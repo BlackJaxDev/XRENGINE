@@ -246,6 +246,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
     private Vector3 _objectMove;
     private bool _distantDisabled;
     private bool _buffersInitialized;
+    private bool _isSimulating;
     
     // Root bone tracking for character locomotion
     private Vector3 _rootBonePrevPosition;
@@ -326,7 +327,10 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
         base.OnPropertyChanged(propName, prev, field);
-        OnValidate();
+        // Skip validation during active simulation to avoid triggering
+        // SetupParticles while compute dispatches are in-flight.
+        if (!_isSimulating)
+            OnValidate();
     }
 
     private void OnValidate()
@@ -339,7 +343,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         Friction = Friction.Clamp(0, 1);
         Radius = MathF.Max(Radius, 0);
 
-        if (!IsEditor || !IsPlaying)
+        if (_particleTrees.Count == 0)
             return;
         
         if (IsRootChanged())
@@ -380,6 +384,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             ++_prepareFrame;
         }
 
+        _isSimulating = true;
         SetWeight(BlendWeight);
         
         CheckDistance();
@@ -391,6 +396,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         }
 
         _preUpdateCount = 0;
+        _isSimulating = false;
     }
 
     private void PreUpdate()
@@ -460,6 +466,14 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < _particleTrees.Count; ++i)
         {
             ParticleTree pt = _particleTrees[i];
+
+            // Restore rest-pose rotations before reading matrices. ApplyParticlesToTransforms()
+            // writes simulation rotation deltas back to the hierarchy each frame; without this
+            // reset the matrices we read below would include the previous frame's deformation,
+            // causing the rest reference to drift.
+            InitTransforms(pt);
+
+            pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Sequential).Wait();
             pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
 
             for (int j = 0; j < pt.Particles.Count; ++j)
@@ -468,7 +482,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
                 if (p.Transform is not null)
                 {
                     p.TransformPosition = p.Transform.WorldTranslation;
-                    p.TransformLocalPosition = p.Transform.LocalTranslation;
+                    p.TransformLocalPosition = p.ParentIndex < 0 ? p.Transform.LocalTranslation : p.InitLocalPosition;
                     p.TransformLocalToWorldMatrix = p.Transform.WorldMatrix;
                 }
             }
@@ -482,7 +496,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < Colliders.Count; ++i)
         {
             PhysicsChainColliderBase c = Colliders[i];
-            if (c is null || !c.IsActive)
+            if (c is null || !c.IsActiveInHierarchy)
                 continue;
 
             _effectiveColliders.Add(c);
@@ -777,31 +791,27 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         if (_particlesBuffer is null || _readbackData is null)
             return;
 
-        // Get the mapped address from the buffer
-        var mappedAddresses = _particlesBuffer.GetMappedAddresses().ToArray();
-        if (mappedAddresses.Length == 0 || !mappedAddresses[0].IsValid)
-        {
-            // Fall back to client-side source if not mapped
-            var clientSource = _particlesBuffer.ClientSideSource;
-            if (clientSource is not null)
-            {
-                uint stride = _particlesBuffer.ElementSize;
-                for (int i = 0; i < _readbackData.Length && i < _totalParticleCount; i++)
-                {
-                    _readbackData[i] = Marshal.PtrToStructure<ParticleData>(clientSource.Address[(uint)i, stride]);
-                }
-            }
+        var renderer = AbstractRenderer.Current as OpenGLRenderer;
+        if (renderer is null)
             return;
-        }
 
-        // Read from mapped GPU memory
+        // Get the GL buffer ID via the API wrapper
+        var glBuffer = _particlesBuffer.APIWrappers.FirstOrDefault() as OpenGLRenderer.GLDataBuffer;
+        if (glBuffer is null || !glBuffer.TryGetBindingId(out uint bufferId) || bufferId == 0)
+            return;
+
+        // Use GetBufferSubData to read particle data directly from the SSBO.
+        // This works with any buffer type (mutable or immutable) and avoids
+        // the need for persistent mapping flags that must be set at allocation time.
         unsafe
         {
-            IntPtr mappedPtr = (IntPtr)mappedAddresses[0].Pointer;
             uint stride = (uint)Marshal.SizeOf<ParticleData>();
-            for (int i = 0; i < _readbackData.Length && i < _totalParticleCount; i++)
+            nuint byteSize = (nuint)(_readbackData.Length * (int)stride);
+            fixed (ParticleData* ptr = _readbackData)
             {
-                _readbackData[i] = Marshal.PtrToStructure<ParticleData>(mappedPtr + (int)(i * stride));
+                renderer.RawGL.BindBuffer(GLEnum.ShaderStorageBuffer, bufferId);
+                renderer.RawGL.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, byteSize, ptr);
+                renderer.RawGL.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
             }
         }
     }
@@ -848,9 +858,6 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             _gpuFence = IntPtr.Zero;
         }
 
-        // Ensure the buffer is configured for persistent mapping if not already
-        EnsureBufferMappedForReadback(_particlesBuffer);
-
         // Create a fence to track when the GPU work is done
         _gpuFence = renderer.RawGL.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
         
@@ -861,19 +868,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         _readbackPending = true;
     }
 
-    private static void EnsureBufferMappedForReadback(XRDataBuffer buffer)
-    {
-        if (buffer.ActivelyMapping.Count > 0)
-            return;
 
-        // Configure buffer for persistent mapped readback
-        buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
-        buffer.RangeFlags |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-        buffer.DisposeOnPush = false;
-        buffer.Usage = EBufferUsage.StreamRead;
-        buffer.Resizable = false;
-        buffer.MapBufferData();
-    }
 
     private void DispatchMainPhysics(float timeVar, bool applyObjectMove)
     {
@@ -885,9 +880,9 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         _mainPhysicsProgram.Uniform("DeltaTime", timeVar);
         _mainPhysicsProgram.Uniform("ObjectScale", _objectScale);
         _mainPhysicsProgram.Uniform("Weight", _weight);
-        _mainPhysicsProgram.Uniform("Force", new Vector4(Force.X, Force.Y, Force.Z, 0));
-        _mainPhysicsProgram.Uniform("Gravity", new Vector4(Gravity.X, Gravity.Y, Gravity.Z, 0));
-        _mainPhysicsProgram.Uniform("ObjectMove", applyObjectMove ? new Vector4(_objectMove.X, _objectMove.Y, _objectMove.Z, 0) : Vector4.Zero);
+        _mainPhysicsProgram.Uniform("Force", Force);
+        _mainPhysicsProgram.Uniform("Gravity", Gravity);
+        _mainPhysicsProgram.Uniform("ObjectMove", applyObjectMove ? _objectMove : Vector3.Zero);
         _mainPhysicsProgram.Uniform("FreezeAxis", (int)FreezeAxis);
         _mainPhysicsProgram.Uniform("ColliderCount", _collidersData.Count);
         _mainPhysicsProgram.Uniform("UpdateMode", (int)UpdateMode);
@@ -910,7 +905,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             return;
 
         // Set uniforms
-        _skipUpdateParticlesProgram.Uniform("ObjectMove", new Vector4(_objectMove.X, _objectMove.Y, _objectMove.Z, 0));
+        _skipUpdateParticlesProgram.Uniform("ObjectMove", _objectMove);
         _skipUpdateParticlesProgram.Uniform("Weight", _weight);
 
         // Bind buffers
@@ -1166,6 +1161,11 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < _particleTrees.Count; ++i)
         {
             ParticleTree pt = _particleTrees[i];
+
+            // Activation-time setup can run before the hierarchy has produced valid
+            // world-space child transforms. Force a hierarchy recalc before we sample
+            // WorldTranslation so the initial chain rest pose matches the authored pose.
+            pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Parallel).Wait();
             AppendParticles(pt, pt.Root, -1, 0.0f);
         }
 
@@ -1187,8 +1187,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             return state;
 
         state = (transform.LocalTranslation, transform.LocalRotation);
-        if (IsPlaying)
-            _initialLocalStates[transform] = state;
+        _initialLocalStates[transform] = state;
 
         return state;
     }
@@ -1381,9 +1380,16 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < pt.Particles.Count; ++i)
         {
             Particle p = pt.Particles[i];
-            if (p.Transform is null || p.ParentIndex < 0)
+            if (p.Transform is null)
                 continue;
-            
+
+            if (p.ParentIndex < 0)
+            {
+                // Root: restore rotation only; translation is driven by animation/external input.
+                p.Transform.Rotation = p.InitLocalRotation;
+                continue;
+            }
+
             p.Transform.Translation = p.InitLocalPosition;
             p.Transform.Rotation = p.InitLocalRotation;
         }
@@ -1459,11 +1465,6 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
     {
         if (!IsActive || Engine.Rendering.State.IsShadowPass)
             return;
-
-        if (IsEditor && !IsPlaying && Transform.HasChanged)
-        {
-            SetupParticles();
-        }
 
         for (int i = 0; i < _particleTrees.Count; ++i)
             DrawTree(_particleTrees[i]);

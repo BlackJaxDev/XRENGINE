@@ -520,11 +520,12 @@ public static partial class EditorUnitTests
         rootAnimation.Animation = CreateSineTranslationClip(rootBaseTranslation.Y, amplitude: 0.9f, frequency: 1.8f, phaseOffset);
         rootAnimation.StartOnActivate = true;
 
-        Transform[] chainBones = CreatePhysicsChainBones(rootNode, segmentCount: 6, segmentLength: 0.55f);
+        const float segmentLength = 0.55f;
+        Transform[] chainBones = CreatePhysicsChainBones(rootNode, segmentCount: 6, segmentLength);
 
         var sphereColliderNode = testNode.NewChild("SphereCollider");
         var sphereColliderTransform = sphereColliderNode.SetTransform<Transform>();
-        sphereColliderTransform.Translation = new Vector3(0.25f, 2.1f, 0.0f);
+        sphereColliderTransform.Translation = new Vector3(0.2f, 3.45f, segmentLength * 2.75f);
         var sphereCollider = sphereColliderNode.AddComponent<PhysicsChainSphereCollider>()!;
         sphereCollider.Radius = 0.65f;
 
@@ -546,7 +547,7 @@ public static partial class EditorUnitTests
             gpuChain.Inert = 0.25f;
             gpuChain.Friction = 0.2f;
             gpuChain.Radius = 0.08f;
-            gpuChain.Gravity = new Vector3(0.0f, -3.0f, 0.0f);
+            gpuChain.Gravity = Vector3.Zero;
             gpuChain.Force = Vector3.Zero;
             gpuChain.BlendWeight = 1.0f;
             gpuChain.Multithread = false;
@@ -565,7 +566,7 @@ public static partial class EditorUnitTests
             cpuChain.Inert = 0.25f;
             cpuChain.Friction = 0.2f;
             cpuChain.Radius = 0.08f;
-            cpuChain.Gravity = new Vector3(0.0f, -3.0f, 0.0f);
+            cpuChain.Gravity = Vector3.Zero;
             cpuChain.Force = Vector3.Zero;
             cpuChain.BlendWeight = 1.0f;
             cpuChain.Multithread = false;
@@ -577,22 +578,33 @@ public static partial class EditorUnitTests
         {
             debug.ClearShapes();
 
-            Vector3 baselineRoot = testTransform.TransformPoint(rootBaseTranslation);
+            // DebugDrawComponent positions are in local space of the owning node (testNode).
+            // Convert world-space transform positions to testNode local-space to avoid doubling.
+            Matrix4x4.Invert(testTransform.WorldMatrix, out var invWorld);
+            Vector3 ToLocal(Vector3 world) => Vector3.Transform(world, invWorld);
+
+            Vector3 localRoot = ToLocal(rootTransform.WorldTranslation);
             debug.AddLine(
-                baselineRoot + new Vector3(0.0f, -0.9f, 0.0f),
-                baselineRoot + new Vector3(0.0f, 0.9f, 0.0f),
+                localRoot + new Vector3(0.0f, -0.9f, 0.0f),
+                localRoot + new Vector3(0.0f, 0.9f, 0.0f),
                 rootColor);
-            debug.AddPoint(rootTransform.WorldTranslation, rootColor);
-            debug.AddSphere(sphereCollider.Radius, sphereColliderTransform.WorldTranslation, ColorF4.Magenta, false);
+            debug.AddPoint(localRoot, rootColor);
+            debug.AddSphere(sphereCollider.Radius, ToLocal(sphereColliderTransform.WorldTranslation), ColorF4.Magenta, false);
             debug.AddLine(
-                planeColliderTransform.WorldTranslation + new Vector3(-0.9f, 0.0f, 0.0f),
-                planeColliderTransform.WorldTranslation + new Vector3(0.9f, 0.0f, 0.0f),
+                ToLocal(planeColliderTransform.WorldTranslation) + new Vector3(-0.9f, 0.0f, 0.0f),
+                ToLocal(planeColliderTransform.WorldTranslation) + new Vector3(0.9f, 0.0f, 0.0f),
                 ColorF4.LightGray);
+            debug.AddLine(
+                localRoot,
+                localRoot + new Vector3(0.0f, 0.0f, segmentLength * (chainBones.Length - 1)),
+                ColorF4.DarkGray);
 
             for (int i = 1; i < chainBones.Length; i++)
             {
-                debug.AddPoint(chainBones[i].WorldTranslation, chainColor);
-                debug.AddLine(chainBones[i - 1].WorldTranslation, chainBones[i].WorldTranslation, chainColor);
+                Vector3 localBone = ToLocal(chainBones[i].WorldTranslation);
+                Vector3 localPrev = ToLocal(chainBones[i - 1].WorldTranslation);
+                debug.AddPoint(localBone, chainColor);
+                debug.AddLine(localPrev, localBone, chainColor);
             }
         });
     }
@@ -608,7 +620,7 @@ public static partial class EditorUnitTests
         {
             var boneNode = parentNode.NewChild($"Bone{i + 1}");
             var boneTransform = boneNode.SetTransform<Transform>();
-            boneTransform.Translation = new Vector3(0.0f, -segmentLength, 0.0f);
+            boneTransform.Translation = new Vector3(0.0f, 0.0f, segmentLength);
             bones[i + 1] = boneTransform;
             parentNode = boneNode;
         }

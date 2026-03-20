@@ -33,8 +33,15 @@ namespace XREngine.Components
             if (shapes is null || shapes.Count == 0)
                 return;
 
-            foreach (var shape in shapes)
-                shape?.Render(Transform);
+            // Snapshot count and iterate by index to avoid "Collection was modified"
+            // when animation ticks call ClearShapes/AddLine concurrently.
+            int count = shapes.Count;
+            for (int i = 0; i < count; i++)
+            {
+                if (i >= shapes.Count)
+                    break; // Collection shrunk during iteration
+                shapes[i]?.Render(Transform);
+            }
         }
 
         private EventList<DebugShapeBase> _shapes = [];

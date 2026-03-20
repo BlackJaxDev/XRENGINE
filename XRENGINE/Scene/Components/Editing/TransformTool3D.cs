@@ -139,6 +139,7 @@ namespace XREngine.Scene.Components.Editing
         private readonly RenderCommandMethod3D _rc;
 
         private readonly XRMaterial[] _axisMat = new XRMaterial[3];
+        private readonly XRMaterial[] _rotationAxisMat = new XRMaterial[3];
         private readonly XRMaterial[] _transPlaneMat = new XRMaterial[6];
         private readonly XRMaterial[] _scalePlaneMat = new XRMaterial[3];
         private XRMaterial? _screenMat;
@@ -237,6 +238,7 @@ namespace XREngine.Scene.Components.Editing
                     unit1,
                     unit2,
                     out XRMaterial axisMat,
+                    out XRMaterial rotationAxisMat,
                     out XRMaterial planeMat1,
                     out XRMaterial planeMat2,
                     out XRMaterial scalePlaneMat);
@@ -277,7 +279,7 @@ namespace XREngine.Scene.Components.Editing
                 scaleMeshes.Add(new SubMesh(scalePrim, scalePlaneMat));
 
                 //isRotate = true
-                rotationMeshes.Add(new SubMesh(rotPrim, axisMat));
+                rotationMeshes.Add(new SubMesh(rotPrim, rotationAxisMat));
             }
 
             //Screen-aligned rotation: view-aligned circle around the center
@@ -351,6 +353,7 @@ namespace XREngine.Scene.Components.Editing
             Vector3 unit1,
             Vector3 unit2,
             out XRMaterial axisMat,
+            out XRMaterial rotationAxisMat,
             out XRMaterial planeMat1,
             out XRMaterial planeMat2,
             out XRMaterial scalePlaneMat)
@@ -360,6 +363,14 @@ namespace XREngine.Scene.Components.Editing
             axisMat.RenderOptions.CullMode = ECullMode.None;
             //axisMat.RenderOptions.LineWidth = 1.0f;
             _axisMat[normalAxis] = axisMat;
+
+            rotationAxisMat = XRMaterial.CreateUnlitColorMaterialForward(unit);
+            rotationAxisMat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+            rotationAxisMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+            rotationAxisMat.RenderOptions.DepthTest.UpdateDepth = false;
+            rotationAxisMat.RenderOptions.DepthTest.Function = Rendering.Models.Materials.EComparison.Lequal;
+            rotationAxisMat.RenderOptions.CullMode = ECullMode.None;
+            _rotationAxisMat[normalAxis] = rotationAxisMat;
 
             planeMat1 = XRMaterial.CreateUnlitColorMaterialForward(unit1);
             planeMat1.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
@@ -395,9 +406,10 @@ namespace XREngine.Scene.Components.Editing
         private static void GetSphere(List<SubMesh> rotationMeshes)
         {
             XRMaterial sphereMat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Orange);
+            sphereMat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
             sphereMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
             sphereMat.RenderOptions.DepthTest.UpdateDepth = true;
-            sphereMat.RenderOptions.DepthTest.Function = Rendering.Models.Materials.EComparison.Lequal;
+            sphereMat.RenderOptions.DepthTest.Function = Rendering.Models.Materials.EComparison.Always;
             //sphereMat.RenderOptions.LineWidth = 1.0f;
             sphereMat.RenderOptions.WriteRed = false;
             sphereMat.RenderOptions.WriteGreen = false;
@@ -1342,9 +1354,16 @@ namespace XREngine.Scene.Components.Editing
 
                 snapFound = _highlight?.Invoke(camera, localRay) ?? false;
 
-                _axisMat[0].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X ? ColorF4.Yellow : ColorF4.Red;
-                _axisMat[1].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y ? ColorF4.Yellow : ColorF4.Green;
-                _axisMat[2].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Z ? ColorF4.Yellow : ColorF4.Blue;
+                ColorF4 xColor = _hiAxis.X ? ColorF4.Yellow : ColorF4.Red;
+                ColorF4 yColor = _hiAxis.Y ? ColorF4.Yellow : ColorF4.Green;
+                ColorF4 zColor = _hiAxis.Z ? ColorF4.Yellow : ColorF4.Blue;
+
+                _axisMat[0].Parameter<ShaderVector4>(0)!.Value = xColor;
+                _axisMat[1].Parameter<ShaderVector4>(0)!.Value = yColor;
+                _axisMat[2].Parameter<ShaderVector4>(0)!.Value = zColor;
+                _rotationAxisMat[0].Parameter<ShaderVector4>(0)!.Value = xColor;
+                _rotationAxisMat[1].Parameter<ShaderVector4>(0)!.Value = yColor;
+                _rotationAxisMat[2].Parameter<ShaderVector4>(0)!.Value = zColor;
                 _screenMat!.Parameter<ShaderVector4>(0)!.Value = _hiCam ? ColorF4.Yellow : ColorF4.LightGray;
 
                 GetDependentColors();

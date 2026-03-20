@@ -238,9 +238,13 @@ void main()
 
         // Force calculation - identical to CPU version
         vec3 force = Gravity;
-        vec3 fdir = normalize(Gravity);
-        vec3 pf = fdir * max(dot(ParticleTrees[treeIndex].RestGravity, fdir), 0.0);
-        force -= pf;
+        float gravityLengthSquared = dot(Gravity, Gravity);
+        if (gravityLengthSquared > 1e-8)
+        {
+            vec3 fdir = Gravity / sqrt(gravityLengthSquared);
+            vec3 pf = fdir * max(dot(ParticleTrees[treeIndex].RestGravity, fdir), 0.0);
+            force -= pf;
+        }
         force = (force + Force) * (ObjectScale * DeltaTime);
 
         p.Position += v * (1.0 - damp) + force + rmove;

@@ -1,738 +1,754 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Build-Editor",
-            "command": "dotnet",
-            "type": "shell",
-            "args": [
-                "build",
-                "${workspaceFolder}/XREngine.Editor/XREngine.Editor.csproj",
-                "/property:GenerateFullPaths=true",
-                "/consoleloggerparameters:NoSummary"
-            ],
-            "group": "build",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Build-Server",
-            "command": "dotnet",
-            "type": "shell",
-            "args": [
-                "build",
-                "${workspaceFolder}/XREngine.Server/XREngine.Server.csproj",
-                "/property:GenerateFullPaths=true",
-                "/consoleloggerparameters:NoSummary"
-            ],
-            "group": "build",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Build-VRClient",
-            "command": "dotnet",
-            "type": "shell",
-            "args": [
-                "build",
-                "${workspaceFolder}/XREngine.VRClient/XREngine.VRClient.csproj",
-                "/property:GenerateFullPaths=true",
-                "/consoleloggerparameters:NoSummary"
-            ],
-            "group": "build",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Generate-UnitTestingWorldSettings",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Generate-UnitTestingWorldSettings.ps1"
-            ],
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-Editor-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_WINDOW_TITLE=XRE Editor (Separate) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-Server-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_NET_MODE=Server && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-Client-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-Client2-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-PoseSourceClient-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=sender && set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_POSE_ENTITY_ID=4242 && set XRE_POSE_BROADCAST_ENABLED=1 && set XRE_POSE_RECEIVE_ENABLED=0 && set XRE_WINDOW_TITLE=XRE Editor (Pose Source) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-PoseServer-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=server && set XRE_NET_MODE=Server && set XRE_WINDOW_TITLE=XRE Editor (Pose Server) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-PoseReceiverClient-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=receiver && set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_POSE_ENTITY_ID=4242 && set XRE_POSE_BROADCAST_ENABLED=0 && set XRE_POSE_RECEIVE_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Pose Receiver) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-LocalPoseSync-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "echo Starting local server + pose source + pose receiver..."
-            ],
-            "dependsOn": [
-                "Start-PoseServer-NoDebug",
-                "Start-PoseSourceClient-NoDebug",
-                "Start-PoseReceiverClient-NoDebug"
-            ],
-            "dependsOrder": "sequence",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-2Clients-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" && timeout /t 1 /nobreak > nul && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-DedicatedServer-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "start \"\" /D \"${workspaceFolder}\\XREngine.Server\" \"${workspaceFolder}\\XREngine.Server\\bin\\Debug\\net10.0-windows10.0.26100.0\\XREngine.Server.exe\""
-            ],
-            "dependsOn": "Build-Server",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-P2PPeer-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-P2PPeer2-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Prep-DebugServer-With2Clients",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "echo Preparing dedicated server debug session..."
-            ],
-            "dependsOn": [
-                "Build-Server",
-                "Start-2Clients-NoDebug"
-            ],
-            "dependsOrder": "sequence",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Prep-DebugServer-Only",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "echo Preparing dedicated server debug session (server only)..."
-            ],
-            "dependsOn": [
-                "Build-Server"
-            ],
-            "dependsOrder": "sequence",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Prep-DebugClient-WithServerAndClient",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "echo Preparing client debug session (server + extra client)..."
-            ],
-            "dependsOn": [
-                "Start-DedicatedServer-NoDebug",
-                "Start-Client2-NoDebug"
-            ],
-            "dependsOrder": "sequence",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Prep-DebugP2PClient-WithPeer",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "echo Preparing P2P client debug session (peer client only)..."
-            ],
-            "dependsOn": [
-                "Start-P2PPeer2-NoDebug"
-            ],
-            "dependsOrder": "sequence",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Prep-DebugVRClient-WithEditor",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "echo Preparing VRClient debug session (editor runs separately)..."
-            ],
-            "dependsOn": [
-                "Start-Editor-NoDebug",
-                "Build-VRClient"
-            ],
-            "dependsOrder": "sequence",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Test-SurfelGi",
-            "command": "dotnet",
-            "type": "shell",
-            "args": [
-                "test",
-                "${workspaceFolder}/XREngine.UnitTests/XREngine.UnitTests.csproj",
-                "-c",
-                "Debug",
-                "--filter",
-                "FullyQualifiedName~XREngine.UnitTests.Rendering.SurfelGiComputeIntegrationTests"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Test-VulkanPhase3-Regression",
-            "command": "dotnet",
-            "type": "process",
-            "args": [
-                "test",
-                "${workspaceFolder}/XREngine.UnitTests/XREngine.UnitTests.csproj",
-                "-c",
-                "Debug",
-                "--filter",
-                "FullyQualifiedName~XREngine.UnitTests.Rendering.GpuIndirectPhase3PolicyTests|FullyQualifiedName~XREngine.UnitTests.Rendering.GpuIndirectPhase3ScaffoldTests|FullyQualifiedName~XREngine.UnitTests.Rendering.GpuCullingPipelineTests|FullyQualifiedName~XREngine.UnitTests.Rendering.GpuRenderingBacklogTests"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Build-Profiler",
-            "command": "dotnet",
-            "type": "shell",
-            "args": [
-                "build",
-                "${workspaceFolder}/XREngine.Profiler/XREngine.Profiler.csproj",
-                "/property:GenerateFullPaths=true",
-                "/consoleloggerparameters:NoSummary"
-            ],
-            "group": "build",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Start-Profiler-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "start \"\" /D \"${workspaceFolder}\\XREngine.Profiler\" \"${workspaceFolder}\\XREngine.Profiler\\bin\\Debug\\net10.0-windows7.0\\XREngine.Profiler.exe\""
-            ],
-            "dependsOn": "Build-Profiler",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Start-Editor-WithProfiler-NoDebug",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "set XRE_PROFILER_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Profiled) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "silent"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Cook-CommonAssets-Archive (Manual Slow)",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Test-CookCommonAssets.ps1",
-                "-NoBuild"
-            ],
-            "dependsOn": "Build-Editor",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Build-VRMonkeyBall-GenerateGameProject",
-            "command": "dotnet",
-            "type": "shell",
-            "args": [
-                "msbuild",
-                "${workspaceFolder}/VR_MonkeyBall_Sample/VR_MonkeyBall_Sample.csproj",
-                "/t:GenerateGameProject",
-                "/p:Configuration=Debug"
-            ],
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Build-VRMonkeyBall-CookGameExe",
-            "command": "dotnet",
-            "type": "shell",
-            "args": [
-                "msbuild",
-                "${workspaceFolder}/VR_MonkeyBall_Sample/VR_MonkeyBall_Sample.csproj",
-                "/t:CookGameExe",
-                "/p:Configuration=Release"
-            ],
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Report-BuildWarnings",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Reports\\Find-BuildWarnings.ps1",
-                "-Root",
-                "${workspaceFolder}",
-                "-OutFile",
-                "${workspaceFolder}\\docs\\work\\audit\\warnings.md"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Report-NewAllocations",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Reports\\Find-NewAllocations.ps1",
-                "-Root",
-                "${workspaceFolder}",
-                "-OutFile",
-                "${workspaceFolder}\\docs\\work\\audit\\new-allocations.md"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Report-StaticClasses",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Reports\\Find-StaticClasses.ps1",
-                "-RepoRoot",
-                "${workspaceFolder}",
-                "-OutFile",
-                "${workspaceFolder}\\docs\\work\\audit\\static-classes.md"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Report-ThreadTaskRuns",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Reports\\Find-ThreadTaskRuns.ps1",
-                "-Root",
-                "${workspaceFolder}",
-                "-OutFile",
-                "${workspaceFolder}\\docs\\work\\audit\\thread-task-runs.md"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Report-XRBaseDirectFieldAssignments",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Reports\\Find-XRBaseDirectFieldAssignments.ps1",
-                "-RepoRoot",
-                "${workspaceFolder}",
-                "-OutFile",
-                "${workspaceFolder}\\docs\\work\\audit\\xrbase-direct-field-assignments.md"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Report-Dependencies",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Reports\\Generate-Dependencies.ps1"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Report-All-AuditReports",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "echo Running all audit reports..."
-            ],
-            "dependsOn": [
-                "Report-BuildWarnings",
-                "Report-NewAllocations",
-                "Report-StaticClasses",
-                "Report-ThreadTaskRuns",
-                "Report-XRBaseDirectFieldAssignments"
-            ],
-            "dependsOrder": "sequence",
-            "group": "test",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Install-YtDlp",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Dependencies\\Get-YtDlp.ps1"
-            ],
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Install-NvComp",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Dependencies\\Get-NvComp.ps1"
-            ],
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Install-Phonon",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Dependencies\\Get-Phonon.ps1"
-            ],
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Install-Audio2Face3D-SDK",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Dependencies\\Get-Audio2Face3DSdk.ps1"
-            ],
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Install-TensorRT",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Dependencies\\Get-TensorRT.ps1"
-            ],
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Install-CUDA",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}\\Tools\\Dependencies\\Get-CudaToolkit.ps1"
-            ],
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Install-Audio2Face3D-Prereqs",
-            "type": "shell",
-            "command": "cmd",
-            "args": [
-                "/d",
-                "/c",
-                "echo Installing Audio2Face3D prerequisites..."
-            ],
-            "dependsOn": [
-                "Install-CUDA",
-                "Install-TensorRT",
-                "Install-Audio2Face3D-SDK"
-            ],
-            "dependsOrder": "sequence",
-            "presentation": {
-                "reveal": "always"
-            },
-            "problemMatcher": []
-        }
-    ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build-Editor",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"build",
+				"${workspaceFolder}/XREngine.Editor/XREngine.Editor.csproj",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"group": "build",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Build-Server",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"build",
+				"${workspaceFolder}/XREngine.Server/XREngine.Server.csproj",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"group": "build",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Build-VRClient",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"build",
+				"${workspaceFolder}/XREngine.VRClient/XREngine.VRClient.csproj",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"group": "build",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Generate-UnitTestingWorldSettings",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Generate-UnitTestingWorldSettings.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-Editor-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WINDOW_TITLE=XRE Editor (Separate) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-Server-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_NET_MODE=Server && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-Client-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-Client2-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-PoseSourceClient-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=sender && set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_POSE_ENTITY_ID=4242 && set XRE_POSE_BROADCAST_ENABLED=1 && set XRE_POSE_RECEIVE_ENABLED=0 && set XRE_WINDOW_TITLE=XRE Editor (Pose Source) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-PoseServer-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=server && set XRE_NET_MODE=Server && set XRE_WINDOW_TITLE=XRE Editor (Pose Server) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-PoseReceiverClient-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=receiver && set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_POSE_ENTITY_ID=4242 && set XRE_POSE_BROADCAST_ENABLED=0 && set XRE_POSE_RECEIVE_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Pose Receiver) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-LocalPoseSync-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"echo Starting local server + pose source + pose receiver..."
+			],
+			"dependsOn": [
+				"Start-PoseServer-NoDebug",
+				"Start-PoseSourceClient-NoDebug",
+				"Start-PoseReceiverClient-NoDebug"
+			],
+			"dependsOrder": "sequence",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-2Clients-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" && timeout /t 1 /nobreak > nul && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-DedicatedServer-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"start \"\" /D \"${workspaceFolder}\\XREngine.Server\" \"${workspaceFolder}\\XREngine.Server\\bin\\Debug\\net10.0-windows10.0.26100.0\\XREngine.Server.exe\""
+			],
+			"dependsOn": "Build-Server",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-P2PPeer-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-P2PPeer2-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Prep-DebugServer-With2Clients",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"echo Preparing dedicated server debug session..."
+			],
+			"dependsOn": [
+				"Build-Server",
+				"Start-2Clients-NoDebug"
+			],
+			"dependsOrder": "sequence",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Prep-DebugServer-Only",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"echo Preparing dedicated server debug session (server only)..."
+			],
+			"dependsOn": [
+				"Build-Server"
+			],
+			"dependsOrder": "sequence",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Prep-DebugClient-WithServerAndClient",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"echo Preparing client debug session (server + extra client)..."
+			],
+			"dependsOn": [
+				"Start-DedicatedServer-NoDebug",
+				"Start-Client2-NoDebug"
+			],
+			"dependsOrder": "sequence",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Prep-DebugP2PClient-WithPeer",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"echo Preparing P2P client debug session (peer client only)..."
+			],
+			"dependsOn": [
+				"Start-P2PPeer2-NoDebug"
+			],
+			"dependsOrder": "sequence",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Prep-DebugVRClient-WithEditor",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"echo Preparing VRClient debug session (editor runs separately)..."
+			],
+			"dependsOn": [
+				"Start-Editor-NoDebug",
+				"Build-VRClient"
+			],
+			"dependsOrder": "sequence",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Test-SurfelGi",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"test",
+				"${workspaceFolder}/XREngine.UnitTests/XREngine.UnitTests.csproj",
+				"-c",
+				"Debug",
+				"--filter",
+				"FullyQualifiedName~XREngine.UnitTests.Rendering.SurfelGiComputeIntegrationTests"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Test-VulkanPhase3-Regression",
+			"command": "dotnet",
+			"type": "process",
+			"args": [
+				"test",
+				"${workspaceFolder}/XREngine.UnitTests/XREngine.UnitTests.csproj",
+				"-c",
+				"Debug",
+				"--filter",
+				"FullyQualifiedName~XREngine.UnitTests.Rendering.GpuIndirectPhase3PolicyTests|FullyQualifiedName~XREngine.UnitTests.Rendering.GpuIndirectPhase3ScaffoldTests|FullyQualifiedName~XREngine.UnitTests.Rendering.GpuCullingPipelineTests|FullyQualifiedName~XREngine.UnitTests.Rendering.GpuRenderingBacklogTests"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Build-Profiler",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"build",
+				"${workspaceFolder}/XREngine.Profiler/XREngine.Profiler.csproj",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"group": "build",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Start-Profiler-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"start \"\" /D \"${workspaceFolder}\\XREngine.Profiler\" \"${workspaceFolder}\\XREngine.Profiler\\bin\\Debug\\net10.0-windows7.0\\XREngine.Profiler.exe\""
+			],
+			"dependsOn": "Build-Profiler",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-Editor-WithProfiler-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_PROFILER_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Profiled) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Cook-CommonAssets-Archive (Manual Slow)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Test-CookCommonAssets.ps1",
+				"-NoBuild"
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Build-VRMonkeyBall-GenerateGameProject",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"msbuild",
+				"${workspaceFolder}/VR_MonkeyBall_Sample/VR_MonkeyBall_Sample.csproj",
+				"/t:GenerateGameProject",
+				"/p:Configuration=Debug"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Build-VRMonkeyBall-CookGameExe",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"msbuild",
+				"${workspaceFolder}/VR_MonkeyBall_Sample/VR_MonkeyBall_Sample.csproj",
+				"/t:CookGameExe",
+				"/p:Configuration=Release"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Report-BuildWarnings",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Reports\\Find-BuildWarnings.ps1",
+				"-Root",
+				"${workspaceFolder}",
+				"-OutFile",
+				"${workspaceFolder}\\docs\\work\\audit\\warnings.md"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Report-NewAllocations",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Reports\\Find-NewAllocations.ps1",
+				"-Root",
+				"${workspaceFolder}",
+				"-OutFile",
+				"${workspaceFolder}\\docs\\work\\audit\\new-allocations.md"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Report-StaticClasses",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Reports\\Find-StaticClasses.ps1",
+				"-RepoRoot",
+				"${workspaceFolder}",
+				"-OutFile",
+				"${workspaceFolder}\\docs\\work\\audit\\static-classes.md"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Report-ThreadTaskRuns",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Reports\\Find-ThreadTaskRuns.ps1",
+				"-Root",
+				"${workspaceFolder}",
+				"-OutFile",
+				"${workspaceFolder}\\docs\\work\\audit\\thread-task-runs.md"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Report-XRBaseDirectFieldAssignments",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Reports\\Find-XRBaseDirectFieldAssignments.ps1",
+				"-RepoRoot",
+				"${workspaceFolder}",
+				"-OutFile",
+				"${workspaceFolder}\\docs\\work\\audit\\xrbase-direct-field-assignments.md"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Report-Dependencies",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Reports\\Generate-Dependencies.ps1"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Report-All-AuditReports",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"echo Running all audit reports..."
+			],
+			"dependsOn": [
+				"Report-BuildWarnings",
+				"Report-NewAllocations",
+				"Report-StaticClasses",
+				"Report-ThreadTaskRuns",
+				"Report-XRBaseDirectFieldAssignments"
+			],
+			"dependsOrder": "sequence",
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Install-YtDlp",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Dependencies\\Get-YtDlp.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Install-NvComp",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Dependencies\\Get-NvComp.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Install-Phonon",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Dependencies\\Get-Phonon.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Install-Audio2Face3D-SDK",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Dependencies\\Get-Audio2Face3DSdk.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Install-TensorRT",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Dependencies\\Get-TensorRT.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Install-CUDA",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Dependencies\\Get-CudaToolkit.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Install-Audio2Face3D-Prereqs",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"echo Installing Audio2Face3D prerequisites..."
+			],
+			"dependsOn": [
+				"Install-CUDA",
+				"Install-TensorRT",
+				"Install-Audio2Face3D-SDK"
+			],
+			"dependsOrder": "sequence",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Editor Validation",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"D:\\Documents\\XRENGINE\\XREngine.Editor\\XREngine.Editor.csproj",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"group": "build"
+		}
+	]
 }

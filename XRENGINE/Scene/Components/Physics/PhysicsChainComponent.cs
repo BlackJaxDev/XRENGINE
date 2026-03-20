@@ -18,6 +18,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private static readonly TimeSpan FaultLogInterval = TimeSpan.FromSeconds(2);
 
     private bool _isSimulating;
+    private bool _isValidating;
     private bool _rebuildQueued;
     private int _particlesVersion;
 
@@ -164,10 +165,16 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         {
             ParticleTree pt = _particleTrees[i];
 
+            // Restore rest-pose rotations before reading matrices. ApplyParticlesToTransforms()
+            // writes simulation rotation deltas back to the hierarchy each frame; without this
+            // reset the matrices we read below would include the previous frame's deformation,
+            // causing the rest reference to drift.
+            InitTransforms(pt);
+
             // Ensure we sample the current (post-InitTransforms / post-animation) pose.
             // Without this, we can end up using stale world matrices from the prior frame,
             // effectively allowing the simulated pose to slowly become the new "rest".
-            pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Sequential).Wait();
+            pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Parallel).Wait();
 
             pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
 
@@ -191,7 +198,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < Colliders.Count; ++i)
         {
             PhysicsChainColliderBase c = Colliders[i];
-            if (c is null || !c.IsActive)
+            if (c is null || !c.IsActiveInHierarchy)
                 continue;
 
             (_effectiveColliders ??= []).Add(c);
@@ -244,29 +251,43 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
         base.OnPropertyChanged(propName, prev, field);
-        //OnValidate();
+        // Skip validation during active simulation to avoid triggering
+        // SetupParticles which queues a rebuild every frame.
+        if (!_isSimulating)
+            OnValidate();
     }
 
     private void OnValidate()
     {
-        UpdateRate = MathF.Max(UpdateRate, 0);
-        Damping = Damping.Clamp(0, 1);
-        Elasticity = Elasticity.Clamp(0, 1);
-        Stiffness = Stiffness.Clamp(0, 1);
-        Inert = Inert.Clamp(0, 1);
-        Friction = Friction.Clamp(0, 1);
-        Radius = MathF.Max(Radius, 0);
-
-        if (!IsEditor || !IsPlaying)
+        if (_isValidating)
             return;
-        
-        if (IsRootChanged())
+
+        _isValidating = true;
+        try
         {
-            InitTransforms();
-            SetupParticles();
+            UpdateRate = MathF.Max(UpdateRate, 0);
+            Damping = Damping.Clamp(0, 1);
+            Elasticity = Elasticity.Clamp(0, 1);
+            Stiffness = Stiffness.Clamp(0, 1);
+            Inert = Inert.Clamp(0, 1);
+            Friction = Friction.Clamp(0, 1);
+            Radius = MathF.Max(Radius, 0);
+
+            if (_particleTrees.Count == 0)
+                return;
+
+            if (IsRootChanged())
+            {
+                InitTransforms();
+                SetupParticles();
+            }
+            else
+                UpdateParameters();
         }
-        else
-            UpdateParameters();
+        finally
+        {
+            _isValidating = false;
+        }
     }
 
     private bool IsRootChanged()
@@ -297,12 +318,6 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     {
         if (!IsActive || Engine.Rendering.State.IsShadowPass)
             return;
-
-        if (IsEditor && !IsPlaying && Transform.HasChanged)
-        {
-            //InitTransforms();
-            SetupParticles();
-        }
 
         for (int i = 0; i < _particleTrees.Count; ++i)
             DrawTree(_particleTrees[i]);
@@ -434,6 +449,11 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < _particleTrees.Count; ++i)
         {
             ParticleTree pt = _particleTrees[i];
+
+            // Activation-time setup can run before the hierarchy has produced valid
+            // world-space child transforms. Force a hierarchy recalc before we sample
+            // WorldTranslation so the initial chain rest pose matches the authored pose.
+            pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Parallel).Wait();
             AppendParticles(pt, pt.Root, -1, 0.0f);
 
             if (pt.Particles.Count == 0)
@@ -461,8 +481,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             return state;
 
         state = (transform.LocalTranslation, transform.LocalRotation);
-        if (IsPlaying)
-            _initialLocalStates[transform] = state;
+        _initialLocalStates[transform] = state;
 
         return state;
     }
@@ -607,9 +626,16 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < particles.Length; ++i)
         {
             Particle p = particles[i];
-            if (p.Transform is null || p.ParentIndex < 0)
+            if (p.Transform is null)
                 continue;
-            
+
+            if (p.ParentIndex < 0)
+            {
+                // Root: restore rotation only; translation is driven by animation/external input.
+                p.Transform.Rotation = p.InitLocalRotation;
+                continue;
+            }
+
             p.Transform.Translation = p.InitLocalPosition;
             p.Transform.Rotation = p.InitLocalRotation;
         }
@@ -682,9 +708,13 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         }
 
         Vector3 force = Gravity;
-        Vector3 fdir = Gravity.Normalized();
-        Vector3 pf = fdir * MathF.Max(Vector3.Dot(pt.RestGravity, fdir), 0); // project current gravity to rest gravity
-        force -= pf; // remove projected gravity
+        float gravityLengthSquared = Gravity.LengthSquared();
+        if (gravityLengthSquared > 1e-8f)
+        {
+            Vector3 fdir = Gravity / MathF.Sqrt(gravityLengthSquared);
+            Vector3 pf = fdir * MathF.Max(Vector3.Dot(pt.RestGravity, fdir), 0.0f); // project current gravity to rest gravity
+            force -= pf; // remove projected gravity
+        }
         force = (force + Force) * (_objectScale * timeVar);
 
         Vector3 objectMove = loopIndex == 0 ? _objectMove : Vector3.Zero; // only first loop consider object move
