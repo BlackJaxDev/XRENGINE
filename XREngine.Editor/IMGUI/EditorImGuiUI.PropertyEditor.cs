@@ -315,6 +315,9 @@ public static partial class EditorImGuiUI
                 .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
                 .Select(p =>
                 {
+                    if (!IsEditorBrowsable(p, targets.Targets))
+                        return null;
+
                     var displayAttr = p.GetCustomAttribute<DisplayNameAttribute>();
                     var descAttr = p.GetCustomAttribute<DescriptionAttribute>();
                     var categoryAttr = p.GetCustomAttribute<CategoryAttribute>();
@@ -375,6 +378,9 @@ public static partial class EditorImGuiUI
                 .Where(f => !f.IsStatic && !f.IsLiteral)
                 .Select(f =>
                 {
+                    if (!IsEditorBrowsable(f, targets.Targets))
+                        return null;
+
                     var displayAttr = f.GetCustomAttribute<DisplayNameAttribute>();
                     var descAttr = f.GetCustomAttribute<DescriptionAttribute>();
                     var categoryAttr = f.GetCustomAttribute<CategoryAttribute>();
@@ -389,7 +395,6 @@ public static partial class EditorImGuiUI
 
                     // Hide XRAsset infrastructure fields from the inspector.
                     if (isXRAssetDerived && InspectorInfrastructureMembers.Contains(f.Name))
-                        return null;
                         return null;
 
                     string displayName = displayAttr?.DisplayName ?? f.Name.SplitCamelCase();
@@ -597,6 +602,27 @@ public static partial class EditorImGuiUI
                     }
                 }
             }
+        }
+
+        private static bool IsEditorBrowsable(MemberInfo member, IReadOnlyList<object> targets)
+        {
+            if (member.GetCustomAttribute<EditorBrowsableIf>(true) is not EditorBrowsableIf condition)
+                return true;
+
+            for (int i = 0; i < targets.Count; ++i)
+            {
+                try
+                {
+                    if (!condition.Evaluate(targets[i]))
+                        return false;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private sealed class InspectorMemberRow

@@ -10,11 +10,11 @@ using XREngine.Components.Animation;
 namespace XREngine.UnitTests.Physics;
 
 /// <summary>
-/// Tests for <see cref="GPUPhysicsChainComponent"/>: default state,
+/// Tests for GPU mode on <see cref="PhysicsChainComponent"/>: default state,
 /// GPU/CPU feature parity, and full-parameter integration.
 /// </summary>
 [TestFixture]
-public sealed class GPUPhysicsChainComponentTests
+public sealed class PhysicsChainComponentGpuModeTests
 {
     #region Test Helpers
 
@@ -39,15 +39,16 @@ public sealed class GPUPhysicsChainComponentTests
         return (rootNode, rootBone, bones);
     }
 
-    private static GPUPhysicsChainComponent CreateComponent(SceneNode node, Transform root)
+    private static PhysicsChainComponent CreateComponent(SceneNode node, Transform root)
     {
-        var component = node.AddComponent<GPUPhysicsChainComponent>()!;
+        var component = node.AddComponent<PhysicsChainComponent>()!;
+        component.UseGPU = true;
         component.Root = root;
         component.Damping = 0.1f;
         component.Elasticity = 0.1f;
         component.Stiffness = 0.1f;
         component.Inert = 0.0f;
-        component.Friction = 0.5f;
+        component.Friction = 0.0f;
         component.Radius = 0.02f;
         component.Gravity = new Vector3(0, -9.8f, 0);
         component.BlendWeight = 1.0f;
@@ -62,18 +63,20 @@ public sealed class GPUPhysicsChainComponentTests
     [Test]
     public void Constructor_SetsExpectedDefaults()
     {
-        var c = new GPUPhysicsChainComponent();
+        var c = new PhysicsChainComponent { UseGPU = true };
 
         // Physics parameters
         c.Damping.ShouldBe(0.1f);
         c.Elasticity.ShouldBe(0.1f);
         c.Stiffness.ShouldBe(0.1f);
         c.Inert.ShouldBe(0.0f);
-        c.Friction.ShouldBe(0.5f);
-        c.Radius.ShouldBe(0.2f);
+        c.Friction.ShouldBe(0.0f);
+        c.Radius.ShouldBe(0.01f);
         c.BlendWeight.ShouldBe(1.0f);
         c.Gravity.ShouldBe(Vector3.Zero);
         c.Force.ShouldBe(Vector3.Zero);
+
+        c.UseGPU.ShouldBeTrue();
 
         // Root / hierarchy
         c.Root.ShouldBeNull();
@@ -84,9 +87,9 @@ public sealed class GPUPhysicsChainComponentTests
 
         // Modes
         c.UseBatchedDispatcher.ShouldBeTrue();
-        c.UpdateMode.ShouldBe(EUpdateMode.Default);
-        c.UpdateRate.ShouldBe(0);
-        c.FreezeAxis.ShouldBe(EFreezeAxis.None);
+        c.UpdateMode.ShouldBe(PhysicsChainComponent.EUpdateMode.Default);
+        c.UpdateRate.ShouldBeGreaterThan(0);
+        c.FreezeAxis.ShouldBe(PhysicsChainComponent.EFreezeAxis.None);
 
         // Distance disable
         c.DistantDisable.ShouldBeFalse();
@@ -107,7 +110,7 @@ public sealed class GPUPhysicsChainComponentTests
     [Test]
     public void AllPhysicsParameters_MatchCPUComponent()
     {
-        var gpu = new GPUPhysicsChainComponent();
+        var gpu = new PhysicsChainComponent { UseGPU = true };
         var cpu = new PhysicsChainComponent();
 
         gpu.Damping = cpu.Damping = 0.25f;
@@ -135,7 +138,7 @@ public sealed class GPUPhysicsChainComponentTests
     [Test]
     public void RootBoneTracking_MatchesCPUBehavior()
     {
-        var gpu = new GPUPhysicsChainComponent();
+        var gpu = new PhysicsChainComponent { UseGPU = true };
         var cpu = new PhysicsChainComponent();
         var rootBone = new Transform();
 
@@ -151,7 +154,7 @@ public sealed class GPUPhysicsChainComponentTests
     [Test]
     public void AllDistributionCurves_AcceptCurves()
     {
-        var component = new GPUPhysicsChainComponent();
+        var component = new PhysicsChainComponent { UseGPU = true };
         var curve = new AnimationCurve();
 
         component.DampingDistrib = curve;
@@ -180,7 +183,8 @@ public sealed class GPUPhysicsChainComponentTests
         var characterRoot = new Transform();
         characterRoot.Parent = rootBone.Parent;
 
-        var component = node.AddComponent<GPUPhysicsChainComponent>()!;
+        var component = node.AddComponent<PhysicsChainComponent>()!;
+        component.UseGPU = true;
         component.Root = rootBone;
         component.Damping = 0.2f;
         component.Elasticity = 0.15f;
@@ -191,9 +195,9 @@ public sealed class GPUPhysicsChainComponentTests
         component.Gravity = new Vector3(0, -10f, 0);
         component.Force = new Vector3(1, 0, 0);
         component.BlendWeight = 0.9f;
-        component.UpdateMode = EUpdateMode.FixedUpdate;
+        component.UpdateMode = PhysicsChainComponent.EUpdateMode.FixedUpdate;
         component.UpdateRate = 60f;
-        component.FreezeAxis = EFreezeAxis.Y;
+        component.FreezeAxis = PhysicsChainComponent.EFreezeAxis.Y;
         component.EndLength = 0.02f;
         component.RootBone = characterRoot;
         component.RootInertia = 0.7f;

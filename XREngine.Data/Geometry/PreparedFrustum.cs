@@ -117,7 +117,6 @@ namespace XREngine.Data.Geometry
         {
             const float planeEps = 1e-4f;
             const float pointEps = 1e-4f;
-            const float denomEps = 1e-6f;
 
             intersectionPoints.Clear();
 
@@ -128,27 +127,6 @@ namespace XREngine.Data.Geometry
                 IsFrustumCompletelyOutside(b.Planes, a.Corners, planeEps))
             {
                 return false;
-            }
-
-            const int totalPlanes = 12;
-            Span<Plane> allPlanes = stackalloc Plane[totalPlanes];
-            for (int i = 0; i < 6; i++)
-            {
-                allPlanes[i] = a.Planes[i];
-                allPlanes[i + 6] = b.Planes[i];
-            }
-
-            Span<float> nx = stackalloc float[totalPlanes];
-            Span<float> ny = stackalloc float[totalPlanes];
-            Span<float> nz = stackalloc float[totalPlanes];
-            Span<float> dd = stackalloc float[totalPlanes];
-
-            for (int i = 0; i < totalPlanes; i++)
-            {
-                nx[i] = allPlanes[i].Normal.X;
-                ny[i] = allPlanes[i].Normal.Y;
-                nz[i] = allPlanes[i].Normal.Z;
-                dd[i] = allPlanes[i].D;
             }
 
             for (int i = 0; i < a.Corners.Length; i++)
@@ -171,24 +149,8 @@ namespace XREngine.Data.Geometry
                 }
             }
 
-            for (int i = 0; i < totalPlanes; i++)
-            {
-                for (int j = i + 1; j < totalPlanes; j++)
-                {
-                    for (int k = j + 1; k < totalPlanes; k++)
-                    {
-                        int inA = ((i < 6) ? 1 : 0) + ((j < 6) ? 1 : 0) + ((k < 6) ? 1 : 0);
-                        if (inA == 0 || inA == 3)
-                            continue;
-
-                        if (TryIntersectThreePlanes(allPlanes[i], allPlanes[j], allPlanes[k], denomEps, out Vector3 p) &&
-                            ContainsPointIntrinsics(p, nx, ny, nz, dd, totalPlanes, planeEps))
-                        {
-                            AddUniquePoint(intersectionPoints, p, pointEps);
-                        }
-                    }
-                }
-            }
+            AddEdgePlaneIntersections(a, b, intersectionPoints, planeEps, pointEps);
+            AddEdgePlaneIntersections(b, a, intersectionPoints, planeEps, pointEps);
 
             return intersectionPoints.Count > 0;
         }
@@ -389,28 +351,76 @@ namespace XREngine.Data.Geometry
             return true;
         }
 
-        private static bool TryIntersectThreePlanes(
-            Plane p1, Plane p2, Plane p3,
-            float denomEps,
+        private static void AddEdgePlaneIntersections(
+            PreparedFrustum edgeSource,
+            PreparedFrustum planeSource,
+            List<Vector3> intersectionPoints,
+            float planeEps,
+            float pointEps)
+        {
+            ReadOnlySpan<int> edges =
+            [
+                0, 1, 1, 3, 3, 2, 2, 0,
+                4, 5, 5, 7, 7, 6, 6, 4,
+                0, 4, 1, 5, 2, 6, 3, 7,
+            ];
+
+            for (int edgeIndex = 0; edgeIndex < edges.Length; edgeIndex += 2)
+            {
+                Vector3 start = edgeSource.Corners[edges[edgeIndex]];
+                Vector3 end = edgeSource.Corners[edges[edgeIndex + 1]];
+
+                for (int planeIndex = 0; planeIndex < planeSource.Planes.Length; planeIndex++)
+                {
+                    if (!TryIntersectSegmentWithPlane(start, end, planeSource.Planes[planeIndex], planeEps, out Vector3 point))
+                        continue;
+
+                    if (ContainsPointIntrinsics(point, edgeSource.NxSpan, edgeSource.NySpan, edgeSource.NzSpan, edgeSource.DSpan, edgeSource.PlaneCount, planeEps) &&
+                        ContainsPointIntrinsics(point, planeSource.NxSpan, planeSource.NySpan, planeSource.NzSpan, planeSource.DSpan, planeSource.PlaneCount, planeEps))
+                    {
+                        AddUniquePoint(intersectionPoints, point, pointEps);
+                    }
+                }
+            }
+        }
+
+        private static bool TryIntersectSegmentWithPlane(
+            Vector3 start,
+            Vector3 end,
+            Plane plane,
+            float planeEps,
             out Vector3 point)
         {
-            Vector3 n1 = p1.Normal;
-            Vector3 n2 = p2.Normal;
-            Vector3 n3 = p3.Normal;
+            float startDistance = SignedDistance(plane, start);
+            float endDistance = SignedDistance(plane, end);
 
-            Vector3 c23 = Vector3.Cross(n2, n3);
-            float denom = Vector3.Dot(n1, c23);
+            if (MathF.Abs(startDistance) <= planeEps)
+            {
+                point = start;
+                return true;
+            }
 
-            if (MathF.Abs(denom) < denomEps)
+            if (MathF.Abs(endDistance) <= planeEps)
+            {
+                point = end;
+                return true;
+            }
+
+            float denominator = startDistance - endDistance;
+            if (MathF.Abs(denominator) <= planeEps)
             {
                 point = default;
                 return false;
             }
 
-            Vector3 c31 = Vector3.Cross(n3, n1);
-            Vector3 c12 = Vector3.Cross(n1, n2);
+            float t = startDistance / denominator;
+            if (t < 0.0f || t > 1.0f)
+            {
+                point = default;
+                return false;
+            }
 
-            point = (-p1.D * c23 - p2.D * c31 - p3.D * c12) / denom;
+            point = Vector3.Lerp(start, end, t);
             return true;
         }
 

@@ -25,18 +25,62 @@ public static partial class EditorUnitTests
         if (Toggles.DirLight)
             Lighting.AddDirLight(rootNode);
 
+        var testLayoutController = rootNode.AddComponent<MathIntersectionsWorldControllerComponent>()!;
+        testLayoutController.Name = "Math Intersections Test Layout";
+        var rootCustomUi = rootNode.AddComponent<CustomUIComponent>()!;
+        rootCustomUi.Name = "Math Intersections Test Controls";
+
         AddGroundCrosshair(rootNode);
-        AddProjectionMatrixCombinerRig(rootNode);
-        AddFrustumIntersectionRig(rootNode);
-        AddFrustumContainmentRig(rootNode);
-        AddRaySphereRig(rootNode);
-        AddSegmentAabbRig(rootNode);
-        AddRayTriangleRig(rootNode);
-        AddPhysicsChainComparisonRig(rootNode);
+        RegisterMathIntersectionsTest(
+            testLayoutController,
+            AddProjectionMatrixCombinerRig(rootNode),
+            "Projection Matrix Combiner Test",
+            AABB.FromCenterSize(new Vector3(0.0f, 4.0f, 9.0f), new Vector3(36.0f, 12.0f, 24.0f)));
+        RegisterMathIntersectionsTest(
+            testLayoutController,
+            AddFrustumIntersectionRig(rootNode),
+            "Frustum Intersection Test",
+            AABB.FromCenterSize(new Vector3(0.5f, 4.0f, 7.0f), new Vector3(24.0f, 10.0f, 24.0f)));
+        RegisterMathIntersectionsTest(
+            testLayoutController,
+            AddFrustumContainmentRig(rootNode),
+            "Frustum Containment Test",
+            AABB.FromCenterSize(new Vector3(0.0f, 3.0f, 4.0f), new Vector3(18.0f, 8.0f, 24.0f)));
+        RegisterMathIntersectionsTest(
+            testLayoutController,
+            AddRaySphereRig(rootNode),
+            "Ray vs Sphere Test",
+            AABB.FromCenterSize(new Vector3(0.5f, 2.5f, 4.5f), new Vector3(20.0f, 6.0f, 20.0f)));
+        RegisterMathIntersectionsTest(
+            testLayoutController,
+            AddSegmentAabbRig(rootNode),
+            "Segment vs AABB Test",
+            AABB.FromCenterSize(new Vector3(8.0f, 2.0f, -2.0f), new Vector3(10.0f, 5.0f, 10.0f)));
+        RegisterMathIntersectionsTest(
+            testLayoutController,
+            AddRayTriangleRig(rootNode),
+            "Ray vs Triangle Test",
+            AABB.FromCenterSize(new Vector3(-2.0f, 2.5f, 20.5f), new Vector3(26.0f, 6.0f, 26.0f)));
+        RegisterMathIntersectionsTest(
+            testLayoutController,
+            AddPhysicsChainComparisonRig(rootNode),
+            "Physics Chain Comparison Test",
+            AABB.FromCenterSize(new Vector3(0.0f, 3.0f, 2.0f), new Vector3(12.0f, 8.0f, 8.0f)));
 
         var world = new XRWorld("Math Intersections World", scene);
         Undo.TrackWorld(world);
         return world;
+    }
+
+    private static void RegisterMathIntersectionsTest(
+        MathIntersectionsWorldControllerComponent controller,
+        SceneNode testRootNode,
+        string displayName,
+        AABB bounds)
+    {
+        testRootNode.Name = displayName;
+        testRootNode.IsActiveSelf = false;
+        controller.RegisterTest(testRootNode, displayName, bounds);
     }
 
     private static void AddGroundCrosshair(SceneNode rootNode)
@@ -56,9 +100,9 @@ public static partial class EditorUnitTests
         debug.AddLine(new Vector3(0.0f, 0.0f, 0.0f), new Vector3(0.0f, 4.0f, 0.0f), ColorF4.LightGold);
     }
 
-    private static void AddFrustumIntersectionRig(SceneNode rootNode)
+    private static SceneNode AddFrustumIntersectionRig(SceneNode rootNode)
     {
-        var rigNode = rootNode.NewChild("FrustumIntersectionRig");
+        var rigNode = rootNode.NewChild("Frustum Intersection Test");
 
         var frustumANode = rigNode.NewChild("FrustumA");
         var frustumATfm = frustumANode.SetTransform<Transform>();
@@ -98,13 +142,14 @@ public static partial class EditorUnitTests
 
             DrawFrustumIntersection(intersectionDebug, frustumA, frustumB);
         });
+
+        return rigNode;
     }
 
-    private static void AddProjectionMatrixCombinerRig(SceneNode rootNode)
+    private static SceneNode AddProjectionMatrixCombinerRig(SceneNode rootNode)
     {
-        var rigRootNode = rootNode.NewChild("ProjectionMatrixCombinerRig");
-        var rigRootTransform = rigRootNode.SetTransform<Transform>();
-        rigRootTransform.Translation = new Vector3(-10.0f, 2.5f, -10.0f);
+        var rigRootNode = rootNode.NewChild("Projection Matrix Combiner Test");
+        rigRootNode.SetTransform<Transform>();
 
         var cyclopsEyeNode = rigRootNode.NewChild("CyclopsEye");
         var cyclopsEyeTransform = cyclopsEyeNode.SetTransform<Transform>();
@@ -325,11 +370,13 @@ public static partial class EditorUnitTests
             value => combinerComponent.CombinedFrustumColor = value,
             true,
             "Debug color for the final combined frustum.");
+
+        return rigRootNode;
     }
 
-    private static void AddRaySphereRig(SceneNode rootNode)
+    private static SceneNode AddRaySphereRig(SceneNode rootNode)
     {
-        var rigNode = rootNode.NewChild("RaySphereRig");
+        var rigNode = rootNode.NewChild("Ray vs Sphere Test");
         var debug = rigNode.AddComponent<DebugDrawComponent>()!;
 
         Vector3 rayOrigin = new(-8.0f, 2.0f, -4.0f);
@@ -360,16 +407,19 @@ public static partial class EditorUnitTests
                 debug.AddLine(rayOrigin, hitPoint, ColorF4.LightGold);
             }
         });
+
+        return rigNode;
     }
 
-    private static void AddFrustumContainmentRig(SceneNode rootNode)
+    private static SceneNode AddFrustumContainmentRig(SceneNode rootNode)
     {
-        var rigNode = rootNode.NewChild("FrustumContainmentRig");
+        var rigNode = rootNode.NewChild("Frustum Containment Test");
+        Quaternion baseRotation = Quaternion.CreateFromAxisAngle(Globals.Up, MathF.PI);
 
         var frustumNode = rigNode.NewChild("CameraFrustum");
         var frustumTfm = frustumNode.SetTransform<Transform>();
         frustumTfm.Translation = new Vector3(0.0f, 2.0f, -6.0f);
-        frustumTfm.Rotation = Quaternion.Identity;
+        frustumTfm.Rotation = baseRotation;
         var frustumDebug = frustumNode.AddComponent<DebugDrawComponent>()!;
 
         var shapesNode = rigNode.NewChild("TestShapes");
@@ -384,6 +434,7 @@ public static partial class EditorUnitTests
         {
             float t = (float)Engine.ElapsedTime;
             frustumTfm.Rotation =
+                baseRotation *
                 Quaternion.CreateFromAxisAngle(Globals.Up, XRMath.DegToRad(MathF.Sin(t * 0.35f) * 25.0f)) *
                 Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(MathF.Sin(t * 0.25f) * 10.0f));
 
@@ -425,11 +476,13 @@ public static partial class EditorUnitTests
                 EContainment.Intersects => ColorF4.Yellow,
                 _ => ColorF4.DarkRed,
             };
+
+        return rigNode;
     }
 
-    private static void AddSegmentAabbRig(SceneNode rootNode)
+    private static SceneNode AddSegmentAabbRig(SceneNode rootNode)
     {
-        var rigNode = rootNode.NewChild("SegmentAabbRig");
+        var rigNode = rootNode.NewChild("Segment vs AABB Test");
         var debug = rigNode.AddComponent<DebugDrawComponent>()!;
 
         Vector3 aabbCenter = new(8.0f, 1.5f, -2.0f);
@@ -457,11 +510,13 @@ public static partial class EditorUnitTests
                 debug.AddPoint(pExit, ColorF4.Orange);
             }
         });
+
+        return rigNode;
     }
 
-    private static void AddRayTriangleRig(SceneNode rootNode)
+    private static SceneNode AddRayTriangleRig(SceneNode rootNode)
     {
-        var rigNode = rootNode.NewChild("RayTriangleRig");
+        var rigNode = rootNode.NewChild("Ray vs Triangle Test");
         var debug = rigNode.AddComponent<DebugDrawComponent>()!;
 
         Vector3 a = new(-10.0f, 1.0f, 10.0f);
@@ -492,16 +547,19 @@ public static partial class EditorUnitTests
                 debug.AddLine(origin, hitPoint, ColorF4.LightGold);
             }
         });
+
+        return rigNode;
     }
 
-    private static void AddPhysicsChainComparisonRig(SceneNode rootNode)
+    private static SceneNode AddPhysicsChainComparisonRig(SceneNode rootNode)
     {
-        var rigNode = rootNode.NewChild("PhysicsChainComparisonRig");
-        var rigTransform = rigNode.SetTransform<Transform>();
-        rigTransform.Translation = new Vector3(12.0f, 0.0f, 12.0f);
+        var rigNode = rootNode.NewChild("Physics Chain Comparison Test");
+        rigNode.SetTransform<Transform>();
 
         AddPhysicsChainTest(rigNode, "CPUPhysicsChainTest", new Vector3(-2.75f, 0.0f, 0.0f), useGpu: false, phaseOffset: 0.0f, ColorF4.LightBlue, ColorF4.LightGold);
         AddPhysicsChainTest(rigNode, "GPUPhysicsChainTest", new Vector3(2.75f, 0.0f, 0.0f), useGpu: true, phaseOffset: MathF.PI * 0.5f, ColorF4.LightGreen, ColorF4.Orange);
+
+        return rigNode;
     }
 
     private static void AddPhysicsChainTest(SceneNode parentNode, string name, Vector3 position, bool useGpu, float phaseOffset, ColorF4 chainColor, ColorF4 rootColor)
@@ -535,48 +593,33 @@ public static partial class EditorUnitTests
         var planeCollider = planeColliderNode.AddComponent<PhysicsChainPlaneCollider>()!;
 
         PhysicsChainColliderBase[] colliders = [sphereCollider, planeCollider];
-        if (useGpu)
-        {
-            var gpuChain = rootNode.AddComponent<GPUPhysicsChainComponent>()!;
-            gpuChain.Root = rootTransform;
-            gpuChain.UpdateMode = EUpdateMode.Default;
-            gpuChain.UpdateRate = 60.0f;
-            gpuChain.Damping = 0.18f;
-            gpuChain.Elasticity = 0.12f;
-            gpuChain.Stiffness = 0.1f;
-            gpuChain.Inert = 0.25f;
-            gpuChain.Friction = 0.2f;
-            gpuChain.Radius = 0.08f;
-            gpuChain.Gravity = Vector3.Zero;
-            gpuChain.Force = Vector3.Zero;
-            gpuChain.BlendWeight = 1.0f;
-            gpuChain.Multithread = false;
-            gpuChain.UseBatchedDispatcher = true;
-            gpuChain.Colliders = [.. colliders];
-        }
-        else
-        {
-            var cpuChain = rootNode.AddComponent<PhysicsChainComponent>()!;
-            cpuChain.Root = rootTransform;
-            cpuChain.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
-            cpuChain.UpdateRate = 60.0f;
-            cpuChain.Damping = 0.18f;
-            cpuChain.Elasticity = 0.12f;
-            cpuChain.Stiffness = 0.1f;
-            cpuChain.Inert = 0.25f;
-            cpuChain.Friction = 0.2f;
-            cpuChain.Radius = 0.08f;
-            cpuChain.Gravity = Vector3.Zero;
-            cpuChain.Force = Vector3.Zero;
-            cpuChain.BlendWeight = 1.0f;
-            cpuChain.Multithread = false;
-            cpuChain.Colliders = [.. colliders];
-        }
+        var chain = rootNode.AddComponent<PhysicsChainComponent>()!;
+        chain.Root = rootTransform;
+        chain.UseGPU = useGpu;
+        chain.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
+        chain.UpdateRate = 60.0f;
+        chain.Damping = 0.18f;
+        chain.Elasticity = 0.12f;
+        chain.Stiffness = 0.1f;
+        chain.Inert = 0.25f;
+        chain.Friction = 0.2f;
+        chain.Radius = 0.08f;
+        chain.Gravity = Vector3.Zero;
+        chain.Force = Vector3.Zero;
+        chain.BlendWeight = 1.0f;
+        chain.Multithread = false;
+        chain.UseBatchedDispatcher = useGpu;
+        chain.Colliders = [.. colliders];
 
         var debug = testNode.AddComponent<DebugDrawComponent>()!;
-        testNode.RegisterAnimationTick<SceneNode>(_ =>
+        // Run in Late tick group AFTER PhysicsChainComponent.LateUpdate (Late+Animation)
+        // so that bone transforms reflect the current frame's simulation results.
+        testNode.RegisterTick(ETickGroup.Late, ETickOrder.Logic, () =>
         {
             debug.ClearShapes();
+
+            rootTransform.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Parallel).Wait();
+            testTransform.RecalculateMatrices();
 
             // DebugDrawComponent positions are in local space of the owning node (testNode).
             // Convert world-space transform positions to testNode local-space to avoid doubling.

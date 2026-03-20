@@ -656,7 +656,14 @@ namespace XREngine.Data.Geometry
             public static bool SegmentWithPlane(Vector3 start, Vector3 end, float d, Vector3 normal, out Vector3 intersectionPoint)
             {
                 Vector3 ab = end - start;
-                float t = (d - Vector3.Dot(start, normal)) / Vector3.Dot(ab, normal);
+                float denominator = Vector3.Dot(ab, normal);
+                if (MathF.Abs(denominator) <= 1e-12f)
+                {
+                    intersectionPoint = Vector3.Zero;
+                    return false;
+                }
+
+                float t = -(Vector3.Dot(start, normal) + d) / denominator;
                 if (t >= 0.0f && t <= 1.0f)
                 {
                     intersectionPoint = start + ab * t;

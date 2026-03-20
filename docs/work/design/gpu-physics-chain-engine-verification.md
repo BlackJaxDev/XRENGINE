@@ -1,8 +1,10 @@
-# GPU Physics Chain Component - XRENGINE Integration Verification
+# GPU Physics Chain - XRENGINE Integration Verification
 
 ## Overview
 
-This document verifies that the `GPUPhysicsChainComponent` will work correctly within the XRENGINE architecture, ensuring proper integration with the engine's rendering system, shader management, and buffer handling.
+This document verifies that the GPU physics chain mode (`PhysicsChainComponent` with `UseGPU = true`) works correctly within the XRENGINE architecture, ensuring proper integration with the engine's rendering system, shader management, and buffer handling.
+
+> **Architecture note:** GPU physics chain functionality was originally a standalone `GPUPhysicsChainComponent` class. It has since been merged into the unified `PhysicsChainComponent` behind a `UseGPU` toggle. GPU-specific code lives in the `PhysicsChainComponent.GPU.cs` partial file. The `GPUPhysicsChainDispatcher` still provides batched multi-component dispatching.
 
 ## Engine Architecture Compatibility
 
@@ -122,7 +124,7 @@ _mainPhysicsProgram.DispatchCompute((uint)threadGroupsX, 1, 1);
 
 ## Conclusion
 
-The `GPUPhysicsChainComponent` is **fully compatible** with the XRENGINE architecture and will work correctly when executed on the GPU. The implementation:
+The GPU physics chain mode on `PhysicsChainComponent` is **fully compatible** with the XRENGINE architecture and works correctly when executed on the GPU. The implementation:
 
 - ✅ **Follows engine patterns** for shader loading, program creation, and buffer management
 - ✅ **Uses supported features** including compute shaders and shader storage buffers
@@ -130,4 +132,4 @@ The `GPUPhysicsChainComponent` is **fully compatible** with the XRENGINE archite
 - ✅ **Provides identical physics behavior** to the CPU version
 - ✅ **Delivers significant performance improvements** through GPU acceleration
 
-The component is ready for production use and will integrate seamlessly with existing XRENGINE projects. 
+The component is ready for production use and integrates seamlessly with existing XRENGINE projects. Toggle `UseGPU = true` on any `PhysicsChainComponent` to activate the GPU path.

@@ -1,10 +1,12 @@
 ﻿using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
+using XREngine.Components.Animation;
+using XREngine.Core.Reflection.Attributes;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components;
@@ -92,6 +94,9 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private bool _multithread = false;
 
+    private bool _useGPU;
+    private bool _useBatchedDispatcher = true;
+
     private TransformBase? _rootBone = null;
     private float _rootInertia = 0.0f;
     private float _velocitySmoothing = 0.0f;
@@ -126,9 +131,12 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     public PhysicsChainComponent()
     {
+        _gpuWorkRenderCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.PreRender, ExecutePendingGpuWork);
+        _gpuWorkRenderInfo = RenderInfo3D.New(this, _gpuWorkRenderCommand);
         RenderedObjects =
         [
-            RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, Render))
+            RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, Render)),
+            _gpuWorkRenderInfo
         ];
     }
 
@@ -258,10 +266,32 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         get => _distanceToObject;
         set => SetField(ref _distanceToObject, value);
     }
+    [Category("Execution")]
+    [DisplayName("Multithreaded")]
+    [EditorBrowsableIf("!UseGPU")]
     public bool Multithread
     {
         get => _multithread;
         set => SetField(ref _multithread, value);
+    }
+
+    [Category("Execution")]
+    [DisplayName("Use GPU")]
+    [Description("Runs the physics chain through the GPU compute path instead of the CPU path.")]
+    public bool UseGPU
+    {
+        get => _useGPU;
+        set => SetField(ref _useGPU, value);
+    }
+
+    [Category("Execution")]
+    [DisplayName("Use Batched Dispatcher")]
+    [Description("When GPU mode is enabled, batch this chain with other GPU chains for one shared compute dispatch.")]
+    [EditorBrowsableIf("UseGPU")]
+    public bool UseBatchedDispatcher
+    {
+        get => _useBatchedDispatcher;
+        set => SetField(ref _useBatchedDispatcher, value);
     }
 
     /// <summary>

@@ -107,73 +107,55 @@ namespace XREngine.Data.Geometry
         public Plane Left
         {
             get => _planes[0];
-            private set
-            {
-                _planes[0] = value;
-                //Verify normal is facing right
-                if (_planes[0].Normal.X < 0)
-                    _planes[0] = new Plane(-_planes[0].Normal, -_planes[0].D);
-            }
+            private set => _planes[0] = OrientPlaneInward(value);
         }
 
         public Plane Right
         {
             get => _planes[1];
-            private set
-            {
-                _planes[1] = value;
-                //Verify normal is facing left
-                if (_planes[1].Normal.X > 0)
-                    _planes[1] = new Plane(-_planes[1].Normal, -_planes[1].D);
-            }
+            private set => _planes[1] = OrientPlaneInward(value);
         }
 
         public Plane Bottom
         {
             get => _planes[2];
-            private set
-            {
-                _planes[2] = value;
-                //Verify normal is facing up
-                if (_planes[2].Normal.Y < 0)
-                    _planes[2] = new Plane(-_planes[2].Normal, -_planes[2].D);
-            }
+            private set => _planes[2] = OrientPlaneInward(value);
         }
 
         public Plane Top
         {
             get => _planes[3];
-            private set
-            {
-                _planes[3] = value;
-                //Verify normal is facing down
-                if (_planes[3].Normal.Y > 0)
-                    _planes[3] = new Plane(-_planes[3].Normal, -_planes[3].D);
-            }
+            private set => _planes[3] = OrientPlaneInward(value);
         }
 
         public Plane Near
         {
             get => _planes[4];
-            private set
-            {
-                _planes[4] = value;
-                //Verify normal is facing forward (away from camera, negative Z)
-                if (_planes[4].Normal.Z > 0)
-                    _planes[4] = new Plane(-_planes[4].Normal, -_planes[4].D);
-            }
+            private set => _planes[4] = OrientPlaneInward(value);
         }
 
         public Plane Far
         {
             get => _planes[5];
-            private set
-            {
-                _planes[5] = value;
-                //Verify normal is facing backward (towards camera, positive Z)
-                if (_planes[5].Normal.Z < 0)
-                    _planes[5] = new Plane(-_planes[5].Normal, -_planes[5].D);
-            }
+            private set => _planes[5] = OrientPlaneInward(value);
+        }
+
+        private Plane OrientPlaneInward(Plane plane)
+        {
+            plane = Plane.Normalize(plane);
+            Vector3 center = GetApproximateCenter();
+            return DistanceFromPointToPlane(center, plane) >= 0.0f
+                ? plane
+                : new Plane(-plane.Normal, -plane.D);
+        }
+
+        private Vector3 GetApproximateCenter()
+        {
+            Vector3 center = Vector3.Zero;
+            for (int i = 0; i < _corners.Length; i++)
+                center += _corners[i];
+
+            return center / _corners.Length;
         }
 
         private Frustum(Plane[] planes, Vector3[] corners)
@@ -526,7 +508,7 @@ namespace XREngine.Data.Geometry
                 return false;
 
             for (int i = 0; i < 6; i++)
-                if (DistanceFromPointToPlane(point, _planes[i]) < 0)
+                if (DistanceFromPointToPlane(point, _planes[i]) < -tolerance)
                     return false;
             
             return true;
@@ -549,12 +531,19 @@ namespace XREngine.Data.Geometry
             var top = shape.GetTopCenterPoint();
             var bottom = shape.GetBottomCenterPoint();
             var radius = shape.Radius;
-            var topContained = ContainsPoint(top, radius);
-            var bottomContained = ContainsPoint(bottom, radius);
-            if (topContained && bottomContained)
+
+            EContainment topContainment = GeoUtil.ContainmentOf.SphereWithinFrustum(this, top, radius);
+            EContainment bottomContainment = GeoUtil.ContainmentOf.SphereWithinFrustum(this, bottom, radius);
+
+            if (topContainment == EContainment.Contains && bottomContainment == EContainment.Contains)
                 return EContainment.Contains;
-            if (topContained || bottomContained)
+
+            if (topContainment != EContainment.Disjoint || bottomContainment != EContainment.Disjoint)
                 return EContainment.Intersects;
+
+            if (IntersectsSegment(new Segment(bottom, top)))
+                return EContainment.Intersects;
+
             return EContainment.Disjoint;
         }
 
