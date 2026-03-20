@@ -69,6 +69,7 @@ namespace XREngine
         private static readonly object LogWriterLock = new();
         private static readonly object ConsoleEntriesLock = new();
         private static readonly List<LogEntry> _consoleEntries = new();
+        private static readonly Dictionary<string, StreamWriter> AuxiliaryLogWriters = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<ELogCategory, StreamWriter?> LogWriters = new()
         {
             [ELogCategory.General] = null,
@@ -929,6 +930,44 @@ namespace XREngine
             return LogWriters[category];
         }
 
+        public static void WriteAuxiliaryLog(string fileName, string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+
+            lock (LogWriterLock)
+            {
+                try
+                {
+                    StreamWriter? writer = EnsureAuxiliaryLogWriterInternal(fileName);
+                    writer?.WriteLine(message);
+                    writer?.WriteLine();
+                }
+                catch
+                {
+                    // Never allow diagnostics logging to affect runtime behavior.
+                }
+            }
+        }
+
+        private static StreamWriter? EnsureAuxiliaryLogWriterInternal(string fileName)
+        {
+            string normalizedName = BuildAuxiliaryLogFileName(fileName);
+            if (AuxiliaryLogWriters.TryGetValue(normalizedName, out StreamWriter? existingWriter))
+                return existingWriter;
+
+            string logsDirectory = GetLogRunDirectory();
+            string filePath = Path.Combine(logsDirectory, normalizedName);
+            var writer = new StreamWriter(new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read))
+            {
+                AutoFlush = true
+            };
+
+            writer.WriteLine($"Auxiliary log ({normalizedName}) started {FormatTimestamp(DateTimeOffset.Now)}");
+            AuxiliaryLogWriters[normalizedName] = writer;
+            return writer;
+        }
+
         private static string FormatTimestamp(DateTimeOffset timestamp)
             => timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
 
@@ -938,6 +977,12 @@ namespace XREngine
             {
                 LogWriters[category]?.Dispose();
                 LogWriters[category] = null;
+            }
+
+            foreach (string auxiliaryName in AuxiliaryLogWriters.Keys.ToArray())
+            {
+                AuxiliaryLogWriters[auxiliaryName]?.Dispose();
+                AuxiliaryLogWriters.Remove(auxiliaryName);
             }
 
             _logSessionId = null;
@@ -1081,6 +1126,31 @@ namespace XREngine
 
         internal static string BuildCategoryLogFileName(ELogCategory category)
             => $"log_{NormalizeLogNameSegment(category.ToString())}.txt";
+
+        internal static string BuildAuxiliaryLogFileName(string? fileName)
+        {
+            string safeName = Path.GetFileName(fileName);
+            if (string.IsNullOrWhiteSpace(safeName))
+                safeName = "diagnostics.log";
+
+            string extension = Path.GetExtension(safeName);
+            string stem = Path.GetFileNameWithoutExtension(safeName);
+            string normalizedStem = NormalizeLogNameSegment(stem);
+
+            if (string.IsNullOrWhiteSpace(extension))
+                return $"{normalizedStem}.log";
+
+            var extensionBuilder = new System.Text.StringBuilder(extension.Length);
+            foreach (char rawChar in extension)
+            {
+                char ch = char.ToLowerInvariant(rawChar);
+                if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+                    extensionBuilder.Append(ch);
+            }
+
+            string normalizedExtension = extensionBuilder.Length > 0 ? extensionBuilder.ToString() : "log";
+            return $"{normalizedStem}.{normalizedExtension}";
+        }
 
         internal static string NormalizeLogNameSegment(string? value)
         {

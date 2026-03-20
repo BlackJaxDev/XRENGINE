@@ -85,6 +85,11 @@ Shortcut script:
 
 Running the editor launches the Unit Testing World, a collection of scenes that exercise rendering, animation, physics, audio, and XR workflows. Use this environment to verify changes and explore current functionality.
 
+## Logs
+
+- Per-run engine logs are written under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/` when file logging is enabled.
+- Profiler diagnostics now emit dedicated files in that same run directory: `profiler-main-thread-invokes.log` for invoke request/execution traces and `profiler-fps-drops.log` for rich FPS-drop records.
+
 ## Unit Testing World Settings (JSONC)
 
 The Unit Testing World is configured by a settings file and loaded on startup.

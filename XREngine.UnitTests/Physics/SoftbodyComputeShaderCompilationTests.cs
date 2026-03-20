@@ -10,6 +10,7 @@ public sealed class SoftbodyComputeShaderCompilationTests : GpuTestBase
     [TestCase("Compute/Softbody/CollideCapsules.comp")]
     [TestCase("Compute/Softbody/SolveDistance.comp")]
     [TestCase("Compute/Softbody/Finalize.comp")]
+    [TestCase("Compute/Softbody/ApplyClusterShapeMatching.comp")]
     public void Softbody_ComputeShader_CompilesSuccessfully(string relativeShaderPath)
     {
         RunWithGLContext(gl =>

@@ -97,3 +97,10 @@ public static class ProfilerProtocol
         return true;
     }
 }
+
+public enum ProfilerTimingDisplayMode
+{
+    Latest,
+    Average,
+    Worst,
+}

@@ -123,6 +123,10 @@ public sealed class GPUSoftbodyComponent : XRComponent, IRenderable
     public int SubmittedClusterCount { get; private set; }
 
     [Category("Softbody Diagnostics")]
+    [DisplayName("Submitted Cluster Member Count")]
+    public int SubmittedClusterMemberCount { get; private set; }
+
+    [Category("Softbody Diagnostics")]
     [DisplayName("Submitted Collider Count")]
     public int SubmittedColliderCount { get; private set; }
 
@@ -151,6 +155,14 @@ public sealed class GPUSoftbodyComponent : XRComponent, IRenderable
     public int LastInvalidConstraintCount => GPUSoftbodyDispatcher.Instance.LastInvalidConstraintCount;
 
     [Category("Softbody Diagnostics")]
+    [DisplayName("Last Invalid Cluster Count")]
+    public int LastInvalidClusterCount => GPUSoftbodyDispatcher.Instance.LastInvalidClusterCount;
+
+    [Category("Softbody Diagnostics")]
+    [DisplayName("Last Invalid Cluster Member Count")]
+    public int LastInvalidClusterMemberCount => GPUSoftbodyDispatcher.Instance.LastInvalidClusterMemberCount;
+
+    [Category("Softbody Diagnostics")]
     [DisplayName("Last Invalid Collider Count")]
     public int LastInvalidColliderCount => GPUSoftbodyDispatcher.Instance.LastInvalidColliderCount;
 
@@ -175,6 +187,7 @@ public sealed class GPUSoftbodyComponent : XRComponent, IRenderable
         SubmittedParticleCount = Particles.Count;
         SubmittedConstraintCount = DistanceConstraints.Count;
         SubmittedClusterCount = Clusters.Count;
+        SubmittedClusterMemberCount = ClusterMembers.Count;
         SubmittedColliderCount = Colliders.Count;
         SubmittedRenderBindingCount = RenderBindings.Count;
 
@@ -239,6 +252,19 @@ public sealed class GPUSoftbodyComponent : XRComponent, IRenderable
             float radius = col.SegmentStartRadius.W;
             Vector3 end = new(col.SegmentEndFriction.X, col.SegmentEndFriction.Y, col.SegmentEndFriction.Z);
             Engine.Rendering.Debug.RenderCapsule(start, end, radius, false, ColorF4.Cyan);
+        }
+
+        for (int i = 0; i < Clusters.Count; i++)
+        {
+            GPUSoftbodyClusterData cluster = Clusters[i];
+            if (!GPUSoftbodyClusterMath.TrySolveClusterTransform(Particles, ClusterMembers, cluster, out Vector3 center, out Quaternion rotation))
+                continue;
+
+            float axisLength = Math.Max(cluster.Radius * 0.6f, 0.05f);
+            Engine.Rendering.Debug.RenderSphere(center, Math.Max(cluster.Radius * 0.15f, 0.015f), false, ColorF4.White);
+            Engine.Rendering.Debug.RenderLine(center, center + Vector3.Transform(Vector3.UnitX * axisLength, rotation), ColorF4.Red);
+            Engine.Rendering.Debug.RenderLine(center, center + Vector3.Transform(Vector3.UnitY * axisLength, rotation), ColorF4.Green);
+            Engine.Rendering.Debug.RenderLine(center, center + Vector3.Transform(Vector3.UnitZ * axisLength, rotation), ColorF4.Blue);
         }
     }
 

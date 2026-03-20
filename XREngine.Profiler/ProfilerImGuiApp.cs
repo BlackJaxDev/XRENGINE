@@ -136,10 +136,10 @@ internal sealed class ProfilerImGuiApp : IDisposable
 
         if (ImGui.BeginMenu("View"))
         {
-            ImGui.MenuItem("Profiler Tree", null, ref _showProfilerTree);
+            ImGui.MenuItem("CPU Timings", null, ref _showProfilerTree);
             ImGui.MenuItem("FPS Drop Spikes", null, ref _showFpsDropSpikes);
             ImGui.MenuItem("Render Stats", null, ref _showRenderStats);
-            ImGui.MenuItem("GPU Pipeline", null, ref _showGpuPipeline);
+            ImGui.MenuItem("GPU Timings", null, ref _showGpuPipeline);
             ImGui.MenuItem("Thread Allocations", null, ref _showThreadAllocations);
             ImGui.MenuItem("Component Timings", null, ref _showComponentTimings);
             ImGui.MenuItem("BVH Metrics", null, ref _showBvhMetrics);
@@ -285,33 +285,32 @@ internal sealed class ProfilerImGuiApp : IDisposable
         ImGuiDockBuilderNative.AddNode(dockSpaceId, ImGuiDockNodeFlags.PassthruCentralNode);
         ImGuiDockBuilderNative.SetNodeSize(dockSpaceId, new Vector2(availableWidth, availableHeight));
 
-        // Split: Left (Profiler Tree + FPS Spikes 55%) | Right (stats panels)
-        ImGuiDockBuilderNative.SplitNode(dockSpaceId, ImGuiDir.Left, 0.55f,
-            out uint leftDockId, out uint rightDockId);
+        ImGuiDockBuilderNative.SplitNode(dockSpaceId, ImGuiDir.Left, 0.58f,
+            out uint leftMainId, out uint rightDockId);
 
-        // Split left: Top (Profiler Tree 70%) | Bottom (FPS Drop Spikes)
-        ImGuiDockBuilderNative.SplitNode(leftDockId, ImGuiDir.Down, 0.30f,
-            out uint leftBottomId, out uint leftTopId);
-
-        // Split right: Top-right (Render Stats) | Bottom-right (rest)
-        ImGuiDockBuilderNative.SplitNode(rightDockId, ImGuiDir.Up, 0.35f,
+        ImGuiDockBuilderNative.SplitNode(rightDockId, ImGuiDir.Up, 0.32f,
             out uint rightTopId, out uint rightBottomId);
 
-        // Split bottom-right: Mid (Thread Alloc + BVH) | Bottom (Job + Invokes)
-        ImGuiDockBuilderNative.SplitNode(rightBottomId, ImGuiDir.Up, 0.50f,
-            out uint rightMidId, out uint rightLowerId);
+        ImGuiDockBuilderNative.SplitNode(rightBottomId, ImGuiDir.Up, 0.28f,
+            out uint rightUpperBandId, out uint rightLowerBlockId);
 
-        ImGuiDockBuilderNative.DockWindow("Profiler Tree", leftTopId);
-        ImGuiDockBuilderNative.DockWindow("FPS Drop Spikes", leftBottomId);
-        ImGuiDockBuilderNative.DockWindow("Render Stats", rightTopId);
-        ImGuiDockBuilderNative.DockWindow("GPU Pipeline", rightTopId);
-        ImGuiDockBuilderNative.DockWindow("Thread Allocations", rightMidId);
-        ImGuiDockBuilderNative.DockWindow("Component Timings", rightMidId);
-        ImGuiDockBuilderNative.DockWindow("BVH Metrics", rightMidId);   // tabbed
-        ImGuiDockBuilderNative.DockWindow("Job System", rightLowerId);
-        ImGuiDockBuilderNative.DockWindow("Main Thread Invokes", rightLowerId); // tabbed
-        ImGuiDockBuilderNative.DockWindow("Connection Info", rightLowerId);     // tabbed
-        ImGuiDockBuilderNative.DockWindow("Profiler Settings", leftBottomId);   // tabbed with FPS Spikes
+        ImGuiDockBuilderNative.SplitNode(rightUpperBandId, ImGuiDir.Right, 0.50f,
+            out uint rightUpperRightId, out uint rightUpperLeftId);
+
+        ImGuiDockBuilderNative.SplitNode(rightLowerBlockId, ImGuiDir.Up, 0.42f,
+            out uint rightLowerMidId, out uint rightBottomId2);
+
+        ImGuiDockBuilderNative.DockWindow("Settings", rightTopId);
+        ImGuiDockBuilderNative.DockWindow("CPU Timings", leftMainId);
+        ImGuiDockBuilderNative.DockWindow("GPU Timings", leftMainId);
+        ImGuiDockBuilderNative.DockWindow("Render Stats", leftMainId);
+        ImGuiDockBuilderNative.DockWindow("Thread Allocations", rightUpperLeftId);
+        ImGuiDockBuilderNative.DockWindow("BVH Metrics", rightUpperRightId);
+        ImGuiDockBuilderNative.DockWindow("Component Timings", rightLowerMidId);
+        ImGuiDockBuilderNative.DockWindow("Job System", rightBottomId2);
+        ImGuiDockBuilderNative.DockWindow("Main Thread Invokes", rightBottomId2);
+        ImGuiDockBuilderNative.DockWindow("FPS Drop Spikes", rightBottomId2);
+        ImGuiDockBuilderNative.DockWindow("Connection Info", rightBottomId2);
 
         ImGuiDockBuilderNative.Finish(dockSpaceId);
     }

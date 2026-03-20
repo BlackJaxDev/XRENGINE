@@ -62,6 +62,14 @@ public struct GPUSoftbodyClusterMemberData
 }
 
 [StructLayout(LayoutKind.Sequential)]
+public struct GPUSoftbodyClusterTransformData
+{
+    public Vector3 Position;
+    public float Padding0;
+    public Quaternion Rotation;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 public struct GPUSoftbodyColliderData
 {
     public Vector4 SegmentStartRadius;

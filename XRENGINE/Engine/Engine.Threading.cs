@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Core;
 
@@ -278,16 +279,20 @@ namespace XREngine
         {
             if (IsRenderThread)
             {
+                var entry = LogMainThreadInvoke(reason, executeNowIfAlreadyRenderThread
+                    ? MainThreadInvokeMode.Inline
+                    : MainThreadInvokeMode.AlreadyOnRenderThread);
+
                 if (executeNowIfAlreadyRenderThread)
-                {
-                    task();
-                }
+                    ExecuteLoggedMainThreadInvoke(task, entry, queuedAtTimestamp: null);
+
                 return false;
             }
 
-            LogMainThreadInvoke(reason, MainThreadInvokeMode.Queued);
+            var queuedEntry = LogMainThreadInvoke(reason, MainThreadInvokeMode.Queued);
+            long queuedAtTimestamp = Stopwatch.GetTimestamp();
             Debug.Out($"[MainThreadInvoke] {reason} (queued)");
-            EnqueueRenderThreadTask(task, reason);
+            EnqueueRenderThreadTask(() => ExecuteLoggedMainThreadInvoke(task, queuedEntry, queuedAtTimestamp), reason);
             return true;
         }
 
@@ -379,6 +384,36 @@ namespace XREngine
             using var scope = Engine.Profiler.Start("MainThreadJobs.Dispatch");
             Jobs.ProcessMainThreadJobs();
         }
+
+        private static void ExecuteLoggedMainThreadInvoke(Action task, MainThreadInvokeEntry entry, long? queuedAtTimestamp)
+        {
+            long executionStartTimestamp = Stopwatch.GetTimestamp();
+            bool completed = false;
+            Exception? exception = null;
+
+            try
+            {
+                task();
+                completed = true;
+            }
+            catch (Exception ex)
+            {
+                exception = ex;
+                throw;
+            }
+            finally
+            {
+                long executionEndTimestamp = Stopwatch.GetTimestamp();
+                double queueDelayMs = queuedAtTimestamp.HasValue
+                    ? StopwatchTicksToMilliseconds(executionStartTimestamp - queuedAtTimestamp.Value)
+                    : 0.0;
+                double executionMs = StopwatchTicksToMilliseconds(executionEndTimestamp - executionStartTimestamp);
+                LogMainThreadInvokeExecution(entry, queueDelayMs, executionMs, completed, exception);
+            }
+        }
+
+        private static double StopwatchTicksToMilliseconds(long ticks)
+            => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
 
         private static void ProcessPendingAppThreadWork(int maxJobs)
         {
