@@ -97,6 +97,16 @@ public sealed class PhysicsChainComponentTests
         c.Multithread.ShouldBeFalse();
     }
 
+    [Test]
+    public void UpdateRate_WhenSetNegative_ClampsWithoutRecursing()
+    {
+        var component = new PhysicsChainComponent();
+
+        component.UpdateRate = -1.0f;
+
+        component.UpdateRate.ShouldBe(0.0f);
+    }
+
     #endregion
 
     #region Particle Setup

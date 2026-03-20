@@ -362,8 +362,6 @@ public sealed class GPUPhysicsChainDispatcher
         {
             buffer?.Dispose();
             buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.Float, componentCount, false, false);
-            buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
-            buffer.RangeFlags |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
             buffer.DisposeOnPush = false;
             buffer.Usage = EBufferUsage.DynamicDraw;
         }
@@ -390,9 +388,9 @@ public sealed class GPUPhysicsChainDispatcher
         _mainPhysicsProgram.Uniform("DeltaTime", firstReq.TimeVar);
         _mainPhysicsProgram.Uniform("ObjectScale", firstReq.ObjectScale);
         _mainPhysicsProgram.Uniform("Weight", firstReq.Weight);
-        _mainPhysicsProgram.Uniform("Force", new Vector4(firstReq.Force, 0));
-        _mainPhysicsProgram.Uniform("Gravity", new Vector4(firstReq.Gravity, 0));
-        _mainPhysicsProgram.Uniform("ObjectMove", applyObjectMove ? new Vector4(firstReq.ObjectMove, 0) : Vector4.Zero);
+        _mainPhysicsProgram.Uniform("Force", firstReq.Force);
+        _mainPhysicsProgram.Uniform("Gravity", firstReq.Gravity);
+        _mainPhysicsProgram.Uniform("ObjectMove", applyObjectMove ? firstReq.ObjectMove : Vector3.Zero);
         _mainPhysicsProgram.Uniform("FreezeAxis", firstReq.FreezeAxis);
         _mainPhysicsProgram.Uniform("ColliderCount", TotalColliderCount);
 
@@ -414,7 +412,7 @@ public sealed class GPUPhysicsChainDispatcher
         if (firstReq is null)
             return;
 
-        _skipUpdateProgram.Uniform("ObjectMove", new Vector4(firstReq.ObjectMove, 0));
+        _skipUpdateProgram.Uniform("ObjectMove", firstReq.ObjectMove);
         _skipUpdateProgram.Uniform("Weight", firstReq.Weight);
 
         _skipUpdateProgram.BindBuffer(_particlesBuffer, 0);
@@ -439,10 +437,6 @@ public sealed class GPUPhysicsChainDispatcher
             renderer.RawGL.DeleteSync(_gpuFence);
             _gpuFence = IntPtr.Zero;
         }
-
-        // Ensure buffer is mapped
-        if (_particlesBuffer.ActivelyMapping.Count == 0)
-            _particlesBuffer.MapBufferData();
 
         _gpuFence = renderer.RawGL.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
 
@@ -477,25 +471,25 @@ public sealed class GPUPhysicsChainDispatcher
         if (_particlesBuffer is null || _readbackData is null)
             return;
 
-        var mappedAddresses = _particlesBuffer.GetMappedAddresses().ToArray();
-        if (mappedAddresses.Length == 0 || !mappedAddresses[0].IsValid)
-        {
-            var clientSource = _particlesBuffer.ClientSideSource;
-            if (clientSource is not null)
-            {
-                uint stride = _particlesBuffer.ElementSize;
-                for (int i = 0; i < _readbackData.Length && i < TotalParticleCount; i++)
-                    _readbackData[i] = Marshal.PtrToStructure<GPUParticleData>(clientSource.Address[(uint)i, stride]);
-            }
+        var renderer = AbstractRenderer.Current as OpenGLRenderer;
+        if (renderer is null)
             return;
-        }
 
+        // Get the GL buffer ID via the API wrapper
+        var glBuffer = _particlesBuffer.APIWrappers.FirstOrDefault() as OpenGLRenderer.GLDataBuffer;
+        if (glBuffer is null || !glBuffer.TryGetBindingId(out uint bufferId) || bufferId == 0)
+            return;
+
+        // Use GetBufferSubData — works with any buffer type without persistent mapping.
         unsafe
         {
-            IntPtr mappedPtr = (IntPtr)mappedAddresses[0].Pointer;
-            uint stride = (uint)Marshal.SizeOf<GPUParticleData>();
-            for (int i = 0; i < _readbackData.Length && i < TotalParticleCount; i++)
-                _readbackData[i] = Marshal.PtrToStructure<GPUParticleData>(mappedPtr + (int)(i * stride));
+            nuint byteSize = (nuint)(_readbackData.Length * Marshal.SizeOf<GPUParticleData>());
+            fixed (GPUParticleData* ptr = _readbackData)
+            {
+                renderer.RawGL.BindBuffer(GLEnum.ShaderStorageBuffer, bufferId);
+                renderer.RawGL.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, byteSize, ptr);
+                renderer.RawGL.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+            }
         }
     }
 

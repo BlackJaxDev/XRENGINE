@@ -984,12 +984,9 @@ namespace System.Collections.Generic
                 try
                 {
                     _lock?.EnterReadLock();
+                    if ((uint)index >= (uint)_list.Count)
+                        return default!;
                     return _list[index];
-                }
-                catch (Exception ex)
-                {
-                    Trace.TraceError(ex.ToString());
-                    return default!;
                 }
                 finally
                 {
@@ -1017,12 +1014,10 @@ namespace System.Collections.Generic
                 try
                 {
                     _lock?.EnterWriteLock();
+                    if ((uint)index >= (uint)_list.Count)
+                        return;
                     prev = _list[index];
                     _list[index] = value;
-                }
-                catch (Exception ex)
-                {
-                    Trace.TraceError(ex.ToString());
                 }
                 finally
                 {
@@ -1068,7 +1063,7 @@ namespace System.Collections.Generic
 
         object? IList.this[int index]
         {
-            get => ((IList)_list)[index];
+            get => this[index];
             set => this[index] = CastObjectValue(value);
         }
 
