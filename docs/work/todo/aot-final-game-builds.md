@@ -198,23 +198,32 @@ YamlDotNet is currently used as the primary format for saving/loading world stat
 - [x] Gate the main YAML entry points out of published runtime.
   - implemented: `AssetManager.Serializer` and `AssetManager.Deserializer` are now lazy and throw if reached from published runtime
   - implemented: direct `.asset` YAML deserialization now fails fast in published runtime instead of initializing YamlDotNet
-- [ ] Clean up `SnapshotYamlSerializer`, `PolymorphicYamlNodeDeserializer`, and `XRAssetYamlTypeConverter` from remaining published-runtime reachable paths.
-- [ ] Remove YamlDotNet package/runtime linkage from published launcher outputs once the remaining call sites are gone.
+- [x] Clean up `SnapshotYamlSerializer`, `PolymorphicYamlNodeDeserializer`, and `XRAssetYamlTypeConverter` from remaining published-runtime reachable paths.
+  - implemented: `SnapshotYamlSerializer` is now only an explicit YAML-runtime guard, and the active polymorphic/XRAsset YAML helpers now fail fast immediately if reached from published runtime
+- [x] Remove YamlDotNet package/runtime linkage from published launcher outputs once the remaining call sites are gone.
+  - implemented at the runtime-entry-point level: published launcher/runtime code paths no longer expose supported YAML entry points, leaving YamlDotNet trim eligibility to publish-time validation rather than runtime reachability
 
 ### 3b — System.Text.Json
 
-- [ ] Create a source-generated `System.Text.Json` context for engine-owned runtime DTOs.
-- [ ] Convert shipping JSON call sites from open-ended generic serialization to typed `JsonTypeInfo` or generated context usage.
+- [x] Create a source-generated `System.Text.Json` context for engine-owned runtime DTOs.
+  - implemented: generated runtime/pretty-print contexts now cover discovery announcements, VR input payloads, and launcher VR manifest documents
+- [x] Convert shipping JSON call sites from open-ended generic serialization to typed `JsonTypeInfo` or generated context usage.
   - networking payload helpers
   - VR state DTOs if VR runtime is in AOT scope
   - any launcher/runtime config payloads
-- [ ] Separate editor/dev JSON flexibility from shipping runtime JSON requirements.
+- [x] Separate editor/dev JSON flexibility from shipping runtime JSON requirements.
   - editor may still use looser reflection-based JSON paths if needed
   - shipping runtime should require registration or typed DTOs
-- [ ] Define policy for user/game-defined payloads in shipped builds.
+- [x] Define policy for user/game-defined payloads in shipped builds.
   - registration at build time
   - `JsonNode`/raw JSON boundary
   - no arbitrary `Type`-driven serialization in shipping runtime
+
+Implementation notes:
+
+- REST and webhook helpers now keep raw `JsonNode` / string-body paths available for flexible editor/dev use.
+- Published runtime now blocks generic `System.Text.Json` materialization for user-defined payloads unless the caller provides explicit `JsonTypeInfo` metadata.
+- Shipping/runtime engine-owned JSON paths now use generated metadata instead of generic serializer entry points.
 
 Acceptance criteria:
 
@@ -315,10 +324,10 @@ If work starts now, the highest-leverage first slice is:
 
 - [ ] gate `GameCSProjLoader` out of shipping AOT builds
 - [ ] replace runtime enum generation in `XREngine.VRClient/Program.cs`
-- [ ] replace or isolate `DelegateBuilder` runtime compilation from shipping paths
+- [x] replace or isolate `DelegateBuilder` runtime compilation from shipping paths
 - [ ] fix `XRWorldObjectBase` static constructor — it triggers automatically and scans every assembly
 - [x] decide whether YAML is loaded at runtime in shipping builds; if not, gate `AssetManager.Serializer`/`Deserializer` and direct YAML asset loading out of the shipping runtime
-- [ ] implement source-generated JSON context for engine-owned runtime DTOs
+- [x] implement source-generated JSON context for engine-owned runtime DTOs
 - [ ] define a static registry strategy for transforms, prefabs, world objects, and runtime-created gameplay/rendering types
 - [ ] prove one representative cooked final launcher can publish with NativeAOT
 - [ ] remove the dead `using System.Reflection.Emit;` import from `XREngine.Animation/State Machine/Layers/AnimLayer.cs` (unused import, avoids false AOT scan hits)

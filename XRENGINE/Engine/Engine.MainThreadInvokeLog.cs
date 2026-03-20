@@ -24,7 +24,9 @@ namespace XREngine
             public int CallerThreadId { get; } = callerThreadId;
         }
 
+        private const int MaxMainThreadInvokeEntries = 512;
         private static long _mainThreadInvokeSequence;
+        private static int _mainThreadInvokeLogCount;
         private static readonly ConcurrentQueue<MainThreadInvokeEntry> _mainThreadInvokeLog = new();
 
         internal static MainThreadInvokeEntry LogMainThreadInvoke(string? reason, MainThreadInvokeMode mode)
@@ -38,12 +40,18 @@ namespace XREngine
                 Environment.CurrentManagedThreadId);
 
             _mainThreadInvokeLog.Enqueue(entry);
-            WriteMainThreadInvokeRequest(entry);
+            TrimMainThreadInvokeLogIfNeeded();
+
+            if (ShouldWriteMainThreadInvokeDiagnostics())
+                WriteMainThreadInvokeRequest(entry);
             return entry;
         }
 
         internal static void LogMainThreadInvokeExecution(in MainThreadInvokeEntry entry, double queueDelayMs, double executionMs, bool completed, Exception? exception)
         {
+            if (!ShouldWriteMainThreadInvokeDiagnostics())
+                return;
+
             try
             {
                 Thread currentThread = Thread.CurrentThread;
@@ -125,6 +133,25 @@ namespace XREngine
             catch
             {
                 return -1;
+            }
+        }
+
+        private static void TrimMainThreadInvokeLogIfNeeded()
+        {
+            int count = Interlocked.Increment(ref _mainThreadInvokeLogCount);
+            while (count > MaxMainThreadInvokeEntries && _mainThreadInvokeLog.TryDequeue(out _))
+                count = Interlocked.Decrement(ref _mainThreadInvokeLogCount);
+        }
+
+        private static bool ShouldWriteMainThreadInvokeDiagnostics()
+        {
+            try
+            {
+                return EditorPreferences.Debug.EnableMainThreadInvokeDiagnostics;
+            }
+            catch
+            {
+                return false;
             }
         }
 

@@ -1126,6 +1126,7 @@ namespace XREngine
         private bool _enableProfilerComponentTiming = true;
         private bool _enableRenderStatisticsTracking = true;
         private bool _enableGpuRenderPipelineProfiling = false;
+        private bool _enableMainThreadInvokeDiagnostics = false;
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
         private bool _startExternalProfilerOnStartup = false;
@@ -1546,6 +1547,29 @@ namespace XREngine
                 SetField(ref _enableGpuRenderPipelineProfiling, false);
 #else
                 SetField(ref _enableGpuRenderPipelineProfiling, value);
+#endif
+            }
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable Main-Thread Invoke Diagnostics")]
+        [Description("When enabled, writes verbose main-thread invoke request/execution diagnostics with stack traces. This is intended for short-lived debugging because it adds measurable overhead.")]
+        public bool EnableMainThreadInvokeDiagnostics
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableMainThreadInvokeDiagnostics;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableMainThreadInvokeDiagnostics, false);
+#else
+                SetField(ref _enableMainThreadInvokeDiagnostics, value);
 #endif
             }
         }
@@ -2060,6 +2084,7 @@ namespace XREngine
             EnableProfilerComponentTiming = source.EnableProfilerComponentTiming;
             EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
             EnableGpuRenderPipelineProfiling = source.EnableGpuRenderPipelineProfiling;
+            EnableMainThreadInvokeDiagnostics = source.EnableMainThreadInvokeDiagnostics;
             EnableUILayoutDebugLogging = source.EnableUILayoutDebugLogging;
             EnableProfilerUdpSending = source.EnableProfilerUdpSending;
             StartExternalProfilerOnStartup = source.StartExternalProfilerOnStartup;
@@ -2166,6 +2191,8 @@ namespace XREngine
                 EnableRenderStatisticsTracking = statsTracking.Value;
             if (overrides.EnableGpuRenderPipelineProfilingOverride is { HasOverride: true } gpuPipelineProfiling)
                 EnableGpuRenderPipelineProfiling = gpuPipelineProfiling.Value;
+            if (overrides.EnableMainThreadInvokeDiagnosticsOverride is { HasOverride: true } invokeDiagnostics)
+                EnableMainThreadInvokeDiagnostics = invokeDiagnostics.Value;
             if (overrides.EnableUILayoutDebugLoggingOverride is { HasOverride: true } uiLayoutDebug)
                 EnableUILayoutDebugLogging = uiLayoutDebug.Value;
             if (overrides.EnableProfilerUdpSendingOverride is { HasOverride: true } profilerUdp)

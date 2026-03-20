@@ -10,6 +10,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -190,6 +191,17 @@ namespace XREngine.Components
             }, cancellationToken);
 
         /// <summary>
+        /// Performs a GET request and deserializes the body into <typeparamref name="TResponse"/> using explicit JSON metadata.
+        /// </summary>
+        public Task<RestApiResponse<TResponse>> GetJsonAsync<TResponse>(string resource, JsonTypeInfo<TResponse> responseTypeInfo, IReadOnlyDictionary<string, string>? query = null, CancellationToken cancellationToken = default)
+            => SendAsync(new RestApiRequest
+            {
+                Method = HttpMethod.Get,
+                Resource = resource,
+                Query = query
+            }, responseTypeInfo, cancellationToken);
+
+        /// <summary>
         /// Performs a POST request whose body is the serialized <paramref name="payload"/>.
         /// </summary>
         public Task<RestApiResponse> PostJsonAsync<TRequest>(string resource, TRequest payload, CancellationToken cancellationToken = default)
@@ -198,6 +210,18 @@ namespace XREngine.Components
                 Method = HttpMethod.Post,
                 Resource = resource,
                 JsonPayload = payload
+            }, cancellationToken);
+
+        /// <summary>
+        /// Performs a POST request whose body is the serialized <paramref name="payload"/> using explicit JSON metadata.
+        /// </summary>
+        public Task<RestApiResponse> PostJsonAsync<TRequest>(string resource, TRequest payload, JsonTypeInfo<TRequest> requestTypeInfo, CancellationToken cancellationToken = default)
+            => SendAsync(new RestApiRequest
+            {
+                Method = HttpMethod.Post,
+                Resource = resource,
+                JsonPayload = payload,
+                JsonPayloadTypeInfo = requestTypeInfo
             }, cancellationToken);
 
         /// <summary>
@@ -210,6 +234,18 @@ namespace XREngine.Components
                 Resource = resource,
                 JsonPayload = payload
             }, cancellationToken);
+
+        /// <summary>
+        /// Performs a POST request with a serialized payload and parses the response into <typeparamref name="TResponse"/> using explicit JSON metadata.
+        /// </summary>
+        public Task<RestApiResponse<TResponse>> PostJsonAsync<TRequest, TResponse>(string resource, TRequest payload, JsonTypeInfo<TRequest> requestTypeInfo, JsonTypeInfo<TResponse> responseTypeInfo, CancellationToken cancellationToken = default)
+            => SendAsync(new RestApiRequest
+            {
+                Method = HttpMethod.Post,
+                Resource = resource,
+                JsonPayload = payload,
+                JsonPayloadTypeInfo = requestTypeInfo
+            }, responseTypeInfo, cancellationToken);
 
         /// <summary>
         /// Executes <paramref name="request"/> and returns the raw REST response, optionally throwing for non-success status codes.
@@ -278,9 +314,34 @@ namespace XREngine.Components
 
             try
             {
+                XREngineJsonRuntime.EnsureDynamicJsonRuntimeSupported("deserialize a REST response", typeof(TResponse));
                 JsonSerializerOptions options = request.SerializerOptionsOverride ?? SerializerOptions;
                 string json = response.BodyText;
                 TResponse? payload = DeserializePayload<TResponse>(json, options);
+                return new RestApiResponse<TResponse>(response, payload);
+            }
+            catch (JsonException ex)
+            {
+                var deserializationException = new RestApiDeserializationException(typeof(TResponse), request, response, ex);
+                DispatchRequestFailed(request, deserializationException);
+                throw deserializationException;
+            }
+        }
+
+        /// <summary>
+        /// Executes <paramref name="request"/> and deserializes the JSON body into <typeparamref name="TResponse"/> using explicit JSON metadata.
+        /// </summary>
+        public async Task<RestApiResponse<TResponse>> SendAsync<TResponse>(RestApiRequest request, JsonTypeInfo<TResponse> responseTypeInfo, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(responseTypeInfo);
+
+            RestApiResponse response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (response.Body.IsEmpty)
+                return new RestApiResponse<TResponse>(response, default);
+
+            try
+            {
+                TResponse? payload = JsonSerializer.Deserialize(response.Body.Span, responseTypeInfo);
                 return new RestApiResponse<TResponse>(response, payload);
             }
             catch (JsonException ex)
@@ -429,10 +490,11 @@ namespace XREngine.Components
 
             if (request.JsonPayload is not null)
             {
-                JsonSerializerOptions options = request.SerializerOptionsOverride ?? SerializerOptions;
                 string json = request.JsonPayload is string str
                     ? str
-                    : SerializePayload(request.JsonPayload, options);
+                    : request.JsonPayloadTypeInfo is not null
+                        ? SerializePayload(request.JsonPayload, request.JsonPayloadTypeInfo)
+                        : SerializeDynamicPayload(request.JsonPayload, request.SerializerOptionsOverride ?? SerializerOptions);
                 return new StringContent(json, Encoding.UTF8, request.ContentType);
             }
 
@@ -616,12 +678,21 @@ namespace XREngine.Components
             => JsonSerializer.Deserialize<TPayload>(json, options);
 
         /// <summary>
-        /// Serializes an arbitrary payload into JSON text while suppressing trim/AOT warnings.
+        /// Serializes an explicitly-registered payload into JSON text.
         /// </summary>
-        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "The component intentionally serializes arbitrary payloads supplied by user code.")]
-        [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "JsonSerializer is used deliberately to serialize caller-provided payload models.")]
-        private static string SerializePayload(object payload, JsonSerializerOptions options)
-            => JsonSerializer.Serialize(payload, payload.GetType(), options);
+        private static string SerializePayload(object payload, JsonTypeInfo typeInfo)
+            => XREngineJsonRuntime.SerializeWithTypeInfo(payload, typeInfo);
+
+        /// <summary>
+        /// Serializes an arbitrary payload into JSON text while suppressing trim/AOT warnings in development/editor flows.
+        /// </summary>
+        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "The component intentionally serializes arbitrary payloads supplied by user code in development/editor flows.")]
+        [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "JsonSerializer is used deliberately to serialize caller-provided payload models in development/editor flows.")]
+        private static string SerializeDynamicPayload(object payload, JsonSerializerOptions options)
+        {
+            XREngineJsonRuntime.EnsureDynamicJsonRuntimeSupported("serialize a REST request payload", payload.GetType());
+            return JsonSerializer.Serialize(payload, payload.GetType(), options);
+        }
 
         /// <summary>
         /// Ensures callbacks fire on the engine's app/update thread immediately if already there.
@@ -702,6 +773,11 @@ namespace XREngine.Components
         /// Overrides the serializer options used for this request.
         /// </summary>
         public JsonSerializerOptions? SerializerOptionsOverride { get; init; }
+            = null;
+        /// <summary>
+        /// Explicit JSON metadata used to serialize <see cref="JsonPayload"/> in published runtime builds.
+        /// </summary>
+        public JsonTypeInfo? JsonPayloadTypeInfo { get; init; }
             = null;
     }
 

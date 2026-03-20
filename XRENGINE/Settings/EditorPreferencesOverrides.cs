@@ -467,6 +467,7 @@ namespace XREngine
         private OverrideableSetting<bool> _enableProfilerComponentTimingOverride = new();
         private OverrideableSetting<bool> _enableRenderStatisticsTrackingOverride = new();
         private OverrideableSetting<bool> _enableGpuRenderPipelineProfilingOverride = new();
+        private OverrideableSetting<bool> _enableMainThreadInvokeDiagnosticsOverride = new();
         private OverrideableSetting<bool> _enableUILayoutDebugLoggingOverride = new();
         private OverrideableSetting<bool> _enableProfilerUdpSendingOverride = new();
         private OverrideableSetting<bool> _startExternalProfilerOnStartupOverride = new();
@@ -677,6 +678,12 @@ namespace XREngine
         {
             get => _enableGpuRenderPipelineProfilingOverride;
             set => SetField(ref _enableGpuRenderPipelineProfilingOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> EnableMainThreadInvokeDiagnosticsOverride
+        {
+            get => _enableMainThreadInvokeDiagnosticsOverride;
+            set => SetField(ref _enableMainThreadInvokeDiagnosticsOverride, value ?? new());
         }
 
         public OverrideableSetting<bool> EnableUILayoutDebugLoggingOverride

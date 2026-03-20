@@ -25,6 +25,8 @@ namespace XREngine
             out object? value,
             ObjectDeserializer rootDeserializer)
         {
+            AssetManager.EnsureYamlAssetRuntimeSupported();
+
             // XRAsset has its own replay/reference mechanism; don't interfere.
             if (typeof(XRAsset).IsAssignableFrom(expectedType))
             {

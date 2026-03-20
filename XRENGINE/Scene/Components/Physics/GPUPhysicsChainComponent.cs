@@ -232,6 +232,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
     private readonly List<ParticleTreeData> _particleTreesData = [];
     private readonly List<Matrix4x4> _transformMatrices = [];
     private readonly List<ColliderData> _collidersData = [];
+    private readonly Dictionary<Transform, (Vector3 LocalPosition, Quaternion LocalRotation)> _initialLocalStates = [];
 
     private int _totalParticleCount;
     private int _prepareFrame;
@@ -316,6 +317,8 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             Rendering.Compute.GPUPhysicsChainDispatcher.Instance.Unregister(this);
         
         InitTransforms();
+        _preUpdateCount = 0;
+        _time = 0.0f;
         CleanupBuffers();
         CleanupPrograms();
     }
@@ -995,7 +998,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
                     Position = p.Position,
                     PrevPosition = p.PrevPosition,
                     TransformPosition = p.Transform?.WorldTranslation ?? p.Position,
-                    TransformLocalPosition = p.Transform?.LocalTranslation ?? p.EndOffset,
+                    TransformLocalPosition = p.ParentIndex < 0 ? (p.Transform?.LocalTranslation ?? p.EndOffset) : p.InitLocalPosition,
                     ParentIndex = p.ParentIndex >= 0 ? p.ParentIndex + _totalParticleCount : -1,
                     Damping = p.Damping,
                     Elasticity = p.Elasticity,
@@ -1178,15 +1181,28 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         _particleTrees.Add(new ParticleTree(root));
     }
 
+    private (Vector3 LocalPosition, Quaternion LocalRotation) GetInitialLocalState(Transform transform)
+    {
+        if (_initialLocalStates.TryGetValue(transform, out var state))
+            return state;
+
+        state = (transform.LocalTranslation, transform.LocalRotation);
+        if (IsPlaying)
+            _initialLocalStates[transform] = state;
+
+        return state;
+    }
+
     private void AppendParticles(ParticleTree tree, Transform? tfm, int parentIndex, float boneLength)
     {
         var ptcl = new Particle(tfm, parentIndex);
 
         if (tfm != null)
         {
+            var initialLocalState = GetInitialLocalState(tfm);
             ptcl.Position = ptcl.PrevPosition = tfm.WorldTranslation;
-            ptcl.InitLocalPosition = tfm.LocalTranslation;
-            ptcl.InitLocalRotation = tfm.LocalRotation;
+            ptcl.InitLocalPosition = initialLocalState.LocalPosition;
+            ptcl.InitLocalRotation = initialLocalState.LocalRotation;
         }
         else //end bone
         {
@@ -1322,6 +1338,8 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             ResetParticlesPosition(_particleTrees[i]);
 
         _objectPrevPosition = Transform.WorldTranslation;
+        _time = 0.0f;
+        _preUpdateCount = 0;
         InitializeRootBoneTracking();
     }
 
@@ -1363,7 +1381,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < pt.Particles.Count; ++i)
         {
             Particle p = pt.Particles[i];
-            if (p.Transform is null)
+            if (p.Transform is null || p.ParentIndex < 0)
                 continue;
             
             p.Transform.Translation = p.InitLocalPosition;
@@ -1392,7 +1410,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             if (parent.ChildCount <= 1 && pTfm is not null) // do not modify bone orientation if has more then one child
             {
                 Vector3 localPos = cTfm is not null
-                    ? cTfm.Translation
+                    ? child.InitLocalPosition
                     : child.EndOffset;
 
                 Vector3 v0 = pTfm.TransformDirection(localPos);
