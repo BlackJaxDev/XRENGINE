@@ -1,8 +1,10 @@
-# GPU Physics Chain Component Compatibility
+# GPU Physics Chain Compatibility
 
 ## Overview
 
-The `GPUPhysicsChainComponent` has been completely rewritten to provide **identical behavior** to the `PhysicsChainComponent` while leveraging GPU compute shaders for performance.
+The `PhysicsChainComponent` with `UseGPU = true` provides **identical behavior** to the CPU path while leveraging GPU compute shaders for performance. GPU-specific code lives in the `PhysicsChainComponent.GPU.cs` partial file.
+
+> **Architecture note:** GPU physics chain functionality was originally a standalone `GPUPhysicsChainComponent` class. It has been merged into the unified `PhysicsChainComponent` behind a `UseGPU` toggle, exposing conditional inspector settings (`UseBatchedDispatcher` when GPU is active, `Multithread` when CPU is active).
 
 ## Key Changes Made
 
@@ -95,20 +97,21 @@ The `GPUPhysicsChainComponent` has been completely rewritten to provide **identi
 
 ### **Component Setup**
 ```csharp
-// Add GPU physics chain component
-var gpuPhysics = gameObject.AddComponent<GPUPhysicsChainComponent>();
+// Enable GPU mode on a PhysicsChainComponent
+var physics = gameObject.AddComponent<PhysicsChainComponent>();
+physics.UseGPU = true;
 
-// Configure exactly like CPU version
-gpuPhysics.Root = transform;
-gpuPhysics.Damping = 0.1f;
-gpuPhysics.Elasticity = 0.1f;
-gpuPhysics.Stiffness = 0.1f;
+// Configure exactly like CPU mode
+physics.Root = transform;
+physics.Damping = 0.1f;
+physics.Elasticity = 0.1f;
+physics.Stiffness = 0.1f;
 
 // Use batched dispatcher for best performance (default: true)
-gpuPhysics.UseBatchedDispatcher = true;
+physics.UseBatchedDispatcher = true;
 
 // Add colliders
-gpuPhysics.Colliders = new List<PhysicsChainColliderBase>
+physics.Colliders = new List<PhysicsChainColliderBase>
 {
     sphereCollider,
     capsuleCollider,
@@ -119,11 +122,11 @@ gpuPhysics.Colliders = new List<PhysicsChainColliderBase>
 
 ### **Batched vs Standalone Mode**
 ```csharp
-// Batched mode (default) - all components processed in single dispatch
-gpuPhysics.UseBatchedDispatcher = true;
+// Batched mode (default) - all GPU components processed in single dispatch
+physics.UseBatchedDispatcher = true;
 
 // Standalone mode - component dispatches its own compute shader
-gpuPhysics.UseBatchedDispatcher = false;
+physics.UseBatchedDispatcher = false;
 ```
 
 ### **Automatic GPU Management**
@@ -135,7 +138,7 @@ gpuPhysics.UseBatchedDispatcher = false;
 ## Verification
 
 ### **Identical Results**
-The GPU version produces **exactly the same physics behavior** as the CPU version:
+The GPU version produces **exactly the same physics behavior** as the CPU path:
 - Same particle positions and velocities
 - Same constraint satisfaction
 - Same collision responses
@@ -163,7 +166,7 @@ To verify compatibility:
 
 ## Conclusion
 
-The `GPUPhysicsChainComponent` now provides **100% feature compatibility** with the `PhysicsChainComponent` while delivering significant performance improvements through GPU acceleration. All physics calculations, constraints, colliders, and features work identically between both versions.
+The `PhysicsChainComponent` with `UseGPU = true` now provides **100% feature compatibility** with the CPU path while delivering significant performance improvements through GPU acceleration. All physics calculations, constraints, colliders, and features work identically between both modes.
 
 **Key implementation details:**
 - All collider types are supported (sphere, capsule, box, plane)

@@ -12,7 +12,7 @@ What exists now:
 - `MeshDeformVertexShaderGenerator` already generates a dedicated vertex shader path for deformation from another mesh rather than classic bone matrices.
 - The current mesh-deform path uses weighted displacement from deformer rest positions, not local-frame skinning or cluster-transform skinning.
 - Compute-shader skinning and blendshape prepasses already exist and already output GPU-resident deformed buffers for rendering.
-- `GPUPhysicsChainComponent` and `GPUPhysicsChainDispatcher` already provide a batched GPU particle simulation path with capsule collisions and compute integration tests.
+- `PhysicsChainComponent` (with `UseGPU = true`) and `GPUPhysicsChainDispatcher` already provide a batched GPU particle simulation path with capsule collisions and compute integration tests. GPU-specific code lives in the `PhysicsChainComponent.GPU.cs` partial file.
 - PhysX softbody-related low-level interop exists, but there is no engine-facing softbody component or runtime authoring pipeline.
 - No dedicated softbody compute shaders exist.
 - No shape-matching or cluster-transform implementation exists.

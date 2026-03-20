@@ -41,6 +41,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     protected override void OnComponentActivated()
     {
+        base.OnComponentActivated();
+        ActivateGpuExecutionMode();
         SetupParticles();
         RegisterTick(ETickGroup.PostPhysics, ETickOrder.Animation, FixedUpdate);
         RegisterTick(ETickGroup.Normal, ETickOrder.Animation, Update);
@@ -51,6 +53,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     }
     protected override void OnComponentDeactivated()
     {
+        DeactivateGpuExecutionMode();
         base.OnComponentDeactivated();
         InitTransforms();
         _preUpdateCount = 0;
@@ -68,7 +71,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         if (UpdateMode != EUpdateMode.FixedUpdate)
             PreUpdate();
         
-        if (_preUpdateCount > 0 && Multithread)
+        if (!UseGPU && _preUpdateCount > 0 && Multithread)
             AddPendingWork(this);
         
         ++_updateCount;
@@ -88,7 +91,9 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         _isSimulating = true;
         SetWeight(BlendWeight);
 
-        if (!_pendingWorks.IsEmpty)
+        if (UseGPU)
+            ExecuteGpuLateUpdate();
+        else if (!_pendingWorks.IsEmpty)
             ExecuteWorks();
         else
         {
@@ -103,6 +108,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         _preUpdateCount = 0;
         _isSimulating = false;
+        ApplyPendingGpuExecutionReconfigure();
 
         if (_rebuildQueued)
         {
@@ -251,6 +257,9 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
         base.OnPropertyChanged(propName, prev, field);
+        if (HandleGpuExecutionModePropertyChanged(propName, prev, field))
+            return;
+
         // Skip validation during active simulation to avoid triggering
         // SetupParticles which queues a rebuild every frame.
         if (!_isSimulating)
@@ -465,6 +474,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         UpdateParameters();
         _particlesVersion++;
+        MarkGpuBuffersDirty();
     }
 
     private void AppendParticleTree(Transform root)
@@ -933,17 +943,18 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                     ? child.InitLocalPosition
                     : child.EndOffset;
 
-                //pTfm.RecalculateMatrices(true, false);
                 Vector3 v0 = pTfm.TransformDirection(localPos);
                 Vector3 v1 = child.Position - parent.Position;
                 Quaternion rot = Quaternion.Normalize(XRMath.RotationBetweenVectors(v0, v1));
 
-                //pTfm.Parent?.RecalculateMatrices(true, false);
                 pTfm.AddWorldRotationDelta(rot);
+
+                // Refresh the parent's world + inverse-world matrices so that the
+                // child's SetWorldTranslation (which uses ParentInverseWorldMatrix)
+                // computes the correct local translation.
+                pTfm.RecalculateMatrices(forceWorldRecalc: true);
             }
 
-            //pTfm?.RecalculateMatrices(true, false);
-            //pTfm?.RecalculateInverseMatrices(true);
             cTfm?.SetWorldTranslation(child.Position);
         }
     }

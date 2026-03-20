@@ -73,7 +73,8 @@ The closest existing compute simulation is the GPU physics chain system.
 
 Relevant code:
 
-- [XRENGINE/Scene/Components/Physics/GPUPhysicsChainComponent.cs](../../../XRENGINE/Scene/Components/Physics/GPUPhysicsChainComponent.cs)
+- [XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs](../../../XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs) — GPU partial of the unified `PhysicsChainComponent` (enabled via `UseGPU = true`)
+- [XRENGINE/Scene/Components/Physics/PhysicsChainComponent.cs](../../../XRENGINE/Scene/Components/Physics/PhysicsChainComponent.cs) — main partial (lifecycle routing, CPU/GPU branching)
 - [XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs](../../../XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs)
 - [Build/CommonAssets/Shaders/Compute/PhysicsChain/PhysicsChain.comp](../../../Build/CommonAssets/Shaders/Compute/PhysicsChain/PhysicsChain.comp)
 - [Build/CommonAssets/Shaders/Compute/PhysicsChain/SkipUpdateParticles.comp](../../../Build/CommonAssets/Shaders/Compute/PhysicsChain/SkipUpdateParticles.comp)

@@ -27,7 +27,8 @@ public sealed class GPUPhysicsChainDispatcher
 
     // Registered components
     private readonly ConcurrentDictionary<int, GPUPhysicsChainRequest> _registeredComponents = new();
-    private readonly List<GPUPhysicsChainRequest> _activeRequests = [];
+    private readonly List<GPUPhysicsChainRequest> _activeRequests = new();
+    private readonly List<GPUPhysicsChainRequest> _dispatchGroup = [];
 
     // Shared GPU resources
     private XRShader? _mainPhysicsShader;
@@ -47,9 +48,6 @@ public sealed class GPUPhysicsChainDispatcher
     private readonly List<Matrix4x4> _allTransformMatrices = [];
     private readonly List<GPUColliderData> _allColliders = [];
 
-    // Async readback
-    private IntPtr _gpuFence = IntPtr.Zero;
-    private bool _readbackPending;
     private GPUParticleData[]? _readbackData;
 
     // Statistics
@@ -139,7 +137,7 @@ public sealed class GPUPhysicsChainDispatcher
     /// <summary>
     /// Registers a GPU physics chain component for batched processing.
     /// </summary>
-    public void Register(GPUPhysicsChainComponent component)
+    public void Register(PhysicsChainComponent component)
     {
         var request = new GPUPhysicsChainRequest(component);
         _registeredComponents.TryAdd(component.GetHashCode(), request);
@@ -148,7 +146,7 @@ public sealed class GPUPhysicsChainDispatcher
     /// <summary>
     /// Unregisters a GPU physics chain component.
     /// </summary>
-    public void Unregister(GPUPhysicsChainComponent component)
+    public void Unregister(PhysicsChainComponent component)
     {
         _registeredComponents.TryRemove(component.GetHashCode(), out _);
     }
@@ -156,7 +154,7 @@ public sealed class GPUPhysicsChainDispatcher
     /// <summary>
     /// Checks if a component is registered for batched processing.
     /// </summary>
-    public bool IsRegistered(GPUPhysicsChainComponent component)
+    public bool IsRegistered(PhysicsChainComponent component)
         => _registeredComponents.ContainsKey(component.GetHashCode());
 
     #endregion
@@ -167,7 +165,7 @@ public sealed class GPUPhysicsChainDispatcher
     /// Submits particle and collider data for a component. Called during component's Prepare phase.
     /// </summary>
     public void SubmitData(
-        GPUPhysicsChainComponent component,
+        PhysicsChainComponent component,
         IReadOnlyList<GPUParticleData> particles,
         IReadOnlyList<GPUParticleTreeData> trees,
         IReadOnlyList<Matrix4x4> transforms,
@@ -203,6 +201,9 @@ public sealed class GPUPhysicsChainDispatcher
         request.FreezeAxis = freezeAxis;
         request.LoopCount = loopCount;
         request.TimeVar = timeVar;
+        request.UpdateMode = (int)component.UpdateMode;
+        request.UpdateRate = component.UpdateRate;
+        request.DispatchIsolationKey = component.UseBatchedDispatcher ? 0 : component.GetHashCode();
         request.NeedsUpdate = true;
         request.SkipUpdate = loopCount <= 0;
     }
@@ -220,9 +221,6 @@ public sealed class GPUPhysicsChainDispatcher
         if (renderer is null)
             return;
 
-        // First, apply any pending readback from previous frame
-        TryApplyAsyncReadback(renderer);
-
         // Collect active requests
         _activeRequests.Clear();
         foreach (var kvp in _registeredComponents)
@@ -236,34 +234,7 @@ public sealed class GPUPhysicsChainDispatcher
 
         EnsureInitialized();
 
-        // Determine max iterations needed
-        int maxIterations = 1;
-        foreach (var req in _activeRequests)
-        {
-            if (!req.SkipUpdate && req.LoopCount > maxIterations)
-                maxIterations = Math.Min(req.LoopCount, MaxIterationsPerFrame);
-        }
-
-        // Build combined buffers
-        BuildCombinedBuffers();
-
-        // Dispatch iterations
-        for (int iter = 0; iter < maxIterations; iter++)
-        {
-            DispatchMainPhysics(renderer, iter == 0);
-
-            // Memory barrier between iterations
-            if (iter < maxIterations - 1)
-                renderer.RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
-        }
-
-        // Handle skip-update components (those with loopCount == 0)
-        bool hasSkipUpdates = _activeRequests.Any(r => r.SkipUpdate);
-        if (hasSkipUpdates)
-            DispatchSkipUpdate(renderer);
-
-        // Request async readback
-        RequestAsyncReadback(renderer);
+        ProcessDispatchGroups(renderer);
 
         // Mark all requests as processed
         foreach (var req in _activeRequests)
@@ -288,7 +259,7 @@ public sealed class GPUPhysicsChainDispatcher
         _initialized = true;
     }
 
-    private void BuildCombinedBuffers()
+    private void BuildCombinedBuffers(IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
         _allParticles.Clear();
         _allParticleTrees.Clear();
@@ -299,8 +270,9 @@ public sealed class GPUPhysicsChainDispatcher
         int treeOffset = 0;
         int colliderOffset = 0;
 
-        foreach (var request in _activeRequests)
+        for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
         {
+            GPUPhysicsChainRequest request = requests[requestIndex];
             request.ParticleOffset = particleOffset;
             request.TreeOffset = treeOffset;
             request.ColliderOffset = colliderOffset;
@@ -351,6 +323,9 @@ public sealed class GPUPhysicsChainDispatcher
 
         _collidersBuffer?.SetDataRaw(_allColliders);
         _collidersBuffer?.PushData();
+
+        if (_readbackData is null || _readbackData.Length != TotalParticleCount)
+            _readbackData = new GPUParticleData[TotalParticleCount];
     }
 
     private static void EnsureBufferCapacity(ref XRDataBuffer? buffer, string name, uint elementCount, uint componentCount)
@@ -371,28 +346,62 @@ public sealed class GPUPhysicsChainDispatcher
 
     #region Dispatch
 
-    private void DispatchMainPhysics(OpenGLRenderer renderer, bool applyObjectMove)
+    private void ProcessDispatchGroups(OpenGLRenderer renderer)
+    {
+        GPUDispatchGroupKey[] keys = _activeRequests.Select(static request => GPUDispatchGroupKey.From(request)).Distinct().ToArray();
+        for (int keyIndex = 0; keyIndex < keys.Length; ++keyIndex)
+        {
+            GPUDispatchGroupKey key = keys[keyIndex];
+            _dispatchGroup.Clear();
+
+            for (int requestIndex = 0; requestIndex < _activeRequests.Count; ++requestIndex)
+            {
+                GPUPhysicsChainRequest request = _activeRequests[requestIndex];
+                if (GPUDispatchGroupKey.From(request) == key)
+                    _dispatchGroup.Add(request);
+            }
+
+            if (_dispatchGroup.Count == 0)
+                continue;
+
+            BuildCombinedBuffers(_dispatchGroup);
+
+            if (key.SkipUpdate)
+            {
+                DispatchSkipUpdate(_dispatchGroup[0]);
+            }
+            else
+            {
+                int maxIterations = Math.Clamp(key.LoopCount, 1, MaxIterationsPerFrame);
+                for (int iteration = 0; iteration < maxIterations; ++iteration)
+                {
+                    DispatchMainPhysics(_dispatchGroup[0], iteration == 0);
+                    if (iteration < maxIterations - 1)
+                        renderer.RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+                }
+            }
+
+            renderer.RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+            ReadParticleDataFromBuffer(renderer);
+            DistributeReadbackToComponents(_dispatchGroup);
+        }
+    }
+
+    private void DispatchMainPhysics(GPUPhysicsChainRequest request, bool applyObjectMove)
     {
         if (_mainPhysicsProgram is null || _particlesBuffer is null)
             return;
 
-        // For batched dispatch, we use a simplified approach:
-        // All components share the same buffers, but we set per-component uniforms
-        // In practice, since all data is combined, we use averaged/common parameters
-
-        // Get representative parameters from first active request
-        var firstReq = _activeRequests.FirstOrDefault();
-        if (firstReq is null)
-            return;
-
-        _mainPhysicsProgram.Uniform("DeltaTime", firstReq.TimeVar);
-        _mainPhysicsProgram.Uniform("ObjectScale", firstReq.ObjectScale);
-        _mainPhysicsProgram.Uniform("Weight", firstReq.Weight);
-        _mainPhysicsProgram.Uniform("Force", firstReq.Force);
-        _mainPhysicsProgram.Uniform("Gravity", firstReq.Gravity);
-        _mainPhysicsProgram.Uniform("ObjectMove", applyObjectMove ? firstReq.ObjectMove : Vector3.Zero);
-        _mainPhysicsProgram.Uniform("FreezeAxis", firstReq.FreezeAxis);
+        _mainPhysicsProgram.Uniform("DeltaTime", request.TimeVar);
+        _mainPhysicsProgram.Uniform("ObjectScale", request.ObjectScale);
+        _mainPhysicsProgram.Uniform("Weight", request.Weight);
+        _mainPhysicsProgram.Uniform("Force", request.Force);
+        _mainPhysicsProgram.Uniform("Gravity", request.Gravity);
+        _mainPhysicsProgram.Uniform("ObjectMove", applyObjectMove ? request.ObjectMove : Vector3.Zero);
+        _mainPhysicsProgram.Uniform("FreezeAxis", request.FreezeAxis);
         _mainPhysicsProgram.Uniform("ColliderCount", TotalColliderCount);
+        _mainPhysicsProgram.Uniform("UpdateMode", request.UpdateMode);
+        _mainPhysicsProgram.Uniform("UpdateRate", request.UpdateRate);
 
         _mainPhysicsProgram.BindBuffer(_particlesBuffer, 0);
         _mainPhysicsProgram.BindBuffer(_particleTreesBuffer!, 1);
@@ -403,17 +412,13 @@ public sealed class GPUPhysicsChainDispatcher
         _mainPhysicsProgram.DispatchCompute(threadGroupsX, 1, 1);
     }
 
-    private void DispatchSkipUpdate(OpenGLRenderer renderer)
+    private void DispatchSkipUpdate(GPUPhysicsChainRequest request)
     {
         if (_skipUpdateProgram is null || _particlesBuffer is null)
             return;
 
-        var firstReq = _activeRequests.FirstOrDefault(r => r.SkipUpdate);
-        if (firstReq is null)
-            return;
-
-        _skipUpdateProgram.Uniform("ObjectMove", firstReq.ObjectMove);
-        _skipUpdateProgram.Uniform("Weight", firstReq.Weight);
+        _skipUpdateProgram.Uniform("ObjectMove", request.ObjectMove);
+        _skipUpdateProgram.Uniform("Weight", request.Weight);
 
         _skipUpdateProgram.BindBuffer(_particlesBuffer, 0);
         _skipUpdateProgram.BindBuffer(_transformMatricesBuffer!, 2);
@@ -424,55 +429,11 @@ public sealed class GPUPhysicsChainDispatcher
 
     #endregion
 
-    #region Async Readback
+    #region Readback
 
-    private void RequestAsyncReadback(OpenGLRenderer renderer)
-    {
-        if (_particlesBuffer is null || TotalParticleCount == 0)
-            return;
-
-        // Clean up existing fence
-        if (_gpuFence != IntPtr.Zero)
-        {
-            renderer.RawGL.DeleteSync(_gpuFence);
-            _gpuFence = IntPtr.Zero;
-        }
-
-        _gpuFence = renderer.RawGL.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
-
-        if (_readbackData is null || _readbackData.Length != TotalParticleCount)
-            _readbackData = new GPUParticleData[TotalParticleCount];
-
-        _readbackPending = true;
-    }
-
-    private void TryApplyAsyncReadback(OpenGLRenderer renderer)
-    {
-        if (!_readbackPending || _gpuFence == IntPtr.Zero || _readbackData is null)
-            return;
-
-        var status = renderer.RawGL.ClientWaitSync(_gpuFence, 0u, 0u);
-        if (status != GLEnum.AlreadySignaled && status != GLEnum.ConditionSatisfied)
-            return;
-
-        renderer.RawGL.DeleteSync(_gpuFence);
-        _gpuFence = IntPtr.Zero;
-        _readbackPending = false;
-
-        // Read data from GPU
-        ReadParticleDataFromBuffer();
-
-        // Distribute results back to components
-        DistributeReadbackToComponents();
-    }
-
-    private void ReadParticleDataFromBuffer()
+    private void ReadParticleDataFromBuffer(OpenGLRenderer renderer)
     {
         if (_particlesBuffer is null || _readbackData is null)
-            return;
-
-        var renderer = AbstractRenderer.Current as OpenGLRenderer;
-        if (renderer is null)
             return;
 
         // Get the GL buffer ID via the API wrapper
@@ -493,13 +454,14 @@ public sealed class GPUPhysicsChainDispatcher
         }
     }
 
-    private void DistributeReadbackToComponents()
+    private void DistributeReadbackToComponents(IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
         if (_readbackData is null)
             return;
 
-        foreach (var request in _activeRequests)
+        for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
         {
+            GPUPhysicsChainRequest request = requests[requestIndex];
             int start = request.ParticleOffset;
             int count = request.Particles.Count;
 
@@ -524,16 +486,9 @@ public sealed class GPUPhysicsChainDispatcher
 
     public void Reset()
     {
-        var renderer = AbstractRenderer.Current as OpenGLRenderer;
-        if (renderer is not null && _gpuFence != IntPtr.Zero)
-        {
-            renderer.RawGL.DeleteSync(_gpuFence);
-            _gpuFence = IntPtr.Zero;
-        }
-
-        _readbackPending = false;
         _readbackData = null;
         _activeRequests.Clear();
+        _dispatchGroup.Clear();
 
         foreach (var kvp in _registeredComponents)
             kvp.Value.NeedsUpdate = false;
@@ -561,9 +516,9 @@ public sealed class GPUPhysicsChainDispatcher
 /// <summary>
 /// Represents a registered GPU physics chain component's data for batched processing.
 /// </summary>
-public class GPUPhysicsChainRequest(GPUPhysicsChainComponent component)
+public class GPUPhysicsChainRequest(PhysicsChainComponent component)
 {
-    public GPUPhysicsChainComponent Component { get; } = component;
+    public PhysicsChainComponent Component { get; } = component;
 
     // Per-component particle data
     public List<GPUPhysicsChainDispatcher.GPUParticleData> Particles { get; } = [];
@@ -581,6 +536,9 @@ public class GPUPhysicsChainRequest(GPUPhysicsChainComponent component)
     public int FreezeAxis;
     public int LoopCount;
     public float TimeVar;
+    public int UpdateMode;
+    public float UpdateRate;
+    public int DispatchIsolationKey;
     public bool NeedsUpdate;
     public bool SkipUpdate;
 
@@ -588,4 +546,46 @@ public class GPUPhysicsChainRequest(GPUPhysicsChainComponent component)
     public int ParticleOffset;
     public int TreeOffset;
     public int ColliderOffset;
+}
+
+internal readonly record struct GPUDispatchGroupKey(
+    int DispatchIsolationKey,
+    bool SkipUpdate,
+    int LoopCount,
+    int UpdateMode,
+    int FreezeAxis,
+    int TimeVarBits,
+    int UpdateRateBits,
+    int ObjectScaleBits,
+    int WeightBits,
+    int ForceXBits,
+    int ForceYBits,
+    int ForceZBits,
+    int GravityXBits,
+    int GravityYBits,
+    int GravityZBits,
+    int ObjectMoveXBits,
+    int ObjectMoveYBits,
+    int ObjectMoveZBits)
+{
+    public static GPUDispatchGroupKey From(GPUPhysicsChainRequest request)
+        => new(
+            request.DispatchIsolationKey,
+            request.SkipUpdate,
+            request.LoopCount,
+            request.UpdateMode,
+            request.FreezeAxis,
+            BitConverter.SingleToInt32Bits(request.TimeVar),
+            BitConverter.SingleToInt32Bits(request.UpdateRate),
+            BitConverter.SingleToInt32Bits(request.ObjectScale),
+            BitConverter.SingleToInt32Bits(request.Weight),
+            BitConverter.SingleToInt32Bits(request.Force.X),
+            BitConverter.SingleToInt32Bits(request.Force.Y),
+            BitConverter.SingleToInt32Bits(request.Force.Z),
+            BitConverter.SingleToInt32Bits(request.Gravity.X),
+            BitConverter.SingleToInt32Bits(request.Gravity.Y),
+            BitConverter.SingleToInt32Bits(request.Gravity.Z),
+            BitConverter.SingleToInt32Bits(request.ObjectMove.X),
+            BitConverter.SingleToInt32Bits(request.ObjectMove.Y),
+            BitConverter.SingleToInt32Bits(request.ObjectMove.Z));
 }

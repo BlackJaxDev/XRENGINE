@@ -38,9 +38,10 @@ public sealed class GPUPhysicsChainDispatcherTests
         return (rootNode, rootBone, bones);
     }
 
-    private static GPUPhysicsChainComponent CreateTestComponent(SceneNode node, Transform root, bool useBatched = true)
+    private static PhysicsChainComponent CreateTestComponent(SceneNode node, Transform root, bool useBatched = true)
     {
-        var component = node.AddComponent<GPUPhysicsChainComponent>()!;
+        var component = node.AddComponent<PhysicsChainComponent>()!;
+        component.UseGPU = true;
         component.Root = root;
         component.Damping = 0.1f;
         component.Elasticity = 0.1f;
@@ -139,7 +140,7 @@ public sealed class GPUPhysicsChainDispatcherTests
         var dispatcher = GPUPhysicsChainDispatcher.Instance;
         int initialCount = dispatcher.RegisteredComponentCount;
 
-        var components = new List<GPUPhysicsChainComponent>();
+        var components = new List<PhysicsChainComponent>();
         var nodes = new List<SceneNode>();
 
         for (int i = 0; i < 5; i++)
@@ -268,7 +269,7 @@ public sealed class GPUPhysicsChainDispatcherTests
     public void MultipleComponents_CanSubmitData()
     {
         var dispatcher = GPUPhysicsChainDispatcher.Instance;
-        var components = new List<GPUPhysicsChainComponent>();
+        var components = new List<PhysicsChainComponent>();
         var nodes = new List<SceneNode>();
 
         // Create and register multiple components
