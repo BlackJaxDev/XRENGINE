@@ -1,0 +1,91 @@
+#version 450
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+struct ParticleState
+{
+    vec3 Position;
+    float _pad0;
+    vec3 PrevPosition;
+    float _pad1;
+    vec3 TransformPosition;
+    float _pad2;
+    int IsColliding;
+    float _pad3a;
+    float _pad3b;
+    float _pad3c;
+};
+
+struct ParticleStatic
+{
+    vec3 TransformLocalPosition;
+    float _pad0;
+    int ParentIndex;
+    float Damping;
+    float Elasticity;
+    float Stiffness;
+    float Inert;
+    float Friction;
+    float Radius;
+    float BoneLength;
+};
+
+struct Point
+{
+    vec4 Position;
+    vec4 Color;
+};
+
+layout(std430, binding = 0) readonly buffer ParticlesBuffer
+{
+    ParticleState Particles[];
+};
+
+layout(std430, binding = 1) readonly buffer ParticleStaticBuffer
+{
+    ParticleStatic ParticleStatics[];
+};
+
+layout(std430, binding = 2) writeonly buffer PointsBuffer
+{
+    Point Points[];
+};
+
+layout(std430, binding = 3) writeonly buffer LinesBuffer
+{
+    vec4 Lines[];
+};
+
+uniform int ParticleOffset;
+uniform int ParticleCount;
+uniform vec4 PointColor;
+uniform vec4 LineColor;
+
+void main()
+{
+    uint localIndex = gl_GlobalInvocationID.x;
+    if (localIndex >= uint(ParticleCount))
+        return;
+
+    uint particleIndex = uint(ParticleOffset) + localIndex;
+    ParticleState particle = Particles[particleIndex];
+    ParticleStatic particleStatic = ParticleStatics[particleIndex];
+
+    Points[localIndex].Position = vec4(particle.Position, 1.0);
+    Points[localIndex].Color = PointColor;
+
+    uint lineIndex = localIndex * 3u;
+    if (particleStatic.ParentIndex >= 0)
+    {
+        ParticleState parent = Particles[particleStatic.ParentIndex];
+        Lines[lineIndex + 0u] = vec4(parent.Position, 1.0);
+        Lines[lineIndex + 1u] = vec4(particle.Position, 1.0);
+        Lines[lineIndex + 2u] = LineColor;
+    }
+    else
+    {
+        Lines[lineIndex + 0u] = vec4(particle.Position, 1.0);
+        Lines[lineIndex + 1u] = vec4(particle.Position, 1.0);
+        Lines[lineIndex + 2u] = vec4(LineColor.rgb, 0.0);
+    }
+}

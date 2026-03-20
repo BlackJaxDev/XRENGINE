@@ -80,7 +80,10 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private void LateUpdate()
     {
         if (_preUpdateCount == 0)
+        {
+            ApplyPendingGpuBoneSync();
             return;
+        }
 
         if (_updateCount > 0)
         {
@@ -92,7 +95,16 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         SetWeight(BlendWeight);
 
         if (UseGPU)
+        {
             ExecuteGpuLateUpdate();
+            if (GpuSyncToBones && UseBatchedDispatcher)
+            {
+                if (_hasPendingGpuBoneSync)
+                    ApplyPendingGpuBoneSync();
+                else
+                    ApplyGpuResultsToTransforms();
+            }
+        }
         else if (!_pendingWorks.IsEmpty)
             ExecuteWorks();
         else
@@ -328,6 +340,12 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         if (!IsActive || Engine.Rendering.State.IsShadowPass)
             return;
 
+        if (UseGPU)
+        {
+            RenderGpuDebug();
+            return;
+        }
+
         for (int i = 0; i < _particleTrees.Count; ++i)
             DrawTree(_particleTrees[i]);
     }
@@ -340,11 +358,12 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             return;
         }
 
-        Particle[] particles = [.. pt.Particles];
-        for (int i = 0; i < particles.Length; ++i)
+        var particles = pt.Particles;
+        int particleCount = particles.Count;
+        for (int i = 0; i < particleCount; ++i)
         {
             Particle p = particles[i];
-            if (p.ParentIndex >= 0 && p.ParentIndex < particles.Length)
+            if (p.ParentIndex >= 0 && p.ParentIndex < particleCount)
             {
                 Particle p0 = particles[p.ParentIndex];
                 Engine.Rendering.Debug.RenderLine(p.Position, p0.Position, ColorF4.Orange);
@@ -352,7 +371,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             else if (p.ParentIndex >= 0)
             {
                 LogFault($"DrawTree:BadParent:{FormatRoot(pt.Root)}:{p.ParentIndex}",
-                    $"DrawTree invalid parent index {p.ParentIndex} for particle {i} (count={particles.Length}, root={FormatRoot(pt.Root)}).");
+                    $"DrawTree invalid parent index {p.ParentIndex} for particle {i} (count={particleCount}, root={FormatRoot(pt.Root)}).");
             }
             if (p.Radius > 0)
             {
@@ -576,6 +595,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         SetWeight(BlendWeight);
         for (int i = 0; i < _particleTrees.Count; ++i)
             UpdateParameters(_particleTrees[i]);
+
+        _particlesVersion++;
     }
 
     private void UpdateParameters(ParticleTree pt)
@@ -670,6 +691,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             _rootBonePrevPosition = _rootBone.WorldTranslation;
         }
         _smoothedObjectMove = Vector3.Zero;
+        _hasPendingGpuBoneSync = false;
     }
 
     private static void ResetParticlesPosition(ParticleTree pt)
@@ -921,14 +943,15 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             return;
         }
 
-        Particle[] particles = [.. pt.Particles];
-        for (int i = 1; i < particles.Length; ++i)
+        var particles = pt.Particles;
+        int particleCount = particles.Count;
+        for (int i = 1; i < particleCount; ++i)
         {
             Particle child = particles[i];
-            if (child.ParentIndex < 0 || child.ParentIndex >= particles.Length)
+            if (child.ParentIndex < 0 || child.ParentIndex >= particleCount)
             {
                 LogFault($"ApplyParticlesToTransforms:BadParent:{FormatRoot(pt.Root)}:{child.ParentIndex}",
-                    $"ApplyParticlesToTransforms invalid parent index {child.ParentIndex} for particle {i} (count={particles.Length}, root={FormatRoot(pt.Root)}).");
+                    $"ApplyParticlesToTransforms invalid parent index {child.ParentIndex} for particle {i} (count={particleCount}, root={FormatRoot(pt.Root)}).");
                 continue;
             }
 

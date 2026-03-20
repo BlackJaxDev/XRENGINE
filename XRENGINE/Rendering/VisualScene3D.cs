@@ -192,6 +192,7 @@ namespace XREngine.Scene
         public override void GlobalPostRender()
         {
             base.GlobalPostRender();
+            GPUPhysicsChainDispatcher.Instance.ProcessCompletions();
             if (_useGpuBvhActive)
                 BvhRaycasts.ProcessCompletions();
         }

@@ -5,6 +5,7 @@ using XREngine.Components.Animation;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using GeometryPlaneIntersection = XREngine.Data.Geometry.EPlaneIntersection;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -33,38 +34,57 @@ public static partial class EditorUnitTests
         AddGroundCrosshair(rootNode);
         RegisterMathIntersectionsTest(
             testLayoutController,
-            AddProjectionMatrixCombinerRig(rootNode),
+            AddProjectionMatrixCombinerRig(rootNode, testLayoutController),
             "Projection Matrix Combiner Test",
+            "Fits a shared cyclops projection that encloses the animated left and right eye frusta.",
             AABB.FromCenterSize(new Vector3(0.0f, 4.0f, 9.0f), new Vector3(36.0f, 12.0f, 24.0f)));
         RegisterMathIntersectionsTest(
             testLayoutController,
-            AddFrustumIntersectionRig(rootNode),
+            AddFrustumIntersectionRig(rootNode, testLayoutController),
             "Frustum Intersection Test",
+            "Two moving frusta sweep through each other while the green box shows the overlap AABB.",
             AABB.FromCenterSize(new Vector3(0.5f, 4.0f, 7.0f), new Vector3(24.0f, 10.0f, 24.0f)));
         RegisterMathIntersectionsTest(
             testLayoutController,
-            AddFrustumContainmentRig(rootNode),
+            AddFrustumContainmentRig(rootNode, testLayoutController),
             "Frustum Containment Test",
+            "A moving sphere, AABB, and capsule change color as the frustum contains, intersects, or rejects them.",
             AABB.FromCenterSize(new Vector3(0.0f, 3.0f, 4.0f), new Vector3(18.0f, 8.0f, 24.0f)));
         RegisterMathIntersectionsTest(
             testLayoutController,
             AddRaySphereRig(rootNode),
             "Ray vs Sphere Test",
+            "A fixed ray probes a moving sphere; green means hit and yellow marks the first intersection.",
             AABB.FromCenterSize(new Vector3(0.5f, 2.5f, 4.5f), new Vector3(20.0f, 6.0f, 20.0f)));
         RegisterMathIntersectionsTest(
             testLayoutController,
             AddSegmentAabbRig(rootNode),
             "Segment vs AABB Test",
+            "A moving segment clips against an AABB and exposes the entry and exit points.",
             AABB.FromCenterSize(new Vector3(8.0f, 2.0f, -2.0f), new Vector3(10.0f, 5.0f, 10.0f)));
         RegisterMathIntersectionsTest(
             testLayoutController,
             AddRayTriangleRig(rootNode),
             "Ray vs Triangle Test",
+            "An animated ray probes a triangle and highlights the barycentric hit point when it intersects.",
             AABB.FromCenterSize(new Vector3(-2.0f, 2.5f, 20.5f), new Vector3(26.0f, 6.0f, 26.0f)));
         RegisterMathIntersectionsTest(
             testLayoutController,
-            AddPhysicsChainComparisonRig(rootNode),
+            AddGeoUtilPrimitiveIntersectionRig(rootNode, testLayoutController),
+            "GeoUtil Primitive Intersection Test",
+            "Each cell exercises a primitive GeoUtil overlap query and flips between hit and miss states.",
+            AABB.FromCenterSize(new Vector3(0.0f, 2.5f, 0.0f), new Vector3(48.0f, 7.0f, 24.0f)));
+        RegisterMathIntersectionsTest(
+            testLayoutController,
+            AddGeoUtilPlaneIntersectionRig(rootNode, testLayoutController),
+            "GeoUtil Plane Intersection Test",
+            "Each cell visualizes plane-side classification, plane intersections, and between-plane checks.",
+            AABB.FromCenterSize(new Vector3(0.0f, 2.5f, 0.0f), new Vector3(40.0f, 7.0f, 24.0f)));
+        RegisterMathIntersectionsTest(
+            testLayoutController,
+            AddPhysicsChainComparisonRig(rootNode, testLayoutController),
             "Physics Chain Comparison Test",
+            "CPU and GPU physics-chain solvers run side by side so their motion can be compared directly.",
             AABB.FromCenterSize(new Vector3(0.0f, 3.0f, 2.0f), new Vector3(12.0f, 8.0f, 8.0f)));
 
         var world = new XRWorld("Math Intersections World", scene);
@@ -76,11 +96,12 @@ public static partial class EditorUnitTests
         MathIntersectionsWorldControllerComponent controller,
         SceneNode testRootNode,
         string displayName,
+        string description,
         AABB bounds)
     {
         testRootNode.Name = displayName;
         testRootNode.IsActiveSelf = false;
-        controller.RegisterTest(testRootNode, displayName, bounds);
+        controller.RegisterTest(testRootNode, displayName, description, bounds);
     }
 
     private static void AddGroundCrosshair(SceneNode rootNode)
@@ -100,7 +121,7 @@ public static partial class EditorUnitTests
         debug.AddLine(new Vector3(0.0f, 0.0f, 0.0f), new Vector3(0.0f, 4.0f, 0.0f), ColorF4.LightGold);
     }
 
-    private static SceneNode AddFrustumIntersectionRig(SceneNode rootNode)
+    private static SceneNode AddFrustumIntersectionRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent controller)
     {
         var rigNode = rootNode.NewChild("Frustum Intersection Test");
 
@@ -143,10 +164,13 @@ public static partial class EditorUnitTests
             DrawFrustumIntersection(intersectionDebug, frustumA, frustumB);
         });
 
+        controller.RegisterSubLabel(rigNode, frustumATfm, "Frustum A", 1.5f);
+        controller.RegisterSubLabel(rigNode, frustumBTfm, "Frustum B", 1.5f);
+
         return rigNode;
     }
 
-    private static SceneNode AddProjectionMatrixCombinerRig(SceneNode rootNode)
+    private static SceneNode AddProjectionMatrixCombinerRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent controller)
     {
         var rigRootNode = rootNode.NewChild("Projection Matrix Combiner Test");
         rigRootNode.SetTransform<Transform>();
@@ -156,9 +180,9 @@ public static partial class EditorUnitTests
         cyclopsEyeTransform.Translation = Vector3.Zero;
 
         var leftEyeNode = rigRootNode.NewChild("LeftEye");
-        leftEyeNode.SetTransform<Transform>();
+        var leftEyeTransform = leftEyeNode.SetTransform<Transform>();
         var rightEyeNode = rigRootNode.NewChild("RightEye");
-        rightEyeNode.SetTransform<Transform>();
+        var rightEyeTransform = rightEyeNode.SetTransform<Transform>();
 
         var debugDraw = rigRootNode.AddComponent<DebugDrawComponent>()!;
 
@@ -371,6 +395,10 @@ public static partial class EditorUnitTests
             true,
             "Debug color for the final combined frustum.");
 
+        controller.RegisterSubLabel(rigRootNode, leftEyeTransform, "Left Eye", 1.0f);
+        controller.RegisterSubLabel(rigRootNode, rightEyeTransform, "Right Eye", 1.0f);
+        controller.RegisterSubLabel(rigRootNode, cyclopsEyeTransform, "Cyclops Eye", 1.0f);
+
         return rigRootNode;
     }
 
@@ -411,15 +439,14 @@ public static partial class EditorUnitTests
         return rigNode;
     }
 
-    private static SceneNode AddFrustumContainmentRig(SceneNode rootNode)
+    private static SceneNode AddFrustumContainmentRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent controller)
     {
         var rigNode = rootNode.NewChild("Frustum Containment Test");
-        Quaternion baseRotation = Quaternion.CreateFromAxisAngle(Globals.Up, MathF.PI);
 
         var frustumNode = rigNode.NewChild("CameraFrustum");
         var frustumTfm = frustumNode.SetTransform<Transform>();
         frustumTfm.Translation = new Vector3(0.0f, 2.0f, -6.0f);
-        frustumTfm.Rotation = baseRotation;
+        frustumTfm.Rotation = Quaternion.Identity;
         var frustumDebug = frustumNode.AddComponent<DebugDrawComponent>()!;
 
         var shapesNode = rigNode.NewChild("TestShapes");
@@ -434,7 +461,6 @@ public static partial class EditorUnitTests
         {
             float t = (float)Engine.ElapsedTime;
             frustumTfm.Rotation =
-                baseRotation *
                 Quaternion.CreateFromAxisAngle(Globals.Up, XRMath.DegToRad(MathF.Sin(t * 0.35f) * 25.0f)) *
                 Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(MathF.Sin(t * 0.25f) * 10.0f));
 
@@ -476,6 +502,8 @@ public static partial class EditorUnitTests
                 EContainment.Intersects => ColorF4.Yellow,
                 _ => ColorF4.DarkRed,
             };
+
+        controller.RegisterSubLabel(rigNode, frustumTfm, "Camera", 1.0f);
 
         return rigNode;
     }
@@ -551,18 +579,433 @@ public static partial class EditorUnitTests
         return rigNode;
     }
 
-    private static SceneNode AddPhysicsChainComparisonRig(SceneNode rootNode)
+    private static SceneNode AddGeoUtilPrimitiveIntersectionRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent controller)
     {
-        var rigNode = rootNode.NewChild("Physics Chain Comparison Test");
+        var rigNode = rootNode.NewChild("GeoUtil Primitive Intersection Test");
         rigNode.SetTransform<Transform>();
 
-        AddPhysicsChainTest(rigNode, "CPUPhysicsChainTest", new Vector3(-2.75f, 0.0f, 0.0f), useGpu: false, phaseOffset: 0.0f, ColorF4.LightBlue, ColorF4.LightGold);
-        AddPhysicsChainTest(rigNode, "GPUPhysicsChainTest", new Vector3(2.75f, 0.0f, 0.0f), useGpu: true, phaseOffset: MathF.PI * 0.5f, ColorF4.LightGreen, ColorF4.Orange);
+        SceneNode rayPointNode = CreateMathTestCell(rigNode, "RayWithPoint", new Vector3(-16.0f, 0.0f, -6.0f));
+        var rayPointDebug = rayPointNode.AddComponent<DebugDrawComponent>()!;
+        rayPointNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 origin = new(-2.5f, 1.1f, -2.0f);
+            Vector3 direction = Vector3.Normalize(new Vector3(1.0f, 0.18f, 1.0f));
+            Vector3 perpendicular = Vector3.Normalize(Vector3.Cross(direction, Globals.Up));
+            if (perpendicular.LengthSquared() <= 1e-6f)
+                perpendicular = Globals.Right;
+
+            float travel = 3.0f + MathF.Sin(t * 0.45f) * 0.8f;
+            bool aligned = MathF.Sin(t * 0.9f) >= 0.0f;
+            Vector3 point = origin + direction * travel + (aligned ? Vector3.Zero : perpendicular * 0.5f);
+            bool hit = GeoUtil.Intersect.RayWithPoint(new Ray(origin, direction), point);
+
+            rayPointDebug.ClearShapes();
+            rayPointDebug.AddLine(origin, origin + direction * 6.0f, hit ? ColorF4.LightGreen : ColorF4.LightGray);
+            rayPointDebug.AddPoint(origin, ColorF4.LightGold);
+            rayPointDebug.AddPoint(point, hit ? ColorF4.Yellow : ColorF4.DarkRed);
+        });
+
+        SceneNode rayRayNode = CreateMathTestCell(rigNode, "RayWithRay", new Vector3(-8.0f, 0.0f, -6.0f));
+        var rayRayDebug = rayRayNode.AddComponent<DebugDrawComponent>()!;
+        rayRayNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Ray ray1 = new(new Vector3(-2.5f, 1.0f, 0.0f), Vector3.UnitX);
+            bool aligned = MathF.Sin(t * 0.8f) >= 0.0f;
+            Ray ray2 = new(new Vector3(0.0f, aligned ? 1.0f : 1.75f, -2.5f), Vector3.UnitZ);
+            bool hit = GeoUtil.Intersect.RayWithRay(ray1, ray2, out Vector3 intersection);
+
+            rayRayDebug.ClearShapes();
+            rayRayDebug.AddLine(ray1.StartPoint, ray1.StartPoint + ray1.Direction * 5.0f, ColorF4.LightBlue);
+            rayRayDebug.AddLine(ray2.StartPoint, ray2.StartPoint + ray2.Direction * 5.0f, ColorF4.Orange);
+            rayRayDebug.AddPoint(ray1.StartPoint, ColorF4.LightGold);
+            rayRayDebug.AddPoint(ray2.StartPoint, ColorF4.LightGold);
+            if (hit)
+                rayRayDebug.AddPoint(intersection, ColorF4.Yellow);
+        });
+
+        SceneNode rayPlaneNode = CreateMathTestCell(rigNode, "RayWithPlane", new Vector3(0.0f, 0.0f, -6.0f));
+        var rayPlaneDebug = rayPlaneNode.AddComponent<DebugDrawComponent>()!;
+        rayPlaneNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 planePoint = new(0.0f, 1.25f, 0.0f);
+            Vector3 planeNormal = Vector3.UnitY;
+            Vector3 origin = new(-2.5f, 0.4f, -2.0f);
+            Vector3 direction = MathF.Sin(t * 0.75f) >= 0.0f
+                ? Vector3.Normalize(new Vector3(1.0f, 0.55f, 1.0f))
+                : Vector3.Normalize(new Vector3(1.0f, -0.1f, 1.0f));
+            bool hit = GeoUtil.Intersect.RayWithPlane(origin, direction, planePoint, planeNormal, out Vector3 intersection);
+
+            rayPlaneDebug.ClearShapes();
+            DrawPlaneIndicator(rayPlaneDebug, planePoint, planeNormal, 2.0f, ColorF4.LightBlue);
+            rayPlaneDebug.AddLine(origin, origin + direction * 6.0f, hit ? ColorF4.LightGreen : ColorF4.LightGray);
+            rayPlaneDebug.AddPoint(origin, ColorF4.LightGold);
+            if (hit)
+                rayPlaneDebug.AddPoint(intersection, ColorF4.Yellow);
+        });
+
+        SceneNode rayAabbNode = CreateMathTestCell(rigNode, "RayWithAABB", new Vector3(8.0f, 0.0f, -6.0f));
+        var rayAabbDebug = rayAabbNode.AddComponent<DebugDrawComponent>()!;
+        rayAabbNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 center = new(0.0f, 1.25f, 0.0f);
+            Vector3 half = new(1.0f, 0.8f, 0.9f);
+            Vector3 min = center - half;
+            Vector3 max = center + half;
+            Vector3 origin = new(-3.0f, 1.15f, -2.0f);
+            Vector3 target = MathF.Sin(t * 0.7f) >= 0.0f ? center : center + new Vector3(0.0f, 2.2f, 0.0f);
+            Vector3 direction = Vector3.Normalize(target - origin);
+            bool hit = GeoUtil.Intersect.RayWithAABB(new Ray(origin, direction), min, max, out Vector3 intersection);
+
+            rayAabbDebug.ClearShapes();
+            rayAabbDebug.AddBox(half, center, hit ? ColorF4.LightGreen : ColorF4.Gray, false);
+            rayAabbDebug.AddLine(origin, origin + direction * 7.0f, hit ? ColorF4.LightGreen : ColorF4.LightGray);
+            rayAabbDebug.AddPoint(origin, ColorF4.LightGold);
+            if (hit)
+                rayAabbDebug.AddPoint(intersection, ColorF4.Yellow);
+        });
+
+        SceneNode rayBoxNode = CreateMathTestCell(rigNode, "RayWithBox", new Vector3(16.0f, 0.0f, -6.0f));
+        var rayBoxDebug = rayBoxNode.AddComponent<DebugDrawComponent>()!;
+        var rayBoxVisualNode = rayBoxNode.NewChild("BoxVisual");
+        var rayBoxVisualTransform = rayBoxVisualNode.SetTransform<Transform>();
+        var rayBoxVisualDebug = rayBoxVisualNode.AddComponent<DebugDrawComponent>()!;
+        rayBoxNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 center = new(0.0f, 1.2f, 0.0f);
+            Vector3 half = new(1.1f, 0.7f, 0.8f);
+            Quaternion rotation =
+                Quaternion.CreateFromAxisAngle(Globals.Up, XRMath.DegToRad(t * 35.0f)) *
+                Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(18.0f));
+            Matrix4x4 worldMatrix = Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(center);
+            Matrix4x4.Invert(worldMatrix, out Matrix4x4 inverseWorld);
+
+            Vector3 origin = new(-3.0f, 1.1f, -1.8f);
+            Vector3 target = MathF.Sin(t * 0.65f) >= 0.0f ? center : center + new Vector3(0.0f, 2.0f, 1.8f);
+            Vector3 direction = Vector3.Normalize(target - origin);
+            bool hit = GeoUtil.Intersect.RayWithBox(origin, direction, half, inverseWorld, out Vector3 intersection);
+
+            rayBoxVisualTransform.Translation = center;
+            rayBoxVisualTransform.Rotation = rotation;
+
+            rayBoxDebug.ClearShapes();
+            rayBoxVisualDebug.ClearShapes();
+            rayBoxDebug.AddLine(origin, origin + direction * 7.0f, hit ? ColorF4.LightGreen : ColorF4.LightGray);
+            rayBoxDebug.AddPoint(origin, ColorF4.LightGold);
+            rayBoxVisualDebug.AddBox(half, Vector3.Zero, hit ? ColorF4.LightGreen : ColorF4.Gray, false);
+            if (hit)
+                rayBoxDebug.AddPoint(intersection, ColorF4.Yellow);
+        });
+
+        SceneNode aabbAabbNode = CreateMathTestCell(rigNode, "AABBWithAABB", new Vector3(-16.0f, 0.0f, 6.0f));
+        var aabbAabbDebug = aabbAabbNode.AddComponent<DebugDrawComponent>()!;
+        aabbAabbNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 box1Center = new(-0.8f, 1.0f, 0.0f);
+            Vector3 box1Half = new(1.0f, 0.8f, 0.9f);
+            Vector3 box2Center = new(1.6f + MathF.Sin(t * 0.8f) * 1.8f, 1.0f, 0.0f);
+            Vector3 box2Half = new(0.9f, 0.75f, 0.8f);
+            bool hit = GeoUtil.Intersect.AABBWithAABB(
+                new AABB(box1Center - box1Half, box1Center + box1Half),
+                new AABB(box2Center - box2Half, box2Center + box2Half));
+
+            aabbAabbDebug.ClearShapes();
+            aabbAabbDebug.AddBox(box1Half, box1Center, hit ? ColorF4.LightGreen : ColorF4.LightBlue, false);
+            aabbAabbDebug.AddBox(box2Half, box2Center, hit ? ColorF4.LightGreen : ColorF4.Orange, false);
+        });
+
+        SceneNode aabbSphereNode = CreateMathTestCell(rigNode, "AABBWithSphere", new Vector3(-8.0f, 0.0f, 6.0f));
+        var aabbSphereDebug = aabbSphereNode.AddComponent<DebugDrawComponent>()!;
+        aabbSphereNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 center = new(0.0f, 1.15f, 0.0f);
+            Vector3 half = new(1.0f, 0.9f, 0.8f);
+            Vector3 sphereCenter = new(1.6f + MathF.Sin(t * 0.9f) * 1.7f, 1.15f, 0.0f);
+            const float sphereRadius = 0.7f;
+            bool hit = GeoUtil.Intersect.AABBWithSphere(center - half, center + half, sphereCenter, sphereRadius);
+
+            aabbSphereDebug.ClearShapes();
+            aabbSphereDebug.AddBox(half, center, hit ? ColorF4.LightGreen : ColorF4.Gray, false);
+            aabbSphereDebug.AddSphere(sphereRadius, sphereCenter, hit ? ColorF4.LightGreen : ColorF4.Orange, false);
+        });
+
+        SceneNode boxSphereNode = CreateMathTestCell(rigNode, "BoxWithSphere", new Vector3(0.0f, 0.0f, 6.0f));
+        var boxSphereDebug = boxSphereNode.AddComponent<DebugDrawComponent>()!;
+        var boxSphereVisualNode = boxSphereNode.NewChild("BoxVisual");
+        var boxSphereVisualTransform = boxSphereVisualNode.SetTransform<Transform>();
+        var boxSphereVisualDebug = boxSphereVisualNode.AddComponent<DebugDrawComponent>()!;
+        boxSphereNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 center = new(0.0f, 1.15f, 0.0f);
+            Vector3 half = new(1.0f, 0.7f, 0.9f);
+            Quaternion rotation = Quaternion.CreateFromAxisAngle(Vector3.Normalize(new Vector3(1.0f, 1.0f, 0.0f)), XRMath.DegToRad(t * 30.0f));
+            Matrix4x4 worldMatrix = Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(center);
+            Matrix4x4.Invert(worldMatrix, out Matrix4x4 inverseWorld);
+            Vector3 sphereCenter = new(1.7f + MathF.Sin(t * 0.8f) * 1.6f, 1.15f, 0.0f);
+            const float sphereRadius = 0.65f;
+            bool hit = GeoUtil.Intersect.BoxWithSphere(half, inverseWorld, sphereCenter, sphereRadius);
+
+            boxSphereVisualTransform.Translation = center;
+            boxSphereVisualTransform.Rotation = rotation;
+
+            boxSphereDebug.ClearShapes();
+            boxSphereVisualDebug.ClearShapes();
+            boxSphereVisualDebug.AddBox(half, Vector3.Zero, hit ? ColorF4.LightGreen : ColorF4.Gray, false);
+            boxSphereDebug.AddSphere(sphereRadius, sphereCenter, hit ? ColorF4.LightGreen : ColorF4.Orange, false);
+        });
+
+        SceneNode sphereTriangleNode = CreateMathTestCell(rigNode, "SphereWithTriangle", new Vector3(8.0f, 0.0f, 6.0f));
+        var sphereTriangleDebug = sphereTriangleNode.AddComponent<DebugDrawComponent>()!;
+        sphereTriangleNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 a = new(-1.5f, 0.6f, -0.8f);
+            Vector3 b = new(1.5f, 1.8f, -0.2f);
+            Vector3 c = new(0.2f, 0.7f, 1.7f);
+            Vector3 sphereCenter = new(0.0f, 1.0f + MathF.Sin(t * 0.85f) * 1.2f, 0.3f + MathF.Cos(t * 0.55f) * 0.9f);
+            const float sphereRadius = 0.65f;
+            bool hit = GeoUtil.Intersect.SphereWithTriangle(sphereCenter, sphereRadius, a, b, c);
+
+            sphereTriangleDebug.ClearShapes();
+            sphereTriangleDebug.AddLine(a, b, ColorF4.White);
+            sphereTriangleDebug.AddLine(b, c, ColorF4.White);
+            sphereTriangleDebug.AddLine(c, a, ColorF4.White);
+            sphereTriangleDebug.AddSphere(sphereRadius, sphereCenter, hit ? ColorF4.LightGreen : ColorF4.Orange, false);
+        });
+
+        SceneNode sphereSphereNode = CreateMathTestCell(rigNode, "SphereWithSphere", new Vector3(16.0f, 0.0f, 6.0f));
+        var sphereSphereDebug = sphereSphereNode.AddComponent<DebugDrawComponent>()!;
+        sphereSphereNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 centerA = new(-0.9f, 1.15f, 0.0f);
+            Vector3 centerB = new(1.4f + MathF.Sin(t * 0.95f) * 1.7f, 1.15f, 0.0f);
+            const float radiusA = 0.85f;
+            const float radiusB = 0.7f;
+            bool hit = GeoUtil.Intersect.SphereWithSphere(centerA, radiusA, centerB, radiusB);
+
+            sphereSphereDebug.ClearShapes();
+            sphereSphereDebug.AddSphere(radiusA, centerA, hit ? ColorF4.LightGreen : ColorF4.LightBlue, false);
+            sphereSphereDebug.AddSphere(radiusB, centerB, hit ? ColorF4.LightGreen : ColorF4.Orange, false);
+        });
+
+        SceneNode segmentPlaneNode = CreateMathTestCell(rigNode, "SegmentWithPlane", new Vector3(24.0f, 0.0f, 6.0f));
+        var segmentPlaneDebug = segmentPlaneNode.AddComponent<DebugDrawComponent>()!;
+        segmentPlaneNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 planePoint = new(0.0f, 1.2f, 0.0f);
+            Vector3 planeNormal = Vector3.UnitY;
+            float planeDistance = -Vector3.Dot(planePoint, planeNormal);
+            Vector3 start = new(-2.0f, 0.45f + MathF.Sin(t * 0.7f) * 1.3f, -0.8f);
+            Vector3 end = new(2.0f, 2.15f + MathF.Cos(t * 0.9f) * 1.2f, 0.8f);
+            bool hit = GeoUtil.Intersect.SegmentWithPlane(start, end, planeDistance, planeNormal, out Vector3 intersection);
+
+            segmentPlaneDebug.ClearShapes();
+            DrawPlaneIndicator(segmentPlaneDebug, planePoint, planeNormal, 1.8f, ColorF4.LightBlue);
+            segmentPlaneDebug.AddLine(start, end, hit ? ColorF4.LightGreen : ColorF4.LightGray);
+            segmentPlaneDebug.AddPoint(start, ColorF4.LightGold);
+            segmentPlaneDebug.AddPoint(end, ColorF4.LightGold);
+            if (hit)
+                segmentPlaneDebug.AddPoint(intersection, ColorF4.Yellow);
+        });
+
+        void SubLabel(SceneNode node, string text) =>
+            controller.RegisterSubLabel(rigNode, node.GetTransformAs<Transform>(true)!, text, 3.2f);
+
+        SubLabel(rayPointNode, "Ray \u2192 Point");
+        SubLabel(rayRayNode, "Ray \u2192 Ray");
+        SubLabel(rayPlaneNode, "Ray \u2192 Plane");
+        SubLabel(rayAabbNode, "Ray \u2192 AABB");
+        SubLabel(rayBoxNode, "Ray \u2192 Box");
+        SubLabel(aabbAabbNode, "AABB \u2192 AABB");
+        SubLabel(aabbSphereNode, "AABB \u2192 Sphere");
+        SubLabel(boxSphereNode, "Box \u2192 Sphere");
+        SubLabel(sphereTriangleNode, "Sphere \u2192 Triangle");
+        SubLabel(sphereSphereNode, "Sphere \u2192 Sphere");
+        SubLabel(segmentPlaneNode, "Segment \u2192 Plane");
 
         return rigNode;
     }
 
-    private static void AddPhysicsChainTest(SceneNode parentNode, string name, Vector3 position, bool useGpu, float phaseOffset, ColorF4 chainColor, ColorF4 rootColor)
+    private static SceneNode AddGeoUtilPlaneIntersectionRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent controller)
+    {
+        var rigNode = rootNode.NewChild("GeoUtil Plane Intersection Test");
+        rigNode.SetTransform<Transform>();
+
+        SceneNode planePointNode = CreateMathTestCell(rigNode, "PlaneWithPoint", new Vector3(-12.0f, 0.0f, -6.0f));
+        var planePointDebug = planePointNode.AddComponent<DebugDrawComponent>()!;
+        planePointNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Plane plane = new(Vector3.UnitY, -1.1f);
+            Vector3 planePoint = new(0.0f, 1.1f, 0.0f);
+            Vector3 point = new(0.0f, 1.1f + MathF.Sin(t * 0.9f) * 1.7f, 0.0f);
+            GeometryPlaneIntersection intersection = GeoUtil.Intersect.PlaneWithPoint(plane, point);
+
+            planePointDebug.ClearShapes();
+            DrawPlaneIndicator(planePointDebug, planePoint, plane.Normal, 2.0f, ColorF4.LightBlue);
+            planePointDebug.AddPoint(point, PlaneIntersectionColor(intersection));
+        });
+
+        SceneNode planePlaneNode = CreateMathTestCell(rigNode, "PlaneWithPlane", new Vector3(-4.0f, 0.0f, -6.0f));
+        var planePlaneDebug = planePlaneNode.AddComponent<DebugDrawComponent>()!;
+        planePlaneNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Plane planeA = new(Vector3.UnitY, -1.0f);
+            Plane planeB = MathF.Sin(t * 0.8f) >= 0.0f
+                ? new Plane(Vector3.UnitZ, 0.0f)
+                : new Plane(Vector3.UnitY, -2.0f);
+
+            bool intersects = GeoUtil.Intersect.PlaneWithPlane(planeA, planeB);
+            bool lineHit = GeoUtil.Intersect.PlaneWithPlane(planeA, planeB, out Ray line);
+
+            planePlaneDebug.ClearShapes();
+            DrawPlaneIndicator(planePlaneDebug, new Vector3(0.0f, 1.0f, 0.0f), planeA.Normal, 1.8f, ColorF4.LightBlue);
+            DrawPlaneIndicator(planePlaneDebug, intersects ? Vector3.Zero : new Vector3(0.0f, 2.0f, 0.0f), planeB.Normal, 1.8f, ColorF4.Orange);
+            if (lineHit)
+                planePlaneDebug.AddLine(line.StartPoint - line.Direction * 2.5f, line.StartPoint + line.Direction * 2.5f, ColorF4.LightGreen);
+        });
+
+        SceneNode planeTriangleNode = CreateMathTestCell(rigNode, "PlaneWithTriangle", new Vector3(4.0f, 0.0f, -6.0f));
+        var planeTriangleDebug = planeTriangleNode.AddComponent<DebugDrawComponent>()!;
+        planeTriangleNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Plane plane = new(Vector3.UnitY, -1.1f);
+            Vector3 planePoint = new(0.0f, 1.1f, 0.0f);
+            float offset = MathF.Sin(t * 0.75f) * 1.4f;
+            Vector3 a = new(-1.4f, 0.6f + offset, -0.9f);
+            Vector3 b = new(1.3f, 1.6f + offset, -0.2f);
+            Vector3 c = new(0.1f, 0.85f - offset, 1.4f);
+            GeometryPlaneIntersection intersection = GeoUtil.Intersect.PlaneWithTriangle(plane, a, b, c);
+
+            planeTriangleDebug.ClearShapes();
+            DrawPlaneIndicator(planeTriangleDebug, planePoint, plane.Normal, 2.0f, ColorF4.LightBlue);
+            ColorF4 triangleColor = PlaneIntersectionColor(intersection);
+            planeTriangleDebug.AddLine(a, b, triangleColor);
+            planeTriangleDebug.AddLine(b, c, triangleColor);
+            planeTriangleDebug.AddLine(c, a, triangleColor);
+        });
+
+        SceneNode planeBoxNode = CreateMathTestCell(rigNode, "PlaneWithBox", new Vector3(12.0f, 0.0f, -6.0f));
+        var planeBoxDebug = planeBoxNode.AddComponent<DebugDrawComponent>()!;
+        var planeBoxVisualNode = planeBoxNode.NewChild("BoxVisual");
+        var planeBoxVisualTransform = planeBoxVisualNode.SetTransform<Transform>();
+        var planeBoxVisualDebug = planeBoxVisualNode.AddComponent<DebugDrawComponent>()!;
+        planeBoxNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Plane plane = Plane.Normalize(new Plane(Vector3.Normalize(new Vector3(0.0f, 1.0f, 0.25f)), -1.0f));
+            Vector3 planePoint = -plane.Normal * plane.D;
+            Vector3 center = new(0.0f, 1.25f + MathF.Sin(t * 0.7f) * 1.3f, 0.0f);
+            Vector3 half = new(0.95f, 0.7f, 0.85f);
+            Quaternion rotation =
+                Quaternion.CreateFromAxisAngle(Globals.Up, XRMath.DegToRad(t * 28.0f)) *
+                Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(20.0f));
+            Matrix4x4 worldMatrix = Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(center);
+            Matrix4x4.Invert(worldMatrix, out Matrix4x4 inverseWorld);
+            GeometryPlaneIntersection intersection = GeoUtil.Intersect.PlaneWithBox(plane, -half, half, inverseWorld);
+
+            planeBoxVisualTransform.Translation = center;
+            planeBoxVisualTransform.Rotation = rotation;
+
+            planeBoxDebug.ClearShapes();
+            planeBoxVisualDebug.ClearShapes();
+            DrawPlaneIndicator(planeBoxDebug, planePoint, plane.Normal, 2.0f, ColorF4.LightBlue);
+            planeBoxVisualDebug.AddBox(half, Vector3.Zero, PlaneIntersectionColor(intersection), false);
+        });
+
+        SceneNode planeSphereNode = CreateMathTestCell(rigNode, "PlaneWithSphere", new Vector3(-8.0f, 0.0f, 6.0f));
+        var planeSphereDebug = planeSphereNode.AddComponent<DebugDrawComponent>()!;
+        planeSphereNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Plane plane = new(Vector3.UnitY, -1.15f);
+            Vector3 planePoint = new(0.0f, 1.15f, 0.0f);
+            Sphere sphere = new(new Vector3(0.0f, 1.15f + MathF.Sin(t * 0.8f) * 1.7f, 0.0f), 0.7f);
+            GeometryPlaneIntersection intersection = GeoUtil.Intersect.PlaneWithSphere(plane, sphere);
+
+            planeSphereDebug.ClearShapes();
+            DrawPlaneIndicator(planeSphereDebug, planePoint, plane.Normal, 1.9f, ColorF4.LightBlue);
+            planeSphereDebug.AddSphere(sphere.Radius, sphere.Center, PlaneIntersectionColor(intersection), false);
+        });
+
+        SceneNode pointBetweenPlanesNode = CreateMathTestCell(rigNode, "PointBetweenPlanes", new Vector3(0.0f, 0.0f, 6.0f));
+        var pointBetweenPlanesDebug = pointBetweenPlanesNode.AddComponent<DebugDrawComponent>()!;
+        pointBetweenPlanesNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            Plane planeA = new(Vector3.UnitX, 0.0f);
+            Plane planeB = new(Vector3.UnitZ, 0.0f);
+            Vector3 facingPoint = new(1.0f, 1.0f, 1.0f);
+            Vector3 awayPoint = new(-1.0f, 1.0f, -1.0f);
+            Vector3 straddlePoint = new(1.0f, 1.0f, -1.0f);
+
+            bool facing = GeoUtil.Intersect.PointBetweenPlanes(facingPoint, planeA, planeB, EBetweenPlanes.NormalsFacing);
+            bool away = GeoUtil.Intersect.PointBetweenPlanes(awayPoint, planeA, planeB, EBetweenPlanes.NormalsAway);
+            bool straddles = GeoUtil.Intersect.PointBetweenPlanes(straddlePoint, planeA, planeB, EBetweenPlanes.DontCare);
+
+            pointBetweenPlanesDebug.ClearShapes();
+            DrawPlaneIndicator(pointBetweenPlanesDebug, Vector3.Zero, planeA.Normal, 1.8f, ColorF4.LightBlue);
+            DrawPlaneIndicator(pointBetweenPlanesDebug, Vector3.Zero, planeB.Normal, 1.8f, ColorF4.Orange);
+            pointBetweenPlanesDebug.AddPoint(facingPoint, facing ? ColorF4.LightGreen : ColorF4.DarkRed);
+            pointBetweenPlanesDebug.AddPoint(awayPoint, away ? ColorF4.LightGreen : ColorF4.DarkRed);
+            pointBetweenPlanesDebug.AddPoint(straddlePoint, straddles ? ColorF4.Yellow : ColorF4.DarkRed);
+        });
+
+        SceneNode threePlanesNode = CreateMathTestCell(rigNode, "ThreePlanes", new Vector3(8.0f, 0.0f, 6.0f));
+        var threePlanesDebug = threePlanesNode.AddComponent<DebugDrawComponent>()!;
+        threePlanesNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            Plane planeA = new(Vector3.Normalize(new Vector3(1.0f, 1.0f, 0.0f)), 0.0f);
+            Plane planeB = new(Vector3.Normalize(new Vector3(0.0f, 1.0f, 1.0f)), 0.0f);
+            Plane planeC = new(Vector3.Normalize(new Vector3(1.0f, 0.0f, 1.0f)), 0.0f);
+            Vector3 intersection = GeoUtil.Intersect.ThreePlanes(planeA, planeB, planeC);
+
+            threePlanesDebug.ClearShapes();
+            DrawPlaneIndicator(threePlanesDebug, Vector3.Zero, planeA.Normal, 1.5f, ColorF4.LightBlue);
+            DrawPlaneIndicator(threePlanesDebug, Vector3.Zero, planeB.Normal, 1.5f, ColorF4.Orange);
+            DrawPlaneIndicator(threePlanesDebug, Vector3.Zero, planeC.Normal, 1.5f, ColorF4.LightGreen);
+            threePlanesDebug.AddPoint(intersection, ColorF4.Yellow);
+        });
+
+        void SubLabel(SceneNode node, string text) =>
+            controller.RegisterSubLabel(rigNode, node.GetTransformAs<Transform>(true)!, text, 3.2f);
+
+        SubLabel(planePointNode, "Plane \u2192 Point");
+        SubLabel(planePlaneNode, "Plane \u2192 Plane");
+        SubLabel(planeTriangleNode, "Plane \u2192 Triangle");
+        SubLabel(planeBoxNode, "Plane \u2192 Box");
+        SubLabel(planeSphereNode, "Plane \u2192 Sphere");
+        SubLabel(pointBetweenPlanesNode, "Between Planes");
+        SubLabel(threePlanesNode, "Three Planes");
+
+        return rigNode;
+    }
+
+    private static SceneNode AddPhysicsChainComparisonRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent controller)
+    {
+        var rigNode = rootNode.NewChild("Physics Chain Comparison Test");
+        rigNode.SetTransform<Transform>();
+
+        var cpuNode = AddPhysicsChainTest(rigNode, "CPUPhysicsChainTest", new Vector3(-2.75f, 0.0f, 0.0f), useGpu: false, phaseOffset: 0.0f, ColorF4.LightBlue, ColorF4.LightGold);
+        var gpuNode = AddPhysicsChainTest(rigNode, "GPUPhysicsChainTest", new Vector3(2.75f, 0.0f, 0.0f), useGpu: true, phaseOffset: MathF.PI * 0.5f, ColorF4.LightGreen, ColorF4.Orange);
+
+        controller.RegisterSubLabel(rigNode, cpuNode.GetTransformAs<Transform>(true)!, "CPU Solver", 5.5f);
+        controller.RegisterSubLabel(rigNode, gpuNode.GetTransformAs<Transform>(true)!, "GPU Solver", 5.5f);
+
+        return rigNode;
+    }
+
+    private static SceneNode AddPhysicsChainTest(SceneNode parentNode, string name, Vector3 position, bool useGpu, float phaseOffset, ColorF4 chainColor, ColorF4 rootColor)
     {
         var testNode = parentNode.NewChild(name);
         var testTransform = testNode.SetTransform<Transform>();
@@ -618,8 +1061,8 @@ public static partial class EditorUnitTests
         {
             debug.ClearShapes();
 
-            rootTransform.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Parallel).Wait();
-            testTransform.RecalculateMatrices();
+            rootTransform.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: true, childRecalcType: ELoopType.Parallel).Wait();
+            testTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
 
             // DebugDrawComponent positions are in local space of the owning node (testNode).
             // Convert world-space transform positions to testNode local-space to avoid doubling.
@@ -650,6 +1093,8 @@ public static partial class EditorUnitTests
                 debug.AddLine(localPrev, localBone, chainColor);
             }
         });
+
+        return testNode;
     }
 
     private static Transform[] CreatePhysicsChainBones(SceneNode rootNode, int segmentCount, float segmentLength)
@@ -673,9 +1118,12 @@ public static partial class EditorUnitTests
 
     private static Frustum BuildFrustum(TransformBase tfm, float fovY, float aspect, float nearZ, float farZ)
     {
-        Vector3 forward = tfm.WorldForward;
-        Vector3 up = tfm.WorldUp;
-        Vector3 position = tfm.WorldTranslation;
+        tfm.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+
+        Matrix4x4 worldMatrix = tfm.WorldMatrix;
+        Vector3 forward = Vector3.Normalize(Vector3.TransformNormal(Globals.Backward, worldMatrix));
+        Vector3 up = Vector3.Normalize(Vector3.TransformNormal(Globals.Up, worldMatrix));
+        Vector3 position = worldMatrix.Translation;
         return new Frustum(fovY, aspect, nearZ, farZ, forward, up, position);
     }
 
@@ -705,6 +1153,29 @@ public static partial class EditorUnitTests
         Vector3 halfExtents = (max - min) * 0.5f;
         debug.AddBox(halfExtents, center, ColorF4.LightGreen, false);
     }
+
+    private static SceneNode CreateMathTestCell(SceneNode parentNode, string name, Vector3 localTranslation)
+    {
+        var cellNode = parentNode.NewChild(name);
+        var transform = cellNode.SetTransform<Transform>();
+        transform.Translation = localTranslation;
+        return cellNode;
+    }
+
+    private static void DrawPlaneIndicator(DebugDrawComponent debug, Vector3 planePoint, Vector3 planeNormal, float radius, ColorF4 color)
+    {
+        Vector3 normal = Vector3.Normalize(planeNormal);
+        debug.AddCircle(radius, planePoint, normal, color, false);
+        debug.AddLine(planePoint, planePoint + normal * (radius * 0.75f), color);
+    }
+
+    private static ColorF4 PlaneIntersectionColor(GeometryPlaneIntersection intersection)
+        => intersection switch
+        {
+            GeometryPlaneIntersection.Intersecting => ColorF4.Yellow,
+            GeometryPlaneIntersection.Front => ColorF4.LightGreen,
+            _ => ColorF4.DarkRed,
+        };
 
     private static bool TryRaySphere(Vector3 origin, Vector3 dir, Vector3 center, float radius, out float distance)
     {

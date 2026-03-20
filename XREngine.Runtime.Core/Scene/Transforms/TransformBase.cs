@@ -1235,8 +1235,16 @@ namespace XREngine.Scene.Transforms
         {
             lock (_renderMatrixEnqueueLock)
             {
-                if (_hasLastEnqueuedRenderMatrix && MatrixEqual(_lastEnqueuedRenderMatrix, matrix))
+                // Compare against the applied render matrix, not just the last queued one.
+                // The queued update can be dropped or deferred across engine phases; if that
+                // happens we still need to re-enqueue the same world matrix until render state
+                // actually catches up.
+                if (MatrixEqual(RenderMatrix, matrix))
+                {
+                    _lastEnqueuedRenderMatrix = matrix;
+                    _hasLastEnqueuedRenderMatrix = false;
                     return false;
+                }
 
                 _lastEnqueuedRenderMatrix = matrix;
                 _hasLastEnqueuedRenderMatrix = true;
