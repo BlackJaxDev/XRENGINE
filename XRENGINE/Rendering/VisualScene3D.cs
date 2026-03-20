@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Numerics;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Data;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
@@ -58,6 +60,43 @@ namespace XREngine.Scene
 
         public override void DebugRender(XRCamera? camera, bool onlyContainingItems = false)
             => RenderTree.DebugRender(camera?.WorldFrustum(), onlyContainingItems, RenderAABB);
+
+        public void RenderMeshBoundsDebug(XRCamera? camera)
+        {
+            if (camera is null)
+                return;
+
+            var debug = Engine.EditorPreferences.Debug;
+            if (!debug.RenderMesh3DBounds || debug.VisualizeTransparencyModeOverlay || debug.VisualizeTransparencyClassificationOverlay)
+                return;
+
+            Frustum frustum = camera.WorldFrustum();
+            ColorF4 containedColor = Engine.EditorPreferences.Theme.MeshBoundsContainedColor;
+            ColorF4 intersectedColor = Engine.EditorPreferences.Theme.MeshBoundsIntersectedColor;
+            ColorF4 disjointColor = Engine.EditorPreferences.Theme.MeshBoundsDisjointColor;
+
+            foreach (RenderInfo3D renderable in _renderables)
+            {
+                if (!renderable.ShouldRender)
+                    continue;
+
+                if (renderable.Owner is not RenderableMesh)
+                    continue;
+
+                if (renderable is not IOctreeItem octreeItem || octreeItem.WorldCullingVolume is not Box box)
+                    continue;
+
+                EContainment containment = frustum.ContainsBox(box);
+                ColorF4 color = containment switch
+                {
+                    EContainment.Contains => containedColor,
+                    EContainment.Intersects => intersectedColor,
+                    _ => disjointColor,
+                };
+
+                Engine.Rendering.Debug.RenderBox(box.LocalHalfExtents, box.LocalCenter, box.Transform, false, color);
+            }
+        }
 
         private void RenderAABB(Vector3 extents, Vector3 center, Color color)
             => Engine.Rendering.Debug.RenderAABB(extents, center, false, color);

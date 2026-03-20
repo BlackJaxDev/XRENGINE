@@ -718,6 +718,9 @@ namespace XREngine
         private ColorF4 _quadtreeContainedBoundsColor = ColorF4.Yellow;
         private ColorF4 _octreeIntersectedBoundsColor = ColorF4.LightGray;
         private ColorF4 _octreeContainedBoundsColor = ColorF4.Yellow;
+        private ColorF4 _meshBoundsContainedColor = ColorF4.LightGreen;
+        private ColorF4 _meshBoundsIntersectedColor = ColorF4.Yellow;
+        private ColorF4 _meshBoundsDisjointColor = ColorF4.LightRed;
         private ColorF4 _bounds2DColor = ColorF4.LightLavender;
         private ColorF4 _bounds3DColor = ColorF4.LightLavender;
         private ColorF4 _transformPointColor = ColorF4.Orange;
@@ -775,6 +778,33 @@ namespace XREngine
         {
             get => _octreeContainedBoundsColor;
             set => SetField(ref _octreeContainedBoundsColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Mesh Bounds Contained Color")]
+        [Description("The color used to represent fully contained 3D mesh bounds in the editor.")]
+        public ColorF4 MeshBoundsContainedColor
+        {
+            get => _meshBoundsContainedColor;
+            set => SetField(ref _meshBoundsContainedColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Mesh Bounds Intersected Color")]
+        [Description("The color used to represent intersecting 3D mesh bounds in the editor.")]
+        public ColorF4 MeshBoundsIntersectedColor
+        {
+            get => _meshBoundsIntersectedColor;
+            set => SetField(ref _meshBoundsIntersectedColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Mesh Bounds Disjoint Color")]
+        [Description("The color used to represent disjoint 3D mesh bounds in the editor.")]
+        public ColorF4 MeshBoundsDisjointColor
+        {
+            get => _meshBoundsDisjointColor;
+            set => SetField(ref _meshBoundsDisjointColor, value);
         }
 
         [Category("Theme")]
@@ -886,6 +916,9 @@ namespace XREngine
             QuadtreeContainedBoundsColor = source.QuadtreeContainedBoundsColor;
             OctreeIntersectedBoundsColor = source.OctreeIntersectedBoundsColor;
             OctreeContainedBoundsColor = source.OctreeContainedBoundsColor;
+            MeshBoundsContainedColor = source.MeshBoundsContainedColor;
+            MeshBoundsIntersectedColor = source.MeshBoundsIntersectedColor;
+            MeshBoundsDisjointColor = source.MeshBoundsDisjointColor;
             Bounds2DColor = source.Bounds2DColor;
             Bounds3DColor = source.Bounds3DColor;
             TransformPointColor = source.TransformPointColor;
@@ -918,6 +951,15 @@ namespace XREngine
 
             if (overrides.OctreeContainedBoundsColorOverride is { HasOverride: true } ocOverride)
                 OctreeContainedBoundsColor = ocOverride.Value;
+
+            if (overrides.MeshBoundsContainedColorOverride is { HasOverride: true } mbcOverride)
+                MeshBoundsContainedColor = mbcOverride.Value;
+
+            if (overrides.MeshBoundsIntersectedColorOverride is { HasOverride: true } mbiOverride)
+                MeshBoundsIntersectedColor = mbiOverride.Value;
+
+            if (overrides.MeshBoundsDisjointColorOverride is { HasOverride: true } mbdOverride)
+                MeshBoundsDisjointColor = mbdOverride.Value;
 
             if (overrides.Bounds2DColorOverride is { HasOverride: true } b2Override)
                 Bounds2DColor = b2Override.Value;
@@ -1087,11 +1129,55 @@ namespace XREngine
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
         private bool _startExternalProfilerOnStartup = false;
+        private float _codeProfilerDebugOutputMinElapsedMs = 1.0f;
+        private int _codeProfilerStatsThreadIntervalMs = 4;
+        private int _codeProfilerSnapshotIntervalMs = 33;
+        private int _codeProfilerThreadHistoryCapacity = 240;
+        private int _codeProfilerMaxOverflowPerCycle = 2_000;
+        private int _codeProfilerMaxOverflowQueueSize = 50_000;
+        private int _codeProfilerProducerBufferCapacity = 16_384;
+        private int _codeProfilerFpsDropBaselineWindowSamples = 30;
+        private float _codeProfilerFpsDropMinPreviousFps = 10.0f;
+        private float _codeProfilerFpsDropMinDeltaMs = 1.0f;
+        private bool _profilerPanelPaused = false;
+        private bool _profilerPanelSortByTime = false;
+        private float _profilerPanelSmoothingAlpha = 0.0f;
+        private float _profilerPanelUpdateIntervalSeconds = 0.5f;
+        private float _profilerPanelPersistenceSeconds = 5.0f;
+        private int _profilerPanelGraphSampleCount = 120;
+        private float _profilerPanelRootHierarchyMinMs = 0.0f;
+        private float _profilerPanelRootHierarchyMaxMs = 0.0f;
+        private bool _profilerPanelShowCpuTimingRawMsLine = true;
+        private bool _profilerPanelShowCpuTimingSmoothedMsLine = true;
+        private bool _profilerPanelInterpolateCpuTimingGraphs = true;
+        private ProfilerTimingDisplayMode _profilerPanelCpuTimingDisplayMode = ProfilerTimingDisplayMode.Latest;
+        private bool _profilerPanelShowGpuTimingRawMsLine = true;
+        private bool _profilerPanelShowGpuTimingSmoothedMsLine = true;
+        private bool _profilerPanelInterpolateGpuTimingGraphs = true;
+        private ProfilerTimingDisplayMode _profilerPanelGpuTimingDisplayMode = ProfilerTimingDisplayMode.Latest;
+        private bool _profilerPanelShowTree = true;
+        private bool _profilerPanelShowFpsDropSpikes = true;
+        private bool _profilerPanelShowRenderStats = true;
+        private bool _profilerPanelShowGpuPipeline = true;
+        private bool _profilerPanelShowThreadAllocations = true;
+        private bool _profilerPanelShowComponentTimings = true;
+        private bool _profilerPanelShowBvhMetrics = true;
+        private bool _profilerPanelShowJobSystem = true;
+        private bool _profilerPanelShowMainThreadInvokes = true;
         private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.JobSystem;
         private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
         private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
         private bool _forwardDepthPrePassEnabled = true;
         private bool _forwardPrePassSharesGBufferTargets = true;
+
+        private static int NormalizeProfilerProducerBufferCapacity(int value)
+        {
+            int normalized = Math.Clamp(value, 2, 1 << 20);
+            int capacity = 1;
+            while (capacity < normalized)
+                capacity <<= 1;
+            return capacity;
+        }
 
         [Category("Debug")]
         [DisplayName("Render 3D Mesh Bounds")]
@@ -1576,6 +1662,371 @@ namespace XREngine
             set => SetField(ref _startExternalProfilerOnStartup, value);
         }
 
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Debug Output Min Elapsed (ms)")]
+        [Description("Minimum elapsed milliseconds required for profiler debug output/log thresholds.")]
+        public float CodeProfilerDebugOutputMinElapsedMs
+        {
+            get => _codeProfilerDebugOutputMinElapsedMs;
+            set
+            {
+                float clamped = Math.Max(0.0f, value);
+                if (SetField(ref _codeProfilerDebugOutputMinElapsedMs, clamped))
+                    Engine.Profiler.DebugOutputMinElapsedMs = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Stats Thread Interval (ms)")]
+        [Description("Sleep interval in milliseconds for the profiler stats worker when idle.")]
+        public int CodeProfilerStatsThreadIntervalMs
+        {
+            get => _codeProfilerStatsThreadIntervalMs;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 1000);
+                if (SetField(ref _codeProfilerStatsThreadIntervalMs, clamped))
+                    Engine.Profiler.StatsThreadIntervalMs = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Snapshot Interval (ms)")]
+        [Description("How often the code profiler builds a snapshot on the stats thread.")]
+        public int CodeProfilerSnapshotIntervalMs
+        {
+            get => _codeProfilerSnapshotIntervalMs;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 5000);
+                if (SetField(ref _codeProfilerSnapshotIntervalMs, clamped))
+                    Engine.Profiler.SnapshotIntervalMs = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Thread History Capacity")]
+        [Description("Number of per-thread frame samples retained for the CPU profiler history.")]
+        public int CodeProfilerThreadHistoryCapacity
+        {
+            get => _codeProfilerThreadHistoryCapacity;
+            set
+            {
+                int clamped = Math.Clamp(value, 2, 10_000);
+                if (SetField(ref _codeProfilerThreadHistoryCapacity, clamped))
+                    Engine.Profiler.ThreadHistoryCapacity = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Max Overflow Per Cycle")]
+        [Description("Maximum number of overflowed completed-scope events drained per stats-thread cycle.")]
+        public int CodeProfilerMaxOverflowPerCycle
+        {
+            get => _codeProfilerMaxOverflowPerCycle;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 1_000_000);
+                if (SetField(ref _codeProfilerMaxOverflowPerCycle, clamped))
+                    Engine.Profiler.MaxOverflowPerCycle = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Max Overflow Queue Size")]
+        [Description("Maximum queued overflow events before the profiler discards stale overflow data.")]
+        public int CodeProfilerMaxOverflowQueueSize
+        {
+            get => _codeProfilerMaxOverflowQueueSize;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 5_000_000);
+                if (SetField(ref _codeProfilerMaxOverflowQueueSize, clamped))
+                    Engine.Profiler.MaxOverflowQueueSize = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Producer Buffer Capacity")]
+        [Description("Per-thread producer ring-buffer capacity for completed profiler scopes. Rounded up to a power of two.")]
+        public int CodeProfilerProducerBufferCapacity
+        {
+            get => _codeProfilerProducerBufferCapacity;
+            set
+            {
+                int normalized = NormalizeProfilerProducerBufferCapacity(value);
+                if (SetField(ref _codeProfilerProducerBufferCapacity, normalized))
+                    Engine.Profiler.ProducerBufferCapacity = normalized;
+            }
+        }
+
+        [Category("Profiling: FPS Drop Detection")]
+        [DisplayName("Baseline Window Samples")]
+        [Description("How many previous samples the FPS drop detector uses when computing its baseline median.")]
+        public int CodeProfilerFpsDropBaselineWindowSamples
+        {
+            get => _codeProfilerFpsDropBaselineWindowSamples;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 10_000);
+                if (SetField(ref _codeProfilerFpsDropBaselineWindowSamples, clamped))
+                    Engine.Profiler.FpsDropBaselineWindowSamples = clamped;
+            }
+        }
+
+        [Category("Profiling: FPS Drop Detection")]
+        [DisplayName("Min Previous FPS")]
+        [Description("Ignore FPS drop logging unless the prior FPS was at least this value.")]
+        public float CodeProfilerFpsDropMinPreviousFps
+        {
+            get => _codeProfilerFpsDropMinPreviousFps;
+            set
+            {
+                float clamped = Math.Max(0.0f, value);
+                if (SetField(ref _codeProfilerFpsDropMinPreviousFps, clamped))
+                    Engine.Profiler.FpsDropMinPreviousFps = clamped;
+            }
+        }
+
+        [Category("Profiling: FPS Drop Detection")]
+        [DisplayName("Min Delta (ms)")]
+        [Description("Minimum frame-time delta in milliseconds before the FPS drop detector records a spike.")]
+        public float CodeProfilerFpsDropMinDeltaMs
+        {
+            get => _codeProfilerFpsDropMinDeltaMs;
+            set
+            {
+                float clamped = Math.Max(0.0f, value);
+                if (SetField(ref _codeProfilerFpsDropMinDeltaMs, clamped))
+                    Engine.Profiler.FpsDropMinDeltaMs = clamped;
+            }
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Paused")]
+        [Description("Pause refreshes in the in-editor profiler panel.")]
+        public bool ProfilerPanelPaused
+        {
+            get => _profilerPanelPaused;
+            set => SetField(ref _profilerPanelPaused, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Sort By Time")]
+        [Description("Sort CPU hierarchy rows by elapsed time in the in-editor profiler panel.")]
+        public bool ProfilerPanelSortByTime
+        {
+            get => _profilerPanelSortByTime;
+            set => SetField(ref _profilerPanelSortByTime, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Smoothing Alpha")]
+        [Description("Display smoothing factor for profiler timing graphs.")]
+        public float ProfilerPanelSmoothingAlpha
+        {
+            get => _profilerPanelSmoothingAlpha;
+            set => SetField(ref _profilerPanelSmoothingAlpha, Math.Clamp(value, 0.0f, 0.95f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Update Interval (s)")]
+        [Description("Refresh cadence for profiler panel aggregation. Zero refreshes every render.")]
+        public float ProfilerPanelUpdateIntervalSeconds
+        {
+            get => _profilerPanelUpdateIntervalSeconds;
+            set => SetField(ref _profilerPanelUpdateIntervalSeconds, Math.Clamp(value, 0.0f, 2.0f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Persistence (s)")]
+        [Description("How long root-method history stays visible in the profiler panel.")]
+        public float ProfilerPanelPersistenceSeconds
+        {
+            get => _profilerPanelPersistenceSeconds;
+            set => SetField(ref _profilerPanelPersistenceSeconds, Math.Clamp(value, 0.5f, 10.0f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Graph Samples")]
+        [Description("Number of samples shown in profiler graphs.")]
+        public int ProfilerPanelGraphSampleCount
+        {
+            get => _profilerPanelGraphSampleCount;
+            set => SetField(ref _profilerPanelGraphSampleCount, Math.Clamp(value, 30, 720));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Min Root Hierarchy (ms)")]
+        [Description("Minimum root timing threshold shown in the CPU hierarchy.")]
+        public float ProfilerPanelRootHierarchyMinMs
+        {
+            get => _profilerPanelRootHierarchyMinMs;
+            set => SetField(ref _profilerPanelRootHierarchyMinMs, Math.Clamp(value, 0.0f, 1000.0f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Max Root Hierarchy (ms)")]
+        [Description("Maximum root timing threshold shown in the CPU hierarchy. Zero disables the clamp.")]
+        public float ProfilerPanelRootHierarchyMaxMs
+        {
+            get => _profilerPanelRootHierarchyMaxMs;
+            set => SetField(ref _profilerPanelRootHierarchyMaxMs, Math.Clamp(value, 0.0f, 1000.0f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Show CPU Raw (ms)")]
+        [Description("Show raw CPU timing lines in profiler graphs.")]
+        public bool ProfilerPanelShowCpuTimingRawMsLine
+        {
+            get => _profilerPanelShowCpuTimingRawMsLine;
+            set => SetField(ref _profilerPanelShowCpuTimingRawMsLine, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Show CPU Smoothed (ms)")]
+        [Description("Show display-smoothed CPU timing lines in profiler graphs.")]
+        public bool ProfilerPanelShowCpuTimingSmoothedMsLine
+        {
+            get => _profilerPanelShowCpuTimingSmoothedMsLine;
+            set => SetField(ref _profilerPanelShowCpuTimingSmoothedMsLine, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Interpolate CPU Graphs")]
+        [Description("Interpolate CPU timing graphs between samples.")]
+        public bool ProfilerPanelInterpolateCpuTimingGraphs
+        {
+            get => _profilerPanelInterpolateCpuTimingGraphs;
+            set => SetField(ref _profilerPanelInterpolateCpuTimingGraphs, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("CPU Display Mode")]
+        [Description("CPU timing graph display mode.")]
+        public ProfilerTimingDisplayMode ProfilerPanelCpuTimingDisplayMode
+        {
+            get => _profilerPanelCpuTimingDisplayMode;
+            set => SetField(ref _profilerPanelCpuTimingDisplayMode, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Show GPU Raw (ms)")]
+        [Description("Show raw GPU timing lines in profiler graphs.")]
+        public bool ProfilerPanelShowGpuTimingRawMsLine
+        {
+            get => _profilerPanelShowGpuTimingRawMsLine;
+            set => SetField(ref _profilerPanelShowGpuTimingRawMsLine, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Show GPU Smoothed (ms)")]
+        [Description("Show display-smoothed GPU timing lines in profiler graphs.")]
+        public bool ProfilerPanelShowGpuTimingSmoothedMsLine
+        {
+            get => _profilerPanelShowGpuTimingSmoothedMsLine;
+            set => SetField(ref _profilerPanelShowGpuTimingSmoothedMsLine, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Interpolate GPU Graphs")]
+        [Description("Interpolate GPU timing graphs between samples.")]
+        public bool ProfilerPanelInterpolateGpuTimingGraphs
+        {
+            get => _profilerPanelInterpolateGpuTimingGraphs;
+            set => SetField(ref _profilerPanelInterpolateGpuTimingGraphs, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("GPU Display Mode")]
+        [Description("GPU timing graph display mode.")]
+        public ProfilerTimingDisplayMode ProfilerPanelGpuTimingDisplayMode
+        {
+            get => _profilerPanelGpuTimingDisplayMode;
+            set => SetField(ref _profilerPanelGpuTimingDisplayMode, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Tree")]
+        [Description("Show the CPU timings panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowTree
+        {
+            get => _profilerPanelShowTree;
+            set => SetField(ref _profilerPanelShowTree, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show FPS Drop Spikes")]
+        [Description("Show the FPS drop spikes panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowFpsDropSpikes
+        {
+            get => _profilerPanelShowFpsDropSpikes;
+            set => SetField(ref _profilerPanelShowFpsDropSpikes, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Render Stats")]
+        [Description("Show the render statistics panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowRenderStats
+        {
+            get => _profilerPanelShowRenderStats;
+            set => SetField(ref _profilerPanelShowRenderStats, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show GPU Pipeline")]
+        [Description("Show the GPU timings panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowGpuPipeline
+        {
+            get => _profilerPanelShowGpuPipeline;
+            set => SetField(ref _profilerPanelShowGpuPipeline, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Thread Allocations")]
+        [Description("Show the thread allocations panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowThreadAllocations
+        {
+            get => _profilerPanelShowThreadAllocations;
+            set => SetField(ref _profilerPanelShowThreadAllocations, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Component Timings")]
+        [Description("Show the component timings panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowComponentTimings
+        {
+            get => _profilerPanelShowComponentTimings;
+            set => SetField(ref _profilerPanelShowComponentTimings, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show BVH Metrics")]
+        [Description("Show the BVH metrics panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowBvhMetrics
+        {
+            get => _profilerPanelShowBvhMetrics;
+            set => SetField(ref _profilerPanelShowBvhMetrics, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Job System")]
+        [Description("Show the job-system panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowJobSystem
+        {
+            get => _profilerPanelShowJobSystem;
+            set => SetField(ref _profilerPanelShowJobSystem, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Main Thread Invokes")]
+        [Description("Show the main-thread invokes panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowMainThreadInvokes
+        {
+            get => _profilerPanelShowMainThreadInvokes;
+            set => SetField(ref _profilerPanelShowMainThreadInvokes, value);
+        }
+
         public void CopyFrom(EditorDebugOptions source)
         {
             if (source is null)
@@ -1612,6 +2063,41 @@ namespace XREngine
             EnableUILayoutDebugLogging = source.EnableUILayoutDebugLogging;
             EnableProfilerUdpSending = source.EnableProfilerUdpSending;
             StartExternalProfilerOnStartup = source.StartExternalProfilerOnStartup;
+            CodeProfilerDebugOutputMinElapsedMs = source.CodeProfilerDebugOutputMinElapsedMs;
+            CodeProfilerStatsThreadIntervalMs = source.CodeProfilerStatsThreadIntervalMs;
+            CodeProfilerSnapshotIntervalMs = source.CodeProfilerSnapshotIntervalMs;
+            CodeProfilerThreadHistoryCapacity = source.CodeProfilerThreadHistoryCapacity;
+            CodeProfilerMaxOverflowPerCycle = source.CodeProfilerMaxOverflowPerCycle;
+            CodeProfilerMaxOverflowQueueSize = source.CodeProfilerMaxOverflowQueueSize;
+            CodeProfilerProducerBufferCapacity = source.CodeProfilerProducerBufferCapacity;
+            CodeProfilerFpsDropBaselineWindowSamples = source.CodeProfilerFpsDropBaselineWindowSamples;
+            CodeProfilerFpsDropMinPreviousFps = source.CodeProfilerFpsDropMinPreviousFps;
+            CodeProfilerFpsDropMinDeltaMs = source.CodeProfilerFpsDropMinDeltaMs;
+            ProfilerPanelPaused = source.ProfilerPanelPaused;
+            ProfilerPanelSortByTime = source.ProfilerPanelSortByTime;
+            ProfilerPanelSmoothingAlpha = source.ProfilerPanelSmoothingAlpha;
+            ProfilerPanelUpdateIntervalSeconds = source.ProfilerPanelUpdateIntervalSeconds;
+            ProfilerPanelPersistenceSeconds = source.ProfilerPanelPersistenceSeconds;
+            ProfilerPanelGraphSampleCount = source.ProfilerPanelGraphSampleCount;
+            ProfilerPanelRootHierarchyMinMs = source.ProfilerPanelRootHierarchyMinMs;
+            ProfilerPanelRootHierarchyMaxMs = source.ProfilerPanelRootHierarchyMaxMs;
+            ProfilerPanelShowCpuTimingRawMsLine = source.ProfilerPanelShowCpuTimingRawMsLine;
+            ProfilerPanelShowCpuTimingSmoothedMsLine = source.ProfilerPanelShowCpuTimingSmoothedMsLine;
+            ProfilerPanelInterpolateCpuTimingGraphs = source.ProfilerPanelInterpolateCpuTimingGraphs;
+            ProfilerPanelCpuTimingDisplayMode = source.ProfilerPanelCpuTimingDisplayMode;
+            ProfilerPanelShowGpuTimingRawMsLine = source.ProfilerPanelShowGpuTimingRawMsLine;
+            ProfilerPanelShowGpuTimingSmoothedMsLine = source.ProfilerPanelShowGpuTimingSmoothedMsLine;
+            ProfilerPanelInterpolateGpuTimingGraphs = source.ProfilerPanelInterpolateGpuTimingGraphs;
+            ProfilerPanelGpuTimingDisplayMode = source.ProfilerPanelGpuTimingDisplayMode;
+            ProfilerPanelShowTree = source.ProfilerPanelShowTree;
+            ProfilerPanelShowFpsDropSpikes = source.ProfilerPanelShowFpsDropSpikes;
+            ProfilerPanelShowRenderStats = source.ProfilerPanelShowRenderStats;
+            ProfilerPanelShowGpuPipeline = source.ProfilerPanelShowGpuPipeline;
+            ProfilerPanelShowThreadAllocations = source.ProfilerPanelShowThreadAllocations;
+            ProfilerPanelShowComponentTimings = source.ProfilerPanelShowComponentTimings;
+            ProfilerPanelShowBvhMetrics = source.ProfilerPanelShowBvhMetrics;
+            ProfilerPanelShowJobSystem = source.ProfilerPanelShowJobSystem;
+            ProfilerPanelShowMainThreadInvokes = source.ProfilerPanelShowMainThreadInvokes;
             DebugShapePopulationMode = source.DebugShapePopulationMode;
             DebugVisualizerPopulationMode = source.DebugVisualizerPopulationMode;
             DebugPrimitiveBufferFormat = source.DebugPrimitiveBufferFormat;
@@ -1686,6 +2172,76 @@ namespace XREngine
                 EnableProfilerUdpSending = profilerUdp.Value;
             if (overrides.StartExternalProfilerOnStartupOverride is { HasOverride: true } startExternalProfiler)
                 StartExternalProfilerOnStartup = startExternalProfiler.Value;
+            if (overrides.CodeProfilerDebugOutputMinElapsedMsOverride is { HasOverride: true } profilerDebugOutput)
+                CodeProfilerDebugOutputMinElapsedMs = profilerDebugOutput.Value;
+            if (overrides.CodeProfilerStatsThreadIntervalMsOverride is { HasOverride: true } profilerStatsInterval)
+                CodeProfilerStatsThreadIntervalMs = profilerStatsInterval.Value;
+            if (overrides.CodeProfilerSnapshotIntervalMsOverride is { HasOverride: true } profilerSnapshotInterval)
+                CodeProfilerSnapshotIntervalMs = profilerSnapshotInterval.Value;
+            if (overrides.CodeProfilerThreadHistoryCapacityOverride is { HasOverride: true } profilerThreadHistory)
+                CodeProfilerThreadHistoryCapacity = profilerThreadHistory.Value;
+            if (overrides.CodeProfilerMaxOverflowPerCycleOverride is { HasOverride: true } profilerOverflowPerCycle)
+                CodeProfilerMaxOverflowPerCycle = profilerOverflowPerCycle.Value;
+            if (overrides.CodeProfilerMaxOverflowQueueSizeOverride is { HasOverride: true } profilerOverflowQueue)
+                CodeProfilerMaxOverflowQueueSize = profilerOverflowQueue.Value;
+            if (overrides.CodeProfilerProducerBufferCapacityOverride is { HasOverride: true } profilerProducerCapacity)
+                CodeProfilerProducerBufferCapacity = profilerProducerCapacity.Value;
+            if (overrides.CodeProfilerFpsDropBaselineWindowSamplesOverride is { HasOverride: true } profilerFpsBaseline)
+                CodeProfilerFpsDropBaselineWindowSamples = profilerFpsBaseline.Value;
+            if (overrides.CodeProfilerFpsDropMinPreviousFpsOverride is { HasOverride: true } profilerFpsPrevious)
+                CodeProfilerFpsDropMinPreviousFps = profilerFpsPrevious.Value;
+            if (overrides.CodeProfilerFpsDropMinDeltaMsOverride is { HasOverride: true } profilerFpsDelta)
+                CodeProfilerFpsDropMinDeltaMs = profilerFpsDelta.Value;
+            if (overrides.ProfilerPanelPausedOverride is { HasOverride: true } profilerPaused)
+                ProfilerPanelPaused = profilerPaused.Value;
+            if (overrides.ProfilerPanelSortByTimeOverride is { HasOverride: true } profilerSortByTime)
+                ProfilerPanelSortByTime = profilerSortByTime.Value;
+            if (overrides.ProfilerPanelSmoothingAlphaOverride is { HasOverride: true } profilerSmoothing)
+                ProfilerPanelSmoothingAlpha = profilerSmoothing.Value;
+            if (overrides.ProfilerPanelUpdateIntervalSecondsOverride is { HasOverride: true } profilerUpdateInterval)
+                ProfilerPanelUpdateIntervalSeconds = profilerUpdateInterval.Value;
+            if (overrides.ProfilerPanelPersistenceSecondsOverride is { HasOverride: true } profilerPersistence)
+                ProfilerPanelPersistenceSeconds = profilerPersistence.Value;
+            if (overrides.ProfilerPanelGraphSampleCountOverride is { HasOverride: true } profilerGraphSamples)
+                ProfilerPanelGraphSampleCount = profilerGraphSamples.Value;
+            if (overrides.ProfilerPanelRootHierarchyMinMsOverride is { HasOverride: true } profilerRootMin)
+                ProfilerPanelRootHierarchyMinMs = profilerRootMin.Value;
+            if (overrides.ProfilerPanelRootHierarchyMaxMsOverride is { HasOverride: true } profilerRootMax)
+                ProfilerPanelRootHierarchyMaxMs = profilerRootMax.Value;
+            if (overrides.ProfilerPanelShowCpuTimingRawMsLineOverride is { HasOverride: true } profilerCpuRaw)
+                ProfilerPanelShowCpuTimingRawMsLine = profilerCpuRaw.Value;
+            if (overrides.ProfilerPanelShowCpuTimingSmoothedMsLineOverride is { HasOverride: true } profilerCpuDisplay)
+                ProfilerPanelShowCpuTimingSmoothedMsLine = profilerCpuDisplay.Value;
+            if (overrides.ProfilerPanelInterpolateCpuTimingGraphsOverride is { HasOverride: true } profilerCpuInterpolate)
+                ProfilerPanelInterpolateCpuTimingGraphs = profilerCpuInterpolate.Value;
+            if (overrides.ProfilerPanelCpuTimingDisplayModeOverride is { HasOverride: true } profilerCpuMode)
+                ProfilerPanelCpuTimingDisplayMode = profilerCpuMode.Value;
+            if (overrides.ProfilerPanelShowGpuTimingRawMsLineOverride is { HasOverride: true } profilerGpuRaw)
+                ProfilerPanelShowGpuTimingRawMsLine = profilerGpuRaw.Value;
+            if (overrides.ProfilerPanelShowGpuTimingSmoothedMsLineOverride is { HasOverride: true } profilerGpuDisplay)
+                ProfilerPanelShowGpuTimingSmoothedMsLine = profilerGpuDisplay.Value;
+            if (overrides.ProfilerPanelInterpolateGpuTimingGraphsOverride is { HasOverride: true } profilerGpuInterpolate)
+                ProfilerPanelInterpolateGpuTimingGraphs = profilerGpuInterpolate.Value;
+            if (overrides.ProfilerPanelGpuTimingDisplayModeOverride is { HasOverride: true } profilerGpuMode)
+                ProfilerPanelGpuTimingDisplayMode = profilerGpuMode.Value;
+            if (overrides.ProfilerPanelShowTreeOverride is { HasOverride: true } profilerShowTree)
+                ProfilerPanelShowTree = profilerShowTree.Value;
+            if (overrides.ProfilerPanelShowFpsDropSpikesOverride is { HasOverride: true } profilerShowSpikes)
+                ProfilerPanelShowFpsDropSpikes = profilerShowSpikes.Value;
+            if (overrides.ProfilerPanelShowRenderStatsOverride is { HasOverride: true } profilerShowRender)
+                ProfilerPanelShowRenderStats = profilerShowRender.Value;
+            if (overrides.ProfilerPanelShowGpuPipelineOverride is { HasOverride: true } profilerShowGpu)
+                ProfilerPanelShowGpuPipeline = profilerShowGpu.Value;
+            if (overrides.ProfilerPanelShowThreadAllocationsOverride is { HasOverride: true } profilerShowAllocs)
+                ProfilerPanelShowThreadAllocations = profilerShowAllocs.Value;
+            if (overrides.ProfilerPanelShowComponentTimingsOverride is { HasOverride: true } profilerShowComponents)
+                ProfilerPanelShowComponentTimings = profilerShowComponents.Value;
+            if (overrides.ProfilerPanelShowBvhMetricsOverride is { HasOverride: true } profilerShowBvh)
+                ProfilerPanelShowBvhMetrics = profilerShowBvh.Value;
+            if (overrides.ProfilerPanelShowJobSystemOverride is { HasOverride: true } profilerShowJobs)
+                ProfilerPanelShowJobSystem = profilerShowJobs.Value;
+            if (overrides.ProfilerPanelShowMainThreadInvokesOverride is { HasOverride: true } profilerShowInvokes)
+                ProfilerPanelShowMainThreadInvokes = profilerShowInvokes.Value;
             if (overrides.DebugShapePopulationModeOverride is { HasOverride: true } shapePop)
                 DebugShapePopulationMode = shapePop.Value;
             if (overrides.DebugVisualizerPopulationModeOverride is { HasOverride: true } vizPop)

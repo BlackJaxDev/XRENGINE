@@ -21,6 +21,7 @@ public sealed class GPUSoftbodyDispatcher
     private const string CollideShaderPath = "Compute/Softbody/CollideCapsules.comp";
     private const string SolveShaderPath = "Compute/Softbody/SolveDistance.comp";
     private const string FinalizeShaderPath = "Compute/Softbody/Finalize.comp";
+    private const string ApplyClusterShaderPath = "Compute/Softbody/ApplyClusterShapeMatching.comp";
 
     private static GPUSoftbodyDispatcher? _instance;
     public static GPUSoftbodyDispatcher Instance => _instance ??= new GPUSoftbodyDispatcher();
@@ -32,6 +33,7 @@ public sealed class GPUSoftbodyDispatcher
     private readonly List<GPUSoftbodyDistanceConstraintData> _allConstraints = [];
     private readonly List<GPUSoftbodyClusterData> _allClusters = [];
     private readonly List<GPUSoftbodyClusterMemberData> _allClusterMembers = [];
+    private readonly List<GPUSoftbodyClusterTransformData> _allClusterTransforms = [];
     private readonly List<GPUSoftbodyColliderData> _allColliders = [];
     private readonly List<GPUSoftbodyRenderBindingData> _allRenderBindings = [];
     private readonly List<GPUSoftbodyDispatchData> _allDispatches = [];
@@ -40,16 +42,19 @@ public sealed class GPUSoftbodyDispatcher
     private XRShader? _collideShader;
     private XRShader? _solveShader;
     private XRShader? _finalizeShader;
+    private XRShader? _applyClusterShader;
     private XRRenderProgram? _integrateProgram;
     private XRRenderProgram? _collideProgram;
     private XRRenderProgram? _solveProgram;
     private XRRenderProgram? _finalizeProgram;
+    private XRRenderProgram? _applyClusterProgram;
 
     private XRDataBuffer? _particlesBuffer;
     private XRDataBuffer? _solveScratchParticlesBuffer;
     private XRDataBuffer? _constraintsBuffer;
     private XRDataBuffer? _clustersBuffer;
     private XRDataBuffer? _clusterMembersBuffer;
+    private XRDataBuffer? _clusterTransformsBuffer;
     private XRDataBuffer? _collidersBuffer;
     private XRDataBuffer? _renderBindingsBuffer;
     private XRDataBuffer? _dispatchParamsBuffer;
@@ -65,6 +70,8 @@ public sealed class GPUSoftbodyDispatcher
     public int TotalColliderCount { get; private set; }
     public int LastInvalidParticleCount { get; private set; }
     public int LastInvalidConstraintCount { get; private set; }
+    public int LastInvalidClusterCount { get; private set; }
+    public int LastInvalidClusterMemberCount { get; private set; }
     public int LastInvalidColliderCount { get; private set; }
     public int LastDispatchedInstanceCount { get; private set; }
     public int LastDispatchedSubsteps { get; private set; }
@@ -83,6 +90,27 @@ public sealed class GPUSoftbodyDispatcher
 
     public bool IsRegistered(GPUSoftbodyComponent component)
         => _registeredComponents.ContainsKey(component.GetHashCode());
+
+    public bool TryGetClusterTransformOutput(GPUSoftbodyComponent component, out XRDataBuffer? buffer, out int transformOffset, out int transformCount)
+    {
+        buffer = null;
+        transformOffset = 0;
+        transformCount = 0;
+
+        if (!_registeredComponents.TryGetValue(component.GetHashCode(), out GPUSoftbodyRequest? request))
+            return false;
+
+        lock (request.SyncRoot)
+        {
+            if (_clusterTransformsBuffer is null || request.ClusterTransformCount <= 0)
+                return false;
+
+            buffer = _clusterTransformsBuffer;
+            transformOffset = request.ClusterTransformOffset;
+            transformCount = request.ClusterTransformCount;
+            return true;
+        }
+    }
 
     public void SubmitData(
         GPUSoftbodyComponent component,
@@ -161,6 +189,12 @@ public sealed class GPUSoftbodyDispatcher
                     SwapParticleBuffers();
                 }
             }
+
+            if (TotalClusterCount > 0)
+            {
+                DispatchFinalizePass();
+                DispatchApplyClusterShapeMatchingPass(currentSubstep);
+            }
         }
 
         if (TotalClusterCount > 0)
@@ -204,6 +238,7 @@ public sealed class GPUSoftbodyDispatcher
         _constraintsBuffer?.Dispose();
         _clustersBuffer?.Dispose();
         _clusterMembersBuffer?.Dispose();
+        _clusterTransformsBuffer?.Dispose();
         _collidersBuffer?.Dispose();
         _renderBindingsBuffer?.Dispose();
         _dispatchParamsBuffer?.Dispose();
@@ -212,6 +247,7 @@ public sealed class GPUSoftbodyDispatcher
         _collideProgram?.Destroy();
         _solveProgram?.Destroy();
         _finalizeProgram?.Destroy();
+        _applyClusterProgram?.Destroy();
 
         _registeredComponents.Clear();
         _initialized = false;
@@ -226,11 +262,13 @@ public sealed class GPUSoftbodyDispatcher
         _collideShader = ShaderHelper.LoadEngineShader(CollideShaderPath, EShaderType.Compute);
         _solveShader = ShaderHelper.LoadEngineShader(SolveShaderPath, EShaderType.Compute);
         _finalizeShader = ShaderHelper.LoadEngineShader(FinalizeShaderPath, EShaderType.Compute);
+        _applyClusterShader = ShaderHelper.LoadEngineShader(ApplyClusterShaderPath, EShaderType.Compute);
 
         _integrateProgram = new XRRenderProgram(true, false, _integrateShader);
         _collideProgram = new XRRenderProgram(true, false, _collideShader);
         _solveProgram = new XRRenderProgram(true, false, _solveShader);
         _finalizeProgram = new XRRenderProgram(true, false, _finalizeShader);
+        _applyClusterProgram = new XRRenderProgram(true, false, _applyClusterShader);
 
         _initialized = true;
     }
@@ -239,12 +277,15 @@ public sealed class GPUSoftbodyDispatcher
     {
         int invalidParticles = 0;
         int invalidConstraints = 0;
+        int invalidClusters = 0;
+        int invalidClusterMembers = 0;
         int invalidColliders = 0;
 
         _allParticles.Clear();
         _allConstraints.Clear();
         _allClusters.Clear();
         _allClusterMembers.Clear();
+        _allClusterTransforms.Clear();
         _allColliders.Clear();
         _allRenderBindings.Clear();
         _allDispatches.Clear();
@@ -261,9 +302,11 @@ public sealed class GPUSoftbodyDispatcher
             GPUSoftbodyRequest request = _activeRequests[instanceIndex];
             lock (request.SyncRoot)
             {
+                int clusterTransformOffset = _allClusters.Count;
+
                 foreach (var particle in request.Particles)
                 {
-                    GPUSoftbodyParticleData adjusted = SanitizeParticle(particle, instanceIndex, ref invalidParticles);
+                    GPUSoftbodyParticleData adjusted = SanitizeParticle(particle, instanceIndex, clusterMemberOffset, request.ClusterMembers.Count, ref invalidParticles);
                     _allParticles.Add(adjusted);
                 }
 
@@ -275,19 +318,23 @@ public sealed class GPUSoftbodyDispatcher
 
                 foreach (var cluster in request.Clusters)
                 {
-                    var adjusted = cluster;
-                    adjusted.MemberStart += clusterMemberOffset;
-                    adjusted.InstanceIndex = instanceIndex;
+                    GPUSoftbodyClusterData adjusted = SanitizeCluster(cluster, instanceIndex, clusterMemberOffset, request.ClusterMembers.Count, ref invalidClusters);
                     _allClusters.Add(adjusted);
+                    _allClusterTransforms.Add(new GPUSoftbodyClusterTransformData
+                    {
+                        Position = adjusted.CurrentCenter,
+                        Rotation = Quaternion.Identity,
+                    });
                 }
 
                 foreach (var member in request.ClusterMembers)
                 {
-                    var adjusted = member;
-                    adjusted.ClusterIndex += clusterOffset;
-                    adjusted.ParticleIndex += particleOffset;
+                    GPUSoftbodyClusterMemberData adjusted = SanitizeClusterMember(member, request.Clusters.Count, request.Particles.Count, clusterOffset, particleOffset, ref invalidClusterMembers);
                     _allClusterMembers.Add(adjusted);
                 }
+
+                request.ClusterTransformOffset = clusterTransformOffset;
+                request.ClusterTransformCount = _allClusters.Count - clusterTransformOffset;
 
                 foreach (var collider in request.Colliders)
                 {
@@ -323,6 +370,8 @@ public sealed class GPUSoftbodyDispatcher
 
         LastInvalidParticleCount = invalidParticles;
         LastInvalidConstraintCount = invalidConstraints;
+        LastInvalidClusterCount = invalidClusters;
+        LastInvalidClusterMemberCount = invalidClusterMembers;
         LastInvalidColliderCount = invalidColliders;
 
         TotalParticleCount = _allParticles.Count;
@@ -335,6 +384,7 @@ public sealed class GPUSoftbodyDispatcher
         EnsureBufferCapacity<GPUSoftbodyDistanceConstraintData>(ref _constraintsBuffer, "SoftbodyConstraints", (uint)Math.Max(_allConstraints.Count, 1));
         EnsureBufferCapacity<GPUSoftbodyClusterData>(ref _clustersBuffer, "SoftbodyClusters", (uint)Math.Max(_allClusters.Count, 1));
         EnsureBufferCapacity<GPUSoftbodyClusterMemberData>(ref _clusterMembersBuffer, "SoftbodyClusterMembers", (uint)Math.Max(_allClusterMembers.Count, 1));
+        EnsureBufferCapacity<GPUSoftbodyClusterTransformData>(ref _clusterTransformsBuffer, "SoftbodyClusterTransforms", (uint)Math.Max(_allClusterTransforms.Count, 1));
         EnsureBufferCapacity<GPUSoftbodyColliderData>(ref _collidersBuffer, "SoftbodyColliders", (uint)Math.Max(_allColliders.Count, 1));
         EnsureBufferCapacity<GPUSoftbodyRenderBindingData>(ref _renderBindingsBuffer, "SoftbodyRenderBindings", (uint)Math.Max(_allRenderBindings.Count, 1));
         EnsureBufferCapacity<GPUSoftbodyDispatchData>(ref _dispatchParamsBuffer, "SoftbodyDispatchParams", (uint)Math.Max(_allDispatches.Count, 1));
@@ -343,6 +393,7 @@ public sealed class GPUSoftbodyDispatcher
         UploadBufferData(_constraintsBuffer, _allConstraints);
         UploadBufferData(_clustersBuffer, _allClusters);
         UploadBufferData(_clusterMembersBuffer, _allClusterMembers);
+        UploadBufferData(_clusterTransformsBuffer, _allClusterTransforms);
         UploadBufferData(_collidersBuffer, _allColliders);
         UploadBufferData(_renderBindingsBuffer, _allRenderBindings);
         UploadBufferData(_dispatchParamsBuffer, _allDispatches);
@@ -407,12 +458,25 @@ public sealed class GPUSoftbodyDispatcher
 
     private void DispatchFinalizePass()
     {
-        if (_finalizeProgram is null || _clustersBuffer is null || _clusterMembersBuffer is null || _dispatchParamsBuffer is null || TotalClusterCount == 0)
+        if (_finalizeProgram is null || _clustersBuffer is null || _clusterMembersBuffer is null || _clusterTransformsBuffer is null || TotalClusterCount == 0)
             return;
 
         BindSharedBuffers(_finalizeProgram);
+        _finalizeProgram.BindBuffer(_clusterTransformsBuffer, 7u);
         _finalizeProgram.Uniform("clusterCount", TotalClusterCount);
         _finalizeProgram.DispatchCompute(ComputeGroups((uint)TotalClusterCount), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+    }
+
+    private void DispatchApplyClusterShapeMatchingPass(int currentSubstep)
+    {
+        if (_applyClusterProgram is null || _particlesBuffer is null || _clustersBuffer is null || _clusterMembersBuffer is null || _dispatchParamsBuffer is null || _clusterTransformsBuffer is null || TotalParticleCount == 0)
+            return;
+
+        BindSharedBuffers(_applyClusterProgram);
+        _applyClusterProgram.BindBuffer(_clusterTransformsBuffer, 7u);
+        _applyClusterProgram.Uniform("particleCount", TotalParticleCount);
+        _applyClusterProgram.Uniform("currentSubstep", currentSubstep);
+        _applyClusterProgram.DispatchCompute(ComputeGroups((uint)TotalParticleCount), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
     }
 
     private void BindSharedBuffers(XRRenderProgram program)
@@ -459,7 +523,7 @@ public sealed class GPUSoftbodyDispatcher
     private static uint ComputeGroups(uint count)
         => Math.Max(1u, (count + LocalSizeX - 1u) / LocalSizeX);
 
-    private static GPUSoftbodyParticleData SanitizeParticle(GPUSoftbodyParticleData particle, int instanceIndex, ref int invalidCount)
+    private static GPUSoftbodyParticleData SanitizeParticle(GPUSoftbodyParticleData particle, int instanceIndex, int clusterMemberOffset, int localClusterMemberCount, ref int invalidCount)
     {
         GPUSoftbodyParticleData adjusted = particle;
         if (!IsFinite(adjusted.RestPosition))
@@ -487,9 +551,103 @@ public sealed class GPUSoftbodyDispatcher
             adjusted.Radius = float.IsFinite(adjusted.Radius) ? Math.Max(0.0f, adjusted.Radius) : 0.0f;
             invalidCount++;
         }
+        if (adjusted.ClusterMemberStart < 0 || adjusted.ClusterMemberCount < 0 || adjusted.ClusterMemberStart + adjusted.ClusterMemberCount > localClusterMemberCount)
+        {
+            adjusted.ClusterMemberStart = clusterMemberOffset;
+            adjusted.ClusterMemberCount = 0;
+            invalidCount++;
+        }
+        else
+        {
+            adjusted.ClusterMemberStart += clusterMemberOffset;
+        }
 
         adjusted.InstanceIndex = instanceIndex;
         adjusted._pad0 = 0;
+        return adjusted;
+    }
+
+    private static GPUSoftbodyClusterData SanitizeCluster(
+        GPUSoftbodyClusterData cluster,
+        int instanceIndex,
+        int clusterMemberOffset,
+        int localClusterMemberCount,
+        ref int invalidCount)
+    {
+        GPUSoftbodyClusterData adjusted = cluster;
+        if (!IsFinite(adjusted.RestCenter))
+        {
+            adjusted.RestCenter = Vector3.Zero;
+            invalidCount++;
+        }
+        if (!IsFinite(adjusted.CurrentCenter))
+            adjusted.CurrentCenter = adjusted.RestCenter;
+        if (!float.IsFinite(adjusted.Radius) || adjusted.Radius < 0.0f)
+        {
+            adjusted.Radius = float.IsFinite(adjusted.Radius) ? Math.Max(0.0f, adjusted.Radius) : 0.0f;
+            invalidCount++;
+        }
+        if (!float.IsFinite(adjusted.Stiffness))
+        {
+            adjusted.Stiffness = 1.0f;
+            invalidCount++;
+        }
+        else
+        {
+            adjusted.Stiffness = Math.Clamp(adjusted.Stiffness, 0.0f, 1.0f);
+        }
+        if (adjusted.MemberStart < 0 || adjusted.MemberCount < 0 || adjusted.MemberStart + adjusted.MemberCount > localClusterMemberCount)
+        {
+            adjusted.MemberStart = clusterMemberOffset;
+            adjusted.MemberCount = 0;
+            invalidCount++;
+        }
+        else
+        {
+            adjusted.MemberStart += clusterMemberOffset;
+        }
+
+        adjusted.InstanceIndex = instanceIndex;
+        adjusted.Reserved = 0;
+        return adjusted;
+    }
+
+    private static GPUSoftbodyClusterMemberData SanitizeClusterMember(
+        GPUSoftbodyClusterMemberData member,
+        int localClusterCount,
+        int localParticleCount,
+        int clusterOffset,
+        int particleOffset,
+        ref int invalidCount)
+    {
+        GPUSoftbodyClusterMemberData adjusted = member;
+        if (adjusted.ClusterIndex < 0 || adjusted.ClusterIndex >= localClusterCount)
+        {
+            adjusted.ClusterIndex = 0;
+            adjusted.Weight = 0.0f;
+            invalidCount++;
+        }
+        if (adjusted.ParticleIndex < 0 || adjusted.ParticleIndex >= localParticleCount)
+        {
+            adjusted.ParticleIndex = 0;
+            adjusted.Weight = 0.0f;
+            invalidCount++;
+        }
+        if (!float.IsFinite(adjusted.Weight) || adjusted.Weight < 0.0f)
+        {
+            adjusted.Weight = 0.0f;
+            invalidCount++;
+        }
+        if (!IsFinite(adjusted.LocalOffset))
+        {
+            adjusted.LocalOffset = Vector3.Zero;
+            invalidCount++;
+        }
+
+        adjusted.ClusterIndex += clusterOffset;
+        adjusted.ParticleIndex += particleOffset;
+        adjusted.Padding0 = 0.0f;
+        adjusted.Padding1 = 0.0f;
         return adjusted;
     }
 
@@ -566,5 +724,7 @@ public sealed class GPUSoftbodyRequest(GPUSoftbodyComponent component)
     public List<GPUSoftbodyColliderData> Colliders { get; } = [];
     public List<GPUSoftbodyRenderBindingData> RenderBindings { get; } = [];
     public GPUSoftbodyDispatchData DispatchData;
+    public int ClusterTransformOffset;
+    public int ClusterTransformCount;
     public bool NeedsUpdate;
 }

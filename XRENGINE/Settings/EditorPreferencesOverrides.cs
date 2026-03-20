@@ -3,6 +3,7 @@ using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
+using XREngine.Data.Profiling;
 
 namespace XREngine
 {
@@ -297,6 +298,9 @@ namespace XREngine
         private OverrideableSetting<ColorF4> _quadtreeContainedBoundsColorOverride = new();
         private OverrideableSetting<ColorF4> _octreeIntersectedBoundsColorOverride = new();
         private OverrideableSetting<ColorF4> _octreeContainedBoundsColorOverride = new();
+        private OverrideableSetting<ColorF4> _meshBoundsContainedColorOverride = new();
+        private OverrideableSetting<ColorF4> _meshBoundsIntersectedColorOverride = new();
+        private OverrideableSetting<ColorF4> _meshBoundsDisjointColorOverride = new();
         private OverrideableSetting<ColorF4> _bounds2DColorOverride = new();
         private OverrideableSetting<ColorF4> _bounds3DColorOverride = new();
         private OverrideableSetting<ColorF4> _transformPointColorOverride = new();
@@ -339,6 +343,24 @@ namespace XREngine
         {
             get => _octreeContainedBoundsColorOverride;
             set => SetField(ref _octreeContainedBoundsColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> MeshBoundsContainedColorOverride
+        {
+            get => _meshBoundsContainedColorOverride;
+            set => SetField(ref _meshBoundsContainedColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> MeshBoundsIntersectedColorOverride
+        {
+            get => _meshBoundsIntersectedColorOverride;
+            set => SetField(ref _meshBoundsIntersectedColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> MeshBoundsDisjointColorOverride
+        {
+            get => _meshBoundsDisjointColorOverride;
+            set => SetField(ref _meshBoundsDisjointColorOverride, value ?? new());
         }
 
         public OverrideableSetting<ColorF4> Bounds2DColorOverride
@@ -448,6 +470,41 @@ namespace XREngine
         private OverrideableSetting<bool> _enableUILayoutDebugLoggingOverride = new();
         private OverrideableSetting<bool> _enableProfilerUdpSendingOverride = new();
         private OverrideableSetting<bool> _startExternalProfilerOnStartupOverride = new();
+        private OverrideableSetting<float> _codeProfilerDebugOutputMinElapsedMsOverride = new();
+        private OverrideableSetting<int> _codeProfilerStatsThreadIntervalMsOverride = new();
+        private OverrideableSetting<int> _codeProfilerSnapshotIntervalMsOverride = new();
+        private OverrideableSetting<int> _codeProfilerThreadHistoryCapacityOverride = new();
+        private OverrideableSetting<int> _codeProfilerMaxOverflowPerCycleOverride = new();
+        private OverrideableSetting<int> _codeProfilerMaxOverflowQueueSizeOverride = new();
+        private OverrideableSetting<int> _codeProfilerProducerBufferCapacityOverride = new();
+        private OverrideableSetting<int> _codeProfilerFpsDropBaselineWindowSamplesOverride = new();
+        private OverrideableSetting<float> _codeProfilerFpsDropMinPreviousFpsOverride = new();
+        private OverrideableSetting<float> _codeProfilerFpsDropMinDeltaMsOverride = new();
+        private OverrideableSetting<bool> _profilerPanelPausedOverride = new();
+        private OverrideableSetting<bool> _profilerPanelSortByTimeOverride = new();
+        private OverrideableSetting<float> _profilerPanelSmoothingAlphaOverride = new();
+        private OverrideableSetting<float> _profilerPanelUpdateIntervalSecondsOverride = new();
+        private OverrideableSetting<float> _profilerPanelPersistenceSecondsOverride = new();
+        private OverrideableSetting<int> _profilerPanelGraphSampleCountOverride = new();
+        private OverrideableSetting<float> _profilerPanelRootHierarchyMinMsOverride = new();
+        private OverrideableSetting<float> _profilerPanelRootHierarchyMaxMsOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowCpuTimingRawMsLineOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowCpuTimingSmoothedMsLineOverride = new();
+        private OverrideableSetting<bool> _profilerPanelInterpolateCpuTimingGraphsOverride = new();
+        private OverrideableSetting<ProfilerTimingDisplayMode> _profilerPanelCpuTimingDisplayModeOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowGpuTimingRawMsLineOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowGpuTimingSmoothedMsLineOverride = new();
+        private OverrideableSetting<bool> _profilerPanelInterpolateGpuTimingGraphsOverride = new();
+        private OverrideableSetting<ProfilerTimingDisplayMode> _profilerPanelGpuTimingDisplayModeOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowTreeOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowFpsDropSpikesOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowRenderStatsOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowGpuPipelineOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowThreadAllocationsOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowComponentTimingsOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowBvhMetricsOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowJobSystemOverride = new();
+        private OverrideableSetting<bool> _profilerPanelShowMainThreadInvokesOverride = new();
         private OverrideableSetting<EDebugShapePopulationMode> _debugShapePopulationModeOverride = new();
         private OverrideableSetting<EDebugVisualizerPopulationMode> _debugVisualizerPopulationModeOverride = new();
         private OverrideableSetting<EDebugPrimitiveBufferFormat> _debugPrimitiveBufferFormatOverride = new();
@@ -638,6 +695,216 @@ namespace XREngine
         {
             get => _startExternalProfilerOnStartupOverride;
             set => SetField(ref _startExternalProfilerOnStartupOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> CodeProfilerDebugOutputMinElapsedMsOverride
+        {
+            get => _codeProfilerDebugOutputMinElapsedMsOverride;
+            set => SetField(ref _codeProfilerDebugOutputMinElapsedMsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<int> CodeProfilerStatsThreadIntervalMsOverride
+        {
+            get => _codeProfilerStatsThreadIntervalMsOverride;
+            set => SetField(ref _codeProfilerStatsThreadIntervalMsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<int> CodeProfilerSnapshotIntervalMsOverride
+        {
+            get => _codeProfilerSnapshotIntervalMsOverride;
+            set => SetField(ref _codeProfilerSnapshotIntervalMsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<int> CodeProfilerThreadHistoryCapacityOverride
+        {
+            get => _codeProfilerThreadHistoryCapacityOverride;
+            set => SetField(ref _codeProfilerThreadHistoryCapacityOverride, value ?? new());
+        }
+
+        public OverrideableSetting<int> CodeProfilerMaxOverflowPerCycleOverride
+        {
+            get => _codeProfilerMaxOverflowPerCycleOverride;
+            set => SetField(ref _codeProfilerMaxOverflowPerCycleOverride, value ?? new());
+        }
+
+        public OverrideableSetting<int> CodeProfilerMaxOverflowQueueSizeOverride
+        {
+            get => _codeProfilerMaxOverflowQueueSizeOverride;
+            set => SetField(ref _codeProfilerMaxOverflowQueueSizeOverride, value ?? new());
+        }
+
+        public OverrideableSetting<int> CodeProfilerProducerBufferCapacityOverride
+        {
+            get => _codeProfilerProducerBufferCapacityOverride;
+            set => SetField(ref _codeProfilerProducerBufferCapacityOverride, value ?? new());
+        }
+
+        public OverrideableSetting<int> CodeProfilerFpsDropBaselineWindowSamplesOverride
+        {
+            get => _codeProfilerFpsDropBaselineWindowSamplesOverride;
+            set => SetField(ref _codeProfilerFpsDropBaselineWindowSamplesOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> CodeProfilerFpsDropMinPreviousFpsOverride
+        {
+            get => _codeProfilerFpsDropMinPreviousFpsOverride;
+            set => SetField(ref _codeProfilerFpsDropMinPreviousFpsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> CodeProfilerFpsDropMinDeltaMsOverride
+        {
+            get => _codeProfilerFpsDropMinDeltaMsOverride;
+            set => SetField(ref _codeProfilerFpsDropMinDeltaMsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelPausedOverride
+        {
+            get => _profilerPanelPausedOverride;
+            set => SetField(ref _profilerPanelPausedOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelSortByTimeOverride
+        {
+            get => _profilerPanelSortByTimeOverride;
+            set => SetField(ref _profilerPanelSortByTimeOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> ProfilerPanelSmoothingAlphaOverride
+        {
+            get => _profilerPanelSmoothingAlphaOverride;
+            set => SetField(ref _profilerPanelSmoothingAlphaOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> ProfilerPanelUpdateIntervalSecondsOverride
+        {
+            get => _profilerPanelUpdateIntervalSecondsOverride;
+            set => SetField(ref _profilerPanelUpdateIntervalSecondsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> ProfilerPanelPersistenceSecondsOverride
+        {
+            get => _profilerPanelPersistenceSecondsOverride;
+            set => SetField(ref _profilerPanelPersistenceSecondsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<int> ProfilerPanelGraphSampleCountOverride
+        {
+            get => _profilerPanelGraphSampleCountOverride;
+            set => SetField(ref _profilerPanelGraphSampleCountOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> ProfilerPanelRootHierarchyMinMsOverride
+        {
+            get => _profilerPanelRootHierarchyMinMsOverride;
+            set => SetField(ref _profilerPanelRootHierarchyMinMsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> ProfilerPanelRootHierarchyMaxMsOverride
+        {
+            get => _profilerPanelRootHierarchyMaxMsOverride;
+            set => SetField(ref _profilerPanelRootHierarchyMaxMsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowCpuTimingRawMsLineOverride
+        {
+            get => _profilerPanelShowCpuTimingRawMsLineOverride;
+            set => SetField(ref _profilerPanelShowCpuTimingRawMsLineOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowCpuTimingSmoothedMsLineOverride
+        {
+            get => _profilerPanelShowCpuTimingSmoothedMsLineOverride;
+            set => SetField(ref _profilerPanelShowCpuTimingSmoothedMsLineOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelInterpolateCpuTimingGraphsOverride
+        {
+            get => _profilerPanelInterpolateCpuTimingGraphsOverride;
+            set => SetField(ref _profilerPanelInterpolateCpuTimingGraphsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ProfilerTimingDisplayMode> ProfilerPanelCpuTimingDisplayModeOverride
+        {
+            get => _profilerPanelCpuTimingDisplayModeOverride;
+            set => SetField(ref _profilerPanelCpuTimingDisplayModeOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowGpuTimingRawMsLineOverride
+        {
+            get => _profilerPanelShowGpuTimingRawMsLineOverride;
+            set => SetField(ref _profilerPanelShowGpuTimingRawMsLineOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowGpuTimingSmoothedMsLineOverride
+        {
+            get => _profilerPanelShowGpuTimingSmoothedMsLineOverride;
+            set => SetField(ref _profilerPanelShowGpuTimingSmoothedMsLineOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelInterpolateGpuTimingGraphsOverride
+        {
+            get => _profilerPanelInterpolateGpuTimingGraphsOverride;
+            set => SetField(ref _profilerPanelInterpolateGpuTimingGraphsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ProfilerTimingDisplayMode> ProfilerPanelGpuTimingDisplayModeOverride
+        {
+            get => _profilerPanelGpuTimingDisplayModeOverride;
+            set => SetField(ref _profilerPanelGpuTimingDisplayModeOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowTreeOverride
+        {
+            get => _profilerPanelShowTreeOverride;
+            set => SetField(ref _profilerPanelShowTreeOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowFpsDropSpikesOverride
+        {
+            get => _profilerPanelShowFpsDropSpikesOverride;
+            set => SetField(ref _profilerPanelShowFpsDropSpikesOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowRenderStatsOverride
+        {
+            get => _profilerPanelShowRenderStatsOverride;
+            set => SetField(ref _profilerPanelShowRenderStatsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowGpuPipelineOverride
+        {
+            get => _profilerPanelShowGpuPipelineOverride;
+            set => SetField(ref _profilerPanelShowGpuPipelineOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowThreadAllocationsOverride
+        {
+            get => _profilerPanelShowThreadAllocationsOverride;
+            set => SetField(ref _profilerPanelShowThreadAllocationsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowComponentTimingsOverride
+        {
+            get => _profilerPanelShowComponentTimingsOverride;
+            set => SetField(ref _profilerPanelShowComponentTimingsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowBvhMetricsOverride
+        {
+            get => _profilerPanelShowBvhMetricsOverride;
+            set => SetField(ref _profilerPanelShowBvhMetricsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowJobSystemOverride
+        {
+            get => _profilerPanelShowJobSystemOverride;
+            set => SetField(ref _profilerPanelShowJobSystemOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ProfilerPanelShowMainThreadInvokesOverride
+        {
+            get => _profilerPanelShowMainThreadInvokesOverride;
+            set => SetField(ref _profilerPanelShowMainThreadInvokesOverride, value ?? new());
         }
 
         public OverrideableSetting<EDebugShapePopulationMode> DebugShapePopulationModeOverride

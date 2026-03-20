@@ -4,11 +4,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.IO;
+using System.Text;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Components.Scripting;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Data.Colors;
 using XREngine.Editor.UI;
 using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
@@ -28,6 +30,7 @@ public static partial class EditorUnitTests
     {
         private static readonly bool DockFPSTopLeft = false;
         private static readonly Queue<float> _fpsAvg = new();
+        private static readonly StringBuilder _fpsTextBuilder = new(512);
         private static long _lastSampledRenderTimestampTicks = -1L;
 
         private static UIEditorComponent? _editorComponent = null;
@@ -51,23 +54,110 @@ public static partial class EditorUnitTests
                 if (_fpsAvg.Count > 60)
                     _fpsAvg.Dequeue();
             }
-            string str = $"{MathF.Round(_fpsAvg.Sum() / _fpsAvg.Count)}hz";
+
+            float averageHz = _fpsAvg.Count > 0 ? MathF.Round(_fpsAvg.Sum() / _fpsAvg.Count) : 0.0f;
+            double renderMs = Engine.Time.Timer.Render.Delta * 1000.0;
+            double updateMs = Engine.Time.Timer.Update.Delta * 1000.0;
+            double fixedMs = Engine.Time.Timer.FixedUpdateDelta * 1000.0;
+            int drawCalls = Engine.Rendering.Stats.DrawCalls;
+            int multiDrawCalls = Engine.Rendering.Stats.MultiDrawCalls;
+            int trianglesRendered = Engine.Rendering.Stats.TrianglesRendered;
+            double cpuFrameMs = Engine.Rendering.Stats.VulkanFrameTotalMs;
+            double gpuCmdMs = Engine.Rendering.Stats.VulkanFrameGpuCommandBufferMs;
+            int fallbackEvents = Engine.Rendering.Stats.GpuCpuFallbackEvents;
+
+            var builder = _fpsTextBuilder;
+            builder.Clear();
+            builder.Append(averageHz.ToString("F0"));
+            builder.Append("hz");
+            builder.Append(" (");
+            builder.Append(renderMs.ToString("F2"));
+            builder.Append("ms)");
+            builder.Append("\nu ");
+            builder.Append(updateMs.ToString("F2"));
+            builder.Append("ms");
+            builder.Append("\nf ");
+            builder.Append(fixedMs.ToString("F2"));
+            builder.Append("ms");
+
             var net = Engine.Networking;
-            if (net is not null)
+            bool showNetworking = net is not null
+                && (net.PacketsPerSecond > 0.05f || net.BytesSentLastSecond > 0 || net.AverageRoundTripTimeMs > 0.05f);
+            if (showNetworking)
             {
-                str += $"\n{net.AverageRoundTripTimeMs}ms";
-                str += $"\n{net.DataPerSecondString}";
-                str += $"\n{net.PacketsPerSecond}p/s";
+                builder.Append("\nn ");
+                builder.Append(net.AverageRoundTripTimeMs.ToString("F1"));
+                builder.Append("ms");
+                builder.Append(" ");
+                builder.Append(net.PacketsPerSecond.ToString("F1"));
+                builder.Append("p/s");
+                builder.Append("\n");
+                builder.Append(net.DataPerSecondString);
             }
+
+            builder.Append("\ndc ");
+            builder.Append(drawCalls.ToString("N0"));
+            builder.Append(" | md ");
+            builder.Append(multiDrawCalls.ToString("N0"));
+            builder.Append("\ntri ");
+            builder.Append(FormatCompactCount(trianglesRendered));
+
+            if (cpuFrameMs > 0.0 || gpuCmdMs > 0.0)
+            {
+                builder.Append("\nc ");
+                builder.Append(cpuFrameMs.ToString("F2"));
+                builder.Append("ms");
+                builder.Append(" | g ");
+                builder.Append(gpuCmdMs.ToString("F2"));
+                builder.Append("ms");
+            }
+
+            if (fallbackEvents > 0)
+            {
+                builder.Append("\nfb ");
+                builder.Append(fallbackEvents.ToString("N0"));
+            }
+
             var videoComp = _editorComponent?.SceneNode.FindFirstDescendantComponent<UIVideoComponent>();
             if (videoComp is not null)
             {
                 string syncState = videoComp.DebugAudioSyncActive ? "on" : "off";
-                str += $"\nA/V: drift {videoComp.DebugPresentDriftMs:F1}ms";
-                str += $"\ndebt {videoComp.DebugVideoDebtMs:F1}ms";
-                str += $"\nunderruns {videoComp.DebugAudioUnderruns} ({syncState})";
+                builder.Append("\nA/V: drift ");
+                builder.Append(videoComp.DebugPresentDriftMs.ToString("F1"));
+                builder.Append("ms");
+                builder.Append("\ndebt ");
+                builder.Append(videoComp.DebugVideoDebtMs.ToString("F1"));
+                builder.Append("ms");
+                builder.Append("\nunderruns ");
+                builder.Append(videoComp.DebugAudioUnderruns.ToString("N0"));
+                builder.Append(" (");
+                builder.Append(syncState);
+                builder.Append(')');
             }
-            t.Text = str;
+
+            t.Text = builder.ToString();
+            t.Color = ResolveFpsOverlayColor(renderMs, cpuFrameMs, gpuCmdMs, showNetworking ? net!.AverageRoundTripTimeMs : 0.0f, fallbackEvents);
+        }
+
+        private static ColorF4 ResolveFpsOverlayColor(double renderMs, double cpuFrameMs, double gpuCmdMs, float rttMs, int fallbackEvents)
+        {
+            double primaryMs = Math.Max(renderMs, Math.Max(cpuFrameMs, gpuCmdMs));
+            if (fallbackEvents > 0 || primaryMs >= 33.0 || rttMs >= 120.0f)
+                return new ColorF4(1.0f, 0.45f, 0.40f, 1.0f);
+            if (primaryMs >= 20.0 || rttMs >= 60.0f)
+                return new ColorF4(1.0f, 0.78f, 0.30f, 1.0f);
+            if (primaryMs >= 12.0 || rttMs >= 20.0f)
+                return new ColorF4(0.95f, 0.90f, 0.35f, 1.0f);
+            return new ColorF4(0.80f, 1.0f, 0.82f, 1.0f);
+        }
+
+        private static string FormatCompactCount(int value)
+        {
+            if (value >= 1_000_000)
+                return $"{value / 1_000_000.0:F2}M";
+            if (value >= 1_000)
+                return $"{value / 1_000.0:F1}K";
+            return value.ToString("N0");
         }
 
         //Simple FPS counter in the bottom right for debugging.
@@ -77,7 +167,9 @@ public static partial class EditorUnitTests
             UITextComponent text = textNode.AddComponent<UITextComponent>()!;
             text.Font = font;
             text.FontSize = 22;
+            text.HorizontalAlignment = EHorizontalAlignment.Center;
             text.WrapMode = FontGlyphSet.EWrapMode.None;
+            text.HideOverflow = false;
             text.RegisterAnimationTick<UITextComponent>(TickFPS);
             var textTransform = textNode.GetTransformAs<UIBoundableTransform>(true)!;
             if (DockFPSTopLeft)
@@ -88,11 +180,11 @@ public static partial class EditorUnitTests
             }
             else
             {
-                textTransform.MinAnchor = new Vector2(1.0f, 0.0f);
-                textTransform.MaxAnchor = new Vector2(1.0f, 0.0f);
-                textTransform.NormalizedPivot = new Vector2(1.0f, 0.0f);
+                textTransform.MinAnchor = new Vector2(0.5f, 0.0f);
+                textTransform.MaxAnchor = new Vector2(0.5f, 0.0f);
+                textTransform.NormalizedPivot = new Vector2(0.5f, 0.0f);
             }
-            textTransform.Margins = new Vector4(10.0f, 10.0f, 10.0f, 10.0f);
+            textTransform.Margins = new Vector4(0.0f, 10.0f, 0.0f, 10.0f);
             textTransform.Scale = new Vector3(1.0f);
             return text;
         }

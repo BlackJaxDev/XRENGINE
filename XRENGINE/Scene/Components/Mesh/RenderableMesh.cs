@@ -191,8 +191,11 @@ namespace XREngine.Components.Scene.Mesh
             bool showTransparencyModeOverlay = debug.VisualizeTransparencyModeOverlay;
             bool showTransparencyClassificationOverlay = debug.VisualizeTransparencyClassificationOverlay;
 
+            if (debug.RenderMesh3DBounds && !showTransparencyModeOverlay && !showTransparencyClassificationOverlay)
+                return;
+
             XRMaterial? material = CurrentLODRenderer?.Material;
-            ColorF4 boundsColor = ColorF4.White;
+            ColorF4 boundsColor = Engine.EditorPreferences.Theme.Bounds3DColor;
 
             if (showTransparencyModeOverlay && material is not null)
                 boundsColor = GetTransparencyModeColor(material.GetEffectiveTransparencyMode());

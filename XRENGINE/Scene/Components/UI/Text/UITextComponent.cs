@@ -406,20 +406,50 @@ namespace XREngine.Rendering.UI
 
         private void AlignQuadsHorizontal(UIBoundableTransform tfm, float w)
         {
-            //Calc max glyph width
-            float textW = CalcAutoWidth(tfm);
-            //Calc offset, which is a percentage of the remaining space not taken up by the text
-            float offset = HorizontalAlignment switch
+            float marginRight = BoundableTransform.Margins.Z;
+
+            if (HorizontalAlignment == EHorizontalAlignment.Center)
             {
-                EHorizontalAlignment.Right => w - textW - BoundableTransform.Margins.Z,
-                EHorizontalAlignment.Center => (w - textW - BoundableTransform.Margins.Z) / 2.0f,
-                EHorizontalAlignment.Left => 0.0f,
-                _ => 0.0f
-            };
-            for (int i = 0; i < _glyphs.Count; i++)
+                // Per-line centering: center each line independently within the region.
+                // When auto-sizing (w unconstrained), center within the widest line's width.
+                float regionW = w < float.MaxValue * 0.5f ? w : CalcAutoWidth(tfm);
+
+                // Detect lines by X-position reset (robust for LTR text with varying glyph Y offsets).
+                int i = 0;
+                while (i < _glyphs.Count)
+                {
+                    int lineStart = i;
+                    float lineWidth = _glyphs[i].transform.X + _glyphs[i].transform.Z;
+                    i++;
+                    while (i < _glyphs.Count && _glyphs[i].transform.X >= _glyphs[i - 1].transform.X - 0.1f)
+                    {
+                        float right = _glyphs[i].transform.X + _glyphs[i].transform.Z;
+                        if (right > lineWidth)
+                            lineWidth = right;
+                        i++;
+                    }
+                    float offset = (regionW - lineWidth - marginRight) / 2.0f;
+                    for (int j = lineStart; j < i; j++)
+                    {
+                        (Vector4 transform, Vector4 uvs) = _glyphs[j];
+                        _glyphs[j] = (new(transform.X + offset, transform.Y, transform.Z, transform.W), uvs);
+                    }
+                }
+            }
+            else
             {
-                (Vector4 transform, Vector4 uvs) = _glyphs[i];
-                _glyphs[i] = (new(transform.X + offset, transform.Y, transform.Z, transform.W), uvs);
+                // Block-level alignment (Right)
+                float textW = CalcAutoWidth(tfm);
+                float offset = HorizontalAlignment switch
+                {
+                    EHorizontalAlignment.Right => w - textW - marginRight,
+                    _ => 0.0f
+                };
+                for (int i = 0; i < _glyphs.Count; i++)
+                {
+                    (Vector4 transform, Vector4 uvs) = _glyphs[i];
+                    _glyphs[i] = (new(transform.X + offset, transform.Y, transform.Z, transform.W), uvs);
+                }
             }
         }
 

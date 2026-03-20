@@ -1,7 +1,7 @@
 # GPU Softbody Mesh Rigging TODO
 
-Last Updated: 2026-03-18
-Current Status: phase 1 softbody runtime scaffold implemented
+Last Updated: 2026-03-19
+Current Status: phase 3 shape-matching cluster runtime implemented
 Scope: implement the GPU softbody and mesh-rigging architecture defined in the [design plan](../design/gpu-softbody-mesh-rigging-plan.md).
 
 ## Current Reality
@@ -179,35 +179,35 @@ Outcome: the simulation produces stable cluster transforms suitable for soft ski
 
 ### 3.1 Cluster Authoring Data
 
-- [ ] Add cluster definitions and cluster-member ranges to the runtime data model
-- [ ] Add rest-space local offsets for cluster members
-- [ ] Add support for overlapping clusters
+- [x] Add cluster definitions and cluster-member ranges to the runtime data model
+- [x] Add rest-space local offsets for cluster members
+- [x] Add support for overlapping clusters
 - [ ] Add import/build pipeline hooks for generating clusters from a simulation proxy
 
 ### 3.2 Cluster Solve
 
-- [ ] Implement cluster center-of-mass solve
-- [ ] Implement covariance accumulation and best-fit rotation extraction
-- [ ] Implement shape-matching goal-position solve for overlapping clusters
-- [ ] Blend cluster corrections back into particle state
+- [x] Implement cluster center-of-mass solve
+- [x] Implement covariance accumulation and best-fit rotation extraction
+- [x] Implement shape-matching goal-position solve for overlapping clusters
+- [x] Blend cluster corrections back into particle state
 
 ### 3.3 Cluster Transform Output
 
-- [ ] Add a GPU output buffer for cluster transforms
-- [ ] Define transform format for rendering use: translation plus quaternion or matrix equivalent
-- [ ] Add debug visualization for cluster centers and orientations
+- [x] Add a GPU output buffer for cluster transforms
+- [x] Define transform format for rendering use: translation plus quaternion or matrix equivalent
+- [x] Add debug visualization for cluster centers and orientations
 
 ### 3.4 Tests
 
-- [ ] Add tests for cluster membership packing and runtime buffer generation
-- [ ] Add tests for simple cluster rotation recovery cases
-- [ ] Add tests for overlapping-cluster stability on a synthetic sample
+- [x] Add tests for cluster membership packing and runtime buffer generation
+- [x] Add tests for simple cluster rotation recovery cases
+- [x] Add tests for overlapping-cluster stability on a synthetic sample
 
 Acceptance criteria:
 
-- [ ] The simulation produces stable cluster transforms from particle motion.
-- [ ] Cluster transforms are GPU-resident and ready to drive a render mesh.
-- [ ] The first shape-matching pass has focused tests and debug visualizations.
+- [x] The simulation produces stable cluster transforms from particle motion.
+- [x] Cluster transforms are GPU-resident and ready to drive a render mesh.
+- [x] The first shape-matching pass has focused tests and debug visualizations.
 
 ---
 

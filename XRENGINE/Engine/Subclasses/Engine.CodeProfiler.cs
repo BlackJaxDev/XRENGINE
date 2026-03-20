@@ -61,16 +61,82 @@ namespace XREngine
             public float DebugOutputMinElapsedMs
             {
                 get => _debugOutputMinElapsedMs;
-                set => SetField(ref _debugOutputMinElapsedMs, value);
+                set => SetField(ref _debugOutputMinElapsedMs, Math.Max(0.0f, value));
             }
 
-            private const int StatsThreadIntervalMs = 4;
-            private const int SnapshotIntervalMs = 33;
-            private const int ThreadHistoryCapacity = 240;
-            private const int MaxOverflowPerCycle = 2_000;
-            private const int MaxOverflowQueueSize = 50_000;
-            private const int ProducerBufferCapacity = 16_384;
-            private static readonly long SnapshotIntervalTicks = EngineTimer.SecondsToStopwatchTicks(SnapshotIntervalMs / 1000.0);
+            private int _statsThreadIntervalMs = 4;
+            public int StatsThreadIntervalMs
+            {
+                get => _statsThreadIntervalMs;
+                set => SetField(ref _statsThreadIntervalMs, Math.Clamp(value, 1, 1000));
+            }
+
+            private int _snapshotIntervalMs = 33;
+            public int SnapshotIntervalMs
+            {
+                get => _snapshotIntervalMs;
+                set => SetField(ref _snapshotIntervalMs, Math.Clamp(value, 1, 5_000));
+            }
+
+            private int _threadHistoryCapacity = 240;
+            public int ThreadHistoryCapacity
+            {
+                get => _threadHistoryCapacity;
+                set => SetField(ref _threadHistoryCapacity, Math.Clamp(value, 2, 10_000));
+            }
+
+            private int _maxOverflowPerCycle = 2_000;
+            public int MaxOverflowPerCycle
+            {
+                get => _maxOverflowPerCycle;
+                set => SetField(ref _maxOverflowPerCycle, Math.Clamp(value, 1, 1_000_000));
+            }
+
+            private int _maxOverflowQueueSize = 50_000;
+            public int MaxOverflowQueueSize
+            {
+                get => _maxOverflowQueueSize;
+                set => SetField(ref _maxOverflowQueueSize, Math.Clamp(value, 1, 5_000_000));
+            }
+
+            private int _producerBufferCapacity = 16_384;
+            public int ProducerBufferCapacity
+            {
+                get => _producerBufferCapacity;
+                set => SetField(ref _producerBufferCapacity, NormalizeProducerBufferCapacity(value));
+            }
+
+            private int _fpsDropBaselineWindowSamples = 30;
+            public int FpsDropBaselineWindowSamples
+            {
+                get => _fpsDropBaselineWindowSamples;
+                set => SetField(ref _fpsDropBaselineWindowSamples, Math.Clamp(value, 1, 10_000));
+            }
+
+            private float _fpsDropMinPreviousFps = 10.0f;
+            public float FpsDropMinPreviousFps
+            {
+                get => _fpsDropMinPreviousFps;
+                set => SetField(ref _fpsDropMinPreviousFps, Math.Max(0.0f, value));
+            }
+
+            private float _fpsDropMinDeltaMs = 1.0f;
+            public float FpsDropMinDeltaMs
+            {
+                get => _fpsDropMinDeltaMs;
+                set => SetField(ref _fpsDropMinDeltaMs, Math.Max(0.0f, value));
+            }
+
+            private long SnapshotIntervalTicks => EngineTimer.SecondsToStopwatchTicks(SnapshotIntervalMs / 1000.0);
+
+            private static int NormalizeProducerBufferCapacity(int value)
+            {
+                int normalized = Math.Clamp(value, 2, 1 << 20);
+                int capacity = 1;
+                while (capacity < normalized)
+                    capacity <<= 1;
+                return capacity;
+            }
 
             private readonly object _statsThreadLock = new();
             private readonly object _producerRegistrationLock = new();
@@ -92,6 +158,7 @@ namespace XREngine
             private readonly List<ProfilerThreadSnapshot> _threadSnapshotsBuffer = new(8);
             private readonly Dictionary<int, List<BuiltTimer>> _accumulatedRoots = [];
             private long _lastSnapshotTicks = -1L;
+            private float _lastFpsDropProcessedFrameTime = float.NegativeInfinity;
 
             [ThreadStatic]
             private static ThreadProducerState? _tlsProducerState;
@@ -541,8 +608,171 @@ namespace XREngine
                         historySnapshot[kvp.Key] = kvp.Value.ToArray();
                 }
 
+                if (frameSnapshot is not null)
+                    LogFpsDrops(frameSnapshot, historySnapshot);
+
                 _readyHistorySnapshot = historySnapshot;
                 _readySnapshot = frameSnapshot;
+            }
+
+            private void LogFpsDrops(ProfilerFrameSnapshot frame, Dictionary<int, float[]> history)
+            {
+                if (!float.IsFinite(frame.FrameTime) || frame.FrameTime == _lastFpsDropProcessedFrameTime)
+                    return;
+
+                _lastFpsDropProcessedFrameTime = frame.FrameTime;
+
+                if (frame.Threads.Count == 0)
+                    return;
+
+                foreach (var thread in frame.Threads)
+                {
+                    if (!history.TryGetValue(thread.ThreadId, out float[]? samples) || samples.Length < 2)
+                        continue;
+
+                    float currentMs = samples[^1];
+                    float previousMs = samples[^2];
+                    if (currentMs <= 0.0001f || previousMs <= 0.0001f)
+                        continue;
+
+                    float currentFps = 1000f / currentMs;
+                    float previousFps = 1000f / previousMs;
+                    if (previousFps < FpsDropMinPreviousFps)
+                        continue;
+
+                    float deltaMs = currentMs - previousMs;
+                    if (deltaMs < FpsDropMinDeltaMs)
+                        continue;
+
+                    float baselineMs = GetMedianTailMs(samples, FpsDropBaselineWindowSamples, skipFromEnd: 1);
+                    if (baselineMs <= 0.0001f)
+                        continue;
+
+                    float baselineFps = 1000f / baselineMs;
+                    float comparisonFps = MathF.Min(previousFps, baselineFps);
+                    if (comparisonFps <= 0.0001f)
+                        continue;
+
+                    float deltaFps = comparisonFps - currentFps;
+                    if (deltaFps <= 0.0f)
+                        continue;
+
+                    float dropFraction = Math.Clamp(deltaFps / comparisonFps, 0f, 1f);
+                    string hotPath = GetHottestPath(thread.RootNodes, out float hotPathMs);
+
+                    var builder = new StringBuilder(1024);
+                    builder.Append("[").Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")).AppendLine("] FPS drop detected");
+                    builder.Append("FrameTimeSeconds: ").Append(frame.FrameTime.ToString("F6")).AppendLine();
+                    builder.Append("ThreadId: ").Append(thread.ThreadId).AppendLine();
+                    builder.Append("ThreadTotalTimeMs: ").Append(thread.TotalTimeMs.ToString("F3")).AppendLine();
+                    builder.Append("CurrentMs: ").Append(currentMs.ToString("F3")).AppendLine();
+                    builder.Append("PreviousMs: ").Append(previousMs.ToString("F3")).AppendLine();
+                    builder.Append("BaselineMs: ").Append(baselineMs.ToString("F3")).AppendLine();
+                    builder.Append("CurrentFps: ").Append(currentFps.ToString("F2")).AppendLine();
+                    builder.Append("PreviousFps: ").Append(previousFps.ToString("F2")).AppendLine();
+                    builder.Append("BaselineFps: ").Append(baselineFps.ToString("F2")).AppendLine();
+                    builder.Append("ComparisonFps: ").Append(comparisonFps.ToString("F2")).AppendLine();
+                    builder.Append("DeltaMs: ").Append(deltaMs.ToString("F3")).AppendLine();
+                    builder.Append("DeltaFps: ").Append(deltaFps.ToString("F2")).AppendLine();
+                    builder.Append("DropPercent: ").Append((dropFraction * 100.0f).ToString("F1")).AppendLine();
+                    builder.Append("HotPathMs: ").Append(hotPathMs.ToString("F3")).AppendLine();
+                    builder.Append("HotPath: ").Append(hotPath).AppendLine();
+                    AppendTopRootTimings(builder, thread.RootNodes, 5);
+                    AppendTopComponentTimings(builder, frame.ComponentTimings?.Components, 5);
+                    Debug.WriteAuxiliaryLog("profiler-fps-drops.log", builder.ToString());
+                }
+            }
+
+            private static void AppendTopRootTimings(StringBuilder builder, IReadOnlyList<ProfilerNodeSnapshot> roots, int maxCount)
+            {
+                if (roots.Count == 0)
+                    return;
+
+                var rankedRoots = new List<ProfilerNodeSnapshot>(roots.Count);
+                for (int i = 0; i < roots.Count; i++)
+                    rankedRoots.Add(roots[i]);
+
+                rankedRoots.Sort(static (left, right) => right.ElapsedMs.CompareTo(left.ElapsedMs));
+
+                builder.AppendLine("TopRoots:");
+                int count = Math.Min(maxCount, rankedRoots.Count);
+                for (int i = 0; i < count; i++)
+                {
+                    ProfilerNodeSnapshot root = rankedRoots[i];
+                    builder.Append("  ").Append(i + 1).Append(". ").Append(root.Name).Append(" = ").Append(root.ElapsedMs.ToString("F3")).AppendLine(" ms");
+                }
+            }
+
+            private static void AppendTopComponentTimings(StringBuilder builder, IReadOnlyList<ProfilerComponentTimingSnapshot>? components, int maxCount)
+            {
+                if (components is null || components.Count == 0)
+                    return;
+
+                builder.AppendLine("TopComponents:");
+                int count = Math.Min(maxCount, components.Count);
+                for (int i = 0; i < count; i++)
+                {
+                    ProfilerComponentTimingSnapshot component = components[i];
+                    builder.Append("  ").Append(i + 1).Append(". ")
+                        .Append(component.ComponentName).Append(" [")
+                        .Append(component.ComponentType).Append("] on ")
+                        .Append(component.SceneNodeName).Append(" = ")
+                        .Append(component.ElapsedMs.ToString("F3")).Append(" ms over ")
+                        .Append(component.CallCount).Append(" calls")
+                        .Append(" (TickMask=").Append(component.TickGroupMask).AppendLine(")");
+                }
+            }
+
+            private static float GetMedianTailMs(float[] samples, int takeCount, int skipFromEnd)
+            {
+                int available = samples.Length - skipFromEnd;
+                if (available <= 0)
+                    return 0f;
+
+                int count = Math.Min(takeCount, available);
+                if (count <= 0)
+                    return 0f;
+
+                float[] window = new float[count];
+                Array.Copy(samples, available - count, window, 0, count);
+                Array.Sort(window);
+
+                int middle = count / 2;
+                return (count % 2 == 0)
+                    ? (window[middle - 1] + window[middle]) * 0.5f
+                    : window[middle];
+            }
+
+            private static string GetHottestPath(IReadOnlyList<ProfilerNodeSnapshot> roots, out float pathMs)
+            {
+                pathMs = 0f;
+                if (roots.Count == 0)
+                    return "(no samples)";
+
+                ProfilerNodeSnapshot hottest = roots[0];
+                for (int i = 1; i < roots.Count; i++)
+                {
+                    if (roots[i].ElapsedMs > hottest.ElapsedMs)
+                        hottest = roots[i];
+                }
+
+                pathMs = hottest.ElapsedMs;
+                var parts = new List<string>(8) { hottest.Name };
+                ProfilerNodeSnapshot current = hottest;
+                while (current.Children.Count > 0)
+                {
+                    ProfilerNodeSnapshot best = current.Children[0];
+                    for (int i = 1; i < current.Children.Count; i++)
+                    {
+                        if (current.Children[i].ElapsedMs > best.ElapsedMs)
+                            best = current.Children[i];
+                    }
+
+                    parts.Add(best.Name);
+                    current = best;
+                }
+
+                return string.Join(" > ", parts);
             }
 
             private static ProfilerNodeSnapshot BuildSnapshotFromBuilt(BuiltTimer timer)
@@ -756,7 +986,7 @@ namespace XREngine
                 public int TickGroupMask { get; } = tickGroupMask;
             }
         }
-#else
+#else //Stub implementation when running a published build without the profiler to avoid stripping out the code paths that call it
         public class CodeProfiler : XRBase
         {
             public delegate void DelTimerCallback(string? methodName, float elapsedMs);
@@ -842,7 +1072,67 @@ namespace XREngine
                 set { }
             }
 
+            public bool EnableComponentTiming
+            {
+                get => false;
+                set { }
+            }
+
             public float DebugOutputMinElapsedMs
+            {
+                get => 0f;
+                set { }
+            }
+
+            public int StatsThreadIntervalMs
+            {
+                get => 0;
+                set { }
+            }
+
+            public int SnapshotIntervalMs
+            {
+                get => 0;
+                set { }
+            }
+
+            public int ThreadHistoryCapacity
+            {
+                get => 0;
+                set { }
+            }
+
+            public int MaxOverflowPerCycle
+            {
+                get => 0;
+                set { }
+            }
+
+            public int MaxOverflowQueueSize
+            {
+                get => 0;
+                set { }
+            }
+
+            public int ProducerBufferCapacity
+            {
+                get => 0;
+                set { }
+            }
+
+            public int FpsDropBaselineWindowSamples
+            {
+                get => 0;
+                set { }
+            }
+
+            public float FpsDropMinPreviousFps
+            {
+                get => 0f;
+                set { }
+            }
+
+            public float FpsDropMinDeltaMs
             {
                 get => 0f;
                 set { }

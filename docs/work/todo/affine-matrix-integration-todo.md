@@ -113,7 +113,7 @@ Implementation:
 Validation:
 
 - [x] Add targeted tests for world-bounds and bounding-sphere equivalence.
-- [ ] Add scenario benchmarks for many-renderable bounds updates and CPU render-prep workloads.
+- [x] Add scenario benchmarks for many-renderable bounds updates and CPU render-prep workloads.
 - [ ] Perform a rendering smoke test to confirm culling and bounds-driven behavior remain correct.
 
 Exit criteria:
@@ -131,11 +131,11 @@ Exit criteria:
 ## Cross-Cutting Validation Checklist
 
 - [ ] Extend [XREngine.UnitTests/Data/AffineMatrix4x3Tests.cs](../../../XREngine.UnitTests/Data/AffineMatrix4x3Tests.cs) with any missing affine correctness coverage used by Phases 1-3.
-- [ ] Keep [XREngine.Benchmarks/AffineMatrixBenchmarks.cs](../../../XREngine.Benchmarks/AffineMatrixBenchmarks.cs) as the shared benchmark baseline for the rollout.
-- [ ] Run the most targeted unit tests for transform and affine behavior after each phase.
-- [ ] Build the affected projects after each phase; at minimum the editor/runtime path should stay green.
+- [x] Keep [XREngine.Benchmarks/AffineMatrixBenchmarks.cs](../../../XREngine.Benchmarks/AffineMatrixBenchmarks.cs) as the shared benchmark baseline for the rollout.
+- [x] Run the most targeted unit tests for transform and affine behavior after each phase.
+- [x] Build the affected projects after each phase; at minimum the editor/runtime path should stay green.
 - [ ] Run a full solution build before declaring the rollout complete.
-- [ ] Document measured wins and any neutral/negative results in the follow-up changelist or work notes.
+- [x] Document measured wins and any neutral/negative results in the follow-up changelist or work notes.
 
 ## Explicit Non-Goals While Executing This TODO
 
@@ -150,3 +150,11 @@ Exit criteria:
 - [ ] The measured results justify keeping the affine fast paths.
 - [ ] Public and GPU-facing boundaries are still `Matrix4x4`.
 - [ ] Any further widening of affine storage has been deferred to a separate measured design decision.
+
+## 2026-03-19 Validation Update
+
+- Targeted tests passed: `AffineMatrix4x3Tests`, `TransformAccessorFastPathTests`, and `RenderableMeshBoundsTests` (12/12).
+- `Build-Editor` completed successfully with pre-existing warnings only.
+- Benchmark reruns reconfirm the Phase 1 and Phase 2 wins in the microbenchmark suite and synthetic transform scenarios.
+- Phase 3 remains measurement-gated: the synthetic CPU bounds scenario is still slower on the affine path, so the current bounds fast path should remain narrow and should not be widened until the pending smoke test and further real-path profiling are complete.
+- See [Affine Matrix Phase 3 Validation - 2026-03-19](../audit/affine-matrix-phase3-validation-2026-03-19.md).

@@ -38,6 +38,7 @@ public sealed class GPUSoftbodyComponentTests
         component.Particles.Add(new GPUSoftbodyParticleData { CurrentPosition = Vector3.Zero, PreviousPosition = Vector3.Zero, RestPosition = Vector3.Zero, InverseMass = 1.0f, Radius = 0.05f });
         component.DistanceConstraints.Add(new GPUSoftbodyDistanceConstraintData { ParticleA = 0, ParticleB = 0, RestLength = 0.0f, Compliance = 0.0f });
         component.Clusters.Add(new GPUSoftbodyClusterData { RestCenter = Vector3.Zero, Radius = 0.1f, MemberStart = 0, MemberCount = 0, Stiffness = 1.0f });
+        component.ClusterMembers.Add(new GPUSoftbodyClusterMemberData { ClusterIndex = 0, ParticleIndex = 0, Weight = 1.0f, LocalOffset = Vector3.Zero });
         component.Colliders.Add(new GPUSoftbodyColliderData { Type = 0, Margin = 0.01f, VelocityAndDrag = new Vector4(0.0f, 0.0f, 0.0f, 1.0f) });
         component.RenderBindings.Add(new GPUSoftbodyRenderBindingData { VertexIndex = 0, ClusterIndex = 0, Weight = 1.0f });
         component.SimulationStepSeconds = 1.0f / 60.0f;
@@ -47,6 +48,7 @@ public sealed class GPUSoftbodyComponentTests
         component.SubmittedParticleCount.ShouldBe(1);
         component.SubmittedConstraintCount.ShouldBe(1);
         component.SubmittedClusterCount.ShouldBe(1);
+        component.SubmittedClusterMemberCount.ShouldBe(1);
         component.SubmittedColliderCount.ShouldBe(1);
         component.SubmittedRenderBindingCount.ShouldBe(1);
     }

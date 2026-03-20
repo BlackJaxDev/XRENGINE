@@ -38,6 +38,13 @@ struct ClusterMemberData
     float Padding1;
 };
 
+struct ClusterTransformData
+{
+    vec3 Position;
+    float Padding0;
+    vec4 Rotation;
+};
+
 layout(std430, binding = 0) readonly buffer ParticlesBuffer
 {
     ParticleData Particles[];
@@ -53,7 +60,44 @@ layout(std430, binding = 3) readonly buffer ClusterMembersBuffer
     ClusterMemberData ClusterMembers[];
 };
 
+layout(std430, binding = 7) buffer ClusterTransformsBuffer
+{
+    ClusterTransformData ClusterTransforms[];
+};
+
 uniform int clusterCount;
+
+vec4 SolveHornQuaternion(
+    float sxx,
+    float sxy,
+    float sxz,
+    float syx,
+    float syy,
+    float syz,
+    float szx,
+    float szy,
+    float szz)
+{
+    vec4 quaternionWxyz = vec4(1.0, 0.0, 0.0, 0.0);
+    for (int i = 0; i < 8; ++i)
+    {
+        vec4 next = vec4(
+            (sxx + syy + szz) * quaternionWxyz.x + (syz - szy) * quaternionWxyz.y + (szx - sxz) * quaternionWxyz.z + (sxy - syx) * quaternionWxyz.w,
+            (syz - szy) * quaternionWxyz.x + (sxx - syy - szz) * quaternionWxyz.y + (sxy + syx) * quaternionWxyz.z + (szx + sxz) * quaternionWxyz.w,
+            (szx - sxz) * quaternionWxyz.x + (sxy + syx) * quaternionWxyz.y + (-sxx + syy - szz) * quaternionWxyz.z + (syz + szy) * quaternionWxyz.w,
+            (sxy - syx) * quaternionWxyz.x + (szx + sxz) * quaternionWxyz.y + (syz + szy) * quaternionWxyz.z + (-sxx - syy + szz) * quaternionWxyz.w);
+
+        float magnitude = length(next);
+        if (magnitude <= 0.000001)
+            return vec4(1.0, 0.0, 0.0, 0.0);
+
+        quaternionWxyz = next / magnitude;
+    }
+
+    if (quaternionWxyz.x < 0.0)
+        quaternionWxyz = -quaternionWxyz;
+    return quaternionWxyz;
+}
 
 void main()
 {
@@ -62,10 +106,14 @@ void main()
         return;
 
     ClusterData cluster = Clusters[clusterIndex];
+    ClusterTransformData transformOut;
     if (cluster.MemberCount <= 0)
     {
         cluster.CurrentCenter = cluster.RestCenter;
         Clusters[clusterIndex] = cluster;
+        transformOut.Position = cluster.RestCenter;
+        transformOut.Rotation = vec4(0.0, 0.0, 0.0, 1.0);
+        ClusterTransforms[clusterIndex] = transformOut;
         return;
     }
 
@@ -76,11 +124,50 @@ void main()
     {
         ClusterMemberData member = ClusterMembers[cluster.MemberStart + i];
         ParticleData particle = Particles[member.ParticleIndex];
-        float weight = max(member.Weight, 0.000001);
+        float weight = max(member.Weight, 0.0);
+        if (weight <= 0.0)
+            continue;
         accumulatedCenter += particle.CurrentPosition * weight;
         accumulatedWeight += weight;
     }
 
-    cluster.CurrentCenter = accumulatedWeight > 0.0 ? accumulatedCenter / accumulatedWeight : cluster.RestCenter;
+    vec3 clusterCenter = accumulatedWeight > 0.0 ? accumulatedCenter / accumulatedWeight : cluster.RestCenter;
+    cluster.CurrentCenter = clusterCenter;
+
+    float sxx = 0.0;
+    float sxy = 0.0;
+    float sxz = 0.0;
+    float syx = 0.0;
+    float syy = 0.0;
+    float syz = 0.0;
+    float szx = 0.0;
+    float szy = 0.0;
+    float szz = 0.0;
+
+    for (int i = 0; i < cluster.MemberCount; ++i)
+    {
+        ClusterMemberData member = ClusterMembers[cluster.MemberStart + i];
+        ParticleData particle = Particles[member.ParticleIndex];
+        float weight = max(member.Weight, 0.0);
+        if (weight <= 0.0)
+            continue;
+
+        vec3 currentOffset = particle.CurrentPosition - clusterCenter;
+        vec3 restOffset = member.LocalOffset;
+        sxx += weight * currentOffset.x * restOffset.x;
+        sxy += weight * currentOffset.x * restOffset.y;
+        sxz += weight * currentOffset.x * restOffset.z;
+        syx += weight * currentOffset.y * restOffset.x;
+        syy += weight * currentOffset.y * restOffset.y;
+        syz += weight * currentOffset.y * restOffset.z;
+        szx += weight * currentOffset.z * restOffset.x;
+        szy += weight * currentOffset.z * restOffset.y;
+        szz += weight * currentOffset.z * restOffset.z;
+    }
+
     Clusters[clusterIndex] = cluster;
+    vec4 quaternionWxyz = SolveHornQuaternion(sxx, sxy, sxz, syx, syy, syz, szx, szy, szz);
+    transformOut.Position = clusterCenter;
+    transformOut.Rotation = vec4(quaternionWxyz.yzw, quaternionWxyz.x);
+    ClusterTransforms[clusterIndex] = transformOut;
 }

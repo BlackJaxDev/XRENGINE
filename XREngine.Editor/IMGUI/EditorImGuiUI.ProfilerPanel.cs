@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Numerics;
 using ImGuiNET;
+using XREngine.Data.Core;
+using XREngine.Data.Profiling;
 using XREngine.Profiler.UI;
 
 namespace XREngine.Editor;
@@ -83,6 +85,177 @@ public static partial class EditorImGuiUI
     /// <summary>Whether UDP profiler sending is active (disables in-editor panels).</summary>
     private static bool _profilerUdpEnabled;
 
+    private static void SyncProfilerRendererFromPreferences(EditorDebugOptions debug)
+    {
+        if (_engineProfilerRenderer is null)
+            return;
+
+        _engineProfilerRenderer.Paused = debug.ProfilerPanelPaused;
+        _engineProfilerRenderer.SortByTime = debug.ProfilerPanelSortByTime;
+        _engineProfilerRenderer.SmoothingAlpha = debug.ProfilerPanelSmoothingAlpha;
+        _engineProfilerRenderer.UpdateIntervalSeconds = debug.ProfilerPanelUpdateIntervalSeconds;
+        _engineProfilerRenderer.PersistenceSeconds = debug.ProfilerPanelPersistenceSeconds;
+        _engineProfilerRenderer.GraphSampleCount = debug.ProfilerPanelGraphSampleCount;
+        _engineProfilerRenderer.RootHierarchyMinMs = debug.ProfilerPanelRootHierarchyMinMs;
+        _engineProfilerRenderer.RootHierarchyMaxMs = debug.ProfilerPanelRootHierarchyMaxMs;
+        _engineProfilerRenderer.ShowCpuTimingRawMsLine = debug.ProfilerPanelShowCpuTimingRawMsLine;
+        _engineProfilerRenderer.ShowCpuTimingSmoothedMsLine = debug.ProfilerPanelShowCpuTimingSmoothedMsLine;
+        _engineProfilerRenderer.InterpolateCpuTimingGraphs = debug.ProfilerPanelInterpolateCpuTimingGraphs;
+        _engineProfilerRenderer.CpuTimingDisplayMode = debug.ProfilerPanelCpuTimingDisplayMode;
+        _engineProfilerRenderer.ShowGpuTimingRawMsLine = debug.ProfilerPanelShowGpuTimingRawMsLine;
+        _engineProfilerRenderer.ShowGpuTimingSmoothedMsLine = debug.ProfilerPanelShowGpuTimingSmoothedMsLine;
+        _engineProfilerRenderer.InterpolateGpuTimingGraphs = debug.ProfilerPanelInterpolateGpuTimingGraphs;
+        _engineProfilerRenderer.GpuTimingDisplayMode = debug.ProfilerPanelGpuTimingDisplayMode;
+    }
+
+    private static void SyncProfilerPanelVisibilityFromPreferences(EditorDebugOptions debug)
+    {
+        _showProfilerTree = debug.ProfilerPanelShowTree;
+        _showFpsDropSpikes = debug.ProfilerPanelShowFpsDropSpikes;
+        _showRenderStats = debug.ProfilerPanelShowRenderStats;
+        _showGpuPipeline = debug.ProfilerPanelShowGpuPipeline;
+        _showThreadAllocations = debug.ProfilerPanelShowThreadAllocations;
+        _showComponentTimings = debug.ProfilerPanelShowComponentTimings;
+        _showBvhMetrics = debug.ProfilerPanelShowBvhMetrics;
+        _showJobSystem = debug.ProfilerPanelShowJobSystem;
+        _showMainThreadInvokes = debug.ProfilerPanelShowMainThreadInvokes;
+    }
+
+    private static void PersistProfilerRendererSettings()
+    {
+        if (_engineProfilerRenderer is null)
+            return;
+
+        PersistProfilerDebugSetting(_engineProfilerRenderer.Paused,
+            static debug => debug.ProfilerPanelPaused,
+            static overrides => overrides.ProfilerPanelPausedOverride,
+            static (debug, value) => debug.ProfilerPanelPaused = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.SortByTime,
+            static debug => debug.ProfilerPanelSortByTime,
+            static overrides => overrides.ProfilerPanelSortByTimeOverride,
+            static (debug, value) => debug.ProfilerPanelSortByTime = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.SmoothingAlpha,
+            static debug => debug.ProfilerPanelSmoothingAlpha,
+            static overrides => overrides.ProfilerPanelSmoothingAlphaOverride,
+            static (debug, value) => debug.ProfilerPanelSmoothingAlpha = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.UpdateIntervalSeconds,
+            static debug => debug.ProfilerPanelUpdateIntervalSeconds,
+            static overrides => overrides.ProfilerPanelUpdateIntervalSecondsOverride,
+            static (debug, value) => debug.ProfilerPanelUpdateIntervalSeconds = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.PersistenceSeconds,
+            static debug => debug.ProfilerPanelPersistenceSeconds,
+            static overrides => overrides.ProfilerPanelPersistenceSecondsOverride,
+            static (debug, value) => debug.ProfilerPanelPersistenceSeconds = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.GraphSampleCount,
+            static debug => debug.ProfilerPanelGraphSampleCount,
+            static overrides => overrides.ProfilerPanelGraphSampleCountOverride,
+            static (debug, value) => debug.ProfilerPanelGraphSampleCount = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.RootHierarchyMinMs,
+            static debug => debug.ProfilerPanelRootHierarchyMinMs,
+            static overrides => overrides.ProfilerPanelRootHierarchyMinMsOverride,
+            static (debug, value) => debug.ProfilerPanelRootHierarchyMinMs = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.RootHierarchyMaxMs,
+            static debug => debug.ProfilerPanelRootHierarchyMaxMs,
+            static overrides => overrides.ProfilerPanelRootHierarchyMaxMsOverride,
+            static (debug, value) => debug.ProfilerPanelRootHierarchyMaxMs = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.ShowCpuTimingRawMsLine,
+            static debug => debug.ProfilerPanelShowCpuTimingRawMsLine,
+            static overrides => overrides.ProfilerPanelShowCpuTimingRawMsLineOverride,
+            static (debug, value) => debug.ProfilerPanelShowCpuTimingRawMsLine = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.ShowCpuTimingSmoothedMsLine,
+            static debug => debug.ProfilerPanelShowCpuTimingSmoothedMsLine,
+            static overrides => overrides.ProfilerPanelShowCpuTimingSmoothedMsLineOverride,
+            static (debug, value) => debug.ProfilerPanelShowCpuTimingSmoothedMsLine = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.InterpolateCpuTimingGraphs,
+            static debug => debug.ProfilerPanelInterpolateCpuTimingGraphs,
+            static overrides => overrides.ProfilerPanelInterpolateCpuTimingGraphsOverride,
+            static (debug, value) => debug.ProfilerPanelInterpolateCpuTimingGraphs = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.CpuTimingDisplayMode,
+            static debug => debug.ProfilerPanelCpuTimingDisplayMode,
+            static overrides => overrides.ProfilerPanelCpuTimingDisplayModeOverride,
+            static (debug, value) => debug.ProfilerPanelCpuTimingDisplayMode = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.ShowGpuTimingRawMsLine,
+            static debug => debug.ProfilerPanelShowGpuTimingRawMsLine,
+            static overrides => overrides.ProfilerPanelShowGpuTimingRawMsLineOverride,
+            static (debug, value) => debug.ProfilerPanelShowGpuTimingRawMsLine = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.ShowGpuTimingSmoothedMsLine,
+            static debug => debug.ProfilerPanelShowGpuTimingSmoothedMsLine,
+            static overrides => overrides.ProfilerPanelShowGpuTimingSmoothedMsLineOverride,
+            static (debug, value) => debug.ProfilerPanelShowGpuTimingSmoothedMsLine = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.InterpolateGpuTimingGraphs,
+            static debug => debug.ProfilerPanelInterpolateGpuTimingGraphs,
+            static overrides => overrides.ProfilerPanelInterpolateGpuTimingGraphsOverride,
+            static (debug, value) => debug.ProfilerPanelInterpolateGpuTimingGraphs = value);
+        PersistProfilerDebugSetting(_engineProfilerRenderer.GpuTimingDisplayMode,
+            static debug => debug.ProfilerPanelGpuTimingDisplayMode,
+            static overrides => overrides.ProfilerPanelGpuTimingDisplayModeOverride,
+            static (debug, value) => debug.ProfilerPanelGpuTimingDisplayMode = value);
+    }
+
+    private static void PersistProfilerPanelVisibilitySettings()
+    {
+        PersistProfilerDebugSetting(_showProfilerTree,
+            static debug => debug.ProfilerPanelShowTree,
+            static overrides => overrides.ProfilerPanelShowTreeOverride,
+            static (debug, value) => debug.ProfilerPanelShowTree = value);
+        PersistProfilerDebugSetting(_showFpsDropSpikes,
+            static debug => debug.ProfilerPanelShowFpsDropSpikes,
+            static overrides => overrides.ProfilerPanelShowFpsDropSpikesOverride,
+            static (debug, value) => debug.ProfilerPanelShowFpsDropSpikes = value);
+        PersistProfilerDebugSetting(_showRenderStats,
+            static debug => debug.ProfilerPanelShowRenderStats,
+            static overrides => overrides.ProfilerPanelShowRenderStatsOverride,
+            static (debug, value) => debug.ProfilerPanelShowRenderStats = value);
+        PersistProfilerDebugSetting(_showGpuPipeline,
+            static debug => debug.ProfilerPanelShowGpuPipeline,
+            static overrides => overrides.ProfilerPanelShowGpuPipelineOverride,
+            static (debug, value) => debug.ProfilerPanelShowGpuPipeline = value);
+        PersistProfilerDebugSetting(_showThreadAllocations,
+            static debug => debug.ProfilerPanelShowThreadAllocations,
+            static overrides => overrides.ProfilerPanelShowThreadAllocationsOverride,
+            static (debug, value) => debug.ProfilerPanelShowThreadAllocations = value);
+        PersistProfilerDebugSetting(_showComponentTimings,
+            static debug => debug.ProfilerPanelShowComponentTimings,
+            static overrides => overrides.ProfilerPanelShowComponentTimingsOverride,
+            static (debug, value) => debug.ProfilerPanelShowComponentTimings = value);
+        PersistProfilerDebugSetting(_showBvhMetrics,
+            static debug => debug.ProfilerPanelShowBvhMetrics,
+            static overrides => overrides.ProfilerPanelShowBvhMetricsOverride,
+            static (debug, value) => debug.ProfilerPanelShowBvhMetrics = value);
+        PersistProfilerDebugSetting(_showJobSystem,
+            static debug => debug.ProfilerPanelShowJobSystem,
+            static overrides => overrides.ProfilerPanelShowJobSystemOverride,
+            static (debug, value) => debug.ProfilerPanelShowJobSystem = value);
+        PersistProfilerDebugSetting(_showMainThreadInvokes,
+            static debug => debug.ProfilerPanelShowMainThreadInvokes,
+            static overrides => overrides.ProfilerPanelShowMainThreadInvokesOverride,
+            static (debug, value) => debug.ProfilerPanelShowMainThreadInvokes = value);
+    }
+
+    private static void PersistProfilerDebugSetting<T>(
+        T value,
+        Func<EditorDebugOptions, T> effectiveSelector,
+        Func<EditorDebugOverrides, OverrideableSetting<T>> overrideSelector,
+        Action<EditorDebugOptions, T> globalSetter)
+    {
+        EditorDebugOptions effective = Engine.EditorPreferences.Debug;
+        if (EqualityComparer<T>.Default.Equals(effectiveSelector(effective), value))
+            return;
+
+        EditorDebugOverrides? overrides = Engine.EditorPreferencesOverrides?.Debug;
+        if (overrides is not null)
+        {
+            OverrideableSetting<T> overrideSetting = overrideSelector(overrides);
+            if (overrideSetting.HasOverride)
+            {
+                overrideSetting.Value = value;
+                return;
+            }
+        }
+
+        globalSetter(Engine.GlobalEditorPreferences.Debug, value);
+    }
+
     private static void EnsureProfilerInitialized()
     {
         if (_engineProfilerDataSource is not null) return;
@@ -98,8 +271,11 @@ public static partial class EditorImGuiUI
     {
         if (!_showProfiler) return;
 
-        _profilerUdpEnabled = Engine.EditorPreferences.Debug.EnableProfilerUdpSending;
+        EditorDebugOptions debug = Engine.EditorPreferences.Debug;
+        _profilerUdpEnabled = debug.EnableProfilerUdpSending;
         EnsureProfilerInitialized();
+        SyncProfilerRendererFromPreferences(debug);
+        SyncProfilerPanelVisibilityFromPreferences(debug);
         DrawProfilerDockSpace();
 
         if (!_showProfiler)
@@ -108,7 +284,7 @@ public static partial class EditorImGuiUI
         // If UDP sending is active, show a thin notice instead of the full panels.
         if (_profilerUdpEnabled)
         {
-            if (!ImGui.Begin("Profiler"))
+            if (!ImGui.Begin("Settings"))
             {
                 ImGui.End();
                 return;
@@ -124,7 +300,10 @@ public static partial class EditorImGuiUI
             if (ImGui.Button("Disable UDP Sending"))
             {
                 _profilerUdpEnabled = false;
-                Engine.EditorPreferences.Debug.EnableProfilerUdpSending = false;
+                PersistProfilerDebugSetting(false,
+                    static current => current.EnableProfilerUdpSending,
+                    static overrides => overrides.EnableProfilerUdpSendingOverride,
+                    static (global, value) => global.EnableProfilerUdpSending = value);
             }
 
             ImGui.End();
@@ -138,10 +317,11 @@ public static partial class EditorImGuiUI
         _engineProfilerRenderer!.ProcessLatestData();
 
         // Controls / toggles window
-        if (ImGui.Begin("Profiler"))
+        if (ImGui.Begin("Settings"))
         {
             // ── Graph / Display Settings (shared) ──
             _engineProfilerRenderer!.DrawSettingsContent();
+            PersistProfilerRendererSettings();
 
             ImGui.Separator();
 
@@ -150,35 +330,50 @@ public static partial class EditorImGuiUI
 
             bool enableFrameLogging = Engine.EditorPreferences.Debug.EnableProfilerFrameLogging;
             if (ImGui.Checkbox("Frame Logging", ref enableFrameLogging))
-                Engine.EditorPreferences.Debug.EnableProfilerFrameLogging = enableFrameLogging;
+                PersistProfilerDebugSetting(enableFrameLogging,
+                    static current => current.EnableProfilerFrameLogging,
+                    static overrides => overrides.EnableProfilerFrameLoggingOverride,
+                    static (global, value) => global.EnableProfilerFrameLogging = value);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("When disabled, profiler method timing is skipped to reduce overhead.");
 
             ImGui.SameLine();
             bool enableComponentTiming = Engine.EditorPreferences.Debug.EnableProfilerComponentTiming;
             if (ImGui.Checkbox("Component Timing", ref enableComponentTiming))
-                Engine.EditorPreferences.Debug.EnableProfilerComponentTiming = enableComponentTiming;
+                PersistProfilerDebugSetting(enableComponentTiming,
+                    static current => current.EnableProfilerComponentTiming,
+                    static overrides => overrides.EnableProfilerComponentTimingOverride,
+                    static (global, value) => global.EnableProfilerComponentTiming = value);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("When disabled, per-component tick timings are not recorded for the Components panel.");
 
             ImGui.SameLine();
             bool enableStatsTracking = Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking;
             if (ImGui.Checkbox("Stats Tracking", ref enableStatsTracking))
-                Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking = enableStatsTracking;
+                PersistProfilerDebugSetting(enableStatsTracking,
+                    static current => current.EnableRenderStatisticsTracking,
+                    static overrides => overrides.EnableRenderStatisticsTrackingOverride,
+                    static (global, value) => global.EnableRenderStatisticsTracking = value);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("When disabled, per-frame render statistics (draw calls, triangles) are not tracked.");
 
             ImGui.SameLine();
             bool enableGpuPipelineProfiling = Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
             if (ImGui.Checkbox("GPU Pipeline", ref enableGpuPipelineProfiling))
-                Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling = enableGpuPipelineProfiling;
+                PersistProfilerDebugSetting(enableGpuPipelineProfiling,
+                    static current => current.EnableGpuRenderPipelineProfiling,
+                    static overrides => overrides.EnableGpuRenderPipelineProfilingOverride,
+                    static (global, value) => global.EnableGpuRenderPipelineProfiling = value);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Collect GPU timestamp timings for generic render-pipeline commands when supported by the active renderer.");
 
             ImGui.SameLine();
             bool enableAllocTracking = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
             if (ImGui.Checkbox("Alloc Tracking", ref enableAllocTracking))
-                Engine.EditorPreferences.Debug.EnableThreadAllocationTracking = enableAllocTracking;
+                PersistProfilerDebugSetting(enableAllocTracking,
+                    static current => current.EnableThreadAllocationTracking,
+                    static overrides => overrides.EnableThreadAllocationTrackingOverride,
+                    static (global, value) => global.EnableThreadAllocationTracking = value);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("When disabled, GC allocation deltas are not measured per tick/frame.");
 
@@ -191,7 +386,10 @@ public static partial class EditorImGuiUI
             if (ImGui.Checkbox("Enable UDP Sending", ref udpEnabled))
             {
                 _profilerUdpEnabled = udpEnabled;
-                Engine.EditorPreferences.Debug.EnableProfilerUdpSending = udpEnabled;
+                PersistProfilerDebugSetting(udpEnabled,
+                    static current => current.EnableProfilerUdpSending,
+                    static overrides => overrides.EnableProfilerUdpSendingOverride,
+                    static (global, value) => global.EnableProfilerUdpSending = value);
             }
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Send profiler telemetry via UDP to the external XREngine.Profiler application.\nWhen enabled, this in-editor profiler panel is disabled to avoid duplicate overhead.");
@@ -212,6 +410,7 @@ public static partial class EditorImGuiUI
             ImGui.SameLine(); ImGui.Checkbox("BVH", ref _showBvhMetrics);
             ImGui.SameLine(); ImGui.Checkbox("Jobs", ref _showJobSystem);
             ImGui.SameLine(); ImGui.Checkbox("Invokes", ref _showMainThreadInvokes);
+            PersistProfilerPanelVisibilitySettings();
         }
         ImGui.End();
 
@@ -229,6 +428,7 @@ public static partial class EditorImGuiUI
             ref _showJobSystem,
             ref _showMainThreadInvokes,
             allowClose: false);
+            PersistProfilerPanelVisibilitySettings();
     }
 
     private static void RequestProfilerDockLayoutReset()
@@ -292,28 +492,31 @@ public static partial class EditorImGuiUI
         ImGuiDockBuilderNative.AddNode(dockSpaceId, ImGuiDockNodeFlags.PassthruCentralNode);
         ImGuiDockBuilderNative.SetNodeSize(dockSpaceId, new Vector2(availableWidth, availableHeight));
 
-        ImGuiDockBuilderNative.SplitNode(dockSpaceId, ImGuiDir.Left, 0.55f,
-            out uint leftDockId, out uint rightDockId);
+        ImGuiDockBuilderNative.SplitNode(dockSpaceId, ImGuiDir.Left, 0.58f,
+            out uint leftMainId, out uint rightDockId);
 
-        ImGuiDockBuilderNative.SplitNode(leftDockId, ImGuiDir.Down, 0.30f,
-            out uint leftBottomId, out uint leftTopId);
-
-        ImGuiDockBuilderNative.SplitNode(rightDockId, ImGuiDir.Up, 0.35f,
+        ImGuiDockBuilderNative.SplitNode(rightDockId, ImGuiDir.Up, 0.32f,
             out uint rightTopId, out uint rightBottomId);
 
-        ImGuiDockBuilderNative.SplitNode(rightBottomId, ImGuiDir.Up, 0.50f,
-            out uint rightMidId, out uint rightLowerId);
+        ImGuiDockBuilderNative.SplitNode(rightBottomId, ImGuiDir.Up, 0.28f,
+            out uint rightUpperBandId, out uint rightLowerBlockId);
 
-        ImGuiDockBuilderNative.DockWindow("Profiler", rightTopId);
-        ImGuiDockBuilderNative.DockWindow("Profiler Tree", leftTopId);
-        ImGuiDockBuilderNative.DockWindow("FPS Drop Spikes", leftBottomId);
-        ImGuiDockBuilderNative.DockWindow("Render Stats", rightTopId);
-        ImGuiDockBuilderNative.DockWindow("GPU Pipeline", rightTopId);
-        ImGuiDockBuilderNative.DockWindow("Thread Allocations", rightMidId);
-        ImGuiDockBuilderNative.DockWindow("Component Timings", rightMidId);
-        ImGuiDockBuilderNative.DockWindow("BVH Metrics", rightMidId);
-        ImGuiDockBuilderNative.DockWindow("Job System", rightLowerId);
-        ImGuiDockBuilderNative.DockWindow("Main Thread Invokes", rightLowerId);
+        ImGuiDockBuilderNative.SplitNode(rightUpperBandId, ImGuiDir.Right, 0.50f,
+            out uint rightUpperRightId, out uint rightUpperLeftId);
+
+        ImGuiDockBuilderNative.SplitNode(rightLowerBlockId, ImGuiDir.Up, 0.42f,
+            out uint rightLowerMidId, out uint rightBottomId2);
+
+        ImGuiDockBuilderNative.DockWindow("Settings", rightTopId);
+        ImGuiDockBuilderNative.DockWindow("CPU Timings", leftMainId);
+        ImGuiDockBuilderNative.DockWindow("GPU Timings", leftMainId);
+        ImGuiDockBuilderNative.DockWindow("Render Stats", leftMainId);
+        ImGuiDockBuilderNative.DockWindow("Thread Allocations", rightUpperLeftId);
+        ImGuiDockBuilderNative.DockWindow("BVH Metrics", rightUpperRightId);
+        ImGuiDockBuilderNative.DockWindow("Component Timings", rightLowerMidId);
+        ImGuiDockBuilderNative.DockWindow("Job System", rightBottomId2);
+        ImGuiDockBuilderNative.DockWindow("Main Thread Invokes", rightBottomId2);
+        ImGuiDockBuilderNative.DockWindow("FPS Drop Spikes", rightBottomId2);
 
         ImGuiDockBuilderNative.Finish(dockSpaceId);
     }
