@@ -4,7 +4,7 @@ layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 // --- Struct Definitions ---
 
-struct Particle
+struct ParticleState
 {
     vec3 Position;
     float _pad0;
@@ -12,8 +12,16 @@ struct Particle
     float _pad1;
     vec3 TransformPosition;
     float _pad2;
+    int IsColliding;
+    float _pad3a;
+    float _pad3b;
+    float _pad3c;
+};
+
+struct ParticleStatic
+{
     vec3 TransformLocalPosition;
-    float _pad3;
+    float _pad0;
     int ParentIndex;
     float Damping;
     float Elasticity;
@@ -22,10 +30,6 @@ struct Particle
     float Friction;
     float Radius;
     float BoneLength;
-    int IsColliding;
-    int _pad4;
-    int _pad5;
-    int _pad6;
 };
 
 struct ParticleTreeData
@@ -59,20 +63,25 @@ struct ColliderData
 
 layout(std430, binding = 0) buffer ParticlesBuffer 
 {
-    Particle Particles[];
+    ParticleState Particles[];
 };
 
-layout(std430, binding = 1) buffer ParticleTreesBuffer
+layout(std430, binding = 1) readonly buffer ParticleStaticBuffer
+{
+    ParticleStatic ParticleStatics[];
+};
+
+layout(std430, binding = 2) buffer ParticleTreesBuffer
 {
     ParticleTreeData ParticleTrees[];
 };
 
-layout(std430, binding = 2) buffer TransformMatricesBuffer 
+layout(std430, binding = 3) buffer TransformMatricesBuffer 
 {
     mat4 TransformMatrices[];
 };
 
-layout(std430, binding = 3) buffer CollidersBuffer
+layout(std430, binding = 4) buffer CollidersBuffer
 {
     ColliderData Colliders[];
 };
@@ -219,19 +228,20 @@ void main()
     if (treeIndex < 0)
         return;
 
-    Particle p = Particles[pid];
+    ParticleState p = Particles[pid];
+    ParticleStatic particleStatic = ParticleStatics[pid];
 
-    if (p.ParentIndex >= 0)
+    if (particleStatic.ParentIndex >= 0)
     {
         // Verlet integration - identical to CPU version
         vec3 v = p.Position - p.PrevPosition;
-        vec3 rmove = ObjectMove * p.Inert;
+        vec3 rmove = ObjectMove * particleStatic.Inert;
         p.PrevPosition = p.Position + rmove;
 
-        float damp = p.Damping;
+        float damp = particleStatic.Damping;
         if (p.IsColliding > 0)
         {
-            damp += p.Friction;
+            damp += particleStatic.Friction;
             damp = min(damp, 1.0);
             p.IsColliding = 0;
         }
@@ -250,19 +260,20 @@ void main()
         p.Position += v * (1.0 - damp) + force + rmove;
         
         // Apply constraints - identical to CPU version
-        Particle parent = Particles[p.ParentIndex];
+        ParticleState parent = Particles[particleStatic.ParentIndex];
+        ParticleStatic parentStatic = ParticleStatics[particleStatic.ParentIndex];
         
         // Stiffness & elasticity constraints
-        float stiff = mix(1.0, p.Stiffness, Weight);
-        if (stiff > 0.0 || p.Elasticity > 0.0)
+        float stiff = mix(1.0, particleStatic.Stiffness, Weight);
+        if (stiff > 0.0 || particleStatic.Elasticity > 0.0)
         {
-            mat4 m = TransformMatrices[p.ParentIndex];
+            mat4 m = TransformMatrices[particleStatic.ParentIndex];
             m[3].xyz = parent.Position;
-            vec3 restPos = (m * vec4(p.TransformLocalPosition, 1.0)).xyz;
+            vec3 restPos = (m * vec4(particleStatic.TransformLocalPosition, 1.0)).xyz;
             vec3 d = restPos - p.Position;
             
             // Elasticity
-            p.Position += d * (p.Elasticity * DeltaTime);
+            p.Position += d * (particleStatic.Elasticity * DeltaTime);
             
             // Stiffness constraint
             if (stiff > 0.0)
@@ -279,11 +290,11 @@ void main()
         }
         
         // Collision detection
-        float pr = p.Radius * ObjectScale;
+        float pr = particleStatic.Radius * ObjectScale;
         p.IsColliding = processColliders(p.Position, pr) ? 1 : 0;
         
         // Freeze axis constraint
-        applyFreezeAxis(p.Position, parent.Position, TransformMatrices[p.ParentIndex]);
+        applyFreezeAxis(p.Position, parent.Position, TransformMatrices[particleStatic.ParentIndex]);
         
         // Length constraint
         vec3 diff = parent.Position - p.Position;

@@ -96,6 +96,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private bool _useGPU;
     private bool _useBatchedDispatcher = true;
+    private bool _gpuSyncToBones = false;
+    private volatile bool _hasPendingGpuBoneSync;
 
     private TransformBase? _rootBone = null;
     private float _rootInertia = 0.0f;
@@ -260,6 +262,11 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     {
         get => _referenceObject;
         set => SetField(ref _referenceObject, value);
+    }
+    public bool GpuSyncToBones
+    {
+        get => _gpuSyncToBones;
+        set => SetField(ref _gpuSyncToBones, value);
     }
     public float DistanceToObject
     {

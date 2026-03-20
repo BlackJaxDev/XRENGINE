@@ -5,7 +5,7 @@ layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 // --- Struct Definitions ---
 
-struct Particle
+struct ParticleState
 {
     vec3 Position;
     float _pad0;
@@ -13,8 +13,16 @@ struct Particle
     float _pad1;
     vec3 TransformPosition;
     float _pad2;
+    int IsColliding;
+    float _pad3a;
+    float _pad3b;
+    float _pad3c;
+};
+
+struct ParticleStatic
+{
     vec3 TransformLocalPosition;
-    float _pad3;
+    float _pad0;
     int ParentIndex;
     float Damping;
     float Elasticity;
@@ -23,20 +31,21 @@ struct Particle
     float Friction;
     float Radius;
     float BoneLength;
-    int IsColliding;
-    int _pad4;
-    int _pad5;
-    int _pad6;
 };
 
 // --- Buffers ---
 
 layout(std430, binding = 0) buffer ParticlesBuffer 
 {
-    Particle Particles[];
+    ParticleState Particles[];
 };
 
-layout(std430, binding = 2) buffer TransformMatricesBuffer 
+layout(std430, binding = 1) readonly buffer ParticleStaticBuffer
+{
+    ParticleStatic ParticleStatics[];
+};
+
+layout(std430, binding = 3) buffer TransformMatricesBuffer 
 {
     mat4 TransformMatrices[];
 };
@@ -51,9 +60,10 @@ uniform float Weight;
 void main()
 {
     uint pid = gl_GlobalInvocationID.x;
-    Particle p = Particles[pid];
+    ParticleState p = Particles[pid];
+    ParticleStatic particleStatic = ParticleStatics[pid];
 
-    if (p.ParentIndex < 0)
+    if (particleStatic.ParentIndex < 0)
     {
         // root stays anchored
         p.PrevPosition = p.Position;
@@ -66,14 +76,14 @@ void main()
         p.Position     += ObjectMove;
 
         // only stiffness constraint
-        float stiff = mix(1.0, p.Stiffness, Weight);
+        float stiff = mix(1.0, particleStatic.Stiffness, Weight);
 
         if (stiff > 0.0)
         {
-            Particle parent = Particles[p.ParentIndex];
-            mat4 m = TransformMatrices[p.ParentIndex];
+            ParticleState parent = Particles[particleStatic.ParentIndex];
+            mat4 m = TransformMatrices[particleStatic.ParentIndex];
             m[3].xyz = parent.Position;
-            vec3 restPos = (m * vec4(p.TransformLocalPosition, 1.0)).xyz;
+            vec3 restPos = (m * vec4(particleStatic.TransformLocalPosition, 1.0)).xyz;
             vec3 d = restPos - p.Position;
             float len = length(d);
             float baseLen = length(parent.TransformPosition - p.TransformPosition);
@@ -85,7 +95,7 @@ void main()
         }
 
         // always maintain rest length
-        Particle parent = Particles[p.ParentIndex];
+        ParticleState parent = Particles[particleStatic.ParentIndex];
         vec3 diff = parent.Position - p.Position;
         float L = length(diff);
         if (L > 1e-4)
