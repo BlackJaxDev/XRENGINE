@@ -52,6 +52,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     {
         base.OnComponentDeactivated();
         InitTransforms();
+        _preUpdateCount = 0;
+        _time = 0.0f;
     }
 
     private void FixedUpdate()
@@ -175,7 +177,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 if (p.Transform is not null)
                 {
                     p.TransformPosition = p.Transform.WorldTranslation;
-                    p.TransformLocalPosition = p.Transform.LocalTranslation;
+                    p.TransformLocalPosition = p.ParentIndex < 0 ? p.Transform.LocalTranslation : p.InitLocalPosition;
                     p.TransformLocalToWorldMatrix = p.Transform.WorldMatrix;
                 }
             }
@@ -453,15 +455,28 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         _particleTrees.Add(new ParticleTree(root));
     }
 
+    private (Vector3 LocalPosition, Quaternion LocalRotation) GetInitialLocalState(Transform transform)
+    {
+        if (_initialLocalStates.TryGetValue(transform, out var state))
+            return state;
+
+        state = (transform.LocalTranslation, transform.LocalRotation);
+        if (IsPlaying)
+            _initialLocalStates[transform] = state;
+
+        return state;
+    }
+
     private void AppendParticles(ParticleTree tree, Transform? tfm, int parentIndex, float boneLength)
     {
         var ptcl = new Particle(tfm, parentIndex);
 
         if (tfm != null)
         {
+            var initialLocalState = GetInitialLocalState(tfm);
             ptcl.Position = ptcl.PrevPosition = tfm.WorldTranslation;
-            ptcl.InitLocalPosition = tfm.LocalTranslation;
-            ptcl.InitLocalRotation = tfm.LocalRotation;
+            ptcl.InitLocalPosition = initialLocalState.LocalPosition;
+            ptcl.InitLocalRotation = initialLocalState.LocalRotation;
         }
         else //end bone
         {
@@ -592,7 +607,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < particles.Length; ++i)
         {
             Particle p = particles[i];
-            if (p.Transform is null)
+            if (p.Transform is null || p.ParentIndex < 0)
                 continue;
             
             p.Transform.Translation = p.InitLocalPosition;
@@ -606,6 +621,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             ResetParticlesPosition(_particleTrees[i]);
 
         _objectPrevPosition = Transform.WorldTranslation;
+        _time = 0.0f;
+        _preUpdateCount = 0;
         InitializeRootBoneTracking();
     }
 
@@ -883,7 +900,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             if (parent.ChildCount <= 1 && pTfm is not null) // do not modify bone orientation if has more then one child
             {
                 Vector3 localPos = cTfm is not null
-                    ? cTfm.Translation
+                    ? child.InitLocalPosition
                     : child.EndOffset;
 
                 //pTfm.RecalculateMatrices(true, false);

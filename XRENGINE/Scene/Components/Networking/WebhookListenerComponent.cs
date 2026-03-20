@@ -6,6 +6,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -310,9 +311,28 @@ namespace XREngine.Components
         [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Webhook payloads are user-defined and require runtime JSON deserialization.")]
         public T? DeserializeJson<T>(JsonSerializerOptions? options = null)
         {
+            XREngineJsonRuntime.EnsureDynamicJsonRuntimeSupported("deserialize a webhook payload", typeof(T));
+
             try
             {
                 return JsonSerializer.Deserialize<T>(Body, options ?? new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            }
+            catch (JsonException)
+            {
+                return default;
+            }
+        }
+
+        /// <summary>
+        /// Attempts to deserialize the body as JSON using explicit metadata.
+        /// </summary>
+        public T? DeserializeJson<T>(JsonTypeInfo<T> typeInfo)
+        {
+            ArgumentNullException.ThrowIfNull(typeInfo);
+
+            try
+            {
+                return JsonSerializer.Deserialize(Body, typeInfo);
             }
             catch (JsonException)
             {

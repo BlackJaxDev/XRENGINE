@@ -77,6 +77,8 @@ namespace XREngine
 
         public bool Deserialize(IParser reader, Type expectedType, Func<IParser, Type, object?> nestedObjectDeserializer, out object? value, ObjectDeserializer rootDeserializer)
         {
+            AssetManager.EnsureYamlAssetRuntimeSupported();
+
             if (!typeof(XRAsset).IsAssignableFrom(expectedType))
             {
                 value = null;
@@ -480,6 +482,8 @@ namespace XREngine
 
         public bool Accepts(Type type)
         {
+            AssetManager.EnsureYamlAssetRuntimeSupported();
+
             if (_skipConverter)
                 return false;
 
@@ -487,10 +491,15 @@ namespace XREngine
         }
 
         public object? ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
-            => throw new NotSupportedException("XRAssetYamlConverter is write-only; reading is handled by XRAssetDeserializer.");
+        {
+            AssetManager.EnsureYamlAssetRuntimeSupported();
+            throw new NotSupportedException("XRAssetYamlConverter is write-only; reading is handled by XRAssetDeserializer.");
+        }
 
         public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)
         {
+            AssetManager.EnsureYamlAssetRuntimeSupported();
+
             if (value is XRAsset asset)
             {
                 System.Diagnostics.Trace.WriteLine($"[XRAssetYamlConverter] WriteYaml type={type.Name}, depth={DepthTrackingEventEmitter.CurrentDepth}, skipConverter={_skipConverter}, SourceAsset==this:{ReferenceEquals(asset.SourceAsset, asset)}, FilePath={asset.FilePath ?? "null"}");

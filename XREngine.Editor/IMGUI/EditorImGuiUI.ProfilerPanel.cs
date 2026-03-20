@@ -377,6 +377,16 @@ public static partial class EditorImGuiUI
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("When disabled, GC allocation deltas are not measured per tick/frame.");
 
+            ImGui.SameLine();
+            bool enableInvokeDiagnostics = Engine.EditorPreferences.Debug.EnableMainThreadInvokeDiagnostics;
+            if (ImGui.Checkbox("Invoke Diagnostics", ref enableInvokeDiagnostics))
+                PersistProfilerDebugSetting(enableInvokeDiagnostics,
+                    static current => current.EnableMainThreadInvokeDiagnostics,
+                    static overrides => overrides.EnableMainThreadInvokeDiagnosticsOverride,
+                    static (global, value) => global.EnableMainThreadInvokeDiagnostics = value);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Writes verbose main-thread invoke diagnostics with stack traces to disk. Keep this off unless you are actively investigating invoke stalls because it adds overhead.");
+
             ImGui.Separator();
 
             // ── External Profiler ──

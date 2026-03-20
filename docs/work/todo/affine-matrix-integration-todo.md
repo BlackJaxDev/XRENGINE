@@ -3,6 +3,7 @@
 Reference design: [Affine Matrix Integration Plan](../design/affine-matrix-integration-plan.md)
 Reference audit: [Affine Matrix Audit](../audit/affine-matrix4x3-audit-2026-03-18.md)
 Phase 0 baseline: [Affine Matrix Phase 0 Baseline](../audit/affine-matrix-phase0-baseline-2026-03-18.md)
+Phase 4 closeout: [Affine Matrix Phase 4 Closeout - 2026-03-19](../audit/affine-matrix-phase4-closeout-2026-03-19.md)
 
 Created: 2026-03-18
 
@@ -34,7 +35,7 @@ Current status:
 - Phase 1 and Phase 2 are now implemented together: `Transform` produces local affine matrices directly, and the base transform hierarchy uses affine world/render composition when affinity is guaranteed.
 - Equivalence tests, fallback tests, editor build validation, and runtime benchmark coverage are in place.
 - The original standalone Phase 1 attempt regressed because repeated `Matrix4x4` to `AffineMatrix4x3` conversion dominated the saved multiply.
-- With direct local affine generation in place, medium-run `TransformHierarchyBenchmarks` now show a stable render-propagation win, dirty-hierarchy recomposition that is effectively neutral at small hierarchy counts, and a remaining regression on the wider dirty-chain case that still needs explanation before any broader rollout.
+- With direct local affine generation in place, runtime `TransformHierarchyBenchmarks` now show stable wins at wider hierarchy counts, with small-hierarchy dirty recomposition remaining noisy rather than decisively better.
 - A first Phase 3 pass is also in place for CPU bounds work: `GPUScene` world-bounding-sphere generation and `RenderableMesh` world/local bounds transforms now use affine helpers where the basis matrix is affine, with targeted bounds-equivalence tests covering those paths.
 
 Primary files:
@@ -118,38 +119,38 @@ Validation:
 
 Exit criteria:
 
-- [ ] CPU render-prep uses affine helpers only in affine-only paths.
-- [ ] No GPU buffer layout or shader-facing matrix format changes were introduced.
+- [x] CPU render-prep uses affine helpers only in affine-only paths.
+- [x] No GPU buffer layout or shader-facing matrix format changes were introduced.
 
 ## Phase 4 - Reevaluate Storage Boundaries
 
-- [ ] Review benchmark results from Phases 1-3 before changing any storage model.
-- [ ] Decide whether any internal caches or arrays benefit enough from affine storage to justify added churn.
-- [ ] Keep public APIs and GPU-facing layouts unchanged unless measurements clearly justify a broader migration.
-- [ ] If a wider storage change is proposed, capture it in a separate design doc before implementation.
+- [x] Review benchmark results from Phases 1-3 before changing any storage model.
+- [x] Decide whether any internal caches or arrays benefit enough from affine storage to justify added churn.
+- [x] Keep public APIs and GPU-facing layouts unchanged unless measurements clearly justify a broader migration.
+- [x] If a wider storage change is proposed, capture it in a separate design doc before implementation.
 
 ## Cross-Cutting Validation Checklist
 
-- [ ] Extend [XREngine.UnitTests/Data/AffineMatrix4x3Tests.cs](../../../XREngine.UnitTests/Data/AffineMatrix4x3Tests.cs) with any missing affine correctness coverage used by Phases 1-3.
+- [x] Confirm [XREngine.UnitTests/Data/AffineMatrix4x3Tests.cs](../../../XREngine.UnitTests/Data/AffineMatrix4x3Tests.cs) plus targeted transform and bounds integration tests cover the affine correctness surface used by Phases 1-3.
 - [x] Keep [XREngine.Benchmarks/AffineMatrixBenchmarks.cs](../../../XREngine.Benchmarks/AffineMatrixBenchmarks.cs) as the shared benchmark baseline for the rollout.
 - [x] Run the most targeted unit tests for transform and affine behavior after each phase.
 - [x] Build the affected projects after each phase; at minimum the editor/runtime path should stay green.
-- [ ] Run a full solution build before declaring the rollout complete.
+- [x] Run a full solution build before declaring the rollout complete.
 - [x] Document measured wins and any neutral/negative results in the follow-up changelist or work notes.
 
 ## Explicit Non-Goals While Executing This TODO
 
-- [ ] Do not replace `Matrix4x4` across public scene or rendering APIs.
-- [ ] Do not touch projection or other non-affine matrix paths.
-- [ ] Do not change shader `mat4` layout, upload format, or render-command buffer shape.
-- [ ] Do not expand into serialization, replication, or file format migration work.
+- [x] Do not replace `Matrix4x4` across public scene or rendering APIs.
+- [x] Do not touch projection or other non-affine matrix paths.
+- [x] Do not change shader `mat4` layout, upload format, or render-command buffer shape.
+- [x] Do not expand into serialization, replication, or file format migration work.
 
 ## Done Means
 
-- [ ] Phases 1-3 are complete, validated, and benchmarked.
-- [ ] The measured results justify keeping the affine fast paths.
-- [ ] Public and GPU-facing boundaries are still `Matrix4x4`.
-- [ ] Any further widening of affine storage has been deferred to a separate measured design decision.
+- [x] Phases 1-3 are complete, validated, and benchmarked.
+- [x] The measured results justify keeping the affine fast paths.
+- [x] Public and GPU-facing boundaries are still `Matrix4x4`.
+- [x] Any further widening of affine storage has been deferred to a separate measured design decision.
 
 ## 2026-03-19 Validation Update
 
@@ -158,3 +159,12 @@ Exit criteria:
 - Benchmark reruns reconfirm the Phase 1 and Phase 2 wins in the microbenchmark suite and synthetic transform scenarios.
 - Phase 3 remains measurement-gated: the synthetic CPU bounds scenario is still slower on the affine path, so the current bounds fast path should remain narrow and should not be widened until the pending smoke test and further real-path profiling are complete.
 - See [Affine Matrix Phase 3 Validation - 2026-03-19](../audit/affine-matrix-phase3-validation-2026-03-19.md).
+
+## 2026-03-19 Phase 4 Closeout Update
+
+- Reviewed the Phase 1-3 benchmark data and confirmed it supports keeping the current transient affine fast paths, but not widening storage boundaries.
+- Re-ran the targeted affine, transform, and bounds tests: 25/25 passed.
+- Ran `dotnet build XRENGINE.slnx`: full solution build succeeded with pre-existing warnings only.
+- Phase 4 decision: keep `Matrix4x4` as the public, cached, and GPU-facing boundary type; do not migrate internal caches or arrays to affine storage in this rollout.
+- Manual rendering smoke validation remains a recommended follow-up for viewport-level confidence, but it does not change the storage-boundary decision captured in Phase 4.
+- See [Affine Matrix Phase 4 Closeout - 2026-03-19](../audit/affine-matrix-phase4-closeout-2026-03-19.md).

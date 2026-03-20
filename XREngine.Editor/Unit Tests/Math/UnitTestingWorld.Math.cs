@@ -32,6 +32,7 @@ public static partial class EditorUnitTests
         AddRaySphereRig(rootNode);
         AddSegmentAabbRig(rootNode);
         AddRayTriangleRig(rootNode);
+        AddPhysicsChainComparisonRig(rootNode);
 
         var world = new XRWorld("Math Intersections World", scene);
         Undo.TrackWorld(world);
@@ -493,6 +494,128 @@ public static partial class EditorUnitTests
         });
     }
 
+    private static void AddPhysicsChainComparisonRig(SceneNode rootNode)
+    {
+        var rigNode = rootNode.NewChild("PhysicsChainComparisonRig");
+        var rigTransform = rigNode.SetTransform<Transform>();
+        rigTransform.Translation = new Vector3(12.0f, 0.0f, 12.0f);
+
+        AddPhysicsChainTest(rigNode, "CPUPhysicsChainTest", new Vector3(-2.75f, 0.0f, 0.0f), useGpu: false, phaseOffset: 0.0f, ColorF4.LightBlue, ColorF4.LightGold);
+        AddPhysicsChainTest(rigNode, "GPUPhysicsChainTest", new Vector3(2.75f, 0.0f, 0.0f), useGpu: true, phaseOffset: MathF.PI * 0.5f, ColorF4.LightGreen, ColorF4.Orange);
+    }
+
+    private static void AddPhysicsChainTest(SceneNode parentNode, string name, Vector3 position, bool useGpu, float phaseOffset, ColorF4 chainColor, ColorF4 rootColor)
+    {
+        var testNode = parentNode.NewChild(name);
+        var testTransform = testNode.SetTransform<Transform>();
+        testTransform.Translation = position;
+
+        var rootNode = testNode.NewChild("Root");
+        var rootTransform = rootNode.SetTransform<Transform>();
+        Vector3 rootBaseTranslation = new(0.0f, 4.0f, 0.0f);
+        rootTransform.Translation = rootBaseTranslation;
+
+        var rootAnimation = rootNode.AddComponent<AnimationClipComponent>()!;
+        rootAnimation.Name = $"{name}RootMotion";
+        rootAnimation.Animation = CreateSineTranslationClip(rootBaseTranslation.Y, amplitude: 0.9f, frequency: 1.8f, phaseOffset);
+        rootAnimation.StartOnActivate = true;
+
+        Transform[] chainBones = CreatePhysicsChainBones(rootNode, segmentCount: 6, segmentLength: 0.55f);
+
+        var sphereColliderNode = testNode.NewChild("SphereCollider");
+        var sphereColliderTransform = sphereColliderNode.SetTransform<Transform>();
+        sphereColliderTransform.Translation = new Vector3(0.25f, 2.1f, 0.0f);
+        var sphereCollider = sphereColliderNode.AddComponent<PhysicsChainSphereCollider>()!;
+        sphereCollider.Radius = 0.65f;
+
+        var planeColliderNode = testNode.NewChild("PlaneCollider");
+        var planeColliderTransform = planeColliderNode.SetTransform<Transform>();
+        planeColliderTransform.Translation = new Vector3(0.0f, 0.65f, 0.0f);
+        var planeCollider = planeColliderNode.AddComponent<PhysicsChainPlaneCollider>()!;
+
+        PhysicsChainColliderBase[] colliders = [sphereCollider, planeCollider];
+        if (useGpu)
+        {
+            var gpuChain = rootNode.AddComponent<GPUPhysicsChainComponent>()!;
+            gpuChain.Root = rootTransform;
+            gpuChain.UpdateMode = EUpdateMode.Default;
+            gpuChain.UpdateRate = 60.0f;
+            gpuChain.Damping = 0.18f;
+            gpuChain.Elasticity = 0.12f;
+            gpuChain.Stiffness = 0.1f;
+            gpuChain.Inert = 0.25f;
+            gpuChain.Friction = 0.2f;
+            gpuChain.Radius = 0.08f;
+            gpuChain.Gravity = new Vector3(0.0f, -3.0f, 0.0f);
+            gpuChain.Force = Vector3.Zero;
+            gpuChain.BlendWeight = 1.0f;
+            gpuChain.Multithread = false;
+            gpuChain.UseBatchedDispatcher = true;
+            gpuChain.Colliders = [.. colliders];
+        }
+        else
+        {
+            var cpuChain = rootNode.AddComponent<PhysicsChainComponent>()!;
+            cpuChain.Root = rootTransform;
+            cpuChain.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
+            cpuChain.UpdateRate = 60.0f;
+            cpuChain.Damping = 0.18f;
+            cpuChain.Elasticity = 0.12f;
+            cpuChain.Stiffness = 0.1f;
+            cpuChain.Inert = 0.25f;
+            cpuChain.Friction = 0.2f;
+            cpuChain.Radius = 0.08f;
+            cpuChain.Gravity = new Vector3(0.0f, -3.0f, 0.0f);
+            cpuChain.Force = Vector3.Zero;
+            cpuChain.BlendWeight = 1.0f;
+            cpuChain.Multithread = false;
+            cpuChain.Colliders = [.. colliders];
+        }
+
+        var debug = testNode.AddComponent<DebugDrawComponent>()!;
+        testNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            debug.ClearShapes();
+
+            Vector3 baselineRoot = testTransform.TransformPoint(rootBaseTranslation);
+            debug.AddLine(
+                baselineRoot + new Vector3(0.0f, -0.9f, 0.0f),
+                baselineRoot + new Vector3(0.0f, 0.9f, 0.0f),
+                rootColor);
+            debug.AddPoint(rootTransform.WorldTranslation, rootColor);
+            debug.AddSphere(sphereCollider.Radius, sphereColliderTransform.WorldTranslation, ColorF4.Magenta, false);
+            debug.AddLine(
+                planeColliderTransform.WorldTranslation + new Vector3(-0.9f, 0.0f, 0.0f),
+                planeColliderTransform.WorldTranslation + new Vector3(0.9f, 0.0f, 0.0f),
+                ColorF4.LightGray);
+
+            for (int i = 1; i < chainBones.Length; i++)
+            {
+                debug.AddPoint(chainBones[i].WorldTranslation, chainColor);
+                debug.AddLine(chainBones[i - 1].WorldTranslation, chainBones[i].WorldTranslation, chainColor);
+            }
+        });
+    }
+
+    private static Transform[] CreatePhysicsChainBones(SceneNode rootNode, int segmentCount, float segmentLength)
+    {
+        var bones = new Transform[segmentCount + 1];
+        Transform parentTransform = rootNode.GetTransformAs<Transform>(true)!;
+        bones[0] = parentTransform;
+
+        SceneNode parentNode = rootNode;
+        for (int i = 0; i < segmentCount; i++)
+        {
+            var boneNode = parentNode.NewChild($"Bone{i + 1}");
+            var boneTransform = boneNode.SetTransform<Transform>();
+            boneTransform.Translation = new Vector3(0.0f, -segmentLength, 0.0f);
+            bones[i + 1] = boneTransform;
+            parentNode = boneNode;
+        }
+
+        return bones;
+    }
+
     private static Frustum BuildFrustum(TransformBase tfm, float fovY, float aspect, float nearZ, float farZ)
     {
         Vector3 forward = tfm.WorldForward;
@@ -585,6 +708,38 @@ public static partial class EditorUnitTests
         return new AnimationClip(root)
         {
             Name = "CyclopsEyeOrbit",
+            LengthInSeconds = durationSeconds,
+            Looped = true,
+            SampleRate = sampleCount - 1,
+        };
+    }
+
+    private static AnimationClip CreateSineTranslationClip(float baseY, float amplitude, float frequency, float phaseOffset)
+    {
+        float durationSeconds = MathF.Tau / frequency;
+        const int sampleCount = 33;
+
+        PropAnimFloat translationY = new(durationSeconds, looped: true, useKeyframes: true);
+        for (int i = 0; i < sampleCount; i++)
+        {
+            float t = i / (float)(sampleCount - 1);
+            float time = durationSeconds * t;
+            float radians = MathF.Tau * t + phaseOffset;
+            float value = baseY + MathF.Sin(radians) * amplitude;
+            translationY.Keyframes.Add(new FloatKeyframe(time, value, 0.0f, EVectorInterpType.Linear));
+        }
+
+        var root = new AnimationMember("Root", EAnimationMemberType.Group);
+        var sceneNodeMember = new AnimationMember("SceneNode", EAnimationMemberType.Property);
+        var transformMember = new AnimationMember("Transform", EAnimationMemberType.Property);
+        transformMember.Children.Add(new AnimationMember("TranslationY", EAnimationMemberType.Property, translationY));
+
+        root.Children.Add(sceneNodeMember);
+        sceneNodeMember.Children.Add(transformMember);
+
+        return new AnimationClip(root)
+        {
+            Name = "SineTranslationY",
             LengthInSeconds = durationSeconds,
             Looped = true,
             SampleRate = sampleCount - 1,

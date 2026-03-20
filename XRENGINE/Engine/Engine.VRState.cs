@@ -961,24 +961,19 @@ namespace XREngine
             private static void InstallApp(VrManifest vrManifest)
             {
                 string path = Path.Combine(Directory.GetCurrentDirectory(), ".vrmanifest");
-                File.WriteAllText(path, JsonSerializer.Serialize(new
-                {
-                    source = "builtin",
-                    applications = new VrManifest[] { vrManifest }
-                }, JSonOpts));
+                string manifestJson = JsonSerializer.Serialize(
+                    new VrManifestInstallDocument
+                    {
+                        Applications = [vrManifest]
+                    },
+                    XREnginePrettyJsonContext.Default.VrManifestInstallDocument);
+                File.WriteAllText(path, manifestJson);
 
                 //Valve.VR.OpenVR.Applications.RemoveApplicationManifest( path );
                 var error = Valve.VR.OpenVR.Applications?.AddApplicationManifest(path, false);
                 if (error != EVRApplicationError.None)
                     Debug.LogWarning($"Error installing app manifest: {error}");
             }
-
-            private static readonly JsonSerializerOptions JSonOpts = new()
-            {
-                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-                WriteIndented = true,
-                IncludeFields = true
-            };
 
             //public static float PosePredictionSec { get; set; } = 0f / 1000.0f;
 
@@ -1278,8 +1273,6 @@ namespace XREngine
                 PipeServer.Dispose();
             }
             
-            [RequiresUnreferencedCode("")]
-            [RequiresDynamicCode("")]
             public static async Task SendInputs()
             {
                 if (PipeClient is null)
@@ -1288,7 +1281,8 @@ namespace XREngine
                 try
                 {
                     CaptureVRInputData();
-                    await PipeClient.WriteAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(_data)));
+                    string json = JsonSerializer.Serialize(_data, XREngineRuntimeJsonContext.Default.VRInputData);
+                    await PipeClient.WriteAsync(Encoding.UTF8.GetBytes(json));
                 }
                 catch (Exception ex)
                 {
@@ -1327,8 +1321,6 @@ namespace XREngine
 
             private static StreamReader? _reader = null;
 
-            [RequiresUnreferencedCode("Calls System.Text.Json.JsonSerializer.Deserialize<TValue>(String, JsonSerializerOptions)")]
-            [RequiresDynamicCode("Calls System.Text.Json.JsonSerializer.Deserialize<TValue>(String, JsonSerializerOptions)")]
             private static async Task InputListenerAsync()
             {
                 Debug.Out("Waiting for VR input connection...");
@@ -1347,8 +1339,6 @@ namespace XREngine
 
             private static DateTime _lastInputRead = DateTime.MinValue;
 
-            [RequiresUnreferencedCode("Calls System.Text.Json.JsonSerializer.Deserialize<TValue>(String, JsonSerializerOptions)")]
-            [RequiresDynamicCode("Calls System.Text.Json.JsonSerializer.Deserialize<TValue>(String, JsonSerializerOptions)")]
             private static async Task ReadVRInput()
             {
                 if (_reader is null)
@@ -1367,7 +1357,7 @@ namespace XREngine
                     return;
                 }
                 _lastInputRead = DateTime.Now;
-                ProcessInputData(JsonSerializer.Deserialize<VRInputData?>(jsonData));
+                ProcessInputData(JsonSerializer.Deserialize(jsonData, XREngineRuntimeJsonContext.Default.VRInputData));
             }
 
             private static VRInputData? _latestInputData = null;

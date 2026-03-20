@@ -108,6 +108,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private int _preUpdateCount = 0;
 
     private readonly List<ParticleTree> _particleTrees = [];
+    private readonly Dictionary<Transform, (Vector3 LocalPosition, Quaternion LocalRotation)> _initialLocalStates = [];
 
     // prepare data
     private float _deltaTime;

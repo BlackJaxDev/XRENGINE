@@ -22,7 +22,6 @@ namespace XREngine.Components
         public const string DefaultMagicTag = "XRENGINE-DISCOVERY";
 
         private readonly ConcurrentDictionary<string, DiscoveredEndpoint> _discovered = new(StringComparer.OrdinalIgnoreCase);
-        private readonly JsonSerializerOptions _serializerOptions = new(JsonSerializerDefaults.Web);
         private readonly string _localBeaconId = Guid.NewGuid().ToString("N");
         private CancellationTokenSource? _discoveryCts;
         private Task? _listenTask;
@@ -365,10 +364,8 @@ namespace XREngine.Components
             {
                 try
                 {
-#pragma warning disable IL2026, IL3050
                     DiscoveryAnnouncement payload = BuildLocalAnnouncement();
-                    byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(payload, _serializerOptions);
-#pragma warning restore IL2026, IL3050
+                    byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(payload, XREngineRuntimeJsonContext.Default.DiscoveryAnnouncement);
 
                     if (multicastEndPoint is not null)
                         await client.SendAsync(bytes, bytes.Length, multicastEndPoint).ConfigureAwait(false);
@@ -432,9 +429,7 @@ namespace XREngine.Components
             DiscoveryAnnouncement? announcement = null;
             try
             {
-#pragma warning disable IL2026, IL3050
-                announcement = JsonSerializer.Deserialize<DiscoveryAnnouncement>(buffer, _serializerOptions);
-#pragma warning restore IL2026, IL3050
+                announcement = JsonSerializer.Deserialize(buffer, XREngineRuntimeJsonContext.Default.DiscoveryAnnouncement);
             }
             catch (Exception ex)
             {
