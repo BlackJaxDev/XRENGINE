@@ -81,7 +81,9 @@ public sealed class PhysicsChainComponentTests
 
         // Modes
         c.UpdateMode.ShouldBe(PhysicsChainComponent.EUpdateMode.Default);
+        c.InterpolationMode.ShouldBe(PhysicsChainComponent.EInterpolationMode.Discrete);
         c.UpdateRate.ShouldBeGreaterThan(0);
+        c.Speed.ShouldBe(1.0f);
         c.FreezeAxis.ShouldBe(PhysicsChainComponent.EFreezeAxis.None);
 
         // Distance disable

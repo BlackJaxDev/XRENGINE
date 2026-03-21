@@ -17,6 +17,8 @@ struct ParticleState
     float _pad3a;
     float _pad3b;
     float _pad3c;
+    vec3 PreviousPhysicsPosition;
+    float _pad4;
 };
 
 struct ParticleStatic

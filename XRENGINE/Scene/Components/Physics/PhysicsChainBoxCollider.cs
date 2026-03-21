@@ -16,22 +16,23 @@ public class PhysicsChainBoxCollider : PhysicsChainColliderBase
     [Description("Transform to use for the collider position (if null, uses this component's transform)")]
     public Transform? ColliderTransform;
 
-    private TransformBase EffectiveTransform => ColliderTransform ?? Transform;
-
     public override bool Collide(ref Vector3 particlePosition, float particleRadius)
     {
-        Vector3 center = EffectiveTransform.WorldTranslation;
+        if (!TryResolveEffectiveTransform(ColliderTransform, out TransformBase effectiveTransform))
+            return false;
+
+        Vector3 center = effectiveTransform.WorldTranslation;
         Vector3 halfExtents = Size * 0.5f;
         
         // Transform particle position to local space
-        Vector3 localPos = EffectiveTransform.InverseTransformPoint(particlePosition);
+        Vector3 localPos = effectiveTransform.InverseTransformPoint(particlePosition);
         
         // Clamp to box bounds
         Vector3 clamped = Vector3.Clamp(localPos, -halfExtents, halfExtents);
         
         // Find closest point on box surface
         Vector3 closestLocal = clamped;
-        Vector3 closestWorld = EffectiveTransform.TransformPoint(closestLocal);
+        Vector3 closestWorld = effectiveTransform.TransformPoint(closestLocal);
         
         // Check distance to closest point
         Vector3 toClosest = particlePosition - closestWorld;

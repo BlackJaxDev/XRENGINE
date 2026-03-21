@@ -88,6 +88,7 @@ public sealed class PhysicsChainComponentGpuModeTests
         // Modes
         c.UseBatchedDispatcher.ShouldBeTrue();
         c.UpdateMode.ShouldBe(PhysicsChainComponent.EUpdateMode.Default);
+        c.InterpolationMode.ShouldBe(PhysicsChainComponent.EInterpolationMode.Discrete);
         c.UpdateRate.ShouldBeGreaterThan(0);
         c.FreezeAxis.ShouldBe(PhysicsChainComponent.EFreezeAxis.None);
 

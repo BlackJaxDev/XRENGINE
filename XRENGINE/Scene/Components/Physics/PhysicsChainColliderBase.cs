@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using XREngine.Components;
+using XREngine.Scene.Transforms;
 
 public class PhysicsChainColliderBase : XRComponent
 {
@@ -34,5 +35,11 @@ public class PhysicsChainColliderBase : XRComponent
     public virtual bool Collide(ref Vector3 particlePosition, float particleRadius)
     {
         return false;
+    }
+
+    protected bool TryResolveEffectiveTransform(TransformBase? overrideTransform, out TransformBase effectiveTransform)
+    {
+        effectiveTransform = overrideTransform ?? Transform!;
+        return effectiveTransform is not null;
     }
 }
