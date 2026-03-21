@@ -73,6 +73,8 @@ public sealed class GPUPhysicsChainDispatcher
         public float _pad2;
         public int IsColliding;
         public Vector3 _pad3;
+        public Vector3 PreviousPhysicsPosition;
+        public float _pad4;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -381,7 +383,7 @@ public sealed class GPUPhysicsChainDispatcher
         TotalColliderCount = _allColliders.Count;
 
         // Resize/create buffers as needed
-        bool particlesResized = EnsureBufferCapacity(ref _particlesBuffer, "Particles", (uint)_allParticles.Count, 16); // 16 components per particle state
+        bool particlesResized = EnsureBufferCapacity(ref _particlesBuffer, "Particles", (uint)_allParticles.Count, 20); // 20 components per particle state (including PreviousPhysicsPosition)
         bool particleStaticResized = EnsureBufferCapacity(ref _particleStaticBuffer, "ParticleStatic", (uint)Math.Max(_allParticles.Count, 1), 12); // 12 components per particle static data
         EnsureBufferCapacity(ref _particleTreesBuffer, "ParticleTrees", (uint)_allParticleTrees.Count, 28); // 28 floats per tree
         EnsureBufferCapacity(ref _transformMatricesBuffer, "TransformMatrices", (uint)_allTransformMatrices.Count, 16);

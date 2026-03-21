@@ -23,6 +23,7 @@ public partial class PhysicsChainComponent
 
         internal Vector3 _position;
         private Vector3 _prevPosition;
+        private Vector3 _previousPhysicsPosition;
         private Vector3 _endOffset;
         private Vector3 _initLocalPosition;
         private Quaternion _initLocalRotation;
@@ -85,6 +86,11 @@ public partial class PhysicsChainComponent
         {
             get => _prevPosition;
             set => SetFieldUnchecked(ref _prevPosition, value);
+        }
+        public Vector3 PreviousPhysicsPosition
+        {
+            get => _previousPhysicsPosition;
+            set => SetFieldUnchecked(ref _previousPhysicsPosition, value);
         }
         public Vector3 EndOffset
         {

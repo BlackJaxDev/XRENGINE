@@ -852,7 +852,7 @@ namespace XREngine.Rendering
                     !RuntimeRenderingHostServices.Current.IsInVR ||
                     (RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR && !mirrorByComposition);
 
-                LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
+                //LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
                 ApplyForcedDebugOpaquePipelineOverride();
 
                 using (var preRenderSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.GlobalPreRender"))

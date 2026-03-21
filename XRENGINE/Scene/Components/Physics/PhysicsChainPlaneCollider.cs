@@ -24,6 +24,12 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
 
     public override void Prepare()
     {
+        if (Transform is null)
+        {
+            _plane = default;
+            return;
+        }
+
         Vector3 normal = Globals.Up;
         switch (_direction)
         {
@@ -44,6 +50,9 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
 
     public override bool Collide(ref Vector3 particlePosition, float particleRadius)
     {
+        if (Transform is null)
+            return false;
+
         float d = GeoUtil.DistanceFrom.PlaneToPoint(_plane, particlePosition);
 
         if (_bound == EBound.Outside)
@@ -68,7 +77,10 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
 
     private void OnDrawGizmosSelected()
     {
-        if (!IsActive || Engine.Rendering.State.IsShadowPass)
+        if (!IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass)
+            return;
+
+        if (Transform is null)
             return;
 
         Prepare();

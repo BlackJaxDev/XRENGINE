@@ -16,6 +16,8 @@ struct ParticleState
     float _pad3a;
     float _pad3b;
     float _pad3c;
+    vec3 PreviousPhysicsPosition;
+    float _pad4;
 };
 
 struct ParticleStatic
@@ -230,6 +232,11 @@ void main()
 
     ParticleState p = Particles[pid];
     ParticleStatic particleStatic = ParticleStatics[pid];
+
+    // Capture the pre-iteration pose for interpolation/extrapolation.
+    // After all iterations, PreviousPhysicsPosition holds the position
+    // before the LAST iteration — exactly one tick of velocity.
+    p.PreviousPhysicsPosition = p.Position;
 
     if (particleStatic.ParentIndex >= 0)
     {

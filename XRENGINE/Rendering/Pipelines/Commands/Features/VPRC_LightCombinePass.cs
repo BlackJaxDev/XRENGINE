@@ -111,6 +111,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             int pointLightCount = lights.DynamicPointLights.Count;
             int spotLightCount = lights.DynamicSpotLights.Count;
 
+/*
             Debug.RenderingEvery(
                 $"RenderDiag.LightCombine.{ActivePipelineInstance.GetHashCode()}",
                 TimeSpan.FromSeconds(1),
@@ -129,6 +130,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 DescribeTexture(rmseTex),
                 DescribeTexture(depthViewTex));
 
+
             if (viewport is { Width: > 512, Height: > 512 } && (region.Width <= 128 || region.Height <= 128))
             {
                 Debug.RenderingWarningEvery(
@@ -142,6 +144,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                     world?.TargetWorld?.Name ?? "<null>",
                     viewport.Index);
             }
+
+*/
 
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
             {

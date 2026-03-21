@@ -16,11 +16,12 @@ public class PhysicsChainSphereCollider : PhysicsChainColliderBase
     [Description("Transform to use for the collider position (if null, uses this component's transform)")]
     public Transform? ColliderTransform;
 
-    private TransformBase EffectiveTransform => ColliderTransform ?? Transform;
-
     public override bool Collide(ref Vector3 particlePosition, float particleRadius)
     {
-        Vector3 center = EffectiveTransform.WorldTranslation;
+        if (!TryResolveEffectiveTransform(ColliderTransform, out TransformBase effectiveTransform))
+            return false;
+
+        Vector3 center = effectiveTransform.WorldTranslation;
         Vector3 direction = particlePosition - center;
         float distance = direction.Length();
         

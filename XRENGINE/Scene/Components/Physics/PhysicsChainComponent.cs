@@ -70,11 +70,14 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     {
         if (UpdateMode != EUpdateMode.FixedUpdate)
             PreUpdate();
+
+        if (UpdateMode == EUpdateMode.FixedUpdate)
+            _fixedUpdateRenderAccumulatedTicks += Math.Max(0L, Engine.Time.Timer.Update.DeltaTicks);
         
         if (!UseGPU && _preUpdateCount > 0 && Multithread)
             AddPendingWork(this);
         
-        ++_updateCount;
+        System.Threading.Interlocked.Increment(ref _updateCount);
     }
 
     private void LateUpdate()
@@ -82,13 +85,14 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         if (_preUpdateCount == 0)
         {
             ApplyPendingGpuBoneSync();
+            if (ShouldRefreshInterpolatedRenderPose())
+                ApplyInterpolatedRenderPose();
             return;
         }
 
-        if (_updateCount > 0)
+        if (System.Threading.Interlocked.Exchange(ref _updateCount, 0) > 0)
         {
-            _updateCount = 0;
-            ++_prepareFrame;
+            System.Threading.Interlocked.Increment(ref _prepareFrame);
         }
 
         _isSimulating = true;
@@ -97,15 +101,15 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         if (UseGPU)
         {
             ExecuteGpuLateUpdate();
-            if (GpuSyncToBones && UseBatchedDispatcher)
+            if (GpuSyncToBones)
             {
                 if (_hasPendingGpuBoneSync)
                     ApplyPendingGpuBoneSync();
                 else
-                    ApplyGpuResultsToTransforms();
+                    ApplyCurrentParticleTransforms();
             }
         }
-        else if (!_pendingWorks.IsEmpty)
+        else if (Multithread)
             ExecuteWorks();
         else
         {
@@ -114,7 +118,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             {
                 Prepare();
                 UpdateParticles();
-                ApplyParticlesToTransforms();
+                ApplyCurrentParticleTransforms(newSimulationResults: _lastSimulationProducedResults);
             }
         }
 
@@ -210,22 +214,53 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         _effectiveColliders?.Clear();
 
-        if (Colliders is null)
-            return;
-        
-        for (int i = 0; i < Colliders.Count; ++i)
+        if (Colliders is not null)
         {
-            PhysicsChainColliderBase c = Colliders[i];
-            if (c is null || !c.IsActiveInHierarchy)
-                continue;
+            for (int i = 0; i < Colliders.Count; ++i)
+            {
+                PhysicsChainColliderBase c = Colliders[i];
+                if (c is null || !c.IsActiveInHierarchy)
+                    continue;
 
-            (_effectiveColliders ??= []).Add(c);
-            if (c.PrepareFrame == _prepareFrame)
-                continue;
-            
-            c.Prepare();
-            c.PrepareFrame = _prepareFrame;
+                (_effectiveColliders ??= []).Add(c);
+                if (c.PrepareFrame == _prepareFrame)
+                    continue;
+
+                c.Prepare();
+                c.PrepareFrame = _prepareFrame;
+            }
         }
+
+        // Snapshot collections into arrays so job worker threads iterate
+        // stable, immutable data instead of the mutable lists above.
+        SnapshotForJobs();
+    }
+
+    /// <summary>
+    /// Copies <see cref="_particleTrees"/> and <see cref="_effectiveColliders"/>
+    /// into pre-allocated arrays that job worker threads can safely iterate.
+    /// Only allocates when the element count grows.
+    /// </summary>
+    private void SnapshotForJobs()
+    {
+        // Particle trees
+        int treeCount = _particleTrees.Count;
+        if (_particleTreesForJob is null || _particleTreesForJob.Length < treeCount)
+            _particleTreesForJob = new ParticleTree[Math.Max(treeCount, 1)];
+        for (int i = 0; i < treeCount; ++i)
+            _particleTreesForJob[i] = _particleTrees[i];
+        _particleTreesForJobCount = treeCount;
+
+        // Effective colliders
+        int colCount = _effectiveColliders?.Count ?? 0;
+        if (colCount > 0)
+        {
+            if (_collidersForJob is null || _collidersForJob.Length < colCount)
+                _collidersForJob = new PhysicsChainColliderBase[Math.Max(colCount, 4)];
+            for (int i = 0; i < colCount; ++i)
+                _collidersForJob[i] = _effectiveColliders![i];
+        }
+        _collidersForJobCount = colCount;
     }
 
     private bool IsNeedUpdate()
@@ -287,6 +322,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         try
         {
             UpdateRate = MathF.Max(UpdateRate, 0);
+            Speed = MathF.Max(Speed, 0);
             Damping = Damping.Clamp(0, 1);
             Elasticity = Elasticity.Clamp(0, 1);
             Stiffness = Stiffness.Clamp(0, 1);
@@ -337,7 +373,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private void Render()
     {
-        if (!IsActive || Engine.Rendering.State.IsShadowPass)
+        if (!IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass || !DebugDrawChains)
             return;
 
         if (UseGPU)
@@ -366,19 +402,33 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             if (p.ParentIndex >= 0 && p.ParentIndex < particleCount)
             {
                 Particle p0 = particles[p.ParentIndex];
-                Engine.Rendering.Debug.RenderLine(p.Position, p0.Position, ColorF4.Orange);
+                Engine.Rendering.Debug.RenderLine(p.Position, p0.Position, ColorF4.White);
+
+                float radius = p.Radius * _objectScale;
+                if (radius > 0.0f)
+                    DrawParticleRadiusSegment(p0.Position, p.Position, radius);
             }
             else if (p.ParentIndex >= 0)
             {
                 LogFault($"DrawTree:BadParent:{FormatRoot(pt.Root)}:{p.ParentIndex}",
                     $"DrawTree invalid parent index {p.ParentIndex} for particle {i} (count={particleCount}, root={FormatRoot(pt.Root)}).");
             }
-            if (p.Radius > 0)
-            {
-                float radius = p.Radius * _objectScale;
-                Engine.Rendering.Debug.RenderSphere(p.Position, radius, false, ColorF4.Yellow);
-            }
         }
+    }
+
+    private static void DrawParticleRadiusSegment(Vector3 start, Vector3 end, float radius)
+    {
+        if (radius <= 0.0f)
+            return;
+
+        float segmentLengthSquared = Vector3.DistanceSquared(start, end);
+        if (segmentLengthSquared <= 1e-8f)
+        {
+            Engine.Rendering.Debug.RenderSphere(start, radius, false, ColorF4.Yellow);
+            return;
+        }
+
+        Engine.Rendering.Debug.RenderCapsule(start, end, radius, false, ColorF4.Yellow);
     }
 
     public void SetWeight(float w)
@@ -396,21 +446,28 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     public float Weight => _weight;
 
-    private void UpdateParticles()
+    internal static float ComputeSimulationTimeScale(float stepDelta, float referenceDelta, float speed)
     {
-        if (_particleTrees.Count <= 0)
-            return;
+        float safeSpeed = MathF.Max(0.0f, speed);
+        float safeReference = MathF.Max(referenceDelta, 1e-6f);
+        float safeStep = MathF.Max(0.0f, stepDelta);
+        return (safeStep / safeReference) * safeSpeed;
+    }
 
-        int loop = 1;
-        float timeVar = 1.0f;
-        float dt = _deltaTime;
+    private float ResolveSimulationReferenceDelta()
+    {
+        if (UpdateRate > 0.0f)
+            return 1.0f / UpdateRate;
 
-        if (UpdateMode == EUpdateMode.Default)
-        {
-            if (UpdateRate > 0.0f)
-                timeVar = dt * UpdateRate;
-        }
-        else if (UpdateRate > 0.0f)
+        return MathF.Max(Engine.Time.Timer.Update.Delta, 1e-6f);
+    }
+
+    private void ResolveSimulationLoopAndTimeScale(float dt, out int loop, out float timeVar)
+    {
+        loop = 1;
+        float stepDelta = dt;
+
+        if (UpdateMode != EUpdateMode.Default && UpdateRate > 0.0f)
         {
             float frameTime = 1.0f / UpdateRate;
             _time += dt;
@@ -421,16 +478,38 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 _time -= frameTime;
                 if (++loop >= 3)
                 {
-                    _time = 0;
+                    _time = 0.0f;
                     break;
                 }
             }
+
+            stepDelta = frameTime;
         }
-        
-        if (loop > 0)
+
+        timeVar = ComputeSimulationTimeScale(stepDelta, ResolveSimulationReferenceDelta(), Speed);
+    }
+
+    private void UpdateParticles()
+    {
+        if (_particleTrees.Count <= 0)
         {
+            _lastSimulationProducedResults = false;
+            return;
+        }
+
+        float dt = _deltaTime;
+        ResolveSimulationLoopAndTimeScale(dt, out int loop, out float timeVar);
+
+        bool producedResults = loop > 0;
+        _lastSimulationProducedResults = producedResults;
+        
+        if (producedResults)
+        {
+            bool capture = UsesInterpolatedPresentation();
             for (int i = 0; i < loop; ++i)
             {
+                if (capture)
+                    CapturePreviousPose();
                 CalculateParticles(timeVar, i);
                 ApplyParticleTransforms(timeVar);
             }
@@ -523,6 +602,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         {
             var initialLocalState = GetInitialLocalState(tfm);
             ptcl.Position = ptcl.PrevPosition = tfm.WorldTranslation;
+            ptcl.PreviousPhysicsPosition = ptcl.Position;
             ptcl.InitLocalPosition = initialLocalState.LocalPosition;
             ptcl.InitLocalRotation = initialLocalState.LocalRotation;
         }
@@ -550,6 +630,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                     ptcl.EndOffset = parent.InverseTransformPoint(Transform.TransformDirection(EndOffset) + parent.WorldTranslation);
                                 
                 ptcl.Position = ptcl.PrevPosition = parent.TransformPoint(ptcl.EndOffset);
+                ptcl.PreviousPhysicsPosition = ptcl.Position;
             }
             ptcl.InitLocalPosition = Vector3.Zero;
             ptcl.InitLocalRotation = Quaternion.Identity;
@@ -680,6 +761,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         _objectPrevPosition = Transform.WorldTranslation;
         _time = 0.0f;
         _preUpdateCount = 0;
+        _fixedUpdateRenderAccumulatedTicks = 0L;
         InitializeRootBoneTracking();
     }
 
@@ -721,14 +803,99 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 if (pb is not null)
                     p.Position = p.PrevPosition = pb.TransformPoint(p.EndOffset);
             }
+            p.PreviousPhysicsPosition = p.Position;
             p.IsColliding = false;
         }
     }
 
+    private bool UsesInterpolatedPresentation()
+        => InterpolationMode != EInterpolationMode.Discrete
+            && (UpdateMode == EUpdateMode.FixedUpdate
+                || (UpdateMode != EUpdateMode.Default && UpdateRate > 0.0f));
+
+    private bool ShouldRefreshInterpolatedRenderPose()
+        => UsesInterpolatedPresentation() && (!UseGPU || GpuSyncToBones);
+
+    private float ComputeRenderAlpha()
+    {
+        if (UpdateMode == EUpdateMode.FixedUpdate)
+        {
+            long fixedDeltaTicks = Engine.Time.Timer.FixedUpdateDeltaTicks;
+            long intervalTicks = fixedDeltaTicks;
+            if (UpdateRate > 0.0f)
+                intervalTicks = Math.Max(intervalTicks, (long)(TimeSpan.TicksPerSecond / UpdateRate));
+            return intervalTicks <= 0L
+                ? 1.0f
+                : Math.Clamp((float)(Math.Max(0L, _fixedUpdateRenderAccumulatedTicks) / (double)intervalTicks), 0.0f, 1.0f);
+        }
+
+        if (UpdateRate > 0.0f)
+        {
+            float frameTime = 1.0f / UpdateRate;
+            return Math.Clamp(_time / frameTime, 0.0f, 1.0f);
+        }
+
+        return 1.0f;
+    }
+
+    private void CapturePreviousPose()
+    {
+        var trees = _particleTreesForJob;
+        int treeCount = _particleTreesForJobCount;
+        for (int treeIndex = 0; treeIndex < treeCount; ++treeIndex)
+        {
+            List<Particle> particles = trees![treeIndex].Particles;
+            for (int particleIndex = 0; particleIndex < particles.Count; ++particleIndex)
+                particles[particleIndex].PreviousPhysicsPosition = particles[particleIndex].Position;
+        }
+    }
+
+    internal static float ComputeFixedUpdateRenderAlpha(long accumulatedTimeTicks, long fixedDeltaTicks)
+        => fixedDeltaTicks <= 0L
+            ? 0.0f
+            : Math.Clamp((float)(Math.Max(0L, accumulatedTimeTicks) / (double)fixedDeltaTicks), 0.0f, 1.0f);
+
+    internal static bool ShouldUseImmediateFixedUpdatePose(EInterpolationMode mode, long updateDeltaTicks, long fixedDeltaTicks)
+        => mode == EInterpolationMode.Discrete || updateDeltaTicks > fixedDeltaTicks;
+
+    internal static Vector3 ResolveFixedUpdateRenderPosition(Vector3 previousPosition, Vector3 currentPosition, EInterpolationMode mode, float alpha)
+        => mode switch
+        {
+            EInterpolationMode.Interpolate => Vector3.Lerp(previousPosition, currentPosition, alpha),
+            EInterpolationMode.Extrapolate => currentPosition + ((currentPosition - previousPosition) * alpha),
+            _ => currentPosition,
+        };
+
+    private void ApplyCurrentParticleTransforms(bool newSimulationResults = false)
+    {
+        if (UsesInterpolatedPresentation())
+        {
+            if (newSimulationResults && UpdateMode == EUpdateMode.FixedUpdate)
+                _fixedUpdateRenderAccumulatedTicks = 0L;
+
+            float alpha = ComputeRenderAlpha();
+            ApplyParticlesToTransforms(InterpolationMode, alpha);
+            return;
+        }
+
+        ApplyParticlesToTransforms();
+    }
+
+    private void ApplyInterpolatedRenderPose()
+    {
+        if (!ShouldRefreshInterpolatedRenderPose())
+            return;
+
+        float alpha = ComputeRenderAlpha();
+        ApplyParticlesToTransforms(InterpolationMode, alpha);
+    }
+
     private void CalculateParticles(float timeVar, int loopIndex)
     {
-        for (int i = 0; i < _particleTrees.Count; ++i)
-            CalculateParticles(_particleTrees[i], timeVar, loopIndex);
+        var trees = _particleTreesForJob;
+        int treeCount = _particleTreesForJobCount;
+        for (int i = 0; i < treeCount; ++i)
+            CalculateParticles(trees![i], timeVar, loopIndex);
     }
 
     private void CalculateParticles(ParticleTree pt, float timeVar, int loopIndex)
@@ -781,8 +948,10 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private void ApplyParticleTransforms(float timeVar)
     {
-        for (int i = 0; i < _particleTrees.Count; ++i)
-            ApplyParticleTransforms(_particleTrees[i], timeVar);
+        var trees = _particleTreesForJob;
+        int treeCount = _particleTreesForJobCount;
+        for (int i = 0; i < treeCount; ++i)
+            ApplyParticleTransforms(trees![i], timeVar);
     }
 
     private void ApplyParticleTransforms(ParticleTree pt, float timeVar)
@@ -833,13 +1002,16 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             }
 
             // collide
-            if (_effectiveColliders != null)
+            var colliders = _collidersForJob;
+            int collidersCount = _collidersForJobCount;
+            if (colliders != null && collidersCount > 0)
             {
                 float particleRadius = childPtcl.Radius * _objectScale;
-                for (int j = 0; j < _effectiveColliders.Count; ++j)
+                for (int j = 0; j < collidersCount; ++j)
                 {
-                    PhysicsChainColliderBase c = _effectiveColliders[j];
-                    childPtcl.IsColliding |= c.Collide(ref childPtcl._position, particleRadius);
+                    PhysicsChainColliderBase? c = colliders[j];
+                    if (c is not null)
+                        childPtcl.IsColliding |= c.Collide(ref childPtcl._position, particleRadius);
                 }
             }
 
@@ -861,8 +1033,10 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private void SkipUpdateParticles()
     {
-        for (int i = 0; i < _particleTrees.Count; ++i)
-            SkipUpdateParticles(_particleTrees[i]);
+        var trees = _particleTreesForJob;
+        int treeCount = _particleTreesForJobCount;
+        for (int i = 0; i < treeCount; ++i)
+            SkipUpdateParticles(trees![i]);
     }
 
     //Only update stiffness and keep bone length
@@ -935,7 +1109,16 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             ApplyParticlesToTransforms(_particleTrees[i]);
     }
 
+    private void ApplyParticlesToTransforms(EInterpolationMode mode, float alpha)
+    {
+        for (int i = 0; i < _particleTrees.Count; ++i)
+            ApplyParticlesToTransforms(_particleTrees[i], mode, alpha);
+    }
+
     private static void ApplyParticlesToTransforms(ParticleTree pt)
+        => ApplyParticlesToTransforms(pt, EInterpolationMode.Discrete, 1.0f);
+
+    private static void ApplyParticlesToTransforms(ParticleTree pt, EInterpolationMode mode, float alpha)
     {
         if (pt.Particles is null || pt.Particles.Count <= 1)
         {
@@ -959,6 +1142,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
             Transform? pTfm = parent.Transform;
             Transform? cTfm = child.Transform;
+            Vector3 parentPosition = ResolveFixedUpdateRenderPosition(parent.PreviousPhysicsPosition, parent.Position, mode, alpha);
+            Vector3 childPosition = ResolveFixedUpdateRenderPosition(child.PreviousPhysicsPosition, child.Position, mode, alpha);
 
             if (parent.ChildCount <= 1 && pTfm is not null) // do not modify bone orientation if has more then one child
             {
@@ -967,7 +1152,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                     : child.EndOffset;
 
                 Vector3 v0 = pTfm.TransformDirection(localPos);
-                Vector3 v1 = child.Position - parent.Position;
+                Vector3 v1 = childPosition - parentPosition;
                 Quaternion rot = Quaternion.Normalize(XRMath.RotationBetweenVectors(v0, v1));
 
                 pTfm.AddWorldRotationDelta(rot);
@@ -978,90 +1163,68 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 pTfm.RecalculateMatrices(forceWorldRecalc: true);
             }
 
-            cTfm?.SetWorldTranslation(child.Position);
+            cTfm?.SetWorldTranslation(childPosition);
         }
     }
 
     private static void AddPendingWork(PhysicsChainComponent db)
         => _pendingWorks.Enqueue(db);
 
-    private static void AddWorkToQueue()
-        => _workQueueSemaphore?.Release();
-
-    private static PhysicsChainComponent? GetWorkFromQueue()
-    {
-        int idx = Interlocked.Increment(ref _workQueueIndex);
-        return idx < 0 || idx >= _effectiveWorks.Count ? null : _effectiveWorks[idx];
-    }
-
-    private static void ThreadProc()
-    {
-        while (true)
-        {
-            _workQueueSemaphore?.WaitOne();
-
-            GetWorkFromQueue()?.UpdateParticles();
-
-            if (Interlocked.Decrement(ref _remainWorkCount) <= 0)
-                _allWorksDoneEvent?.Set();
-        }
-    }
-
-    private static void InitThreadPool()
-    {
-        _allWorksDoneEvent = new AutoResetEvent(false);
-        _workQueueSemaphore = new Semaphore(0, int.MaxValue);
-
-        int threadCount = Environment.ProcessorCount;
-
-        for (int i = 0; i < threadCount; ++i)
-        {
-            var t = new Thread(ThreadProc)
-            {
-                IsBackground = true
-            };
-            t.Start();
-        }
-    }
-
     private static void ExecuteWorks()
     {
-        if (_pendingWorks.IsEmpty)
-            return;
-
-        _effectiveWorks.Clear();
-
-        while (_pendingWorks.TryDequeue(out PhysicsChainComponent? db))
+        lock (_executeWorksSync)
         {
-            if (db is null || !db.IsActive)
-                continue;
-            
-            db.CheckDistance();
-            if (db.IsNeedUpdate())
-                _effectiveWorks.Add(db);
+            if (_pendingWorks.IsEmpty)
+                return;
+
+            _effectiveWorks.Clear();
+
+            while (_pendingWorks.TryDequeue(out PhysicsChainComponent? db))
+            {
+                if (db is null || !db.IsActive)
+                    continue;
+
+                db.CheckDistance();
+                if (db.IsNeedUpdate())
+                    _effectiveWorks.Add(db);
+            }
+
+            if (_effectiveWorks.Count <= 0)
+                return;
+
+            int workCount = _effectiveWorks.Count;
+
+            // Prepare all components before scheduling any jobs.
+            // This avoids a race where a running job reads shared collider
+            // state that a later Prepare() call is still writing.
+            for (int i = 0; i < workCount; ++i)
+                _effectiveWorks[i]?.Prepare();
+
+            _scheduledWorkHandles.Clear();
+
+            for (int i = 0; i < workCount; ++i)
+            {
+                PhysicsChainComponent? db = _effectiveWorks[i];
+                if (db is null)
+                    continue;
+                if (JobManager.IsJobWorkerThread)
+                    db.UpdateParticles();
+                else
+                    _scheduledWorkHandles.Add(Engine.Jobs.Schedule(new ActionJob(db.UpdateParticles), JobPriority.High));
+            }
+
+            for (int i = 0; i < _scheduledWorkHandles.Count; ++i)
+                _scheduledWorkHandles[i].Wait();
+
+            for (int i = 0; i < workCount; ++i)
+            {
+                PhysicsChainComponent? component = _effectiveWorks[i];
+                if (component is null)
+                    continue;
+                component.ApplyCurrentParticleTransforms(newSimulationResults: component._lastSimulationProducedResults);
+                // Mark as handled so the component's own LateUpdate does not re-simulate.
+                component._preUpdateCount = 0;
+            }
         }
-
-        if (_effectiveWorks.Count <= 0)
-            return;
-
-        if (_allWorksDoneEvent == null)
-            InitThreadPool();
-        
-        int workCount = _remainWorkCount = _effectiveWorks.Count;
-        _workQueueIndex = -1;
-
-        for (int i = 0; i < workCount; ++i)
-        {
-            PhysicsChainComponent db = _effectiveWorks[i];
-            if (db is null)
-                continue;
-            db.Prepare();
-            AddWorkToQueue();
-        }
-
-        _allWorksDoneEvent?.WaitOne();
-
-        for (int i = 0; i < workCount; ++i)
-            _effectiveWorks[i]?.ApplyParticlesToTransforms();
     }
 }

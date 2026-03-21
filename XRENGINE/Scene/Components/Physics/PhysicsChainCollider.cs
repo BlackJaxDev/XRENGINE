@@ -45,6 +45,17 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
 
     public override void Prepare()
     {
+        if (Transform is null)
+        {
+            _scaledRadius = 0.0f;
+            _scaledRadius2 = 0.0f;
+            _center0 = Vector3.Zero;
+            _center1 = Vector3.Zero;
+            _centersDistance = 0.0f;
+            _collideType = -1;
+            return;
+        }
+
         float scale = MathF.Abs(Transform.LossyWorldScale.X);
         float halfHeight = _height * 0.5f;
 
@@ -395,7 +406,7 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
 
     private void RenderGizmos()
     {
-        if (!IsActive || Engine.Rendering.State.IsShadowPass)
+        if (!IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass)
             return;
 
         Prepare();

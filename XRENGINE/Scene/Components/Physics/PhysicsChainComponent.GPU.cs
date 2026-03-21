@@ -30,6 +30,8 @@ public partial class PhysicsChainComponent
         public float _pad2;
         public int IsColliding;
         public Vector3 _pad3;
+        public Vector3 PreviousPhysicsPosition;
+        public float _pad4;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -219,62 +221,18 @@ public partial class PhysicsChainComponent
     private void UpdateParticlesGpu()
     {
         if (_particleTrees.Count <= 0)
+        {
+            _lastSimulationProducedResults = false;
             return;
+        }
 
-        int loop = 1;
-        float timeVar = 1.0f;
         float dt = _deltaTime;
+        ResolveSimulationLoopAndTimeScale(dt, out int loop, out float timeVar);
 
-        if (UpdateMode == EUpdateMode.Default)
-        {
-            if (UpdateRate > 0.0f)
-                timeVar = dt * UpdateRate;
-        }
-        else if (UpdateMode == EUpdateMode.FixedUpdate)
-        {
-            if (UpdateRate > 0.0f)
-            {
-                float frameTime = 1.0f / UpdateRate;
-                _time += dt;
-                loop = 0;
+        bool producedResults = loop > 0;
+        _lastSimulationProducedResults = producedResults;
 
-                while (_time >= frameTime)
-                {
-                    _time -= frameTime;
-                    if (++loop >= 3)
-                    {
-                        _time = 0.0f;
-                        break;
-                    }
-                }
-
-                timeVar = frameTime;
-            }
-            else
-            {
-                timeVar = dt;
-            }
-        }
-        else if (UpdateMode == EUpdateMode.Undilated && UpdateRate > 0.0f)
-        {
-            float frameTime = 1.0f / UpdateRate;
-            _time += dt;
-            loop = 0;
-
-            while (_time >= frameTime)
-            {
-                _time -= frameTime;
-                if (++loop >= 3)
-                {
-                    _time = 0.0f;
-                    break;
-                }
-            }
-
-            timeVar = frameTime;
-        }
-
-        if (loop <= 0)
+        if (!producedResults)
             return;
 
         if (UseBatchedDispatcher)
@@ -316,6 +274,8 @@ public partial class PhysicsChainComponent
         if (!IsActive || !UseGPU || UseBatchedDispatcher)
             return;
 
+        EnsureStandaloneGpuPrograms();
+
         if (!_buffersInitialized)
             InitializeBuffers();
         else
@@ -354,7 +314,8 @@ public partial class PhysicsChainComponent
                 Position = particle.Position,
                 PrevPosition = particle.PrevPosition,
                 TransformPosition = particle.TransformPosition,
-                IsColliding = particle.IsColliding
+                IsColliding = particle.IsColliding,
+                PreviousPhysicsPosition = particle.PreviousPhysicsPosition
             });
         }
 
@@ -444,6 +405,7 @@ public partial class PhysicsChainComponent
                 Particle particle = tree.Particles[particleTreeIndex];
                 particle.Position = data.Position;
                 particle.PrevPosition = data.PrevPosition;
+                particle.PreviousPhysicsPosition = data.PreviousPhysicsPosition;
                 particle.IsColliding = data.IsColliding != 0;
                 ++particleIndex;
             }
@@ -516,20 +478,27 @@ public partial class PhysicsChainComponent
                 Particle particle = tree.Particles[particleTreeIndex];
                 particle.Position = data.Position;
                 particle.PrevPosition = data.PrevPosition;
+                particle.PreviousPhysicsPosition = data.PreviousPhysicsPosition;
                 particle.IsColliding = data.IsColliding != 0;
                 ++particleIndex;
             }
         }
 
-        ApplyGpuResultsToTransforms();
+        if (GpuSyncToBones)
+        {
+            _hasPendingGpuBoneSync = true;
+            return;
+        }
+
+        ApplyCurrentParticleTransforms(newSimulationResults: _lastSimulationProducedResults);
     }
 
-    private void ApplyGpuResultsToTransforms()
+    private void ApplyGpuResultsToTransforms(bool newSimulationResults = false)
     {
         if (!GpuSyncToBones)
             return;
 
-        ApplyParticlesToTransforms();
+        ApplyCurrentParticleTransforms(newSimulationResults);
 
         for (int treeIndex = 0; treeIndex < _particleTrees.Count; ++treeIndex)
         {
@@ -542,11 +511,11 @@ public partial class PhysicsChainComponent
 
     private void ApplyPendingGpuBoneSync()
     {
-        if (!UseGPU || !UseBatchedDispatcher || !_hasPendingGpuBoneSync)
+        if (!UseGPU || !_hasPendingGpuBoneSync)
             return;
 
         _hasPendingGpuBoneSync = false;
-        ApplyGpuResultsToTransforms();
+        ApplyGpuResultsToTransforms(newSimulationResults: true);
     }
 
     private void DispatchMainPhysics(float timeVar, bool applyObjectMove)
@@ -596,7 +565,7 @@ public partial class PhysicsChainComponent
         CleanupBuffers();
         PrepareGPUData();
 
-        _particlesBuffer = new XRDataBuffer("Particles", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_particlesData.Count, 1), EComponentType.Float, 16, false, false);
+        _particlesBuffer = new XRDataBuffer("Particles", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_particlesData.Count, 1), EComponentType.Float, 20, false, false);
         _particlesBuffer.SetBlockIndex(0);
 
         _particleStaticBuffer = new XRDataBuffer("ParticleStatic", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_particleStaticData.Count, 1), EComponentType.Float, 12, false, false);
@@ -680,7 +649,8 @@ public partial class PhysicsChainComponent
                     Position = particle.Position,
                     PrevPosition = particle.PrevPosition,
                     TransformPosition = particle.TransformPosition,
-                    IsColliding = particle.IsColliding ? 1 : 0
+                    IsColliding = particle.IsColliding ? 1 : 0,
+                    PreviousPhysicsPosition = particle.PreviousPhysicsPosition
                 };
 
                 ParticleStaticData particleStaticData = new()
@@ -804,8 +774,21 @@ public partial class PhysicsChainComponent
 
     private void RenderGpuDebug()
     {
+        if (!DebugDrawChains)
+            return;
+
         if (AbstractRenderer.Current is not OpenGLRenderer renderer || !Engine.Rendering.State.DebugInstanceRenderingAvailable)
             return;
+
+        if (UseBatchedDispatcher)
+        {
+            // Batched dispatch groups rebuild the shared dispatcher buffers multiple times per frame.
+            // Rendering from the component's read-back particle state avoids cross-chain slice aliasing.
+            for (int i = 0; i < _particleTrees.Count; ++i)
+                DrawTree(_particleTrees[i]);
+
+            return;
+        }
 
         if (!TryGetGpuParticleRenderSource(out XRDataBuffer? particleBuffer, out XRDataBuffer? particleStaticBuffer, out int particleOffset, out int particleCount)
             || particleBuffer is null
@@ -822,7 +805,9 @@ public partial class PhysicsChainComponent
         _gpuDebugRenderProgram.Uniform("ParticleOffset", particleOffset);
         _gpuDebugRenderProgram.Uniform("ParticleCount", particleCount);
         _gpuDebugRenderProgram.Uniform("PointColor", new Vector4(1.0f, 1.0f, 0.0f, 1.0f));
-        _gpuDebugRenderProgram.Uniform("LineColor", new Vector4(1.0f, 0.5f, 0.0f, 1.0f));
+        _gpuDebugRenderProgram.Uniform("LineColor", new Vector4(1.0f, 1.0f, 1.0f, 1.0f));
+        _gpuDebugRenderProgram.Uniform("InterpolationAlpha", ComputeRenderAlpha());
+        _gpuDebugRenderProgram.Uniform("InterpolationMode", (int)InterpolationMode);
         _gpuDebugRenderProgram.BindBuffer(particleBuffer, 0);
         _gpuDebugRenderProgram.BindBuffer(particleStaticBuffer, 1);
         _gpuDebugRenderProgram.BindBuffer(_gpuDebugPointsBuffer, 2);

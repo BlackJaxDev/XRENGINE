@@ -1,321 +1,475 @@
-# Real-time Rendering with a Neural Irradiance Volume
+# Neural Irradiance Volume Implementation Plan
 
-## Executive summary
+Last Updated: 2026-03-20
+Status: design
+Scope: add a baked neural irradiance volume GI mode to XRENGINE for mostly static scenes, with runtime inference from the G-Buffer and explicit fallback to existing baked GI modes.
 
-This report analyzes the 2026 entity["organization","arXiv","preprint repository"] paper *“Real-time Rendering with a Neural Irradiance Volume”* (accepted at entity["organization","Eurographics","european graphics assn"] 2026) by entity["people","Arno Coomans","computer graphics researcher"], entity["people","Giacomo Nazzaro","computer graphics researcher"], entity["people","Edoardo A. Dominici","computer graphics researcher"], entity["people","Christian Döring","computer graphics researcher"], entity["people","Floor Verhoeven","computer graphics researcher"], entity["people","Konstantinos Vardis","computer graphics researcher"], and entity["people","Markus Steinberger","computer graphics researcher"] (affiliations include entity["company","Huawei Technologies","telecom company"] and entity["organization","Graz University of Technology","university graz, at"]). citeturn18view0turn51search0
+Related docs:
 
-The paper’s central idea is to replace a traditional probe-grid “irradiance volume” with a *neural* representation that directly regresses **indirect diffuse irradiance** as a continuous 5D function of **3D position + 2D direction/normal** (their “Neural Irradiance Volume”, NIV). This is trained offline from path-traced irradiance samples and then evaluated in one batched inference pass per frame from a rasterization G-buffer (position & normal buffers), enabling real-time diffuse global illumination (GI) for **novel dynamic objects inserted after training**, without runtime ray tracing or denoising. citeturn18view0turn22view0turn24view0
+- `docs/features/gi/global-illumination.md`
+- `docs/features/gi/light-volumes.md`
+- `docs/features/gi/radiance-cascades.md`
+- `vxao-implementation-plan.md`
 
-Key results claimed by the authors are (i) **~1 ms/frame** inference at 1920×1080 on consumer GPUs, (ii) **1–5 MB** model memory for medium scenes, and (iii) **≥10× quality improvement** at the same memory budget compared to probe-grid baselines, with better handling of aliasing/leaks and higher-frequency diffuse effects such as contact shadows (via a training strategy that emphasizes surface samples). citeturn18view0turn24view0turn22view0
+---
 
-Relative to other neural GI caches (especially surface-based approaches requiring deferred ray queries + denoising), NIV’s distinguishing trade is: it learns a **pre-integrated** quantity (irradiance) that can be rendered **noise-free** for diffuse materials at runtime, at the cost of (a) assuming the scene is “mostly static” during deployment and (b) not natively modeling higher-order light transport interactions induced by newly inserted geometry. citeturn22view0turn25view0turn26view0
+## 1. Executive Summary
 
-Important caveat for this report: the official PDF text is not directly accessible in the current tooling environment, so analysis is based on the official arXiv HTML rendering and cited primary references. Some numeric hyperparameters (notably the exact learning rate, batch size, and one hash-grid scaling factor) appear elided in the HTML extraction and are therefore treated as **unspecified** here (flagged explicitly in the reproducibility section). citeturn22view0turn24view0turn27view0
+Neural irradiance volumes should enter XRENGINE as a new baked or hybrid GI mode for mostly static worlds, not as a replacement for the engine's dynamic GI systems.
 
-## Problem framing and contributions
+The right product position is narrow and explicit:
 
-### Why irradiance volumes exist and why they break at scale
+- diffuse indirect lighting only
+- trained offline from static scene state
+- sampled at runtime from the G-Buffer in a compute pass
+- supported by a conventional fallback asset such as an irradiance volume texture
 
-Real-time applications often want plausible GI for *dynamic objects moving inside largely static environments* (e.g., characters in a baked level). A common solution is to precompute (“bake”) indirect lighting into a **3D grid of probes**, then interpolate at runtime to shade both static surfaces and new dynamic geometry. The paper emphasizes two recurrent probe-volume failure modes: (1) **cubic scaling** of memory/computation with grid resolution, and (2) **interpolation artifacts** (leaks, missed contact shadows, aliasing) plus scene-specific heuristics for placement/rejection. citeturn21view0turn24view0turn26view0
+This mode should sit between existing light volumes and more expensive dynamic GI paths:
 
-Probe volumes are conceptually rooted in the classic “irradiance volume” literature (a volumetric representation of irradiance for efficient shading), and the paper positions NIV as a “modernization” of that idea by swapping the discrete grid+basis-function representation for a continuous neural function. citeturn21view0turn28search1
+- better memory-quality scaling than conventional baked probe or volume data
+- cheaper runtime than ray-traced or surface-cache neural GI
+- less physically complete than Surfel GI, ReSTIR GI, or any method that actually re-solves dynamic light transport
 
-### Goals, assumptions, and what “working” means here
+Recommended delivery sequence:
 
-The explicit goal is to render **diffuse** global illumination on *unseen dynamic objects* in a known static environment under strict real-time budgets, with only a **G-buffer** at runtime (no expensive per-frame ray tracing). citeturn18view0turn24view0
+1. add a new GI mode and asset/component scaffolding
+2. support fallback rendering through a conventional 3D irradiance texture
+3. build the offline bake and training toolchain
+4. add runtime neural inference and half-resolution support
+5. add debug views, dynamic AO compensation, and limited conditioning later
 
-The paper inherits key assumptions typical in production irradiance-volume pipelines: the scene is *mostly static*, and dynamic additions are relatively small so their effect on overall indirect light propagation is limited (or artist-controlled). It also assumes **direct illumination** can be computed efficiently enough at runtime without introducing visible sampling noise, because NIV adds indirect diffuse to an otherwise conventional direct-lighting pipeline. citeturn21view0turn26view0
+---
 
-### Stated contributions and headline claims
+## 2. Current Reality
 
-The authors list four main contributions: (a) a heuristic-free precomputation scheme that “bakes” path-tracing-quality diffuse irradiance and can shade unseen moving objects; (b) much lower rendering cost than neural methods requiring ray tracing/denoising; (c) a compact representation improving the memory–error trade-off by roughly an order of magnitude vs probe grids; and (d) extension to a small number of scene variables (e.g., time-of-day) by conditioning the irradiance field on additional inputs. citeturn21view0turn26view0turn25view0
+### 2.1 Relevant Engine Seams
 
-## Technical method and derivations
+The most relevant existing systems are:
 
-### From the rendering equation to the cached quantity
+- `docs/features/gi/global-illumination.md`
+- `docs/features/gi/light-volumes.md`
+- `docs/features/gi/radiance-cascades.md`
+- `XRENGINE/Scene/Components/Lights/LightVolumeComponent.cs`
+- `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs`
+- `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs`
+- `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.SecondaryContext.cs`
 
-The general rendering equation expresses outgoing radiance as emitted plus reflected incident radiance integrated over directions (and recursively over paths). In its classic form: citeturn28search0turn28search4
+### 2.2 What Already Exists
 
-\[
-L_o(\mathbf{x}, \omega_o)
-=
-L_e(\mathbf{x}, \omega_o)
-+
-\int_{\Omega} f_r(\mathbf{x}, \omega_i, \omega_o)\, L_i(\mathbf{x}, \omega_i)\, (\mathbf{n}\cdot \omega_i)\, d\omega_i .
-\]
+- XRENGINE already supports multiple GI modes with explicit engine-level selection.
+- `LightVolumeComponent` already represents a baked 3D irradiance texture plus transform and bounds.
+- `RadianceCascadeComponent` already establishes the pattern for compute-driven baked GI sampling from the G-Buffer.
+- The renderer already has a concept of secondary rendering work for probe or irradiance updates outside the main frame budget.
+- The project already distinguishes baked, hybrid, and real-time GI rather than forcing one GI system to solve every case.
 
-The paper focuses on **diffuse illumination** (Lambertian BRDF), allowing the BRDF to factor out as a constant proportional to albedo, reducing the view-dependent complexity. They define an *irradiance function* in terms of **position** and an oriented **direction/normal parameter** over the sphere (their domain description treats this as a continuous spherical function). citeturn21view0turn22view0
+### 2.3 What Is Missing
 
-A standard diffuse irradiance definition (consistent with the paper’s described simplification) is:
+- No `NeuralIrradianceVolume` GI mode.
+- No neural irradiance asset format.
+- No trainer or bake tool that exports scene samples and optimizes a model.
+- No runtime pass that performs batched inference against G-Buffer position and normal.
+- No debug tooling to compare neural GI against existing light volumes or radiance cascades.
 
-\[
-E(\mathbf{x}, \mathbf{n})
-=
-\int_{\Omega^+(\mathbf{n})} L_i(\mathbf{x}, \omega_i)\, (\mathbf{n}\cdot \omega_i)\, d\omega_i,
-\]
+### 2.4 Consequence For Design
 
-where \(E\) is irradiance (power per unit area), \(\mathbf{x}\in\mathbb{R}^3\) is position, \(\mathbf{n}\in\mathbb{S}^2\) is the surface normal (or more generally an oriented direction parameter), \(\Omega^+(\mathbf{n})\) is the hemisphere around \(\mathbf{n}\), and \(L_i\) is incoming radiance. This relationship is also deeply tied to the spherical-harmonic low-frequency properties exploited in classic irradiance approximations. citeturn35search0turn35search8turn21view0
+This feature should be treated as a new baked GI asset family with a compute resolve pass. It should not be bolted onto the current `LightVolumeComponent` as a hidden special case.
 
-For Lambertian reflectance, outgoing reflected radiance simplifies to:
+---
 
-\[
-L_o^{\text{diff}}(\mathbf{x})
-=
-\frac{\rho(\mathbf{x})}{\pi}\, E(\mathbf{x}, \mathbf{n}),
-\]
+## 3. Product Position
 
-with \(\rho\) the diffuse albedo. The paper further distinguishes **indirect irradiance** (their cached target) from direct illumination, which is added at runtime. citeturn21view0turn22view0
+Recommended product position:
 
-### Neural Irradiance Volume as a learned 5D field
+- Neural irradiance volume is a baked or hybrid GI mode for static environments with moving dynamic objects.
+- It complements existing modes rather than replacing them.
+- It should target scenes where current light probes or light volumes are too coarse, but full dynamic GI is too expensive.
+- It should remain diffuse-only for the first version.
 
-Traditional probe volumes typically map each spatial probe to a low-dimensional basis expansion over direction (commonly spherical harmonics), i.e. a representation of \(E(\mathbf{x},\cdot)\) and an evaluation step for a given \(\mathbf{n}\). NIV instead learns a direct mapping from the **5D input** to irradiance:
+Recommended non-goals for the first version:
 
-\[
-\hat{E}_\theta(\mathbf{x}, \mathbf{n}) \approx E(\mathbf{x}, \mathbf{n}),
-\]
+- do not attempt glossy transport
+- do not attempt runtime retraining
+- do not attempt large numbers of dynamic conditioning variables
+- do not require dynamic objects to inject bounced light back into the field
 
-where \(\theta\) are parameters of a compact neural model. The paper highlights this “direct 5D regression” as enabling (i) avoiding explicit basis choice (e.g., SH order selection) and (ii) enabling extensions such as higher-dimensional conditioning. citeturn22view0turn25view0
+---
 
-### Architecture: compact MLP plus coordinate encodings
+## 4. Goals And Non-Goals
 
-The core network is a **4-layer fully connected MLP** with ReLU activations (except the last layer), inspired by compact real-time neural cache architectures in prior work. citeturn22view0turn29search0
+### 4.1 Goals
 
-To handle high-frequency variation, the inputs are encoded:
+- Add a new GI mode that samples a compact neural irradiance field from G-Buffer position and normal.
+- Reuse existing GI composite conventions so downstream lighting stays stable.
+- Provide an explicit baked fallback when neural inference is unavailable or disabled.
+- Support mostly static scenes with dynamic objects moving through the trained volume.
+- Support half-resolution inference and upsampling in the runtime path.
+- Make training and bake output deterministic enough for cooking and patching.
 
-- For smaller models, they apply **frequency/positional encoding** to the input positions (motivated by Fourier-feature analyses of spectral bias and by NeRF-style positional encodings). citeturn22view0turn30search13turn30search4  
-- For larger scenes at fixed MLP cost, they replace handcrafted encodings with a **multi-level hash-grid encoding** (Instant-NGP style), mapping 3D positions to multiresolution feature vectors stored in hash tables. citeturn22view0turn28search3turn28search11
+### 4.2 Non-Goals
 
-The paper explicitly discusses **hash collisions** as a feature: many positions map to shared latent entries, and optimization “allocates capacity” where gradients dominate. Too many collisions degrade quality; they therefore treat hash table size as the main knob to tune the collision rate for irradiance fields. citeturn22view0turn28search3
+- No requirement to solve specular GI.
+- No requirement to replace Surfel GI, ReSTIR GI, or voxel cone tracing.
+- No requirement to capture higher-order bounce interactions from newly spawned dynamic objects.
+- No requirement to train inside the engine process.
 
-Some encoding hyperparameters are specified in the paper text: latent dimension is 4, the coarsest grid side length is 16, and the number of levels varies from 2–8 depending on the target capacity; the scaling factor between levels is mentioned but its numeric value is not visible in the accessible HTML extraction. citeturn22view0turn27view0
+---
 
-### Unified volume and surface cache via a sampling trick
+## 5. Recommended Architecture
 
-A major design move is that NIV aims to replace *both* (a) volumetric probes for dynamic objects and (b) separate surface caches (e.g., lightmaps) for static surfaces.
+### 5.1 New Runtime Mode And Component
 
-Instead of introducing a separate 2D structure, the paper “carves out” a 2D manifold inside the 5D domain: it samples a fraction of training points **on surfaces**, and sets the directional input deterministically to the **surface normal**. This makes static-surface shading a special low-dimensional subset of the learned field, allowing the model to spend capacity capturing contact shadows and high-frequency diffuse detail on surfaces. The authors report using **20%** of training samples on surfaces as a good balance. citeturn22view0turn24view0
+Recommended engine additions:
 
-### Why learn irradiance (pre-integrated) rather than incoming radiance
+- `EGlobalIlluminationMode.NeuralIrradianceVolume`
+- `NeuralIrradianceVolumeComponent`
+- `NeuralIrradianceVolumeAsset`
+- `VPRC_NeuralIrradianceVolumePass`
 
-The paper argues that learning **irradiance** (already integrated over incident directions) provides two advantages:
+`NeuralIrradianceVolumeComponent` should mirror the operational shape of `LightVolumeComponent` without overloading it.
 
-1. **No runtime sampling variance:** if you learn incoming radiance \(L_i(\mathbf{x},\omega)\), you must still numerically integrate it for diffuse shading (multiple samples per shading point), or denoise, both of which raise runtime cost. citeturn22view0turn25view0  
-2. **Easier function approximation:** irradiance is directionally smoother than full directional radiance, requiring less capacity and converging faster (they include an appendix experiment showing slower training and higher runtime when learning incoming radiance at the same budget). citeturn27view0turn22view0
+Recommended component fields:
 
-### Training distribution, loss, and data curation
+- `Asset` or `ModelAsset`
+- `FallbackVolumeTexture`
+- `HalfExtents`
+- `Tint`
+- `Intensity`
+- `VolumeEnabled`
+- `HalfResolution`
+- `UseFallbackOnly`
 
-**Training samples.** The model is trained on position–direction pairs throughout the scene volume, with 20% sampled on surfaces with direction = normal. For each pair, they compute ground-truth **indirect irradiance** using path tracing. citeturn24view0turn27view0
+This keeps the scene-level authoring model familiar while making the runtime payload distinct.
 
-**Discarding samples inside geometry.** They discard points “inside surfaces,” detected by checking whether the majority of normals at first hit are backfacing while estimating irradiance. They also discard samples collecting “null irradiance” in the visualization appendix, which is consistent with avoiding wasted capacity on invisible or irrelevant volume regions. citeturn24view0turn27view0
+### 5.2 Asset Contract
 
-**Loss.** They use a “relative L2” loss that normalizes mean squared error by the squared network prediction, with a stop-gradient operator and a small constant for stability (inspired by the relative-error normalization commonly used in Noise2Noise-style reasoning). Because the HTML view elides the exact equation body, the following is a faithful reconstruction of the described structure, not necessarily the authors’ exact per-channel/per-sample reduction:
+Recommended payload inside `NeuralIrradianceVolumeAsset`:
 
-\[
-\mathcal{L}(\theta)
-=
-\frac{\|\hat{E}_\theta - E^\star\|_2^2}
-{\operatorname{sg}(\|\hat{E}_\theta\|_2^2)+\epsilon},
-\]
+- scene or bake hash
+- world-space bounds and transform metadata
+- encoding metadata for position and normal inputs
+- hash-grid or feature-grid parameters
+- MLP topology metadata
+- weights and latent tables
+- optional fallback 3D irradiance texture
+- training metric summary
+- conditioning metadata for any optional extra inputs
 
-where \(E^\star\) is the path-traced target irradiance, \(\operatorname{sg}(\cdot)\) is stop-gradient, and \(\epsilon\) is a small constant. citeturn24view0turn29search1
-
-**Optimizer and compute profile.** They train in PyTorch with Adam, and use a renderer (Mitsuba3) to generate ground truth; scenes converge in ≤50k iterations. They report that training time is dominated by path tracing: for the Cornell Box, ~94% of compute is irradiance path tracing rather than network optimization. citeturn24view0turn30search3turn34search0
-
-Numeric optimizer hyperparameters in the extracted HTML (learning rate, batch size, the final decayed learning rate) are not visible here and should be obtained from the official PDF/source when reproducing. citeturn24view0turn27view0
-
-### Runtime rendering pipeline
-
-At runtime, NIV plugs into a conventional deferred renderer:
-
-1. Render primary visibility with rasterization → produce G-buffer (position \(\mathbf{x}\), normal \(\mathbf{n}\), albedo \(\rho\), etc.).  
-2. Batch-evaluate the network for all pixels: \(\hat{E}_\theta(\mathbf{x},\mathbf{n})\).  
-3. Convert irradiance to indirect diffuse radiance via the diffuse factor \(\rho/\pi\), add direct illumination and emission. citeturn24view0turn22view0
-
-They also support **half-resolution** inference (quarter pixels) and note that irradiance is smooth in screen-space so aliasing is relatively mild; they mention joint-bilateral upsampling as an industry-style option for reconstruction. citeturn24view0turn34search2
-
-For missing interactions (dynamic objects do not affect the baked field), they add a lightweight **dynamic ambient occlusion** pass computed only over dynamic geometry to approximate self-occlusion and occlusion cast onto static surfaces by newly added objects. citeturn24view0turn34search3
+### 5.3 High-Level Data Flow
 
 ```mermaid
 flowchart LR
-  subgraph Offline_Precompute[Offline precompute]
-    S[Static scene + lights] --> D[Sample (x, n) pairs in volume]
-    D --> PT[Path trace indirect irradiance E*(x,n)]
-    PT --> T[Train neural field E_hatθ(x,n)]
-  end
-
-  subgraph Runtime[Runtime frame]
-    G[Rasterize -> G-buffer (x,n,albedo,...)] --> Q[Batch query E_hatθ(x,n)]
-    Q --> I[Indirect diffuse = (albedo/pi) * E_hatθ]
-    I --> C[Compose with direct lighting + emission]
-    C --> F[Final frame]
-    G --> AO[Optional dynamic AO from dynamic geometry]
-    AO --> F
-  end
+  A[Static scene export] --> B[Sample positions and normals]
+  B --> C[Path-traced indirect irradiance targets]
+  C --> D[Train neural irradiance volume]
+  D --> E[NeuralIrradianceVolumeAsset]
+  E --> F1[Runtime neural inference pass]
+  E --> F2[Fallback light-volume path]
+  F1 --> G[GI composite]
+  F2 --> G
 ```
 
-citeturn24view0turn22view0turn21view0
+### 5.4 Why This Should Be A Separate GI Mode
 
-## Intuition and toy scenarios
+Light volumes already assume a conventional 3D irradiance texture. Neural irradiance volumes have very different runtime characteristics:
 
-### Toy model: “grid probes” vs “continuous function”
+- inference instead of trilinear volume sampling
+- model metadata instead of only texture metadata
+- possible half-resolution and temporal support
+- per-platform capability decisions
 
-Consider a 1D hallway parameterized by position \(x\in[0,1]\), and suppose indirect diffuse irradiance \(E(x)\) changes rapidly near doorways (sharp occlusion transitions) and smoothly elsewhere.
+Keeping NIV as a distinct GI mode makes those differences visible in code, tooling, and profiling.
 
-- A probe grid is like sampling \(E\) at fixed points \(x_k\) and interpolating. To capture sharp changes you must increase probe density everywhere → memory scales with resolution (in 3D, cubically). citeturn24view0turn21view0  
-- NIV is instead a “compressed function” \(\hat{E}_\theta(x)\) trained to minimize reconstruction error. With a multiresolution encoding, the model can devote more representational precision to regions where the loss is high (near sharp transitions) and less elsewhere, avoiding uniform cubic scaling. citeturn22view0turn28search3
+---
 
-This is the paper’s “neural compression is adaptive + amortized” argument in a simplified setting. citeturn18view0turn22view0
+## 6. Runtime Rendering Design
 
-### Why surface sampling helps (contact shadows intuition)
+### 6.1 First-Version Frame Flow
 
-If you only sample uniformly in volume, many samples lie in empty air where irradiance changes slowly. But the visually important error is often on surfaces near contact points (e.g., an object near the floor), where irradiance can change over very small spatial distances. By forcing 20% of samples onto surfaces with direction fixed to the surface normal, the model is explicitly trained on the “shading manifold” your renderer will query at runtime, improving surface fidelity without requiring a separate 2D cache. citeturn22view0turn24view0
+The first real runtime path should look like this:
 
-### Hash collisions as “shared cells” (why they don’t always hurt)
+```mermaid
+flowchart LR
+  A[G-Buffer pass] --> B[Neural irradiance inference pass]
+  B --> C[Optional dynamic AO compensation]
+  C --> D[GI composite pass]
+  D --> E[Final lighting result]
+```
 
-In a hash-grid encoder, two positions \(\mathbf{x}_a\) and \(\mathbf{x}_b\) might map to the same latent feature due to hashing. Superficially, this seems like a bug. The Instant-NGP viewpoint is that (a) multiresolution levels help disambiguate collisions, and (b) optimization implicitly prioritizes important regions: gradients from high-loss samples dominate. NIV applies the same idea to irradiance fields and empirically observes that *high collision rates mildly affect irradiance MSE while greatly reducing memory*. citeturn22view0turn28search3
+Pass responsibilities:
 
-## Empirical results and comparison to alternatives
+1. reconstruct or read world position and normal from the G-Buffer
+2. transform world position into the local NIV domain
+3. reject pixels outside the trained volume bounds
+4. evaluate the neural field for diffuse irradiance
+5. multiply by tint and intensity controls
+6. composite into the existing GI output contract
 
-### Runtime and memory characteristics of NIV
+### 6.2 Runtime Contract
 
-The paper reports that a 4-layer network can run at full HD in the **0.19–1.35 ms** range on an RTX 4090 depending on width and hash-grid levels, with corresponding memory from **0.003 MB** up to **~5.4 MB** in their table. citeturn24view0turn27view0
+Recommended runtime output contract:
 
-They also test an older GPU (RTX 2080 Ti) showing roughly ~4× slower inference, but remaining within a real-time regime for smaller configurations, and attribute performance primarily to matrix-multiplication throughput. citeturn27view0
+- the pass outputs indirect diffuse irradiance or indirect diffuse radiance into a dedicated GI texture
+- the composite stage remains compatible with the current pipeline
+- direct lighting remains separate
 
-### Scene-level illustration images
+That keeps NIV aligned with the rest of the renderer instead of bypassing it.
 
-image_group{"layout":"carousel","aspect_ratio":"16:9","query":["Cornell Box global illumination rendering","Sponza atrium global illumination scene"],"num_per_query":1}
+### 6.3 Half-Resolution Support
 
-### Comparison table of the main approach families
+Half-resolution inference should be part of the first neural runtime design, not a later afterthought.
 
-| Method family | Representation | Runtime mechanism for dynamic objects | Typical artifacts / failure modes | NIV’s relative position |
-|---|---|---|---|---|
-| Probe-grid irradiance volumes (e.g., DDGI-style) | Regular 3D probe lattice + low-order basis over direction (often SH) | Interpolate probes in volume at shading points | Light leaking, poor contact shadows, cubic memory scaling; heuristics for placement/rejection | NIV aims to remove interpolation/placement heuristics and improve memory–quality scaling citeturn24view0turn22view0 |
-| Neural surface cache (outgoing radiance on surfaces) | Neural field on known surfaces | Requires deferred ray queries to trained surfaces; variance must be denoised | Monte Carlo variance, denoiser blotchiness; runtime cost from ray tracing + denoising | NIV avoids runtime ray tracing/denoising by learning pre-integrated irradiance citeturn25view0turn22view0 |
-| Variable-scene neural rendering (explicit scene parameters) | Neural field conditioned on many parameters | Can model higher-order interactions if trained on them | High inference cost; retraining when parameter set changes; performance scales with #variables/objects | NIV trades away higher-order interactions for speed and better scaling under fixed memory citeturn25view0turn26view0 |
+Recommended approach:
 
-The DDGI baseline details in the paper use a modern probe grid similar to the JCGT DDGI formulation, including visibility handling. The authors note that visibility via ray tracing reduces probe error but still cannot close the gap to NIV and adds significant runtime cost. citeturn24view0turn28search2turn28search22
+- execute inference at half resolution when enabled
+- upsample using depth-aware and normal-aware filtering
+- keep the output contract identical to the full-resolution path
 
-### Probe-based baselines: why NIV wins at equal memory
+NIV is a good candidate for this because diffuse irradiance varies more smoothly than direct lighting.
 
-For their probe baseline, the paper stores 2nd-order spherical harmonics (9 coefficients) at half precision (54 bytes per probe) and emphasizes the cubic scaling and inability to adapt capacity to where it matters most, leading to missed contact shadows and light-leak sensitivity (especially without expensive visibility). citeturn24view0turn35search8turn35search0
+### 6.4 Dynamic Object Compensation
 
-They report that across tested scenes, NIV improves quality by roughly an **order of magnitude** at a given memory budget, especially at lower capacities, and qualitatively captures irradiance bleed/shadows better. citeturn24view0turn18view0
+The neural field will not encode bounced-light changes caused by runtime dynamic objects. The first mitigation should be simple and explicit:
 
-The appendix comparison to an open-source industry implementation of DDGI (RTXGI/DDGI) highlights large memory differences in their setup (tens of MB for DDGI defaults vs sub-MB for NIV in that example), and mentions failure cases like probes placed inside dynamic geometry producing smudges. citeturn27view0turn35search3
+- add optional dynamic AO or contact shadow compensation for dynamic geometry
+- keep this compensation separate from the baked irradiance solve
+- expose the blend so the limitation stays visible instead of pretending the system is fully dynamic
 
-### Neural surface cache: variance dominates quality, runtime dominates cost
+This should integrate with the AO work already planned elsewhere rather than inventing a dedicated neural-only occlusion system.
 
-The paper trains a neural surface cache similar to “real-time neural radiance caching” style models (augmented with a multiresolution hash encoding) and explains why dynamic objects require *deferred* lookups via ray tracing: the cache only knows radiance on static surfaces. This introduces sampling variance that then requires denoising (OptiX is referenced as an example denoiser). citeturn25view0turn29search0turn29search3
+---
 
-They report **~5–10 ms/frame** overhead from the ray tracing + denoising pieces (even with hardware RT and efficient denoising), and show that increasing cache capacity doesn’t help much when variance dominates; increasing spp helps but scales cost linearly. citeturn25view0
+## 7. Offline Bake And Training Pipeline
 
-Quantitatively, their Table 2 shows lower FLIP and far lower MSE for NIV than the surface cache across several scenes at the same 5.40 MB capacity. citeturn25view0turn29search2
+### 7.1 Tool Ownership
 
-### Variable-scene methods: stronger physics if you can afford it, but not real-time here
+Recommended new tooling folder:
 
-The paper compares NIV to methods that explicitly train on variable scene parameters, describing two broad strategies: (i) feeding an explicit scene-parameter vector to a generator, or (ii) using learned encodings over those variables. They state major drawbacks in their experiments: inference exceeding **100 ms**, scaling with the number of dynamic objects/variables, and needing retraining when the set of parameters changes (objects added/removed). citeturn25view0turn39search8turn46view0
+- `Tools/NeuralIrradianceVolume/`
 
-A key analytical point is their “lower bound” on irradiance-volume methods: since the irradiance field is trained without the dynamic objects, it cannot represent higher-order interactions induced by those objects (beyond what a dynamic AO hack may approximate). Variable-scene models can go below that bound given enough capacity/training because they can learn those interactions explicitly. citeturn25view0turn26view0turn39search8
+Recommended responsibilities:
 
-## Practical implications and implementation considerations
+- export static scene geometry, materials, lights, and bounds
+- generate training samples
+- invoke the path-tracing target generator
+- invoke the trainer
+- package the cooked model and optional fallback texture
+- emit metrics and thumbnails
 
-### Where NIV fits in real renderers
+### 7.2 Training Data Contract
 
-NIV is designed for **deferred shading** pipelines: it consumes G-buffer position and normals, runs a single batched inference pass, and adds indirect diffuse as a cheap additive component. This makes it attractive as a drop-in replacement for probe volumes in engines that already do baked GI + dynamic objects, but want higher quality at lower memory and fewer heuristics. citeturn24view0turn18view0
+The bake pipeline should generate tuples of:
 
-Because the cached quantity is irradiance (pre-integrated), runtime shading is lightweight: a multiply by albedo/\(\pi\) plus compositing with direct/emissive. This is fundamentally cheaper than any approach that must integrate learned incident radiance at runtime or trace rays for deferred queries. citeturn22view0turn25view0
+- world position
+- oriented normal or direction
+- indirect diffuse irradiance target
 
-### Computational cost profile
+Recommended first-version sampling rules:
 
-**Runtime.** The paper’s timing table shows inference times around the 1 ms scale at full HD on a high-end GPU for their larger models; smaller configurations are sub-millisecond. Half-resolution evaluation is substantially cheaper and can be paired with full-resolution albedo for materials. citeturn24view0turn27view0
+- sample both interior volume points and surface points
+- bias a fixed portion of samples toward surfaces
+- reject samples inside geometry or clearly invalid regions
+- export all sampling rules into the cook metadata for reproducibility
 
-**Offline.** Training time is dominated by generating irradiance targets via path tracing. Reported convergence times include minutes for simple scenes and tens of minutes for larger ones on a single high-end GPU, with ~94% of compute spent in path tracing in one example. citeturn24view0
+### 7.3 Fallback Asset Generation
 
-### Data requirements
+Every NIV cook should be able to generate a conventional fallback.
 
-NIV needs a scene where you can path trace indirect irradiance at many sampled points. The training set is conceptually a collection of \((\mathbf{x},\mathbf{n}) \mapsto E^\star\) tuples, plus a surface-sample subset. This is closer to “baking” than to dataset-based learning: you regenerate targets if the static environment’s geometry/materials/lights change. citeturn24view0turn21view0
+Recommended fallback:
 
-### Hyperparameters that matter most in practice
+- a low- or medium-resolution 3D irradiance texture matching the same bounds
 
-From the paper’s discussion, the key knobs are:
+That lets the engine continue rendering even when:
 
-- **Model capacity:** MLP width and hash-grid levels; their table enumerates widths 16/32/64 and hash levels 2–8 with memory/latency trade-offs. citeturn24view0turn27view0  
-- **Hash table size / collision rate:** treated as the main parameter governing memory–quality trade-off for the hash encoding. citeturn22view0turn28search3  
-- **Training sampling mix:** the 20% surface sampling and inside-geometry culling are critical to robust results and high-frequency surface detail. citeturn24view0turn27view0  
-- **Dynamic AO strength/settings:** not fully specified, but it is the intended mechanism to mitigate missing occlusion interactions by dynamic objects. citeturn24view0
+- runtime neural inference is disabled
+- the backend lacks a compatible inference path
+- a cooked model fails validation
 
-Several other values are referenced but not fully visible in the extracted HTML (learning rate, batch size, encoding scaling factor), so an implementation should consult the official PDF/source or perform a small hyperparameter search. citeturn24view0turn22view0
+### 7.4 Training Profiles
 
-### Extending to limited “dynamic lighting” or other small parameter sets
+Recommended author-facing profiles:
 
-The paper demonstrates conditioning NIV on 1–2 additional variables (e.g., directional light angle for time-of-day), trained by sampling those variables during precomputation, so runtime does not require updates. They caution that scaling to many variables degrades quality unless one uses heavier learned encodings (which reintroduces the inference-cost issues seen in variable-scene methods). citeturn25view0turn26view0
+- `Preview`
+- `Balanced`
+- `HighQuality`
+- `MemoryAggressive`
 
-### Limitations and open problems highlighted by the authors
+Profiles should set sampling density, model capacity, and fallback resolution together rather than exposing raw training hyperparameters in ordinary editor workflows.
 
-The limitations section is unusually concrete about where the approach breaks:
+---
 
-- **Direct illumination must be cheap + noise-free**; with many lights or sampling-based direct lighting, noise-free shading may be impossible without additional techniques. citeturn26view0turn34search1  
-- **Irradiance-volume assumption**: dynamic objects do not contribute to scene GI; extending to glossy materials or higher-order occlusion would require additional modeling (they point to PRT and glossy extensions as related directions). citeturn26view0turn35search1  
-- **Glossy materials**: possible via secondary rays to diffuse intersections, but then you reintroduce sampling variance; they suggest conditioning on roughness (citing Ref-NeRF-style ideas) as a possible direction. citeturn26view0turn37search0  
-- **Online learning** is possible in principle but slower due to the larger volumetric domain; they suggest frustum-only sampling and loss-driven sampling as potential tactics. citeturn26view0turn39search8  
-- **Scaling to very large scenes** eventually becomes capacity-limited; they propose spatial partitioning (KiloNeRF-like) or LOD strategies, and cite neural BVH / related neural subdivision ideas as a broader direction. citeturn26view0turn36search0turn38search0
+## 8. Integration With Existing GI Systems
 
-## Reproducibility checklist and suggested experiments
+### 8.1 Relationship To Light Volumes
 
-### What you need to reproduce the main claims
+Light volumes remain the simplest fallback and the easiest reference path. NIV should be treated as a higher-quality baked successor in the same content space, not as a replacement for every volume-based solution.
 
-**Assets and renderer setup**
-- A static 3D scene with materials and lights, plus a bounding volume for sampling. citeturn24view0turn21view0  
-- A path tracer to compute indirect irradiance targets \(E^\star(\mathbf{x},\mathbf{n})\) (the paper reports using Mitsuba3 + PyTorch). citeturn24view0turn31search5turn30search3  
-- A deferred renderer that outputs G-buffer position/normal/albedo for runtime inference. citeturn24view0  
+Recommended behavior:
 
-**Model and training**
-- 4-layer MLP (ReLU), with either positional encoding or multires hash-grid encoding for positions. citeturn22view0turn28search3turn30search13  
-- Training data: uniform volume samples plus ~20% surface samples with direction = normal; cull samples inside geometry/backfacing. citeturn24view0turn27view0  
-- Loss: relative-L2 style normalization (stop-gradient denominator + constant). citeturn24view0turn29search1  
-- Optimizer: Adam; convergence in ≤50k iterations reported. citeturn24view0turn34search0  
+- if NIV mode is selected and a valid neural asset is present, run the neural pass
+- if not, fall back to the component's conventional 3D irradiance texture
+- if neither exists, fail over to the engine's default GI mode or neutral GI behavior
 
-**Runtime**
-- Batched inference over full-HD G-buffer (optionally half-res), compose with direct lighting and optional dynamic AO. citeturn24view0turn34search3  
+### 8.2 Relationship To Radiance Cascades
 
-**Unspecified / ambiguous in accessible text (must verify from PDF/source)**
-- Exact learning rate, batch size, LR decay endpoint. citeturn24view0turn27view0  
-- One hash-grid scaling factor value between levels (mentioned but elided in the HTML extraction). citeturn22view0  
+Radiance cascades remain the better choice when the project wants explicit multi-scale volume data and conventional texture sampling. NIV should target cases where radiance cascade memory or interpolation quality is the real problem.
 
-### Experiments that most directly validate (or falsify) the paper’s claims
+### 8.3 Relationship To Dynamic GI
 
-**Memory–error scaling**
-- Reproduce the paper’s “order-of-magnitude better quality at fixed memory” by sweeping hash table sizes / number of levels, then comparing volumetric MSE on random \((\mathbf{x},\mathbf{n})\) samples against a probe grid with matched memory. citeturn24view0turn22view0  
+NIV should not compete with Surfel GI, ReSTIR GI, or voxel cone tracing on the same claim. It is not a full dynamic GI system. It is a compact baked diffuse field for static scenes with dynamic receivers.
 
-**Ablations of the two critical training heuristics**
-- Train with and without (i) surface sampling and (ii) inside-geometry culling; measure surface error (contact shadows) and volumetric error separately, matching their qualitative claim that combining both yields the most robust results. citeturn24view0turn22view0  
+---
 
-**Runtime comparison against a “best-case” surface cache**
-- Implement a surface neural cache (NRC-style) with comparable capacity, then compare: (a) quality vs spp, (b) need for denoising, and (c) total frame time including ray tracing + denoiser. The paper claims the variance–cost trade dominates and NIV is 5–10 ms faster at similar quality. citeturn25view0turn29search0turn29search3  
+## 9. Debuggability And Tooling
 
-**Generalization tests**
-- Insert novel dynamic objects with varying sizes/coverage ratios (beyond the reported 5–10% coverage), and test when the irradiance-volume “small impact” assumption starts to cause unacceptable bias. citeturn25view0turn26view0  
+Recommended editor and runtime debug views:
 
-**Higher-dimensional conditioning**
-- Add 1–2 conditioning variables (e.g., directional light angle, moving occluder) and verify that (i) adding frequency encoding for those variables preserves near-constant inference time and (ii) increasing the number of variables produces visible reconstruction error at fixed capacity, as claimed. citeturn26view0turn25view0  
+- volume bounds visualization
+- inside or outside volume coverage overlay
+- neural vs fallback output toggle
+- irradiance-only buffer view
+- inference cost and memory readout
+- bake profile and metrics panel
+- dynamic AO compensation overlay
 
-**Large scene scaling**
-- Partition a large environment into tiles and train multiple NIVs (KiloNeRF-style spatial decomposition) and quantify the trade between seam artifacts, memory, and runtime overhead. citeturn26view0turn36search0  
+Recommended content diagnostics:
 
-## Key references and reading map
+- heatmap of disagreement vs fallback volume
+- view of surface-sample density
+- invalid-sample rejection count
+- per-scene model size and inference time
 
-The paper is best understood as sitting at the intersection of (i) classical irradiance/probe caching and (ii) neural field compression for fast inference. The following primary sources are the most load-bearing for understanding the method and its comparisons:
+---
 
-- The rendering equation foundation (for the “what are we approximating” baseline). citeturn28search0  
-- Original irradiance volume concept (historical probe-volume framing). citeturn28search1turn28search17  
-- DDGI / irradiance fields with visibility (strong modern probe baseline). citeturn28search2turn28search22  
-- Low-order spherical harmonics for irradiance (why 9-coefficient SH is a common diffuse probe representation). citeturn35search0turn35search8  
-- Precomputed radiance transfer (extensions and the “higher-order effects need more structure” story). citeturn35search1turn35search5  
-- Real-time neural radiance caching (surface-based neural cache, variance/denoising trade). citeturn29search0turn29search4  
-- Instant-NGP hash-grid encoding (the core compression/enabling trick used by NIV for large scenes). citeturn28search3turn28search11  
-- Noise2Noise (reference point for relative / normalized losses and noise reasoning used as inspiration). citeturn29search1turn29search5  
-- Joint bilateral upsampling (runtime upsampling option for half-resolution inference). citeturn34search2turn34search10  
-- Hardware ambient occlusion approximations (the kind of AO pass NIV uses for dynamic geometry interactions). citeturn34search3turn34search23  
+## 10. Risks And Mitigations
 
-These references together explain (a) why probe volumes exist, (b) why their scaling/aliasing problems are structural, and (c) why NIV’s specific combination—*pre-integrated irradiance + hash-grid encoding + batched MLP inference*—lands in a favorable place on the quality/memory/runtime frontier for diffuse GI under real-time constraints. citeturn24view0turn22view0turn18view0
+| Risk | Why it matters | Mitigation |
+|------|----------------|------------|
+| Dynamic geometry does not affect GI | The method is only partially dynamic | Keep compensation explicit and document limits |
+| Training time is dominated by target generation | Bake iteration can become slow | Make preview profiles cheap and cache scene exports |
+| Large scenes exceed one model's capacity | Quality falls off or memory grows too far | Support multiple volumes or partitions before scaling one model indefinitely |
+| Runtime inference cost spikes in VR or stereo | GI pass can exceed budget | Require half-resolution support and explicit stereo profiling |
+| Model quality is hard to trust | Baked GI regressions are subtle | Ship fallback texture generation and A/B tools |
+
+---
+
+## 11. Phased Bring-Up Plan
+
+### Phase 0: Honest Scaffolding
+
+Outcome: the engine can represent a neural irradiance volume mode without pretending the bake or runtime inference already exists.
+
+Required work:
+
+- add the GI mode enum value
+- add asset and component skeletons
+- add editor-visible properties and neutral debug labels
+- add fallback-only behavior
+
+### Phase 1: Fallback Volume Path
+
+Outcome: the new component can render through a conventional 3D irradiance texture while the neural toolchain is still under construction.
+
+Required work:
+
+- component registration and bounds handling
+- fallback volume texture support
+- pipeline plumbing and GI mode selection
+- basic debug visualization
+
+Deliverable:
+
+- projects can adopt the new scene component without waiting for neural runtime inference
+
+### Phase 2: Offline Bake Toolchain
+
+Outcome: a static scene can be exported, sampled, trained, and packaged as a cooked NIV asset.
+
+Required work:
+
+- scene export format
+- sample generation
+- trainer driver and profile selection
+- asset packaging and fallback texture generation
+- deterministic metadata and hashes
+
+### Phase 3: Runtime Neural Inference Pass
+
+Outcome: NIV produces visible indirect diffuse lighting from the neural field in real time.
+
+Required work:
+
+- add `VPRC_NeuralIrradianceVolumePass`
+- implement G-Buffer query and bounds rejection
+- implement inference and output path
+- add half-resolution option
+- integrate GI composite and profiling hooks
+
+### Phase 4: Debugging, Validation, And AO Compensation
+
+Outcome: the system is explainable and can be evaluated against current baked GI modes.
+
+Required work:
+
+- A/B comparison against light volumes and radiance cascades
+- error heatmaps and overlay views
+- dynamic AO compensation pass or integration
+- editor metrics panel
+
+### Phase 5: Limited Conditioning And Partitioning
+
+Outcome: the system can handle small controlled variations without becoming a general variable-scene renderer.
+
+Possible later additions:
+
+- time-of-day or one-light-angle conditioning
+- multiple neural volumes per world
+- spatial partitioning for large scenes
+- more aggressive stereo and VR optimizations
+
+---
+
+## 12. Validation Plan
+
+### 12.1 Required Comparisons
+
+Every serious NIV evaluation should compare against:
+
+- current light volume fallback
+- radiance cascades where applicable
+- light probes in scenes where probe interpolation is currently the baseline
+
+### 12.2 Required Measurements
+
+- model size on disk
+- VRAM residency size
+- inference time at 1080p and stereo
+- half-resolution quality delta
+- camera-motion stability
+- visible error on inserted dynamic objects
+
+### 12.3 Acceptance Criteria
+
+The mode should not be considered ready until:
+
+- it can fall back cleanly to a standard volume texture
+- runtime inference cost is budgeted and stable
+- A/B debug views exist in the editor
+- at least one real project scene shows a meaningful quality-memory win over current baked GI options
+- its dynamic-scene limitations are documented and visible in tooling
+
+---
+
+## 13. Recommended First Milestone
+
+The first milestone should remain narrow:
+
+- diffuse-only
+- one neural volume per scene region
+- one conventional fallback texture per asset
+- full-resolution and half-resolution runtime modes
+- no runtime retraining
+- no glossy transport
+
+That is enough to answer the real question: whether XRENGINE benefits from a compact neural irradiance field more than it already benefits from light volumes and radiance cascades.
+
+If the answer is no on real content, the engine should keep the fallback path and stop there rather than forcing a larger neural GI surface area.

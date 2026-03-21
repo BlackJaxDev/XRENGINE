@@ -34,6 +34,13 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         set => SetField(ref _updateRate, value);
     }
 
+    private float _speed = 1.0f;
+    public float Speed
+    {
+        get => _speed;
+        set => SetField(ref _speed, value);
+    }
+
     public enum EUpdateMode
     {
         Normal,
@@ -42,12 +49,21 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         Default
     }
 
+    public enum EInterpolationMode
+    {
+        Discrete,
+        Interpolate,
+        Extrapolate
+    }
+
     private EUpdateMode _updateMode = EUpdateMode.Default;
     public EUpdateMode UpdateMode
     {
         get => _updateMode;
         set => SetField(ref _updateMode, value);
     }
+
+    private EInterpolationMode _interpolationMode = EInterpolationMode.Discrete;
 
     private float _damping = 0.1f;
     private AnimationCurve? _dampingDistrib = null;
@@ -98,6 +114,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private bool _useBatchedDispatcher = true;
     private bool _gpuSyncToBones = false;
     private volatile bool _hasPendingGpuBoneSync;
+    private bool _debugDrawChains = true;
 
     private TransformBase? _rootBone = null;
     private float _rootInertia = 0.0f;
@@ -113,6 +130,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private float _weight = 1.0f;
     private bool _distantDisabled = false;
     private int _preUpdateCount = 0;
+    private long _fixedUpdateRenderAccumulatedTicks;
+    private bool _lastSimulationProducedResults;
 
     private readonly List<ParticleTree> _particleTrees = [];
     private readonly Dictionary<Transform, (Vector3 LocalPosition, Quaternion LocalRotation)> _initialLocalStates = [];
@@ -121,12 +140,17 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private float _deltaTime;
     private List<PhysicsChainColliderBase>? _effectiveColliders;
 
+    // Thread-safe snapshots populated in Prepare() before jobs are scheduled.
+    // Jobs read from these arrays instead of the mutable lists to avoid races.
+    private PhysicsChainColliderBase[]? _collidersForJob;
+    private int _collidersForJobCount;
+    private ParticleTree[]? _particleTreesForJob;
+    private int _particleTreesForJobCount;
+
     private static readonly ConcurrentQueue<PhysicsChainComponent> _pendingWorks = [];
     private static readonly List<PhysicsChainComponent> _effectiveWorks = [];
-    private static AutoResetEvent? _allWorksDoneEvent;
-    private static int _remainWorkCount;
-    private static Semaphore? _workQueueSemaphore;
-    private static int _workQueueIndex;
+    private static readonly List<JobHandle> _scheduledWorkHandles = [];
+    private static readonly object _executeWorksSync = new();
 
     private static int _updateCount;
     private static int _prepareFrame;
@@ -274,6 +298,15 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         set => SetField(ref _distanceToObject, value);
     }
     [Category("Execution")]
+    [DisplayName("Fixed Update Transform Mode")]
+    [Description("When Update Mode is FixedUpdate, controls how chain transforms are presented between fixed simulation ticks.")]
+    public EInterpolationMode InterpolationMode
+    {
+        get => _interpolationMode;
+        set => SetField(ref _interpolationMode, value);
+    }
+
+    [Category("Execution")]
     [DisplayName("Multithreaded")]
     [EditorBrowsableIf("!UseGPU")]
     public bool Multithread
@@ -299,6 +332,15 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     {
         get => _useBatchedDispatcher;
         set => SetField(ref _useBatchedDispatcher, value);
+    }
+
+    [Category("Debug")]
+    [DisplayName("Draw Debug Chains")]
+    [Description("Shows the debug chain overlay using white bone links and yellow radius capsules.")]
+    public bool DebugDrawChains
+    {
+        get => _debugDrawChains;
+        set => SetField(ref _debugDrawChains, value);
     }
 
     /// <summary>

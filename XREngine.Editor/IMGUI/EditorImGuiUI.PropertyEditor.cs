@@ -1774,7 +1774,7 @@ public static partial class EditorImGuiUI
             if (keyType.IsValueType)
                 return Activator.CreateInstance(keyType);
 
-            if (keyType.GetConstructor(Type.EmptyTypes) is not null)
+            if (HasParameterlessConstructorSafe(keyType))
                 return Activator.CreateInstance(keyType);
 
             return null;
@@ -2313,6 +2313,64 @@ public static partial class EditorImGuiUI
             return effective.IsClass || effective.IsInterface;
         }
 
+        private static bool HasParameterlessConstructorSafe(Type? type)
+        {
+            if (type is null)
+                return false;
+
+            try
+            {
+                return type.GetConstructor(Type.EmptyTypes) is not null;
+            }
+            catch (FileNotFoundException)
+            {
+                return false;
+            }
+            catch (FileLoadException)
+            {
+                return false;
+            }
+            catch (TypeLoadException)
+            {
+                return false;
+            }
+            catch (NotSupportedException)
+            {
+                return false;
+            }
+        }
+
+        private static Type[] GetLoadableAssemblyTypesSafe(Assembly assembly)
+        {
+            if (assembly.IsDynamic)
+                return [];
+
+            try
+            {
+                return assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                return ex.Types.Where(static t => t is not null).Cast<Type>().ToArray();
+            }
+            catch (FileNotFoundException)
+            {
+                return [];
+            }
+            catch (FileLoadException)
+            {
+                return [];
+            }
+            catch (BadImageFormatException)
+            {
+                return [];
+            }
+            catch (NotSupportedException)
+            {
+                return [];
+            }
+        }
+
         /// <summary>
         /// Gets the available concrete types that can be instantiated for a property type.
         /// </summary>
@@ -2327,7 +2385,7 @@ public static partial class EditorImGuiUI
 
             // If the base type itself is concrete with a parameterless constructor, include it
             if (!baseType.IsAbstract && !baseType.IsInterface && !baseType.ContainsGenericParameters
-                && baseType.GetConstructor(Type.EmptyTypes) is not null)
+                && HasParameterlessConstructorSafe(baseType))
             {
                 descriptors.Add(new CollectionTypeDescriptor(
                     baseType,
@@ -2339,15 +2397,7 @@ public static partial class EditorImGuiUI
             // Search all loaded assemblies for derived types
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[] types;
-                try
-                {
-                    types = assembly.GetTypes();
-                }
-                catch (ReflectionTypeLoadException ex)
-                {
-                    types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
-                }
+                Type[] types = GetLoadableAssemblyTypesSafe(assembly);
 
                 foreach (var type in types)
                 {
@@ -2361,7 +2411,7 @@ public static partial class EditorImGuiUI
                         continue;
                     if (type.ContainsGenericParameters)
                         continue;
-                    if (type.GetConstructor(Type.EmptyTypes) is null)
+                    if (!HasParameterlessConstructorSafe(type))
                         continue;
 
                     descriptors.Add(new CollectionTypeDescriptor(
@@ -2876,7 +2926,7 @@ public static partial class EditorImGuiUI
                         continue;
                     if (type.ContainsGenericParameters)
                         continue;
-                    if (type.GetConstructor(Type.EmptyTypes) is null)
+                    if (!HasParameterlessConstructorSafe(type))
                         continue;
 
                     descriptors.Add(new CollectionTypeDescriptor(
@@ -3049,7 +3099,7 @@ public static partial class EditorImGuiUI
             if (candidate is null || !typeof(XRAsset).IsAssignableFrom(candidate))
                 return null;
 
-            if (!candidate.IsAbstract && !candidate.ContainsGenericParameters && candidate.GetConstructor(Type.EmptyTypes) is not null)
+            if (!candidate.IsAbstract && !candidate.ContainsGenericParameters && HasParameterlessConstructorSafe(candidate))
                 return candidate;
 
             return null;
