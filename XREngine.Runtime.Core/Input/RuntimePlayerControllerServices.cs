@@ -90,21 +90,44 @@ namespace XREngine.Input
     /// </summary>
     public static class RuntimePlayerControllerServices
     {
+        private const string DefaultLocalControllerTypeName = "XREngine.Input.LocalPlayerController, XREngine.Runtime.InputIntegration";
+        private const string DefaultRemoteControllerTypeName = "XREngine.Input.RemotePlayerController, XREngine.Runtime.InputIntegration";
+
+        private static Type? _defaultLocalControllerType;
+        private static Type? _defaultRemoteControllerType;
+
         public static IRuntimePlayerControllerServices? Current { get; set; }
 
         /// <summary>
         /// Default concrete type for local player controllers.
-        /// Set by the integration assembly (e.g. Runtime.InputIntegration) at startup.
+        /// Resolved lazily from the integration assembly when first requested.
         /// Used by the factory when no type override is provided and the game mode has no preference.
         /// </summary>
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
-        public static Type? DefaultLocalControllerType { get; set; }
+        public static Type? DefaultLocalControllerType
+        {
+            get => _defaultLocalControllerType ??= ResolveControllerType(DefaultLocalControllerTypeName);
+            set => _defaultLocalControllerType = value;
+        }
 
         /// <summary>
         /// Default concrete type for remote player controllers.
-        /// Set by the integration assembly at startup.
+        /// Resolved lazily from the integration assembly when first requested.
         /// </summary>
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
-        public static Type? DefaultRemoteControllerType { get; set; }
+        public static Type? DefaultRemoteControllerType
+        {
+            get => _defaultRemoteControllerType ??= ResolveControllerType(DefaultRemoteControllerTypeName);
+            set => _defaultRemoteControllerType = value;
+        }
+
+        [return: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        private static Type? ResolveControllerType(string assemblyQualifiedTypeName)
+        {
+            Type? type = Type.GetType(assemblyQualifiedTypeName, throwOnError: false);
+            return type is not null && typeof(IPawnController).IsAssignableFrom(type)
+                ? type
+                : null;
+        }
     }
 }

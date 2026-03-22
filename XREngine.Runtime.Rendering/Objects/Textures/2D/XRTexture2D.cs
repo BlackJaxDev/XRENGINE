@@ -940,7 +940,7 @@ namespace XREngine.Rendering
 
         public XRTexture2D(params string[] mipMapPaths)
         {
-            Mipmap2D[] mips = new Mipmap2D[mipMapPaths.Length];
+            List<Mipmap2D> mips = [];
             for (int i = 0; i < mipMapPaths.Length; ++i)
             {
                 string path = mipMapPaths[i];
@@ -948,14 +948,14 @@ namespace XREngine.Rendering
                     path = path[7..];
                 try
                 {
-                    mips[i] = new Mipmap2D(new MagickImage(path));
+                    mips.Add(new Mipmap2D(new MagickImage(path)));
                 }
                 catch (Exception e)
                 {
                     RuntimeRenderingHostServices.Current.LogWarning($"Failed to load texture from path: {path}{Environment.NewLine}{e.Message}");
                 }
             }
-            Mipmaps = mips;
+            Mipmaps = [.. mips];
             // Derive the sized format from the first mipmap so non-resizable textures
             // don't fall back to the default Rgba32f.
             if (Mipmaps.Length > 0)

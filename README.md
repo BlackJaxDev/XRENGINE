@@ -89,6 +89,7 @@ Running the editor launches the Unit Testing World, a collection of scenes that 
 
 - Per-run engine logs are written under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/` when file logging is enabled.
 - Profiler diagnostics now emit dedicated files in that same run directory: `profiler-main-thread-invokes.log` for invoke request/execution traces and `profiler-fps-drops.log` for rich FPS-drop records.
+- Math Intersections world benchmarks now emit `math-intersections-benchmarks.log` into that same run directory, including frame timing and GPU physics-chain transfer-pressure counters.
 
 ## Unit Testing World Settings (JSONC)
 
@@ -232,6 +233,16 @@ For a quick networking test:
 	```
 
 	This downloads `yt-dlp.exe` to `Build/Dependencies/YoutubeDL/yt-dlp.exe` and the build copies it into app output folders automatically for executable projects.
+
+- MSDF font atlas generation (`msdf-atlas-gen`) – world-space and UI text can optionally import fonts through an MSDF atlas path for sharper scaling and outline rendering. The font importer looks for `msdf-atlas-gen.exe` under `Build/Dependencies/MsdfAtlasGen/`.
+
+	To install/update `msdf-atlas-gen` into the repo-standard dependency location, run:
+
+	```powershell
+	./Tools/Dependencies/Get-MsdfAtlasGen.ps1
+	```
+
+	A matching VS Code task is also available as `Install-MsdfAtlasGen`. Font import options now default to `Auto`, which prefers MSDF when the tool is available and falls back to the legacy bitmap atlas path otherwise.
 
 - NVIDIA features (DLSS / Reflex / Streamline) – **NVIDIA proprietary SDK binaries are not redistributed in this repo.** To enable these features locally, obtain the relevant NVIDIA SDK(s) from NVIDIA and drop the required DLLs into `ThirdParty/NVIDIA/SDK/win-x64/`. The build copies them into the output directory when present. See `ThirdParty/NVIDIA/SDK/README.md`.
 

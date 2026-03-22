@@ -396,17 +396,20 @@ public unsafe partial class VulkanRenderer
 							pipelineInfo.PNext = &renderingInfo;
 						}
 
+						VkRenderProgram program = _program ?? throw new InvalidOperationException("Graphics program was not initialized.");
+
 						try
 						{
-							pipeline = _program!.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
+							pipeline = program.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
 						}
 						catch (InvalidOperationException ex)
 						{
+							string programName = program.Data.Name ?? "UnnamedProgram";
 							Debug.VulkanWarningEvery(
-								$"Vulkan.Pipeline.CreateFailed.{_program!.Data.Name}",
+								$"Vulkan.Pipeline.CreateFailed.{programName}",
 								TimeSpan.FromSeconds(5),
 								"[Vulkan] Pipeline creation failed for program '{0}': {1}",
-								_program.Data.Name ?? "UnnamedProgram",
+								programName,
 								ex.Message);
 							pipeline = default;
 							return false;

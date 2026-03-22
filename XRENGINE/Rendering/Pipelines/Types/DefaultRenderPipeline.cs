@@ -33,16 +33,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private readonly Lazy<XRMaterial> _motionVectorsMaterial;
     private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
 
-    private const float TemporalFeedbackMin = 0.15f;
-    private const float TemporalFeedbackMax = 0.975f;
-    private const float TemporalVarianceGamma = 0.85f;
+    private const float TemporalFeedbackMin = 0.08f;
+    private const float TemporalFeedbackMax = 0.94f;
+    private const float TemporalVarianceGamma = 1.0f;
     private const float TemporalCatmullRadius = 1.0f;
     private const float TemporalDepthRejectThreshold = 0.0045f;
     private static readonly Vector2 TemporalReactiveTransparencyRange = new(0.4f, 0.85f);
     private const float TemporalReactiveVelocityScale = 0.55f;
     private const float TemporalReactiveLumaThreshold = 0.35f;
     private const float TemporalDepthDiscontinuityScale = 250.0f;
-    private const float TemporalConfidencePower = 0.75f;
+    private const float TemporalConfidencePower = 0.65f;
 
     private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
     public EGlobalIlluminationMode GlobalIlluminationMode
@@ -74,21 +74,87 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     /// <summary>
     /// Resolves the effective HDR output mode for the current rendering camera.
-    /// Camera override takes highest priority, then falls back to the global engine setting.
+    /// Prefers SceneCamera (the viewport's main camera, unaffected by
+    /// <see cref="RenderingState.PushRenderingCamera"/>) so per-camera overrides
+    /// survive the null-push inside <see cref="XRQuadFrameBuffer.Render"/>.
+    /// Falls back to global engine setting when no camera is available.
     /// </summary>
     internal static bool ResolveOutputHDR()
     {
-        var camera = Engine.Rendering.State.RenderingCamera;
+        var camera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera
+                  ?? Engine.Rendering.State.RenderingCamera;
         return camera?.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+    }
+
+    private static EPixelInternalFormat ResolveOutputInternalFormat()
+        => ResolveOutputHDR() ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
+
+    private static EPixelType ResolveOutputPixelType()
+        => ResolveOutputHDR() ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
+
+    private static ESizedInternalFormat ResolveOutputSizedInternalFormat()
+        => ResolveOutputHDR() ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
+
+    private static ERenderBufferStorage ResolveOutputRenderBufferStorage()
+        => ResolveOutputHDR() ? ERenderBufferStorage.Rgba16f : ERenderBufferStorage.Rgba8;
+
+    private static bool NeedsRecreateOutputTextureInternalSize(XRTexture texture)
+        => NeedsRecreateTextureInternalSize(texture) || !MatchesOutputTextureFormat(texture);
+
+    private static bool NeedsRecreateOutputTextureFullSize(XRTexture texture)
+        => NeedsRecreateTextureFullSize(texture) || !MatchesOutputTextureFormat(texture);
+
+    private static bool MatchesOutputTextureFormat(XRTexture texture)
+    {
+        ESizedInternalFormat sizedFormat = ResolveOutputSizedInternalFormat();
+        EPixelInternalFormat internalFormat = ResolveOutputInternalFormat();
+        EPixelType pixelType = ResolveOutputPixelType();
+
+        return texture switch
+        {
+            XRTexture2D texture2D when texture2D.Mipmaps is { Length: > 0 }
+                => texture2D.SizedInternalFormat == sizedFormat
+                && texture2D.Mipmaps[0].InternalFormat == internalFormat
+                && texture2D.Mipmaps[0].PixelType == pixelType,
+            XRTexture2D texture2D
+                => texture2D.SizedInternalFormat == sizedFormat,
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Returns true when any color attachment on the FBO has a format that no longer
+    /// matches the current output HDR mode. Forces FBO recreation so its attachments
+    /// and material source textures stay in sync with the freshly-recreated textures.
+    /// </summary>
+    private static bool NeedsRecreateFboDueToOutputFormat(XRFrameBuffer fbo)
+    {
+        var targets = fbo.Targets;
+        if (targets is null)
+            return false;
+
+        for (int i = 0; i < targets.Length; i++)
+        {
+            var (target, attachment, _, _) = targets[i];
+            if (attachment < EFrameBufferAttachment.ColorAttachment0
+                || attachment > EFrameBufferAttachment.ColorAttachment7)
+                continue;
+
+            if (target is XRTexture tex && !MatchesOutputTextureFormat(tex))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
     /// Resolves the effective anti-aliasing mode for the current rendering camera.
-    /// Camera override takes highest priority, then falls back to the global engine setting.
+    /// Prefers SceneCamera so per-camera overrides survive null-push scopes.
     /// </summary>
     private static EAntiAliasingMode ResolveAntiAliasingMode()
     {
-        var camera = Engine.Rendering.State.RenderingCamera;
+        var camera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera
+                  ?? Engine.Rendering.State.RenderingCamera;
         return camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
     }
 
@@ -105,11 +171,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     /// <summary>
     /// Resolves the effective MSAA sample count for the current rendering camera.
-    /// Camera override takes highest priority, then falls back to the global engine setting.
+    /// Prefers SceneCamera so per-camera overrides survive null-push scopes.
     /// </summary>
     internal static uint ResolveEffectiveMsaaSampleCount()
     {
-        var camera = Engine.Rendering.State.RenderingCamera;
+        var camera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera
+                  ?? Engine.Rendering.State.RenderingCamera;
         return Math.Max(1u, camera?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount);
     }
 
@@ -127,6 +194,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
     /// </summary>
     private static bool RuntimeEnableFxaa
         => ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;
+
+    /// <summary>
+    /// True when SMAA should be active for the current rendering camera.
+    /// Evaluated at render time so per-camera overrides take effect.
+    /// </summary>
+    private static bool RuntimeEnableSmaa
+        => ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;
 
     /// <summary>
     /// True when the current camera's AA mode is TSR and internal resolution is
@@ -172,14 +246,29 @@ public partial class DefaultRenderPipeline : RenderPipeline
     }
 
     private bool NeedsRecreateMsaaFbo(XRFrameBuffer fbo)
-        => fbo.EffectiveSampleCount != MsaaSampleCount;
+    {
+        if (fbo.EffectiveSampleCount != MsaaSampleCount)
+            return true;
+
+        if (fbo.Targets is null)
+            return false;
+
+        foreach (var (target, attachment, _, _) in fbo.Targets)
+        {
+            if (attachment == EFrameBufferAttachment.ColorAttachment0
+                && target is XRRenderBuffer renderBuffer
+                && renderBuffer.Type != ResolveOutputRenderBufferStorage())
+                return true;
+        }
+
+        return false;
+    }
 
     /// <summary>
-    /// Deferred MSAA remains opt-in because the forward path benefits from MSAA independently,
-    /// while the deferred MSAA branches are substantially more fragile and don't improve the
-    /// final full-screen deferred lighting edge quality on their own.
+    /// When true the deferred GBuffer renders into an MSAA FBO and deferred lighting
+    /// runs with per-sample shading so geometric edges in the deferred path get anti-aliased.
     /// </summary>
-    public bool EnableDeferredMsaa { get; set; } = false;
+    public bool EnableDeferredMsaa { get; set; } = true;
 
     private string BrightPassShaderName() => 
         Stereo ? "BrightPassStereo.fs" : 
@@ -244,6 +333,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
     public const string FxaaFBOName = "FxaaFBO";
+    public const string SmaaFBOName = "SmaaFBO";
     public const string UserInterfaceFBOName = "UserInterfaceFBO";
     public const string TransformIdDebugQuadFBOName = "TransformIdDebugQuadFBO";
     public const string TransformIdDebugOutputTextureName = "TransformIdDebugOutputTexture";
@@ -263,6 +353,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
     public const string ForwardDepthPrePassMergeFBOName = "ForwardDepthPrePassMergeFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
+    public const string SmaaOutputTextureName = "SmaaOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
@@ -322,6 +413,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string MsaaGBufferFBOName = "MsaaGBufferFBO";
     public const string MsaaLightingTextureName = "MsaaLightingTexture";
     public const string MsaaLightingFBOName = "MsaaLightingFBO";
+    public const string MsaaLightCombineFBOName = "MsaaLightCombineFBO";
     public const string MsaaDeferredResolveAlbedoFBOName = "MsaaDeferredResolveAlbedoFBO";
     public const string MsaaDeferredResolveNormalFBOName = "MsaaDeferredResolveNormalFBO";
     public const string MsaaDeferredResolveRmseFBOName = "MsaaDeferredResolveRmseFBO";
@@ -350,6 +442,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     [
         PostProcessOutputTextureName,
         FxaaOutputTextureName,
+        SmaaOutputTextureName,
         HistoryColorTextureName,
         HistoryDepthStencilTextureName,
         HistoryDepthViewTextureName,
@@ -364,6 +457,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
         MsaaDepthViewTextureName,
         MsaaTransformIdTextureName,
         MsaaLightingTextureName,
+        ForwardPassMsaaDepthStencilTextureName,
+        ForwardPassMsaaDepthViewTextureName,
     ];
 
     private static readonly string[] AntiAliasingFrameBufferDependencies =
@@ -375,6 +470,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         PostProcessOutputFBOName,
         PostProcessFBOName,
         FxaaFBOName,
+        SmaaFBOName,
         TsrHistoryColorFBOName,
         TsrUpscaleFBOName,
         HistoryCaptureFBOName,
@@ -389,6 +485,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         VelocityFBOName,
         MsaaGBufferFBOName,
         MsaaLightingFBOName,
+        MsaaLightCombineFBOName,
         MsaaDeferredResolveAlbedoFBOName,
         MsaaDeferredResolveNormalFBOName,
         MsaaDeferredResolveRmseFBOName,
@@ -810,6 +907,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 GetDesiredFBOSizeInternal,
                 NeedsRecreateMsaaFbo);
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                MsaaLightCombineFBOName,
+                CreateMsaaLightCombineFBO,
+                GetDesiredFBOSizeInternal);
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 DepthPreloadFBOName,
                 CreateDepthPreloadFBO,
                 GetDesiredFBOSizeInternal);
@@ -902,18 +1003,62 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 x.DynamicClearDepth = () => RuntimeEnableMsaa;
             }))
             {
-                // Depth preload blit is only needed for MSAA.
+                // Depth preload is only needed for MSAA.
                 var msaaPreload = c.Add<VPRC_IfElse>();
                 msaaPreload.ConditionEvaluator = () => RuntimeEnableMsaa;
                 {
                     var preloadCmds = new ViewportRenderCommandContainer(this);
-                    preloadCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthPreloadFBOName, ForwardPassMsaaFBOName);
+
+                    // When deferred MSAA is active, blit per-sample depth from the MSAA GBuffer
+                    // instead of the non-MSAA shader-based preload. This preserves per-sample
+                    // depth at silhouette edges so the skybox can render at actual sky samples
+                    // and forward meshes get correct per-sample depth testing.
+                    var deferredChoice = preloadCmds.Add<VPRC_IfElse>();
+                    deferredChoice.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+                    {
+                        var blitCmds = new ViewportRenderCommandContainer(this);
+                        blitCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                            MsaaGBufferFBOName,
+                            ForwardPassMsaaFBOName,
+                            EReadBufferMode.ColorAttachment0,
+                            blitColor: false,
+                            blitDepth: true,
+                            blitStencil: false,
+                            linearFilter: false);
+                        deferredChoice.TrueCommands = blitCmds;
+                    }
+                    {
+                        // Forward-only MSAA: shader-based preload from non-MSAA depth
+                        var shaderCmds = new ViewportRenderCommandContainer(this);
+                        shaderCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthPreloadFBOName, ForwardPassMsaaFBOName);
+                        deferredChoice.FalseCommands = shaderCmds;
+                    }
+
                     msaaPreload.TrueCommands = preloadCmds;
                 }
 
                 //Render the deferred pass lighting result, no depth testing
                 c.Add<VPRC_DepthTest>().Enable = false;
-                c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+
+                // When deferred MSAA is active, use the per-sample LightCombine variant
+                // so direct light is read from the MSAA lighting texture per-sample via
+                // sampler2DMS + gl_SampleID. This avoids the dark silhouette edges that
+                // occur when the premature resolve averages sky-samples (zero) with
+                // geometry lighting before the skybox has a chance to fill them.
+                var lightCompositeBranch = c.Add<VPRC_IfElse>();
+                lightCompositeBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+                {
+                    var msaaCmds = new ViewportRenderCommandContainer(this);
+                    msaaCmds.Add<VPRC_SampleShading>().Enable = true;
+                    msaaCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = MsaaLightCombineFBOName;
+                    msaaCmds.Add<VPRC_SampleShading>().Enable = false;
+                    lightCompositeBranch.TrueCommands = msaaCmds;
+                }
+                {
+                    var stdCmds = new ViewportRenderCommandContainer(this);
+                    stdCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+                    lightCompositeBranch.FalseCommands = stdCmds;
+                }
 
                 //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
                 c.Add<VPRC_DepthTest>().Enable = true;
@@ -1114,34 +1259,38 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 FxaaOutputTextureName,
                 CreateFxaaOutputTexture,
-                NeedsRecreateTextureFullSize,
+                NeedsRecreateOutputTextureFullSize,
                 ResizeTextureFullSize);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 PostProcessOutputFBOName,
                 CreatePostProcessOutputFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateFboDueToOutputFormat);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 FxaaFBOName,
                 CreateFxaaFBO,
-                GetDesiredFBOSizeFull);
+                GetDesiredFBOSizeFull,
+                NeedsRecreateFboDueToOutputFormat);
 
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 TsrHistoryColorTextureName,
                 CreateTsrHistoryColorTexture,
-                NeedsRecreateTextureFullSize,
+                NeedsRecreateOutputTextureFullSize,
                 ResizeTextureFullSize);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 TsrHistoryColorFBOName,
                 CreateTsrHistoryColorFBO,
-                GetDesiredFBOSizeFull);
+                GetDesiredFBOSizeFull,
+                NeedsRecreateFboDueToOutputFormat);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 TsrUpscaleFBOName,
                 CreateTsrUpscaleFBO,
-                GetDesiredFBOSizeFull);
+                GetDesiredFBOSizeFull,
+                NeedsRecreateFboDueToOutputFormat);
 
             //c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             //    UserInterfaceFBOName,
@@ -1150,10 +1299,11 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         }
 
-        // FXAA / TSR upscale chain: runs when FXAA is active or TSR needs upscaling from internal to full resolution.
+            // Post-AA chain: FXAA and SMAA run against the post-process output, while TSR
+            // resolves from internal resolution and writes a full-resolution result.
         {
             var upscaleChoice = c.Add<VPRC_IfElse>();
-            upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeNeedsTsrUpscale;
+                upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
             {
                 var upscaleCmds = new ViewportRenderCommandContainer(this);
 
@@ -1163,30 +1313,42 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     upscaleCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
                 }
 
-                // Second pass: upscale to full resolution.
-                // FXAA: applies FXAA while upscaling.
-                // TSR: resolves against full-resolution history.
+                    // Second pass: apply the selected anti-aliasing path.
                 using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
                 {
-                    var fxaaOrTsr = upscaleCmds.Add<VPRC_IfElse>();
-                    fxaaOrTsr.ConditionEvaluator = () => RuntimeEnableFxaa;
+                        var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
+                        tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
                     {
-                        var fxaaUpscale = new ViewportRenderCommandContainer(this);
-                        fxaaUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
-                        fxaaOrTsr.TrueCommands = fxaaUpscale;
+                            var tsrUpscale = new ViewportRenderCommandContainer(this);
+                            tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
+                            tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                                TsrUpscaleFBOName,
+                                TsrHistoryColorFBOName,
+                                EReadBufferMode.ColorAttachment0,
+                                blitColor: true,
+                                blitDepth: false,
+                                blitStencil: false,
+                                linearFilter: false);
+                            tsrOrPostAa.TrueCommands = tsrUpscale;
                     }
                     {
-                        var tsrUpscale = new ViewportRenderCommandContainer(this);
-                        tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
-                        tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
-                            TsrUpscaleFBOName,
-                            TsrHistoryColorFBOName,
-                            EReadBufferMode.ColorAttachment0,
-                            blitColor: true,
-                            blitDepth: false,
-                            blitStencil: false,
-                            linearFilter: false);
-                        fxaaOrTsr.FalseCommands = tsrUpscale;
+                            var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
+                            var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
+                            postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
+                            {
+                                var fxaaUpscale = new ViewportRenderCommandContainer(this);
+                                fxaaUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
+                                postAaChoice.TrueCommands = fxaaUpscale;
+                            }
+                            {
+                                var smaaUpscale = new ViewportRenderCommandContainer(this);
+                                var smaa = smaaUpscale.Add<VPRC_SMAA>();
+                                smaa.SourceTextureName = PostProcessOutputTextureName;
+                                smaa.OutputTextureName = SmaaOutputTextureName;
+                                smaa.OutputFBOName = SmaaFBOName;
+                                postAaChoice.FalseCommands = smaaUpscale;
+                            }
+                            tsrOrPostAa.FalseCommands = fxaaOrSmaa;
                     }
                 }
 
@@ -1243,17 +1405,23 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     else
                     {
                         // Dynamic AA/upscale selection: choose the correct source at render time.
-                        // FXAA and TSR upscale both write to FxaaOutputTexture, so both use their
-                        // respective FBOs to blit to the output. When neither is active, PostProcess
-                        // output goes directly to screen.
+                        // FXAA, SMAA, and TSR each publish a distinct post-AA output FBO; when none
+                        // are active, the post-process output goes directly to screen.
                         var upscaleOutputChoice = c.Add<VPRC_IfElse>();
-                        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeNeedsTsrUpscale;
+                        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
                         {
                             var upscaleOutput = new ViewportRenderCommandContainer(this);
-                            var fxaaOrTsrFinal = upscaleOutput.Add<VPRC_IfElse>();
-                            fxaaOrTsrFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
-                            fxaaOrTsrFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
-                            fxaaOrTsrFinal.FalseCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
+                            var tsrOrPostAaFinal = upscaleOutput.Add<VPRC_IfElse>();
+                            tsrOrPostAaFinal.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
+                            tsrOrPostAaFinal.TrueCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
+                            {
+                                var postAaOutput = new ViewportRenderCommandContainer(this);
+                                var fxaaOrSmaaFinal = postAaOutput.Add<VPRC_IfElse>();
+                                fxaaOrSmaaFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
+                                fxaaOrSmaaFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
+                                fxaaOrSmaaFinal.FalseCommands = CreateFinalBlitCommands(SmaaFBOName, bypassVendorUpscale);
+                                tsrOrPostAaFinal.FalseCommands = postAaOutput;
+                            }
                             upscaleOutputChoice.TrueCommands = upscaleOutput;
                         }
                         upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessFBOName, bypassVendorUpscale);
@@ -1517,7 +1685,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             PostProcessOutputTextureName,
             CreatePostProcessOutputTexture,
-            NeedsRecreateTextureInternalSize,
+            NeedsRecreateOutputTextureInternalSize,
             ResizeTextureInternalSize);
 
         if (EnableFxaa)
@@ -1526,7 +1694,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 FxaaOutputTextureName,
                 CreateFxaaOutputTexture,
-                NeedsRecreateTextureFullSize,
+                NeedsRecreateOutputTextureFullSize,
                 ResizeTextureFullSize);
         }
 

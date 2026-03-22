@@ -95,7 +95,7 @@ internal sealed class YamlDefaultTypeInspector(ITypeInspector inner, bool applyD
 
         public bool Required => _inner.Required;
 
-        public Type ConverterType => _inner.ConverterType;
+        public Type ConverterType => _inner.ConverterType ?? typeof(object);
 
         public void Write(object target, object? value)
             => _inner.Write(target, value);

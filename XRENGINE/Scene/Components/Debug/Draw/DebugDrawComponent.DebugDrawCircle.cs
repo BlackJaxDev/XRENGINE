@@ -20,7 +20,7 @@ namespace XREngine.Components
             public Vector3 LocalOffset
             {
                 get => localOffset;
-                set => SetField(ref localOffset, value);
+                set => localOffset = value;
             }
 
             /// <summary>
@@ -29,7 +29,7 @@ namespace XREngine.Components
             public Vector3 LocalNormal
             {
                 get => localNormal;
-                set => SetField(ref localNormal, value);
+                set => localNormal = value;
             }
 
             /// <summary>
@@ -38,13 +38,13 @@ namespace XREngine.Components
             public float Radius
             {
                 get => radius;
-                set => SetField(ref radius, value);
+                set => radius = value;
             }
 
             public override void Render(TransformBase transform)
                 => Engine.Rendering.Debug.RenderCircle(
                     transform.TransformPoint(LocalOffset, true),
-                    XRMath.RotationBetweenVectors(transform.TransformDirection(LocalNormal, true), Globals.Up),
+                    XRMath.RotationBetweenVectors(Globals.Up, transform.TransformDirection(LocalNormal, true)),
                     Radius,
                     Solid,
                     Color);

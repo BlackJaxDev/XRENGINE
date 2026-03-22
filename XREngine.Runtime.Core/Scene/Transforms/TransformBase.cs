@@ -1242,12 +1242,10 @@ namespace XREngine.Scene.Transforms
                 if (MatrixEqual(RenderMatrix, matrix))
                 {
                     _lastEnqueuedRenderMatrix = matrix;
-                    _hasLastEnqueuedRenderMatrix = false;
                     return false;
                 }
 
                 _lastEnqueuedRenderMatrix = matrix;
-                _hasLastEnqueuedRenderMatrix = true;
                 return true;
             }
         }
@@ -1721,7 +1719,6 @@ namespace XREngine.Scene.Transforms
 
         private readonly object _renderMatrixEnqueueLock = new();
         private Matrix4x4 _lastEnqueuedRenderMatrix;
-        private bool _hasLastEnqueuedRenderMatrix;
 
         #endregion
 

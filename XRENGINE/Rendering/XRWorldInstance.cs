@@ -1052,21 +1052,48 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Ticks all sorted lists of methods registered to this group.
+        /// The lock is released before dispatching tick callbacks so that
+        /// callbacks can safely call RegisterTick/UnregisterTick (e.g. via
+        /// component activation/deactivation or node destruction) without
+        /// deadlocking on the non-reentrant <see cref="_listGroupLock"/>.
+        /// Uses a pooled local snapshot instead of a shared reusable list so
+        /// nested tick dispatch on the same world cannot invalidate an active
+        /// enumeration.
         /// </summary>
         public void TickGroup(ETickGroup group)
         {
+            KeyValuePair<int, TickList>[] snapshotBuffer;
+            int snapshotCount = 0;
+
             using (_listGroupLock.EnterScope())
             {
                 var tickListDic = TickLists[group];
-                List<int> toRemove = [];
+                snapshotBuffer = ArrayPool<KeyValuePair<int, TickList>>.Shared.Rent(tickListDic.Count);
                 foreach (var kv in tickListDic)
+                    snapshotBuffer[snapshotCount++] = kv;
+            }
+
+            try
+            {
+                // Dispatch all ticks OUTSIDE the lock so callbacks can register/unregister freely.
+                for (int i = 0; i < snapshotCount; i++)
+                    snapshotBuffer[i].Value.Tick();
+
+                // Re-acquire lock only for cleanup of empty tick lists.
+                using (_listGroupLock.EnterScope())
                 {
-                    kv.Value.Tick();
-                    if (kv.Value.Count == 0)
-                        toRemove.Add(kv.Key);
+                    var tickListDic = TickLists[group];
+                    for (int i = 0; i < snapshotCount; i++)
+                    {
+                        var kv = snapshotBuffer[i];
+                        if (kv.Value.Count == 0)
+                            tickListDic.Remove(kv.Key);
+                    }
                 }
-                foreach (int key in toRemove)
-                    tickListDic.Remove(key);
+            }
+            finally
+            {
+                ArrayPool<KeyValuePair<int, TickList>>.Shared.Return(snapshotBuffer, clearArray: false);
             }
         }
 

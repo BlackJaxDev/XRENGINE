@@ -52,6 +52,20 @@ public sealed partial class RenderStatsPacket
     public long FBOBandwidthBytes { get; set; }
     public int FBOBindCount { get; set; }
 
+    // Physics-chain telemetry
+    public long PhysicsChainCpuUploadBytes { get; set; }
+    public long PhysicsChainGpuCopyBytes { get; set; }
+    public long PhysicsChainCpuReadbackBytes { get; set; }
+    public int PhysicsChainDispatchGroupCount { get; set; }
+    public int PhysicsChainDispatchIterationCount { get; set; }
+    public long PhysicsChainResidentParticleBytes { get; set; }
+    public long PhysicsChainStandaloneCpuUploadBytes { get; set; }
+    public long PhysicsChainStandaloneCpuReadbackBytes { get; set; }
+    public long PhysicsChainBatchedCpuUploadBytes { get; set; }
+    public long PhysicsChainBatchedGpuCopyBytes { get; set; }
+    public long PhysicsChainBatchedCpuReadbackBytes { get; set; }
+    public double PhysicsChainHierarchyRecalcMilliseconds { get; set; }
+
     // Render matrix
     public bool RenderMatrixStatsReady { get; set; }
     public int RenderMatrixApplied { get; set; }

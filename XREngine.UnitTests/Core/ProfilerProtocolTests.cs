@@ -111,6 +111,18 @@ public sealed class ProfilerProtocolTests
             AllocatedRenderBufferBytes = 64 * 1024 * 1024L,
             FBOBandwidthBytes = 100_000_000,
             FBOBindCount = 42,
+            PhysicsChainCpuUploadBytes = 10_000,
+            PhysicsChainGpuCopyBytes = 20_000,
+            PhysicsChainCpuReadbackBytes = 30_000,
+            PhysicsChainDispatchGroupCount = 4,
+            PhysicsChainDispatchIterationCount = 9,
+            PhysicsChainResidentParticleBytes = 40_000,
+            PhysicsChainStandaloneCpuUploadBytes = 2_000,
+            PhysicsChainStandaloneCpuReadbackBytes = 3_000,
+            PhysicsChainBatchedCpuUploadBytes = 8_000,
+            PhysicsChainBatchedGpuCopyBytes = 20_000,
+            PhysicsChainBatchedCpuReadbackBytes = 27_000,
+            PhysicsChainHierarchyRecalcMilliseconds = 1.75,
             RenderMatrixStatsReady = true,
             RenderMatrixApplied = 300,
             RenderMatrixSetCalls = 150,
@@ -160,6 +172,18 @@ public sealed class ProfilerProtocolTests
         clone.AllocatedVRAMBytes.ShouldBe(512 * 1024 * 1024L);
         clone.FBOBandwidthBytes.ShouldBe(100_000_000);
         clone.FBOBindCount.ShouldBe(42);
+        clone.PhysicsChainCpuUploadBytes.ShouldBe(10_000);
+        clone.PhysicsChainGpuCopyBytes.ShouldBe(20_000);
+        clone.PhysicsChainCpuReadbackBytes.ShouldBe(30_000);
+        clone.PhysicsChainDispatchGroupCount.ShouldBe(4);
+        clone.PhysicsChainDispatchIterationCount.ShouldBe(9);
+        clone.PhysicsChainResidentParticleBytes.ShouldBe(40_000);
+        clone.PhysicsChainStandaloneCpuUploadBytes.ShouldBe(2_000);
+        clone.PhysicsChainStandaloneCpuReadbackBytes.ShouldBe(3_000);
+        clone.PhysicsChainBatchedCpuUploadBytes.ShouldBe(8_000);
+        clone.PhysicsChainBatchedGpuCopyBytes.ShouldBe(20_000);
+        clone.PhysicsChainBatchedCpuReadbackBytes.ShouldBe(27_000);
+        clone.PhysicsChainHierarchyRecalcMilliseconds.ShouldBe(1.75);
         clone.RenderMatrixStatsReady.ShouldBeTrue();
         clone.RenderMatrixApplied.ShouldBe(300);
         clone.RenderMatrixListenerCounts.Length.ShouldBe(2);

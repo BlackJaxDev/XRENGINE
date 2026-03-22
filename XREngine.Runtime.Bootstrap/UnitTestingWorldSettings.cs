@@ -118,6 +118,7 @@ public class UnitTestingWorldSettings
         /// </summary>
         public bool SplitSubmeshesIntoSeparateModelComponents { get; set; } = false;
         public YawPitchRollDegrees? YawPitchRoll { get; set; }
+        public TranslationXYZ? Translation { get; set; }
     }
 
     public class YawPitchRollDegrees
@@ -125,6 +126,13 @@ public class UnitTestingWorldSettings
         public float Yaw { get; set; } = 0.0f;
         public float Pitch { get; set; } = 0.0f;
         public float Roll { get; set; } = 0.0f;
+    }
+
+    public class TranslationXYZ
+    {
+        public float X { get; set; } = 0.0f;
+        public float Y { get; set; } = 0.0f;
+        public float Z { get; set; } = 0.0f;
     }
 
     public List<ModelImportSettings> ModelsToImport { get; set; } = [];

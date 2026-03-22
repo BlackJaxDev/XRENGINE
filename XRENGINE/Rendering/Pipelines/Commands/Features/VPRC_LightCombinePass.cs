@@ -167,26 +167,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         /// <summary>
-        /// Two-pass MSAA deferred lighting. For each light:
-        /// 1) Simple pixels (complex stencil bit NOT set): standard shader, sample 0
-        /// 2) Complex pixels (complex stencil bit IS set): MSAA shader + GL_SAMPLE_SHADING per-sample
+        /// Single-pass MSAA deferred lighting: every pixel is lit with per-sample
+        /// shading so the MSAA resolve produces anti-aliased edges on deferred geometry.
         /// </summary>
         private void RenderLightsMsaaDeferred(Lights3DCollection lights)
         {
-            // --- Pass 1: Simple pixels (stencil bit NOT set) ---
-            // The standard renderers read from resolved (non-MSAA) GBuffer.
-            // GL_SAMPLE_SHADING is off, so fragment shader runs once per pixel
-            // and the result is replicated to all MSAA samples.
-            foreach (PointLightComponent c in lights.DynamicPointLights)
-                RenderLight(PointLightRenderer!, c);
-            foreach (SpotLightComponent c in lights.DynamicSpotLights)
-                RenderLight(SpotLightRenderer!, c);
-            foreach (DirectionalLightComponent c in lights.DynamicDirectionalLights)
-                RenderLight(DirectionalLightRenderer!, c);
-
-            // --- Pass 2: Complex pixels (stencil bit IS set) ---
-            // The MSAA renderers read from MSAA GBuffer with sampler2DMS + gl_SampleID.
-            // GL_SAMPLE_SHADING enables per-sample fragment invocation.
             Engine.Rendering.State.EnableSampleShading(1.0f);
             try
             {
@@ -361,10 +346,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRShader msaaSpotShader = ShaderHelper.CreateDefinedShaderVariant(baseSpot, MsaaDeferredDefine) ?? baseSpot;
             XRShader msaaDirShader = ShaderHelper.CreateDefinedShaderVariant(baseDir, MsaaDeferredDefine) ?? baseDir;
 
-            // Complex pixel pass: stencil test requires the complex bit to be set
-            RenderingParameters msaaParams = GetAdditiveParametersWithStencil(
-                VPRC_MarkComplexMsaaPixels.ComplexPixelStencilBit,
-                EComparison.Equal);
+            // Single-pass per-sample: no stencil gating needed, all pixels lit per-sample.
+            RenderingParameters msaaParams = GetAdditiveParameters();
 
             XRMaterial msaaPointMat = new(Array.Empty<XRTexture?>(), msaaPointShader) { RenderOptions = msaaParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
             XRMaterial msaaSpotMat = new(Array.Empty<XRTexture?>(), msaaSpotShader) { RenderOptions = msaaParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };

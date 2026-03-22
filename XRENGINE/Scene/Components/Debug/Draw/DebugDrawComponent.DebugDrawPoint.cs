@@ -19,7 +19,7 @@ namespace XREngine.Components
             public Vector3 LocalOffset
             {
                 get => localOffset;
-                set => SetField(ref localOffset, value);
+                set => localOffset = value;
             }
 
             public override void Render(TransformBase transform)

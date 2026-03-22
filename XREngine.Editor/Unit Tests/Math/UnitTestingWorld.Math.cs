@@ -2,11 +2,15 @@ using System.Numerics;
 using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Components.Animation;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using GeometryPlaneIntersection = XREngine.Data.Geometry.EPlaneIntersection;
 using XREngine.Rendering;
+using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -32,60 +36,11 @@ public static partial class EditorUnitTests
         rootCustomUi.Name = "Math Intersections Test Controls";
 
         AddGroundCrosshair(rootNode);
-        RegisterMathIntersectionsTest(
-            testLayoutController,
-            AddProjectionMatrixCombinerRig(rootNode, testLayoutController),
-            "Projection Matrix Combiner Test",
-            "Fits a shared cyclops projection that encloses the animated left and right eye frusta.",
-            AABB.FromCenterSize(new Vector3(0.0f, 4.0f, 9.0f), new Vector3(36.0f, 12.0f, 24.0f)));
-        RegisterMathIntersectionsTest(
-            testLayoutController,
-            AddFrustumIntersectionRig(rootNode, testLayoutController),
-            "Frustum Intersection Test",
-            "Two moving frusta sweep through each other while the green box shows the overlap AABB.",
-            AABB.FromCenterSize(new Vector3(0.5f, 4.0f, 7.0f), new Vector3(24.0f, 10.0f, 24.0f)));
-        RegisterMathIntersectionsTest(
-            testLayoutController,
-            AddFrustumContainmentRig(rootNode, testLayoutController),
-            "Frustum Containment Test",
-            "A moving sphere, AABB, and capsule change color as the frustum contains, intersects, or rejects them.",
-            AABB.FromCenterSize(new Vector3(0.0f, 3.0f, 4.0f), new Vector3(18.0f, 8.0f, 24.0f)));
-        RegisterMathIntersectionsTest(
-            testLayoutController,
-            AddRaySphereRig(rootNode),
-            "Ray vs Sphere Test",
-            "A fixed ray probes a moving sphere; green means hit and yellow marks the first intersection.",
-            AABB.FromCenterSize(new Vector3(0.5f, 2.5f, 4.5f), new Vector3(20.0f, 6.0f, 20.0f)));
-        RegisterMathIntersectionsTest(
-            testLayoutController,
-            AddSegmentAabbRig(rootNode),
-            "Segment vs AABB Test",
-            "A moving segment clips against an AABB and exposes the entry and exit points.",
-            AABB.FromCenterSize(new Vector3(8.0f, 2.0f, -2.0f), new Vector3(10.0f, 5.0f, 10.0f)));
-        RegisterMathIntersectionsTest(
-            testLayoutController,
-            AddRayTriangleRig(rootNode),
-            "Ray vs Triangle Test",
-            "An animated ray probes a triangle and highlights the barycentric hit point when it intersects.",
-            AABB.FromCenterSize(new Vector3(-2.0f, 2.5f, 20.5f), new Vector3(26.0f, 6.0f, 26.0f)));
-        RegisterMathIntersectionsTest(
-            testLayoutController,
-            AddGeoUtilPrimitiveIntersectionRig(rootNode, testLayoutController),
-            "GeoUtil Primitive Intersection Test",
-            "Each cell exercises a primitive GeoUtil overlap query and flips between hit and miss states.",
-            AABB.FromCenterSize(new Vector3(0.0f, 2.5f, 0.0f), new Vector3(48.0f, 7.0f, 24.0f)));
-        RegisterMathIntersectionsTest(
-            testLayoutController,
-            AddGeoUtilPlaneIntersectionRig(rootNode, testLayoutController),
-            "GeoUtil Plane Intersection Test",
-            "Each cell visualizes plane-side classification, plane intersections, and between-plane checks.",
-            AABB.FromCenterSize(new Vector3(0.0f, 2.5f, 0.0f), new Vector3(40.0f, 7.0f, 24.0f)));
-        RegisterMathIntersectionsTest(
-            testLayoutController,
-            AddPhysicsChainComparisonRig(rootNode, testLayoutController),
-            "Physics Chain Comparison Test",
-            "CPU and GPU physics-chain solvers run side by side so their motion can be compared directly.",
-            AABB.FromCenterSize(new Vector3(0.0f, 3.0f, 2.0f), new Vector3(12.0f, 8.0f, 8.0f)));
+        foreach (MathIntersectionsWorldTestDefinition definition in GetMathIntersectionsTestDefinitions())
+        {
+            SceneNode testRootNode = definition.Factory(rootNode, testLayoutController);
+            RegisterMathIntersectionsTest(testLayoutController, testRootNode, definition);
+        }
 
         var world = new XRWorld("Math Intersections World", scene);
         Undo.TrackWorld(world);
@@ -95,13 +50,11 @@ public static partial class EditorUnitTests
     private static void RegisterMathIntersectionsTest(
         MathIntersectionsWorldControllerComponent controller,
         SceneNode testRootNode,
-        string displayName,
-        string description,
-        AABB bounds)
+        MathIntersectionsWorldTestDefinition definition)
     {
-        testRootNode.Name = displayName;
+        testRootNode.Name = definition.DisplayName;
         testRootNode.IsActiveSelf = false;
-        controller.RegisterTest(testRootNode, displayName, description, bounds);
+        controller.RegisterTest(testRootNode, definition.DisplayName, definition.Description, definition.Bounds, definition.Factory);
     }
 
     private static void AddGroundCrosshair(SceneNode rootNode)
@@ -121,7 +74,7 @@ public static partial class EditorUnitTests
         debug.AddLine(new Vector3(0.0f, 0.0f, 0.0f), new Vector3(0.0f, 4.0f, 0.0f), ColorF4.LightGold);
     }
 
-    private static SceneNode AddFrustumIntersectionRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent controller)
+    private static SceneNode AddFrustumIntersectionRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent? controller)
     {
         var rigNode = rootNode.NewChild("Frustum Intersection Test");
 
@@ -164,13 +117,13 @@ public static partial class EditorUnitTests
             DrawFrustumIntersection(intersectionDebug, frustumA, frustumB);
         });
 
-        controller.RegisterSubLabel(rigNode, frustumATfm, "Frustum A", 1.5f);
-        controller.RegisterSubLabel(rigNode, frustumBTfm, "Frustum B", 1.5f);
+        controller?.RegisterSubLabel(rigNode, frustumATfm, "Frustum A", 1.5f);
+        controller?.RegisterSubLabel(rigNode, frustumBTfm, "Frustum B", 1.5f);
 
         return rigNode;
     }
 
-    private static SceneNode AddProjectionMatrixCombinerRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent controller)
+    private static SceneNode AddProjectionMatrixCombinerRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent? controller)
     {
         var rigRootNode = rootNode.NewChild("Projection Matrix Combiner Test");
         rigRootNode.SetTransform<Transform>();
@@ -395,9 +348,9 @@ public static partial class EditorUnitTests
             true,
             "Debug color for the final combined frustum.");
 
-        controller.RegisterSubLabel(rigRootNode, leftEyeTransform, "Left Eye", 1.0f);
-        controller.RegisterSubLabel(rigRootNode, rightEyeTransform, "Right Eye", 1.0f);
-        controller.RegisterSubLabel(rigRootNode, cyclopsEyeTransform, "Cyclops Eye", 1.0f);
+        controller?.RegisterSubLabel(rigRootNode, leftEyeTransform, "Left Eye", 1.0f);
+        controller?.RegisterSubLabel(rigRootNode, rightEyeTransform, "Right Eye", 1.0f);
+        controller?.RegisterSubLabel(rigRootNode, cyclopsEyeTransform, "Cyclops Eye", 1.0f);
 
         return rigRootNode;
     }
@@ -439,7 +392,7 @@ public static partial class EditorUnitTests
         return rigNode;
     }
 
-    private static SceneNode AddFrustumContainmentRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent controller)
+    private static SceneNode AddFrustumContainmentRig(SceneNode rootNode, MathIntersectionsWorldControllerComponent? controller)
     {
         var rigNode = rootNode.NewChild("Frustum Containment Test");
 
@@ -503,7 +456,7 @@ public static partial class EditorUnitTests
                 _ => ColorF4.DarkRed,
             };
 
-        controller.RegisterSubLabel(rigNode, frustumTfm, "Camera", 1.0f);
+        controller?.RegisterSubLabel(rigNode, frustumTfm, "Camera", 1.0f);
 
         return rigNode;
     }
@@ -996,8 +949,28 @@ public static partial class EditorUnitTests
         var rigNode = rootNode.NewChild("Physics Chain Comparison Test");
         rigNode.SetTransform<Transform>();
 
-        var cpuNode = AddPhysicsChainTest(rigNode, "CPUPhysicsChainTest", new Vector3(-2.75f, 0.0f, 0.0f), useGpu: false, phaseOffset: 0.0f, ColorF4.LightBlue, ColorF4.LightGold);
-        var gpuNode = AddPhysicsChainTest(rigNode, "GPUPhysicsChainTest", new Vector3(2.75f, 0.0f, 0.0f), useGpu: true, phaseOffset: MathF.PI * 0.5f, ColorF4.LightGreen, ColorF4.Orange);
+        var cpuNode = AddPhysicsChainTest(
+            rigNode,
+            "CPUPhysicsChainTest",
+            new Vector3(-2.75f, 0.0f, 0.0f),
+            useGpu: false,
+            multithread: false,
+            useBatchedDispatcher: false,
+            gpuSyncToBones: false,
+            phaseOffset: 0.0f,
+            ColorF4.LightBlue,
+            ColorF4.LightGold);
+        var gpuNode = AddPhysicsChainTest(
+            rigNode,
+            "GPUPhysicsChainTest",
+            new Vector3(2.75f, 0.0f, 0.0f),
+            useGpu: true,
+            multithread: false,
+            useBatchedDispatcher: true,
+            gpuSyncToBones: false,
+            phaseOffset: MathF.PI * 0.5f,
+            ColorF4.LightGreen,
+            ColorF4.Orange);
 
         controller.RegisterSubLabel(rigNode, cpuNode.GetTransformAs<Transform>(true)!, "CPU Solver", 5.5f);
         controller.RegisterSubLabel(rigNode, gpuNode.GetTransformAs<Transform>(true)!, "GPU Solver", 5.5f);
@@ -1005,7 +978,26 @@ public static partial class EditorUnitTests
         return rigNode;
     }
 
-    private static SceneNode AddPhysicsChainTest(SceneNode parentNode, string name, Vector3 position, bool useGpu, float phaseOffset, ColorF4 chainColor, ColorF4 rootColor)
+    private enum PhysicsChainColliderScenario
+    {
+        Default,
+        None,
+        Heavy,
+    }
+
+    private static SceneNode AddPhysicsChainTest(
+        SceneNode parentNode,
+        string name,
+        Vector3 position,
+        bool useGpu,
+        bool multithread,
+        bool useBatchedDispatcher,
+        bool gpuSyncToBones,
+        float phaseOffset,
+        ColorF4 chainColor,
+        ColorF4 rootColor,
+        PhysicsChainColliderScenario colliderScenario = PhysicsChainColliderScenario.Default,
+        bool includeSkinnedMesh = false)
     {
         var testNode = parentNode.NewChild(name);
         var testTransform = testNode.SetTransform<Transform>();
@@ -1024,18 +1016,49 @@ public static partial class EditorUnitTests
         const float segmentLength = 0.55f;
         Transform[] chainBones = CreatePhysicsChainBones(rootNode, segmentCount: 6, segmentLength);
 
-        var sphereColliderNode = testNode.NewChild("SphereCollider");
-        var sphereColliderTransform = sphereColliderNode.SetTransform<Transform>();
-        sphereColliderTransform.Translation = new Vector3(0.2f, 3.45f, segmentLength * 2.75f);
-        var sphereCollider = sphereColliderNode.AddComponent<PhysicsChainSphereCollider>()!;
-        sphereCollider.Radius = 0.65f;
+        var colliders = new List<PhysicsChainColliderBase>();
 
-        var planeColliderNode = testNode.NewChild("PlaneCollider");
-        var planeColliderTransform = planeColliderNode.SetTransform<Transform>();
-        planeColliderTransform.Translation = new Vector3(0.0f, 0.65f, 0.0f);
-        var planeCollider = planeColliderNode.AddComponent<PhysicsChainPlaneCollider>()!;
+        if (colliderScenario != PhysicsChainColliderScenario.None)
+        {
+            var sphereColliderNode = testNode.NewChild("SphereCollider");
+            var sphereColliderTransform = sphereColliderNode.SetTransform<Transform>();
+            sphereColliderTransform.Translation = new Vector3(0.2f, 3.45f, segmentLength * 2.75f);
+            var sphereCollider = sphereColliderNode.AddComponent<PhysicsChainSphereCollider>()!;
+            sphereCollider.Radius = 0.65f;
+            colliders.Add(sphereCollider);
 
-        PhysicsChainColliderBase[] colliders = [sphereCollider, planeCollider];
+            var planeColliderNode = testNode.NewChild("PlaneCollider");
+            var planeColliderTransform = planeColliderNode.SetTransform<Transform>();
+            planeColliderTransform.Translation = new Vector3(0.0f, 0.65f, 0.0f);
+            var planeCollider = planeColliderNode.AddComponent<PhysicsChainPlaneCollider>()!;
+            colliders.Add(planeCollider);
+
+            if (colliderScenario == PhysicsChainColliderScenario.Heavy)
+            {
+                var capsuleNode = testNode.NewChild("CapsuleCollider");
+                var capsuleTransform = capsuleNode.SetTransform<Transform>();
+                capsuleTransform.Translation = new Vector3(-0.65f, 2.1f, segmentLength * 3.4f);
+                var capsuleCollider = capsuleNode.AddComponent<PhysicsChainCapsuleCollider>()!;
+                capsuleCollider.Radius = 0.22f;
+                capsuleCollider.Height = 1.25f;
+                colliders.Add(capsuleCollider);
+
+                var boxNode = testNode.NewChild("BoxCollider");
+                var boxTransform = boxNode.SetTransform<Transform>();
+                boxTransform.Translation = new Vector3(0.85f, 2.55f, segmentLength * 4.2f);
+                var boxCollider = boxNode.AddComponent<PhysicsChainBoxCollider>()!;
+                boxCollider.Size = new Vector3(0.85f, 0.5f, 0.7f);
+                colliders.Add(boxCollider);
+
+                var sphereColliderNode2 = testNode.NewChild("SphereCollider2");
+                var sphereColliderTransform2 = sphereColliderNode2.SetTransform<Transform>();
+                sphereColliderTransform2.Translation = new Vector3(-0.45f, 4.15f, segmentLength * 1.6f);
+                var sphereCollider2 = sphereColliderNode2.AddComponent<PhysicsChainSphereCollider>()!;
+                sphereCollider2.Radius = 0.45f;
+                colliders.Add(sphereCollider2);
+            }
+        }
+
         var chain = rootNode.AddComponent<PhysicsChainComponent>()!;
         chain.Root = rootTransform;
         chain.UseGPU = useGpu;
@@ -1050,13 +1073,27 @@ public static partial class EditorUnitTests
         chain.Gravity = Vector3.Zero;
         chain.Force = Vector3.Zero;
         chain.BlendWeight = 1.0f;
-        chain.Multithread = false;
-        chain.UseBatchedDispatcher = useGpu;
+        chain.Multithread = multithread;
+        chain.UseBatchedDispatcher = useBatchedDispatcher;
+        chain.GpuSyncToBones = gpuSyncToBones;
         chain.Colliders = [.. colliders];
+
+        if (includeSkinnedMesh)
+        {
+            AddPhysicsChainSkinnedBoxVisual(testNode, chainBones, chainColor);
+            // The skinned mesh was added after the chain component activated,
+            // so the auto-scan didn't find it. Trigger a re-scan so the GPU
+            // bone palette writes directly to the renderer's bone matrices
+            // buffer (zero-readback path).
+            chain.InvalidateGpuDrivenRenderers();
+        }
 
         var debug = testNode.AddComponent<DebugDrawComponent>()!;
         // Run in Late tick group AFTER PhysicsChainComponent.LateUpdate (Late+Animation)
         // so that bone transforms reflect the current frame's simulation results.
+        // Registered on the SceneNode so the tick survives deactivation/re-activation
+        // toggles (SceneNode ticks are NOT cleared on deactivation). Benchmark copy
+        // SceneNode ticks are cleaned up explicitly via ClearSceneNodeTicks during teardown.
         testNode.RegisterTick(ETickGroup.Late, ETickOrder.Logic, () =>
         {
             debug.ClearShapes();
@@ -1075,11 +1112,31 @@ public static partial class EditorUnitTests
                 localRoot + new Vector3(0.0f, 0.9f, 0.0f),
                 rootColor);
             debug.AddPoint(localRoot, rootColor);
-            debug.AddSphere(sphereCollider.Radius, ToLocal(sphereColliderTransform.WorldTranslation), ColorF4.Magenta, false);
-            debug.AddLine(
-                ToLocal(planeColliderTransform.WorldTranslation) + new Vector3(-0.9f, 0.0f, 0.0f),
-                ToLocal(planeColliderTransform.WorldTranslation) + new Vector3(0.9f, 0.0f, 0.0f),
-                ColorF4.LightGray);
+            for (int colliderIndex = 0; colliderIndex < colliders.Count; ++colliderIndex)
+            {
+                PhysicsChainColliderBase collider = colliders[colliderIndex];
+                switch (collider)
+                {
+                    case PhysicsChainSphereCollider sphereCollider:
+                        debug.AddSphere(sphereCollider.Radius, ToLocal(sphereCollider.Transform.WorldTranslation), ColorF4.Magenta, false);
+                        break;
+                    case PhysicsChainPlaneCollider planeCollider:
+                        Vector3 planeCenter = ToLocal(planeCollider.Transform.WorldTranslation);
+                        debug.AddLine(planeCenter + new Vector3(-0.9f, 0.0f, 0.0f), planeCenter + new Vector3(0.9f, 0.0f, 0.0f), ColorF4.LightGray);
+                        break;
+                    case PhysicsChainCapsuleCollider capsuleCollider:
+                        Vector3 capsuleStart = ToLocal(capsuleCollider.Transform.WorldTranslation);
+                        Vector3 capsuleEnd = ToLocal(capsuleCollider.Transform.TransformPoint(new Vector3(0.0f, capsuleCollider.Height, 0.0f)));
+                        debug.AddLine(capsuleStart, capsuleEnd, ColorF4.Orange);
+                        debug.AddSphere(capsuleCollider.Radius, capsuleStart, ColorF4.Orange, false);
+                        debug.AddSphere(capsuleCollider.Radius, capsuleEnd, ColorF4.Orange, false);
+                        break;
+                    case PhysicsChainBoxCollider boxCollider:
+                        debug.AddBox(boxCollider.Size * 0.5f, ToLocal(boxCollider.Transform.WorldTranslation), new ColorF4(0.93f, 0.53f, 0.18f, 1.0f), false);
+                        break;
+                }
+            }
+
             debug.AddLine(
                 localRoot,
                 localRoot + new Vector3(0.0f, 0.0f, segmentLength * (chainBones.Length - 1)),
@@ -1114,6 +1171,217 @@ public static partial class EditorUnitTests
         }
 
         return bones;
+    }
+
+    private static void AddPhysicsChainSkinnedBoxVisual(SceneNode testNode, Transform[] chainBones, ColorF4 color)
+    {
+        Transform testTransform = testNode.GetTransformAs<Transform>(true)!;
+        testTransform.RecalculateMatrixHierarchy(
+            forceWorldRecalc: true,
+            setRenderMatrixNow: true,
+            childRecalcType: ELoopType.Parallel).Wait();
+
+        var visualNode = testNode.NewChild("SkinnedBoxVisual");
+        visualNode.SetTransform<Transform>();
+
+        XRMesh mesh = CreatePhysicsChainSkinnedPrismMesh(testTransform, chainBones);
+        XRMaterial material = XRMaterial.CreateLitColorMaterial(color);
+        material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+
+        var modelComponent = visualNode.AddComponent<ModelComponent>()!;
+        modelComponent.Model = new Model([new SubMesh(mesh, material)]);
+    }
+
+    private static XRMesh CreatePhysicsChainSkinnedPrismMesh(Transform visualParent, Transform[] chainBones)
+    {
+        const float halfWidth = 0.18f;
+        const float halfHeight = 0.12f;
+
+        var utilizedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[chainBones.Length];
+        Vector3[] boneCenters = new Vector3[chainBones.Length];
+        Matrix4x4 visualParentInverse = visualParent.InverseWorldMatrix;
+        for (int boneIndex = 0; boneIndex < chainBones.Length; ++boneIndex)
+        {
+            utilizedBones[boneIndex] = (chainBones[boneIndex], chainBones[boneIndex].InverseWorldMatrix);
+            boneCenters[boneIndex] = Vector3.Transform(chainBones[boneIndex].WorldTranslation, visualParentInverse);
+        }
+
+        Vector3[] crossSection =
+        [
+            new(-halfWidth, -halfHeight, 0.0f),
+            new(-halfWidth, halfHeight, 0.0f),
+            new(halfWidth, halfHeight, 0.0f),
+            new(halfWidth, -halfHeight, 0.0f),
+        ];
+
+        var vertices = new List<Vertex>((chainBones.Length - 1) * 16 + 8);
+        var indices = new List<ushort>((chainBones.Length - 1) * 24 + 12);
+        for (int segmentIndex = 0; segmentIndex < chainBones.Length - 1; ++segmentIndex)
+        {
+            Vector3 startCenter = boneCenters[segmentIndex];
+            Vector3 endCenter = boneCenters[segmentIndex + 1];
+
+            AddSkinnedQuad(vertices, indices,
+                startCenter + crossSection[0],
+                startCenter + crossSection[1],
+                endCenter + crossSection[1],
+                endCenter + crossSection[0],
+                -Vector3.UnitX,
+                chainBones,
+                utilizedBones,
+                boneCenters);
+
+            AddSkinnedQuad(vertices, indices,
+                startCenter + crossSection[1],
+                startCenter + crossSection[2],
+                endCenter + crossSection[2],
+                endCenter + crossSection[1],
+                Vector3.UnitY,
+                chainBones,
+                utilizedBones,
+                boneCenters);
+
+            AddSkinnedQuad(vertices, indices,
+                startCenter + crossSection[2],
+                startCenter + crossSection[3],
+                endCenter + crossSection[3],
+                endCenter + crossSection[2],
+                Vector3.UnitX,
+                chainBones,
+                utilizedBones,
+                boneCenters);
+
+            AddSkinnedQuad(vertices, indices,
+                startCenter + crossSection[3],
+                startCenter + crossSection[0],
+                endCenter + crossSection[0],
+                endCenter + crossSection[3],
+                -Vector3.UnitY,
+                chainBones,
+                utilizedBones,
+                boneCenters);
+        }
+
+        Vector3 firstCenter = boneCenters[0];
+        Vector3 lastCenter = boneCenters[^1];
+        AddSkinnedQuad(vertices, indices,
+            firstCenter + crossSection[0],
+            firstCenter + crossSection[3],
+            firstCenter + crossSection[2],
+            firstCenter + crossSection[1],
+            -Vector3.UnitZ,
+            chainBones,
+            utilizedBones,
+            boneCenters);
+        AddSkinnedQuad(vertices, indices,
+            lastCenter + crossSection[0],
+            lastCenter + crossSection[1],
+            lastCenter + crossSection[2],
+            lastCenter + crossSection[3],
+            Vector3.UnitZ,
+            chainBones,
+            utilizedBones,
+            boneCenters);
+
+        var mesh = new XRMesh(vertices, indices)
+        {
+            Name = "PhysicsChainSkinnedPrism"
+        };
+        mesh.UtilizedBones = utilizedBones;
+        mesh.RebuildSkinningBuffersFromVertices();
+        return mesh;
+    }
+
+    private static void AddSkinnedQuad(
+        List<Vertex> vertices,
+        List<ushort> indices,
+        Vector3 v0,
+        Vector3 v1,
+        Vector3 v2,
+        Vector3 v3,
+        Vector3 normal,
+        Transform[] chainBones,
+        (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] utilizedBones,
+        Vector3[] boneCenters)
+    {
+        ushort baseIndex = (ushort)vertices.Count;
+        vertices.Add(CreateSkinnedChainVertex(v0, normal, new Vector2(0.0f, 0.0f), chainBones, utilizedBones, boneCenters));
+        vertices.Add(CreateSkinnedChainVertex(v1, normal, new Vector2(1.0f, 0.0f), chainBones, utilizedBones, boneCenters));
+        vertices.Add(CreateSkinnedChainVertex(v2, normal, new Vector2(1.0f, 1.0f), chainBones, utilizedBones, boneCenters));
+        vertices.Add(CreateSkinnedChainVertex(v3, normal, new Vector2(0.0f, 1.0f), chainBones, utilizedBones, boneCenters));
+
+        Vector3 geometricNormal = Vector3.Normalize(Vector3.Cross(v1 - v0, v2 - v0));
+        if (Vector3.Dot(geometricNormal, normal) >= 0.0f)
+        {
+            indices.Add(baseIndex);
+            indices.Add((ushort)(baseIndex + 1));
+            indices.Add((ushort)(baseIndex + 2));
+            indices.Add(baseIndex);
+            indices.Add((ushort)(baseIndex + 2));
+            indices.Add((ushort)(baseIndex + 3));
+        }
+        else
+        {
+            indices.Add(baseIndex);
+            indices.Add((ushort)(baseIndex + 2));
+            indices.Add((ushort)(baseIndex + 1));
+            indices.Add(baseIndex);
+            indices.Add((ushort)(baseIndex + 3));
+            indices.Add((ushort)(baseIndex + 2));
+        }
+    }
+
+    private static Vertex CreateSkinnedChainVertex(
+        Vector3 position,
+        Vector3 normal,
+        Vector2 texCoord,
+        Transform[] chainBones,
+        (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] utilizedBones,
+        Vector3[] boneCenters)
+    {
+        int closestSegmentIndex = 0;
+        float closestSegmentDistanceSq = float.MaxValue;
+        float closestSegmentT = 0.0f;
+        for (int boneIndex = 0; boneIndex < boneCenters.Length - 1; ++boneIndex)
+        {
+            Vector3 start = boneCenters[boneIndex];
+            Vector3 end = boneCenters[boneIndex + 1];
+            Vector3 segment = end - start;
+            float segmentLengthSq = segment.LengthSquared();
+            float t = segmentLengthSq <= float.Epsilon
+                ? 0.0f
+                : Math.Clamp(Vector3.Dot(position - start, segment) / segmentLengthSq, 0.0f, 1.0f);
+            Vector3 closestPoint = Vector3.Lerp(start, end, t);
+            float distanceSq = Vector3.DistanceSquared(position, closestPoint);
+            if (distanceSq < closestSegmentDistanceSq)
+            {
+                closestSegmentDistanceSq = distanceSq;
+                closestSegmentIndex = boneIndex;
+                closestSegmentT = t;
+            }
+        }
+
+        var weights = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>(2, System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        int startIndex = closestSegmentIndex;
+        int endIndex = Math.Min(closestSegmentIndex + 1, chainBones.Length - 1);
+        float startWeight = 1.0f - closestSegmentT;
+        float endWeight = closestSegmentT;
+
+        if (endIndex == startIndex || endWeight <= 0.0001f)
+        {
+            weights[chainBones[startIndex]] = (1.0f, utilizedBones[startIndex].invBindWorldMtx);
+        }
+        else if (startWeight <= 0.0001f)
+        {
+            weights[chainBones[endIndex]] = (1.0f, utilizedBones[endIndex].invBindWorldMtx);
+        }
+        else
+        {
+            weights[chainBones[startIndex]] = (startWeight, utilizedBones[startIndex].invBindWorldMtx);
+            weights[chainBones[endIndex]] = (endWeight, utilizedBones[endIndex].invBindWorldMtx);
+        }
+
+        return new Vertex(position, weights, normal, texCoord);
     }
 
     private static Frustum BuildFrustum(TransformBase tfm, float fovY, float aspect, float nearZ, float farZ)

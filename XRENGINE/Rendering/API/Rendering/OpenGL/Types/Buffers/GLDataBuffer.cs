@@ -351,6 +351,11 @@ namespace XREngine.Rendering.OpenGL
                     _allocatedVRAMBytes = 0;
                 }
 
+                // If the GL buffer was allocated with glNamedBufferStorage (immutable),
+                // glNamedBufferData is illegal. Delete and recreate as a mutable buffer.
+                if (_immutableStorageSet)
+                    RecreateBufferAsMutable();
+
                 void* addr = (Data.TryGetAddress(out var address) ? address : VoidPtr.Zero).Pointer;
                 Api.NamedBufferData(BindingId, Data.Length, addr, ToGLEnum(Data.Usage));
                 _lastPushedLength = Data.Length;
@@ -573,6 +578,8 @@ namespace XREngine.Rendering.OpenGL
                 else
                     Api.NamedBufferStorage(id, length = Data.Length, null, glStorage);
 
+                _immutableStorageSet = true;
+
                 // Track VRAM allocation
                 _allocatedVRAMBytes = length;
                 Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
@@ -672,9 +679,23 @@ namespace XREngine.Rendering.OpenGL
                 Unbind();
             }
 
+            /// <summary>
+            /// Deletes the current GL buffer and creates a fresh mutable one,
+            /// allowing subsequent glNamedBufferData calls to succeed.
+            /// </summary>
+            internal void RecreateBufferAsMutable()
+            {
+                uint oldId = _bindingId!.Value;
+                Api.DeleteBuffer(oldId);
+                Api.CreateBuffers(1, out uint newId);
+                _bindingId = newId;
+                _immutableStorageSet = false;
+            }
+
             protected internal override void PreDeleted()
             {
                 UnmapBufferData();
+                _immutableStorageSet = false;
 
                 // Track VRAM deallocation
                 if (_allocatedVRAMBytes > 0)

@@ -217,8 +217,9 @@ namespace XREngine.Components
             
             var parts = new List<string>();
 
-            if (player is not null)
-                parts.Add($"Player {(int)player.LocalPlayerIndex + 1}");
+            ELocalPlayerIndex? localPlayerIndex = player?.LocalPlayerIndex;
+            if (localPlayerIndex.HasValue)
+                parts.Add($"Player {(int)localPlayerIndex.GetValueOrDefault() + 1}");
             
             if (pawn is not null)
             {

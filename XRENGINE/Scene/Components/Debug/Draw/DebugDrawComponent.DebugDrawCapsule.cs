@@ -19,7 +19,7 @@ namespace XREngine.Components
             public float Radius
             {
                 get => radius;
-                set => SetField(ref radius, value);
+                set => radius = value;
             }
             /// <summary>
             /// The local offset of the capsule's center relative to this component's transform.
@@ -27,7 +27,7 @@ namespace XREngine.Components
             public Vector3 LocalStartOffset
             {
                 get => localStartOffset;
-                set => SetField(ref localStartOffset, value);
+                set => localStartOffset = value;
             }
             /// <summary>
             /// The local offset of the capsule's end relative to this component's transform.
@@ -35,7 +35,7 @@ namespace XREngine.Components
             public Vector3 LocalEndOffset
             {
                 get => localEndOffset;
-                set => SetField(ref localEndOffset, value);
+                set => localEndOffset = value;
             }
 
             public override void Render(TransformBase transform)

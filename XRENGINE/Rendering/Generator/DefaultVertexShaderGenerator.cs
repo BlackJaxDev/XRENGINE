@@ -177,6 +177,9 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             UniformNames.Add(EEngineUniform.ModelMatrix.ToString(), (EShaderVarType._mat4, false));
 
+            if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
+                UniformNames.Add("boneMatrixBase", (EShaderVarType._uint, false));
+
             // Used when gl_BaseInstance is 0 (non-indirect draw path).
             if (EmitTransformId)
                 UniformNames.Add("TransformId", (EShaderVarType._uint, false));
@@ -544,7 +547,11 @@ namespace XREngine.Rendering.Shaders.Generator
                 {
                     Line($"int boneIndex = int({ECommonBufferType.BoneMatrixOffset}[i]);");
                     Line($"float weight = {ECommonBufferType.BoneMatrixCount}[i];");
-                    Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[boneIndex] * {ECommonBufferType.BoneMatrices}[boneIndex];"); // * {EEngineUniform.RootInvModelMatrix}
+                    Line("if (boneIndex <= 0 || weight <= 0.0f)");
+                    using (OpenBracketState())
+                        Line("continue;");
+                    Line("uint paletteIndex = boneMatrixBase + uint(boneIndex);");
+                    Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];"); // * {EEngineUniform.RootInvModelMatrix}
                     Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
                     Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
                     if (hasNormals)
@@ -561,7 +568,11 @@ namespace XREngine.Rendering.Shaders.Generator
                     Line($"int index = int({ECommonBufferType.BoneMatrixOffset}) + i;");
                     Line($"int boneIndex = int({ECommonBufferType.BoneMatrixIndices}[index]);");
                     Line($"float weight = {ECommonBufferType.BoneMatrixWeights}[index];");
-                    Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[boneIndex] * {ECommonBufferType.BoneMatrices}[boneIndex];"); // * {EEngineUniform.RootInvModelMatrix}
+                    Line("if (boneIndex <= 0 || weight <= 0.0f)");
+                    using (OpenBracketState())
+                        Line("continue;");
+                    Line("uint paletteIndex = boneMatrixBase + uint(boneIndex);");
+                    Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];"); // * {EEngineUniform.RootInvModelMatrix}
                     Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
                     Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
                     if (hasNormals)

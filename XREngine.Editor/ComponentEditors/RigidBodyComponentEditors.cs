@@ -73,22 +73,21 @@ internal static class RigidBodyEditorShared
 
     private static void DrawWireframePreviewControls(PhysicsActorComponent component, IReadOnlyList<CoACD.ConvexHullMesh>? cachedHulls)
     {
-        bool hasHulls = cachedHulls is { Count: > 0 };
         var previewState = _previewStates.GetValue(component, _ => new HullPreviewState());
 
-        if (!hasHulls)
+        if (cachedHulls is not { Count: > 0 } hulls)
         {
             previewState.EnabledHullIndices.Clear();
             ImGui.TextDisabled("Generate convex hulls to enable preview.");
             return;
         }
 
-        TrimInvalidHullSelections(previewState, cachedHulls.Count);
+        TrimInvalidHullSelections(previewState, hulls.Count);
 
         ImGui.SeparatorText("Generated Hulls");
-        DrawHullSummary(cachedHulls);
-        DrawHullPreviewToolbar(previewState, cachedHulls.Count);
-        DrawHullPreviewTable(previewState, cachedHulls);
+        DrawHullSummary(hulls);
+        DrawHullPreviewToolbar(previewState, hulls.Count);
+        DrawHullPreviewTable(previewState, hulls);
 
         int selectedHullCount = previewState.EnabledHullIndices.Count;
         if (selectedHullCount > 0)

@@ -110,9 +110,13 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 // Perform the upload
+                // If the GL buffer was allocated immutable, recreate it as mutable first
+                if (buffer.ImmutableStorageSet)
+                    buffer.RecreateBufferAsMutable();
+
                 fixed (byte* src = data)
                 {
-                    _renderer.Api.NamedBufferData(targetBufferId, dataLength, src, GLDataBuffer.ToGLEnum(buffer.Data.Usage));
+                    _renderer.Api.NamedBufferData(buffer.BindingId, dataLength, src, GLDataBuffer.ToGLEnum(buffer.Data.Usage));
                 }
 
                 buffer.SetLastPushedLength(dataLength);

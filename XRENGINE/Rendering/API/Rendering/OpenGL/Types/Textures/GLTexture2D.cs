@@ -63,9 +63,10 @@ namespace XREngine.Rendering.OpenGL
 
         private void UpdateMipmaps()
         {
-            Mipmaps = new MipmapInfo[Data.Mipmaps.Length];
-            for (int i = 0; i < Data.Mipmaps.Length; ++i)
-                Mipmaps[i] = new MipmapInfo(this, Data.Mipmaps[i]);
+            Mipmap2D[] sourceMipmaps = Data.Mipmaps.Where(static mip => mip is not null).ToArray();
+            Mipmaps = new MipmapInfo[sourceMipmaps.Length];
+            for (int i = 0; i < sourceMipmaps.Length; ++i)
+                Mipmaps[i] = new MipmapInfo(this, sourceMipmaps[i]);
             Invalidate();
         }
 

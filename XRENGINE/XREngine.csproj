@@ -103,7 +103,7 @@
     <PackageReference Include="Jitter2" Version="2.7.9" />
     <PackageReference Include="JoltPhysicsSharp" Version="2.20.1" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
-    <PackageReference Include="Magick.NET.Core" Version="14.10.4" />
+    <PackageReference Include="Magick.NET.Core" Version="14.11.0" />
     <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.16" />
     <PackageReference Include="MagicPhysX" Version="1.0.0" />
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />

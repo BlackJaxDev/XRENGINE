@@ -13,9 +13,13 @@ internal sealed class EngineRuntimeWorldObjectServices : IRuntimeWorldObjectServ
     public bool HasLocalPlayerAuthority(int owningPlayerServerIndex)
         => Engine.State.LocalPlayers.Any(static player => player is not null)
             && Engine.State.LocalPlayers.Any(player =>
-                player is not null
-                && owningPlayerServerIndex >= 0
-                && owningPlayerServerIndex == player.PlayerInfo.ServerIndex);
+            {
+                if (player?.PlayerInfo is not { } playerInfo)
+                    return false;
+
+                return owningPlayerServerIndex >= 0
+                    && owningPlayerServerIndex == playerInfo.ServerIndex;
+            });
 
     public void OnRuntimeObjectActivated(RuntimeWorldObjectBase worldObject)
         => SyncRenderableWorldBinding(worldObject, worldObject.World, isActiveInHierarchy: true);

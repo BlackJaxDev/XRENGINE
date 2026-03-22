@@ -122,7 +122,9 @@
       // Creates one ModelComponent per imported submesh instead of grouping by source node.
       "SplitSubmeshesIntoSeparateModelComponents": false,
       // Optional Euler rotation offset, in degrees, applied after import.
-      "YawPitchRoll": null
+      "YawPitchRoll": null,
+      // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
+      "Translation": null
     }
   ],
 

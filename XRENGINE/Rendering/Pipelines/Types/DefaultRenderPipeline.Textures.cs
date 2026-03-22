@@ -1102,7 +1102,7 @@ public partial class DefaultRenderPipeline
     {
         // Use internal resolution - FXAA pass will upscale to full resolution
         var (width, height) = GetDesiredFBOSizeInternal();
-        bool outputHdr = Engine.Rendering.Settings.OutputHDR;
+        bool outputHdr = ResolveOutputHDR();
 
         EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
         EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
@@ -1129,7 +1129,7 @@ public partial class DefaultRenderPipeline
     private XRTexture CreateTransformIdDebugOutputTexture()
     {
         var (width, height) = GetDesiredFBOSizeInternal();
-        bool outputHdr = Engine.Rendering.Settings.OutputHDR;
+        bool outputHdr = ResolveOutputHDR();
 
         EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
         EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
@@ -1156,7 +1156,7 @@ public partial class DefaultRenderPipeline
     private XRTexture CreateFxaaOutputTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();
-        bool outputHdr = Engine.Rendering.Settings.OutputHDR;
+        bool outputHdr = ResolveOutputHDR();
 
         EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
         EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
@@ -1183,7 +1183,7 @@ public partial class DefaultRenderPipeline
     private XRTexture CreateTsrHistoryColorTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();
-        bool outputHdr = Engine.Rendering.Settings.OutputHDR;
+        bool outputHdr = ResolveOutputHDR();
 
         EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
         EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;

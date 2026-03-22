@@ -200,7 +200,10 @@ namespace XREngine
                     if (player is null)
                         continue;
 
-                    int serverIndex = player.PlayerInfo.ServerIndex;
+                    if (player.PlayerInfo is not { } playerInfo)
+                        continue;
+
+                    int serverIndex = playerInfo.ServerIndex;
                     if (serverIndex < 0)
                         continue;
 
@@ -223,7 +226,10 @@ namespace XREngine
                     if (player is null)
                         continue;
 
-                    int serverIndex = player.PlayerInfo.ServerIndex;
+                    if (player.PlayerInfo is not { } playerInfo)
+                        continue;
+
+                    int serverIndex = playerInfo.ServerIndex;
                     if (serverIndex < 0)
                         continue;
 
@@ -235,7 +241,7 @@ namespace XREngine
                         ServerPlayerIndex = serverIndex,
                         Input = pawn.CaptureNetworkInputState(),
                         TimestampUtc = GetUtcSeconds(),
-                        InstanceId = player.PlayerInfo.InstanceId
+                        InstanceId = playerInfo.InstanceId
                     };
 
                     BroadcastStateChange(EStateChangeType.PlayerInputSnapshot, snapshot, compress: true);
@@ -249,7 +255,10 @@ namespace XREngine
                     if (player is null)
                         continue;
 
-                    int serverIndex = player.PlayerInfo.ServerIndex;
+                    if (player.PlayerInfo is not { } playerInfo)
+                        continue;
+
+                    int serverIndex = playerInfo.ServerIndex;
                     if (serverIndex < 0)
                         continue;
 
@@ -257,15 +266,15 @@ namespace XREngine
                     if (transform is null)
                         continue;
 
-                PlayerTransformUpdate update = new()
-                {
-                    ServerPlayerIndex = serverIndex,
-                    TransformId = transform.ID,
-                    Translation = transform.Translation,
-                    Rotation = transform.Rotation,
-                    Velocity = Vector3.Zero,
-                    InstanceId = player.PlayerInfo.InstanceId
-                };
+                    PlayerTransformUpdate update = new()
+                    {
+                        ServerPlayerIndex = serverIndex,
+                        TransformId = transform.ID,
+                        Translation = transform.Translation,
+                        Rotation = transform.Rotation,
+                        Velocity = Vector3.Zero,
+                        InstanceId = playerInfo.InstanceId
+                    };
 
                     BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, update, compress: false);
                 }
@@ -278,7 +287,10 @@ namespace XREngine
                     if (player is null)
                         continue;
 
-                    int serverIndex = player.PlayerInfo.ServerIndex;
+                    if (player.PlayerInfo is not { } playerInfo)
+                        continue;
+
+                    int serverIndex = playerInfo.ServerIndex;
                     if (serverIndex < 0)
                         continue;
 
@@ -287,12 +299,12 @@ namespace XREngine
                         ServerPlayerIndex = serverIndex,
                         ClientId = _clientId,
                         Reason = reason,
-                        InstanceId = player.PlayerInfo.InstanceId
+                        InstanceId = playerInfo.InstanceId
                     };
 
                     BroadcastStateChange(EStateChangeType.PlayerLeave, leave, compress: false);
 
-                    player.PlayerInfo.ServerIndex = -1;
+                    playerInfo.ServerIndex = -1;
                     _localServerIndices.Remove(serverIndex);
                 }
             }
@@ -327,11 +339,14 @@ namespace XREngine
                     if (player is null)
                         continue;
 
-                    if (player.PlayerInfo.ServerIndex == assignment.ServerPlayerIndex || player.PlayerInfo.ServerIndex < 0)
+                    if (player.PlayerInfo is not { } playerInfo)
+                        continue;
+
+                    if (playerInfo.ServerIndex == assignment.ServerPlayerIndex || playerInfo.ServerIndex < 0)
                     {
-                        player.PlayerInfo.ServerIndex = assignment.ServerPlayerIndex;
-                        player.PlayerInfo.LocalIndex ??= player.LocalPlayerIndex;
-                        player.PlayerInfo.InstanceId = assignment.InstanceId;
+                        playerInfo.ServerIndex = assignment.ServerPlayerIndex;
+                        playerInfo.LocalIndex ??= player.LocalPlayerIndex;
+                        playerInfo.InstanceId = assignment.InstanceId;
                         _activeInstanceId = assignment.InstanceId;
                         _localServerIndices.Add(assignment.ServerPlayerIndex);
                         RemoveRemotePlayer(assignment.ServerPlayerIndex);
@@ -450,9 +465,12 @@ namespace XREngine
                     if (player is null)
                         continue;
 
-                    if (player.PlayerInfo.ServerIndex == leave.ServerPlayerIndex)
+                    if (player.PlayerInfo is not { } playerInfo)
+                        continue;
+
+                    if (playerInfo.ServerIndex == leave.ServerPlayerIndex)
                     {
-                        player.PlayerInfo.ServerIndex = -1;
+                        playerInfo.ServerIndex = -1;
                         _localServerIndices.Remove(leave.ServerPlayerIndex);
                     }
                 }
@@ -479,7 +497,8 @@ namespace XREngine
                         if (player is null)
                             continue;
 
-                        player.PlayerInfo.ServerIndex = -1;
+                        if (player.PlayerInfo is { } playerInfo)
+                            playerInfo.ServerIndex = -1;
                     }
                     _localServerIndices.Clear();
                     ClearRemotePlayers();

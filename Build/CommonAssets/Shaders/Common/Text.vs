@@ -20,6 +20,7 @@ uniform mat4 ProjMatrix_VTX;
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
 layout (location = 4) out vec2 FragUV0;
+layout (location = 5) flat out vec4 GlyphUVBounds;
 layout (location = 20) out vec3 FragPosLocal;
 
 out gl_PerVertex
@@ -60,4 +61,5 @@ void main()
 	gl_Position = mvpMatrix * position;
 	FragNorm = normalize(normalMatrix * normal);
 	FragUV0 = mix(uv.xy, uv.zw, Position.xy);
+	GlyphUVBounds = uv;
 }

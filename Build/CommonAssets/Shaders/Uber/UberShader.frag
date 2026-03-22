@@ -674,8 +674,9 @@ void main() {
     // Final output
     FragColor = vec4(fragData.finalColor, fragData.alpha);
     
-    // Handle transparency modes
-    if (_Mode == BLEND_MODE_OPAQUE) {
+    // Handle transparency modes — opaque and cutout should always output full alpha
+    // so MSAA resolve and post-processing compositing don't see partial transparency.
+    if (_Mode == BLEND_MODE_OPAQUE || _Mode == BLEND_MODE_CUTOUT) {
         FragColor.a = 1.0;
     }
 }

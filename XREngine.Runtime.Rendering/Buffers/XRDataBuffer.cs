@@ -458,11 +458,7 @@ namespace XREngine.Rendering
             if (byteLength != data.Length)
                 throw new InvalidOperationException($"Raw byte payload length mismatch for buffer '{AttributeName}'. Expected {byteLength} bytes, got {data.Length}.");
 
-            if (_clientSideSource is null || _clientSideSource.Length != byteLength)
-            {
-                _clientSideSource?.Dispose();
-                _clientSideSource = DataSource.Allocate(byteLength);
-            }
+            EnsureClientSideSourceLength(byteLength);
 
             if (byteLength > 0)
             {
@@ -473,67 +469,104 @@ namespace XREngine.Rendering
             ClearGpuCompressedPayload();
         }
 
-        public void Allocate<T>(uint listCount) where T : struct
+        private void EnsureClientSideSourceLength(uint byteLength)
         {
-            _componentCount = 1;
-            
+            if (_clientSideSource is not null && _clientSideSource.Length == byteLength)
+                return;
+
+            _clientSideSource?.Dispose();
+            _clientSideSource = DataSource.Allocate(byteLength);
+        }
+
+        private static void ConfigureRawComponentLayout<T>(out EComponentType componentType, out uint componentCount) where T : struct
+        {
+            componentCount = 1;
+
             switch (typeof(T))
             {
                 case Type t when t == typeof(sbyte):
-                    _componentType = EComponentType.SByte;
+                    componentType = EComponentType.SByte;
                     break;
                 case Type t when t == typeof(byte):
-                    _componentType = EComponentType.Byte;
+                    componentType = EComponentType.Byte;
                     break;
                 case Type t when t == typeof(short):
-                    _componentType = EComponentType.Short;
+                    componentType = EComponentType.Short;
                     break;
                 case Type t when t == typeof(ushort):
-                    _componentType = EComponentType.UShort;
+                    componentType = EComponentType.UShort;
                     break;
                 case Type t when t == typeof(int):
-                    _componentType = EComponentType.Int;
+                    componentType = EComponentType.Int;
                     break;
                 case Type t when t == typeof(uint):
-                    _componentType = EComponentType.UInt;
+                    componentType = EComponentType.UInt;
                     break;
                 case Type t when t == typeof(float):
-                    _componentType = EComponentType.Float;
+                    componentType = EComponentType.Float;
                     break;
                 case Type t when t == typeof(double):
-                    _componentType = EComponentType.Double;
+                    componentType = EComponentType.Double;
                     break;
                 case Type t when t == typeof(Vector2):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 2;
+                    componentType = EComponentType.Float;
+                    componentCount = 2;
                     break;
                 case Type t when t == typeof(IVector2):
-                    _componentType = EComponentType.Int;
-                    _componentCount = 2;
+                    componentType = EComponentType.Int;
+                    componentCount = 2;
                     break;
                 case Type t when t == typeof(Vector3):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 3;
+                    componentType = EComponentType.Float;
+                    componentCount = 3;
                     break;
                 case Type t when t == typeof(Vector4):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 4;
+                    componentType = EComponentType.Float;
+                    componentCount = 4;
                     break;
                 case Type t when t == typeof(Matrix4x4):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 16;
+                    componentType = EComponentType.Float;
+                    componentCount = 16;
                     break;
                 case Type t when t == typeof(Quaternion):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 4;
+                    componentType = EComponentType.Float;
+                    componentCount = 4;
                     break;
                 default:
-                    throw new InvalidOperationException("Not a proper numeric data type.");
+                    componentType = EComponentType.Struct;
+                    componentCount = (uint)Marshal.SizeOf<T>();
+                    break;
             }
+        }
+
+        public unsafe void SetDataRaw<T>(ReadOnlySpan<T> data) where T : unmanaged
+        {
+            ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
+            _normalize = false;
+            _elementCount = (uint)data.Length;
+
+            EnsureClientSideSourceLength(Length);
+
+            uint byteLength = (uint)(data.Length * sizeof(T));
+            if (byteLength > 0)
+            {
+                fixed (T* src = data)
+                    Memory.Move(_clientSideSource!.Address, src, byteLength);
+            }
+
+            ClearGpuCompressedPayload();
+        }
+
+        public void Allocate<T>(uint listCount) where T : struct
+        {
+            ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
+
+            if (_componentType == EComponentType.Struct)
+                throw new InvalidOperationException("Not a proper numeric data type.");
 
             _normalize = false;
             _elementCount = listCount;
-            _clientSideSource = DataSource.Allocate(Length);
+            EnsureClientSideSourceLength(Length);
         }
 
         public void Allocate(uint stride, uint count)
@@ -542,7 +575,7 @@ namespace XREngine.Rendering
             _componentCount = stride;
             _componentType = EComponentType.Struct;
             _normalize = false;
-            _clientSideSource = DataSource.Allocate(stride * count);
+            EnsureClientSideSourceLength(stride * count);
         }
 
         public void SetDataRawAtIndex<T>(uint index, T data) where T : struct
@@ -623,57 +656,10 @@ namespace XREngine.Rendering
 
         public Remapper? SetDataRaw<T>(IEnumerable<T> items, int count, bool remap = false) where T : struct
         {
-            _componentCount = 1;
+            ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
 
-            switch (typeof(T))
-            {
-                case Type t when t == typeof(sbyte):
-                    _componentType = EComponentType.SByte;
-                    break;
-                case Type t when t == typeof(byte):
-                    _componentType = EComponentType.Byte;
-                    break;
-                case Type t when t == typeof(short):
-                    _componentType = EComponentType.Short;
-                    break;
-                case Type t when t == typeof(ushort):
-                    _componentType = EComponentType.UShort;
-                    break;
-                case Type t when t == typeof(int):
-                    _componentType = EComponentType.Int;
-                    break;
-                case Type t when t == typeof(uint):
-                    _componentType = EComponentType.UInt;
-                    break;
-                case Type t when t == typeof(float):
-                    _componentType = EComponentType.Float;
-                    break;
-                case Type t when t == typeof(double):
-                    _componentType = EComponentType.Double;
-                    break;
-                case Type t when t == typeof(Vector2):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 2;
-                    break;
-                case Type t when t == typeof(Vector3):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 3;
-                    break;
-                case Type t when t == typeof(Vector4):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 4;
-                    break;
-                case Type t when t == typeof(Matrix4x4):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 16;
-                    break;
-                case Type t when t == typeof(Quaternion):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 4;
-                    break;
-                default:
-                    throw new InvalidOperationException("Not a proper numeric data type.");
-            }
+            if (_componentType == EComponentType.Struct)
+                throw new InvalidOperationException("Not a proper numeric data type.");
 
             _normalize = false;
             if (remap)
@@ -682,7 +668,7 @@ namespace XREngine.Rendering
                 var arr = items as T[] ?? [.. items];
                 remapper.Remap(arr, null);
                 _elementCount = remapper.ImplementationLength;
-                _clientSideSource = DataSource.Allocate(Length);
+                EnsureClientSideSourceLength(Length);
                 uint stride = ElementSize;
                 for (uint i = 0; i < remapper.ImplementationLength; ++i)
                 {
@@ -695,7 +681,7 @@ namespace XREngine.Rendering
             else
             {
                 _elementCount = (uint)count;
-                _clientSideSource = DataSource.Allocate(Length);
+                EnsureClientSideSourceLength(Length);
                 uint stride = ElementSize;
                 uint i = 0;
                 foreach (var value in items)
@@ -709,59 +695,7 @@ namespace XREngine.Rendering
         }
         public Remapper? SetDataRaw<T>(IList<T> list, bool remap = false) where T : struct
         {
-            _componentCount = 1;
-
-            switch (typeof(T))
-            {
-                case Type t when t == typeof(sbyte):
-                    _componentType = EComponentType.SByte;
-                    break;
-                case Type t when t == typeof(byte):
-                    _componentType = EComponentType.Byte;
-                    break;
-                case Type t when t == typeof(short):
-                    _componentType = EComponentType.Short;
-                    break;
-                case Type t when t == typeof(ushort):
-                    _componentType = EComponentType.UShort;
-                    break;
-                case Type t when t == typeof(int):
-                    _componentType = EComponentType.Int;
-                    break;
-                case Type t when t == typeof(uint):
-                    _componentType = EComponentType.UInt;
-                    break;
-                case Type t when t == typeof(float):
-                    _componentType = EComponentType.Float;
-                    break;
-                case Type t when t == typeof(double):
-                    _componentType = EComponentType.Double;
-                    break;
-                case Type t when t == typeof(Vector2):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 2;
-                    break;
-                case Type t when t == typeof(Vector3):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 3;
-                    break;
-                case Type t when t == typeof(Vector4):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 4;
-                    break;
-                case Type t when t == typeof(Matrix4x4):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 16;
-                    break;
-                case Type t when t == typeof(Quaternion):
-                    _componentType = EComponentType.Float;
-                    _componentCount = 4;
-                    break;
-                default:
-                    _componentType = EComponentType.Struct;
-                    _componentCount = (uint)Marshal.SizeOf<T>();
-                    break;
-            }
+            ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
 
             _normalize = false;
             if (remap)
@@ -769,7 +703,7 @@ namespace XREngine.Rendering
                 Remapper remapper = new();
                 remapper.Remap(list, null);
                 _elementCount = remapper.ImplementationLength;
-                _clientSideSource = DataSource.Allocate(Length);
+                EnsureClientSideSourceLength(Length);
                 uint stride = ElementSize;
                 for (uint i = 0; i < remapper.ImplementationLength; ++i)
                 {
@@ -782,7 +716,7 @@ namespace XREngine.Rendering
             else
             {
                 _elementCount = (uint)list.Count;
-                _clientSideSource = DataSource.Allocate(Length);
+                EnsureClientSideSourceLength(Length);
                 uint stride = ElementSize;
                 for (uint i = 0; i < list.Count; ++i)
                 {
@@ -806,7 +740,7 @@ namespace XREngine.Rendering
                 remapper.Remap(list, null);
 
                 _elementCount = remapper.ImplementationLength;
-                _clientSideSource = DataSource.Allocate(Length);
+                EnsureClientSideSourceLength(Length);
                 uint stride = ElementSize;
                 for (uint i = 0; i < remapper.ImplementationLength; ++i)
                 {
@@ -818,7 +752,7 @@ namespace XREngine.Rendering
             else
             {
                 _elementCount = (uint)list.Count;
-                _clientSideSource = DataSource.Allocate(Length);
+                EnsureClientSideSourceLength(Length);
                 uint stride = ElementSize;
                 for (uint i = 0; i < list.Count; ++i)
                 {

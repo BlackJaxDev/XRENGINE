@@ -8,14 +8,12 @@ struct ParticleState
     float _pad0;
     vec3 PrevPosition;
     float _pad1;
-    vec3 TransformPosition;
-    float _pad2;
     int IsColliding;
-    float _pad3a;
-    float _pad3b;
-    float _pad3c;
+    float _pad2a;
+    float _pad2b;
+    float _pad2c;
     vec3 PreviousPhysicsPosition;
-    float _pad4;
+    float _pad3;
 };
 
 struct ParticleStatic
@@ -30,6 +28,10 @@ struct ParticleStatic
     float Friction;
     float Radius;
     float BoneLength;
+    int TreeIndex;
+    int _pad1;
+    int _pad2;
+    int _pad3;
 };
 
 struct Point

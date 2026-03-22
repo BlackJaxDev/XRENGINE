@@ -8,6 +8,7 @@ namespace XREngine.Components
 {
     public partial class DebugDrawComponent : XRComponent, IRenderable
     {
+        private readonly object _shapeSync = new();
         private readonly Stack<DebugDrawSphere> _spherePool = [];
         private readonly Stack<DebugDrawBox> _boxPool = [];
         private readonly Stack<DebugDrawCircle> _circlePool = [];
@@ -29,18 +30,14 @@ namespace XREngine.Components
         {
             using var profilerState = Engine.Profiler.Start("DebugDrawComponent.Render");
 
-            var shapes = Shapes;
-            if (shapes is null || shapes.Count == 0)
-                return;
-
-            // Snapshot count and iterate by index to avoid "Collection was modified"
-            // when animation ticks call ClearShapes/AddLine concurrently.
-            int count = shapes.Count;
-            for (int i = 0; i < count; i++)
+            lock (_shapeSync)
             {
-                if (i >= shapes.Count)
-                    break; // Collection shrunk during iteration
-                shapes[i]?.Render(Transform);
+                var shapes = Shapes;
+                if (shapes.Count == 0)
+                    return;
+
+                for (int i = 0; i < shapes.Count; i++)
+                    shapes[i]?.Render(Transform);
             }
         }
 
@@ -55,93 +52,123 @@ namespace XREngine.Components
 
         public void AddSphere(float radius, Vector3 localOffset, ColorF4 color, bool solid)
         {
-            var shape = RentShape(_spherePool);
-            shape.Radius = radius;
-            shape.LocalOffset = localOffset;
-            shape.Color = color;
-            shape.Solid = solid;
-            Shapes.Add(shape);
+            lock (_shapeSync)
+            {
+                var shape = RentShape(_spherePool);
+                shape.Radius = radius;
+                shape.LocalOffset = localOffset;
+                shape.Color = color;
+                shape.Solid = solid;
+                Shapes.Add(shape);
+            }
         }
         public void AddBox(Vector3 halfExtents, Vector3 localOffset, ColorF4 color, bool solid)
         {
-            var shape = RentShape(_boxPool);
-            shape.HalfExtents = halfExtents;
-            shape.LocalOffset = localOffset;
-            shape.Color = color;
-            shape.Solid = solid;
-            Shapes.Add(shape);
+            lock (_shapeSync)
+            {
+                var shape = RentShape(_boxPool);
+                shape.HalfExtents = halfExtents;
+                shape.LocalOffset = localOffset;
+                shape.Color = color;
+                shape.Solid = solid;
+                Shapes.Add(shape);
+            }
         }
         public void AddCircle(float radius, Vector3 localOffset, Vector3 localNormal, ColorF4 color, bool solid)
         {
-            var shape = RentShape(_circlePool);
-            shape.Radius = radius;
-            shape.LocalOffset = localOffset;
-            shape.LocalNormal = localNormal;
-            shape.Color = color;
-            shape.Solid = solid;
-            Shapes.Add(shape);
+            lock (_shapeSync)
+            {
+                var shape = RentShape(_circlePool);
+                shape.Radius = radius;
+                shape.LocalOffset = localOffset;
+                shape.LocalNormal = localNormal;
+                shape.Color = color;
+                shape.Solid = solid;
+                Shapes.Add(shape);
+            }
         }
         public void AddCapsule(float radius, Vector3 localStartOffset, Vector3 localEndOffset, ColorF4 color, bool solid)
         {
-            var shape = RentShape(_capsulePool);
-            shape.Radius = radius;
-            shape.LocalStartOffset = localStartOffset;
-            shape.LocalEndOffset = localEndOffset;
-            shape.Color = color;
-            shape.Solid = solid;
-            Shapes.Add(shape);
+            lock (_shapeSync)
+            {
+                var shape = RentShape(_capsulePool);
+                shape.Radius = radius;
+                shape.LocalStartOffset = localStartOffset;
+                shape.LocalEndOffset = localEndOffset;
+                shape.Color = color;
+                shape.Solid = solid;
+                Shapes.Add(shape);
+            }
         }
         public void AddCone(float radius, float height, Vector3 localOffset, Vector3 localUpAxis, ColorF4 color, bool solid)
         {
-            var shape = RentShape(_conePool);
-            shape.Radius = radius;
-            shape.Height = height;
-            shape.LocalOffset = localOffset;
-            shape.LocalUpAxis = localUpAxis;
-            shape.Color = color;
-            shape.Solid = solid;
-            Shapes.Add(shape);
+            lock (_shapeSync)
+            {
+                var shape = RentShape(_conePool);
+                shape.Radius = radius;
+                shape.Height = height;
+                shape.LocalOffset = localOffset;
+                shape.LocalUpAxis = localUpAxis;
+                shape.Color = color;
+                shape.Solid = solid;
+                Shapes.Add(shape);
+            }
         }
         public void AddCylinder(float radius, float halfHeight, Vector3 localOffset, Vector3 localUpAxis, ColorF4 color, bool solid)
         {
-            var shape = RentShape(_cylinderPool);
-            shape.Radius = radius;
-            shape.HalfHeight = halfHeight;
-            shape.LocalOffset = localOffset;
-            shape.LocalUpAxis = localUpAxis;
-            shape.Color = color;
-            shape.Solid = solid;
-            Shapes.Add(shape);
+            lock (_shapeSync)
+            {
+                var shape = RentShape(_cylinderPool);
+                shape.Radius = radius;
+                shape.HalfHeight = halfHeight;
+                shape.LocalOffset = localOffset;
+                shape.LocalUpAxis = localUpAxis;
+                shape.Color = color;
+                shape.Solid = solid;
+                Shapes.Add(shape);
+            }
         }
         public void AddLine(Vector3 localStartOffset, Vector3 localEndOffset, ColorF4 color)
         {
-            var shape = RentShape(_linePool);
-            shape.StartOffset = localStartOffset;
-            shape.EndOffset = localEndOffset;
-            shape.Color = color;
-            Shapes.Add(shape);
+            lock (_shapeSync)
+            {
+                var shape = RentShape(_linePool);
+                shape.StartOffset = localStartOffset;
+                shape.EndOffset = localEndOffset;
+                shape.Color = color;
+                Shapes.Add(shape);
+            }
         }
         public void AddPoint(Vector3 localOffset, ColorF4 color)
         {
-            var shape = RentShape(_pointPool);
-            shape.LocalOffset = localOffset;
-            shape.Color = color;
-            Shapes.Add(shape);
+            lock (_shapeSync)
+            {
+                var shape = RentShape(_pointPool);
+                shape.LocalOffset = localOffset;
+                shape.Color = color;
+                Shapes.Add(shape);
+            }
         }
 
         public void AddShape(DebugShapeBase shape)
-            => Shapes.Add(shape);
+        {
+            lock (_shapeSync)
+                Shapes.Add(shape);
+        }
         public void ClearShapes()
         {
-            var shapes = Shapes;
-            for (int i = 0; i < shapes.Count; i++)
+            lock (_shapeSync)
             {
-                DebugShapeBase? shape = shapes[i];
-                if (shape is not null && _pooledShapes.Contains(shape))
-                    ReturnShape(shape);
-            }
+                var shapes = Shapes;
+                for (int i = 0; i < shapes.Count; i++)
+                {
+                    DebugShapeBase? shape = shapes[i];
+                    if (shape is not null && _pooledShapes.Contains(shape))
+                        ReturnShape(shape);
+                }
 
-            shapes.Clear();
+                shapes.Clear();
+            }
         }
 
         private T RentShape<T>(Stack<T> pool) where T : DebugShapeBase, new()

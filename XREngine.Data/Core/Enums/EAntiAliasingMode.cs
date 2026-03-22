@@ -11,6 +11,8 @@ namespace XREngine
         Msaa,
         /// <summary>Fast approximate anti-aliasing.</summary>
         Fxaa,
+        /// <summary>Subpixel morphological anti-aliasing.</summary>
+        Smaa,
         /// <summary>Temporal anti-aliasing.</summary>
         Taa,
         /// <summary>Temporal super-resolution.</summary>

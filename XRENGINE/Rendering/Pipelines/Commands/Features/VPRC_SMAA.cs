@@ -31,6 +31,9 @@ float Luma(vec3 color)
 void main()
 {
     vec2 uv = FragPos.xy;
+    if (uv.x > 1.0 || uv.y > 1.0)
+        discard;
+    uv = uv * 0.5 + 0.5;
 
     float center = Luma(texture(SourceTexture, uv).rgb);
     float left = Luma(texture(SourceTexture, uv - vec2(TexelSize.x, 0.0)).rgb);
@@ -82,6 +85,10 @@ float SearchSpan(vec2 uv, vec2 direction, int channelIndex)
 void main()
 {
     vec2 uv = FragPos.xy;
+    if (uv.x > 1.0 || uv.y > 1.0)
+        discard;
+    uv = uv * 0.5 + 0.5;
+
     vec4 edge = texture(EdgeTexture, uv);
 
     vec4 weights = vec4(0.0);
@@ -124,6 +131,10 @@ uniform vec2 TexelSize;
 void main()
 {
     vec2 uv = FragPos.xy;
+    if (uv.x > 1.0 || uv.y > 1.0)
+        discard;
+    uv = uv * 0.5 + 0.5;
+
     vec4 center = texture(SourceTexture, uv);
     vec4 blend = texture(BlendTexture, uv);
 
@@ -157,6 +168,10 @@ void main()
     private XRQuadFrameBuffer? _neighborhoodQuad;
     private uint _cachedWidth;
     private uint _cachedHeight;
+    private EPixelInternalFormat _cachedOutputInternalFormat;
+    private ESizedInternalFormat _cachedOutputSizedFormat;
+    private EPixelFormat _cachedOutputPixelFormat;
+    private EPixelType _cachedOutputPixelType;
 
     public string? SourceTextureName { get; set; }
     public string? SourceFBOName { get; set; }
@@ -245,6 +260,10 @@ void main()
 
         _cachedWidth = 0;
         _cachedHeight = 0;
+        _cachedOutputInternalFormat = default;
+        _cachedOutputSizedFormat = default;
+        _cachedOutputPixelFormat = default;
+        _cachedOutputPixelType = default;
     }
 
     protected override void Execute()
@@ -299,9 +318,20 @@ void main()
     {
         uint width = Math.Max(1u, sourceTexture.Width);
         uint height = Math.Max(1u, sourceTexture.Height);
+        (EPixelInternalFormat sourceInternalFormat, ESizedInternalFormat sourceSizedFormat, EPixelFormat sourcePixelFormat, EPixelType sourcePixelType) = ResolveSourceFormat(sourceTexture);
+
+        bool outputRegistered = instance.Resources.TryGetTexture(OutputTextureName, out XRTexture? registeredOutputTexture)
+            && ReferenceEquals(registeredOutputTexture, _outputTexture)
+            && instance.Resources.TryGetFrameBuffer(ResolvedOutputFboName, out XRFrameBuffer? registeredOutputFbo)
+            && ReferenceEquals(registeredOutputFbo, _outputFbo);
 
         if (_cachedWidth == width &&
             _cachedHeight == height &&
+            _cachedOutputInternalFormat == sourceInternalFormat &&
+            _cachedOutputSizedFormat == sourceSizedFormat &&
+            _cachedOutputPixelFormat == sourcePixelFormat &&
+            _cachedOutputPixelType == sourcePixelType &&
+            outputRegistered &&
             _edgeTexture is not null &&
             _blendTexture is not null &&
             _outputTexture is not null &&
@@ -316,8 +346,6 @@ void main()
         _blendFbo?.Destroy();
         _edgeTexture?.Destroy();
         _blendTexture?.Destroy();
-
-        (EPixelInternalFormat sourceInternalFormat, ESizedInternalFormat sourceSizedFormat, EPixelFormat sourcePixelFormat, EPixelType sourcePixelType) = ResolveSourceFormat(sourceTexture);
 
         _edgeTexture = XRTexture2D.CreateFrameBufferTexture(width, height, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
         _edgeTexture.Name = $"{ResolvedOutputFboName}_EdgeTexture";
@@ -361,6 +389,10 @@ void main()
 
         _cachedWidth = width;
         _cachedHeight = height;
+        _cachedOutputInternalFormat = sourceInternalFormat;
+        _cachedOutputSizedFormat = sourceSizedFormat;
+        _cachedOutputPixelFormat = sourcePixelFormat;
+        _cachedOutputPixelType = sourcePixelType;
     }
 
     private static (EPixelInternalFormat, ESizedInternalFormat, EPixelFormat, EPixelType) ResolveSourceFormat(XRTexture2D sourceTexture)

@@ -485,6 +485,17 @@
             }
           ],
           "description": "Optional Euler rotation offset, in degrees, applied after import."
+        },
+        "Translation": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/TranslationXYZ"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling."
         }
       }
     },
@@ -520,6 +531,24 @@
         "Roll": {
           "type": "number",
           "description": "Roll rotation in degrees."
+        }
+      }
+    },
+    "TranslationXYZ": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "X": {
+          "type": "number",
+          "description": "Generated from X on TranslationXYZ."
+        },
+        "Y": {
+          "type": "number",
+          "description": "Generated from Y on TranslationXYZ."
+        },
+        "Z": {
+          "type": "number",
+          "description": "Generated from Z on TranslationXYZ."
         }
       }
     },

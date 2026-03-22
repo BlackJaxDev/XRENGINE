@@ -672,7 +672,7 @@ public partial class DefaultRenderPipeline
     }
 
     private ERenderBufferStorage GetForwardMsaaColorFormat()
-        => Engine.Rendering.Settings.OutputHDR ? ERenderBufferStorage.Rgba16f : ERenderBufferStorage.Rgba8;
+        => ResolveOutputRenderBufferStorage();
 
     private XRFrameBuffer CreateDepthPreloadFBO()
     {
@@ -981,5 +981,48 @@ public partial class DefaultRenderPipeline
         {
             Name = MsaaLightingFBOName
         };
+    }
+
+    /// <summary>
+    /// Creates a per-sample variant of the DeferredLightCombine QuadFBO for MSAA deferred.
+    /// Reads direct light from the MSAA lighting texture via sampler2DMS + gl_SampleID
+    /// so each sample receives its own direct-light contribution. This prevents premature
+    /// MSAA resolve from averaging sky-samples with geometry lighting at silhouette edges.
+    /// </summary>
+    private XRFrameBuffer CreateMsaaLightCombineFBO()
+    {
+        var msaaLightingTexture = GetTexture<XRTexture>(MsaaLightingTextureName)!;
+
+        XRTexture[] textures = [
+            GetTexture<XRTexture>(AlbedoOpacityTextureName)!,
+            GetTexture<XRTexture>(NormalTextureName)!,
+            GetTexture<XRTexture>(RMSETextureName)!,
+            GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName)!,
+            GetTexture<XRTexture>(DepthViewTextureName)!,
+            msaaLightingTexture,
+            GetTexture<XRTexture>(BRDFTextureName)!,
+        ];
+
+        XRShader baseShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()), EShaderType.Fragment);
+        XRShader msaaShader = ShaderHelper.CreateDefinedShaderVariant(baseShader, MsaaDeferredDefine) ?? baseShader;
+
+        XRMaterial mat = new(textures, msaaShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new()
+                {
+                    Enabled = ERenderParamUsage.Unchanged,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                RequiredEngineUniforms = EUniformRequirements.Camera
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(mat, true, false) { Name = MsaaLightCombineFBOName };
+        fbo.SettingUniforms += LightCombineFBO_SettingUniforms;
+        return fbo;
     }
 }

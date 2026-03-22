@@ -635,6 +635,22 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Install-MsdfAtlasGen",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Dependencies\\Get-MsdfAtlasGen.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Install-NvComp",
 			"type": "shell",
 			"command": "powershell",
