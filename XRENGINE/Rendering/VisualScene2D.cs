@@ -108,8 +108,6 @@ namespace XREngine.Scene
                 //_diagFrames++;
             }
         }
-        private int _diagFrames = 0;
-
         public IReadOnlyList<RenderInfo2D> Renderables => _renderables;
         private readonly List<RenderInfo2D> _renderables = [];
         private readonly HashSet<RenderInfo2D> _renderableSet = [];

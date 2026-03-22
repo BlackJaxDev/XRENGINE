@@ -59,7 +59,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         if (!MeshSupportsGpuSkinning(xrMesh))
             return false;
 
-        if (renderer.BoneMatricesBuffer is null || renderer.BoneInvBindMatricesBuffer is null)
+        if (renderer.ActiveBoneMatricesBuffer is null || renderer.ActiveBoneInvBindMatricesBuffer is null)
             return false;
 
         lock (_syncRoot)
@@ -75,11 +75,12 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             uint vertexCount = (uint)xrMesh.VertexCount;
             resources.EnsureCapacity(vertexCount);
             resources.ResetBoundsBuffer();
-            renderer.BoneMatricesBuffer.SetBlockIndex(0);
-            renderer.BoneInvBindMatricesBuffer.SetBlockIndex(1);
+            renderer.ActiveBoneMatricesBuffer.SetBlockIndex(0);
+            renderer.ActiveBoneInvBindMatricesBuffer.SetBlockIndex(1);
 
             _program.Uniform("vertexCount", vertexCount);
             _program.Uniform("hasSkinning", 1);
+            _program.Uniform("boneMatrixBase", renderer.ActiveBoneMatrixBase);
             _program.Uniform("fallbackMatrix", mesh.Component.Transform.RenderMatrix);
 
             const uint groupSize = 256;

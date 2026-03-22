@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.10.4" />
+    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.11.0" />
     <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
     <PackageReference Include="NUnit" Version="4.5.0" />

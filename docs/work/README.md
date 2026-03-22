@@ -12,6 +12,7 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [Indirect GPU Rendering TODO](backlog/IndirectGPURendering-TODO.md)
 - [AOT TODO For Final Game Builds](todo/aot-final-game-builds.md)
 - [Affine Matrix Integration TODO](todo/affine-matrix-integration-todo.md)
+- [Physics Chain Speed Update TODO](todo/physics-chain-speed-update-todo.md)
 - [GPU Softbody Mesh Rigging TODO](todo/gpu-softbody-mesh-rigging-todo.md)
 - [HBAO And HBAO+ Implementation TODO](todo/hbao-hbao-plus-implementation-todo.md)
 - [Non-HBAO AO Remediation TODO](todo/non-hbao-ambient-occlusion-remediation.md)

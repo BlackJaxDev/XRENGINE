@@ -136,9 +136,9 @@ public static partial class EditorImGuiUI
 
                         ImGui.TableNextRow();
                         ImGui.TableSetColumnIndex(0);
-                        ImGui.Text(player.LocalPlayerIndex.ToString());
+                        ImGui.Text(player.LocalPlayerIndex?.ToString() ?? "<none>");
                         ImGui.TableSetColumnIndex(1);
-                        ImGui.Text(player.PlayerInfo.ServerIndex.ToString());
+                        ImGui.Text(player.PlayerInfo?.ServerIndex is int serverIndex ? serverIndex.ToString() : "<none>");
                         ImGui.TableSetColumnIndex(2);
                         ImGui.TextUnformatted((player.ControlledPawnComponent as PawnComponent)?.Name ?? "(no pawn)");
                     }

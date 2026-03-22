@@ -217,9 +217,18 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         // Local Player info
         if (player is not null)
         {
-            ImGui.TextColored(new Vector4(0.4f, 0.8f, 1.0f, 1.0f), $"Local Player: {(int)player.LocalPlayerIndex + 1}");
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip($"This camera is being used by Local Player {(int)player.LocalPlayerIndex + 1}'s viewport.");
+            ELocalPlayerIndex? localPlayerIndex = player.LocalPlayerIndex;
+            if (localPlayerIndex.HasValue)
+            {
+                int playerNumber = (int)localPlayerIndex.GetValueOrDefault() + 1;
+                ImGui.TextColored(new Vector4(0.4f, 0.8f, 1.0f, 1.0f), $"Local Player: {playerNumber}");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"This camera is being used by Local Player {playerNumber}'s viewport.");
+            }
+            else
+            {
+                ImGui.TextDisabled("Local Player: None");
+            }
         }
         else
         {
@@ -386,8 +395,19 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         "None",
         "MSAA",
         "FXAA",
+        "SMAA",
         "TAA",
         "TSR"
+    ];
+
+    private static readonly EAntiAliasingMode[] AntiAliasingModes =
+    [
+        EAntiAliasingMode.None,
+        EAntiAliasingMode.Msaa,
+        EAntiAliasingMode.Fxaa,
+        EAntiAliasingMode.Smaa,
+        EAntiAliasingMode.Taa,
+        EAntiAliasingMode.Tsr,
     ];
 
     private static void DrawAntiAliasingOverride(CameraComponent component)
@@ -412,11 +432,13 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         if (camera.AntiAliasingModeOverride.HasValue)
         {
-            int modeIndex = (int)camera.AntiAliasingModeOverride.Value;
+            int modeIndex = Array.IndexOf(AntiAliasingModes, camera.AntiAliasingModeOverride.Value);
+            if (modeIndex < 0)
+                modeIndex = 0;
             ImGui.SetNextItemWidth(150f);
             if (ImGui.Combo("Mode##AAOverrideMode", ref modeIndex, AntiAliasingModeNames, AntiAliasingModeNames.Length))
             {
-                camera.AntiAliasingModeOverride = (EAntiAliasingMode)modeIndex;
+                camera.AntiAliasingModeOverride = AntiAliasingModes[Math.Clamp(modeIndex, 0, AntiAliasingModes.Length - 1)];
             }
 
             if (camera.AntiAliasingModeOverride == EAntiAliasingMode.Msaa)

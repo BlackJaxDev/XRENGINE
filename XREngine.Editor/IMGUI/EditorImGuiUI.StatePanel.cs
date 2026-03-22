@@ -389,10 +389,11 @@ public static partial class EditorImGuiUI
 
                                         ImGui.TableNextColumn();
                                         var player = viewport.AssociatedPlayer;
-                                        if (player is not null)
+                                        ELocalPlayerIndex? localPlayerIndex = player?.LocalPlayerIndex;
+                                        if (localPlayerIndex.HasValue)
                                         {
                                             ImGui.TextColored(new Vector4(0.3f, 1.0f, 0.3f, 1.0f), 
-                                                $"P{(int)player.LocalPlayerIndex + 1}");
+                                            $"P{(int)localPlayerIndex.GetValueOrDefault() + 1}");
                                         }
                                         else
                                         {

@@ -80,11 +80,12 @@ public static partial class EditorUnitTests
             builder.Append(fixedMs.ToString("F2"));
             builder.Append("ms");
 
+            float networkingRttMs = 0.0f;
             var net = Engine.Networking;
-            bool showNetworking = net is not null
-                && (net.PacketsPerSecond > 0.05f || net.BytesSentLastSecond > 0 || net.AverageRoundTripTimeMs > 0.05f);
-            if (showNetworking)
+            if (net is not null
+                && (net.PacketsPerSecond > 0.05f || net.BytesSentLastSecond > 0 || net.AverageRoundTripTimeMs > 0.05f))
             {
+                networkingRttMs = net.AverageRoundTripTimeMs;
                 builder.Append("\nn ");
                 builder.Append(net.AverageRoundTripTimeMs.ToString("F1"));
                 builder.Append("ms");
@@ -136,7 +137,7 @@ public static partial class EditorUnitTests
             }
 
             t.Text = builder.ToString();
-            t.Color = ResolveFpsOverlayColor(renderMs, cpuFrameMs, gpuCmdMs, showNetworking ? net!.AverageRoundTripTimeMs : 0.0f, fallbackEvents);
+            t.Color = ResolveFpsOverlayColor(renderMs, cpuFrameMs, gpuCmdMs, networkingRttMs, fallbackEvents);
         }
 
         private static ColorF4 ResolveFpsOverlayColor(double renderMs, double cpuFrameMs, double gpuCmdMs, float rttMs, int fallbackEvents)

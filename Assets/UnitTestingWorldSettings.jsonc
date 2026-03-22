@@ -5,7 +5,7 @@
   "$id": "1",
   // Selects which unit-test world factory the editor or server boots into.
   // WorldKind: Default, AudioTesting, MathIntersections, MeshEditing, UberShader, PhysxTesting, NetworkingPose
-  "WorldKind": "MathIntersections",
+  "WorldKind": "Default",
 
   // Debug visualize.
   // Draws octree structure overlays for visibility and partitioning diagnostics.
@@ -129,7 +129,9 @@
         "Pitch": 0.0,
         // Roll rotation in degrees.
         "Roll": 0.0
-      }
+      },
+      // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
+      "Translation": null
     },
     {
       // When false, this model import entry is ignored.
@@ -155,7 +157,51 @@
       // Creates one ModelComponent per imported submesh instead of grouping by source node.
       "SplitSubmeshesIntoSeparateModelComponents": false,
       // Optional Euler rotation offset, in degrees, applied after import.
-      "YawPitchRoll": null
+      "YawPitchRoll": null,
+      // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
+      "Translation": {
+        // Generated from X on TranslationXYZ.
+        "X": -18.0,
+        // Generated from Y on TranslationXYZ.
+        "Y": 0.0,
+        // Generated from Z on TranslationXYZ.
+        "Z": 0.0
+      }
+    },
+    {
+      // When false, this model import entry is ignored.
+      "Enabled": true,
+      // Whether this import should be treated as a static or animated model.
+      // Kind: Static, Animated
+      "Kind": "Static",
+      // Material/shader pipeline family used for this imported model.
+      // MaterialMode: Deferred, Forward, Uber
+      "MaterialMode": "Deferred",
+      // When true and MaterialMode is Deferred, alpha-textured materials are routed through the forward lit path for proper transparency.
+      "UseForwardForTransparent": false,
+      // Asset-relative path to the model file to import.
+      "Path": "Models\\Sponza2\\Sponza.obj",
+      // Comma-separated Assimp PostProcessSteps flags. These are parsed as enum flag names, so keep the exact symbolic names separated by commas.
+      "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
+      // Uniform import scale multiplier.
+      "Scale": 0.01,
+      // Treats the source model as Z-up when true.
+      "ZUp": false,
+      // For static models, splits submeshes and auto-attaches CoACD-generated PhysX convex colliders per submesh.
+      "GenerateCoacdCollidersPerSubmesh": false,
+      // Creates one ModelComponent per imported submesh instead of grouping by source node.
+      "SplitSubmeshesIntoSeparateModelComponents": false,
+      // Optional Euler rotation offset, in degrees, applied after import.
+      "YawPitchRoll": null,
+      // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
+      "Translation": {
+        // Generated from X on TranslationXYZ.
+        "X": 18.0,
+        // Generated from Y on TranslationXYZ.
+        "Y": 0.0,
+        // Generated from Z on TranslationXYZ.
+        "Z": 0.0
+      }
     }
   ],
 

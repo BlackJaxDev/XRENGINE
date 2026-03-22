@@ -14,6 +14,20 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// </summary>
 public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 {
+    private const float TaaJitterScaleInTexels = 0.35f;
+    private const float TsrJitterScaleInTexels = 0.20f;
+    private static readonly Vector2[] TemporalJitterSequence =
+    [
+        new(0.125f, -0.375f),
+        new(-0.125f, 0.375f),
+        new(0.625f, 0.125f),
+        new(0.375f, -0.625f),
+        new(-0.625f, 0.625f),
+        new(-0.875f, -0.125f),
+        new(0.375f, 0.875f),
+        new(0.875f, -0.875f)
+    ];
+
     private sealed class TemporalState
     {
         public uint HaltonIndex = 1;
@@ -308,7 +322,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
 
         bool jitterEnabled = ShouldUseTemporalJitter(antiAliasingMode);
-        Vector2 jitter = jitterEnabled ? GenerateHaltonJitter(state) : Vector2.Zero;
+        Vector2 jitter = jitterEnabled ? GenerateJitter(state, antiAliasingMode) : Vector2.Zero;
         state.CurrentJitter = jitter;
         //Debug.Out($"[Temporal] JitterEnabled={jitterEnabled} Jitter=({jitter.X:F6},{jitter.Y:F6}) HaltonIndex={state.HaltonIndex}");
 
@@ -404,26 +418,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         //Debug.Out("[Temporal] Commit completed: history stored.");
     }
 
-    private static Vector2 GenerateHaltonJitter(TemporalState state)
+    private static Vector2 GenerateJitter(TemporalState state, EAntiAliasingMode antiAliasingMode)
     {
-        state.HaltonIndex = (state.HaltonIndex % 8192u) + 1u;
-        float x = Halton(state.HaltonIndex, 2u) - 0.5f;
-        float y = Halton(state.HaltonIndex, 3u) - 0.5f;
-        return new Vector2(x, y);
-    }
-
-    private static float Halton(uint index, uint @base)
-    {
-        float result = 0.0f;
-        float f = 1.0f / @base;
-        uint i = index;
-        while (i > 0)
-        {
-            result += f * (i % @base);
-            i /= @base;
-            f /= @base;
-        }
-        return result;
+        state.HaltonIndex = (state.HaltonIndex + 1u) % (uint)TemporalJitterSequence.Length;
+        Vector2 sample = TemporalJitterSequence[state.HaltonIndex];
+        float scale = antiAliasingMode == EAntiAliasingMode.Tsr
+            ? TsrJitterScaleInTexels
+            : TaaJitterScaleInTexels;
+        return sample * scale;
     }
 
     private static bool IsMatrixApproximatelyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon = 1e-6f)

@@ -41,6 +41,7 @@ layout(std430, binding = 6) buffer BoundsBuffer
 
 uniform uint vertexCount;
 uniform int hasSkinning;
+uniform uint boneMatrixBase;
 uniform mat4 fallbackMatrix;
 
 const float FLT_MAX = 3.402823466e+38;
@@ -171,10 +172,11 @@ void main()
                     continue;
 
                 // Avoid reading outside the bone matrix buffers
-                if (uint(boneIndex) >= boneCount)
+                uint paletteIndex = boneMatrixBase + uint(boneIndex);
+                if (paletteIndex >= boneCount)
                     continue;
 
-                mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+                mat4 boneMatrix = BoneInvBindMatrices[paletteIndex] * BoneMatrices[paletteIndex];
                 skinnedPosition += (boneMatrix * basePosition) * weight;
             }
 

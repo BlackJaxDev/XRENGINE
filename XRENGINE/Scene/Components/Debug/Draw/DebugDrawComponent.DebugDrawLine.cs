@@ -19,7 +19,7 @@ namespace XREngine.Components
             public Vector3 StartOffset
             {
                 get => start;
-                set => SetField(ref start, value);
+                set => start = value;
             }
 
             /// <summary>
@@ -28,7 +28,7 @@ namespace XREngine.Components
             public Vector3 EndOffset
             {
                 get => end;
-                set => SetField(ref end, value);
+                set => end = value;
             }
 
             public override void Render(TransformBase transform)

@@ -63,7 +63,8 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
                     object? deserialized;
                     try
                     {
-                        deserialized = rootDeserializer(runtimeType);
+                        Type concreteType = runtimeType is null ? typeof(Transform) : runtimeType;
+                        deserialized = rootDeserializer(concreteType);
                     }
                     finally
                     {

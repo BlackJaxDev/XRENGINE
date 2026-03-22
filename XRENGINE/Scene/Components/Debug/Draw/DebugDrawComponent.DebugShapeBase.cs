@@ -19,7 +19,7 @@ namespace XREngine.Components
             public ColorF4 Color
             {
                 get => color;
-                set => SetField(ref color, value);
+                set => color = value;
             }
 
             /// <summary>
@@ -29,7 +29,7 @@ namespace XREngine.Components
             public bool Solid 
             {
                 get => solid;
-                set => SetField(ref solid, value);
+                set => solid = value;
             }
 
             public abstract void Render(TransformBase transform);

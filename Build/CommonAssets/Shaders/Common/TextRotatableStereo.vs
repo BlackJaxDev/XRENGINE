@@ -14,7 +14,7 @@ layout(std430, binding = 1) buffer GlyphTexCoordsBuffer
 {
     vec4 GlyphTexCoords[];
 };
-layout(std430, binding = 1) buffer GlyphRotationsBuffer
+layout(std430, binding = 2) buffer GlyphRotationsBuffer
 {
     float GlyphRotations[];
 };
@@ -28,6 +28,7 @@ uniform mat4 RightEyeProjMatrix_VTX;
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
 layout (location = 4) out vec2 FragUV0;
+layout (location = 5) flat out vec4 GlyphUVBounds;
 layout (location = 20) out vec3 FragPosLocal;
 
 out gl_PerVertex
@@ -80,4 +81,5 @@ void main()
 	gl_Position = mvpMatrix * position;
 	FragNorm = normalize(normalMatrix * normal);
 	FragUV0 = mix(uv.xy, uv.zw, Position.xy);
+	GlyphUVBounds = uv;
 }

@@ -1129,7 +1129,7 @@ namespace XREngine
 
         internal static string BuildAuxiliaryLogFileName(string? fileName)
         {
-            string safeName = Path.GetFileName(fileName);
+            string safeName = string.IsNullOrWhiteSpace(fileName) ? string.Empty : Path.GetFileName(fileName);
             if (string.IsNullOrWhiteSpace(safeName))
                 safeName = "diagnostics.log";
 

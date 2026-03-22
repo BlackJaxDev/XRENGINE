@@ -140,6 +140,7 @@ present.UseTargetViewportRegion = true;
 
 Notes:
 - `VPRC_FXAA` can be used as a standalone authored post-process instead of relying on the default pipeline's built-in AA branch.
+- `VPRC_SMAA` now follows the same pattern in the default render pipeline when the camera or effective AA mode resolves to `SMAA`.
 - `VPRC_RenderToWindow` then composites the chosen final source into the active renderer window backbuffer.
 - If the source is already a named texture instead of an FBO, set `SourceTextureName` instead.
 

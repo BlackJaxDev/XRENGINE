@@ -832,6 +832,8 @@ namespace XREngine.Rendering
             _dirtyBoneIndices?.Clear();
             _dirtyBoneFlags = null;
             _dirtyBoneMatrices = null;
+            _gpuDrivenBoneRefCounts = null;
+            _gpuDrivenBoneCount = 0;
 
             _bones = null;
 
@@ -905,11 +907,26 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         public XRDataBuffer? BoneMatricesBuffer { get; private set; }
 
+        [MemoryPackIgnore]
+        public XRDataBuffer? ActiveBoneMatricesBuffer => BoneMatricesBuffer;
+
         /// <summary>
         /// All bone inverse bind matrices for the mesh.
         /// </summary>
         [MemoryPackIgnore]
         public XRDataBuffer? BoneInvBindMatricesBuffer { get; private set; }
+
+        [MemoryPackIgnore]
+        public XRDataBuffer? ActiveBoneInvBindMatricesBuffer => BoneInvBindMatricesBuffer;
+
+        [MemoryPackIgnore]
+        public uint ActiveBoneMatrixBase => 0u;
+
+        [MemoryPackIgnore]
+        public uint ActiveBoneMatrixCount => (uint)(Mesh?.UtilizedBones?.Length ?? 0) + 1u;
+
+        [MemoryPackIgnore]
+        public bool HasGpuDrivenBoneSource => _gpuDrivenBoneCount > 0;
 
         /// <summary>
         /// All blendshape weights for the mesh.
@@ -1047,6 +1064,7 @@ namespace XREngine.Rendering
             _dirtyBoneIndices = new List<uint>((int)boneCount);
             _dirtyBoneFlags = new bool[boneCount + 1];
             _dirtyBoneMatrices = new Matrix4x4[boneCount + 1];
+            _gpuDrivenBoneRefCounts = new int[boneCount + 1];
             for (int i = 0; i < _bones.Length; i++)
             {
                 var (tfm, invBindWorldMtx) = Mesh!.UtilizedBones[i];
@@ -1067,6 +1085,8 @@ namespace XREngine.Rendering
 
         private bool _bonesInvalidated = false;
         private bool _blendshapesInvalidated = false;
+    private int[]? _gpuDrivenBoneRefCounts;
+    private int _gpuDrivenBoneCount;
 
         private void BoneTransformRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
@@ -1080,6 +1100,9 @@ namespace XREngine.Rendering
                 return;
 
             int index = (int)bone.Index;
+            if (IsBoneGpuDriven(index))
+                return;
+
             _dirtyBoneMatrices[index] = renderMatrix;
             if (!_dirtyBoneFlags[index])
             {
@@ -1110,6 +1133,66 @@ namespace XREngine.Rendering
 
             BoneMatricesBuffer.PushSubData();
         }
+
+        internal void RegisterGpuDrivenBoneIndices(IReadOnlyList<uint> boneIndices)
+        {
+            if (_gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
+                return;
+
+            for (int i = 0; i < boneIndices.Count; ++i)
+            {
+                uint boneIndex = boneIndices[i];
+                if (boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
+                    continue;
+
+                if (_gpuDrivenBoneRefCounts[boneIndex]++ == 0)
+                    ++_gpuDrivenBoneCount;
+
+                ClearDirtyBoneIndex((int)boneIndex);
+            }
+        }
+
+        internal void UnregisterGpuDrivenBoneIndices(IReadOnlyList<uint> boneIndices)
+        {
+            if (_gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
+                return;
+
+            for (int i = 0; i < boneIndices.Count; ++i)
+            {
+                uint boneIndex = boneIndices[i];
+                if (boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
+                    continue;
+
+                int refCount = _gpuDrivenBoneRefCounts[boneIndex];
+                if (refCount <= 0)
+                    continue;
+
+                refCount -= 1;
+                _gpuDrivenBoneRefCounts[boneIndex] = refCount;
+                if (refCount == 0 && _gpuDrivenBoneCount > 0)
+                    --_gpuDrivenBoneCount;
+            }
+        }
+
+        private bool IsBoneGpuDriven(int index)
+            => _gpuDrivenBoneRefCounts is not null
+                && index >= 0
+                && index < _gpuDrivenBoneRefCounts.Length
+                && _gpuDrivenBoneRefCounts[index] > 0;
+
+        private void ClearDirtyBoneIndex(int index)
+        {
+            if (_dirtyBoneFlags is null || _dirtyBoneIndices is null)
+                return;
+
+            if (index < 0 || index >= _dirtyBoneFlags.Length || !_dirtyBoneFlags[index])
+                return;
+
+            _dirtyBoneFlags[index] = false;
+            _dirtyBoneIndices.Remove((uint)index);
+            _bonesInvalidated = _dirtyBoneIndices.Count > 0;
+        }
+
         public void PushBlendshapeWeightsToGPU()
         {
             if (BlendshapeWeights is null || !_blendshapesInvalidated)

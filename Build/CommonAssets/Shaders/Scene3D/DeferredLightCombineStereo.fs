@@ -9,7 +9,7 @@
 
 const float MAX_REFLECTION_LOD = 4.0f;
 
-layout(location = 0) out vec3 OutLo; //Diffuse Light Color, to start off the HDR Scene Texture
+layout(location = 0) out vec4 OutLo; //Diffuse Light Color, to start off the HDR Scene Texture
 layout(location = 0) in vec3 FragPos;
 
 layout(binding = 0) uniform sampler2DArray AlbedoOpacity;
@@ -94,5 +94,5 @@ void main()
 	float specOcclusion = SpecularOcclusionEnabled ? GTSpecularOcclusion(NoV, ao, roughness) : ao;
 	vec3 ambient = kD * diffuse * diffuseAO + specular * specOcclusion;
 
-	OutLo = ambient + InLo;
+	OutLo = vec4(ambient + InLo, 1.0);
 }

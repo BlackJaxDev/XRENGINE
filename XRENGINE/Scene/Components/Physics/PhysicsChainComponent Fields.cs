@@ -287,6 +287,9 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         get => _referenceObject;
         set => SetField(ref _referenceObject, value);
     }
+    [Category("Execution")]
+    [DisplayName("GPU Sync To Bones")]
+    [Description("Compatibility mode that copies GPU particle results back to the CPU bone transforms asynchronously. Use the GPU-driven bone palette path when possible; enabling this adds extra staging, readback, and latency.")]
     public bool GpuSyncToBones
     {
         get => _gpuSyncToBones;

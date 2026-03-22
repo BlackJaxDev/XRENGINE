@@ -91,6 +91,7 @@ public static partial class Engine
 
     private static RenderStatsPacket? CollectRenderStats()
     {
+        var physicsChainSnapshot = XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
         var listenerSnapshot = Rendering.Stats.GetRenderMatrixListenerSnapshot();
         var listenerEntries = new RenderMatrixListenerEntry[listenerSnapshot.Length];
         for (int i = 0; i < listenerSnapshot.Length; i++)
@@ -139,6 +140,18 @@ public static partial class Engine
             AllocatedRenderBufferBytes = Rendering.Stats.AllocatedRenderBufferBytes,
             FBOBandwidthBytes = Rendering.Stats.FBOBandwidthBytes,
             FBOBindCount = Rendering.Stats.FBOBindCount,
+            PhysicsChainCpuUploadBytes = physicsChainSnapshot.CpuUploadBytes,
+            PhysicsChainGpuCopyBytes = physicsChainSnapshot.GpuCopyBytes,
+            PhysicsChainCpuReadbackBytes = physicsChainSnapshot.CpuReadbackBytes,
+            PhysicsChainDispatchGroupCount = physicsChainSnapshot.DispatchGroupCount,
+            PhysicsChainDispatchIterationCount = physicsChainSnapshot.DispatchIterationCount,
+            PhysicsChainResidentParticleBytes = physicsChainSnapshot.ResidentParticleBytes,
+            PhysicsChainStandaloneCpuUploadBytes = physicsChainSnapshot.StandaloneCpuUploadBytes,
+            PhysicsChainStandaloneCpuReadbackBytes = physicsChainSnapshot.StandaloneCpuReadbackBytes,
+            PhysicsChainBatchedCpuUploadBytes = physicsChainSnapshot.BatchedCpuUploadBytes,
+            PhysicsChainBatchedGpuCopyBytes = physicsChainSnapshot.BatchedGpuCopyBytes,
+            PhysicsChainBatchedCpuReadbackBytes = physicsChainSnapshot.BatchedCpuReadbackBytes,
+            PhysicsChainHierarchyRecalcMilliseconds = physicsChainSnapshot.HierarchyRecalcMilliseconds,
             RenderMatrixStatsReady = Rendering.Stats.RenderMatrixStatsReady,
             RenderMatrixApplied = Rendering.Stats.RenderMatrixApplied,
             RenderMatrixSetCalls = Rendering.Stats.RenderMatrixSetCalls,

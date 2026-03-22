@@ -89,6 +89,12 @@ namespace XREngine.Rendering.UI
         }
 
         private const string TextColorUniformName = "TextColor";
+        private const string OutlineColorUniformName = "OutlineColor";
+        private const string OutlineThicknessUniformName = "OutlineThickness";
+        private const string MsdfDistanceRangeUniformName = "MsdfDistanceRange";
+        private const string MsdfDistanceRangeMiddleUniformName = "MsdfDistanceRangeMiddle";
+        private const string MsdfFillBiasUniformName = "MsdfFillBias";
+        private const float DefaultMsdfFillBias = 0.5f;
 
         private readonly List<(Vector4 transform, Vector4 uvs)> _glyphs = [];
         private XRDataBuffer? _uvsBuffer;
@@ -235,6 +241,33 @@ namespace XREngine.Rendering.UI
                             UpdateText(true);
                     }
                     break;
+                case nameof(OutlineColor):
+                    {
+                        var mat = Mesh?.Material;
+                        if (mat is not null)
+                            mat.SetVector4(OutlineColorUniformName, OutlineColor);
+                        else
+                            UpdateText(true);
+                    }
+                    break;
+                case nameof(OutlineThickness):
+                    {
+                        var mat = Mesh?.Material;
+                        if (mat is not null)
+                            mat.SetFloat(OutlineThicknessUniformName, OutlineThickness);
+                        else
+                            UpdateText(true);
+                    }
+                    break;
+                case nameof(MsdfFillBias):
+                    {
+                        var mat = Mesh?.Material;
+                        if (mat is not null)
+                            mat.SetFloat(MsdfFillBiasUniformName, MsdfFillBias);
+                        else
+                            UpdateText(true);
+                    }
+                    break;
             }
         }
 
@@ -250,7 +283,7 @@ namespace XREngine.Rendering.UI
             uint count;
             lock (_glyphLock)
             {
-                Font.GetQuads(Text, _glyphs, FontSize, 0, 0, FontGlyphSet.EWrapMode.None, 5.0f, 2.0f);
+                Font.GetQuads(Text, _glyphs, FontSize, 0, 0, FontGlyphSet.EWrapMode.None, 0.0f, 2.0f);
                 count = (uint)(_glyphs?.Count ?? 0);
             }
             ResizeGlyphCount(count);
@@ -287,8 +320,9 @@ namespace XREngine.Rendering.UI
             CullMode = ECullMode.None,
             DepthTest = new()
             {
-                Enabled = ERenderParamUsage.Disabled,
-                Function = EComparison.Always
+                Enabled = ERenderParamUsage.Enabled,
+                Function = EComparison.Lequal,
+                UpdateDepth = false
             },
             BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
         };
@@ -314,6 +348,27 @@ namespace XREngine.Rendering.UI
         {
             get => _color;
             set => SetField(ref _color, value);
+        }
+
+        private ColorF4 _outlineColor = new(0.0f, 0.0f, 0.0f, 0.0f);
+        public ColorF4 OutlineColor
+        {
+            get => _outlineColor;
+            set => SetField(ref _outlineColor, value);
+        }
+
+        private float _outlineThickness = 0.0f;
+        public float OutlineThickness
+        {
+            get => _outlineThickness;
+            set => SetField(ref _outlineThickness, MathF.Max(0.0f, value));
+        }
+
+        private float _msdfFillBias = DefaultMsdfFillBias;
+        public float MsdfFillBias
+        {
+            get => _msdfFillBias;
+            set => SetField(ref _msdfFillBias, Math.Clamp(value, 0.0f, 1.0f));
         }
 
         private int _renderPass = (int)EDefaultRenderPass.TransparentForward;
@@ -348,14 +403,40 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         protected virtual XRMaterial CreateMaterial(XRTexture2D atlas)
         {
+            string fragmentShaderName = Font?.AtlasType switch
+            {
+                EFontAtlasType.Mtsdf => "TextMtsdf.fs",
+                EFontAtlasType.Msdf => "TextMsdf.fs",
+                _ => "Text.fs"
+            };
             XRShader vertexShader = XRShader.EngineShader(Path.Combine("Common", AnimatableTransforms ? "TextRotatable.vs" : "Text.vs"), EShaderType.Vertex);
             XRShader stereoVertexShader = XRShader.EngineShader(Path.Combine("Common", AnimatableTransforms ? "TextRotatableStereo.vs" : "TextStereo.vs"), EShaderType.Vertex);
-            XRShader[] nonVertexShaders = NonVertexShadersOverride ?? [XRShader.EngineShader(Path.Combine("Common", "Text.fs"), EShaderType.Fragment)];
-            return new([new ShaderVector4(Color, TextColorUniformName)], [atlas], new XRShader[] { vertexShader, stereoVertexShader }.Concat(nonVertexShaders))
+            XRShader[] nonVertexShaders = NonVertexShadersOverride ?? [XRShader.EngineShader(Path.Combine("Common", fragmentShaderName), EShaderType.Fragment)];
+            Debug.WriteAuxiliaryLog("text-material-diagnostics.log", $"UIText.CreateMaterial: shader={fragmentShaderName}, atlasType={Font?.AtlasType}, glyphs={Font?.Glyphs?.Count ?? 0}, atlas='{atlas.OriginalPath ?? atlas.FilePath ?? "<null>"}', fontAsset='{Font?.FilePath ?? "<null>"}', fontOriginal='{Font?.OriginalPath ?? "<null>"}', text='{SummarizeTextForDiagnostics(Text ?? string.Empty)}'");
+            ShaderVar[] parameters =
+            [
+                new ShaderVector4(Color, TextColorUniformName),
+                new ShaderVector4(OutlineColor, OutlineColorUniformName),
+                new ShaderFloat(OutlineThickness, OutlineThicknessUniformName),
+                new ShaderFloat(Font?.DistanceRange ?? 0.0f, MsdfDistanceRangeUniformName),
+                new ShaderFloat(Font?.DistanceRangeMiddle ?? 0.5f, MsdfDistanceRangeMiddleUniformName),
+                new ShaderFloat(MsdfFillBias, MsdfFillBiasUniformName),
+            ];
+
+            return new(parameters, [atlas], new XRShader[] { vertexShader, stereoVertexShader }.Concat(nonVertexShaders))
             {
                 RenderPass = RenderPass,
                 RenderOptions = RenderParameters
             };
+        }
+
+        private static string SummarizeTextForDiagnostics(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+
+            string sanitized = text.Replace("\r", "\\r").Replace("\n", "\\n");
+            return sanitized.Length <= 80 ? sanitized : sanitized[..80] + "...";
         }
 
         /// <summary>

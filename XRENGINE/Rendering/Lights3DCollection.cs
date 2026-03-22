@@ -59,7 +59,6 @@ namespace XREngine.Scene
         private static XRTextureCube DummyEnvironmentCubemap => _dummyEnvironmentCubemap ??= new XRTextureCube(1u);
 
         private static bool _loggedForwardLightingOnce = false;
-        private static bool _loggedForwardAoBindingOnce = false;
         private static bool _loggedShadowMapEnabledOnce = false;
 
         #endregion

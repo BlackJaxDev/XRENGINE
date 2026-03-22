@@ -177,7 +177,7 @@ namespace XREngine.Rendering.OpenGL
 
                     using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMeshUniforms"))
                     {
-                        SetMeshUniforms(modelMatrix, prevModelMatrix, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
+                        SetMeshUniforms(modelMatrix, prevModelMatrix, MeshRenderer, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
                     }
 
                     using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms"))
@@ -214,6 +214,7 @@ namespace XREngine.Rendering.OpenGL
             private static void SetMeshUniforms(
                 Matrix4x4 modelMatrix,
                 Matrix4x4 prevModelMatrix,
+                XRMeshRenderer meshRenderer,
                 GLRenderProgram vertexProgram,
                 GLRenderProgram? materialProgram,
                 EMeshBillboardMode billboardMode)
@@ -251,6 +252,8 @@ namespace XREngine.Rendering.OpenGL
                 uint transformId = Engine.Rendering.State.CurrentTransformId;
                 vertexProgram.Uniform("TransformId", transformId);
                 materialProgram?.Uniform("TransformId", transformId);
+                vertexProgram.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
+                materialProgram?.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
 
                 vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);

@@ -8,7 +8,7 @@
 // Reflection mip is derived from the texture's mip count; no fixed cap.
 const float MAX_REFLECTION_LOD = 4.0f; // Deprecated; retained to avoid breaking includes, actual max is queried per texture.
 
-layout(location = 0) out vec3 OutLo; //Diffuse Light Color, to start off the HDR Scene Texture
+layout(location = 0) out vec4 OutLo; //Diffuse Light Color, to start off the HDR Scene Texture
 layout(location = 0) in vec3 FragPos;
 
 layout(binding = 0) uniform sampler2D AlbedoOpacity;
@@ -16,7 +16,12 @@ layout(binding = 1) uniform sampler2D Normal;
 layout(binding = 2) uniform sampler2D RMSE;
 layout(binding = 3) uniform sampler2D AmbientOcclusionTexture;
 layout(binding = 4) uniform sampler2D DepthView; //Depth
+
+#ifdef XRENGINE_MSAA_DEFERRED
+layout(binding = 5) uniform sampler2DMS LightingTextureMS;
+#else
 layout(binding = 5) uniform sampler2D LightingTexture;
+#endif
 
 layout(binding = 6) uniform sampler2D BRDF;
 
@@ -308,7 +313,11 @@ void main()
         vec4 rmse = texture(RMSE, uv);
         float ao = UseAmbientOcclusion ? pow(texture(AmbientOcclusionTexture, uv).r, max(AmbientOcclusionPower, 0.001f)) : 1.0f;
         float depth = texture(DepthView, uv).r;
+#ifdef XRENGINE_MSAA_DEFERRED
+        vec3 InLo = max(texelFetch(LightingTextureMS, ivec2(gl_FragCoord.xy), gl_SampleID).rgb, vec3(0.0f));
+#else
         vec3 InLo = max(texture(LightingTexture, uv).rgb, vec3(0.0f));
+#endif
         vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
         //float fogDensity = noise3(fragPosWS);
 
@@ -392,5 +401,5 @@ void main()
         float specOcclusion = SpecularOcclusionEnabled ? GTSpecularOcclusion(NoV, ao, roughness) : ao;
         vec3 ambient = kD * diffuse * diffuseAO + specular * specOcclusion;
 
-        OutLo = ambient + InLo + emissiveIntensity * albedoColor;
+        OutLo = vec4(ambient + InLo + emissiveIntensity * albedoColor, 1.0);
 }

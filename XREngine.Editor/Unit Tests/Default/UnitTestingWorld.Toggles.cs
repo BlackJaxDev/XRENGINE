@@ -144,6 +144,12 @@ public static partial class EditorUnitTests
             /// Values are degrees.
             /// </summary>
             public YawPitchRollDegrees? YawPitchRoll { get; set; }
+
+            /// <summary>
+            /// Optional world-space translation offset to apply to the imported root.
+            /// Values are engine world units after import scaling.
+            /// </summary>
+            public TranslationXYZ? Translation { get; set; }
         }
 
         public class YawPitchRollDegrees
@@ -151,6 +157,13 @@ public static partial class EditorUnitTests
             public float Yaw { get; set; } = 0.0f;
             public float Pitch { get; set; } = 0.0f;
             public float Roll { get; set; } = 0.0f;
+        }
+
+        public class TranslationXYZ
+        {
+            public float X { get; set; } = 0.0f;
+            public float Y { get; set; } = 0.0f;
+            public float Z { get; set; } = 0.0f;
         }
 
         public List<ModelImportSettings> ModelsToImport { get; set; } =

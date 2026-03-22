@@ -43,9 +43,7 @@ namespace XREngine.Components
         private int _lastRenderObservedSwapGeneration = -1;
         private bool _loggedStaleNonScreenFrameWarning = false;
         private bool _forceDirectRenderingForBackdropBlur = false;
-        private int _renderModeDiagCount = 0;
         private bool _autoDisableOffscreenForBackdropBlur = true;
-        private int _cameraBindingDiagCount = 0;
 
         private bool _preferOffscreenRenderingForNonScreenSpaces = true;
         /// <summary>
@@ -477,7 +475,6 @@ namespace XREngine.Components
             return _worldSpaceQuadCommand.Mesh is not null;
         }
 
-        private int _renderDiagCount = 0;
         private void RenderNonScreenCanvasToTexture()
         {
             if (!IsActive)

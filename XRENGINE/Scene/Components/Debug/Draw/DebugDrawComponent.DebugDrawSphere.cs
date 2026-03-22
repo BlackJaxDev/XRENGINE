@@ -19,7 +19,7 @@ namespace XREngine.Components
             public float Radius
             {
                 get => radius;
-                set => SetField(ref radius, value);
+                set => radius = value;
             }
 
             /// <summary>
@@ -28,7 +28,7 @@ namespace XREngine.Components
             public Vector3 LocalOffset
             {
                 get => localOffset;
-                set => SetField(ref localOffset, value);
+                set => localOffset = value;
             }
 
             public override void Render(TransformBase transform)

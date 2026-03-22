@@ -39,7 +39,6 @@ namespace XREngine.Components
             set => SetField(ref _pitchIncrementModifier, value);
         }
 
-        private float _lastMouseMoveLogTime = -1.0f;
         private float _lastMoveTickLogTime = -1.0f;
 
         /// <summary>

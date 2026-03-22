@@ -578,6 +578,22 @@ namespace XREngine.Components.Scene.Mesh
                     }
                 }
 
+                if (CurrentLODRenderer?.HasGpuDrivenBoneSource == true)
+                {
+                    Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
+                    SetSkinnedRootRenderMatrix(basis);
+                    _skinnedLocalBounds = _bindPoseBounds;
+                    _skinnedBoundsDirty = false;
+                    _hasSkinnedBounds = true;
+                    _skinnedBoundsAreWorldSpace = false;
+                    if (RenderInfo is not null)
+                    {
+                        RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
+                        RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
+                    }
+                    return true;
+                }
+
                 bool useGpu = Engine.IsRenderThread && Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
 
                 // Try GPU path first if enabled

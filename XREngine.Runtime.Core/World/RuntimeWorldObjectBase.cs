@@ -256,7 +256,7 @@ public abstract class RuntimeWorldObjectBase : XRObjectBase
             tickProperty.SetValue(this, value);
     }
 
-    protected internal void ClearTicks()
+    public void ClearTicks()
     {
         foreach ((ETickGroup group, int order, WorldTick tick) in _tickCache)
             World?.UnregisterTick(group, order, tick);

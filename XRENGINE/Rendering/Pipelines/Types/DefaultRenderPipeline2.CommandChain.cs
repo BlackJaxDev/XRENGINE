@@ -355,6 +355,10 @@ public partial class DefaultRenderPipeline2
             GetDesiredFBOSizeInternal,
             NeedsRecreateMsaaFbo);
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            MsaaLightCombineFBOName,
+            CreateMsaaLightCombineFBO,
+            GetDesiredFBOSizeInternal);
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             DepthPreloadFBOName,
             CreateDepthPreloadFBO,
             GetDesiredFBOSizeInternal);
@@ -447,18 +451,62 @@ public partial class DefaultRenderPipeline2
             x.DynamicClearDepth = () => RuntimeEnableMsaa;
         }))
         {
-            // Depth preload blit is only needed for MSAA.
+            // Depth preload is only needed for MSAA.
             var msaaPreload = c.Add<VPRC_IfElse>();
             msaaPreload.ConditionEvaluator = () => RuntimeEnableMsaa;
             {
                 var preloadCmds = new ViewportRenderCommandContainer(this);
-                preloadCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthPreloadFBOName, ForwardPassMsaaFBOName);
+
+                // When deferred MSAA is active, blit per-sample depth from the MSAA GBuffer
+                // instead of the non-MSAA shader-based preload. This preserves per-sample
+                // depth at silhouette edges so the skybox can render at actual sky samples
+                // and forward meshes get correct per-sample depth testing.
+                var deferredChoice = preloadCmds.Add<VPRC_IfElse>();
+                deferredChoice.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+                {
+                    var blitCmds = new ViewportRenderCommandContainer(this);
+                    blitCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                        MsaaGBufferFBOName,
+                        ForwardPassMsaaFBOName,
+                        EReadBufferMode.ColorAttachment0,
+                        blitColor: false,
+                        blitDepth: true,
+                        blitStencil: false,
+                        linearFilter: false);
+                    deferredChoice.TrueCommands = blitCmds;
+                }
+                {
+                    // Forward-only MSAA: shader-based preload from non-MSAA depth
+                    var shaderCmds = new ViewportRenderCommandContainer(this);
+                    shaderCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthPreloadFBOName, ForwardPassMsaaFBOName);
+                    deferredChoice.FalseCommands = shaderCmds;
+                }
+
                 msaaPreload.TrueCommands = preloadCmds;
             }
 
             //Render the deferred pass lighting result, no depth testing
             c.Add<VPRC_DepthTest>().Enable = false;
-            c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+
+            // When deferred MSAA is active, use the per-sample LightCombine variant
+            // so direct light is read from the MSAA lighting texture per-sample via
+            // sampler2DMS + gl_SampleID. This avoids the dark silhouette edges that
+            // occur when the premature resolve averages sky-samples (zero) with
+            // geometry lighting before the skybox has a chance to fill them.
+            var lightCompositeBranch = c.Add<VPRC_IfElse>();
+            lightCompositeBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+            {
+                var msaaCmds = new ViewportRenderCommandContainer(this);
+                msaaCmds.Add<VPRC_SampleShading>().Enable = true;
+                msaaCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = MsaaLightCombineFBOName;
+                msaaCmds.Add<VPRC_SampleShading>().Enable = false;
+                lightCompositeBranch.TrueCommands = msaaCmds;
+            }
+            {
+                var stdCmds = new ViewportRenderCommandContainer(this);
+                stdCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+                lightCompositeBranch.FalseCommands = stdCmds;
+            }
 
             //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
             c.Add<VPRC_DepthTest>().Enable = true;
@@ -681,40 +729,44 @@ public partial class DefaultRenderPipeline2
 
     }
 
-    /// <summary>Caches FXAA and TSR textures, FBOs, and history resources.</summary>
+    /// <summary>Caches post-AA and TSR support resources used by the default pipeline.</summary>
     private void AppendAntiAliasingResourceCaching(ViewportRenderCommandContainer c)
     {
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             FxaaOutputTextureName,
             CreateFxaaOutputTexture,
-            NeedsRecreateTextureFullSize,
+            NeedsRecreateOutputTextureFullSize,
             ResizeTextureFullSize);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             PostProcessOutputFBOName,
             CreatePostProcessOutputFBO,
-            GetDesiredFBOSizeInternal);
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateFboDueToOutputFormat);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             FxaaFBOName,
             CreateFxaaFBO,
-            GetDesiredFBOSizeFull);
+            GetDesiredFBOSizeFull,
+            NeedsRecreateFboDueToOutputFormat);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             TsrHistoryColorTextureName,
             CreateTsrHistoryColorTexture,
-            NeedsRecreateTextureFullSize,
+            NeedsRecreateOutputTextureFullSize,
             ResizeTextureFullSize);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             TsrHistoryColorFBOName,
             CreateTsrHistoryColorFBO,
-            GetDesiredFBOSizeFull);
+            GetDesiredFBOSizeFull,
+            NeedsRecreateFboDueToOutputFormat);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             TsrUpscaleFBOName,
             CreateTsrUpscaleFBO,
-            GetDesiredFBOSizeFull);
+            GetDesiredFBOSizeFull,
+            NeedsRecreateFboDueToOutputFormat);
 
         //c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
         //    UserInterfaceFBOName,
@@ -722,13 +774,14 @@ public partial class DefaultRenderPipeline2
         //    GetDesiredFBOSizeInternal);
     }
 
-    /// <summary>Appends the FXAA/TSR upscale chain (internal resolution to full resolution).</summary>
+    /// <summary>Appends the FXAA/SMAA/TSR post-AA chain.</summary>
     private void AppendFxaaTsrUpscaleChain(ViewportRenderCommandContainer c)
     {
-        // FXAA / TSR upscale chain: runs when FXAA is active or TSR needs upscaling from internal to full resolution.
+        // Post-AA chain: FXAA and SMAA run against the post-process output, while TSR
+        // resolves from internal resolution and writes a full-resolution result.
         {
             var upscaleChoice = c.Add<VPRC_IfElse>();
-            upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeNeedsTsrUpscale;
+            upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
             {
                 var upscaleCmds = new ViewportRenderCommandContainer(this);
 
@@ -738,18 +791,11 @@ public partial class DefaultRenderPipeline2
                     upscaleCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
                 }
 
-                // Second pass: upscale to full resolution.
-                // FXAA: applies FXAA while upscaling.
-                // TSR: resolves against full-resolution history.
+                // Second pass: apply the selected anti-aliasing path.
                 using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
                 {
-                    var fxaaOrTsr = upscaleCmds.Add<VPRC_IfElse>();
-                    fxaaOrTsr.ConditionEvaluator = () => RuntimeEnableFxaa;
-                    {
-                        var fxaaUpscale = new ViewportRenderCommandContainer(this);
-                        fxaaUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
-                        fxaaOrTsr.TrueCommands = fxaaUpscale;
-                    }
+                    var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
+                    tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
                     {
                         var tsrUpscale = new ViewportRenderCommandContainer(this);
                         tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
@@ -761,7 +807,26 @@ public partial class DefaultRenderPipeline2
                             blitDepth: false,
                             blitStencil: false,
                             linearFilter: false);
-                        fxaaOrTsr.FalseCommands = tsrUpscale;
+                        tsrOrPostAa.TrueCommands = tsrUpscale;
+                    }
+                    {
+                        var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
+                        var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
+                        postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
+                        {
+                            var fxaaUpscale = new ViewportRenderCommandContainer(this);
+                            fxaaUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
+                            postAaChoice.TrueCommands = fxaaUpscale;
+                        }
+                        {
+                            var smaaUpscale = new ViewportRenderCommandContainer(this);
+                            var smaa = smaaUpscale.Add<VPRC_SMAA>();
+                            smaa.SourceTextureName = PostProcessOutputTextureName;
+                            smaa.OutputTextureName = SmaaOutputTextureName;
+                            smaa.OutputFBOName = SmaaFBOName;
+                            postAaChoice.FalseCommands = smaaUpscale;
+                        }
+                        tsrOrPostAa.FalseCommands = fxaaOrSmaa;
                     }
                 }
 
@@ -830,17 +895,23 @@ public partial class DefaultRenderPipeline2
                     else
                     {
                         // Dynamic AA/upscale selection: choose the correct source at render time.
-                        // FXAA and TSR upscale both write to FxaaOutputTexture, so both use their
-                        // respective FBOs to blit to the output. When neither is active, PostProcess
-                        // output goes directly to screen.
+                        // FXAA, SMAA, and TSR each publish a distinct post-AA output FBO; when none
+                        // are active, the post-process output goes directly to screen.
                         var upscaleOutputChoice = c.Add<VPRC_IfElse>();
-                        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeNeedsTsrUpscale;
+                        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
                         {
                             var upscaleOutput = new ViewportRenderCommandContainer(this);
-                            var fxaaOrTsrFinal = upscaleOutput.Add<VPRC_IfElse>();
-                            fxaaOrTsrFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
-                            fxaaOrTsrFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
-                            fxaaOrTsrFinal.FalseCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
+                            var tsrOrPostAaFinal = upscaleOutput.Add<VPRC_IfElse>();
+                            tsrOrPostAaFinal.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
+                            tsrOrPostAaFinal.TrueCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
+                            {
+                                var postAaOutput = new ViewportRenderCommandContainer(this);
+                                var fxaaOrSmaaFinal = postAaOutput.Add<VPRC_IfElse>();
+                                fxaaOrSmaaFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
+                                fxaaOrSmaaFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
+                                fxaaOrSmaaFinal.FalseCommands = CreateFinalBlitCommands(SmaaFBOName, bypassVendorUpscale);
+                                tsrOrPostAaFinal.FalseCommands = postAaOutput;
+                            }
                             upscaleOutputChoice.TrueCommands = upscaleOutput;
                         }
                         upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessFBOName, bypassVendorUpscale);
@@ -1130,7 +1201,7 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             PostProcessOutputTextureName,
             CreatePostProcessOutputTexture,
-            NeedsRecreateTextureInternalSize,
+            NeedsRecreateOutputTextureInternalSize,
             ResizeTextureInternalSize);
 
         if (EnableFxaa)
@@ -1139,7 +1210,7 @@ public partial class DefaultRenderPipeline2
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 FxaaOutputTextureName,
                 CreateFxaaOutputTexture,
-                NeedsRecreateTextureFullSize,
+                NeedsRecreateOutputTextureFullSize,
                 ResizeTextureFullSize);
         }
 

@@ -854,14 +854,15 @@ namespace XREngine
                     }
                 }
 
+                private const float DefaultDebugTextScale = 0.0012f;
                 private static readonly ConcurrentDictionary<int, (UIText text, float lastUpdatedTime)> DebugTexts = new();
                 private static readonly ResourcePool<UIText> TextPool = new(() => new());
                 private static readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color, float scale)> DebugTextUpdateQueue = new();
 
-                public static void RenderText(Vector3 worldPosition, string text, ColorF4 color, float scale = 0.0006f)
+                public static void RenderText(Vector3 worldPosition, string text, ColorF4 color, float scale = DefaultDebugTextScale)
                 {
                     if (Engine.IsRenderThread)
-                        UpdateDebugText(worldPosition, text, color);
+                        UpdateDebugText(worldPosition, text, color, scale);
                     else
                     {
                         using (_debugShapeQueueLock.EnterScope())
@@ -869,7 +870,7 @@ namespace XREngine
                     }
                 }
 
-                private static void UpdateDebugText(Vector3 worldPosition, string text, ColorF4 color, float scale = 0.0006f)
+                private static void UpdateDebugText(Vector3 worldPosition, string text, ColorF4 color, float scale = DefaultDebugTextScale)
                 {
                     int hash = HashCode.Combine(text.GetHashCode(), worldPosition.GetHashCode());
                     DebugTexts.AddOrUpdate(hash, _ =>

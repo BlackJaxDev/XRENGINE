@@ -57,17 +57,30 @@ public static partial class EditorUnitTests
 
         private static Matrix4x4? GetOptionalRootTransformMatrix(Settings.ModelImportSettings model)
         {
-            if (model?.YawPitchRoll is null)
+            if (model is null)
                 return null;
 
-            // JSON values are degrees; Quaternion APIs expect radians.
-            var ypr = model.YawPitchRoll;
-            var rot = Quaternion.CreateFromYawPitchRoll(
-                XRMath.DegToRad(ypr.Yaw),
-                XRMath.DegToRad(ypr.Pitch),
-                XRMath.DegToRad(ypr.Roll));
+            Matrix4x4 transform = Matrix4x4.Identity;
 
-            return Matrix4x4.CreateFromQuaternion(rot);
+            if (model.YawPitchRoll is not null)
+            {
+                // JSON values are degrees; Quaternion APIs expect radians.
+                var ypr = model.YawPitchRoll;
+                var rot = Quaternion.CreateFromYawPitchRoll(
+                    XRMath.DegToRad(ypr.Yaw),
+                    XRMath.DegToRad(ypr.Pitch),
+                    XRMath.DegToRad(ypr.Roll));
+
+                transform *= Matrix4x4.CreateFromQuaternion(rot);
+            }
+
+            if (model.Translation is not null)
+            {
+                var translation = model.Translation;
+                transform *= Matrix4x4.CreateTranslation(translation.X, translation.Y, translation.Z);
+            }
+
+            return transform == Matrix4x4.Identity ? null : transform;
         }
 
         private static ModelImportOptions? CreateImportOptions(Settings.ModelImportSettings model)

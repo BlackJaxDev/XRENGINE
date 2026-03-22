@@ -160,6 +160,7 @@ static class SourceMetadataParser
         ParseClass(source, "Settings", metadata);
         ParseClass(source, "ModelImportSettings", metadata);
         ParseClass(source, "YawPitchRollDegrees", metadata);
+        ParseClass(source, "TranslationXYZ", metadata);
         return metadata;
     }
 

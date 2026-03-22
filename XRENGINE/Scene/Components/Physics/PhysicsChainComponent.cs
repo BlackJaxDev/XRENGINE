@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using JoltPhysicsSharp;
 using System;
+using System.Diagnostics;
 using System.Numerics;
 using XREngine;
 using XREngine.Data;
@@ -8,6 +9,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
 
@@ -21,6 +23,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private bool _isValidating;
     private bool _rebuildQueued;
     private int _particlesVersion;
+    private int _particleStateVersion;
 
     private static string FormatRoot(Transform? root)
         => root?.ToString() ?? "<null>";
@@ -136,6 +139,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private void Prepare()
     {
+        using var profilerState = Profiler.Start("PhysicsChainComponent.Prepare");
+
         _deltaTime = Delta;
         switch (UpdateMode)
         {
@@ -186,6 +191,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < _particleTrees.Count; ++i)
         {
             ParticleTree pt = _particleTrees[i];
+            if (pt.Particles is not { Count: > 0 })
+                continue;
 
             // Restore rest-pose rotations before reading matrices. ApplyParticlesToTransforms()
             // writes simulation rotation deltas back to the hierarchy each frame; without this
@@ -196,7 +203,12 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             // Ensure we sample the current (post-InitTransforms / post-animation) pose.
             // Without this, we can end up using stale world matrices from the prior frame,
             // effectively allowing the simulated pose to slowly become the new "rest".
-            pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Parallel).Wait();
+            using (Profiler.Start("PhysicsChainComponent.Prepare.HierarchyRecalc"))
+            {
+                long hierarchyStart = Stopwatch.GetTimestamp();
+                pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Parallel).Wait();
+                GPUPhysicsChainDispatcher.RecordHierarchyRecalcTicks(Stopwatch.GetTimestamp() - hierarchyStart);
+            }
 
             pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
 
@@ -266,9 +278,20 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private bool IsNeedUpdate()
         => _weight > 0 && !(DistantDisable && _distantDisabled);
 
+    private bool HasSimulatableParticles()
+    {
+        for (int i = 0; i < _particleTrees.Count; ++i)
+        {
+            if (_particleTrees[i].Particles is { Count: > 0 })
+                return true;
+        }
+
+        return false;
+    }
+
     private void PreUpdate()
     {
-        if (IsNeedUpdate())
+        if (IsNeedUpdate() && HasSimulatableParticles())
             InitTransforms();
         
         ++_preUpdateCount;
@@ -573,6 +596,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         UpdateParameters();
         _particlesVersion++;
         MarkGpuBuffersDirty();
+        RebuildGpuDrivenRendererBindings();
     }
 
     private void AppendParticleTree(Transform root)
@@ -729,13 +753,11 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private static void InitTransforms(ParticleTree pt)
     {
         if (pt.Particles is null || pt.Particles.Count == 0)
-        {
-            LogFault($"InitTransforms:NoParticles:{FormatRoot(pt.Root)}", $"InitTransforms skipped: no particles. Root={FormatRoot(pt.Root)}.");
             return;
-        }
 
-        Particle[] particles = [.. pt.Particles];
-        for (int i = 0; i < particles.Length; ++i)
+        List<Particle> particles = pt.Particles;
+        int particleCount = particles.Count;
+        for (int i = 0; i < particleCount; ++i)
         {
             Particle p = particles[i];
             if (p.Transform is null)
@@ -757,6 +779,11 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     {
         for (int i = 0; i < _particleTrees.Count; ++i)
             ResetParticlesPosition(_particleTrees[i]);
+
+        unchecked
+        {
+            ++_particleStateVersion;
+        }
 
         _objectPrevPosition = Transform.WorldTranslation;
         _time = 0.0f;
@@ -784,18 +811,19 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             return;
         }
 
-        Particle[] particles = [.. pt.Particles];
-        for (int i = 0; i < particles.Length; ++i)
+        List<Particle> particles = pt.Particles;
+        int particleCount = particles.Count;
+        for (int i = 0; i < particleCount; ++i)
         {
             Particle p = particles[i];
             if (p.Transform is not null)
                 p.Position = p.PrevPosition = p.Transform.WorldTranslation;
             else // end bone
             {
-                if (p.ParentIndex < 0 || p.ParentIndex >= particles.Length)
+                if (p.ParentIndex < 0 || p.ParentIndex >= particleCount)
                 {
                     LogFault($"ResetParticles:BadParent:{FormatRoot(pt.Root)}:{p.ParentIndex}",
-                        $"ResetParticlesPosition invalid parent index {p.ParentIndex} for particle {i} (count={particles.Length}, root={FormatRoot(pt.Root)}).");
+                        $"ResetParticlesPosition invalid parent index {p.ParentIndex} for particle {i} (count={particleCount}, root={FormatRoot(pt.Root)}).");
                     continue;
                 }
 
@@ -918,8 +946,9 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         Vector3 objectMove = loopIndex == 0 ? _objectMove : Vector3.Zero; // only first loop consider object move
 
-        Particle[] particles = [.. pt.Particles];
-        for (int i = 0; i < particles.Length; ++i)
+        List<Particle> particles = pt.Particles;
+        int particleCount = particles.Count;
+        for (int i = 0; i < particleCount; ++i)
         {
             Particle p = particles[i];
             if (p.ParentIndex >= 0)
@@ -962,14 +991,15 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             return;
         }
 
-        Particle[] particles = [.. pt.Particles];
-        for (int i = 1; i < particles.Length; ++i)
+        List<Particle> particles = pt.Particles;
+        int particleCount = particles.Count;
+        for (int i = 1; i < particleCount; ++i)
         {
             Particle childPtcl = particles[i];
-            if (childPtcl.ParentIndex < 0 || childPtcl.ParentIndex >= particles.Length)
+            if (childPtcl.ParentIndex < 0 || childPtcl.ParentIndex >= particleCount)
             {
                 LogFault($"ApplyParticleTransforms:BadParent:{FormatRoot(pt.Root)}:{childPtcl.ParentIndex}",
-                    $"ApplyParticleTransforms invalid parent index {childPtcl.ParentIndex} for particle {i} (count={particles.Length}, root={FormatRoot(pt.Root)}).");
+                    $"ApplyParticleTransforms invalid parent index {childPtcl.ParentIndex} for particle {i} (count={particleCount}, root={FormatRoot(pt.Root)}).");
                 continue;
             }
 
@@ -1048,8 +1078,9 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             return;
         }
 
-        Particle[] particles = [.. pt.Particles];
-        for (int i = 0; i < particles.Length; ++i)
+        List<Particle> particles = pt.Particles;
+        int particleCount = particles.Count;
+        for (int i = 0; i < particleCount; ++i)
         {
             Particle childPtcl = particles[i];
             if (childPtcl.ParentIndex >= 0)
@@ -1057,10 +1088,10 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 childPtcl.PrevPosition += _objectMove;
                 childPtcl.Position += _objectMove;
 
-                if (childPtcl.ParentIndex >= particles.Length)
+                if (childPtcl.ParentIndex >= particleCount)
                 {
                     LogFault($"SkipUpdateParticles:BadParent:{FormatRoot(pt.Root)}:{childPtcl.ParentIndex}",
-                        $"SkipUpdateParticles invalid parent index {childPtcl.ParentIndex} for particle {i} (count={particles.Length}, root={FormatRoot(pt.Root)}).");
+                        $"SkipUpdateParticles invalid parent index {childPtcl.ParentIndex} for particle {i} (count={particleCount}, root={FormatRoot(pt.Root)}).");
                     continue;
                 }
 
@@ -1105,12 +1136,16 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private void ApplyParticlesToTransforms()
     {
+        using var profilerState = Profiler.Start("PhysicsChainComponent.ApplyParticlesToTransforms");
+
         for (int i = 0; i < _particleTrees.Count; ++i)
             ApplyParticlesToTransforms(_particleTrees[i]);
     }
 
     private void ApplyParticlesToTransforms(EInterpolationMode mode, float alpha)
     {
+        using var profilerState = Profiler.Start("PhysicsChainComponent.ApplyParticlesToTransforms");
+
         for (int i = 0; i < _particleTrees.Count; ++i)
             ApplyParticlesToTransforms(_particleTrees[i], mode, alpha);
     }

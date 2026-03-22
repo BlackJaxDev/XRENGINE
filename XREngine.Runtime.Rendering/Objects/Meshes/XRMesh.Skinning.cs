@@ -9,6 +9,77 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh
 {
+    public void RebuildSkinningBuffersFromVertices()
+    {
+        ClearSkinningBuffers();
+
+        if (Vertices is not { Length: > 0 })
+        {
+            UtilizedBones = [];
+            return;
+        }
+
+        var boneToIndexTable = new Dictionary<TransformBase, int>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        var utilizedBones = new List<(TransformBase tfm, Matrix4x4 invBindWorldMtx)>(UtilizedBones.Length);
+
+        for (int i = 0; i < UtilizedBones.Length; ++i)
+        {
+            var utilized = UtilizedBones[i];
+            if (boneToIndexTable.ContainsKey(utilized.tfm))
+                continue;
+
+            boneToIndexTable.Add(utilized.tfm, utilizedBones.Count);
+            utilizedBones.Add(utilized);
+        }
+
+        var weightsPerVertex = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[VertexCount];
+        _maxWeightCount = 0;
+
+        for (int vertexIndex = 0; vertexIndex < VertexCount; ++vertexIndex)
+        {
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = Vertices[vertexIndex].Weights;
+            if (weights is null || weights.Count == 0)
+                continue;
+
+            var copiedWeights = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>(weights.Count, System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            foreach (var pair in weights)
+            {
+                copiedWeights[pair.Key] = pair.Value;
+                if (boneToIndexTable.ContainsKey(pair.Key))
+                    continue;
+
+                boneToIndexTable.Add(pair.Key, utilizedBones.Count);
+                utilizedBones.Add((pair.Key, pair.Value.bindInvWorldMatrix));
+            }
+
+            weightsPerVertex[vertexIndex] = copiedWeights;
+            _maxWeightCount = Math.Max(_maxWeightCount, copiedWeights.Count);
+        }
+
+        if (boneToIndexTable.Count == 0)
+        {
+            UtilizedBones = [];
+            return;
+        }
+
+        UtilizedBones = [.. utilizedBones];
+        PopulateSkinningBuffers(boneToIndexTable, weightsPerVertex);
+    }
+
+    private void ClearSkinningBuffers()
+    {
+        Buffers.RemoveBuffer(ECommonBufferType.BoneMatrixOffset.ToString());
+        Buffers.RemoveBuffer(ECommonBufferType.BoneMatrixCount.ToString());
+        Buffers.RemoveBuffer($"{ECommonBufferType.BoneMatrixIndices}Buffer");
+        Buffers.RemoveBuffer($"{ECommonBufferType.BoneMatrixWeights}Buffer");
+
+        BoneWeightOffsets = null;
+        BoneWeightCounts = null;
+        BoneWeightIndices = null;
+        BoneWeightValues = null;
+        _maxWeightCount = 0;
+    }
+
     private void InitializeSkinning(
         Mesh mesh,
         Dictionary<string, List<SceneNode>> nodeCache,

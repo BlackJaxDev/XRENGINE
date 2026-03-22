@@ -136,6 +136,7 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
 
     private static RenderStatsPacket? CollectRenderStats()
     {
+        var physicsChainSnapshot = XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
         var listenerSnapshot = Engine.Rendering.Stats.GetRenderMatrixListenerSnapshot();
         var listenerEntries = new RenderMatrixListenerEntry[listenerSnapshot.Length];
         for (int i = 0; i < listenerSnapshot.Length; i++)
@@ -184,6 +185,18 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             AllocatedRenderBufferBytes = Engine.Rendering.Stats.AllocatedRenderBufferBytes,
             FBOBandwidthBytes = Engine.Rendering.Stats.FBOBandwidthBytes,
             FBOBindCount = Engine.Rendering.Stats.FBOBindCount,
+            PhysicsChainCpuUploadBytes = physicsChainSnapshot.CpuUploadBytes,
+            PhysicsChainGpuCopyBytes = physicsChainSnapshot.GpuCopyBytes,
+            PhysicsChainCpuReadbackBytes = physicsChainSnapshot.CpuReadbackBytes,
+            PhysicsChainDispatchGroupCount = physicsChainSnapshot.DispatchGroupCount,
+            PhysicsChainDispatchIterationCount = physicsChainSnapshot.DispatchIterationCount,
+            PhysicsChainResidentParticleBytes = physicsChainSnapshot.ResidentParticleBytes,
+            PhysicsChainStandaloneCpuUploadBytes = physicsChainSnapshot.StandaloneCpuUploadBytes,
+            PhysicsChainStandaloneCpuReadbackBytes = physicsChainSnapshot.StandaloneCpuReadbackBytes,
+            PhysicsChainBatchedCpuUploadBytes = physicsChainSnapshot.BatchedCpuUploadBytes,
+            PhysicsChainBatchedGpuCopyBytes = physicsChainSnapshot.BatchedGpuCopyBytes,
+            PhysicsChainBatchedCpuReadbackBytes = physicsChainSnapshot.BatchedCpuReadbackBytes,
+            PhysicsChainHierarchyRecalcMilliseconds = physicsChainSnapshot.HierarchyRecalcMilliseconds,
             RenderMatrixStatsReady = Engine.Rendering.Stats.RenderMatrixStatsReady,
             RenderMatrixApplied = Engine.Rendering.Stats.RenderMatrixApplied,
             RenderMatrixSetCalls = Engine.Rendering.Stats.RenderMatrixSetCalls,
