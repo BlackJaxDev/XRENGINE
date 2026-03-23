@@ -10,17 +10,12 @@
 uniform mat4 ModelMatrix;
 uniform mat4 ViewMatrix;
 uniform mat4 ProjMatrix;
-uniform mat4 InverseViewMatrix;
 
 // Camera (matches EEngineUniform.CameraPosition)
 uniform vec3 CameraPosition;
 
-// Time for animations (set by engine or custom)
-uniform float Time;
-
-// Screen parameters
-uniform float ScreenWidth;
-uniform float ScreenHeight;
+// Time for animations (provided by engine when RenderTime is requested)
+uniform float RenderTime;
 
 // ============================================
 // Convenience macros for compatibility with u_ prefix code
@@ -31,63 +26,11 @@ uniform float ScreenHeight;
 #define u_ModelViewMatrix (ViewMatrix * ModelMatrix)
 #define u_ModelViewProjectionMatrix (ProjMatrix * ViewMatrix * ModelMatrix)
 #define u_CameraPosition CameraPosition
-#define u_Time Time
+#define u_Time RenderTime
 #define u_ScreenParams vec4(ScreenWidth, ScreenHeight, 1.0 + 1.0/ScreenWidth, 1.0 + 1.0/ScreenHeight)
 
-// ============================================
-// Light Data (Forward rendering - from ForwardLighting snippet)
-// Primary directional light info extracted from DirectionalLights[0]
-// ============================================
-struct BaseLight
-{
-    vec3 Color;
-    float DiffuseIntensity;
-    float AmbientIntensity;
-    mat4 WorldToLightSpaceProjMatrix;
-};
-
-struct DirLight
-{
-    BaseLight Base;
-    vec3 Direction;
-};
-
-uniform vec3 GlobalAmbient;
-uniform int DirLightCount; 
-uniform DirLight DirectionalLights[2];
-
-// ============================================
-// Helper functions for uber shader light access
-// ============================================
-vec3 getLightDirection() {
-    return DirLightCount > 0 ? DirectionalLights[0].Direction : vec3(0.0, -1.0, 0.0);
-}
-
-vec3 getLightColor() {
-    return DirLightCount > 0 ? DirectionalLights[0].Base.Color : vec3(1.0);
-}
-
-float getLightIntensity() {
-    return DirLightCount > 0 ? DirectionalLights[0].Base.DiffuseIntensity : 1.0;
-}
-
-mat4 getLightSpaceMatrix() {
-    return DirLightCount > 0 ? DirectionalLights[0].Base.WorldToLightSpaceProjMatrix : mat4(1.0);
-}
-
-// Convenience macros that call the helper functions
-#define u_LightDirection getLightDirection()
-#define u_LightColor getLightColor()
-#define u_LightIntensity getLightIntensity()
-#define u_AmbientColor GlobalAmbient
-#define u_AmbientIntensity 1.0
-#define u_LightSpaceMatrix getLightSpaceMatrix()
-
-// ============================================
-// Shadow Map (Directional light shadow) - matches ForwardLighting snippet
-// ============================================
-layout(binding = 15) uniform sampler2D ShadowMap;
-uniform bool ShadowMapEnabled;
+// Forward-lighting uniforms, shadows, Forward+, and probe bindings are declared
+// by the shared engine snippets included by fragment-stage Uber shaders.
 
 // ============================================
 // Main Texture Properties

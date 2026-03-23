@@ -5,6 +5,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_RenderToCubemapFace : ViewportRenderCommand
     {
         private XRFrameBuffer? _targetFbo;

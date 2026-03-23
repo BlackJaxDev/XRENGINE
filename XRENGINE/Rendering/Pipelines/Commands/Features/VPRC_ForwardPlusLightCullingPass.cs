@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Builds an SSBO of local (point/spot) lights and writes per-tile visible light indices.
     /// OpenGL-first; skipped for stereo and shadow passes.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_ForwardPlusLightCullingPass : ViewportRenderCommand
     {
         public const int TileSize = 16;

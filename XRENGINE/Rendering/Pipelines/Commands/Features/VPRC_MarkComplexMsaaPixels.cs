@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Writes stencil bit 2 (0x04) for pixels where MSAA samples diverge (geometric edges).
     /// Subsequent deferred lighting passes use the stencil to shade complex pixels per-sample.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_MarkComplexMsaaPixels : ViewportRenderCommand
     {
         /// <summary>

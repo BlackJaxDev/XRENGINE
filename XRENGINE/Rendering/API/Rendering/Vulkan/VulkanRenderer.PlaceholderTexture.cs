@@ -82,23 +82,19 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        Api.GetImageMemoryRequirements(device, _placeholderImage, out MemoryRequirements memReqs);
-        MemoryAllocateInfo allocInfo = new()
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memReqs.Size,
-            MemoryTypeIndex = FindMemoryType(memReqs.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit),
-        };
+        VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_placeholderImage, MemoryPropertyFlags.DeviceLocalBit);
+        _imageAllocations[_placeholderImage.Handle] = allocation;
+        _placeholderImageMemory = allocation.Memory;
 
-        if (Api.AllocateMemory(device, ref allocInfo, null, out _placeholderImageMemory) != Result.Success)
+        if (Api.BindImageMemory(device, _placeholderImage, _placeholderImageMemory, allocation.Offset) != Result.Success)
         {
+            _imageAllocations.TryRemove(_placeholderImage.Handle, out _);
+            FreeMemoryAllocation(allocation);
             Api.DestroyImage(device, _placeholderImage, null);
             _placeholderImage = default;
-            Debug.VulkanWarning("[Vulkan] Failed to allocate placeholder image memory.");
+            Debug.VulkanWarning("[Vulkan] Failed to bind placeholder image memory.");
             return;
         }
-
-        Api.BindImageMemory(device, _placeholderImage, _placeholderImageMemory, 0);
 
         // ── Upload magenta pixel via staging buffer ──────────────────────
         byte* pixel = stackalloc byte[4];
@@ -245,13 +241,16 @@ public unsafe partial class VulkanRenderer
         }
         else
         {
+            // Fault-containment fallback for transitions not yet enumerated.
+            // Placeholder textures only transition Undefined→TransferDst→ShaderReadOnly
+            // in normal usage, so this branch should not fire in practice.
             barrier.SrcAccessMask = AccessFlags.MemoryWriteBit;
             barrier.DstAccessMask = AccessFlags.MemoryReadBit;
             srcStage = PipelineStageFlags.AllCommandsBit;
             dstStage = PipelineStageFlags.AllCommandsBit;
         }
 
-        Api!.CmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, null, 0, null, 1, &barrier);
+        CmdPipelineBarrierTracked(cmd, srcStage, dstStage, 0, 0, null, 0, null, 1, &barrier);
     }
 
     // ── Destruction ──────────────────────────────────────────────────────
@@ -276,14 +275,18 @@ public unsafe partial class VulkanRenderer
         if (_placeholderImage.Handle != 0)
         {
             Api!.DestroyImage(device, _placeholderImage, null);
+            if (_imageAllocations.TryRemove(_placeholderImage.Handle, out VulkanMemoryAllocation alloc))
+                FreeMemoryAllocation(alloc);
+            else if (_placeholderImageMemory.Handle != 0)
+                Api!.FreeMemory(device, _placeholderImageMemory, null);
             _placeholderImage = default;
         }
-
-        if (_placeholderImageMemory.Handle != 0)
+        else if (_placeholderImageMemory.Handle != 0)
         {
             Api!.FreeMemory(device, _placeholderImageMemory, null);
-            _placeholderImageMemory = default;
         }
+
+        _placeholderImageMemory = default;
 
         _placeholderTextureReady = false;
     }

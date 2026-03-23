@@ -3,6 +3,7 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_BindFBOByName : ViewportStateRenderCommand<VPRC_UnbindFBO>
     {
         public string? FrameBufferName { get; set; }

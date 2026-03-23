@@ -3,6 +3,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_CacheOrCreateTexture : ViewportRenderCommand
     {
         /// <summary>

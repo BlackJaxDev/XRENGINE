@@ -24,10 +24,21 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="OpenVR.NET">
+      <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
     <ProjectReference Include="..\XREngine.Editor\XREngine.Editor.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Untracked WIP test file using xUnit (Fact) instead of NUnit; excluded until ready -->
+    <Compile Remove="Rendering\RenderPipelineScriptCompilerTests.cs" />
   </ItemGroup>
 
 </Project>

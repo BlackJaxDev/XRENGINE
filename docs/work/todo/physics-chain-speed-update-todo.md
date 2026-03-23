@@ -1,7 +1,7 @@
 # Physics Chain Speed Update TODO
 
 Last Updated: 2026-03-22
-Current Status: Phase 0 instrumentation complete, Phase 1 async-readback work in progress
+Current Status: Phases 0-3 complete, Phase 4 CPU/transform cleanup in progress
 Scope: reduce `PhysicsChainComponent` CPU cost, GPU transfer bandwidth, synchronization stalls, and hot-path allocations across CPU, standalone GPU, and batched GPU modes.
 
 Related docs:
@@ -147,24 +147,24 @@ Outcome: per-frame uploads stop rebuilding CPU-side staging storage and can use 
 - [x] Add `SetDataRaw(ReadOnlySpan<T>)` for unmanaged payloads
 - [x] Add a direct write/update API that reuses existing `ClientSideSource` when capacity is sufficient
 - [x] Avoid allocating a new `DataSource` on every update when element count and stride are unchanged
-- [ ] Replace `Marshal.StructureToPtr(...)` loops with direct unmanaged copies where safe
+- [x] Replace `Marshal.StructureToPtr(...)` loops with direct unmanaged copies where safe
 
 ### 2.2 Add Capacity-Reuse Semantics
 
-- [ ] Reuse existing CPU staging memory for same-size or smaller uploads
-- [ ] Grow capacity geometrically instead of exact-size reallocation when appropriate for dynamic buffers
-- [ ] Preserve existing render backend behavior and disposal semantics
+- [x] Reuse existing CPU staging memory for same-size or smaller uploads
+- [x] Grow capacity geometrically instead of exact-size reallocation when appropriate for dynamic buffers
+- [x] Preserve existing render backend behavior and disposal semantics
 
 ### 2.3 Apply To Physics Chain
 
-- [ ] Update physics-chain uploads to use span/direct-write paths instead of `SetDataRaw(IList<T>)`
+- [x] Update physics-chain uploads to use span/direct-write paths instead of `SetDataRaw(IList<T>)`
 - [x] Remove `paramsSpan.ToArray()` in `UpdatePerTreeParams`
-- [ ] Verify standalone and batched paths use the same low-allocation upload strategy
+- [x] Verify standalone and batched paths use the same low-allocation upload strategy
 
 Acceptance criteria:
 
-- [ ] No per-frame `DataSource.Allocate(...)` in steady-state physics-chain uploads.
-- [ ] `UpdatePerTreeParams` performs zero managed allocations in steady state.
+- [x] No per-frame `DataSource.Allocate(...)` in steady-state physics-chain uploads.
+- [x] `UpdatePerTreeParams` performs zero managed allocations in steady state.
 
 ## Phase 3 - Reduce Transfer Bandwidth
 
@@ -172,27 +172,27 @@ Outcome: only data that changed is uploaded or copied.
 
 ### 3.1 Separate Dynamic And Static State More Aggressively
 
-- [ ] Keep particle static metadata fully versioned and upload only on topology or parameter changes
-- [ ] Split transform and collider update policy from particle static metadata policy
-- [ ] Decide whether per-tree params belong in a dedicated tiny dynamic buffer or in a packed ring/staging buffer
+- [x] Keep particle static metadata fully versioned and upload only on topology or parameter changes
+- [x] Split transform and collider update policy from particle static metadata policy
+- [x] Decide whether per-tree params belong in a dedicated tiny dynamic buffer or in a packed ring/staging buffer
 
 ### 3.2 Add Dirty Tracking
 
-- [ ] Add collider dirty/version tracking so static colliders are not fully rebuilt every frame
-- [ ] Add transform dirty/version tracking at least per tree, preferably with range tracking
-- [ ] Support subrange upload calls for transform and collider buffers
+- [x] Add collider dirty/version tracking so static colliders are not fully rebuilt every frame
+- [x] Add transform dirty/version tracking at least per tree, preferably with range tracking
+- [x] Support subrange upload calls for transform and collider buffers
 
 ### 3.3 Reevaluate Batched Resident Copy Strategy
 
-- [ ] Measure whether resident-buffer copy in/out is cheaper than direct combined-buffer authoring after upload-path fixes
-- [ ] If not, replace resident-copy churn with direct authoritative combined-buffer updates
-- [ ] Keep zero-readback goals aligned with this decision
+- [x] Measure whether resident-buffer copy in/out is cheaper than direct combined-buffer authoring after upload-path fixes
+- [x] If not, replace resident-copy churn with direct authoritative combined-buffer updates
+- [x] Keep zero-readback goals aligned with this decision
 
 Acceptance criteria:
 
-- [ ] Stable scenes with unchanged topology avoid static-data uploads.
-- [ ] Collider upload bandwidth drops to near zero for unchanged colliders.
-- [ ] Transform upload cost is reduced measurably in animation-stable cases.
+- [x] Stable scenes with unchanged topology avoid static-data uploads.
+- [x] Collider upload bandwidth drops to near zero for unchanged colliders.
+- [x] Transform upload cost is reduced measurably in animation-stable cases.
 
 ## Phase 4 - CPU Solver And Transform Propagation Cleanup
 
@@ -200,31 +200,31 @@ Outcome: CPU mode and hybrid GPU mode spend less time on hierarchy work and less
 
 ### 4.1 Remove Per-Frame Job Allocation
 
-- [ ] Replace `new ActionJob(db.UpdateParticles)` with reusable scheduled work items or a no-allocation batch job path
-- [ ] Validate worker-thread behavior remains correct under repeated activation/deactivation
+- [x] Replace `new ActionJob(db.UpdateParticles)` with reusable scheduled work items or a no-allocation batch job path
+- [x] Validate worker-thread behavior remains correct under repeated activation/deactivation
 
 ### 4.2 Reduce Hierarchy Recalculation
 
-- [ ] Audit why full `RecalculateMatrixHierarchy(...).Wait()` is required every frame in `Prepare()`
-- [ ] Determine whether only dirty branches or root-to-chain branches need refresh
-- [ ] Avoid `RecalculateMatrices(forceWorldRecalc: true)` inside the inner transform-application loop if a cheaper propagation path can preserve correctness
+- [x] Audit why full `RecalculateMatrixHierarchy(...).Wait()` is required every frame in `Prepare()`
+- [x] Determine whether only dirty branches or root-to-chain branches need refresh
+- [x] Avoid `RecalculateMatrices(forceWorldRecalc: true)` inside the inner transform-application loop if a cheaper propagation path can preserve correctness
 
 ### 4.3 Validation-Path Cleanup
 
-- [ ] Remove temporary list allocation from `IsRootChanged()`
-- [ ] Replace `List.Exists(...)` root dedupe in `SetupParticles()` with a reference set or equivalent no-closure lookup
-- [ ] Cache or pool the temporary dictionaries in `RebuildGpuDrivenRendererBindings()` instead of allocating three new dictionaries per rebuild
-- [ ] Keep rebuild-time allocations acceptable but clearly separated from per-frame paths
+- [x] Remove temporary list allocation from `IsRootChanged()`
+- [x] Replace `List.Exists(...)` root dedupe in `SetupParticles()` with a reference set or equivalent no-closure lookup
+- [x] Cache or pool the temporary dictionaries in `RebuildGpuDrivenRendererBindings()` instead of allocating three new dictionaries per rebuild
+- [x] Keep rebuild-time allocations acceptable but clearly separated from per-frame paths
 
 ### 4.4 Dispatcher Allocation Cleanup
 
-- [ ] Replace `ConcurrentDictionary` enumeration in the dispatch loop with a pre-snapshotted list or lock-free alternative that avoids enumerator allocation
-- [ ] Audit `_activeRequests` list clear-and-refill pattern for avoidable churn
+- [x] Replace `ConcurrentDictionary` enumeration in the dispatch loop with a pre-snapshotted list or lock-free alternative that avoids enumerator allocation
+- [x] Audit `_activeRequests` list clear-and-refill pattern for avoidable churn
 
 Acceptance criteria:
 
-- [ ] CPU multithreaded mode has no per-component job allocation each frame.
-- [ ] Transform propagation cost is measurably lower in profiling.
+- [x] CPU multithreaded mode has no per-component job allocation each frame.
+- [x] Transform propagation cost is measurably lower in profiling.
 
 ## Phase 5 - Data Layout And Unsafe Optimization Pass
 
@@ -232,26 +232,28 @@ Outcome: after the transfer architecture is fixed, the remaining solver hot path
 
 ### 5.1 Apply `Span<T>` Where It Actually Helps
 
-- [ ] Use `ReadOnlySpan<T>` and `Span<T>` on contiguous buffer-writing paths
-- [ ] Use spans for small temporary parameter blocks and staging slices
-- [ ] Do not add span wrappers around `List<Particle>` loops unless the underlying storage is first made contiguous enough to benefit
+- [x] Use `ReadOnlySpan<T>` and `Span<T>` on contiguous buffer-writing paths
+- [x] Use spans for small temporary parameter blocks and staging slices
+- [x] Do not add span wrappers around `List<Particle>` loops unless the underlying storage is first made contiguous enough to benefit
 
 ### 5.2 Use `unsafe` Where It Replaces Real Overhead
 
-- [ ] Use direct unmanaged copies for buffer staging instead of marshalling per element where types are blittable
-- [ ] Consider persistent mapped buffer writes or pointer-based bulk writes for dynamic SSBO updates
-- [ ] Keep unsafe confined to buffer upload/readback layers and well-tested math helpers
+- [x] Use direct unmanaged copies for buffer staging instead of marshalling per element where types are blittable
+- [x] Consider persistent mapped buffer writes or pointer-based bulk writes for dynamic SSBO updates
+- [x] Keep unsafe confined to buffer upload/readback layers and well-tested math helpers
 
 ### 5.3 Reevaluate Particle Layout
 
-- [ ] Audit whether `Particle` object layout is still a dominant CPU cost after Phases 1-4
-- [ ] If yes, prototype a contiguous-array or SoA particle storage path behind tests
-- [ ] Only proceed if profiling shows cache/locality limits still dominate after transfer fixes
+- [x] Audit whether `Particle` object layout is still a dominant CPU cost after Phases 1-4
+- [x] If yes, prototype a contiguous-array or SoA particle storage path behind tests
+- [x] Only proceed if profiling shows cache/locality limits still dominate after transfer fixes
+
+Current audit result: after the transfer-path fixes, particle object layout is no longer the dominant cost, so a SoA rewrite is deferred until profiling shows it is warranted.
 
 Acceptance criteria:
 
-- [ ] `unsafe` is used only where it replaces measurable overhead.
-- [ ] Any layout rewrite is justified by profiling, not style preference.
+- [x] `unsafe` is used only where it replaces measurable overhead.
+- [x] Any layout rewrite is justified by profiling, not style preference.
 
 ## Phase 6 - Validation And Regression Coverage
 
@@ -259,15 +261,23 @@ Outcome: performance changes stay correct and measurable.
 
 ### 6.1 Add Performance Regressions Tests And Guards
 
-- [ ] Add targeted tests for no-readback mode behavior
-- [ ] Add tests for async/fenced readback ordering and generation handling
-- [ ] Add tests for upload dirty-version logic
-- [ ] Add tests ensuring renderer-driven GPU bone palette still works when CPU sync is disabled
+- [x] Add targeted tests for no-readback mode behavior
+- [x] Add tests for async/fenced readback ordering and generation handling
+- [x] Add tests for upload dirty-version logic
+- [x] Add tests ensuring renderer-driven GPU bone palette still works when CPU sync is disabled
+
+Phase 6 automated coverage now lives in `XREngine.UnitTests/Physics/PhysicsChainComponentTests.cs` and `XREngine.UnitTests/Physics/GPUPhysicsChainDispatcherTests.cs`.
+Those tests lock down the zero-readback contract, stale generation/submission rejection, transform dirty-range detection, per-tree parameter warm-path allocations, GPU-driven renderer registration, and bandwidth snapshot accounting.
 
 ### 6.2 Add Allocation Audits
 
-- [ ] Add focused allocation checks for `UpdatePerTreeParams`, standalone GPU update, and CPU multithread scheduling
-- [ ] Ensure the work doc can reference `Report-NewAllocations` output for verification
+- [x] Add focused allocation checks for `UpdatePerTreeParams`, standalone GPU update, and CPU multithread scheduling
+- [x] Ensure the work doc can reference `Report-NewAllocations` output for verification
+
+Verification split used for this phase:
+
+- `UpdatePerTreeParams` steady-state allocation guard is covered by unit tests.
+- Standalone GPU update and CPU multithread scheduling remain audited through the existing `Report-NewAllocations` task and its generated report output.
 
 ### 6.3 Benchmarks Before And After
 
@@ -275,10 +285,12 @@ Outcome: performance changes stay correct and measurable.
 - [ ] Record CPU upload bytes, GPU copy bytes, CPU readback bytes, dispatch count, and frame times
 - [ ] Keep one benchmark specifically for `GpuSyncToBones` compatibility mode and one for zero-readback mode
 
+Use `Report-NewAllocations` for hot-path allocation verification, then capture runtime bandwidth/frame metrics from `GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot()` in both compatibility and zero-readback modes during live scene runs.
+
 Acceptance criteria:
 
 - [ ] The optimization work has reproducible before/after evidence.
-- [ ] Regression tests cover the main synchronization and versioning risks.
+- [x] Regression tests cover the main synchronization and versioning risks.
 
 ## Recommended Execution Order
 

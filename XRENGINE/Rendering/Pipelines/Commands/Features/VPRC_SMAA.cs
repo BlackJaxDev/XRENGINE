@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// This implementation uses local edge detection, blend-weight estimation, and neighborhood blending
 /// without external area/search textures so it can remain fully self-contained in the command layer.
 /// </summary>
+[RenderPipelineScriptCommand]
 public sealed class VPRC_SMAA : ViewportRenderCommand
 {
     private const string EdgeDetectionShaderCode = """

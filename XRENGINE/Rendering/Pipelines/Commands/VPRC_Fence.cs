@@ -4,6 +4,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Inserts a named synchronization point into the authored pipeline and publishes its completion into the variable store.
     /// The current implementation is a named memory barrier marker over existing renderer synchronization primitives.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public sealed class VPRC_Fence : ViewportRenderCommand
     {
         private EMemoryBarrierMask _mask =

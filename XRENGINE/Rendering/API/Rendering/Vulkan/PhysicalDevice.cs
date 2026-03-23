@@ -129,4 +129,24 @@ public unsafe partial class VulkanRenderer
 
         throw new Exception("Failed to find suitable memory type.");
     }
+
+    public bool TryFindMemoryType(uint typeFilter, MemoryPropertyFlags memProps, out uint memoryTypeIndex)
+    {
+        Api!.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memProperties);
+
+        for (int i = 0; i < memProperties.MemoryTypeCount; i++)
+        {
+            if ((typeFilter & (1 << i)) == 0)
+                continue;
+
+            if ((memProperties.MemoryTypes[i].PropertyFlags & memProps) != memProps)
+                continue;
+
+            memoryTypeIndex = (uint)i;
+            return true;
+        }
+
+        memoryTypeIndex = 0;
+        return false;
+    }
 }

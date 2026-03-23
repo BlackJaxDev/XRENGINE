@@ -49,9 +49,14 @@ public unsafe partial class VulkanRenderer
 		}
 
 		if (buffer.Handle != 0)
+		{
 			Api!.DestroyBuffer(device, buffer, null);
-
-		if (memory.Handle != 0)
+			if (_bufferAllocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation alloc))
+				FreeMemoryAllocation(alloc);
+			else if (memory.Handle != 0)
+				Api!.FreeMemory(device, memory, null);
+		}
+		else if (memory.Handle != 0)
 			Api!.FreeMemory(device, memory, null);
 	}
 
@@ -71,7 +76,9 @@ public unsafe partial class VulkanRenderer
 		{
 			Silk.NET.Vulkan.Buffer buffer = new() { Handle = entry.Key };
 			Api!.DestroyBuffer(device, buffer, null);
-			if (entry.Value.Handle != 0)
+			if (_bufferAllocations.TryRemove(entry.Key, out VulkanMemoryAllocation alloc))
+				FreeMemoryAllocation(alloc);
+			else if (entry.Value.Handle != 0)
 				Api!.FreeMemory(device, entry.Value, null);
 		}
 	}
@@ -165,16 +172,9 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			Api.GetBufferMemoryRequirements(Device, buffer, out MemoryRequirements memReqs);
 
-			MemoryAllocateInfo allocInfo = new()
-			{
-				SType = StructureType.MemoryAllocateInfo,
-				AllocationSize = memReqs.Size,
-				MemoryTypeIndex = Renderer.FindMemoryType(memReqs.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit),
-			};
-
-			if (Api.AllocateMemory(Device, ref allocInfo, null, out memory) != Result.Success)
+			MemoryPropertyFlags props = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
+			if (!Renderer.MemoryAllocator.TryAllocateForBuffer(Api!, Device, buffer, props, out VulkanMemoryAllocation allocation))
 			{
 				Api.DestroyBuffer(Device, buffer, null);
 				WarnOnce("Failed to allocate memory for engine uniform buffer.");
@@ -182,7 +182,9 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			Api.BindBufferMemory(Device, buffer, memory, 0);
+			Renderer._bufferAllocations[buffer.Handle] = allocation;
+			memory = allocation.Memory;
+			Api.BindBufferMemory(Device, buffer, memory, allocation.Offset);
 			Renderer.TrackMeshUniformBuffer(buffer, memory);
 			return true;
 		}

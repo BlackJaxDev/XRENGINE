@@ -59,6 +59,7 @@ public unsafe partial class VulkanRenderer
                         continue;
 
                     Api!.DestroyDescriptorPool(device, block.Pool, null);
+                    Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
                 }
             }
         }
@@ -201,8 +202,8 @@ public unsafe partial class VulkanRenderer
             {
                 SType = StructureType.DescriptorPoolCreateInfo,
                 Flags = usesUpdateAfterBind
-                    ? DescriptorPoolCreateFlags.FreeDescriptorSetBit | DescriptorPoolCreateFlags.UpdateAfterBindBit
-                    : DescriptorPoolCreateFlags.FreeDescriptorSetBit,
+                    ? DescriptorPoolCreateFlags.UpdateAfterBindBit
+                    : 0,
                 PoolSizeCount = (uint)poolSizes.Length,
                 PPoolSizes = poolSizesPtr,
                 MaxSets = allocationCapacity * (uint)layouts.Length
@@ -210,6 +211,8 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.CreateDescriptorPool(device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
                 return false;
+
+            Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
 
             block = new ComputeDescriptorPoolBlock
             {

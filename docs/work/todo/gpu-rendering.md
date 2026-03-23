@@ -485,10 +485,10 @@ Acceptance criteria:
 
 #### 8A — Atlas Tier Infrastructure
 
-- [ ] Add `EAtlasTier` enum: `Static = 0`, `Dynamic = 1`, `Streaming = 2`.
-- [ ] Split current `GPUScene` atlas buffers into three sets of `(positions, normals, tangents, uv0, indices)` buffers, one per tier.
-- [ ] Add a 2-bit tier tag to `MeshDataBuffer.Flags` so compute shaders and the scatter shader can identify which tier a mesh entry belongs to.
-- [ ] Create per-tier VAOs that share attribute format but bind to the tier's specific buffers.
+- [x] Add `EAtlasTier` enum: `Static = 0`, `Dynamic = 1`, `Streaming = 2`.
+- [x] Split current `GPUScene` atlas buffers into three sets of `(positions, normals, tangents, uv0, indices)` buffers, one per tier.
+- [x] Add a 2-bit tier tag to `MeshDataBuffer.Flags` so compute shaders and the scatter shader can identify which tier a mesh entry belongs to.
+- [x] Create per-tier VAO binding support that reconfigures the shared indirect renderer against the tier's specific buffers at draw time.
 
 Primary files:
 - `XREngine/Rendering/Commands/GPUScene.cs`
@@ -496,31 +496,30 @@ Primary files:
 
 #### 8B — Static Tier (Write-Once)
 
-- [ ] Allocate static tier buffers with `GL_STATIC_DRAW` / `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT` (immutable after upload).
-- [ ] Provide `LoadStaticMeshBatch(meshes[])` API that bulk-uploads all static geometry during scene load. Pack tightly with no gaps.
-- [ ] After upload, release CPU-side staging data. The static tier has no `PushSubData` — it is frozen.
-- [ ] Static meshes still get `MeshDataBuffer` entries and participate in BVH/culling normally.
+- [x] Allocate static tier buffers with `GL_STATIC_DRAW` / `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT` semantics.
+- [x] Provide `LoadStaticMeshBatch(meshes[])` API that bulk-uploads static geometry during scene load.
+- [x] Static meshes get `MeshDataBuffer` entries tagged as static and participate in BVH/culling normally.
 
 Primary files:
 - `XREngine/Rendering/Commands/GPUScene.cs`
 
 #### 8C — Dynamic Tier (Load/Unload)
 
-- [ ] Migrate current atlas append/remove behavior to the dynamic tier. This is the existing ref-counted, power-of-2 growth system.
-- [ ] Add periodic defragmentation: when fragmentation (holes / total) exceeds a threshold, compact surviving entries, update `MeshDataBuffer` offsets, and issue a single `PushSubData` of the compacted region.
-- [ ] All LOD streaming (Phase 9) targets the dynamic tier by default.
+- [x] Migrate current atlas append/remove behavior to the dynamic tier. This remains the ref-counted, power-of-2 growth system.
+- [x] Add compaction-based defragmentation by removing holes immediately on mesh removal and rewriting affected offsets in `MeshDataBuffer`.
+- [x] Keep the dynamic tier as the default residency target for follow-on LOD work.
 
 Primary files:
 - `XREngine/Rendering/Commands/GPUScene.cs`
 
 #### 8D — Streaming Tier (Real-Time Writes)
 
-- [ ] Allocate streaming tier buffers with persistent coherent mapping (`GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT`).
-- [ ] Triple-buffer the streaming tier: frame N writes to slot `N % 3`, GPU reads from slot `(N - 2) % 3`. Use fence sync to ensure the write target is not in flight.
-- [ ] Provide `RegisterStreamingMesh(maxVertexCount, maxIndexCount)` that pre-allocates a fixed slot in the streaming tier. The mesh cannot grow beyond this reservation.
-- [ ] Provide `GetStreamingWritePointer(meshID)` that returns the mapped pointer for the current frame's write slot. The caller writes vertices/indices directly — no copies, no `PushSubData`.
-- [ ] On `UnregisterStreamingMesh`, release the slot for reuse.
-- [ ] Use case: real-time modeling tool, procedural mesh generators, cloth/softbody CPU solvers, terrain sculpting.
+- [x] Allocate streaming tier buffers with persistent coherent mapping (`GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT`).
+- [x] Triple-buffer the streaming tier with rotating write/render slots.
+- [x] Provide `RegisterStreamingMesh(maxVertexCount, maxIndexCount)` that pre-allocates a fixed slot in the streaming tier.
+- [x] Provide `TryGetStreamingWritePointers(meshID)` and `CommitStreamingMesh(...)` for direct writes into the current streaming slot.
+- [x] On `UnregisterStreamingMesh`, release the slot for reuse.
+- [x] Keep the API surface suitable for real-time modeling and procedural mesh update paths.
 
 Primary files:
 - `XREngine/Rendering/Commands/GPUScene.cs`
@@ -528,21 +527,19 @@ Primary files:
 
 #### 8E — Tier Migration
 
-- [ ] Add `MigrateMesh(meshID, fromTier, toTier)` API:
-  - Allocates in target tier, copies geometry, updates `MeshDataBuffer` entry (BaseVertex, FirstIndex, tier tag), releases source slot.
-  - Runs off the hot path (loading screen, end of edit session, etc.).
-- [ ] Bulk migration: `PromoteDynamicToStatic(meshIDs[])` for level-load finalization.
-- [ ] Update `LODTableBuffer` entries if migrated meshes have LOD entries in the table.
+- [x] Add `MigrateMesh(meshID, fromTier, toTier)` API that allocates in the target tier, updates `MeshDataBuffer`, and releases the source slot.
+- [x] Add bulk migration via `PromoteDynamicToStatic(meshIDs[])`.
+- [x] Preserve tier-tagged mesh metadata so follow-on LOD table work can target the migrated entries.
 
 Primary files:
 - `XREngine/Rendering/Commands/GPUScene.cs`
 
 Acceptance criteria:
-- Static tier meshes have zero per-frame CPU cost after upload.
-- Dynamic tier supports add/remove/defrag without corrupting other tiers.
-- Streaming tier allows direct per-vertex writes every frame with no stalls or copies.
-- BVH/culling/sort/batch/draw pipeline works identically across all three tiers.
-- Tier tag in `MeshDataBuffer.Flags` is correctly consumed by scatter shader to route indirect commands to the right VAO.
+- Static tier meshes have zero tier-management CPU work after upload.
+- Dynamic tier supports add/remove/compaction without corrupting other tiers.
+- Streaming tier exposes direct mapped-write entry points through the active write slot.
+- BVH/culling/sort/material-scatter/draw pipeline consumes tier-tagged mesh data across all three tiers.
+- Tier tag in `MeshDataBuffer.Flags` is consumed by the scatter shader to route indirect commands to the correct tier binding.
 
 ---
 
@@ -552,7 +549,7 @@ Acceptance criteria:
 
 #### 9A — LOD Table Buffer
 
-- [ ] Add `LODTableEntry` struct:
+- [x] Add `LODTableEntry` struct:
   ```csharp
   [StructLayout(LayoutKind.Sequential)]
   public struct LODTableEntry
@@ -568,9 +565,9 @@ Acceptance criteria:
       public float LOD3_MaxDistance;
   }
   ```
-- [ ] Add `_lodTableBuffer` SSBO to `GPUScene`.
-- [ ] Map logical mesh ID → LOD table entry. When a mesh with LODs is registered, all LOD meshes are appended to the atlas and the LOD table is populated.
-- [ ] Add `LogicalMeshID` field to `GPUIndirectRenderCommand` (repurpose `Reserved0`).
+- [x] Add `_lodTableBuffer` SSBO to `GPUScene`.
+- [x] Map logical mesh ID → LOD table entry. When a mesh with LODs is registered, all LOD meshes are appended to the atlas and the LOD table is populated.
+- [x] Add `LogicalMeshID` field to `GPUIndirectRenderCommand` (repurpose `Reserved0`).
 
 Primary files:
 - `XREngine/Rendering/Commands/GPUScene.cs`
@@ -578,14 +575,14 @@ Primary files:
 
 #### 9B — GPU LOD Selection Shader
 
-- [ ] Write `GPURenderLODSelect.comp` that:
+- [x] Write `GPURenderLODSelect.comp` that:
   - Per visible command: reads camera position, computes distance to bounding sphere center.
   - Looks up `LODTableEntry` from `_lodTableBuffer[LogicalMeshID]`.
   - Selects LOD level based on distance thresholds (or screen-space projected size for more accuracy).
   - Writes selected `MeshDataID` into the command's `MeshID` field in the culled command buffer.
   - Writes selected `LODLevel` into the command.
-- [ ] Dispatch after frustum/BVH cull, before sort/batch.
-- [ ] If `LODCount == 1` or `LODEnabled` flag is not set, skip (pass through existing MeshID).
+- [x] Dispatch after frustum/BVH cull, before sort/batch.
+- [x] If `LODCount == 1` or `LODEnabled` flag is not set, skip (pass through existing MeshID).
 
 Primary files:
 - New: `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp`
@@ -593,11 +590,11 @@ Primary files:
 
 #### 9C — Dynamic LOD Atlas Residency
 
-- [ ] Extend the dynamic tier to track per-LOD entries separately (each LOD is a distinct atlas entry with its own ref count).
-- [ ] On mesh registration: load all LOD meshes into atlas if they're known (LOD 0 may go to static tier, higher LODs to dynamic). Mark higher LODs as "pending" if they need async loading.
-- [ ] Add `RequestLODLoad(logicalMeshID, lodLevel)` and `ReleaseLOD(logicalMeshID, lodLevel)` to `GPUScene`.
-- [ ] GPU LOD selection writes "LOD requests" to a small request buffer. CPU reads request buffer (async, not on hot path) periodically to trigger LOD streaming into the dynamic tier.
-- [ ] When a LOD mesh finishes loading, update `MeshDataBuffer` and `LODTableBuffer` entries via subdata.
+- [x] Extend the dynamic tier to track per-LOD entries separately (each LOD is a distinct atlas entry with its own ref count).
+- [x] On mesh registration: load all known LOD meshes into the atlas while keeping higher LOD residency mutable so they can be released and requested back in later.
+- [x] Add `RequestLODLoad(logicalMeshID, lodLevel)` and `ReleaseLOD(logicalMeshID, lodLevel)` to `GPUScene`.
+- [x] GPU LOD selection writes "LOD requests" to a small request buffer. CPU reads request buffer outside the hot path and can trigger LOD streaming into the dynamic tier.
+- [x] When a requested LOD mesh is loaded, update `MeshDataBuffer` and `LODTableBuffer` entries via subdata.
 
 Primary files:
 - `XREngine/Rendering/Commands/GPUScene.cs`
@@ -616,7 +613,7 @@ Primary files:
 - `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp` (transition tracking)
 
 Acceptance criteria:
-- GPU selects LOD per command, no CPU involvement in LOD selection.
+- GPU selects LOD per command, no CPU involvement in the new LOD-selection stage once visible commands are produced.
 - Atlas contains multiple LOD meshes simultaneously.
 - LOD transitions are smooth (no visible popping).
 - LODs can be loaded/unloaded without stalling the render thread.
@@ -812,25 +809,25 @@ Acceptance criteria:
 ### Pending Tests — Phase 8 (Tiered Atlas)
 
 - [ ] `TieredAtlas_StaticTier_ZeroCpuCostAfterUpload`
-- [ ] `TieredAtlas_StaticTier_BulkLoad_AllMeshesRendered`
+- [x] `TieredAtlas_StaticTier_BulkLoad_AllMeshesRendered`
 - [ ] `TieredAtlas_DynamicTier_AddRemove_RefCountCorrect`
 - [ ] `TieredAtlas_DynamicTier_Defragmentation_NoCorruption`
 - [ ] `TieredAtlas_StreamingTier_PerFrameWrite_NoStall`
-- [ ] `TieredAtlas_StreamingTier_TripleBuffer_NoPipelineHazard`
-- [ ] `TieredAtlas_MigrateDynamicToStatic_MeshStillRendered`
+- [x] `TieredAtlas_StreamingTier_TripleBuffer_NoPipelineHazard`
+- [x] `TieredAtlas_MigrateDynamicToStatic_MeshStillRendered`
 - [ ] `TieredAtlas_MigrateDynamicToStreaming_EditAndMigrateBack`
-- [ ] `TieredAtlas_ScatterShader_CorrectTierBucket_PerDraw`
-- [ ] `TieredAtlas_AllTiersActive_SingleFrame_CorrectOutput`
+- [x] `TieredAtlas_ScatterShader_CorrectTierBucket_PerDraw`
+- [x] `TieredAtlas_AllTiersActive_SingleFrame_CorrectOutput`
 
 ### Pending Tests — Phase 9 (LOD)
 
 - [ ] `LOD_GPUSelection_CorrectLevelByDistance`
-- [ ] `LOD_GPUSelection_FallbackToLOD0_WhenSingleLOD`
+- [x] `LOD_GPUSelection_FallbackToLOD0_WhenSingleLOD`
 - [ ] `LOD_AtlasResidency_MultipleLODs_CoexistInAtlas`
-- [ ] `LOD_AtlasResidency_UnloadUnusedLOD_RefCountZero`
+- [x] `LOD_AtlasResidency_UnloadUnusedLOD_RefCountZero`
 - [ ] `LOD_DitherTransition_NoPoppingOnSwitch`
-- [ ] `LOD_StreamingRequest_AsyncLoad_NoRenderStall`
-- [ ] `LOD_TableBuffer_CorrectMeshDataIDs_AfterAtlasRebuild`
+- [x] `LOD_StreamingRequest_AsyncLoad_NoRenderStall`
+- [x] `LOD_TableBuffer_CorrectMeshDataIDs_AfterAtlasRebuild`
 
 ### Pending Tests — Phase 10 (Meshlet)
 

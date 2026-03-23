@@ -2670,6 +2670,9 @@ namespace XREngine.Rendering
 
                 for (uint tier = 0; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
                 {
+                    if (!ConfigureIndirectRendererForTier(scene, vaoRenderer, (EAtlasTier)tier))
+                        continue;
+
                     uint bucketIndex = ((uint)slotIndex * GPUBatchingBindings.MaterialTierCount) + tier;
                     nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
                     nuint countByteOffset = (nuint)(bucketIndex * sizeof(uint));
@@ -2690,6 +2693,40 @@ namespace XREngine.Rendering
                         defaultModelMatrix);
                 }
             }
+        }
+
+        private static bool ConfigureIndirectRendererForTier(GPUScene scene, XRMeshRenderer? vaoRenderer, EAtlasTier tier)
+        {
+            if (vaoRenderer is null)
+                return false;
+
+            XRDataBuffer? positions = scene.GetAtlasPositions(tier);
+            XRDataBuffer? normals = scene.GetAtlasNormals(tier);
+            XRDataBuffer? tangents = scene.GetAtlasTangents(tier);
+            XRDataBuffer? uv0 = scene.GetAtlasUV0(tier);
+            XRDataBuffer? indices = scene.GetAtlasIndices(tier);
+            if (positions is null || indices is null)
+                return false;
+
+            static void SetOrRemoveBuffer(XRMeshRenderer renderer, string key, XRDataBuffer? buffer)
+            {
+                if (renderer.Buffers.ContainsKey(key))
+                    renderer.Buffers.Remove(key);
+
+                if (buffer is not null)
+                    renderer.Buffers.Add(key, buffer);
+            }
+
+            SetOrRemoveBuffer(vaoRenderer, ECommonBufferType.Position.ToString(), positions);
+            SetOrRemoveBuffer(vaoRenderer, ECommonBufferType.Normal.ToString(), normals);
+            SetOrRemoveBuffer(vaoRenderer, ECommonBufferType.Tangent.ToString(), tangents);
+            SetOrRemoveBuffer(vaoRenderer, $"{ECommonBufferType.TexCoord}{0}", uv0);
+
+            var renderer = AbstractRenderer.Current;
+            if (renderer is null)
+                return false;
+
+            return renderer.TrySyncMeshRendererIndexBuffer(vaoRenderer, indices, scene.GetAtlasIndexElementSize(tier));
         }
 
         private static void DispatchRenderIndirectCountBucket(

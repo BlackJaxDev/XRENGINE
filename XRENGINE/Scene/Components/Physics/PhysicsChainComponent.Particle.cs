@@ -31,6 +31,7 @@ public partial class PhysicsChainComponent
         private Vector3 _transformPosition;
         private Vector3 _transformLocalPosition;
         private Matrix4x4 _transformLocalToWorldMatrix;
+        private bool _preparedWorldChanged;
 
         public int ChildCount
         {
@@ -121,6 +122,11 @@ public partial class PhysicsChainComponent
         {
             get => _transformLocalToWorldMatrix;
             set => SetFieldUnchecked(ref _transformLocalToWorldMatrix, value);
+        }
+        public bool PreparedWorldChanged
+        {
+            get => _preparedWorldChanged;
+            set => SetFieldUnchecked(ref _preparedWorldChanged, value);
         }
     }
 }

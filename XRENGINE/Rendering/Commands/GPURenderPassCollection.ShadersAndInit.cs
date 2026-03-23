@@ -160,6 +160,7 @@ namespace XREngine.Rendering.Commands
             _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildBatches.comp", EShaderType.Compute));
             _materialScatterComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderMaterialScatter.comp", EShaderType.Compute));
             _classifyTransparencyComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClassifyTransparencyDomains.comp", EShaderType.Compute));
+            _lodSelectComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderLODSelect.comp", EShaderType.Compute));
             //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Sorting/GPURenderRadixIndexSort.comp", EShaderType.Compute));
             _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderIndirect.comp", EShaderType.Compute));
             _buildHotCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildHotCommands.comp", EShaderType.Compute));
@@ -275,7 +276,7 @@ namespace XREngine.Rendering.Commands
         private void MakeIndirectRenderer(GPUScene scene)
         {
             scene.EnsureAtlasBuffers();
-            scene.RebuildAtlasIfDirty();
+            scene.RebuildAllAtlasesIfDirty();
 
             _indirectRenderer = new XRMeshRenderer();
             var defVer = _indirectRenderer.GetDefaultVersion();

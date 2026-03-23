@@ -17,6 +17,7 @@ public enum EHistogramSourceChannel
 /// Computes a histogram from a texture readback and stores the bins in a pipeline buffer.
 /// Summary statistics can also be exposed as pipeline variables for later commands.
 /// </summary>
+[RenderPipelineScriptCommand]
 public class VPRC_ComputeHistogram : ViewportRenderCommand
 {
     public string? SourceTextureName { get; set; }

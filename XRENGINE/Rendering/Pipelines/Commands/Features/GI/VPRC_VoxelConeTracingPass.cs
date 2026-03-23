@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Placeholder voxel cone tracing pass. Ensures required resources exist and
     /// provides a hook for future voxelization and cone tracing integration.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_VoxelConeTracingPass : ViewportRenderCommand
     {
         /// <summary>

@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Applies a standalone tonemapping pass from a named input texture into the current or specified output framebuffer.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public sealed class VPRC_Tonemap : ViewportRenderCommand
     {
         private const string TonemapShaderCode = """

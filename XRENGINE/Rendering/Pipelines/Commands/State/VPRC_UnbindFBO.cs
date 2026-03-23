@@ -2,6 +2,7 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_UnbindFBO : ViewportPopStateRenderCommand
     {
         /// <summary>

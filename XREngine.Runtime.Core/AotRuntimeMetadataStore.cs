@@ -101,6 +101,32 @@ public static class AotRuntimeMetadataStore
         return false;
     }
 
+    public static bool IsPublishedRuntimeAssetType(Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+
+        string? assemblyQualifiedName = type.AssemblyQualifiedName;
+        return !string.IsNullOrWhiteSpace(assemblyQualifiedName)
+            && IsPublishedRuntimeAssetType(assemblyQualifiedName);
+    }
+
+    public static bool IsPublishedRuntimeAssetType(string assemblyQualifiedName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(assemblyQualifiedName);
+
+        AotRuntimeMetadata? metadata = Metadata;
+        if (metadata is null)
+            return false;
+
+        foreach (string candidate in metadata.PublishedRuntimeAssetTypeNames)
+        {
+            if (string.Equals(candidate, assemblyQualifiedName, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
     private static void EnsureLoaded()
     {
         if (_loaded)

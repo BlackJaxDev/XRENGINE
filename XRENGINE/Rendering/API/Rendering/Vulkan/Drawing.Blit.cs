@@ -561,7 +561,7 @@ namespace XREngine.Rendering.Vulkan
             ImageMemoryBarrier* barrierPtr = stackalloc ImageMemoryBarrier[1];
             barrierPtr[0] = barrier;
 
-            Api!.CmdPipelineBarrier(
+            CmdPipelineBarrierTracked(
                 commandBuffer,
                 srcStage,
                 dstStage,
@@ -599,10 +599,27 @@ namespace XREngine.Rendering.Vulkan
             ImageMemoryBarrier* barrierPtr = stackalloc ImageMemoryBarrier[1];
             barrierPtr[0] = barrier;
 
-            Api!.CmdPipelineBarrier(
+            // Swapchain images transition between a known set of layouts;
+            // use precise stages instead of AllCommandsBit.
+            PipelineStageFlags swapSrcStage = oldLayout switch
+            {
+                ImageLayout.ColorAttachmentOptimal => PipelineStageFlags.ColorAttachmentOutputBit,
+                ImageLayout.TransferSrcOptimal or ImageLayout.TransferDstOptimal => PipelineStageFlags.TransferBit,
+                ImageLayout.PresentSrcKhr => PipelineStageFlags.BottomOfPipeBit,
+                _ => PipelineStageFlags.ColorAttachmentOutputBit,
+            };
+            PipelineStageFlags swapDstStage = newLayout switch
+            {
+                ImageLayout.TransferSrcOptimal or ImageLayout.TransferDstOptimal => PipelineStageFlags.TransferBit,
+                ImageLayout.PresentSrcKhr => PipelineStageFlags.BottomOfPipeBit,
+                ImageLayout.ColorAttachmentOptimal => PipelineStageFlags.ColorAttachmentOutputBit,
+                _ => PipelineStageFlags.BottomOfPipeBit,
+            };
+
+            CmdPipelineBarrierTracked(
                 commandBuffer,
-                PipelineStageFlags.AllCommandsBit,
-                newLayout == ImageLayout.TransferSrcOptimal ? PipelineStageFlags.TransferBit : PipelineStageFlags.AllCommandsBit,
+                swapSrcStage,
+                swapDstStage,
                 DependencyFlags.None,
                 0,
                 null,
@@ -659,11 +676,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             ulong rawByteCount = (ulong)(width * height) * sourcePixelSize;
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                rawByteCount,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(rawByteCount);
 
             try
             {
@@ -724,8 +737,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            void* mappedPtr;
-            if (Api!.MapMemory(device, stagingMemory, 0, rawByteCount, 0, &mappedPtr) != Result.Success)
+            if (!TryMapReadbackMemory(stagingMemory, 0, rawByteCount, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
@@ -755,11 +767,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             ulong rawByteCount = (ulong)(width * height) * sourcePixelSize;
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                rawByteCount,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(rawByteCount);
 
             try
             {
@@ -820,8 +828,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            void* mappedPtr;
-            if (Api!.MapMemory(device, stagingMemory, 0, rawByteCount, 0, &mappedPtr) != Result.Success)
+            if (!TryMapReadbackMemory(stagingMemory, 0, rawByteCount, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
@@ -1031,11 +1038,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             ulong bufferSize = pixelSize;
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                bufferSize,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
 
             try
             {
@@ -1100,14 +1103,98 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            void* mappedPtr;
-            if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
             depth = ReadDepthValue(mappedPtr, source.Format);
+            Api!.UnmapMemory(device, stagingMemory);
+            DestroyBuffer(stagingBuffer, stagingMemory);
+            return true;
+        }
+
+        private bool TryReadStencilPixel(in BlitImageInfo source, int x, int y, out byte stencil)
+        {
+            stencil = 0;
+
+            if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.StencilBit))
+                return false;
+
+            uint pixelSize = GetDepthFormatPixelSize(source.Format);
+            if (pixelSize == 0)
+                return false;
+
+            ulong bufferSize = pixelSize;
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
+
+            try
+            {
+                using var scope = NewCommandScope();
+
+                ImageLayout preTransferLayout = source.PreferredLayout;
+                ImageLayout postTransferLayout = preTransferLayout != ImageLayout.Undefined
+                    ? preTransferLayout
+                    : ImageLayout.DepthStencilAttachmentOptimal;
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    source,
+                    preTransferLayout,
+                    ImageLayout.TransferSrcOptimal,
+                    source.AccessMask,
+                    AccessFlags.TransferReadBit,
+                    source.StageMask,
+                    PipelineStageFlags.TransferBit);
+
+                BufferImageCopy copy = new()
+                {
+                    BufferOffset = 0,
+                    BufferRowLength = 0,
+                    BufferImageHeight = 0,
+                    ImageSubresource = new ImageSubresourceLayers
+                    {
+                        AspectMask = ImageAspectFlags.StencilBit,
+                        MipLevel = source.MipLevel,
+                        BaseArrayLayer = source.BaseArrayLayer,
+                        LayerCount = source.LayerCount,
+                    },
+                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
+                    ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
+                };
+
+                Api!.CmdCopyImageToBuffer(
+                    scope.CommandBuffer,
+                    source.Image,
+                    ImageLayout.TransferSrcOptimal,
+                    stagingBuffer,
+                    1,
+                    &copy);
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    source,
+                    ImageLayout.TransferSrcOptimal,
+                    postTransferLayout,
+                    AccessFlags.TransferReadBit,
+                    source.AccessMask,
+                    PipelineStageFlags.TransferBit,
+                    source.StageMask);
+            }
+            catch
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                return false;
+            }
+
+            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                return false;
+            }
+
+            stencil = ReadStencilValue(mappedPtr, source.Format);
             Api!.UnmapMemory(device, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
             return true;
@@ -1139,6 +1226,17 @@ namespace XREngine.Rendering.Vulkan
                 Format.D24UnormS8Uint => (*(uint*)ptr & 0x00FFFFFF) / 16777215f,
                 Format.D32SfloatS8Uint => *(float*)ptr,
                 _ => 1.0f,
+            };
+        }
+
+        private static byte ReadStencilValue(void* ptr, Format format)
+        {
+            return format switch
+            {
+                Format.D24UnormS8Uint => (byte)((*(uint*)ptr >> 24) & 0xFF),
+                Format.D32SfloatS8Uint => *((byte*)ptr + 4),
+                Format.S8Uint => *(byte*)ptr,
+                _ => 0,
             };
         }
     }

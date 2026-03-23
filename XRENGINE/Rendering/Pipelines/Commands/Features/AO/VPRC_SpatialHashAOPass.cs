@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Builds the spatial hash buffers and dispatches the compute shader for the spatially hashed ray traced AO.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_SpatialHashAOPass : ViewportRenderCommand
     {
         private static void Log(string message)

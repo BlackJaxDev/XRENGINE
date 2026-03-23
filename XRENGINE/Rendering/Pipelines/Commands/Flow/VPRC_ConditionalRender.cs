@@ -18,6 +18,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Executes a nested command body when the specified pipeline variable resolves truthy.
     /// This is intended to pair with authored query/readback commands that publish results into the variable store.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public sealed class VPRC_ConditionalRender : ViewportRenderCommand
     {
         private ViewportRenderCommandContainer? _body;

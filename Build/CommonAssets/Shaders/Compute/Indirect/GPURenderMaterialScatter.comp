@@ -7,6 +7,7 @@ const uint KEY_UINTS = 4u;
 const uint DRAW_UINTS = 5u;
 const uint MATERIAL_TIER_COUNT = 3u;
 const uint INVALID_MATERIAL_SLOT = 0xFFFFFFFFu;
+const uint MESH_DATA_ATLAS_TIER_MASK = 0x3u;
 
 layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { float culled[]; };
 layout(std430, binding = 1) readonly buffer MeshDataBuffer { uint meshData[]; };
@@ -82,13 +83,17 @@ void main()
     if (slotIndex == INVALID_MATERIAL_SLOT)
         return;
 
-    uint tier = 0u;
-    uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier;
-    if (bucketIndex >= uint(MaxBucketCount) || bucketIndex >= uint(drawCounts.length()))
-        return;
-
     uint meshBase = meshID * 4u;
     if (meshBase + 3u >= uint(meshData.length()))
+        return;
+
+    uint tierFlags = meshData[meshBase + 3u];
+    uint tier = tierFlags & MESH_DATA_ATLAS_TIER_MASK;
+    if (tier >= MATERIAL_TIER_COUNT)
+        tier = 0u;
+
+    uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier;
+    if (bucketIndex >= uint(MaxBucketCount) || bucketIndex >= uint(drawCounts.length()))
         return;
 
     uint indexCount = meshData[meshBase + 0u];

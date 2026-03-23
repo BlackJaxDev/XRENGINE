@@ -24,32 +24,25 @@ public class GpuRenderingBacklogTests
     {
         var scene = new GPUScene();
         var mesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+        uint meshId = GetOrCreateMeshId(scene, mesh);
+
+        EnsureDynamicAtlasResidency(scene, mesh, meshId, "refcount-test");
+        scene.RebuildAtlasIfDirty(EAtlasTier.Dynamic);
 
         Dictionary<XRMesh, (int firstVertex, int firstIndex, int indexCount)> atlasOffsets =
             GetPrivateField<Dictionary<XRMesh, (int, int, int)>>(scene, "_atlasMeshOffsets");
         Dictionary<XRMesh, int> refCounts =
             GetPrivateField<Dictionary<XRMesh, int>>(scene, "_atlasMeshRefCounts");
-        var idToMesh =
-            GetPrivateField<System.Collections.Concurrent.ConcurrentDictionary<uint, XRMesh>>(scene, "_idToMesh");
-        List<IndexTriangle> faceIndices =
-            GetPrivateField<List<IndexTriangle>>(scene, "_indirectFaceIndices");
-
-        atlasOffsets[mesh] = (0, 0, 3);
-        faceIndices.Add(new IndexTriangle(0, 1, 2));
-        idToMesh[7u] = mesh;
-
-        SetPrivateField(scene, "_atlasVertexCount", 3);
-        SetPrivateField(scene, "_atlasIndexCount", 3);
 
         InvokeNonPublic(scene, "IncrementAtlasMeshRefCount", mesh);
         InvokeNonPublic(scene, "IncrementAtlasMeshRefCount", mesh);
         refCounts[mesh].ShouldBe(2);
 
-        InvokeNonPublic(scene, "DecrementAtlasMeshRefCount", 7u, "unit-test");
+        InvokeNonPublic(scene, "DecrementAtlasMeshRefCount", meshId, "unit-test");
         refCounts[mesh].ShouldBe(1);
         atlasOffsets.ContainsKey(mesh).ShouldBeTrue();
 
-        InvokeNonPublic(scene, "DecrementAtlasMeshRefCount", 7u, "unit-test");
+        InvokeNonPublic(scene, "DecrementAtlasMeshRefCount", meshId, "unit-test");
         refCounts.ContainsKey(mesh).ShouldBeFalse();
         atlasOffsets.ContainsKey(mesh).ShouldBeFalse();
 
@@ -245,6 +238,192 @@ public class GpuRenderingBacklogTests
     }
 
     [Test]
+    public void TieredAtlas_StaticTier_BulkLoad_AssignsStaticTierFlags()
+    {
+        var scene = new GPUScene();
+        var mesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+        uint meshId = GetOrCreateMeshId(scene, mesh);
+
+        scene.LoadStaticMeshBatch([mesh]);
+
+        scene.GetActiveAtlasTier(meshId).ShouldBe(EAtlasTier.Static);
+        scene.TryGetMeshDataEntry(meshId, out GPUScene.MeshDataEntry entry).ShouldBeTrue();
+        (entry.Flags & GPUScene.MeshDataFlagAtlasTierMask).ShouldBe((uint)EAtlasTier.Static);
+        scene.GetAtlasVertexCount(EAtlasTier.Static).ShouldBeGreaterThan(0);
+        scene.GetAtlasIndices(EAtlasTier.Static).ShouldNotBeNull();
+    }
+
+    [Test]
+    public void TieredAtlas_StreamingTier_RegisterCommitAndAdvance_PreservesStreamingMeshEntry()
+    {
+        var scene = new GPUScene();
+        var mesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+
+        bool registered = scene.RegisterStreamingMesh(mesh, maxVertexCount: 8, maxIndexCount: 6, out uint meshId, out string? failureReason);
+        registered.ShouldBeTrue(failureReason);
+
+        scene.GetActiveAtlasTier(meshId).ShouldBe(EAtlasTier.Streaming);
+        scene.TryGetMeshDataEntry(meshId, out GPUScene.MeshDataEntry initialEntry).ShouldBeTrue();
+        (initialEntry.Flags & GPUScene.MeshDataFlagAtlasTierMask).ShouldBe((uint)EAtlasTier.Streaming);
+
+        scene.CommitStreamingMesh(meshId, vertexCount: 3, indexCount: 3).ShouldBeTrue();
+        scene.AdvanceStreamingAtlasFrame();
+
+        scene.GetActiveAtlasTier(meshId).ShouldBe(EAtlasTier.Streaming);
+        scene.TryGetMeshDataEntry(meshId, out GPUScene.MeshDataEntry committedEntry).ShouldBeTrue();
+        committedEntry.IndexCount.ShouldBe(3u);
+        (committedEntry.Flags & GPUScene.MeshDataFlagAtlasTierMask).ShouldBe((uint)EAtlasTier.Streaming);
+        scene.GetAtlasPositions(EAtlasTier.Streaming).ShouldNotBeNull();
+    }
+
+    [Test]
+    public void TieredAtlas_MigrateDynamicToStatic_PreservesMeshDataAndTierFlags()
+    {
+        var scene = new GPUScene();
+        var mesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+        uint meshId = GetOrCreateMeshId(scene, mesh);
+
+        EnsureDynamicAtlasResidency(scene, mesh, meshId, "phase8-dynamic");
+        scene.RebuildAtlasIfDirty(EAtlasTier.Dynamic);
+        scene.GetActiveAtlasTier(meshId).ShouldBe(EAtlasTier.Dynamic);
+
+        scene.MigrateMesh(meshId, EAtlasTier.Dynamic, EAtlasTier.Static).ShouldBeTrue();
+
+        scene.GetActiveAtlasTier(meshId).ShouldBe(EAtlasTier.Static);
+        scene.TryGetMeshDataEntry(meshId, out GPUScene.MeshDataEntry entry).ShouldBeTrue();
+        entry.IndexCount.ShouldBe(3u);
+        (entry.Flags & GPUScene.MeshDataFlagAtlasTierMask).ShouldBe((uint)EAtlasTier.Static);
+        scene.GetAtlasVertexCount(EAtlasTier.Static).ShouldBeGreaterThan(0);
+    }
+
+    [Test]
+    public void TieredAtlas_AllTiersActive_EntriesCarryCorrectTierFlags()
+    {
+        var scene = new GPUScene();
+
+        var staticMesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+        var dynamicMesh = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitX + Vector3.UnitZ, Vector3.UnitY + Vector3.UnitZ);
+        var streamingMesh = XRMesh.CreateTriangles(Vector3.One, Vector3.One + Vector3.UnitX, Vector3.One + Vector3.UnitY);
+
+        uint staticMeshId = GetOrCreateMeshId(scene, staticMesh);
+        uint dynamicMeshId = GetOrCreateMeshId(scene, dynamicMesh);
+
+        scene.LoadStaticMeshBatch([staticMesh]);
+        EnsureDynamicAtlasResidency(scene, dynamicMesh, dynamicMeshId, "phase8-dynamic-all-tiers");
+        scene.RebuildAtlasIfDirty(EAtlasTier.Dynamic);
+        scene.RegisterStreamingMesh(streamingMesh, maxVertexCount: 8, maxIndexCount: 6, out uint streamingMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+        scene.RebuildAllAtlasesIfDirty();
+
+        scene.TryGetMeshDataEntry(staticMeshId, out GPUScene.MeshDataEntry staticEntry).ShouldBeTrue();
+        scene.TryGetMeshDataEntry(dynamicMeshId, out GPUScene.MeshDataEntry dynamicEntry).ShouldBeTrue();
+        scene.TryGetMeshDataEntry(streamingMeshId, out GPUScene.MeshDataEntry streamingEntry).ShouldBeTrue();
+
+        (staticEntry.Flags & GPUScene.MeshDataFlagAtlasTierMask).ShouldBe((uint)EAtlasTier.Static);
+        (dynamicEntry.Flags & GPUScene.MeshDataFlagAtlasTierMask).ShouldBe((uint)EAtlasTier.Dynamic);
+        (streamingEntry.Flags & GPUScene.MeshDataFlagAtlasTierMask).ShouldBe((uint)EAtlasTier.Streaming);
+
+        scene.GetAtlasPositions(EAtlasTier.Static).ShouldNotBeNull();
+        scene.GetAtlasPositions(EAtlasTier.Dynamic).ShouldNotBeNull();
+        scene.GetAtlasPositions(EAtlasTier.Streaming).ShouldNotBeNull();
+    }
+
+    [Test]
+    public void TieredAtlas_ScatterShader_UsesMeshDataTierFlags()
+    {
+        string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderMaterialScatter.comp");
+
+        source.ShouldContain("MESH_DATA_ATLAS_TIER_MASK");
+        source.ShouldContain("uint tierFlags = meshData[meshBase + 3u]");
+        source.ShouldContain("uint tier = tierFlags & MESH_DATA_ATLAS_TIER_MASK");
+        source.ShouldContain("uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier");
+    }
+
+    [Test]
+    public void LOD_TableBuffer_CorrectMeshDataIDs_AfterAtlasRebuild()
+    {
+        var scene = new GPUScene();
+        var lod0 = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+        var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
+
+        scene.RegisterLogicalMeshLODs([(lod0, 5.0f), (lod1, 25.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+        scene.RebuildAtlasIfDirty(EAtlasTier.Dynamic);
+
+        scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry entry).ShouldBeTrue();
+        entry.LODCount.ShouldBe(2u);
+        entry.LOD0_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod0));
+        entry.LOD1_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod1));
+        entry.LOD0_MaxDistance.ShouldBe(5.0f);
+        entry.LOD1_MaxDistance.ShouldBe(float.MaxValue);
+
+        scene.TryGetMeshDataEntry(entry.LOD0_MeshDataID, out _).ShouldBeTrue();
+        scene.TryGetMeshDataEntry(entry.LOD1_MeshDataID, out _).ShouldBeTrue();
+    }
+
+    [Test]
+    public void LOD_TableBuffer_FallbackToLOD0_WhenSingleLOD()
+    {
+        var scene = new GPUScene();
+        var mesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+
+        scene.RegisterLogicalMeshLODs([(mesh, 10.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+
+        scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry entry).ShouldBeTrue();
+        entry.LODCount.ShouldBe(1u);
+        entry.LOD0_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, mesh));
+        entry.LOD0_MaxDistance.ShouldBe(float.MaxValue);
+        entry.LOD1_MeshDataID.ShouldBe(0u);
+    }
+
+    [Test]
+    public void LOD_ReleaseAndRequestLoad_UpdateLogicalMeshResidency()
+    {
+        var scene = new GPUScene();
+        var lod0 = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+        var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
+
+        scene.RegisterLogicalMeshLODs([(lod0, 5.0f), (lod1, 25.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+        uint lod1MeshId = GetOrCreateMeshId(scene, lod1);
+
+        scene.ReleaseLOD(logicalMeshId, 1, out string? releaseFailure).ShouldBeTrue(releaseFailure);
+        scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry releasedEntry).ShouldBeTrue();
+        releasedEntry.LOD1_MeshDataID.ShouldBe(0u);
+
+        scene.RequestLODLoad(logicalMeshId, 1, out string? requestFailure).ShouldBeTrue(requestFailure);
+        scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry restoredEntry).ShouldBeTrue();
+        restoredEntry.LOD1_MeshDataID.ShouldBe(lod1MeshId);
+    }
+
+    [Test]
+    public void LOD_RequestBuffer_DrainReturnsAndClearsRequestedMasks()
+    {
+        var scene = new GPUScene();
+        var lod0 = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+        var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
+
+        scene.RegisterLogicalMeshLODs([(lod0, 5.0f), (lod1, 25.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+        scene.LODRequestBuffer.SetDataRawAtIndex(logicalMeshId, 0b10u);
+
+        List<(uint logicalMeshId, uint lodMask)> requests = scene.DrainLODRequests();
+        requests.Count.ShouldBe(1);
+        requests[0].logicalMeshId.ShouldBe(logicalMeshId);
+        requests[0].lodMask.ShouldBe(0b10u);
+        scene.LODRequestBuffer.GetDataRawAtIndex<uint>(logicalMeshId).ShouldBe(0u);
+    }
+
+    [Test]
+    public void LOD_SelectShader_WritesMeshIdAndLodLevel()
+    {
+        string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp");
+
+        source.ShouldContain("FLAG_LOD_ENABLED");
+        source.ShouldContain("uint logicalMeshID = floatBitsToUint(culled[base + 46u])");
+        source.ShouldContain("uint lodCount = floatBitsToUint(lodTable[entryBase + 0u])");
+        source.ShouldContain("atomicOr(lodRequestMask[logicalMeshID], 1u << min(selectedLevel, 31u))");
+        source.ShouldContain("culled[base + 36u] = uintBitsToFloat(selectedMeshID)");
+        source.ShouldContain("culled[base + 44u] = uintBitsToFloat(resolvedLevel)");
+    }
+
+    [Test]
     public void VR_ViewSet_SharedCull_FansOut_AllOutputs()
     {
         GPUViewDescriptor[] descriptors =
@@ -324,6 +503,27 @@ public class GpuRenderingBacklogTests
     private static T GetPrivateField<T>(object target, string fieldName)
         => (T)GetNonPublicField(target, fieldName);
 
+    private static uint GetOrCreateMeshId(GPUScene scene, XRMesh mesh)
+    {
+        object?[] args = [mesh, 0u];
+        typeof(GPUScene)
+            .GetMethod("GetOrCreateMeshID", BindingFlags.Instance | BindingFlags.NonPublic)
+            .ShouldNotBeNull()!
+            .Invoke(scene, args);
+        return (uint)args[1]!;
+    }
+
+    private static void EnsureDynamicAtlasResidency(GPUScene scene, XRMesh mesh, uint meshId, string meshLabel)
+    {
+        object?[] args = [mesh, meshId, meshLabel, null];
+        object? result = typeof(GPUScene)
+            .GetMethod("EnsureSubmeshInAtlas", BindingFlags.Instance | BindingFlags.NonPublic)
+            .ShouldNotBeNull()!
+            .Invoke(scene, args);
+
+        (result is bool hydrated && hydrated).ShouldBeTrue(args[3] as string);
+    }
+
     private static object GetNonPublicField(object target, string fieldName)
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -345,7 +545,34 @@ public class GpuRenderingBacklogTests
 
     private static object? InvokeNonPublic(object target, string methodName, params object?[] args)
     {
-        var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
+        var method = target.GetType()
+            .GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
+            .FirstOrDefault(candidate =>
+            {
+                if (!string.Equals(candidate.Name, methodName, StringComparison.Ordinal))
+                    return false;
+
+                ParameterInfo[] parameters = candidate.GetParameters();
+                if (parameters.Length != args.Length)
+                    return false;
+
+                for (int i = 0; i < parameters.Length; i++)
+                {
+                    object? argument = args[i];
+                    Type parameterType = parameters[i].ParameterType;
+                    if (argument is null)
+                    {
+                        if (parameterType.IsValueType && Nullable.GetUnderlyingType(parameterType) is null)
+                            return false;
+                        continue;
+                    }
+
+                    if (!parameterType.IsInstanceOfType(argument))
+                        return false;
+                }
+
+                return true;
+            });
         method.ShouldNotBeNull();
         return method!.Invoke(target, args);
     }

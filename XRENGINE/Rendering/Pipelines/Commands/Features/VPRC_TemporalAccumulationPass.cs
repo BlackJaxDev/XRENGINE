@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// <summary>
 /// Handles all temporal accumulation stages (begin, accumulate, commit) without relying on manual commands.
 /// </summary>
+[RenderPipelineScriptCommand]
 public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 {
     private const float TaaJitterScaleInTexels = 0.35f;

@@ -1,6 +1,6 @@
 ﻿# Dependency Inventory
 
-Generated: 2026-03-18T11:40:02-07:00
+Generated: 2026-03-22T18:08:59-07:00
 Commit: (not a git repo)
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, and native/managed binaries that are referenced or shipped.
@@ -10,20 +10,22 @@ Notes:
 - This lists direct `PackageReference`s from solution projects, not all transitive dependencies.
 - NVIDIA proprietary SDK binaries (DLSS/NGX, Reflex, Streamline) are **not redistributed** and are expected to be provided by end users via `ThirdParty/NVIDIA/SDK/win-x64/`.
 - Manual unknown-license resolutions are loaded from `docs/dependency-license-overrides.json`.
-- Prompt mode for unknown licenses: True (use -PromptForUnknownLicenses or -NoPromptForUnknownLicenses to override).
+- Prompt mode for unknown licenses: False (use -PromptForUnknownLicenses or -NoPromptForUnknownLicenses to override).
 
 ## Git submodules / vendored submodules
 | Name | Path | Owner | License (best-effort) | URL |
 |---|---|---|---|---|
 | CoACD | Build/Submodules/CoACD | SarahWeiii | [MIT](licenses/submodules/CoACD-MIT.txt) | https://github.com/SarahWeiii/CoACD |
-| OpenVR.NET | Build/Submodules/OpenVR.NET | BlackJaxDev | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | https://github.com/BlackJaxDev/OpenVR.NET.git |
-| OscCore-NET9 | Build/Submodules/OscCore-NET9 | BlackJaxDev | [MIT](licenses/submodules/OscCore-NET9-MIT.txt) | https://github.com/BlackJaxDev/OscCore-NET9.git |
+| Flyleaf | Build/Submodules/Flyleaf | (unknown) | [LGPL-3.0](licenses/submodules/Flyleaf-LGPL-3.0.txt) | (not detected) |
+| MagicPhysX | Build/Submodules/MagicPhysX | (unknown) | [MIT](licenses/submodules/MagicPhysX-MIT.txt) | (not detected) |
+| OpenVR.NET | Build/Submodules/OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | https://github.com/BlackJaxDev/OpenVR.NET.git |
+| OscCore-NET9 | Build/Submodules/OscCore-NET9 | stella3d + BlackJaxDev (modifications) | [MIT](licenses/submodules/OscCore-NET9-MIT.txt) | https://github.com/BlackJaxDev/OscCore-NET9.git |
 | rive-sharp | Build/Submodules/rive-sharp | Rive (rive-app) | [MIT](licenses/fetched/rive-sharp-MIT.txt) | https://github.com/rive-app/rive-sharp.git |
 
 ## Nested / fetched dependencies (build scripts)
 | Name | Used by | Owner | License (best-effort) | URL |
 |---|---|---|---|---|
-| CDT | CoACD | artem-ogre | [MPL-2.0](https://github.com/artem-ogre/CDT/blob/main/LICENSE) | https://github.com/artem-ogre/CDT |
+| CDT | CoACD | artem-ogre | [MPL-2.0](licenses/github/CDT-MPL-2.0.txt) | https://github.com/artem-ogre/CDT |
 
 ## NuGet packages (direct)
 | Package | Version(s) | Owner (best-effort) | License (best-effort) | Used by |
@@ -42,9 +44,9 @@ Notes:
 | JoltPhysicsSharp | 2.20.1 | amerkoleci | [MIT](licenses/nuget/JoltPhysicsSharp-2.20.1-MIT.txt) | XREngine.csproj |
 | K4os.Compression.LZ4 | 1.3.8 | MiloszKrajewski | [MIT](licenses/nuget/K4os.Compression.LZ4-1.3.8-MIT.txt) | XREngine.Data.csproj |
 | LZMA-SDK | 22.1.1 | monemihir | [MIT](licenses/nuget/LZMA-SDK-22.1.1-MIT.txt) | XREngine.csproj, XREngine.Data.csproj |
-| Magick.NET.Core | 14.10.4 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET.Core-14.10.4-Apache-2.0.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
-| Magick.NET.SystemDrawing | 8.0.16 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET.SystemDrawing-8.0.16-Apache-2.0.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
-| Magick.NET-Q16-HDRI-AnyCPU | 14.10.4 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET-Q16-HDRI-AnyCPU-14.10.4-Apache-2.0.txt) | XREngine.Animation.csproj, XREngine.Extensions.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
+| Magick.NET.Core | 14.11.0 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET.Core-14.11.0.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
+| Magick.NET.SystemDrawing | 8.0.16 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET.SystemDrawing-8.0.16.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
+| Magick.NET-Q16-HDRI-AnyCPU | 14.11.0 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET-Q16-HDRI-AnyCPU-14.11.0.txt) | XREngine.Animation.csproj, XREngine.Extensions.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
 | MagicPhysX | 1.0.0 | Cysharp | [MIT](licenses/nuget/MagicPhysX-1.0.0-MIT.txt) | XREngine.csproj |
 | MathNet.Numerics | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj |
 | MathNet.Numerics.Providers.CUDA | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics.Providers.CUDA-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj |
@@ -68,7 +70,7 @@ Notes:
 | RestSharp | 113.1.0 | restsharp | [Apache-2.0](licenses/nuget/RestSharp-113.1.0-Apache-2.0.txt) | XREngine.csproj |
 | SharpCompress | 0.46.2 | adamhathcock | [MIT](licenses/nuget/SharpCompress-0.46.2-MIT.txt) | XREngine.Editor.csproj |
 | SharpFont | 4.0.1 | Robmaister | [MIT](licenses/nuget/SharpFont-4.0.1-MIT.txt) | XREngine.Data.csproj |
-| SharpFont.Dependencies | 2.6.0 | Robmaister | [https://github.com/Robmaister/SharpFont.Dependencies/blob/master/LICENSE](licenses/unknown/nuget-SharpFont.Dependencies-2.6.0.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
+| SharpFont.Dependencies | 2.6.0 | Robmaister | [FreeType License (FTL)](licenses/nuget/SharpFont.Dependencies-2.6.0-FreeType License (FTL).txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
 | SharpFont.NetStandard | 1.0.5 | vonderborch | [MIT](licenses/nuget/SharpFont.NetStandard-1.0.5-MIT.txt) | XREngine.csproj, XREngine.Data.csproj |
 | SharpZipLib | 1.4.2 | icsharpcode | [MIT](licenses/nuget/SharpZipLib-1.4.2-MIT.txt) | XREngine.Data.csproj |
 | Shouldly | 4.3.0 | shouldly | [BSD-3-Clause](licenses/nuget/Shouldly-4.3.0-BSD-3-Clause.txt) | XREngine.UnitTests.csproj |
@@ -151,19 +153,19 @@ Notes:
 ## Explicit assembly references (`<Reference>` )
 | Project | Reference | Owner (best-effort) | License (best-effort) | HintPath |
 |---|---|---|---|---|
-| XREngine.csproj | OpenVR.NET | BlackJaxDev | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.csproj | OscCore | BlackJaxDev | [MIT](licenses/submodules/OscCore-NET9-MIT.txt) | ..\Build\Submodules\OscCore-NET9\bin\$(Configuration)\net9.0\OscCore.dll |
+| XREngine.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
+| XREngine.csproj | OscCore | stella3d + BlackJaxDev (modifications) | [MIT](licenses/submodules/OscCore-NET9-MIT.txt) | ..\Build\Submodules\OscCore-NET9\bin\$(Configuration)\net9.0\OscCore.dll |
 | XREngine.csproj | RiveSharp | Rive (rive-app) | [MIT](licenses/fetched/RiveSharp-MIT.txt) | ..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll |
-| XREngine.Editor.csproj | OpenVR.NET | BlackJaxDev | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.Input.csproj | OpenVR.NET | BlackJaxDev | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.Runtime.Core.csproj | OpenVR.NET | BlackJaxDev | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.Runtime.InputIntegration.csproj | OpenVR.NET | BlackJaxDev | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.VRClient.csproj | OpenVR.NET, Version=0.8.5.0, Culture=neutral, PublicKeyToken=null | BlackJaxDev | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
+| XREngine.Editor.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
+| XREngine.Input.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
+| XREngine.Runtime.Core.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
+| XREngine.Runtime.InputIntegration.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
+| XREngine.VRClient.csproj | OpenVR.NET, Version=0.8.5.0, Culture=neutral, PublicKeyToken=null | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
 
 ## Referenced binaries via project items (dll/exe)
 | Project | Path/Update | Owner (best-effort) | License (best-effort) | Link | CopyToOutputDirectory |
 |---|---|---|---|---|---|
-| XREngine.Audio.csproj | runtimes\win-x64\native\phonon.dll | Valve (Steam Audio) | [Apache-2.0](licenses/fetched/phonon-Apache-2.0.txt) | phonon.dll | PreserveNewest |
+| XREngine.Audio.csproj | runtimes\win-x64\native\phonon.dll | Valve (Steam Audio) | [Apache-2.0](https://raw.githubusercontent.com/ValveSoftware/steam-audio/master/LICENSE.md) | phonon.dll | PreserveNewest |
 | XREngine.csproj | $(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll | Meta Platforms, Inc. | [Proprietary (Oculus SDK License Agreement)](licenses/fetched/OVRLipSync-Proprietary (Oculus SDK License Agreement).txt) | OVRLipSync.dll | PreserveNewest |
 | XREngine.csproj | $(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll | NVIDIA Corporation | [Proprietary (NVIDIA RTXGI SDK License)](https://developer.nvidia.com/rtxgi) | RestirGI.Native.dll | Always |
 | XREngine.csproj | ..\Build\Dependencies\FFmpeg\HlsReference\win-x64\*.dll | FFmpeg Project | [LGPL-2.1-or-later](licenses/fetched/win-x64-LGPL-2.1-or-later.txt) | %(Filename)%(Extension) | PreserveNewest |
@@ -177,13 +179,39 @@ Notes:
 | XREngine.csproj | runtimes\win-x64\native\libmagicphysx.dll | Cysharp (MagicPhysX) / NVIDIA (PhysX 5) | [MIT (MagicPhysX) + NVIDIA PhysX 5 license](licenses/fetched/libmagicphysx-MIT (MagicPhysX) + NVIDIA PhysX 5 license.txt) |  | PreserveNewest |
 | XREngine.csproj | runtimes\win-x64\native\postproc.dll | FFmpeg Project | [LGPL-2.1-or-later](licenses/fetched/postproc-LGPL-2.1-or-later.txt) |  | PreserveNewest |
 | XREngine.csproj | runtimes\win-x64\native\rive.dll | Rive | [MIT](licenses/fetched/rive-MIT.txt) |  | PreserveNewest |
-| XREngine.Editor.csproj | C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\openxr_loader.dll | Khronos Group (OpenXR loader), distributed via Valve/SteamVR | [Apache-2.0](licenses/fetched/openxr_loader-Apache-2.0.txt) | openxr_loader.dll | PreserveNewest |
+| XREngine.Editor.csproj | C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\openxr_loader.dll | Khronos Group (OpenXR loader), distributed via Valve/SteamVR | [Apache-2.0](https://github.com/KhronosGroup/OpenXR-SDK-Source/blob/master/LICENSE) | openxr_loader.dll | PreserveNewest |
 | XREngine.VRClient.csproj | openvr_api.dll | Valve (OpenVR/SteamVR) | [BSD-3-Clause](licenses/fetched/openvr_api-BSD-3-Clause.txt) |  | PreserveNewest |
 
 ## Checked-in native/managed binaries (filesystem)
 | Path | File | Likely upstream/owner | License (best-effort) |
 |---|---|---|---|
+| XRENGINE/NvLowLatencyVk.dll | NvLowLatencyVk.dll | NVIDIA (Reflex / Low Latency) | [NVIDIA SDK License Agreement (see XRENGINE/reflex.license.txt)](../ThirdParty/NVIDIA/SDK/win-x64/reflex.license.txt) |
+| XRENGINE/nvngx_deepdvc.dll | nvngx_deepdvc.dll | NVIDIA (DLSS/NIS/DeepDVC) | [NVIDIA RTX SDKs License (see XRENGINE/nvngx_dlss.license.txt)](../ThirdParty/NVIDIA/SDK/win-x64/nvngx_dlss.license.txt) |
+| XRENGINE/nvngx_dlss.dll | nvngx_dlss.dll | NVIDIA (DLSS/NIS/DeepDVC) | [NVIDIA RTX SDKs License (see XRENGINE/nvngx_dlss.license.txt)](../ThirdParty/NVIDIA/SDK/win-x64/nvngx_dlss.license.txt) |
+| XRENGINE/nvngx_dlssd.dll | nvngx_dlssd.dll | NVIDIA (DLSS/NIS/DeepDVC) | [NVIDIA RTX SDKs License (see XRENGINE/nvngx_dlss.license.txt)](../ThirdParty/NVIDIA/SDK/win-x64/nvngx_dlss.license.txt) |
+| XRENGINE/nvngx_dlssg.dll | nvngx_dlssg.dll | NVIDIA (DLSS/NIS/DeepDVC) | [NVIDIA RTX SDKs License (see XRENGINE/nvngx_dlss.license.txt)](../ThirdParty/NVIDIA/SDK/win-x64/nvngx_dlss.license.txt) |
 | XRENGINE/openvr_api.dll | openvr_api.dll | Valve (OpenVR/SteamVR) | [BSD-3-Clause](licenses/fetched/openvr_api-BSD-3-Clause.txt) |
 | XRENGINE/OVRLipSync.dll | OVRLipSync.dll | Meta Platforms, Inc. | [Proprietary (Oculus SDK License Agreement)](licenses/fetched/OVRLipSync-Proprietary (Oculus SDK License Agreement).txt) |
+| XRENGINE/RestirGI.Native.dll | RestirGI.Native.dll | NVIDIA Corporation | [Proprietary (NVIDIA RTXGI SDK License)](https://developer.nvidia.com/rtxgi) |
+| XRENGINE/runtimes/win-x64/native/avcodec.dll | avcodec.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avcodec.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/avdevice.dll | avdevice.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avdevice.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/avfilter.dll | avfilter.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avfilter.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/avformat.dll | avformat.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avformat.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/avutil.dll | avutil.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avutil.dll.txt) |
 | XRENGINE/runtimes/win-x64/native/lib_coacd.dll | lib_coacd.dll | SarahWeiii (CoACD) | [MIT (see Build/Submodules/CoACD/LICENSE)](../Build/Submodules/CoACD/LICENSE) |
 | XRENGINE/runtimes/win-x64/native/libmagicphysx.dll | libmagicphysx.dll | Cysharp (MagicPhysX) / NVIDIA (PhysX 5) | [MIT (MagicPhysX) + NVIDIA PhysX 5 license](licenses/fetched/libmagicphysx-MIT (MagicPhysX) + NVIDIA PhysX 5 license.txt) |
+| XRENGINE/runtimes/win-x64/native/postproc.dll | postproc.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-postproc.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/rive.dll | rive.dll | Rive (rive-app) | [MIT](licenses/fetched/rive-MIT.txt) |
+| XRENGINE/runtimes/win-x64/native/swresample.dll | swresample.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-swresample.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/swscale.dll | swscale.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-swscale.dll.txt) |
+| XRENGINE/sl.common.dll | sl.common.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |
+| XRENGINE/sl.deepdvc.dll | sl.deepdvc.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |
+| XRENGINE/sl.directsr.dll | sl.directsr.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |
+| XRENGINE/sl.dlss.dll | sl.dlss.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |
+| XRENGINE/sl.dlss_d.dll | sl.dlss_d.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |
+| XRENGINE/sl.dlss_g.dll | sl.dlss_g.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |
+| XRENGINE/sl.interposer.dll | sl.interposer.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |
+| XRENGINE/sl.nis.dll | sl.nis.dll | NVIDIA (Streamline) | [MIT (see XRENGINE/nis.license.txt)](../XRENGINE/nis.license.txt) |
+| XRENGINE/sl.nvperf.dll | sl.nvperf.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |
+| XRENGINE/sl.pcl.dll | sl.pcl.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |
+| XRENGINE/sl.reflex.dll | sl.reflex.dll | NVIDIA (Streamline) | [(unknown - see NVIDIA license files)](../ThirdParty/NVIDIA/SDK/win-x64/) |

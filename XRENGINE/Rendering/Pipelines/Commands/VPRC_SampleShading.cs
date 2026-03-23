@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// When enabled with MinValue=1.0, the fragment shader executes once per MSAA sample,
     /// which is required for per-sample deferred lighting of complex pixels.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_SampleShading : ViewportRenderCommand
     {
         public bool Enable { get; set; }

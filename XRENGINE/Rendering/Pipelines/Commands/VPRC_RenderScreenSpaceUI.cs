@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Render's the camera's screen space UI to the current viewport.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_RenderScreenSpaceUI : ViewportRenderCommand
     {
         /// <summary>

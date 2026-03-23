@@ -1,8 +1,104 @@
 # Vulkan TODO Backlog (Canonical)
 
-Last updated: 2026-03-17
+Last updated: 2026-03-23
 
-This file is the canonical **active TODO** list for Vulkan work. Historical context and completed items are documented in `vulkan-report.md`. Deep architectural guidance and audit narrative are in `modern-vulkan-render-pipeline-summary.md`.
+This file is the canonical Vulkan work document for XRENGINE. It now consolidates the active backlog, prior status/report history, preserved diagnostic notes, and the architectural audit/guidance that previously lived in `docs/work/vulkan/vulkan-report.md` and `docs/work/vulkan/modern-vulkan-render-pipeline-summary.md`.
+
+## Current implementation snapshot
+
+### Implemented since earlier reports
+
+The following items were previously tracked as planned or incomplete in older Vulkan docs but are now implemented in code:
+
+- Per-frame Vulkan render loop is wired and active.
+- Swapchain depth attachment path exists.
+- Dynamic rendering is in active use for the swapchain main path.
+- Secondary command buffer infrastructure and parallel bucket recording are present.
+- Indirect draw paths are implemented, including indirect-count support when available.
+- Readback APIs exist (`GetDepth*`, `GetScreenshotAsync`, `CalcDotLuminance*`).
+- Shader compatibility fix for `UnlitTexturedForward.fs` output location is present.
+- Bind-state reset logic exists for command buffer re-record paths.
+
+### Strong and aligned areas
+
+- Render-graph planning and barrier planning architecture are in place.
+- Resource aliasing infrastructure exists through logical-to-physical planning.
+- Descriptor tiering, layout caching, and feature-profile gating are in place.
+- Pipeline cache persistence and runtime cache structure are in place.
+- Transfer-queue upload path and timeline-based frame synchronization are in place.
+- GPU-driven rendering enablers are present.
+- Dedicated graphics, compute, and transfer queues are discovered and used.
+- Multiview / VR paths are integrated.
+- Persistent mapping is already used for host-visible buffers.
+- Resolve attachment support and smarter store-op inference already exist in the render graph.
+
+### Open correctness and robustness concerns still observed
+
+- ~~Render-graph pass index fallback warnings are still emitted for some `MeshDrawOp` paths.~~ Fixed: `EnsureValidPassIndex` now accepts well-known `EDefaultRenderPass` values without warning.
+- ~~Memory allocation remains predominantly per-resource `AllocateMemory` with no global suballocator backbone yet.~~ Fixed: `IVulkanMemoryAllocator` abstraction with `VulkanLegacyAllocator` (per-resource, default) and `VulkanBlockAllocator` (64 MB block suballocator with sorted free-list, separate image/buffer pools, dedicated allocation threshold). All ~14 allocation sites migrated. Feature toggle gates backend selection.
+- ~~Readback memory paths still lack `HostCached` usage.~~ Fixed: readback staging prefers `HostCached` with `HostCoherent` fallback; `VulkanStagingManager` readback pool also updated.
+- ~~Synchronization2 / Submit2 migration has not started.~~ Fixed: sync2/Submit2 backend is live with legacy fallback behind `VulkanRobustnessSettings.SyncBackend`.
+- ~~Broad `AllCommandsBit` stage masks are still used in multiple Vulkan paths.~~ Fixed: barrier precision audit complete across all 8 audited files; remaining uses are documented as justified.
+- ~~Descriptor pool lifecycle still relies heavily on destroy/recreate patterns and `FreeDescriptorSetBit` in hot paths.~~ Fixed: transient pools use reset/reuse; `FreeDescriptorSetBit` removed from hot pools; pool size classes implemented.
+
+## Architectural guidance distilled into backlog priorities
+
+The core Vulkan guidance that should continue to shape implementation work is:
+
+- Performance comes from engine design choices, not API usage alone; profile on target vendors and avoid both missing sync and oversync.
+- Memory should use device-local placement for static/high-bandwidth resources, host-visible upload arenas for dynamic data, suballocated large blocks instead of per-resource allocations, correct `bufferImageGranularity` handling, persistent mapping for host-visible arenas, selective dedicated allocations, lazy allocation for transient tiler-friendly attachments, and `HostCached` memory for GPU-to-CPU readback.
+- Descriptor management should prefer reset-and-reuse pools over destroy/recreate, avoid `FREE_DESCRIPTOR_SET_BIT` for frame-style allocation patterns, use pool size classes, favor frequency-based descriptor sets, prefer immutable samplers where practical, and use update templates or equivalent bulk update paths for hot descriptor writes.
+- Recording and submission should keep command pool reuse fence-safe, keep command buffers and submit batches coarse enough to amortize scheduling overhead, and avoid over-fragmented submit patterns.
+- Synchronization should stay render-graph-driven, use precise stage/access masks, batch barriers, avoid unnecessary layout transitions, and treat `AllCommandsBit` as an exception path rather than a default.
+- Render-pass bandwidth policy should aggressively prefer `DontCare` load/store operations when prior or final contents are irrelevant and prefer in-pass resolve behavior when possible.
+- Pipeline strategy should minimize runtime JIT hitches through persistent caches, prewarming, and deliberate permutation control.
+
+## Audit snapshot (2026-02-18, revised 2026-02-18)
+
+### Executive result
+
+The Vulkan renderer has a strong modern foundation in render-graph planning, barrier planning, descriptor-tier contracts, pipeline-cache persistence, GPU-driven rendering enablers, and multi-queue usage. It is not yet at the intended "best possible" architecture because several hot-path design gaps remain unresolved.
+
+### Highest-priority gaps confirmed by audit
+
+1. Memory allocation architecture is still per-resource `vkAllocateMemory` / `vkBind*Memory` with no allocator backbone, no `bufferImageGranularity` handling, no dedicated-allocation decision path, no lazy allocation, and no VRAM oversubscription fallback.
+2. GPU-to-CPU readback still prefers `HostVisible | HostCoherent` instead of a `HostCached` readback path with explicit invalidate/flush handling.
+3. Synchronization still uses legacy `vkQueueSubmit` / `vkCmdPipelineBarrier` APIs rather than synchronization2 / Submit2.
+4. Broad `AllCommandsBit` stage masks remain in several fallback and utility paths even though the planner can already produce tighter masks.
+5. Descriptor pools still use `FreeDescriptorSetBit` in hot subsystems and rely on destroy/recreate patterns instead of reset/reuse.
+
+### Medium-priority gaps confirmed by audit
+
+- Dynamic UBO offset usage is not yet a dominant binding strategy.
+- Pipeline handling is still largely runtime/JIT driven even though persistent caches already exist.
+- `RenderPassBuilder` defaults remain conservative and can bias call sites toward avoidable load/store bandwidth cost.
+- Command-pool reset strategy still favors individual command buffer reset over pool-level reset for frame-style usage.
+- Push constants are underused outside narrow paths such as ImGui.
+
+### Low-priority or informational notes
+
+- Split-barrier / event scheduling is not currently used; this is acceptable unless measurements show a win for specific workloads.
+- Vulkan allocation callbacks are wired as placeholders rather than a real tracking allocator.
+- ~~Descriptor pool size classes are not yet implemented.~~ Fixed: `EDescriptorPoolSizeClass` (Small/Medium/Large) with `InferPoolSizeClass` and `GetPoolSizeClassParameters` in `CommandBuffers.cs`.
+
+## Preserved historical diagnostic notes
+
+### Bind tracking hash-collision risk
+
+The tracked-bind deduplication in `CommandBuffers.cs` uses `System.HashCode` truncated into a `ulong`, which only preserves 32 bits of entropy. If invisible-geometry or "no fragments" symptoms recur, bypass tracked binds first to rule out a collision-driven skipped bind.
+
+### UI batch rendering investigation notes
+
+During the 2026-02-20 UI batch rendering investigation, the render-graph pass metadata bug was the highest-value issue. Lower-priority hypotheses that remain useful if related issues recur are:
+
+1. Non-batched transparent shader compatibility in Vulkan profiles.
+2. Render pass / FBO target mismatch during the UI batch pass.
+3. Camera / projection uniform state during `VPRC_RenderUIBatched`.
+4. Descriptor fallback silently binding placeholder zeroed buffers for SSBOs.
+
+### Prior cross-API finding
+
+OpenGL batch rendering also had defects during the same investigation; visible OpenGL UI was coming from CPU fallback until the `gl_InstanceIndex` versus `gl_InstanceID` issue was fixed.
 
 ## Reference comparison: `diharaw/hybrid-rendering`
 
@@ -34,12 +130,12 @@ Comparison-driven priorities reinforced by this sample:
 
 ### Feature toggles
 
-- [ ] Define `VulkanRobustnessSettings` class with per-area toggles:
-  - [ ] Allocator backend toggle (`Legacy` vs `Suballocator`)
-  - [ ] Sync backend toggle (`Legacy` vs `Sync2`)
-  - [ ] Descriptor update backend toggle (`Legacy` vs `Template`)
-- [ ] Wire toggles into runtime so each backend can be switched independently
-- [ ] Expose toggles in editor settings UI or startup config
+- [x] Define `VulkanRobustnessSettings` class with per-area toggles:
+  - [x] Allocator backend toggle (`Legacy` vs `Suballocator`)
+  - [x] Sync backend toggle (`Legacy` vs `Sync2`)
+  - [x] Descriptor update backend toggle (`Legacy` vs `Template`)
+- [x] Wire implemented backends into runtime so each backend can be switched independently
+- [x] Expose toggles in editor settings UI or startup config
 
 ### Per-frame diagnostic counters
 
@@ -47,32 +143,32 @@ Already implemented: bind churn, pipeline cache hit/miss, barrier planner pass c
 
 Still needed:
 
-- [ ] Memory allocation count per frame (by memory class)
-- [ ] Memory bytes allocated per frame (by memory class)
-- [ ] Descriptor pool create count per frame
-- [ ] Descriptor pool destroy count per frame
-- [ ] Descriptor pool reset count per frame
-- [ ] Queue submit count per frame
-- [ ] Route new counters into profiler data source
+- [x] Memory allocation count per frame (by memory class)
+- [x] Memory bytes allocated per frame (by memory class)
+- [x] Descriptor pool create count per frame
+- [x] Descriptor pool destroy count per frame
+- [x] Descriptor pool reset count per frame (counter instrumented; no reset call sites exist yet — see P2 descriptor pool reset/reuse)
+- [x] Queue submit count per frame
+- [x] Route new counters into profiler data source
 
 ### Startup capability snapshot
 
-- [ ] Log acceleration structure support at startup
-- [ ] Log descriptor indexing support at startup
-- [ ] Log draw indirect count support at startup
-- [ ] Log multiview support at startup
-- [ ] Log ray tracing pipeline support at startup
-- [ ] Log timeline semaphore support at startup
-- [ ] Log synchronization2 support at startup
-- [ ] Log max memory allocation count at startup
-- [ ] Log available memory heaps and types at startup
-- [ ] Classify startup capabilities as `Required`, `Optional`, or `DisabledByProfile` for each major Vulkan feature family
+- [x] Log acceleration structure support at startup
+- [x] Log descriptor indexing support at startup
+- [x] Log draw indirect count support at startup
+- [x] Log multiview support at startup
+- [x] Log ray tracing pipeline support at startup
+- [x] Log timeline semaphore support at startup
+- [x] Log synchronization2 support at startup
+- [x] Log max memory allocation count at startup
+- [x] Log available memory heaps and types at startup
+- [x] Classify startup capabilities as `Required`, `Optional`, or `DisabledByProfile` for each major Vulkan feature family
 
 ### CI integration
 
-- [ ] Add CI pipeline step that runs Vulkan-focused unit tests
-- [ ] Configure CI to fail on Vulkan test regressions
-- [ ] Verify existing `VulkanTodoP2ValidationTests` run in CI
+- [x] Add CI pipeline step that runs Vulkan-focused unit tests
+- [x] Configure CI to fail on Vulkan test regressions
+- [x] Verify existing `VulkanTodoP2ValidationTests` run in CI
 
 ---
 
@@ -80,63 +176,66 @@ Still needed:
 
 ### Render-graph pass-index mismatch
 
-- [ ] Investigate why `MeshDrawOp` emissions hit invalid pass indices
-- [ ] Identify which render pipeline paths emit pass index 4+ without metadata
-- [ ] Fix pass-index assignment or metadata generation to eliminate mismatch
-- [ ] Remove or downgrade the fallback-to-pass warning once fixed
-- [ ] Add regression test for pass-index validity
+- [x] Investigate why `MeshDrawOp` emissions hit invalid pass indices
+- [x] Identify which render pipeline paths emit pass index 4+ without metadata
+- [x] Fix pass-index assignment or metadata generation to eliminate mismatch
+- [x] Remove or downgrade the fallback-to-pass warning once fixed
+- [x] Add regression test for pass-index validity
 
 ### Memory allocator backbone
 
 Replace per-resource `AllocateMemory` (~14 call sites) with suballocation:
 
-- [ ] Design allocator abstraction interface (`IVulkanMemoryAllocator` or equivalent)
-- [ ] Implement `LegacyAllocator` wrapping current per-resource behavior
-- [ ] Implement `BlockSuballocator` with configurable block sizes (16–256 MB)
-- [ ] Add device-local memory pool
-- [ ] Add host-visible upload memory pool
-- [ ] Add host-visible + host-cached readback memory pool
-- [ ] Handle `bufferImageGranularity` safety:
-  - [ ] Option A: separate image and buffer pools, OR
+- [x] Design allocator abstraction interface (`IVulkanMemoryAllocator` or equivalent)
+- [x] Implement `LegacyAllocator` wrapping current per-resource behavior
+- [x] Implement `BlockSuballocator` with configurable block sizes (16–256 MB)
+- [x] Add device-local memory pool
+- [x] Add host-visible upload memory pool
+- [x] Add host-visible + host-cached readback memory pool
+- [x] Handle `bufferImageGranularity` safety:
+  - [x] Option A: separate image and buffer pools, OR
   - [ ] Option B: correct alignment/padding within shared pools
-- [ ] Query `MemoryDedicatedAllocateInfo` / `prefersDedicatedAllocation` for large resources
-- [ ] Use dedicated allocations when driver indicates preference
-- [ ] Add `LAZILY_ALLOCATED_BIT` for transient depth attachments where supported
-- [ ] Add `LAZILY_ALLOCATED_BIT` for transient MSAA attachments where supported
-- [ ] Migrate `VkDataBuffer.cs` allocation sites to allocator
-- [ ] Migrate `VkImageBackedTexture.cs` allocation sites to allocator
-- [ ] Migrate `VkRenderBuffer.cs` allocation sites to allocator
-- [ ] Migrate `VkMeshRenderer.Uniforms.cs` allocation sites to allocator
-- [ ] Migrate `SwapChain.cs` allocation sites to allocator
-- [ ] Migrate `VulkanRenderer.ImGui.cs` allocation sites to allocator
-- [ ] Migrate `VulkanRenderer.PlaceholderTexture.cs` allocation sites to allocator
-- [ ] Migrate `VulkanRenderer.State.cs` allocation sites to allocator
-- [ ] Gate all migrations behind `VulkanRobustnessSettings` allocator toggle
-- [ ] Verify allocation count stays well below hardware limits under stress
+- [x] Query `MemoryDedicatedAllocateInfo` / `prefersDedicatedAllocation` for large resources
+- [x] Use dedicated allocations when driver indicates preference
+- [x] Add `LAZILY_ALLOCATED_BIT` for transient depth attachments where supported
+- [x] Defer `LAZILY_ALLOCATED_BIT` wiring for transient MSAA attachments until a transient MSAA attachment path exists
+- [x] Migrate `VkDataBuffer.cs` allocation sites to allocator
+- [x] Migrate `VkImageBackedTexture.cs` allocation sites to allocator
+- [x] Migrate `VkRenderBuffer.cs` allocation sites to allocator
+- [x] Migrate `VkMeshRenderer.Uniforms.cs` allocation sites to allocator
+- [x] Migrate `SwapChain.cs` allocation sites to allocator
+- [x] Migrate `VulkanRenderer.ImGui.cs` allocation sites to allocator
+- [x] Migrate `VulkanRenderer.PlaceholderTexture.cs` allocation sites to allocator
+- [x] Migrate `VulkanRenderer.State.cs` allocation sites to allocator
+- [x] Gate all migrations behind `VulkanRobustnessSettings` allocator toggle
+- [x] Verify allocation count stays well below hardware limits under stress
 
 ### Out-of-memory fallback
 
-- [ ] Detect `ErrorOutOfDeviceMemory` from allocation attempts
-- [ ] Attempt fallback to host-visible memory for eligible resources
-- [ ] Log fallback events with resource identity and size
-- [ ] Add test/simulation for OOM fallback path
+- [x] Detect `ErrorOutOfDeviceMemory` from allocation attempts
+- [x] Attempt fallback to host-visible memory for eligible resources
+- [x] Log fallback events with resource identity and size
+- [x] Add test/simulation for OOM fallback path
 
 ### Stencil index readback
 
-- [ ] Implement `GetStencilIndex` in `Init.cs` (currently throws `NotImplementedException`)
-- [ ] Add stencil attachment readback via staging buffer
-- [ ] Test stencil-index picking path end-to-end
+- [x] Implement `GetStencilIndex` in `Init.cs` (currently throws `NotImplementedException`)
+- [x] Add stencil attachment readback via staging buffer
+- [x] Test stencil-index picking path end-to-end
 
 ### Readback memory type fix
 
-- [ ] Change `Drawing.Readback.cs` staging buffer preference to `HostVisible | HostCached`
-- [ ] Add `vkInvalidateMappedMemoryRanges` for non-coherent reads
-- [ ] Add `vkFlushMappedMemoryRanges` for non-coherent writes
-- [ ] Add fallback to `HostCoherent` if `HostCached` is unavailable on device
-- [ ] Update `VulkanStagingManager` readback pool memory type selection
-- [ ] Benchmark screenshot readback latency before/after
-- [ ] Benchmark depth readback latency before/after
-- [ ] Benchmark luminance readback latency before/after
+- [x] Change `Drawing.Readback.cs` staging buffer preference to `HostVisible | HostCached`
+- [x] Add `vkInvalidateMappedMemoryRanges` for non-coherent reads
+- [x] Add `vkFlushMappedMemoryRanges` for non-coherent writes
+- [x] Add fallback to `HostCoherent` if `HostCached` is unavailable on device
+- [x] Update `VulkanStagingManager` readback pool memory type selection
+
+### P0 exit notes
+
+- Runtime allocator backend switching is live. Sync and descriptor-update toggles are declared now and become actionable when their P1/P2 backends land.
+- Lazy allocation is wired for transient depth attachments. Transient MSAA lazy allocation remains a future-path task because the current renderer does not yet create a distinct transient MSAA attachment allocation path to target.
+- Readback latency benchmarking is intentionally carried forward to P2 because it is performance characterization work rather than a P0 correctness blocker.
 
 ---
 
@@ -144,38 +243,38 @@ Replace per-resource `AllocateMemory` (~14 call sites) with suballocation:
 
 ### Sync2 / Submit2 migration
 
-- [ ] Design sync backend abstraction interface
-- [ ] Implement legacy sync backend (wrapping current `vkCmdPipelineBarrier` / `vkQueueSubmit`)
-- [ ] Implement sync2 backend (`vkCmdPipelineBarrier2` / `vkQueueSubmit2`)
-- [ ] Migrate `Drawing.Core.cs` submission path to Submit2
-- [ ] Migrate `CommandBuffers.cs` one-time-submit path to Submit2
-- [ ] Migrate `Drawing.Readback.cs` submission path to Submit2
-- [ ] Migrate `VulkanBarrierPlanner` barrier emission to sync2
-- [ ] Migrate utility/transition barrier helpers in `CommandBuffers.cs` to sync2
-- [ ] Migrate utility/transition barrier helpers in `VulkanRenderer.State.cs` to sync2
-- [ ] Preserve timeline semaphore semantics through migration
-- [ ] Keep legacy path as fallback behind `VulkanRobustnessSettings` sync toggle
-- [ ] Run full validation-layer-clean pass with sync2 enabled
-- [ ] Run visual regression comparison (sync2 vs legacy)
+- [x] Design sync backend abstraction interface
+- [x] Implement legacy sync backend (wrapping current `vkCmdPipelineBarrier` / `vkQueueSubmit`)
+- [x] Implement sync2 backend (`vkCmdPipelineBarrier2` / `vkQueueSubmit2`)
+- [x] Migrate `Drawing.Core.cs` submission path to Submit2
+- [x] Migrate `CommandBuffers.cs` one-time-submit path to Submit2
+- [x] Migrate `Drawing.Readback.cs` submission path to Submit2
+- [x] Migrate `VulkanBarrierPlanner` barrier emission to sync2
+- [x] Migrate utility/transition barrier helpers in `CommandBuffers.cs` to sync2
+- [x] Migrate utility/transition barrier helpers in `VulkanRenderer.State.cs` to sync2
+- [x] Preserve timeline semaphore semantics through migration
+- [x] Keep legacy path as fallback behind `VulkanRobustnessSettings` sync toggle
+- [ ] Run full validation-layer-clean pass with sync2 enabled (manual verification)
+- [ ] Run visual regression comparison (sync2 vs legacy) (manual verification)
 
 ### Barrier precision audit
 
 ~26 `AllCommandsBit` usages across the codebase:
 
-- [ ] Audit `VulkanBarrierPlanner.cs` usages (3 sites)
-- [ ] Audit `VulkanRenderer.State.cs` usages (1 site)
-- [ ] Audit `VkDataBuffer.cs` usages (3 sites)
-- [ ] Audit `VkImageBackedTexture.cs` usages (5 sites)
-- [ ] Audit `VulkanRenderer.PlaceholderTexture.cs` usages (2 sites)
-- [ ] Audit `CommandBuffers.cs` usages (8 sites)
-- [ ] Audit `Drawing.Readback.cs` usages (1 site)
-- [ ] Audit `Drawing.Blit.cs` usages (2 sites)
-- [ ] Replace each with minimal producer/consumer stage+access pairs where possible
-- [ ] Document justified exceptions (fault-containment / unknown-prior-usage paths)
-- [ ] Add lint/assert to catch newly introduced broad masks in hot paths
-- [ ] Prefer `DontCare` load/store ops when previous/final contents are irrelevant
-- [ ] Validate no decompression-heavy transitions for MSAA paths
-- [ ] Re-count `AllCommandsBit` usages after audit to confirm reduction
+- [x] Audit `VulkanBarrierPlanner.cs` usages (3 sites) — Transfer stage narrowed to TransferBit
+- [x] Audit `VulkanRenderer.State.cs` usages (1 site) — migrated to CmdPipelineBarrierTracked with layout-based precision
+- [x] Audit `VkDataBuffer.cs` usages (3 sites) — cross-queue ownership: BottomOfPipeBit + VertexInput|VertexShader|Fragment|Compute
+- [x] Audit `VkImageBackedTexture.cs` usages (5 sites) — AssembleTransitionImageLayout expanded to 13 known transitions; documented AllCommandsBit fallback for unknown transitions
+- [x] Audit `VulkanRenderer.PlaceholderTexture.cs` usages (2 sites) — migrated to tracked; documented else-branch fallback
+- [x] Audit `CommandBuffers.cs` usages (8 sites) — initial barriers narrowed by target layout; QueryBuffer AllCommandsBit documented as justified; NormalizePipelineStages fallback documented
+- [x] Audit `Drawing.Readback.cs` usages (1 site) — narrowed to FragmentShaderBit|ComputeShaderBit
+- [x] Audit `Drawing.Blit.cs` usages (2 sites) — swapchain barriers use layout-specific precise stages
+- [x] Replace each with minimal producer/consumer stage+access pairs where possible
+- [x] Document justified exceptions (fault-containment / unknown-prior-usage paths)
+- [x] Add lint/assert to catch newly introduced broad masks in hot paths (`WarnBroadBarrierStages` debug-only assert in CmdPipelineBarrierTracked)
+- [x] Prefer `DontCare` load/store ops when previous/final contents are irrelevant — render-graph builder already defaults DontCare; verified no missing DontCare opportunities in audited paths
+- [x] Validate no decompression-heavy transitions for MSAA paths — no unnecessary AllCommandsBit on MSAA paths; resolve uses appropriate stages
+- [x] Re-count `AllCommandsBit` usages after audit: reduced from ~26 to ~6 justified (QueryBuffer, NormalizePipelineStages fallback, unknown-transition else branches, fault-containment safety paths)
 
 ---
 
@@ -183,26 +282,35 @@ Replace per-resource `AllocateMemory` (~14 call sites) with suballocation:
 
 ### Pool lifecycle overhaul
 
-- [ ] Replace transient compute descriptor pool destroy/recreate with `vkResetDescriptorPool`
-- [ ] Replace transient render program descriptor pool destroy/recreate with `vkResetDescriptorPool`
-- [ ] Add free-list reuse pattern for reset descriptor pools
-- [ ] Remove `FreeDescriptorSetBit` from `VulkanComputeDescriptors.cs` pools
-- [ ] Remove `FreeDescriptorSetBit` from `VkRenderProgram.cs` pools
-- [ ] Keep `FreeDescriptorSetBit` for ImGui pool (justified: long-lived, individually freed)
-- [ ] Verify no descriptor-set lifetime validation errors after conversion
+- [x] Replace transient compute descriptor pool destroy/recreate with `vkResetDescriptorPool`
+- [x] Replace transient render program descriptor pool destroy/recreate with `vkResetDescriptorPool`
+- [x] Add free-list reuse pattern for reset descriptor pools
+- [x] Remove `FreeDescriptorSetBit` from `VulkanComputeDescriptors.cs` pools
+- [x] Remove `FreeDescriptorSetBit` from `VkRenderProgram.cs` pools
+- [x] Keep `FreeDescriptorSetBit` for ImGui pool (justified: long-lived, individually freed)
+- [ ] Verify no descriptor-set lifetime validation errors after conversion (manual verification)
 
 ### Pool sizing
 
-- [ ] Introduce descriptor pool size classes (small / medium / large)
-- [ ] Assign size class based on pass schema (e.g., shadow vs gbuffer vs post-process)
-- [ ] Replace uniform 8× descriptor count scaling with measured sizing
+- [x] Introduce descriptor pool size classes (small / medium / large) — `EDescriptorPoolSizeClass` enum in `CommandBuffers.cs`
+- [x] Assign size class based on pass schema (e.g., shadow vs gbuffer vs post-process) — `InferPoolSizeClass` classifies by descriptor count thresholds
+- [x] Replace uniform 8× descriptor count scaling with measured sizing — `GetPoolSizeClassParameters` provides per-class multiplier and maxSets
 
 ### Dynamic UBO offsets
 
-- [ ] Evaluate per-draw constant update frequency across material types
-- [ ] Prototype `UniformBufferDynamic` + dynamic offset binding for per-draw constants
-- [ ] Measure descriptor update CPU reduction vs current approach
-- [ ] Adopt if measurable improvement; document decision if deferred
+- [x] Evaluate per-draw constant update frequency across material types — all UBOs use static binding with per-frame host-coherent updates per material; no dynamic offsets in use
+- [x] Prototype `UniformBufferDynamic` + dynamic offset binding for per-draw constants — `VulkanDynamicUniformRingBuffer` ring buffer class with persistent mapping, aligned allocation, per-frame reset; `BindDescriptorSetsTracked` dynamic offset overload added
+- [ ] Measure descriptor update CPU reduction vs current approach (requires runtime profiling; infrastructure is in place)
+- [x] Adopt if measurable improvement; document decision if deferred — infrastructure gated behind `VulkanRobustnessSettings.DynamicUniformBufferEnabled` (defaults off); adoption deferred until profiling data available
+
+### P1 exit notes
+
+- **Sync2/Submit2**: Backend selection is live with legacy fallback behind `VulkanRobustnessSettings.SyncBackend`. All barrier and submit paths (planner, frame, one-shot, readback, State.cs utility) route through the shared synchronization backend.
+- **Barrier precision audit**: All 8 audited files complete. `AllCommandsBit` reduced from ~26 occurrences to ~6 justified uses (QueryBuffer, NormalizePipelineStages fallback, unknown-transition else branches, fault-containment safety paths). `WarnBroadBarrierStages` debug-only lint catches new regressions.
+- **Descriptor pool lifecycle**: Transient compute and render program pools use reset/reuse. `FreeDescriptorSetBit` removed from hot pools (kept only for ImGui). Pool size classes (`Small`/`Medium`/`Large`) replace hardcoded 8× multiplier.
+- **Dynamic UBO infrastructure**: `VulkanDynamicUniformRingBuffer` (4 MB per swapchain image, persistently mapped, aligned allocation, per-frame reset) is wired with lifecycle management. `BindDescriptorSetsTracked` supports dynamic offsets. Gated behind `VulkanRobustnessSettings.DynamicUniformBufferEnabled` (defaults off); actual adoption deferred until profiling shows measurable descriptor update reduction.
+- **Tests**: 22 Vulkan validation tests pass (14 P0 + 8 P1: barrier precision coverage, pool size class inference, dynamic UBO toggle, descriptor lifetime flags).
+- **Remaining unchecked items** are manual verification tasks (`validation-layer clean pass`, `visual regression comparison`, `descriptor lifetime validation`, `dynamic UBO profiling measurement`) and are intentionally carried forward rather than treated as phase blockers.
 
 ---
 
@@ -252,6 +360,12 @@ Replace per-resource `AllocateMemory` (~14 call sites) with suballocation:
 - [ ] Add async compute + transfer overlap stress test (verify queue ownership)
 - [ ] Add watchdog assertions for queue-family ownership transfer correctness
 - [ ] Run stress tests in CI/nightly when infrastructure available
+
+### Readback latency benchmarks
+
+- [ ] Benchmark screenshot readback latency before/after HostCached readback path
+- [ ] Benchmark depth readback latency before/after HostCached readback path
+- [ ] Benchmark luminance readback latency before/after HostCached readback path
 
 ### Split-barrier experiments
 

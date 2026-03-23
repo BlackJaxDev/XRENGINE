@@ -98,12 +98,16 @@ namespace XREngine.Rendering.OpenGL
 
                 if (!IsGenerated)
                 {
-                    // Queue generation for next frame(s) to spread load
-                    // This prevents all meshes from generating at once during import
-                    if (Renderer.MeshGenerationQueue.Enabled)
+                    bool shadowPass = Engine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false;
+
+                    // Never let the shadow pass cold-start GL resources, otherwise every shadow viewport
+                    // amplifies the startup cost before the main view has had a chance to warm the mesh.
+                    if (shadowPass || Renderer.MeshGenerationQueue.Enabled)
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
-                        Dbg("Not generated yet - queued for deferred generation", "Render");
+                        Dbg(shadowPass
+                            ? "Not generated yet during shadow pass - queued for deferred generation"
+                            : "Not generated yet - queued for deferred generation", "Render");
                         return; // Skip rendering until generated
                     }
 

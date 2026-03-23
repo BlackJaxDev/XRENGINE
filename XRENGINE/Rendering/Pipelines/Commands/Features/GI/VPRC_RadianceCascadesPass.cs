@@ -19,6 +19,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// - Half-resolution rendering option for performance
     /// - Debug visualization modes
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_RadianceCascadesPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;

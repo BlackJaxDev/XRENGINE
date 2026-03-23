@@ -1,6 +1,7 @@
 namespace XREngine.Rendering.Pipelines.Commands
 {
     /*
+    [RenderPipelineScriptCommand]
     public class VPRC_RenderMeshesPassCPU : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
         public VPRC_RenderMeshesPassCPU()

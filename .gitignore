@@ -415,3 +415,4 @@ XREngine.Audio/runtimes/win-x64/native/phonon.dll
 Screenshots/
 .dotnet/
 .matplot_venv/
+Build/TempValidation/

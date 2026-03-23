@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// update a uniform, or swap a render target).
     /// </summary>
     /// <typeparam name="T">The element type yielded by the collection.</typeparam>
+    [RenderPipelineScriptCommand]
     public class VPRC_ForEach<T> : ViewportRenderCommand
     {
         /// <summary>

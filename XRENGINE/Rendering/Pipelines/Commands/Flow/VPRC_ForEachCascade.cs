@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// <summary>
 /// Iterates the active cascades of a directional light, publishing per-cascade state and executing a nested command chain.
 /// </summary>
+[RenderPipelineScriptCommand]
 public sealed class VPRC_ForEachCascade : ViewportRenderCommand
 {
     private ViewportRenderCommandContainer? _body;

@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     /// <param name="source"></param>
     /// <param name="destination"></param>
+    [RenderPipelineScriptCommand]
     public class VPRC_RenderQuadToFBO : ViewportRenderCommand
     {
         public string? SourceQuadFBOName { get; set; }

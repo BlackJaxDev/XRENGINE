@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// <summary>
 /// Renders surfel debug visualization (circles or grid heatmap) using the buffers from VPRC_SurfelGIPass.
 /// </summary>
+[RenderPipelineScriptCommand]
 public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
 {
     private const uint CulledCommandFloats = 48u;

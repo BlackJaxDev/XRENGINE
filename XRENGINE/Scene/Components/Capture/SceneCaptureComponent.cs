@@ -191,6 +191,8 @@ namespace XREngine.Components.Lights
 
         public override void CollectVisible()
         {
+            int count = _progressiveRenderEnabled ? 1 : 6;
+            Debug.Out($"[SceneCapture] CollectVisible: progressive={_progressiveRenderEnabled}, faces={count}, Viewports[0]={Viewports[0] is not null}, World={Viewports[0]?.World is not null}");
             if (_progressiveRenderEnabled)
                 CollectVisibleFace(_currentFace);
             else
@@ -203,6 +205,7 @@ namespace XREngine.Components.Lights
 
         public override void SwapBuffers()
         {
+            Debug.Out($"[SceneCapture] SwapBuffers: progressive={_progressiveRenderEnabled}");
             if (_progressiveRenderEnabled)
                 SwapBuffersFace(_currentFace);
             else
@@ -219,7 +222,10 @@ namespace XREngine.Components.Lights
         public override void Render()
         {
             if (World is null || RenderFBO is null)
+            {
+                Debug.Out($"[SceneCapture] Render() SKIPPED: World={World is not null}, RenderFBO={RenderFBO is not null}");
                 return;
+            }
 
             Engine.Rendering.State.IsSceneCapturePass = true;
 
@@ -234,8 +240,12 @@ namespace XREngine.Components.Lights
             }
             else
             {
+                Debug.Out($"[SceneCapture] Rendering all 6 faces. Cubemap={_environmentTextureCubemap is not null}, Extent={_environmentTextureCubemap?.Extent ?? 0}");
                 for (int i = 0; i < 6; ++i)
+                {
                     RenderFace(depthAttachment, depthLayers, i);
+                    Debug.Out($"[SceneCapture] Face {i} rendered. FBO complete={RenderFBO.IsLastCheckComplete}");
+                }
             }
 
             bool completedCycle = !_progressiveRenderEnabled || _currentFace == 0;
@@ -247,10 +257,15 @@ namespace XREngine.Components.Lights
             {
                 _environmentTextureCubemap.Bind();
                 _environmentTextureCubemap.GenerateMipmapsGPU();
+                Debug.Out("[SceneCapture] Cubemap mipmaps generated.");
             }
 
             if (completedCycle)
+            {
+                Debug.Out($"[SceneCapture] Encoding to octahedral. OctaFBO={_octahedralFBO is not null}, OctaTex={_environmentTextureOctahedral is not null}");
                 EncodeEnvironmentToOctahedralMap();
+                Debug.Out("[SceneCapture] Octahedral encode done.");
+            }
 
             Engine.Rendering.State.IsSceneCapturePass = false;
         }
@@ -399,14 +414,15 @@ namespace XREngine.Components.Lights
             BoundingRectangle previousCrop = pipelineState?.CurrentCropRegion ?? BoundingRectangle.Empty;
             bool hadCrop = previousCrop.Width > 0 && previousCrop.Height > 0;
 
-            AbstractRenderer.Current?.SetCroppingEnabled(false);
-            // Ensure the viewport matches the octa target even if no pipeline state is active
-            StateObject? renderArea = pipelineState?.PushRenderArea(width, height);
-            if (renderArea is null)
-                AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
-
             using (_octahedralFBO.BindForWritingState())
             {
+                AbstractRenderer.Current?.SetCroppingEnabled(false);
+
+                // Ensure the viewport matches the octa target even if no pipeline state is active.
+                using StateObject? renderArea = pipelineState?.PushRenderArea(width, height);
+                if (renderArea is null)
+                    AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
+
                 // Make sure the cubemap is bound on GL before the blit; avoids relying solely on shader program state when other passes clear bindings.
                 _environmentTextureCubemap?.Bind();
 
@@ -421,7 +437,6 @@ namespace XREngine.Components.Lights
                 AbstractRenderer.Current?.SetCroppingEnabled(true);
                 AbstractRenderer.Current?.CropRenderArea(previousCrop);
             }
-            renderArea?.Dispose();
         }
 
         private void GetDepthParams(out IFrameBufferAttachement depthAttachment, out int[] depthLayers)

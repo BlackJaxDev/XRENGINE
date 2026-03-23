@@ -1,0 +1,5 @@
+﻿License file not detected for checked-in binary.
+
+Path: XRENGINE/runtimes/win-x64/native/avcodec.dll
+File: avcodec.dll
+

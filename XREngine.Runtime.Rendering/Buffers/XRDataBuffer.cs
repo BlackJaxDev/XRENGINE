@@ -2,6 +2,7 @@ using Extensions;
 using MemoryPack;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using XREngine.Data;
@@ -403,7 +404,7 @@ namespace XREngine.Rendering
         /// <returns>The T value at the given offset.</returns>
         [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.", Justification = "<Pending>")]
         public T? Get<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(uint offset) where T : struct
-            => _clientSideSource != null ? Marshal.PtrToStructure<T>(_clientSideSource.Address + offset) : default;
+            => _clientSideSource != null ? ReadStructValue<T>(_clientSideSource.Address + offset) : default;
 
         /// <summary>
         /// Writes the struct value into the buffer at the given index.
@@ -416,13 +417,13 @@ namespace XREngine.Rendering
         public void Set<T>(uint index, T value) where T : struct
         {
             if (_clientSideSource != null)
-                Marshal.StructureToPtr(value, _clientSideSource.Address[index, ElementSize], true);
+                WriteStructValue(_clientSideSource.Address[index, ElementSize], value);
         }
         
         public void SetByOffset<T>(uint offset, T value) where T : struct
         {
             if (_clientSideSource != null)
-                Marshal.StructureToPtr(value, _clientSideSource.Address + offset, true);
+                WriteStructValue(_clientSideSource.Address + offset, value);
         }
 
         public void SetDataPointer(VoidPtr data)
@@ -476,6 +477,85 @@ namespace XREngine.Rendering
 
             _clientSideSource?.Dispose();
             _clientSideSource = DataSource.Allocate(byteLength);
+        }
+
+        private static bool CanUseDirectStructAccess<T>() where T : struct
+            => !RuntimeHelpers.IsReferenceOrContainsReferences<T>();
+
+        private static unsafe void WriteStructValue<T>(VoidPtr address, in T value) where T : struct
+        {
+            if (CanUseDirectStructAccess<T>())
+            {
+                Unsafe.WriteUnaligned(address.Pointer, value);
+                return;
+            }
+
+            Marshal.StructureToPtr(value, (IntPtr)address, true);
+        }
+
+        private static unsafe T ReadStructValue<T>(VoidPtr address) where T : struct
+            => CanUseDirectStructAccess<T>()
+                ? Unsafe.ReadUnaligned<T>(address.Pointer)
+                : Marshal.PtrToStructure<T>((IntPtr)address);
+
+        private static unsafe bool TryWriteContiguousStructSpan<T>(VoidPtr destination, uint stride, ReadOnlySpan<T> data) where T : struct
+        {
+            if (!CanUseDirectStructAccess<T>() || stride != (uint)Unsafe.SizeOf<T>())
+                return false;
+
+            if (data.IsEmpty)
+                return true;
+
+            ReadOnlySpan<byte> bytes = MemoryMarshal.AsBytes(data);
+            fixed (byte* src = bytes)
+                Memory.Move(destination, src, (uint)bytes.Length);
+
+            return true;
+        }
+
+        private static unsafe bool TryReadContiguousStructSpan<T>(VoidPtr source, uint stride, Span<T> data) where T : struct
+        {
+            if (!CanUseDirectStructAccess<T>() || stride != (uint)Unsafe.SizeOf<T>())
+                return false;
+
+            if (data.IsEmpty)
+                return true;
+
+            Span<byte> bytes = MemoryMarshal.AsBytes(data);
+            fixed (byte* dst = bytes)
+                Memory.Move(dst, source, (uint)bytes.Length);
+
+            return true;
+        }
+
+        private static bool TryGetContiguousSpan<T>(IEnumerable<T> items, out ReadOnlySpan<T> span)
+        {
+            if (items is T[] array)
+            {
+                span = array;
+                return true;
+            }
+
+            if (items is List<T> list)
+            {
+                span = CollectionsMarshal.AsSpan(list);
+                return true;
+            }
+
+            span = default;
+            return false;
+        }
+
+        private bool TrySetContiguousStructData<T>(ReadOnlySpan<T> data) where T : struct
+        {
+            _elementCount = (uint)data.Length;
+            EnsureClientSideSourceLength(Length);
+
+            if (_clientSideSource is null || !TryWriteContiguousStructSpan(_clientSideSource.Address, ElementSize, data))
+                return false;
+
+            ClearGpuCompressedPayload();
+            return true;
         }
 
         private static void ConfigureRawComponentLayout<T>(out EComponentType componentType, out uint componentCount) where T : struct
@@ -557,6 +637,52 @@ namespace XREngine.Rendering
             ClearGpuCompressedPayload();
         }
 
+        public unsafe bool EnsureRawCapacity<T>(uint elementCount, bool growCapacityGeometrically = true) where T : unmanaged
+        {
+            ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
+            _normalize = false;
+
+            uint requiredElementCount = Math.Max(elementCount, 1u);
+            uint requiredByteLength = GetRawByteLength<T>(requiredElementCount);
+            if (_clientSideSource is not null && ElementCount >= requiredElementCount && _clientSideSource.Length >= requiredByteLength)
+                return false;
+
+            _elementCount = growCapacityGeometrically ? XRMath.NextPowerOfTwo(requiredElementCount) : requiredElementCount;
+            EnsureClientSideSourceLength(GetRawByteLength<T>(_elementCount));
+            ClearGpuCompressedPayload();
+            return true;
+        }
+
+        public unsafe uint WriteDataRaw<T>(ReadOnlySpan<T> data) where T : unmanaged
+            => WriteDataRaw(data, 0u);
+
+        public unsafe uint WriteDataRaw<T>(ReadOnlySpan<T> data, uint elementOffset) where T : unmanaged
+        {
+            ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
+            _normalize = false;
+
+            uint requiredElementCount = Math.Max(elementOffset + (uint)data.Length, 1u);
+            uint requiredByteLength = GetRawByteLength<T>(requiredElementCount);
+            if (_clientSideSource is null || ElementCount < requiredElementCount || _clientSideSource.Length < requiredByteLength)
+                throw new InvalidOperationException($"Buffer '{AttributeName}' does not have enough capacity for {data.Length} elements at offset {elementOffset}. Call {nameof(EnsureRawCapacity)} first.");
+
+            uint byteLength = (uint)(data.Length * sizeof(T));
+            if (byteLength > 0)
+            {
+                fixed (T* src = data)
+                    Memory.Move(_clientSideSource.Address + (elementOffset * (uint)sizeof(T)), src, byteLength);
+            }
+
+            ClearGpuCompressedPayload();
+            return byteLength;
+        }
+
+        private unsafe uint GetRawByteLength<T>(uint elementCount) where T : unmanaged
+        {
+            uint byteLength = elementCount * (uint)sizeof(T);
+            return PadEndingToVec4 ? byteLength.Align(0x10) : byteLength;
+        }
+
         public void Allocate<T>(uint listCount) where T : struct
         {
             ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
@@ -582,7 +708,7 @@ namespace XREngine.Rendering
         {
             if (_clientSideSource is null)
                 throw new InvalidOperationException($"Cannot set data at index {index}: client-side buffer has not been allocated.");
-            Marshal.StructureToPtr(data, _clientSideSource.Address[index, ElementSize], true);
+            WriteStructValue(_clientSideSource.Address[index, ElementSize], data);
         }
         
         public T GetDataRawAtIndex<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(uint index) where T : struct
@@ -591,14 +717,20 @@ namespace XREngine.Rendering
                 throw new InvalidOperationException($"Cannot get data at index {index}: client-side buffer has not been allocated.");
             if (index >= _elementCount)
                 throw new ArgumentOutOfRangeException(nameof(index), $"Index {index} is out of range. Element count: {_elementCount}");
-            return Marshal.PtrToStructure<T>(_clientSideSource.Address[index, ElementSize]);
+            return ReadStructValue<T>(_clientSideSource.Address[index, ElementSize]);
         }
 
         public void SetDataArrayRawAtIndex<T>(uint index, T[] data) where T : struct
         {
+            if (_clientSideSource is null)
+                throw new InvalidOperationException($"Cannot set data array at index {index}: client-side buffer has not been allocated.");
+
             uint stride = ElementSize;
+            if (TryWriteContiguousStructSpan(_clientSideSource.Address[index, stride], stride, data))
+                return;
+
             for (uint i = 0; i < data.Length; ++i)
-                Marshal.StructureToPtr(data[i], _clientSideSource!.Address[index + i, stride], true);
+                WriteStructValue(_clientSideSource.Address[index + i, stride], data[i]);
         }
 
         /// <summary>
@@ -613,8 +745,14 @@ namespace XREngine.Rendering
         {
             T[] arr = new T[count];
             uint stride = ElementSize;
+            if (_clientSideSource is null)
+                throw new InvalidOperationException($"Cannot get data array at index {index}: client-side buffer has not been allocated.");
+
+            if (TryReadContiguousStructSpan(_clientSideSource.Address[index, stride], stride, arr))
+                return arr;
+
             for (uint i = 0; i < count; ++i)
-                arr[i] = Marshal.PtrToStructure<T>(_clientSideSource!.Address[index + i, stride]);
+                arr[i] = ReadStructValue<T>(_clientSideSource.Address[index + i, stride]);
             return arr;
         }
 
@@ -662,6 +800,9 @@ namespace XREngine.Rendering
                 throw new InvalidOperationException("Not a proper numeric data type.");
 
             _normalize = false;
+            if (!remap && TryGetContiguousSpan(items, out ReadOnlySpan<T> span) && span.Length == count && TrySetContiguousStructData(span))
+                return null;
+
             if (remap)
             {
                 Remapper remapper = new();
@@ -674,7 +815,7 @@ namespace XREngine.Rendering
                 {
                     VoidPtr addr = _clientSideSource.Address[i, stride];
                     T value = arr[remapper.ImplementationTable![i]];
-                    Marshal.StructureToPtr(value, addr, true);
+                    WriteStructValue(addr, value);
                 }
                 return remapper;
             }
@@ -687,7 +828,7 @@ namespace XREngine.Rendering
                 foreach (var value in items)
                 {
                     VoidPtr addr = _clientSideSource.Address[i, stride];
-                    Marshal.StructureToPtr(value, addr, true);
+                    WriteStructValue(addr, value);
                     i++;
                 }
                 return null;
@@ -698,6 +839,9 @@ namespace XREngine.Rendering
             ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
 
             _normalize = false;
+            if (!remap && TryGetContiguousSpan(list, out ReadOnlySpan<T> span) && TrySetContiguousStructData(span))
+                return null;
+
             if (remap)
             {
                 Remapper remapper = new();
@@ -709,7 +853,7 @@ namespace XREngine.Rendering
                 {
                     VoidPtr addr = _clientSideSource.Address[i, stride];
                     T value = list[remapper.ImplementationTable![i]];
-                    Marshal.StructureToPtr(value, addr, true);
+                    WriteStructValue(addr, value);
                 }
                 return remapper;
             }
@@ -722,7 +866,7 @@ namespace XREngine.Rendering
                 {
                     VoidPtr addr = _clientSideSource.Address[i, stride];
                     T value = list[(int)i];
-                    Marshal.StructureToPtr(value, addr, true);
+                    WriteStructValue(addr, value);
                 }
                 return null;
             }
@@ -858,8 +1002,11 @@ namespace XREngine.Rendering
             uint count = totalBytes / tSize;
             
             array = new T[count];
-            for (uint i = 0; i < count; ++i)
-                array[i] = Marshal.PtrToStructure<T>(_clientSideSource!.Address + (i * tSize));
+            if (!TryReadContiguousStructSpan(_clientSideSource!.Address, tSize, array))
+            {
+                for (uint i = 0; i < count; ++i)
+                    array[i] = ReadStructValue<T>(_clientSideSource.Address + (i * tSize));
+            }
             
             if (!remap)
                 return null;

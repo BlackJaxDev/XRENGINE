@@ -919,59 +919,6 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        private bool TryAllocateTransientComputeDescriptorSets(
-            DescriptorPoolSize[] poolSizes,
-            out DescriptorPool descriptorPool,
-            out DescriptorSet[] descriptorSets)
-        {
-            descriptorPool = default;
-            descriptorSets = Array.Empty<DescriptorSet>();
-
-            fixed (DescriptorPoolSize* poolSizesPtr = poolSizes)
-            {
-                DescriptorPoolCreateInfo poolInfo = new()
-                {
-                    SType = StructureType.DescriptorPoolCreateInfo,
-                    Flags = _descriptorSetsRequireUpdateAfterBind
-                        ? DescriptorPoolCreateFlags.FreeDescriptorSetBit | DescriptorPoolCreateFlags.UpdateAfterBindBit
-                        : DescriptorPoolCreateFlags.FreeDescriptorSetBit,
-                    MaxSets = (uint)_descriptorSetLayouts.Length,
-                    PoolSizeCount = (uint)poolSizes.Length,
-                    PPoolSizes = poolSizesPtr,
-                };
-
-                if (Api!.CreateDescriptorPool(Device, ref poolInfo, null, out descriptorPool) != Result.Success)
-                {
-                    WarnComputeOnce("Failed to create Vulkan compute descriptor pool.");
-                    return false;
-                }
-            }
-
-            descriptorSets = new DescriptorSet[_descriptorSetLayouts.Length];
-            fixed (DescriptorSetLayout* layoutPtr = _descriptorSetLayouts)
-            fixed (DescriptorSet* setPtr = descriptorSets)
-            {
-                DescriptorSetAllocateInfo allocInfo = new()
-                {
-                    SType = StructureType.DescriptorSetAllocateInfo,
-                    DescriptorPool = descriptorPool,
-                    DescriptorSetCount = (uint)_descriptorSetLayouts.Length,
-                    PSetLayouts = layoutPtr,
-                };
-
-                if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
-                {
-                    WarnComputeOnce("Failed to allocate Vulkan compute descriptor sets.");
-                    Api!.DestroyDescriptorPool(Device, descriptorPool, null);
-                    descriptorPool = default;
-                    descriptorSets = Array.Empty<DescriptorSet>();
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
         private void UpdateComputeDescriptorSets(
             DescriptorSet[] descriptorSets,
             PendingDescriptorWrite[] pendingWrites,

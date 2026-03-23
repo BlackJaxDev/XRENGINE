@@ -95,6 +95,18 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected abstract ViewportRenderCommandContainer GenerateCommandChain();
     protected abstract Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters();
 
+    /// <summary>
+    /// Compiles a code-authored render-pipeline script into the nested VPRC command-container layout used at runtime.
+    /// </summary>
+    protected ViewportRenderCommandContainer CompileScript(Action<RenderPipelineScript.Builder> build)
+        => RenderPipelineScript.Compile(this, build);
+
+    /// <summary>
+    /// Parses and compiles a text-authored render-pipeline script into the nested VPRC command-container layout used at runtime.
+    /// </summary>
+    protected ViewportRenderCommandContainer CompileScript(string script)
+        => RenderPipelineScript.Compile(this, script);
+
     protected virtual void DescribeRenderPasses(RenderPassMetadataCollection metadata)
     {
     }

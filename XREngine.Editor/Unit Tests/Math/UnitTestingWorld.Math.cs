@@ -1192,6 +1192,85 @@ public static partial class EditorUnitTests
         modelComponent.Model = new Model([new SubMesh(mesh, material)]);
     }
 
+    internal static bool RebuildPhysicsChainSkinnedBoxVisual(SceneNode testNode)
+    {
+        ArgumentNullException.ThrowIfNull(testNode);
+
+        Transform testTransform = testNode.GetTransformAs<Transform>(true)!;
+        testTransform.RecalculateMatrixHierarchy(
+            forceWorldRecalc: true,
+            setRenderMatrixNow: true,
+            childRecalcType: ELoopType.Parallel).Wait();
+
+        PhysicsChainComponent? chain = testNode.FindFirstDescendantComponent<PhysicsChainComponent>();
+        if (chain?.Root is not Transform rootTransform)
+            return false;
+
+        SceneNode? visualNode = null;
+        testNode.IterateHierarchy(node =>
+        {
+            if (visualNode is null && string.Equals(node.Name, "SkinnedBoxVisual", StringComparison.Ordinal))
+                visualNode = node;
+        });
+
+        if (visualNode is null)
+            return false;
+
+        ModelComponent? modelComponent = visualNode.FindFirstDescendantComponent<ModelComponent>();
+        if (modelComponent?.Model is not Model existingModel)
+            return false;
+
+        XRMaterial? material = null;
+        string? subMeshName = null;
+        foreach (SubMesh existingSubMesh in existingModel.Meshes)
+        {
+            subMeshName ??= existingSubMesh.Name;
+            foreach (SubMeshLOD lod in existingSubMesh.LODs)
+            {
+                material ??= lod.Material as XRMaterial;
+                if (lod.Mesh is XRMesh oldMesh)
+                    oldMesh.Destroy();
+            }
+        }
+
+        if (material is null)
+            return false;
+
+        List<Transform> chainBones = [rootTransform];
+        TransformBase? current = rootTransform;
+        while (current?.Children.Count > 0)
+        {
+            Transform? next = null;
+            foreach (TransformBase child in current.Children)
+            {
+                if (child is Transform transform)
+                {
+                    next = transform;
+                    break;
+                }
+            }
+
+            if (next is null)
+                break;
+
+            chainBones.Add(next);
+            current = next;
+        }
+
+        XRMesh rebuiltMesh = CreatePhysicsChainSkinnedPrismMesh(testTransform, [.. chainBones]);
+        SubMesh rebuiltSubMesh = new(new SubMeshLOD(material, rebuiltMesh, float.PositiveInfinity))
+        {
+            Name = subMeshName ?? "SkinnedBoxVisual"
+        };
+        modelComponent.Model = new Model(rebuiltSubMesh);
+
+        // Reinitialize particles at the current (post-move) bone positions so the
+        // simulation doesn't see a huge _objectMove delta on its first frame.
+        // This also rebuilds GPU-driven renderer bindings with the new mesh.
+        chain.SetupParticles();
+        return true;
+    }
+
     private static XRMesh CreatePhysicsChainSkinnedPrismMesh(Transform visualParent, Transform[] chainBones)
     {
         const float halfWidth = 0.18f;
@@ -1200,9 +1279,15 @@ public static partial class EditorUnitTests
         var utilizedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[chainBones.Length];
         Vector3[] boneCenters = new Vector3[chainBones.Length];
         Matrix4x4 visualParentInverse = visualParent.InverseWorldMatrix;
+        Matrix4x4 visualParentWorld = visualParent.WorldMatrix;
         for (int boneIndex = 0; boneIndex < chainBones.Length; ++boneIndex)
         {
-            utilizedBones[boneIndex] = (chainBones[boneIndex], chainBones[boneIndex].InverseWorldMatrix);
+            // InvBind must include the visual parent's world matrix so that the
+            // vertex shader skinning equation (invBind * boneMatrix * v) correctly
+            // maps mesh-local vertices to world space when model matrix = Identity.
+            // Without this, skinning only produces correct results when the visual
+            // parent sits at the world origin.
+            utilizedBones[boneIndex] = (chainBones[boneIndex], chainBones[boneIndex].InverseWorldMatrix * visualParentWorld);
             boneCenters[boneIndex] = Vector3.Transform(chainBones[boneIndex].WorldTranslation, visualParentInverse);
         }
 

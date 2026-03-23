@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Reads a rectangular region from a named texture mip/layer into a pipeline data buffer as
 /// tightly packed RGBA float32 data.
 /// </summary>
+[RenderPipelineScriptCommand]
 public class VPRC_ReadbackRegion : ViewportRenderCommand
 {
     public string? SourceTextureName { get; set; }

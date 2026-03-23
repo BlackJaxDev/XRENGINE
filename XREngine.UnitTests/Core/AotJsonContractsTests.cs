@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Text.Json;
 using NUnit.Framework;
 using Shouldly;
+using Valve.VR;
 using XREngine.Components;
 
 namespace XREngine.UnitTests.Core;

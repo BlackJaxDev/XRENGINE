@@ -3,6 +3,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Convenience barrier for authored pipelines that need compute-written resources visible to subsequent graphics work.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public sealed class VPRC_WaitForCompute : ViewportRenderCommand
     {
         private EMemoryBarrierMask _mask =

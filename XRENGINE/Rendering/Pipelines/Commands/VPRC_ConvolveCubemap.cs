@@ -3,6 +3,7 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_ConvolveCubemap : ViewportRenderCommand
     {
         private static XRShader? s_fullscreenCubeVertex;

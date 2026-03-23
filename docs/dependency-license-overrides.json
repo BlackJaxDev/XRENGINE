@@ -1,4 +1,4 @@
-﻿{
+{
   "schemaVersion": 1,
   "entries": {
     "binary-item|XREngine.Audio.csproj|runtimes\\win-x64\\native\\phonon.dll": {
@@ -9,9 +9,9 @@
     },
 
     "binary-item|XREngine.csproj|..\\Build\\Dependencies\\FFmpeg\\HlsReference\\win-x64\\*.dll": {
-        "license": "LGPL-2.1-or-later",
+      "license": "LGPL-2.1-or-later",
       "owner": "FFmpeg Project",
-        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "licenseLink": "https://www.ffmpeg.org/legal.html",
       "notes": "Assumes these DLLs are standard FFmpeg LGPL binaries staged for HLS playback support."
     },
 
@@ -30,30 +30,30 @@
     },
 
     "binary-item|XREngine.csproj|ffmpeg.exe": {
-        "license": "LGPL-2.1-or-later",
+      "license": "LGPL-2.1-or-later",
       "owner": "FFmpeg Project",
-        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "licenseLink": "https://www.ffmpeg.org/legal.html",
       "notes": "Use LGPL-compatible FFmpeg builds for redistribution. Confirm build configuration with `ffmpeg -L`."
     },
 
     "binary-item|XREngine.csproj|ffplay.exe": {
-        "license": "LGPL-2.1-or-later",
+      "license": "LGPL-2.1-or-later",
       "owner": "FFmpeg Project",
-        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "licenseLink": "https://www.ffmpeg.org/legal.html",
       "notes": "Same licensing family as ffmpeg.exe."
     },
 
     "binary-item|XREngine.csproj|ffprobe.exe": {
-        "license": "LGPL-2.1-or-later",
+      "license": "LGPL-2.1-or-later",
       "owner": "FFmpeg Project",
-        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "licenseLink": "https://www.ffmpeg.org/legal.html",
       "notes": "Same licensing family as ffmpeg.exe."
     },
 
     "binary-item|XREngine.csproj|runtimes\\win-x64\\native\\postproc.dll": {
-        "license": "LGPL-2.1-or-later",
+      "license": "LGPL-2.1-or-later",
       "owner": "FFmpeg Project",
-        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "licenseLink": "https://www.ffmpeg.org/legal.html",
       "notes": "Part of FFmpeg LGPL binary distribution."
     },
 
@@ -78,7 +78,7 @@
       "notes": "Property-based include path for the optional ThirdParty OVR LipSync drop-folder binary."
     },
 
-    "binary-item|XREngine.csproj|RestirGI.Native.dll": { 
+    "binary-item|XREngine.csproj|RestirGI.Native.dll": {
       "license": "Proprietary (NVIDIA RTXGI SDK License)",
       "owner": "NVIDIA Corporation",
       "licenseLink": "https://developer.nvidia.com/rtxgi",
@@ -92,7 +92,7 @@
       "notes": "Property-based include path for the optional ThirdParty RTXGI drop-folder binary."
     },
 
-    "binary-item|XREngine.csproj|runtimes\\win-x64\\native\\libmagicphysx.dll": { 
+    "binary-item|XREngine.csproj|runtimes\\win-x64\\native\\libmagicphysx.dll": {
       "license": "MIT (MagicPhysX) + NVIDIA PhysX 5 license",
       "owner": "Cysharp (MagicPhysX) / NVIDIA (PhysX 5)",
       "licenseLink": "https://github.com/Cysharp/MagicPhysX/blob/main/LICENSE",
@@ -126,7 +126,7 @@
       "licenseLink": "https://github.com/ValveSoftware/openvr/blob/master/LICENSE",
       "notes": "Checked binary; confirm hash matches the official OpenVR SDK build you rely on."
     },
-    
+
     "checked-binary|XRENGINE/OVRLipSync.dll": {
       "license": "Proprietary (Oculus SDK License Agreement)",
       "owner": "Meta Platforms, Inc.",
@@ -134,7 +134,14 @@
       "notes": "Binary redistribution permitted under the Oculus SDK License. Must remain separate from AGPL-3.0 code."
     },
 
-    "checked-binary|XRENGINE/runtimes/win-x64/native/libmagicphysx.dll": { 
+    "checked-binary|XRENGINE/RestirGI.Native.dll": {
+      "license": "Proprietary (NVIDIA RTXGI SDK License)",
+      "owner": "NVIDIA Corporation",
+      "licenseLink": "https://developer.nvidia.com/rtxgi",
+      "notes": "Checked binary built from the NVIDIA RTXGI SDK; keep the proprietary RTXGI notice with shipped binaries."
+    },
+
+    "checked-binary|XRENGINE/runtimes/win-x64/native/libmagicphysx.dll": {
       "license": "MIT (MagicPhysX) + NVIDIA PhysX 5 license",
       "owner": "Cysharp (MagicPhysX) / NVIDIA (PhysX 5)",
       "licenseLink": "https://github.com/Cysharp/MagicPhysX/blob/main/LICENSE",

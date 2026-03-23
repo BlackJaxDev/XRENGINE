@@ -2,6 +2,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_RenderDebugShapes : ViewportRenderCommand
     {
         protected override void Execute()

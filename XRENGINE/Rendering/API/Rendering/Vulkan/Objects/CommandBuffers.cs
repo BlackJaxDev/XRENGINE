@@ -107,6 +107,7 @@ namespace XREngine.Rendering.Vulkan
             public DescriptorPool ActiveDescriptorPool;
             public List<DescriptorPool> DescriptorPools { get; } = [];
             public List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> UniformBuffers { get; } = [];
+            public bool DescriptorPoolsInitialized;
         }
 
         private readonly struct DeferredSecondaryCommandBuffer
@@ -203,6 +204,15 @@ namespace XREngine.Rendering.Vulkan
             PipelineLayout layout,
             uint firstSet,
             DescriptorSet[] sets)
+            => BindDescriptorSetsTracked(commandBuffer, bindPoint, layout, firstSet, sets, ReadOnlySpan<uint>.Empty);
+
+        internal void BindDescriptorSetsTracked(
+            CommandBuffer commandBuffer,
+            PipelineBindPoint bindPoint,
+            PipelineLayout layout,
+            uint firstSet,
+            DescriptorSet[] sets,
+            ReadOnlySpan<uint> dynamicOffsets)
         {
             if (sets.Length == 0)
                 return;
@@ -213,6 +223,8 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(firstSet);
             for (int i = 0; i < sets.Length; i++)
                 hash.Add(sets[i].Handle);
+            for (int i = 0; i < dynamicOffsets.Length; i++)
+                hash.Add(dynamicOffsets[i]);
 
             ulong signature = unchecked((ulong)hash.ToHashCode());
             bool shouldBind = true;
@@ -245,7 +257,8 @@ namespace XREngine.Rendering.Vulkan
             }
 
             fixed (DescriptorSet* setPtr = sets)
-                Api!.CmdBindDescriptorSets(commandBuffer, bindPoint, layout, firstSet, (uint)sets.Length, setPtr, 0, null);
+            fixed (uint* offsetPtr = dynamicOffsets)
+                Api!.CmdBindDescriptorSets(commandBuffer, bindPoint, layout, firstSet, (uint)sets.Length, setPtr, (uint)dynamicOffsets.Length, offsetPtr);
 
             Engine.Rendering.Stats.RecordVulkanBindChurn(descriptorBinds: 1);
         }
@@ -394,6 +407,43 @@ namespace XREngine.Rendering.Vulkan
             _deferredSecondaryCommandBuffers[imageIndex]!.Add(new DeferredSecondaryCommandBuffer(pool, commandBuffer));
         }
 
+        /// <summary>
+        /// Descriptor pool size tiers for transient compute pool allocation.
+        /// Replaces the old uniform 8× scaling with demand-aware sizing.
+        /// </summary>
+        private enum EDescriptorPoolSizeClass : byte
+        {
+            /// <summary>Simple shaders with few bindings (shadow, single-texture compute). Scale=4×, base=16.</summary>
+            Small = 0,
+            /// <summary>Standard compute/material passes (3-8 bindings). Scale=8×, base=32.</summary>
+            Medium = 1,
+            /// <summary>Complex passes with many bindings (deferred lighting, multi-texture). Scale=16×, base=64.</summary>
+            Large = 2,
+        }
+
+        private static (uint maxSetsBase, uint descriptorScale) GetPoolSizeClassParameters(EDescriptorPoolSizeClass sizeClass) => sizeClass switch
+        {
+            EDescriptorPoolSizeClass.Small => (16u, 4u),
+            EDescriptorPoolSizeClass.Medium => (32u, 8u),
+            EDescriptorPoolSizeClass.Large => (64u, 16u),
+            _ => (32u, 8u),
+        };
+
+        private static EDescriptorPoolSizeClass InferPoolSizeClass(DescriptorPoolSize[] poolSizes, int setLayoutCount)
+        {
+            uint totalDescriptors = 0;
+            for (int i = 0; i < poolSizes.Length; i++)
+                totalDescriptors += poolSizes[i].DescriptorCount;
+
+            if (poolSizes.Length > 8 || totalDescriptors > 16)
+                return EDescriptorPoolSizeClass.Large;
+
+            if (poolSizes.Length <= 2 && totalDescriptors <= 4)
+                return EDescriptorPoolSizeClass.Small;
+
+            return EDescriptorPoolSizeClass.Medium;
+        }
+
         private void DestroyComputeTransientResources()
         {
             if (_computeTransientResources is null)
@@ -414,14 +464,27 @@ namespace XREngine.Rendering.Vulkan
             if (resources is null)
                 return;
 
-            foreach (DescriptorPool descriptorPool in resources.DescriptorPools)
+            for (int i = 0; i < resources.DescriptorPools.Count; i++)
             {
+                DescriptorPool descriptorPool = resources.DescriptorPools[i];
                 if (descriptorPool.Handle != 0)
-                    Api!.DestroyDescriptorPool(device, descriptorPool, null);
+                {
+                    Result resetResult = Api!.ResetDescriptorPool(device, descriptorPool, 0);
+                    if (resetResult == Result.Success)
+                    {
+                        Engine.Rendering.Stats.RecordVulkanDescriptorPoolReset();
+                    }
+                    else
+                    {
+                        Api!.DestroyDescriptorPool(device, descriptorPool, null);
+                        Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                        resources.DescriptorPools[i] = default;
+                    }
+                }
             }
 
-            resources.DescriptorPools.Clear();
             resources.ActiveDescriptorPool = default;
+            resources.DescriptorPoolsInitialized = resources.DescriptorPools.Count > 0;
 
             foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in resources.UniformBuffers)
             {
@@ -476,7 +539,24 @@ namespace XREngine.Rendering.Vulkan
             if (resources.ActiveDescriptorPool.Handle != 0 && TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets))
                 return true;
 
-            uint descriptorScale = 8u;
+            if (resources.DescriptorPoolsInitialized)
+            {
+                for (int i = 0; i < resources.DescriptorPools.Count; i++)
+                {
+                    DescriptorPool pooledDescriptorPool = resources.DescriptorPools[i];
+                    if (pooledDescriptorPool.Handle == 0)
+                        continue;
+
+                    resources.ActiveDescriptorPool = pooledDescriptorPool;
+                    if (TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets))
+                        return true;
+                }
+            }
+
+            // Infer pool size class from descriptor demand to avoid uniform over-allocation.
+            EDescriptorPoolSizeClass sizeClass = InferPoolSizeClass(poolSizes, setLayouts.Length);
+            (uint maxSetsBase, uint descriptorScale) = GetPoolSizeClassParameters(sizeClass);
+
             DescriptorPoolSize[] scaledPoolSizes = new DescriptorPoolSize[poolSizes.Length];
             for (int i = 0; i < poolSizes.Length; i++)
             {
@@ -499,7 +579,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     SType = StructureType.DescriptorPoolCreateInfo,
                     Flags = poolFlags,
-                    MaxSets = Math.Max((uint)setLayouts.Length * descriptorScale, 32u),
+                    MaxSets = Math.Max((uint)setLayouts.Length * descriptorScale, maxSetsBase),
                     PoolSizeCount = (uint)scaledPoolSizes.Length,
                     PPoolSizes = poolSizesPtr,
                 };
@@ -507,8 +587,10 @@ namespace XREngine.Rendering.Vulkan
                 if (Api!.CreateDescriptorPool(device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
                     return false;
 
+                Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
                 resources.DescriptorPools.Add(descriptorPool);
                 resources.ActiveDescriptorPool = descriptorPool;
+                resources.DescriptorPoolsInitialized = true;
             }
 
             return TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets);
@@ -950,7 +1032,7 @@ namespace XREngine.Rendering.Vulkan
                             }
                         };
 
-                        Api!.CmdPipelineBarrier(
+                        CmdPipelineBarrierTracked(
                             commandBuffer,
                             PipelineStageFlags.ColorAttachmentOutputBit,
                             PipelineStageFlags.BottomOfPipeBit,
@@ -1083,7 +1165,7 @@ namespace XREngine.Rendering.Vulkan
                         preRenderingBarriers[0] = colorBarrier;
                         preRenderingBarriers[1] = depthBarrier;
 
-                        Api!.CmdPipelineBarrier(
+                        CmdPipelineBarrierTracked(
                             commandBuffer,
                             PipelineStageFlags.TopOfPipeBit,
                             PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit,
@@ -1297,7 +1379,7 @@ namespace XREngine.Rendering.Vulkan
                         DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
                     };
 
-                    Api!.CmdPipelineBarrier(
+                    CmdPipelineBarrierTracked(
                         commandBuffer,
                         PipelineStageFlags.AllCommandsBit,
                         PipelineStageFlags.AllCommandsBit,
@@ -2143,7 +2225,7 @@ namespace XREngine.Rendering.Vulkan
                     DstAccessMask = AccessFlags.IndirectCommandReadBit,
                 };
 
-                Api!.CmdPipelineBarrier(
+                CmdPipelineBarrierTracked(
                     commandBuffer,
                     PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
                     PipelineStageFlags.DrawIndirectBit,
@@ -2306,7 +2388,7 @@ namespace XREngine.Rendering.Vulkan
                 DstAccessMask = dstAccess,
             };
 
-            Api!.CmdPipelineBarrier(
+            CmdPipelineBarrierTracked(
                 commandBuffer,
                 srcStages,
                 dstStages,
@@ -2402,6 +2484,8 @@ namespace XREngine.Rendering.Vulkan
                 AccessFlags.HostWriteBit,
                 AccessFlags.TransferReadBit | AccessFlags.VertexAttributeReadBit | AccessFlags.UniformReadBit | AccessFlags.ShaderReadBit);
 
+            // Query buffers: AllCommandsBit is justified per Vulkan spec because
+            // queries can be written by any pipeline stage.
             Merge(mask.HasFlag(EMemoryBarrierMask.QueryBuffer),
                 PipelineStageFlags.AllCommandsBit,
                 PipelineStageFlags.AllCommandsBit,
@@ -2554,10 +2638,26 @@ namespace XREngine.Rendering.Vulkan
                     DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
                 };
 
-                Api!.CmdPipelineBarrier(
+                // Narrow dst stage based on target layout instead of AllCommandsBit.
+                PipelineStageFlags initDstStage = targetLayout switch
+                {
+                    ImageLayout.DepthStencilAttachmentOptimal =>
+                        PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+                    ImageLayout.ColorAttachmentOptimal =>
+                        PipelineStageFlags.ColorAttachmentOutputBit,
+                    ImageLayout.General =>
+                        PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit,
+                    ImageLayout.ShaderReadOnlyOptimal =>
+                        PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                    ImageLayout.TransferDstOptimal or ImageLayout.TransferSrcOptimal =>
+                        PipelineStageFlags.TransferBit,
+                    _ => PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit,
+                };
+
+                CmdPipelineBarrierTracked(
                     commandBuffer,
                     PipelineStageFlags.TopOfPipeBit,
-                    PipelineStageFlags.AllCommandsBit,
+                    initDstStage,
                     DependencyFlags.None,
                     0, null, 0, null,
                     1, &barrier);
@@ -2609,7 +2709,7 @@ namespace XREngine.Rendering.Vulkan
                 PipelineStageFlags srcStages = NormalizePipelineStages(planned.Previous.StageMask);
                 PipelineStageFlags dstStages = NormalizePipelineStages(planned.Next.StageMask);
 
-                Api!.CmdPipelineBarrier(
+                CmdPipelineBarrierTracked(
                     commandBuffer,
                     srcStages,
                     dstStages,
@@ -2652,7 +2752,7 @@ namespace XREngine.Rendering.Vulkan
                 PipelineStageFlags srcStages = NormalizePipelineStages(planned.Previous.StageMask);
                 PipelineStageFlags dstStages = NormalizePipelineStages(planned.Next.StageMask);
 
-                Api!.CmdPipelineBarrier(
+                CmdPipelineBarrierTracked(
                     commandBuffer,
                     srcStages,
                     dstStages,
@@ -2666,6 +2766,8 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        /// Pipeline stages must not be zero; fall back to AllCommandsBit as safety net.
+        /// The planner should produce non-zero masks; this guards against edge cases.
         private static PipelineStageFlags NormalizePipelineStages(PipelineStageFlags stageMask)
             => stageMask == 0 ? PipelineStageFlags.AllCommandsBit : stageMask;
 
@@ -3016,7 +3118,7 @@ namespace XREngine.Rendering.Vulkan
             lock (_oneTimeSubmitLock)
             {
                 Queue submitQueue = SelectOneTimeSubmitQueue(useTransferQueue);
-                Result submitResult = Api!.QueueSubmit(submitQueue, 1, ref submitInfo, submitFence);
+                Result submitResult = SubmitToQueueTracked(submitQueue, ref submitInfo, submitFence);
                 if (submitResult != Result.Success)
                 {
                     Debug.VulkanWarning($"[Vulkan] One-shot QueueSubmit failed (result={submitResult}). Skipping command buffer free.");

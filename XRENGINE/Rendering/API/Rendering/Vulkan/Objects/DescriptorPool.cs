@@ -7,7 +7,14 @@ namespace XREngine.Rendering.Vulkan
         private DescriptorPool descriptorPool;
 
         private void DestroyDescriptorPool()
-            => Api!.DestroyDescriptorPool(device, descriptorPool, null);
+        {
+            if (descriptorPool.Handle == 0)
+                return;
+
+            Api!.DestroyDescriptorPool(device, descriptorPool, null);
+            descriptorPool = default;
+            Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+        }
 
         private void CreateDescriptorPool()
         {
@@ -39,6 +46,8 @@ namespace XREngine.Rendering.Vulkan
 
                 if (Api!.CreateDescriptorPool(device, ref poolInfo, null, descriptorPoolPtr) != Result.Success)
                     throw new Exception("Failed to create descriptor pool.");
+
+                Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
             }
         }
     }

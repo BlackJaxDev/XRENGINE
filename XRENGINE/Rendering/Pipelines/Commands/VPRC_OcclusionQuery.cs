@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Wraps an authored command body in a hardware occlusion query and publishes the visibility result into pipeline variables.
     /// On unsupported backends, the command publishes the query as unavailable.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public sealed class VPRC_OcclusionQuery : ViewportRenderCommand
     {
         private readonly AsyncOcclusionQueryManager _queryManager = new();

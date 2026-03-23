@@ -4,6 +4,7 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_Switch : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
         public Func<int>? SwitchEvaluator { get; set; }

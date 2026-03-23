@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// for RGB and alpha channels independently. Automatically pops via
     /// <see cref="VPRC_PopBlendState"/> when used with the <c>using</c> pattern.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_PushBlendState : ViewportStateRenderCommand<VPRC_PopBlendState>
     {
         /// <summary>Blend equation for the RGB channels.</summary>

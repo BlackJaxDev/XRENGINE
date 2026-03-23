@@ -20,6 +20,7 @@ public enum EDebugHeatmapSourceChannel
 /// <summary>
 /// Visualizes a scalar texture channel as a false-color heatmap.
 /// </summary>
+[RenderPipelineScriptCommand]
 public sealed class VPRC_DebugHeatmap : ViewportRenderCommand
 {
     private const string HeatmapShaderCode = """

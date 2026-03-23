@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Uses per-material fragment variants when available so the pre-pass preserves each shader's
     /// own normal evaluation path, with a generic override material left as fallback.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_ForwardDepthNormalPrePass : ViewportRenderCommand
     {
         private IReadOnlyList<int> _renderPasses = [];

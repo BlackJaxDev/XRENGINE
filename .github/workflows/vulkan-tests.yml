@@ -1,0 +1,36 @@
+name: Vulkan Tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  vulkan-unit-tests:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore XRENGINE.slnx
+
+      - name: Build Unit Tests
+        run: dotnet build XREngine.UnitTests/XREngine.UnitTests.csproj --configuration Release --no-restore
+
+      - name: Run Vulkan Regression Tests
+        run: >-
+          dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj
+          --configuration Release
+          --no-build
+          --filter "FullyQualifiedName~VulkanTodoP2ValidationTests|FullyQualifiedName~GpuIndirectPhase3PolicyTests|FullyQualifiedName~GpuCullingPipelineTests"

@@ -117,6 +117,19 @@ function Detect-LicenseFromFile([string]$path) {
     }
 }
 
+function Test-IsPlaceholderLicenseText([string]$text) {
+    if (-not $text) { return $false }
+    $t = $text.ToLowerInvariant()
+
+    return (
+        $t -match 'copyright \(c\) <year> <copyright holders>' -or
+        $t -match 'copyright \[yyyy\] \[name of copyright owner\]' -or
+        $t -match 'standard license header' -or
+        $t -match 'this license was released january 2004' -or
+        $t -match 'note for matching purposes, this license contains a number of equivalent variations'
+    )
+}
+
 function Ensure-Directory([string]$path) {
     if (-not $path) { return }
     if (-not (Test-Path -LiteralPath $path)) {
@@ -312,6 +325,11 @@ function Materialize-LicenseLink([string]$licLink, [string]$entityName, [string]
             }
         }
 
+        if (Test-IsPlaceholderLicenseText -text $fetchedText) {
+            # SPDX/web-template pages lose attribution details; keep the original link instead.
+            return $licLink
+        }
+
         # Use just the leaf filename (without extension) to keep filenames short.
         # Strip MSBuild variable prefixes like $(NvidiaRtxgiWinX64Dir) and redaction markers.
         $cleanName = $entityName -replace '\$\([^)]+\)', '' -replace '<[^>]+>', ''
@@ -490,14 +508,52 @@ function Read-NupkgEntryText([string]$nupkgPath, [string]$entryName) {
     }
 }
 
+function Get-GitHubLicenseTextFromRawRepoUrl([string]$url) {
+    $parts = Get-GitHubRepoParts -url $url
+    if (-not $parts) { return $null }
+
+    $branches = @('main', 'master', 'dev')
+    $licenseFiles = @(
+        'LICENSE',
+        'LICENSE.txt',
+        'LICENSE.md',
+        'LICENCE',
+        'LICENCE.txt',
+        'LICENCE.md',
+        'COPYING',
+        'COPYING.txt',
+        'COPYING.md'
+    )
+
+    foreach ($branch in $branches) {
+        foreach ($licenseFile in $licenseFiles) {
+            $rawUrl = "https://raw.githubusercontent.com/{0}/{1}/{2}/{3}" -f $parts.Owner, $parts.Repo, $branch, $licenseFile
+            $text = Try-ReadUrlText -url $rawUrl
+            if ($text -and -not (Test-IsPlaceholderLicenseText -text $text)) {
+                return $text
+            }
+        }
+    }
+
+    return $null
+}
+
 function Get-GitHubLicenseTextFromRepoUrl([string]$url) {
     $parts = Get-GitHubRepoParts -url $url
     if (-not $parts) { return $null }
+
+    $rawText = Get-GitHubLicenseTextFromRawRepoUrl -url $url
+    if ($rawText) { return $rawText }
+
     try {
         $licInfo = Invoke-RestMethod -Uri ("https://api.github.com/repos/{0}/{1}/license" -f $parts.Owner, $parts.Repo) -Headers @{ 'User-Agent' = 'XRENGINE-Dependencies' } -Method Get
         if (-not $licInfo -or -not $licInfo.content) { return $null }
         $bytes = [System.Convert]::FromBase64String([string]$licInfo.content)
-        return [System.Text.Encoding]::UTF8.GetString($bytes)
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+        if ($text -and -not (Test-IsPlaceholderLicenseText -text $text)) {
+            return $text
+        }
+        return $null
     } catch {
         return $null
     }
@@ -509,7 +565,7 @@ function Resolve-NuGetLicenseFileText([string]$id, [string]$version, $meta) {
         $nupkg = Get-NuGetNupkgPath -id $id -version $version
         $txt = Read-NupkgEntryText -nupkgPath $nupkg -entryName $meta.License
         if (-not $txt) { $txt = Read-NuGetExtractedFileText -id $id -version $version -relativeOrFileName $meta.License }
-        return $txt
+        if ($txt -and -not (Test-IsPlaceholderLicenseText -text $txt)) { return $txt }
     }
 
     if ($meta -and $meta.License) {
@@ -518,12 +574,12 @@ function Resolve-NuGetLicenseFileText([string]$id, [string]$version, $meta) {
             $nupkg = Get-NuGetNupkgPath -id $id -version $version
             $txt = Read-NupkgEntryText -nupkgPath $nupkg -entryName $licVal
             if (-not $txt) { $txt = Read-NuGetExtractedFileText -id $id -version $version -relativeOrFileName $licVal }
-            return $txt
+            if ($txt -and -not (Test-IsPlaceholderLicenseText -text $txt)) { return $txt }
         }
         # If the license value is a URL, try to fetch its contents as license text.
-        if ($licVal -match '^https?://') {
-            $txt = Try-ReadUrlText -url $licVal
-            if ($txt) { return $txt }
+            if ($licVal -match '^https?://') {
+                $txt = Try-ReadUrlText -url $licVal
+                if ($txt -and -not (Test-IsPlaceholderLicenseText -text $txt)) { return $txt }
         }
     }
 
@@ -533,7 +589,11 @@ function Resolve-NuGetLicenseFileText([string]$id, [string]$version, $meta) {
         foreach ($cand in @('LICENSE', 'LICENSE.txt', 'license.txt', 'COPYING', 'COPYING.txt', 'NOTICE', 'NOTICE.txt')) {
             $p = Join-Path $dir $cand
             if (Test-Path -LiteralPath $p) {
-                try { return Get-Content -Raw -LiteralPath $p } catch { }
+                try {
+                    $txt = Get-Content -Raw -LiteralPath $p
+                    if ($txt -and -not (Test-IsPlaceholderLicenseText -text $txt)) { return $txt }
+                } catch {
+                }
             }
         }
     }
@@ -543,7 +603,10 @@ function Resolve-NuGetLicenseFileText([string]$id, [string]$version, $meta) {
         $t = Get-GitHubLicenseTextFromRepoUrl -url $meta.RepositoryUrl
         if (-not $t) { $t = Get-GitHubLicenseTextFromRepoUrl -url $meta.ProjectUrl }
         if (-not $t -and $meta.LicenseUrl -and (Is-AbsoluteHttpUrl -s $meta.LicenseUrl)) {
-            $t = Try-ReadUrlText -url $meta.LicenseUrl
+                $candidate = Try-ReadUrlText -url $meta.LicenseUrl
+                if ($candidate -and -not (Test-IsPlaceholderLicenseText -text $candidate)) {
+                    $t = $candidate
+                }
         }
         return $t
     }
@@ -849,7 +912,7 @@ $promptUnknown = if ($NoPromptForUnknownLicenses) {
 } elseif ($PromptForUnknownLicenses) {
     $true
 } else {
-    $interactiveHost
+    $false
 }
 
 $licenseOverrides = Load-LicenseOverrides -path $licenseOverridesPath
@@ -863,6 +926,8 @@ function Get-BinaryOwner([string]$fileOrPath) {
         '^openvr_api\.dll$' { return 'Valve (OpenVR/SteamVR)' }
         '^openxr_loader\.dll$' { return 'Valve (SteamVR) / Khronos (OpenXR loader)' }
         '^OVRLipSync\.dll$' { return 'Meta/Oculus (OVR LipSync)' }
+        '^RestirGI\.Native\.dll$' { return 'NVIDIA Corporation' }
+        '^rive\.dll$' { return 'Rive (rive-app)' }
 
         '^(av.*|sw(resample|scale)(-[0-9]+)?|postproc)(-[0-9]+)?\.dll$' { return 'FFmpeg project' }
         '^ffmpeg\.exe$' { return 'FFmpeg project' }
@@ -874,7 +939,7 @@ function Get-BinaryOwner([string]$fileOrPath) {
         '^NvLowLatencyVk\.dll$' { return 'NVIDIA (Reflex / Low Latency)' }
 
         '^lib_coacd\.(dll|so|dylib)$' { return 'SarahWeiii (CoACD)' }
-        '^libmagicphysx\.(dll|so|dylib)$' { return 'MagicPhysX' }
+        '^libmagicphysx\.(dll|so|dylib)$' { return 'Cysharp (MagicPhysX) / NVIDIA (PhysX 5)' }
 
         '^libmp3lame\.(32|64)\.dll$' { return 'LAME / NAudio.Lame (Corey-M) packaging' }
         default { return '(unknown)' }
@@ -890,9 +955,11 @@ function Get-BinaryLicense([string]$fileOrPath) {
         '^nvngx_.*\.dll$' { return 'NVIDIA RTX SDKs License (see XRENGINE/nvngx_dlss.license.txt)' }
         '^NvLowLatencyVk\.dll$' { return 'NVIDIA SDK License Agreement (see XRENGINE/reflex.license.txt)' }
         '^sl\..*\.dll$' { return '(unknown - see NVIDIA license files)' }
+        '^RestirGI\.Native\.dll$' { return 'Proprietary (NVIDIA RTXGI SDK License)' }
+        '^rive\.dll$' { return 'MIT' }
 
         '^lib_coacd\.(dll|so|dylib)$' { return 'MIT (see Build/Submodules/CoACD/LICENSE)' }
-        '^libmagicphysx\.(dll|so|dylib)$' { return '(unknown)' }
+        '^libmagicphysx\.(dll|so|dylib)$' { return 'MIT (MagicPhysX) + NVIDIA PhysX 5 license' }
 
         '^(av.*|sw(resample|scale)(-[0-9]+)?|postproc)(-[0-9]+)?\.dll$' { return '(unknown - depends on FFmpeg build config)' }
         '^ff(mpeg|play|probe)\.exe$' { return '(unknown - depends on FFmpeg build config)' }
@@ -909,7 +976,10 @@ function Get-BinaryLicenseLink([string]$fileOrPath) {
         '^nvngx_.*\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/nvngx_dlss.license.txt' }
         '^NvLowLatencyVk\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/reflex.license.txt' }
         '^sl\..*\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/' }
+        '^RestirGI\.Native\.dll$' { return 'https://developer.nvidia.com/rtxgi' }
+        '^rive\.dll$' { return 'https://github.com/rive-app/rive-cpp/blob/master/LICENSE' }
         '^lib_coacd\.(dll|so|dylib)$' { return '../Build/Submodules/CoACD/LICENSE' }
+        '^libmagicphysx\.(dll|so|dylib)$' { return 'https://github.com/Cysharp/MagicPhysX/blob/main/LICENSE' }
         default { return $null }
     }
 }
@@ -1293,7 +1363,7 @@ foreach ($pkg in ($packages.Values | Sort-Object Id)) {
         # Try to fetch the license text from the URL and materialize a local file
         # instead of linking to the raw external URL.
         $fetchedText = Try-ReadUrlText -url $pkg.Meta.LicenseUrl
-        if ($fetchedText) {
+        if ($fetchedText -and -not (Test-IsPlaceholderLicenseText -text $fetchedText)) {
             $dstRel = ("nuget/{0}-{1}-{2}.txt" -f $pkgSafe, (To-SafeFileName $verForFile), $licSafe)
             $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text $fetchedText
         }

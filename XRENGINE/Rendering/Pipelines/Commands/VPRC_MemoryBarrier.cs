@@ -1,5 +1,6 @@
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_MemoryBarrier : ViewportRenderCommand
     {
         private EMemoryBarrierMask _mask = EMemoryBarrierMask.All;

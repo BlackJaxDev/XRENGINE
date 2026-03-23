@@ -3,6 +3,7 @@ using XREngine.Rendering;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_ExposureUpdate : ViewportRenderCommand
     {
         /// <summary>

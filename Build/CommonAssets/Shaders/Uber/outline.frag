@@ -3,16 +3,15 @@
 #version 450 core
 
 #include "common.glsl"
+#pragma snippet "LightStructs"
 
 // ============================================
 // Fragment Inputs
 // ============================================
-in VS_OUT {
-    vec2 uv;
-    vec4 vertexColor;
-    vec3 worldPos;
-    float distanceFade;
-} fs_in;
+layout(location = 0) in vec2 v_Uv;
+layout(location = 1) in vec4 v_VertexColor;
+layout(location = 2) in vec3 v_WorldPos;
+layout(location = 3) in float v_DistanceFade;
 
 // ============================================
 // Fragment Output
@@ -34,21 +33,6 @@ uniform float _OutlineLit;
 uniform float _OutlineTextureTint;
 uniform float _OutlineVertexColorTint;
 
-// Lighting (for lit outlines) - using ForwardLighting snippet structures
-struct BaseLight
-{
-    vec3 Color;
-    float DiffuseIntensity;
-    float AmbientIntensity;
-    mat4 WorldToLightSpaceProjMatrix;
-};
-
-struct DirLight
-{
-    BaseLight Base;
-    vec3 Direction;
-};
-
 uniform vec3 GlobalAmbient;
 uniform int DirLightCount; 
 uniform DirLight DirectionalLights[2];
@@ -67,21 +51,21 @@ void main() {
     
     // Apply texture tinting
     if (_OutlineTextureTint > 0.0) {
-        vec4 mainTex = texture(_MainTex, fs_in.uv);
+        vec4 mainTex = texture(_MainTex, v_Uv);
         vec4 texColor = mainTex * _Color;
         outlineColor.rgb = mix(outlineColor.rgb, outlineColor.rgb * texColor.rgb, _OutlineTextureTint);
     }
     
     // Apply vertex color tinting
     if (_OutlineVertexColorTint > 0.0) {
-        outlineColor.rgb = mix(outlineColor.rgb, outlineColor.rgb * fs_in.vertexColor.rgb, _OutlineVertexColorTint);
+        outlineColor.rgb = mix(outlineColor.rgb, outlineColor.rgb * v_VertexColor.rgb, _OutlineVertexColorTint);
     }
     
     // Apply lighting (if lit outlines enabled)
     if (_OutlineLit > 0.0) {
         // Simple lambert lighting
         vec3 lightDir = normalize(u_LightDirection);
-        float NdotL = max(dot(normalize(cross(dFdx(fs_in.worldPos), dFdy(fs_in.worldPos))), lightDir), 0.0);
+        float NdotL = max(dot(normalize(cross(dFdx(v_WorldPos), dFdy(v_WorldPos))), lightDir), 0.0);
         vec3 lighting = u_AmbientColor + u_LightColor * NdotL;
         outlineColor.rgb = mix(outlineColor.rgb, outlineColor.rgb * lighting, _OutlineLit);
     }
@@ -90,7 +74,7 @@ void main() {
     outlineColor.rgb += outlineColor.rgb * _OutlineEmission;
     
     // Apply distance fade to alpha
-    outlineColor.a *= fs_in.distanceFade;
+    outlineColor.a *= v_DistanceFade;
     
     // Discard if alpha is zero (optimization)
     if (outlineColor.a < 0.001) {

@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Configures the GBuffer and ambient occlusion frame buffers for the multi-view ambient occlusion pass.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_MVAOPass : ViewportRenderCommand
     {
         private const int MaxKernelSize = 128;

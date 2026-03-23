@@ -88,6 +88,10 @@ internal static class VulkanShaderAutoUniforms
         @"\bstruct\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex StructFieldTypeRegex = new(
+        @"(?m)^\s*(?<type>[A-Za-z_][A-Za-z0-9_]*)\s+[A-Za-z_][A-Za-z0-9_]*(?:\s*\[[^\]]+\])?\s*;",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly Regex FunctionDefinitionRegex = new(
         @"(?m)^\s*[A-Za-z_][A-Za-z0-9_\s]*\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^;{}]*\)\s*\{",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -335,10 +339,31 @@ internal static class VulkanShaderAutoUniforms
         }
 
         List<Match> declarationsToMove = [];
-        foreach (string structType in requiredStructTypes)
+        HashSet<string> visitedStructTypes = new(StringComparer.Ordinal);
+        Queue<string> pendingStructTypes = new(requiredStructTypes);
+
+        while (pendingStructTypes.Count > 0)
         {
+            string structType = pendingStructTypes.Dequeue();
+            if (!visitedStructTypes.Add(structType))
+                continue;
+
             if (!declarationsByName.TryGetValue(structType, out Match? declaration) || declaration is null)
                 continue;
+
+            foreach (Match fieldMatch in StructFieldTypeRegex.Matches(declaration.Value))
+            {
+                if (!fieldMatch.Success)
+                    continue;
+
+                string fieldType = fieldMatch.Groups["type"].Value;
+                if (string.IsNullOrWhiteSpace(fieldType)
+                    || GlslTypeMap.ContainsKey(fieldType)
+                    || string.Equals(fieldType, structType, StringComparison.Ordinal))
+                    continue;
+
+                pendingStructTypes.Enqueue(fieldType);
+            }
 
             if (declaration.Index >= threshold)
                 declarationsToMove.Add(declaration);

@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// 4. PostProcess reads bloom mip 1 (accumulated result) with BloomStrength
     /// </para>
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_BloomPass : ViewportRenderCommand
     {
         private static void LogGuardFailure(string location, string reason)

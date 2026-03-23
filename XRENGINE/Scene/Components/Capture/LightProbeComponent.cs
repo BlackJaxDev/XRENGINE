@@ -83,6 +83,7 @@ namespace XREngine.Components.Capture.Lights
         private readonly RenderCommandMethod3D _debugAxesCommand;
         private readonly RenderCommandMethod3D _debugInfluenceCommand;
         private readonly GameTimer _realtimeCaptureTimer;
+        private readonly GameTimer _startupCaptureTimer;
 
         private bool _parallaxCorrectionEnabled = false;
         private Vector3 _proxyBoxCenterOffset = Vector3.Zero;
@@ -130,6 +131,7 @@ namespace XREngine.Components.Capture.Lights
         public LightProbeComponent() : base()
         {
             _realtimeCaptureTimer = new GameTimer(this);
+            _startupCaptureTimer = new GameTimer(this);
             _debugAxesCommand = new RenderCommandMethod3D(EDefaultRenderPass.OnTopForward, RenderCameraOrientationDebug)
             {
                 Enabled = false,
@@ -445,6 +447,7 @@ namespace XREngine.Components.Capture.Lights
             base.OnComponentActivated();
 
             var world = WorldAs<XREngine.Rendering.XRWorldInstance>();
+            Debug.Out($"[LightProbe] OnComponentActivated: world={world is not null}, RealtimeCapture={RealtimeCapture}, Cubemap={EnvironmentTextureCubemap is not null}, Octa={EnvironmentTextureOctahedral is not null}, IrrFBO={_irradianceFBO is not null}");
             if (world is not null)
             {
                 if (_registeredWorld is not null && _registeredWorld != world)
@@ -456,12 +459,23 @@ namespace XREngine.Components.Capture.Lights
             if (!RealtimeCapture)
             {
                 ProgressiveRenderEnabled = false;
-                FullCapture(128, false);
+                _startupCaptureTimer.StartSingleFire(() =>
+                {
+                    var w = WorldAs<XREngine.Rendering.XRWorldInstance>();
+                    Debug.Out($"[LightProbe] Startup timer fired: IsActiveInHierarchy={IsActiveInHierarchy}, world={w is not null}");
+                    if (!IsActiveInHierarchy || w is null)
+                        return;
+
+                    FullCapture(128, false);
+                    Debug.Out($"[LightProbe] FullCapture queued. Cubemap={EnvironmentTextureCubemap is not null}, Res={Resolution}, Octa={EnvironmentTextureOctahedral is not null}, IrradianceFBO={_irradianceFBO is not null}");
+                }, TimeSpan.FromMilliseconds(1.0f));
             }
         }
 
         protected override void OnComponentDeactivated()
         {
+            _startupCaptureTimer.Cancel();
+            _realtimeCaptureTimer.Cancel();
             base.OnComponentDeactivated();
 
             if (_registeredWorld is not null)
@@ -609,13 +623,7 @@ namespace XREngine.Components.Capture.Lights
 
             int width = (int)Math.Max(1u, IrradianceTexture.Width);
             int height = (int)Math.Max(1u, IrradianceTexture.Height);
-            AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
-
-            using (_irradianceFBO.BindForWritingState())
-            {
-                Engine.Rendering.State.ClearByBoundFBO();
-                _irradianceFBO.Render(null, true);
-            }
+            RunFullscreenProbePass(_irradianceFBO, width, height);
 
             IrradianceTexture.GenerateMipmapsGPU();
         }
@@ -637,24 +645,48 @@ namespace XREngine.Components.Capture.Lights
                 _prefilterFBO.Material?.SetInt(1, _prefilterSourceDimension);
 
                 _prefilterFBO.SetRenderTargets((PrefilterTexture, EFrameBufferAttachment.ColorAttachment0, mip, -1));
-                AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(mipWidth, mipHeight)));
+                RunFullscreenProbePass(_prefilterFBO, mipWidth, mipHeight);
+            }
+        }
 
-                using (_prefilterFBO.BindForWritingState())
-                {
-                    Engine.Rendering.State.ClearByBoundFBO();
-                    _prefilterFBO.Render(null, true);
-                }
+        private static void RunFullscreenProbePass(XRQuadFrameBuffer fbo, int width, int height)
+        {
+            var pipelineState = Engine.Rendering.State.RenderingPipelineState;
+            BoundingRectangle previousCrop = pipelineState?.CurrentCropRegion ?? BoundingRectangle.Empty;
+            bool hadCrop = previousCrop.Width > 0 && previousCrop.Height > 0;
+
+            using (fbo.BindForWritingState())
+            {
+                AbstractRenderer.Current?.SetCroppingEnabled(false);
+
+                using StateObject? renderArea = pipelineState?.PushRenderArea(width, height);
+                if (renderArea is null)
+                    AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
+
+                Engine.Rendering.State.ClearByBoundFBO();
+                fbo.Render(null, true);
+            }
+
+            if (hadCrop)
+            {
+                AbstractRenderer.Current?.SetCroppingEnabled(true);
+                AbstractRenderer.Current?.CropRenderArea(previousCrop);
             }
         }
 
         public override void Render()
         {
+            Debug.Out($"[LightProbe] Render() START. Cubemap={EnvironmentTextureCubemap is not null}, Octa={EnvironmentTextureOctahedral is not null}, IrrFBO={_irradianceFBO is not null}, PreFBO={_prefilterFBO is not null}");
             Engine.Rendering.State.IsLightProbePass = true;
 
             base.Render();
+            Debug.Out($"[LightProbe] base.Render() done. Cubemap extent={EnvironmentTextureCubemap?.Extent ?? 0}, Octa size={EnvironmentTextureOctahedral?.Width ?? 0}x{EnvironmentTextureOctahedral?.Height ?? 0}");
             GenerateIrradianceInternal();
+            Debug.Out($"[LightProbe] Irradiance generated. IrradianceTex={IrradianceTexture is not null}, size={IrradianceTexture?.Width ?? 0}x{IrradianceTexture?.Height ?? 0}");
             GeneratePrefilterInternal();
+            Debug.Out($"[LightProbe] Prefilter generated. PrefilterTex={PrefilterTexture is not null}, size={PrefilterTexture?.Width ?? 0}x{PrefilterTexture?.Height ?? 0}");
             CaptureVersion++;
+            Debug.Out($"[LightProbe] Render() DONE. CaptureVersion={CaptureVersion}");
 
             Engine.Rendering.State.IsLightProbePass = false;
         }

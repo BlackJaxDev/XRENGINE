@@ -11,6 +11,37 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private readonly VulkanStagingManager _stagingManager = new();
+        private IVulkanMemoryAllocator? _memoryAllocator;
+
+        /// <summary>The active memory allocator (legacy per-resource or block suballocator).</summary>
+        internal IVulkanMemoryAllocator MemoryAllocator
+            => _memoryAllocator ?? throw new InvalidOperationException("Memory allocator not initialized.");
+
+        /// <summary>
+        /// Tracks buffer allocations made through the allocator so that DestroyBufferRaw
+        /// can free through the correct path (suballocator or legacy).
+        /// Key: Buffer.Handle.
+        /// </summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, VulkanMemoryAllocation> _bufferAllocations = new();
+
+        /// <summary>
+        /// Tracks image allocations made through the allocator.
+        /// Key: Image.Handle.
+        /// </summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, VulkanMemoryAllocation> _imageAllocations = new();
+
+        /// <summary>
+        /// Returns the suballocation offset for a tracked buffer, or 0 if untracked (legacy).
+        /// Use when mapping memory for a buffer that was allocated through the allocator.
+        /// </summary>
+        internal ulong GetBufferAllocationOffset(Buffer buffer)
+            => _bufferAllocations.TryGetValue(buffer.Handle, out VulkanMemoryAllocation alloc) ? alloc.Offset : 0;
+
+        /// <summary>
+        /// Returns the suballocation offset for a tracked image, or 0 if untracked (legacy).
+        /// </summary>
+        internal ulong GetImageAllocationOffset(Image image)
+            => _imageAllocations.TryGetValue(image.Handle, out VulkanMemoryAllocation alloc) ? alloc.Offset : 0;
 
         /// <summary>
         /// Vulkan data buffer with best practices: staging, synchronization, descriptor integration, lifetime, mapping, error handling, and multi-frame support.
@@ -681,9 +712,9 @@ namespace XREngine.Rendering.Vulkan
                         Size = copySize
                     };
 
-                    Api!.CmdPipelineBarrier(
+                    CmdPipelineBarrierTracked(
                         transferScope.CommandBuffer,
-                        PipelineStageFlags.AllCommandsBit,
+                        PipelineStageFlags.BottomOfPipeBit,
                         PipelineStageFlags.TransferBit,
                         DependencyFlags.None,
                         0,
@@ -717,10 +748,10 @@ namespace XREngine.Rendering.Vulkan
                         Size = copySize
                     };
 
-                    Api!.CmdPipelineBarrier(
+                    CmdPipelineBarrierTracked(
                         transferScope.CommandBuffer,
                         PipelineStageFlags.TransferBit,
-                        PipelineStageFlags.AllCommandsBit,
+                        PipelineStageFlags.BottomOfPipeBit,
                         DependencyFlags.None,
                         0,
                         null,
@@ -746,10 +777,10 @@ namespace XREngine.Rendering.Vulkan
                     Size = copySize
                 };
 
-                Api!.CmdPipelineBarrier(
+                CmdPipelineBarrierTracked(
                     graphicsScope.CommandBuffer,
                     PipelineStageFlags.TransferBit,
-                    PipelineStageFlags.AllCommandsBit,
+                    PipelineStageFlags.VertexInputBit | PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                     DependencyFlags.None,
                     0,
                     null,
@@ -767,6 +798,16 @@ namespace XREngine.Rendering.Vulkan
 
             DestroyBufferRaw(vkBuffer, vkMemory);
         }
+
+        internal MemoryPropertyFlags GetReadbackMemoryProperties()
+            => MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit;
+
+        internal (Buffer stagingBuffer, DeviceMemory stagingMemory) CreateReadbackBuffer(ulong bufferSize)
+            => CreateBuffer(
+                bufferSize,
+                BufferUsageFlags.TransferDstBit,
+                GetReadbackMemoryProperties(),
+                null);
 
         public (Buffer stagingBuffer, DeviceMemory stagingMemory) CreateBuffer(
             ulong bufferSize,
@@ -818,12 +859,40 @@ namespace XREngine.Rendering.Vulkan
             if (Api!.CreateBuffer(device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
                 throw new Exception("Failed to create Vulkan buffer.");
 
-            MemoryRequirements memoryRequirements = Api.GetBufferMemoryRequirements(device, buffer);
+            // Device-address buffers require special MemoryAllocateFlags and bypass the allocator.
+            if (enableDeviceAddress)
+                return CreateBufferRawLegacy(buffer, properties, bufferSize);
+
+            // Route through the allocator (Legacy or Suballocator based on settings).
+            VulkanMemoryAllocation allocation = AllocateBufferMemoryWithFallback(buffer, properties);
+            _bufferAllocations[buffer.Handle] = allocation;
+
+            RecordAllocationTelemetry(properties, (long)allocation.Size);
+
+            Result bindResult = Api.BindBufferMemory(device, buffer, allocation.Memory, allocation.Offset);
+            if (bindResult != Result.Success)
+            {
+                _bufferAllocations.TryRemove(buffer.Handle, out _);
+                FreeMemoryAllocation(allocation);
+                Api.DestroyBuffer(device, buffer, null);
+                throw new Exception($"Failed to bind Vulkan buffer memory ({bindResult}).");
+            }
+
+            return (buffer, allocation.Memory);
+        }
+
+        /// <summary>Legacy path for device-address buffers that need special allocation flags.</summary>
+        private (Buffer buffer, DeviceMemory memory) CreateBufferRawLegacy(
+            Buffer buffer,
+            MemoryPropertyFlags properties,
+            ulong bufferSize)
+        {
+            MemoryRequirements memoryRequirements = Api!.GetBufferMemoryRequirements(device, buffer);
             MemoryAllocateInfo memoryInfo = new()
             {
                 SType = StructureType.MemoryAllocateInfo,
                 AllocationSize = memoryRequirements.Size,
-                MemoryTypeIndex = FindMemoryType(memoryRequirements.MemoryTypeBits, properties)
+                MemoryTypeIndex = ResolveMemoryType(memoryRequirements.MemoryTypeBits, properties)
             };
 
             MemoryAllocateFlagsInfo memoryAllocateFlagsInfo = new()
@@ -833,15 +902,15 @@ namespace XREngine.Rendering.Vulkan
                 Flags = MemoryAllocateFlags.DeviceAddressBit,
                 DeviceMask = 0,
             };
-
-            if (enableDeviceAddress)
-                memoryInfo.PNext = &memoryAllocateFlagsInfo;
+            memoryInfo.PNext = &memoryAllocateFlagsInfo;
 
             if (Api.AllocateMemory(device, ref memoryInfo, null, out DeviceMemory memory) != Result.Success)
             {
                 Api.DestroyBuffer(device, buffer, null);
-                throw new Exception("Failed to allocate Vulkan buffer memory.");
+                throw new Exception("Failed to allocate Vulkan buffer memory (device-address).");
             }
+
+            RecordAllocationTelemetry(properties, (long)memoryInfo.AllocationSize);
 
             Result bindResult = Api.BindBufferMemory(device, buffer, memory, 0);
             if (bindResult != Result.Success)
@@ -866,6 +935,7 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 Unsafe.CopyBlock(mappedPtr, source, (uint)size);
+                FlushBuffer(memory, 0, size);
             }
             finally
             {
@@ -934,8 +1004,19 @@ namespace XREngine.Rendering.Vulkan
         internal void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)
         {
             if (buffer.HasValue && buffer.Value.Handle != 0)
-                Api!.DestroyBuffer(device, buffer.Value, null);
+            {
+                // If this buffer was tracked through the allocator, free through it.
+                if (_bufferAllocations.TryRemove(buffer.Value.Handle, out VulkanMemoryAllocation allocation))
+                {
+                    Api!.DestroyBuffer(device, buffer.Value, null);
+                    FreeMemoryAllocation(allocation);
+                    return;
+                }
 
+                Api!.DestroyBuffer(device, buffer.Value, null);
+            }
+
+            // Untracked memory (device-address, legacy, or staging pool) — free directly.
             if (memory.HasValue && memory.Value.Handle != 0)
                 Api!.FreeMemory(device, memory.Value, null);
         }
@@ -958,6 +1039,81 @@ namespace XREngine.Rendering.Vulkan
 
             if (Api!.FlushMappedMemoryRanges(device, 1, ref v) != Result.Success)
                 throw new Exception("Failed to flush Vulkan buffer memory.");
+        }
+
+        internal bool TryMapReadbackMemory(DeviceMemory memory, ulong offset, ulong length, out void* mappedPtr)
+        {
+            mappedPtr = null;
+
+            ulong mappedLength = Math.Max(length, 1UL);
+            void* localMappedPtr = null;
+            if (Api!.MapMemory(device, memory, offset, mappedLength, 0, &localMappedPtr) != Result.Success)
+                return false;
+
+            mappedPtr = localMappedPtr;
+            InvalidateBuffer(memory, offset, mappedLength);
+            Engine.Rendering.Stats.RecordGpuBufferMapped();
+            Engine.Rendering.Stats.RecordGpuReadbackBytes((long)length);
+            return true;
+        }
+
+        internal void InvalidateBuffer(DeviceMemory? vkMemory, ulong offset, ulong length)
+        {
+            if (vkMemory is null)
+                throw new ArgumentNullException(nameof(vkMemory), "Cannot invalidate null Vulkan memory.");
+
+            var v = new MappedMemoryRange
+            {
+                SType = StructureType.MappedMemoryRange,
+                Memory = vkMemory.Value,
+                Offset = offset,
+                Size = length
+            };
+
+            if (Api!.InvalidateMappedMemoryRanges(device, 1, ref v) != Result.Success)
+                throw new Exception("Failed to invalidate Vulkan buffer memory.");
+        }
+
+        internal uint ResolveMemoryType(uint typeFilter, MemoryPropertyFlags properties)
+        {
+            if (TryFindMemoryType(typeFilter, properties, out uint exactIndex))
+                return exactIndex;
+
+            bool prefersReadbackFallback =
+                (properties & (MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit)) ==
+                (MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit);
+
+            if (prefersReadbackFallback &&
+                TryFindMemoryType(typeFilter, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit, out uint coherentIndex))
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.ReadbackMemoryTypeFallback",
+                    TimeSpan.FromSeconds(10),
+                    "[Vulkan] Host-cached readback memory unavailable; falling back to host-coherent staging memory.");
+                return coherentIndex;
+            }
+
+            return FindMemoryType(typeFilter, properties);
+        }
+
+        private static void RecordAllocationTelemetry(MemoryPropertyFlags properties, long bytes)
+        {
+            if ((properties & MemoryPropertyFlags.DeviceLocalBit) != 0 &&
+                (properties & MemoryPropertyFlags.HostVisibleBit) == 0)
+            {
+                Engine.Rendering.Stats.RecordVulkanAllocation(Engine.Rendering.Stats.EVulkanAllocationTelemetryClass.DeviceLocal, bytes);
+                return;
+            }
+
+            if ((properties & MemoryPropertyFlags.HostVisibleBit) != 0 &&
+                (properties & MemoryPropertyFlags.HostCachedBit) != 0)
+            {
+                Engine.Rendering.Stats.RecordVulkanAllocation(Engine.Rendering.Stats.EVulkanAllocationTelemetryClass.Readback, bytes);
+                return;
+            }
+
+            if ((properties & MemoryPropertyFlags.HostVisibleBit) != 0)
+                Engine.Rendering.Stats.RecordVulkanAllocation(Engine.Rendering.Stats.EVulkanAllocationTelemetryClass.Upload, bytes);
         }
     }
 } 

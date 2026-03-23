@@ -1,5 +1,6 @@
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_StencilMask : ViewportRenderCommand
     {
         public uint Mask { get; set; }

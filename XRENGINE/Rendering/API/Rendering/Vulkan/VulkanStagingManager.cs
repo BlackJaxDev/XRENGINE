@@ -48,9 +48,21 @@ internal unsafe sealed class VulkanStagingManager
     private int _trimFrameCounter;
 
     public bool CanPool(BufferUsageFlags usage, MemoryPropertyFlags properties)
-        => usage == BufferUsageFlags.TransferSrcBit &&
-           properties.HasFlag(MemoryPropertyFlags.HostVisibleBit) &&
-           properties.HasFlag(MemoryPropertyFlags.HostCoherentBit);
+    {
+        // Upload staging: TransferSrc + HostVisible + HostCoherent
+        if (usage == BufferUsageFlags.TransferSrcBit &&
+            properties.HasFlag(MemoryPropertyFlags.HostVisibleBit) &&
+            properties.HasFlag(MemoryPropertyFlags.HostCoherentBit))
+            return true;
+
+        // Readback staging: TransferDst + HostVisible + HostCached
+        if (usage == BufferUsageFlags.TransferDstBit &&
+            properties.HasFlag(MemoryPropertyFlags.HostVisibleBit) &&
+            properties.HasFlag(MemoryPropertyFlags.HostCachedBit))
+            return true;
+
+        return false;
+    }
 
     public (Buffer buffer, DeviceMemory memory) Acquire(
         VulkanRenderer renderer,

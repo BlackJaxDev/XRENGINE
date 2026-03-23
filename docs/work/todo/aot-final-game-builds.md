@@ -234,13 +234,24 @@ Acceptance criteria:
 
 Outcome: shipped runtime asset loading paths stop relying on arbitrary reflection.
 
-- [ ] Audit the exact cooked asset loading paths exercised by final game launchers.
-- [ ] Reduce `CookedBinarySerializer` usage in shipping runtime paths.
+- [x] Audit the exact cooked asset loading paths exercised by final game launchers.
+  - implemented: published launcher asset loads flow through `AssetManager.Published.cs` -> `CookedAssetReader` -> cooked blob format dispatch
+- [x] Reduce `CookedBinarySerializer` usage in shipping runtime paths.
   - prefer explicit per-type readers/writers
   - or generator-based serializers such as MemoryPack where appropriate
-- [ ] Add a build-time registry for cooked asset/runtime-serializable types.
-- [ ] Keep editor-side authoring/cooking flexibility separate from shipped runtime loading requirements.
-- [ ] Revisit `AssetManager.Published.cs`, `CookedAssetBlob.cs`, and texture/mesh cooked-binary helpers currently annotated with dynamic-code warnings.
+  - implemented: registered published runtime asset types now cook as `RuntimeBinaryV1` and dispatch through `PublishedCookedAssetRegistry` instead of the generic reflection reader
+  - expanded scope: published runtime registry now covers `XRMesh`, `XRTexture2D`, `AnimationClip`, `BlendTree1D`, `BlendTree2D`, `BlendTreeDirect`, and `AnimStateMachine`
+- [x] Add a build-time registry for cooked asset/runtime-serializable types.
+  - implemented: `AotRuntimeMetadata.PublishedRuntimeAssetTypeNames` now records the registered published runtime asset set and is validated by AOT runtime loads
+- [x] Keep editor-side authoring/cooking flexibility separate from shipped runtime loading requirements.
+  - implemented: editor/dev cooking still supports the generic cooked-binary fallback, while published runtime only opts into explicit registry-backed formats for bounded asset types
+- [x] Revisit `AssetManager.Published.cs`, `CookedAssetBlob.cs`, and texture/mesh cooked-binary helpers currently annotated with dynamic-code warnings.
+  - implemented: published runtime asset blobs now have an explicit runtime-only format for registered types, while editor/dev cooking and generic cooked-binary fallback remain available for non-registered assets
+
+Implementation note:
+
+- animation asset serializers now use MemoryPack-serialized model payloads for nested motions and static method arguments instead of embedding generic cooked-binary payloads
+- remaining custom cooked-binary handlers that still require open-ended payloads stay off the published runtime registry until they gain bounded serializers
 
 Acceptance criteria:
 

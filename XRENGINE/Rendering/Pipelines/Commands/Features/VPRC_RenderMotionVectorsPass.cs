@@ -7,6 +7,7 @@ using Silk.NET.OpenGL;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_RenderMotionVectorsPass : ViewportRenderCommand
     {
         private static readonly int[] DefaultRenderPasses =

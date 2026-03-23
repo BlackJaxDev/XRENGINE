@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Current implementation is backed by OpenGL polygon mode because the shared renderer
 /// abstraction does not yet expose generic fill-mode switching.
 /// </summary>
+[RenderPipelineScriptCommand]
 public sealed class VPRC_DebugWireframe : ViewportRenderCommand
 {
     private ViewportRenderCommandContainer? _body;

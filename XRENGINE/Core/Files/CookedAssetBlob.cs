@@ -7,6 +7,7 @@ namespace XREngine.Core.Files
     public enum CookedAssetFormat : byte
     {
         BinaryV1 = 1,
+        RuntimeBinaryV1 = 2,
     }
 
     [MemoryPackable]
@@ -41,6 +42,7 @@ namespace XREngine.Core.Files
             return blob.Format switch
             {
                 CookedAssetFormat.BinaryV1 => DeserializeBinary(blob, expectedType),
+                CookedAssetFormat.RuntimeBinaryV1 => DeserializeRuntimeBinary(blob, expectedType),
                 _ => throw new NotSupportedException($"Unsupported cooked asset format '{blob.Format}'.")
             };
         }
@@ -61,6 +63,7 @@ namespace XREngine.Core.Files
             return blob.Format switch
             {
                 CookedAssetFormat.BinaryV1 => DeserializeBinary(blob, expectedType),
+                CookedAssetFormat.RuntimeBinaryV1 => DeserializeRuntimeBinary(blob, expectedType),
                 _ => throw new NotSupportedException($"Unsupported cooked asset format '{blob.Format}'.")
             };
         }
@@ -69,13 +72,46 @@ namespace XREngine.Core.Files
         [RequiresDynamicCode(ReflectionWarningMessage)]
         private static object? DeserializeBinary(CookedAssetBlob blob, Type? expectedType)
         {
-            var resolvedType = CookedAssetTypeReference.Resolve(blob.TypeName, expectedType)
-                ?? throw new InvalidOperationException($"Unable to resolve cooked asset type '{blob.TypeName}'.");
+            Type resolvedType = ResolveAssetType(blob.TypeName, expectedType);
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild && PublishedCookedAssetRegistry.IsRegistered(resolvedType))
+            {
+                throw new NotSupportedException(
+                    $"Cooked asset type '{resolvedType}' was published with legacy '{CookedAssetFormat.BinaryV1}'. Republish content so it uses '{CookedAssetFormat.RuntimeBinaryV1}'.");
+            }
+
+            return CookedBinarySerializer.Deserialize(resolvedType, blob.Payload);
+        }
+
+        [RequiresUnreferencedCode(ReflectionWarningMessage)]
+        [RequiresDynamicCode(ReflectionWarningMessage)]
+        private static object? DeserializeRuntimeBinary(CookedAssetBlob blob, Type? expectedType)
+        {
+            Type resolvedType = ResolveAssetType(blob.TypeName, expectedType);
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild && !AotRuntimeMetadataStore.IsPublishedRuntimeAssetType(resolvedType))
+            {
+                throw new NotSupportedException(
+                    $"Cooked asset type '{resolvedType}' is not registered in published AOT runtime metadata for format '{CookedAssetFormat.RuntimeBinaryV1}'.");
+            }
+
+            if (!PublishedCookedAssetRegistry.TryDeserialize(resolvedType, blob.Payload, out object? asset))
+                throw new NotSupportedException($"No published cooked asset serializer is registered for '{resolvedType}'.");
+
+            return asset;
+        }
+
+        [RequiresUnreferencedCode(ReflectionWarningMessage)]
+        [RequiresDynamicCode(ReflectionWarningMessage)]
+        private static Type ResolveAssetType(string? typeName, Type? expectedType)
+        {
+            Type resolvedType = CookedAssetTypeReference.Resolve(typeName, expectedType)
+                ?? throw new InvalidOperationException($"Unable to resolve cooked asset type '{typeName}'.");
 
             if (expectedType is not null && !expectedType.IsAssignableFrom(resolvedType))
                 throw new InvalidOperationException($"Cooked asset type '{resolvedType}' does not match expected type '{expectedType}'.");
 
-            return CookedBinarySerializer.Deserialize(resolvedType, blob.Payload);
+            return resolvedType;
         }
     }
 }

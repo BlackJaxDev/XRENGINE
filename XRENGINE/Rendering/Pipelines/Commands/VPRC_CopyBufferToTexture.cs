@@ -4,6 +4,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_CopyBufferToTexture : ViewportRenderCommand
     {
         public string? SourceBufferName { get; set; }

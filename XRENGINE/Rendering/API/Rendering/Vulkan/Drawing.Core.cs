@@ -387,7 +387,7 @@ namespace XREngine.Rendering.Vulkan
                 PSignalSemaphores = acquireSignalSemaphores,
             };
 
-            Result bridgeResult = Api!.QueueSubmit(graphicsQueue, 1, ref acquireBridgeSubmit, default);
+            Result bridgeResult = SubmitToQueueTracked(graphicsQueue, ref acquireBridgeSubmit, default);
             if (bridgeResult != Result.Success)
             {
                 if (bridgeResult == Result.ErrorDeviceLost)
@@ -399,7 +399,10 @@ namespace XREngine.Rendering.Vulkan
             if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
                 WaitForTimelineValue(_graphicsTimelineSemaphore, _swapchainImageTimelineValues[imageIndex]);
 
-            // 4. Record the command buffer
+            // 4. Reset per-frame dynamic uniform ring buffer for this image.
+            ResetDynamicUniformRingBuffer(imageIndex);
+
+            // 5. Record the command buffer
             // Note: This currently records a default pass (Clear + ImGui). 
             // Full integration with the engine's render queue happens via frame operations enqueued during the frame.
             stageStartTimestamp = Stopwatch.GetTimestamp();
@@ -475,7 +478,9 @@ namespace XREngine.Rendering.Vulkan
             stageStartTimestamp = Stopwatch.GetTimestamp();
             Result submitResult;
             lock (_oneTimeSubmitLock)
-                submitResult = Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, default);
+            {
+                submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, default);
+            }
 
             if (submitResult != Result.Success)
             {

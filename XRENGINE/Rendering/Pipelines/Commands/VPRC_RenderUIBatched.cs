@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// to achieve minimal draw call counts (typically 1 draw for all material quads + 1 draw for all text quads per pass).
 /// </para>
 /// </summary>
+[RenderPipelineScriptCommand]
 public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
 {
     private int _renderPass;
