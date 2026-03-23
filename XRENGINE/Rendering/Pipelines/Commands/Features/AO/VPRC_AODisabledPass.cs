@@ -8,6 +8,7 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_AODisabledPass : ViewportRenderCommand
     {
         private static void LogStub(string key, string message)

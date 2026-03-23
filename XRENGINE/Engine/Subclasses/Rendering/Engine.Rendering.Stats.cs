@@ -135,6 +135,28 @@ namespace XREngine
                 private static long _lastFrameVulkanFramePresentTicks;
                 private static long _lastFrameVulkanFrameTotalTicks;
                 private static long _lastFrameVulkanFrameGpuCommandBufferTicks;
+                private static int _vulkanDeviceLocalAllocationCount;
+                private static long _vulkanDeviceLocalAllocatedBytes;
+                private static int _vulkanUploadAllocationCount;
+                private static long _vulkanUploadAllocatedBytes;
+                private static int _vulkanReadbackAllocationCount;
+                private static long _vulkanReadbackAllocatedBytes;
+                private static int _vulkanDescriptorPoolCreateCount;
+                private static int _vulkanDescriptorPoolDestroyCount;
+                private static int _vulkanDescriptorPoolResetCount;
+                private static int _vulkanQueueSubmitCount;
+                private static int _lastFrameVulkanDeviceLocalAllocationCount;
+                private static long _lastFrameVulkanDeviceLocalAllocatedBytes;
+                private static int _lastFrameVulkanUploadAllocationCount;
+                private static long _lastFrameVulkanUploadAllocatedBytes;
+                private static int _lastFrameVulkanReadbackAllocationCount;
+                private static long _lastFrameVulkanReadbackAllocatedBytes;
+                private static int _lastFrameVulkanDescriptorPoolCreateCount;
+                private static int _lastFrameVulkanDescriptorPoolDestroyCount;
+                private static int _lastFrameVulkanDescriptorPoolResetCount;
+                private static int _lastFrameVulkanQueueSubmitCount;
+                private static int _vulkanOomFallbackCount;
+                private static int _lastFrameVulkanOomFallbackCount;
 
                 // GPU->CPU readback / mapping counters (per-frame)
                 private static int _gpuMappedBuffers;
@@ -302,6 +324,17 @@ namespace XREngine
                                 public static double VulkanFramePresentMs => TimeSpan.FromTicks(_lastFrameVulkanFramePresentTicks).TotalMilliseconds;
                                 public static double VulkanFrameTotalMs => TimeSpan.FromTicks(_lastFrameVulkanFrameTotalTicks).TotalMilliseconds;
                                 public static double VulkanFrameGpuCommandBufferMs => TimeSpan.FromTicks(_lastFrameVulkanFrameGpuCommandBufferTicks).TotalMilliseconds;
+                                public static int VulkanDeviceLocalAllocationCount => _lastFrameVulkanDeviceLocalAllocationCount;
+                                public static long VulkanDeviceLocalAllocatedBytes => _lastFrameVulkanDeviceLocalAllocatedBytes;
+                                public static int VulkanUploadAllocationCount => _lastFrameVulkanUploadAllocationCount;
+                                public static long VulkanUploadAllocatedBytes => _lastFrameVulkanUploadAllocatedBytes;
+                                public static int VulkanReadbackAllocationCount => _lastFrameVulkanReadbackAllocationCount;
+                                public static long VulkanReadbackAllocatedBytes => _lastFrameVulkanReadbackAllocatedBytes;
+                                public static int VulkanDescriptorPoolCreateCount => _lastFrameVulkanDescriptorPoolCreateCount;
+                                public static int VulkanDescriptorPoolDestroyCount => _lastFrameVulkanDescriptorPoolDestroyCount;
+                                public static int VulkanDescriptorPoolResetCount => _lastFrameVulkanDescriptorPoolResetCount;
+                                public static int VulkanQueueSubmitCount => _lastFrameVulkanQueueSubmitCount;
+                                public static int VulkanOomFallbackCount => _lastFrameVulkanOomFallbackCount;
                                 public static double VulkanPipelineCacheLookupHitRate
                                         => (_lastFrameVulkanPipelineCacheLookupHits + _lastFrameVulkanPipelineCacheLookupMisses) <= 0
                                                 ? 1.0
@@ -521,6 +554,17 @@ namespace XREngine
                     _lastFrameVulkanFramePresentTicks = _vulkanFramePresentTicks;
                     _lastFrameVulkanFrameTotalTicks = _vulkanFrameTotalTicks;
                     _lastFrameVulkanFrameGpuCommandBufferTicks = _vulkanFrameGpuCommandBufferTicks;
+                    _lastFrameVulkanDeviceLocalAllocationCount = _vulkanDeviceLocalAllocationCount;
+                    _lastFrameVulkanDeviceLocalAllocatedBytes = _vulkanDeviceLocalAllocatedBytes;
+                    _lastFrameVulkanUploadAllocationCount = _vulkanUploadAllocationCount;
+                    _lastFrameVulkanUploadAllocatedBytes = _vulkanUploadAllocatedBytes;
+                    _lastFrameVulkanReadbackAllocationCount = _vulkanReadbackAllocationCount;
+                    _lastFrameVulkanReadbackAllocatedBytes = _vulkanReadbackAllocatedBytes;
+                    _lastFrameVulkanDescriptorPoolCreateCount = _vulkanDescriptorPoolCreateCount;
+                    _lastFrameVulkanDescriptorPoolDestroyCount = _vulkanDescriptorPoolDestroyCount;
+                    _lastFrameVulkanDescriptorPoolResetCount = _vulkanDescriptorPoolResetCount;
+                    _lastFrameVulkanQueueSubmitCount = _vulkanQueueSubmitCount;
+                    _lastFrameVulkanOomFallbackCount = _vulkanOomFallbackCount;
                     _lastFrameVrLeftEyeDraws = _vrLeftEyeDraws;
                     _lastFrameVrRightEyeDraws = _vrRightEyeDraws;
                     _lastFrameVrLeftEyeVisible = _vrLeftEyeVisible;
@@ -599,6 +643,17 @@ namespace XREngine
                     _vulkanFramePresentTicks = 0;
                     _vulkanFrameTotalTicks = 0;
                     _vulkanFrameGpuCommandBufferTicks = 0;
+                    _vulkanDeviceLocalAllocationCount = 0;
+                    _vulkanDeviceLocalAllocatedBytes = 0;
+                    _vulkanUploadAllocationCount = 0;
+                    _vulkanUploadAllocatedBytes = 0;
+                    _vulkanReadbackAllocationCount = 0;
+                    _vulkanReadbackAllocatedBytes = 0;
+                    _vulkanDescriptorPoolCreateCount = 0;
+                    _vulkanDescriptorPoolDestroyCount = 0;
+                    _vulkanDescriptorPoolResetCount = 0;
+                    _vulkanQueueSubmitCount = 0;
+                    _vulkanOomFallbackCount = 0;
                     _vrLeftEyeDraws = 0;
                     _vrRightEyeDraws = 0;
                     _vrLeftEyeVisible = 0;
@@ -631,6 +686,78 @@ namespace XREngine
                         return;
 
                     Interlocked.Add(ref _gpuReadbackBytes, bytes);
+                }
+
+                public enum EVulkanAllocationTelemetryClass
+                {
+                    DeviceLocal,
+                    Upload,
+                    Readback,
+                }
+
+                public static void RecordVulkanAllocation(EVulkanAllocationTelemetryClass allocationClass, long bytes)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    switch (allocationClass)
+                    {
+                        case EVulkanAllocationTelemetryClass.DeviceLocal:
+                            Interlocked.Increment(ref _vulkanDeviceLocalAllocationCount);
+                            if (bytes > 0)
+                                Interlocked.Add(ref _vulkanDeviceLocalAllocatedBytes, bytes);
+                            break;
+                        case EVulkanAllocationTelemetryClass.Upload:
+                            Interlocked.Increment(ref _vulkanUploadAllocationCount);
+                            if (bytes > 0)
+                                Interlocked.Add(ref _vulkanUploadAllocatedBytes, bytes);
+                            break;
+                        case EVulkanAllocationTelemetryClass.Readback:
+                            Interlocked.Increment(ref _vulkanReadbackAllocationCount);
+                            if (bytes > 0)
+                                Interlocked.Add(ref _vulkanReadbackAllocatedBytes, bytes);
+                            break;
+                    }
+                }
+
+                public static void RecordVulkanDescriptorPoolCreate(int count = 1)
+                {
+                    if (!EnableTracking || count <= 0)
+                        return;
+
+                    Interlocked.Add(ref _vulkanDescriptorPoolCreateCount, count);
+                }
+
+                public static void RecordVulkanDescriptorPoolDestroy(int count = 1)
+                {
+                    if (!EnableTracking || count <= 0)
+                        return;
+
+                    Interlocked.Add(ref _vulkanDescriptorPoolDestroyCount, count);
+                }
+
+                public static void RecordVulkanDescriptorPoolReset(int count = 1)
+                {
+                    if (!EnableTracking || count <= 0)
+                        return;
+
+                    Interlocked.Add(ref _vulkanDescriptorPoolResetCount, count);
+                }
+
+                public static void RecordVulkanQueueSubmit(int count = 1)
+                {
+                    if (!EnableTracking || count <= 0)
+                        return;
+
+                    Interlocked.Add(ref _vulkanQueueSubmitCount, count);
+                }
+
+                public static void RecordVulkanOomFallback(int count = 1)
+                {
+                    if (!EnableTracking || count <= 0)
+                        return;
+
+                    Interlocked.Add(ref _vulkanOomFallbackCount, count);
                 }
 
                 public static void RecordRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime)

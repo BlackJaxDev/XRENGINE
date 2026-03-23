@@ -131,9 +131,13 @@ namespace XREngine.Scene
         public void QueueForCapture(SceneCaptureComponentBase component)
         {
             if (_captureQueue.Contains(component))
+            {
+                Debug.Out($"[Lights3D] QueueForCapture: ALREADY QUEUED {component.GetType().Name}");
                 return;
+            }
 
             _captureQueue.Enqueue(component);
+            Debug.Out($"[Lights3D] QueueForCapture: ENQUEUED {component.GetType().Name}, queue size now ~{_captureQueue.Count}");
         }
 
         #endregion
@@ -530,7 +534,10 @@ namespace XREngine.Scene
             while (_captureQueue.TryPeek(out _))
             {
                 if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
+                {
+                    Debug.Out("[Lights3D] CollectVisible: capture budget exceeded, deferring remaining");
                     break;
+                }
 
                 if (!_captureQueue.TryDequeue(out SceneCaptureComponentBase? capture))
                     break;
@@ -538,6 +545,7 @@ namespace XREngine.Scene
                 if (_captureBagUpdating.Contains(capture))
                     continue;
 
+                Debug.Out($"[Lights3D] CollectVisible: processing capture {capture.GetType().Name}");
                 _captureBagUpdating.Add(capture);
                 capture.CollectVisible();
             }
@@ -827,10 +835,12 @@ namespace XREngine.Scene
                 if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
                 {
                     // Defer remaining captures to next frame
+                    Debug.Out($"[Lights3D] RenderShadowMaps: capture render budget exceeded, deferring {capture.GetType().Name}");
                     _captureQueue.Enqueue(capture);
                     continue;
                 }
 
+                Debug.Out($"[Lights3D] RenderShadowMaps: rendering capture {capture.GetType().Name}");
                 capture.Render();
             }
         }

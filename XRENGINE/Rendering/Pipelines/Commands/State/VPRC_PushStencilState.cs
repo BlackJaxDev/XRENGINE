@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// reference value, mask, and stencil operations. Automatically pops via
     /// <see cref="VPRC_PopStencilState"/> when used with the <c>using</c> pattern.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_PushStencilState : ViewportStateRenderCommand<VPRC_PopStencilState>
     {
         /// <summary>Stencil comparison function.</summary>

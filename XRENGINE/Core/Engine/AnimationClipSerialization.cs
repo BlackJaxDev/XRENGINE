@@ -283,7 +283,7 @@ internal static class AnimationClipSerialization
             models.Add(new SerializedMethodArgumentModel
             {
                 TypeName = runtimeType.AssemblyQualifiedName,
-                Payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(argument))
+                Payload = MemoryPackSerializer.Serialize(runtimeType, argument)
             });
         }
 
@@ -305,10 +305,9 @@ internal static class AnimationClipSerialization
                 continue;
             }
 
-            Type runtimeType = Type.GetType(model.TypeName, throwOnError: false)
+            Type runtimeType = AotRuntimeMetadataStore.ResolveType(model.TypeName)
                 ?? throw new InvalidOperationException($"Failed to resolve method argument type '{model.TypeName}'.");
-            arguments[i] = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
-                () => CookedBinarySerializer.Deserialize(runtimeType, model.Payload));
+            arguments[i] = MemoryPackSerializer.Deserialize(runtimeType, model.Payload);
         }
 
         return arguments;

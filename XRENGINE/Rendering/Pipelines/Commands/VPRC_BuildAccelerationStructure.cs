@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// <summary>
 /// Builds or refreshes the engine's current scene BVH and publishes the resulting buffers into pipeline variables.
 /// </summary>
+[RenderPipelineScriptCommand]
 public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
 {
     public string ReadyVariableName { get; set; } = "AccelerationStructureReady";

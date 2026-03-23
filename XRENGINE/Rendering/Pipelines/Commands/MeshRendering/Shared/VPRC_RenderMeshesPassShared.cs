@@ -13,6 +13,7 @@ public enum EMeshRenderingPathIntent
 /// Shared router entry point for mesh rendering command paths.
 /// Callers configure one command and do not encode traditional/meshlet details.
 /// </summary>
+[RenderPipelineScriptCommand]
 public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 {
     public VPRC_RenderMeshesPassShared()

@@ -46,5 +46,5 @@ void main()
     OutData[outBase + 12u] = floatBitsToUint(InData[inBase + 41u]); // ShaderProgramID
     OutData[outBase + 13u] = floatBitsToUint(InData[inBase + 42u]); // RenderDistance
     OutData[outBase + 14u] = idx;                                    // SourceCommandIndex
-    OutData[outBase + 15u] = 0u;                                     // Reserved
+    OutData[outBase + 15u] = floatBitsToUint(InData[inBase + 46u]);  // LogicalMeshID
 }

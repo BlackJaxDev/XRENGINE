@@ -39,10 +39,12 @@ using Extensions;
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using XREngine.Components;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -57,6 +59,13 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Commands
 {
+    public enum EAtlasTier : uint
+    {
+        Static = 0,
+        Dynamic = 1,
+        Streaming = 2,
+    }
+
     /// <summary>
     /// Manages GPU-resident scene data for indirect rendering.
     /// </summary>
@@ -153,6 +162,134 @@ namespace XREngine.Rendering.Commands
         // Meshes are linearly appended; future optimization could bin by vertex format/material.
         // -------------------------------------------------------------------------
 
+        public const uint MeshDataFlagAtlasTierMask = 0x3u;
+        public const int MaxLogicalMeshLodCount = 4;
+        public const int LODTableEntryFloatCount = 12;
+        private const uint MinLodTableEntries = 16;
+        private const uint MinLodRequestEntries = 16;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LODTableEntry
+        {
+            public uint LODCount;
+            public uint LOD0_MeshDataID;
+            public uint LOD1_MeshDataID;
+            public uint LOD2_MeshDataID;
+            public uint LOD3_MeshDataID;
+            public float LOD0_MaxDistance;
+            public float LOD1_MaxDistance;
+            public float LOD2_MaxDistance;
+            public float LOD3_MaxDistance;
+            public float Padding0;
+            public float Padding1;
+            public float Padding2;
+
+            public readonly uint GetMeshDataId(int lodLevel)
+                => lodLevel switch
+                {
+                    0 => LOD0_MeshDataID,
+                    1 => LOD1_MeshDataID,
+                    2 => LOD2_MeshDataID,
+                    3 => LOD3_MeshDataID,
+                    _ => 0,
+                };
+
+            public readonly float GetMaxDistance(int lodLevel)
+                => lodLevel switch
+                {
+                    0 => LOD0_MaxDistance,
+                    1 => LOD1_MaxDistance,
+                    2 => LOD2_MaxDistance,
+                    3 => LOD3_MaxDistance,
+                    _ => float.MaxValue,
+                };
+        }
+
+        private readonly struct AtlasAllocation(int firstVertex, int firstIndex, int vertexCount, int indexCount, int reservedVertexCount, int reservedIndexCount)
+        {
+            public int FirstVertex { get; } = firstVertex;
+            public int FirstIndex { get; } = firstIndex;
+            public int VertexCount { get; } = vertexCount;
+            public int IndexCount { get; } = indexCount;
+            public int ReservedVertexCount { get; } = reservedVertexCount;
+            public int ReservedIndexCount { get; } = reservedIndexCount;
+        }
+
+        private sealed class LogicalMeshState(uint logicalMeshId, uint submeshIndex)
+        {
+            public uint LogicalMeshId { get; } = logicalMeshId;
+            public uint SubmeshIndex { get; } = submeshIndex;
+            public string DebugLabel { get; set; } = $"LogicalMesh_{logicalMeshId}";
+            public int ReferenceCount;
+            public readonly uint[] MeshIds = new uint[MaxLogicalMeshLodCount];
+            public readonly XRMesh?[] Meshes = new XRMesh?[MaxLogicalMeshLodCount];
+            public readonly float[] MaxDistances = new float[MaxLogicalMeshLodCount];
+            public uint LODCount;
+
+            public LODTableEntry ToEntry()
+                => new()
+                {
+                    LODCount = LODCount,
+                    LOD0_MeshDataID = MeshIds[0],
+                    LOD1_MeshDataID = MeshIds[1],
+                    LOD2_MeshDataID = MeshIds[2],
+                    LOD3_MeshDataID = MeshIds[3],
+                    LOD0_MaxDistance = MaxDistances[0],
+                    LOD1_MaxDistance = MaxDistances[1],
+                    LOD2_MaxDistance = MaxDistances[2],
+                    LOD3_MaxDistance = MaxDistances[3],
+                };
+        }
+
+        public readonly struct StreamingWritePointers(
+            VoidPtr positions,
+            VoidPtr normals,
+            VoidPtr tangents,
+            VoidPtr uv0,
+            VoidPtr indices,
+            int maxVertexCount,
+            int maxIndexCount)
+        {
+            public VoidPtr Positions { get; } = positions;
+            public VoidPtr Normals { get; } = normals;
+            public VoidPtr Tangents { get; } = tangents;
+            public VoidPtr UV0 { get; } = uv0;
+            public VoidPtr Indices { get; } = indices;
+            public int MaxVertexCount { get; } = maxVertexCount;
+            public int MaxIndexCount { get; } = maxIndexCount;
+        }
+
+        private sealed class AtlasTierState(EAtlasTier tier)
+        {
+            public EAtlasTier Tier { get; } = tier;
+            public XRDataBuffer? Positions;
+            public XRDataBuffer? Normals;
+            public XRDataBuffer? Tangents;
+            public XRDataBuffer? UV0;
+            public XRDataBuffer? Indices;
+            public bool Dirty;
+            public int VertexCount;
+            public int IndexCount;
+            public uint Version;
+            public IndexSize IndexElementSize = IndexSize.FourBytes;
+            public readonly Dictionary<XRMesh, AtlasAllocation> MeshOffsets = [];
+            public readonly List<IndexTriangle> IndirectFaceIndices = [];
+        }
+
+        private readonly AtlasTierState _staticAtlas = new(EAtlasTier.Static);
+        private readonly AtlasTierState _dynamicAtlas = new(EAtlasTier.Dynamic);
+        private readonly AtlasTierState[] _streamingAtlases =
+        [
+            new AtlasTierState(EAtlasTier.Streaming),
+            new AtlasTierState(EAtlasTier.Streaming),
+            new AtlasTierState(EAtlasTier.Streaming),
+        ];
+
+        private readonly Dictionary<XRMesh, EAtlasTier> _activeAtlasTiers = [];
+        private readonly Dictionary<XRMesh, (int maxVertexCount, int maxIndexCount)> _streamingReservations = [];
+        private int _streamingWriteSlot;
+        private int _streamingRenderSlot;
+
         /// <summary>Atlas buffer containing position vec3 data for all meshes.</summary>
         private XRDataBuffer? _atlasPositions;
 
@@ -208,32 +345,85 @@ namespace XREngine.Rendering.Commands
         /// <summary>Gets the list of triangle indices for indirect rendering.</summary>
         public List<IndexTriangle> IndirectFaceIndices => _indirectFaceIndices;
 
+        public IReadOnlyList<IndexTriangle> GetIndirectFaceIndices(EAtlasTier tier)
+            => GetTierState(tier).IndirectFaceIndices;
+
         /// <summary>Gets the current total vertex count in the atlas.</summary>
         public int AtlasVertexCount => _atlasVertexCount;
+
+        public int GetAtlasVertexCount(EAtlasTier tier)
+            => GetTierState(tier).VertexCount;
 
         /// <summary>Gets the current total index count in the atlas.</summary>
         public int AtlasIndexCount => _atlasIndexCount;
 
+        public int GetAtlasIndexCount(EAtlasTier tier)
+            => GetTierState(tier).IndexCount;
+
         /// <summary>Gets the version number incremented on each atlas rebuild. Use for change detection.</summary>
         public uint AtlasVersion => _atlasVersion;
+
+        public uint GetAtlasVersion(EAtlasTier tier)
+            => GetTierState(tier).Version;
 
         /// <summary>Gets the index element size used in the atlas index buffer (u8, u16, or u32).</summary>
         public IndexSize AtlasIndexElementSize => _atlasIndexElementSize;
 
+        public IndexSize GetAtlasIndexElementSize(EAtlasTier tier)
+            => GetTierState(tier).IndexElementSize;
+
         /// <summary>Gets the atlas buffer containing position data.</summary>
         public XRDataBuffer? AtlasPositions => _atlasPositions;
+
+        public XRDataBuffer? GetAtlasPositions(EAtlasTier tier)
+            => GetTierState(tier).Positions;
 
         /// <summary>Gets the atlas buffer containing normal data.</summary>
         public XRDataBuffer? AtlasNormals => _atlasNormals;
 
+        public XRDataBuffer? GetAtlasNormals(EAtlasTier tier)
+            => GetTierState(tier).Normals;
+
         /// <summary>Gets the atlas buffer containing tangent data.</summary>
         public XRDataBuffer? AtlasTangents => _atlasTangents;
+
+        public XRDataBuffer? GetAtlasTangents(EAtlasTier tier)
+            => GetTierState(tier).Tangents;
 
         /// <summary>Gets the atlas buffer containing UV0 data.</summary>
         public XRDataBuffer? AtlasUV0 => _atlasUV0;
 
+        public XRDataBuffer? GetAtlasUV0(EAtlasTier tier)
+            => GetTierState(tier).UV0;
+
         /// <summary>Gets the atlas buffer containing index data.</summary>
         public XRDataBuffer? AtlasIndices => _atlasIndices;
+
+        public XRDataBuffer? GetAtlasIndices(EAtlasTier tier)
+            => GetTierState(tier).Indices;
+
+        public EAtlasTier GetActiveAtlasTier(uint meshID)
+        {
+            if (meshID != 0 && _idToMesh.TryGetValue(meshID, out var mesh) && mesh is not null && _activeAtlasTiers.TryGetValue(mesh, out var tier))
+                return tier;
+
+            return EAtlasTier.Dynamic;
+        }
+
+        private AtlasTierState GetTierState(EAtlasTier tier)
+            => tier switch
+            {
+                EAtlasTier.Static => _staticAtlas,
+                EAtlasTier.Dynamic => _dynamicAtlas,
+                EAtlasTier.Streaming => _streamingAtlases[_streamingRenderSlot],
+                _ => _dynamicAtlas,
+            };
+
+        private AtlasTierState GetStreamingWriteTierState()
+            => _streamingAtlases[_streamingWriteSlot];
+
+        private static uint ComposeMeshDataFlags(EAtlasTier tier)
+            => (uint)tier & MeshDataFlagAtlasTierMask;
 
         #endregion
 
@@ -252,6 +442,13 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Reverse mapping from mesh ID to XRMesh instance.</summary>
         private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
+
+        private readonly Dictionary<RenderableMesh, Dictionary<uint, uint>> _renderableLogicalMeshIdMap = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<XRMesh, uint> _standaloneLogicalMeshIdMap = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<uint, LogicalMeshState> _logicalMeshStates = [];
+        private XRDataBuffer? _lodTableBuffer;
+        private XRDataBuffer? _lodRequestBuffer;
+        private uint _nextLogicalMeshID = 1;
 
         /// <summary>Next material ID to assign (incremented atomically).</summary>
         private uint _nextMaterialID = 1;
@@ -384,6 +581,194 @@ namespace XREngine.Rendering.Commands
             return ok;
         }
 
+        public XRDataBuffer LODTableBuffer => _lodTableBuffer ??= MakeLodTableBuffer();
+
+        public XRDataBuffer LODRequestBuffer => _lodRequestBuffer ??= MakeLodRequestBuffer();
+
+        public bool HasLogicalMeshEntries => _logicalMeshStates.Count > 0;
+
+        public bool TryGetLodTableEntry(uint logicalMeshId, out LODTableEntry entry)
+        {
+            entry = default;
+            if (logicalMeshId == 0 || !_logicalMeshStates.TryGetValue(logicalMeshId, out LogicalMeshState? state) || state.LODCount == 0)
+                return false;
+
+            entry = state.ToEntry();
+            return true;
+        }
+
+        public bool RegisterLogicalMeshLODs(IEnumerable<(XRMesh mesh, float maxDistance)> lodMeshes, out uint logicalMeshId, out string? failureReason)
+        {
+            logicalMeshId = 0;
+            failureReason = null;
+            if (lodMeshes is null)
+            {
+                failureReason = "LOD mesh set is null";
+                return false;
+            }
+
+            using (_lock.EnterScope())
+            {
+                logicalMeshId = Interlocked.Increment(ref _nextLogicalMeshID);
+                LogicalMeshState state = new(logicalMeshId, 0u);
+                _logicalMeshStates[logicalMeshId] = state;
+                if (!TryPopulateLogicalMeshState(state, lodMeshes, "LogicalMesh", out failureReason))
+                {
+                    _logicalMeshStates.Remove(logicalMeshId);
+                    logicalMeshId = 0;
+                    return false;
+                }
+
+                return true;
+            }
+        }
+
+        public bool RequestLODLoad(uint logicalMeshId, int lodLevel, out string? failureReason)
+        {
+            failureReason = null;
+            using (_lock.EnterScope())
+            {
+                if (!TryGetLogicalMeshState(logicalMeshId, lodLevel, out LogicalMeshState? state, out failureReason))
+                    return false;
+
+                XRMesh? mesh = state!.Meshes[lodLevel];
+                if (mesh is null)
+                {
+                    failureReason = $"logical mesh {logicalMeshId} has no mesh registered for LOD {lodLevel}";
+                    return false;
+                }
+
+                if (state.MeshIds[lodLevel] != 0)
+                    return true;
+
+                GetOrCreateMeshID(mesh, out uint meshId);
+                string lodLabel = state.LODCount <= 1
+                    ? state.DebugLabel
+                    : $"{state.DebugLabel} LOD{lodLevel}";
+
+                if (!EnsureSubmeshInAtlas(mesh, meshId, lodLabel, out failureReason))
+                    return false;
+
+                state.MeshIds[lodLevel] = meshId;
+                if (state.ReferenceCount > 0)
+                    IncrementAtlasMeshRefCount(meshId, state.ReferenceCount, "RequestLODLoad");
+
+                UpdateLogicalMeshTableEntry(state);
+                return true;
+            }
+        }
+
+        public bool ReleaseLOD(uint logicalMeshId, int lodLevel, out string? failureReason)
+        {
+            failureReason = null;
+            using (_lock.EnterScope())
+            {
+                if (!TryGetLogicalMeshState(logicalMeshId, lodLevel, out LogicalMeshState? state, out failureReason))
+                    return false;
+
+                if (lodLevel == 0)
+                {
+                    failureReason = "LOD0 must remain resident as the fallback mesh";
+                    return false;
+                }
+
+                uint meshId = state!.MeshIds[lodLevel];
+                if (meshId == 0)
+                    return true;
+
+                if (state.ReferenceCount > 0)
+                    DecrementAtlasMeshRefCount(meshId, "ReleaseLOD", state.ReferenceCount);
+
+                state.MeshIds[lodLevel] = 0;
+                UpdateLogicalMeshTableEntry(state);
+                return true;
+            }
+        }
+
+        public List<(uint logicalMeshId, uint lodMask)> DrainLODRequests()
+        {
+            using (_lock.EnterScope())
+            {
+                List<(uint logicalMeshId, uint lodMask)> requests = [];
+                XRDataBuffer buffer = LODRequestBuffer;
+                uint entryCount = Math.Min(buffer.ElementCount, _nextLogicalMeshID + 1);
+                if (entryCount <= 1)
+                    return requests;
+
+                bool mappedTemporarily = false;
+                bool usedMappedAccess = false;
+                bool modified = false;
+
+                try
+                {
+                    if (!buffer.IsMapped)
+                    {
+                        buffer.MapBufferData();
+                        if (buffer.IsMapped)
+                        {
+                            mappedTemporarily = true;
+                            Engine.Rendering.Stats.RecordGpuBufferMapped();
+                        }
+                    }
+
+                    IntPtr mappedAddress = IntPtr.Zero;
+                    if (buffer.IsMapped)
+                    {
+                        AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+                        mappedAddress = buffer.GetMappedAddresses().FirstOrDefault();
+                    }
+
+                    if (mappedAddress != IntPtr.Zero)
+                    {
+                        usedMappedAccess = true;
+                        unsafe
+                        {
+                            uint* ptr = (uint*)(void*)mappedAddress;
+                            for (uint logicalMeshId = 1; logicalMeshId < entryCount; logicalMeshId++)
+                            {
+                                uint lodMask = ptr[logicalMeshId];
+                                if (lodMask == 0)
+                                    continue;
+
+                                Engine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
+                                requests.Add((logicalMeshId, lodMask));
+                                ptr[logicalMeshId] = 0u;
+                                modified = true;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (uint logicalMeshId = 1; logicalMeshId < entryCount; logicalMeshId++)
+                        {
+                            uint lodMask = buffer.GetDataRawAtIndex<uint>(logicalMeshId);
+                            if (lodMask == 0)
+                                continue;
+
+                            requests.Add((logicalMeshId, lodMask));
+                            buffer.SetDataRawAtIndex(logicalMeshId, 0u);
+                            modified = true;
+                        }
+                    }
+                }
+                finally
+                {
+                    if (usedMappedAccess && modified)
+                        AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                    else if (modified)
+                    {
+                        buffer.PushSubData();
+                        AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.Command);
+                    }
+
+                    if (mappedTemporarily)
+                        buffer.UnmapBufferData();
+                }
+
+                return requests;
+            }
+        }
+
         /// <summary>
         /// Attempts to resolve the original mesh render command for a GPU command index.
         /// </summary>
@@ -406,56 +791,440 @@ namespace XREngine.Rendering.Commands
 
         #region Atlas Management
 
+        private void SyncLegacyDynamicAtlasState()
+        {
+            _atlasPositions = _dynamicAtlas.Positions;
+            _atlasNormals = _dynamicAtlas.Normals;
+            _atlasTangents = _dynamicAtlas.Tangents;
+            _atlasUV0 = _dynamicAtlas.UV0;
+            _atlasIndices = _dynamicAtlas.Indices;
+            _atlasDirty = _dynamicAtlas.Dirty;
+            _atlasVertexCount = _dynamicAtlas.VertexCount;
+            _atlasIndexCount = _dynamicAtlas.IndexCount;
+            _atlasIndexElementSize = _dynamicAtlas.IndexElementSize;
+            _indirectFaceIndices.Clear();
+            _indirectFaceIndices.AddRange(_dynamicAtlas.IndirectFaceIndices);
+            _atlasMeshOffsets.Clear();
+            foreach (var kvp in _dynamicAtlas.MeshOffsets)
+                _atlasMeshOffsets[kvp.Key] = (kvp.Value.FirstVertex, kvp.Value.FirstIndex, kvp.Value.IndexCount);
+        }
+
+        private static string GetTierLabel(EAtlasTier tier)
+            => tier switch
+            {
+                EAtlasTier.Static => "Static",
+                EAtlasTier.Dynamic => "Dynamic",
+                EAtlasTier.Streaming => "Streaming",
+                _ => "Unknown",
+            };
+
+        private static EBufferUsage GetTierUsage(EAtlasTier tier)
+            => tier switch
+            {
+                EAtlasTier.Static => EBufferUsage.StaticDraw,
+                EAtlasTier.Dynamic => EBufferUsage.DynamicDraw,
+                EAtlasTier.Streaming => EBufferUsage.StreamDraw,
+                _ => EBufferUsage.DynamicDraw,
+            };
+
+        private static void ConfigureStreamingBuffer(XRDataBuffer buffer)
+        {
+            buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
+            buffer.RangeFlags |= EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+            buffer.ShouldMap = true;
+            buffer.Resizable = true;
+        }
+
+        private void EnsureTierBuffers(AtlasTierState state)
+        {
+            string tierLabel = GetTierLabel(state.Tier);
+            EBufferUsage usage = GetTierUsage(state.Tier);
+
+            state.Positions ??= new XRDataBuffer(ECommonBufferType.Position.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 3, false, false)
+            {
+                Name = $"MeshAtlas_{tierLabel}_Positions",
+                Usage = usage,
+                DisposeOnPush = false,
+                BindingIndexOverride = 0,
+            };
+            state.Normals ??= new XRDataBuffer(ECommonBufferType.Normal.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 3, false, false)
+            {
+                Name = $"MeshAtlas_{tierLabel}_Normals",
+                Usage = usage,
+                DisposeOnPush = false,
+                BindingIndexOverride = 1,
+            };
+            state.Tangents ??= new XRDataBuffer(ECommonBufferType.Tangent.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 4, false, false)
+            {
+                Name = $"MeshAtlas_{tierLabel}_Tangents",
+                Usage = usage,
+                DisposeOnPush = false,
+                BindingIndexOverride = 2,
+            };
+            state.UV0 ??= new XRDataBuffer($"{ECommonBufferType.TexCoord}0", EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 2, false, false)
+            {
+                Name = $"MeshAtlas_{tierLabel}_UV0",
+                Usage = usage,
+                DisposeOnPush = false,
+                BindingIndexOverride = 3,
+            };
+            state.Indices ??= new XRDataBuffer($"MeshAtlas_{tierLabel}_Indices", EBufferTarget.ElementArrayBuffer, 0, EComponentType.UInt, 1, false, true)
+            {
+                Usage = usage,
+                DisposeOnPush = false,
+                PadEndingToVec4 = false,
+            };
+
+            if (state.Tier == EAtlasTier.Streaming)
+            {
+                ConfigureStreamingBuffer(state.Positions);
+                ConfigureStreamingBuffer(state.Normals);
+                ConfigureStreamingBuffer(state.Tangents);
+                ConfigureStreamingBuffer(state.UV0);
+                ConfigureStreamingBuffer(state.Indices);
+            }
+        }
+
         /// <summary>
         /// Marks the atlas as dirty so it will be rebuilt before next render if needed.
         /// </summary>
         private void MarkAtlasDirty()
-            => _atlasDirty = true;
+            => MarkAtlasDirty(EAtlasTier.Dynamic);
+
+        private void MarkAtlasDirty(EAtlasTier tier)
+        {
+            AtlasTierState state = GetTierState(tier);
+            state.Dirty = true;
+            if (tier == EAtlasTier.Dynamic)
+                _atlasDirty = true;
+        }
 
         /// <summary>
         /// Ensures atlas buffers exist with minimal allocation on first use.
         /// Creates position, normal, tangent, UV0, and index buffers.
         /// </summary>
         public void EnsureAtlasBuffers()
+            => EnsureAtlasBuffers(EAtlasTier.Dynamic);
+
+        public void EnsureAtlasBuffers(EAtlasTier tier)
         {
-            _atlasPositions ??= new XRDataBuffer(ECommonBufferType.Position.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 3, false, false)
+            if (tier == EAtlasTier.Streaming)
             {
-                Name = "MeshAtlas_Positions",
-                Usage = EBufferUsage.StreamDraw,
-                DisposeOnPush = false,
-                BindingIndexOverride = 0
-            };
-            _atlasNormals ??= new XRDataBuffer(ECommonBufferType.Normal.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 3, false, false)
+                foreach (AtlasTierState streamingState in _streamingAtlases)
+                    EnsureTierBuffers(streamingState);
+            }
+            else
             {
-                Name = "MeshAtlas_Normals",
-                Usage = EBufferUsage.StreamDraw,
-                DisposeOnPush = false,
-                BindingIndexOverride = 1
-            };
-            _atlasTangents ??= new XRDataBuffer(ECommonBufferType.Tangent.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 4, false, false)
+                EnsureTierBuffers(GetTierState(tier));
+            }
+
+            SyncLegacyDynamicAtlasState();
+        }
+
+        private static XRDataBuffer MakeLodTableBuffer()
+        {
+            var buffer = new XRDataBuffer(
+                "LodTableBuffer",
+                EBufferTarget.ShaderStorageBuffer,
+                MinLodTableEntries,
+                EComponentType.Float,
+                LODTableEntryFloatCount,
+                false,
+                false)
             {
-                Name = "MeshAtlas_Tangents",
-                Usage = EBufferUsage.StreamDraw,
+                Usage = EBufferUsage.DynamicCopy,
                 DisposeOnPush = false,
-                BindingIndexOverride = 2
+                Resizable = true
             };
-            _atlasUV0 ??= new XRDataBuffer($"{ECommonBufferType.TexCoord}0", EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 2, false, false)
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeLodRequestBuffer()
+        {
+            var buffer = new XRDataBuffer(
+                "LodRequestBuffer",
+                EBufferTarget.ShaderStorageBuffer,
+                MinLodRequestEntries,
+                EComponentType.UInt,
+                1,
+                false,
+                false)
             {
-                Name = "MeshAtlas_UV0",
-                Usage = EBufferUsage.StreamDraw,
+                Usage = EBufferUsage.DynamicCopy,
                 DisposeOnPush = false,
-                BindingIndexOverride = 3
+                Resizable = true
             };
-            _atlasIndices ??= new XRDataBuffer("MeshAtlas_Indices", EBufferTarget.ElementArrayBuffer, 0, EComponentType.UInt, 1, false, true)
+
+            for (uint index = 0; index < buffer.ElementCount; index++)
+                buffer.SetDataRawAtIndex(index, 0u);
+
+            return buffer;
+        }
+
+        private void EnsureLodTableCapacity(uint requiredEntries)
+        {
+            XRDataBuffer buffer = LODTableBuffer;
+            if (requiredEntries <= buffer.ElementCount)
+                return;
+
+            uint newCapacity = XRMath.NextPowerOfTwo(requiredEntries).ClampMin(MinLodTableEntries);
+            buffer.Resize(newCapacity);
+        }
+
+        private void EnsureLodRequestCapacity(uint requiredEntries)
+        {
+            XRDataBuffer buffer = LODRequestBuffer;
+            if (requiredEntries <= buffer.ElementCount)
+                return;
+
+            uint oldCount = buffer.ElementCount;
+            uint newCapacity = XRMath.NextPowerOfTwo(requiredEntries).ClampMin(MinLodRequestEntries);
+            buffer.Resize(newCapacity);
+            for (uint index = oldCount; index < newCapacity; index++)
+                buffer.SetDataRawAtIndex(index, 0u);
+            buffer.PushSubData((int)(oldCount * sizeof(uint)), (newCapacity - oldCount) * sizeof(uint));
+        }
+
+        private void UpdateLogicalMeshTableEntry(LogicalMeshState state)
+        {
+            EnsureLodTableCapacity(state.LogicalMeshId + 1);
+            EnsureLodRequestCapacity(state.LogicalMeshId + 1);
+            LODTableBuffer.SetDataRawAtIndex(state.LogicalMeshId, state.ToEntry());
+            LODTableBuffer.PushSubData();
+        }
+
+        private bool TryGetLogicalMeshState(uint logicalMeshId, int lodLevel, out LogicalMeshState? state, out string? failureReason)
+        {
+            state = null;
+            failureReason = null;
+
+            if (logicalMeshId == 0 || !_logicalMeshStates.TryGetValue(logicalMeshId, out state))
             {
-                Usage = EBufferUsage.StreamDraw,
-                DisposeOnPush = false,
-                PadEndingToVec4 = false
-            };
-            _atlasPositions!.BindingIndexOverride ??= 0;
-            _atlasNormals!.BindingIndexOverride ??= 1;
-            _atlasTangents!.BindingIndexOverride ??= 2;
-            _atlasUV0!.BindingIndexOverride ??= 3;
+                failureReason = $"logical mesh {logicalMeshId} is not registered";
+                return false;
+            }
+
+            if (lodLevel < 0 || lodLevel >= MaxLogicalMeshLodCount || lodLevel >= state.LODCount)
+            {
+                failureReason = $"LOD {lodLevel} is outside the registered range for logical mesh {logicalMeshId}";
+                state = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        private uint GetOrCreateRenderableLogicalMeshId(RenderableMesh renderable, uint submeshIndex)
+        {
+            if (!_renderableLogicalMeshIdMap.TryGetValue(renderable, out Dictionary<uint, uint>? submeshMap))
+            {
+                submeshMap = [];
+                _renderableLogicalMeshIdMap[renderable] = submeshMap;
+            }
+
+            if (!submeshMap.TryGetValue(submeshIndex, out uint logicalMeshId))
+            {
+                logicalMeshId = Interlocked.Increment(ref _nextLogicalMeshID);
+                submeshMap[submeshIndex] = logicalMeshId;
+                _logicalMeshStates[logicalMeshId] = new LogicalMeshState(logicalMeshId, submeshIndex);
+            }
+
+            return logicalMeshId;
+        }
+
+        private uint GetOrCreateStandaloneLogicalMeshId(XRMesh mesh)
+        {
+            if (!_standaloneLogicalMeshIdMap.TryGetValue(mesh, out uint logicalMeshId))
+            {
+                logicalMeshId = Interlocked.Increment(ref _nextLogicalMeshID);
+                _standaloneLogicalMeshIdMap[mesh] = logicalMeshId;
+                _logicalMeshStates[logicalMeshId] = new LogicalMeshState(logicalMeshId, 0u);
+            }
+
+            return logicalMeshId;
+        }
+
+        private static List<(XRMesh mesh, float maxDistance)> BuildFallbackLodSet(XRMesh mesh)
+            => [(mesh, float.MaxValue)];
+
+        private static List<(XRMesh mesh, float maxDistance)> CollectRenderableLodSet(RenderableMesh renderable, uint submeshIndex, XRMesh fallbackMesh)
+        {
+            List<(XRMesh mesh, float maxDistance)> lodMeshes = [];
+            foreach (RenderableMesh.RenderableLOD lod in renderable.LODs)
+            {
+                var submeshes = lod.Renderer.GetMeshes();
+                if (submeshIndex >= (uint)submeshes.Length)
+                    continue;
+
+                XRMesh? lodMesh = submeshes[submeshIndex].mesh;
+                if (lodMesh is null)
+                    continue;
+
+                lodMeshes.Add((lodMesh, lod.MaxVisibleDistance));
+                if (lodMeshes.Count >= MaxLogicalMeshLodCount)
+                    break;
+            }
+
+            if (lodMeshes.Count == 0)
+                lodMeshes.Add((fallbackMesh, float.MaxValue));
+
+            int lastIndex = lodMeshes.Count - 1;
+            lodMeshes[lastIndex] = (lodMeshes[lastIndex].mesh, float.MaxValue);
+            return lodMeshes;
+        }
+
+        private bool TryPopulateLogicalMeshState(LogicalMeshState state, IEnumerable<(XRMesh mesh, float maxDistance)> lodMeshes, string meshLabel, out string? failureReason)
+        {
+            failureReason = null;
+            state.DebugLabel = meshLabel;
+            List<(XRMesh mesh, float maxDistance)> levels = [];
+            foreach ((XRMesh mesh, float maxDistance) in lodMeshes)
+            {
+                if (mesh is null)
+                    continue;
+
+                levels.Add((mesh, maxDistance));
+                if (levels.Count >= MaxLogicalMeshLodCount)
+                    break;
+            }
+
+            if (levels.Count == 0)
+            {
+                failureReason = "no valid LOD meshes were provided";
+                return false;
+            }
+
+            int lastIndex = levels.Count - 1;
+            levels[lastIndex] = (levels[lastIndex].mesh, float.MaxValue);
+
+            uint[] previousMeshIds = new uint[MaxLogicalMeshLodCount];
+            Array.Copy(state.MeshIds, previousMeshIds, state.MeshIds.Length);
+            int previousRefCount = state.ReferenceCount;
+
+            uint[] newMeshIds = new uint[MaxLogicalMeshLodCount];
+            XRMesh?[] newMeshes = new XRMesh?[MaxLogicalMeshLodCount];
+            float[] newDistances = new float[MaxLogicalMeshLodCount];
+
+            for (int i = 0; i < levels.Count; i++)
+            {
+                XRMesh mesh = levels[i].mesh;
+                GetOrCreateMeshID(mesh, out uint meshId);
+                string lodLabel = levels.Count == 1 ? meshLabel : $"{meshLabel} LOD{i}";
+                if (!EnsureSubmeshInAtlas(mesh, meshId, lodLabel, out failureReason))
+                    return false;
+
+                newMeshIds[i] = meshId;
+                newMeshes[i] = mesh;
+                newDistances[i] = i == lastIndex ? float.MaxValue : MathF.Max(0.0f, levels[i].maxDistance);
+            }
+
+            if (previousRefCount > 0)
+            {
+                HashSet<uint> previous = [];
+                HashSet<uint> current = [];
+
+                foreach (uint meshId in previousMeshIds)
+                    if (meshId != 0)
+                        previous.Add(meshId);
+
+                foreach (uint meshId in newMeshIds)
+                    if (meshId != 0)
+                        current.Add(meshId);
+
+                foreach (uint meshId in current)
+                {
+                    if (!previous.Contains(meshId))
+                        IncrementAtlasMeshRefCount(meshId, previousRefCount, "TryPopulateLogicalMeshState");
+                }
+
+                foreach (uint meshId in previous)
+                {
+                    if (!current.Contains(meshId))
+                        DecrementAtlasMeshRefCount(meshId, "TryPopulateLogicalMeshState", previousRefCount);
+                }
+            }
+
+            Array.Clear(state.MeshIds, 0, state.MeshIds.Length);
+            Array.Clear(state.Meshes, 0, state.Meshes.Length);
+            Array.Clear(state.MaxDistances, 0, state.MaxDistances.Length);
+            Array.Copy(newMeshIds, state.MeshIds, newMeshIds.Length);
+            Array.Copy(newMeshes, state.Meshes, newMeshes.Length);
+            Array.Copy(newDistances, state.MaxDistances, newDistances.Length);
+            state.LODCount = (uint)levels.Count;
+
+            UpdateLogicalMeshTableEntry(state);
+            return true;
+        }
+
+        private bool ResolveLogicalMeshRegistration(RenderInfo renderInfo, XRMesh mesh, uint submeshIndex, string meshLabel, out uint meshId, out uint logicalMeshId, out uint lodCount, out string? failureReason)
+        {
+            meshId = 0;
+            logicalMeshId = 0;
+            lodCount = 0;
+            failureReason = null;
+
+            List<(XRMesh mesh, float maxDistance)> lodMeshes;
+            LogicalMeshState state;
+
+            if (renderInfo.Owner is RenderableMesh renderable)
+            {
+                lodMeshes = CollectRenderableLodSet(renderable, submeshIndex, mesh);
+                logicalMeshId = GetOrCreateRenderableLogicalMeshId(renderable, submeshIndex);
+                state = _logicalMeshStates[logicalMeshId];
+            }
+            else
+            {
+                lodMeshes = BuildFallbackLodSet(mesh);
+                logicalMeshId = GetOrCreateStandaloneLogicalMeshId(mesh);
+                state = _logicalMeshStates[logicalMeshId];
+            }
+
+            if (!TryPopulateLogicalMeshState(state, lodMeshes, meshLabel, out failureReason))
+                return false;
+
+            GetOrCreateMeshID(mesh, out meshId);
+            lodCount = state.LODCount;
+            return true;
+        }
+
+        private void AcquireLogicalMeshResidency(uint logicalMeshId)
+        {
+            if (logicalMeshId == 0 || !_logicalMeshStates.TryGetValue(logicalMeshId, out LogicalMeshState? state))
+                return;
+
+            state.ReferenceCount++;
+            if (state.ReferenceCount != 1)
+                return;
+
+            HashSet<uint> uniqueMeshIds = [];
+            foreach (uint meshId in state.MeshIds)
+            {
+                if (meshId != 0)
+                    uniqueMeshIds.Add(meshId);
+            }
+
+            foreach (uint meshId in uniqueMeshIds)
+                IncrementAtlasMeshRefCount(meshId, 1, "AcquireLogicalMeshResidency");
+        }
+
+        private void ReleaseLogicalMeshResidency(uint logicalMeshId, string context)
+        {
+            if (logicalMeshId == 0 || !_logicalMeshStates.TryGetValue(logicalMeshId, out LogicalMeshState? state) || state.ReferenceCount <= 0)
+                return;
+
+            state.ReferenceCount--;
+            if (state.ReferenceCount != 0)
+                return;
+
+            HashSet<uint> uniqueMeshIds = [];
+            foreach (uint meshId in state.MeshIds)
+            {
+                if (meshId != 0)
+                    uniqueMeshIds.Add(meshId);
+            }
+
+            foreach (uint meshId in uniqueMeshIds)
+                DecrementAtlasMeshRefCount(meshId, context, 1);
         }
 
         /// <summary>
@@ -470,12 +1239,17 @@ namespace XREngine.Rendering.Commands
         /// <param name="failureReason">Reason for failure if the method returns false.</param>
         /// <returns>True if the mesh was successfully appended; false otherwise.</returns>
         private bool AppendMeshToAtlas(XRMesh mesh, string meshLabel, out string? failureReason)
+            => AppendMeshToAtlas(mesh, EAtlasTier.Dynamic, meshLabel, out failureReason);
+
+        private bool AppendMeshToAtlas(XRMesh mesh, EAtlasTier tier, string meshLabel, out string? failureReason)
         {
             failureReason = null;
-            //Make sure the buffers exist - positions, normals, etc
-            EnsureAtlasBuffers();
+            AtlasTierState state = GetTierState(tier);
 
-            if (_atlasMeshOffsets.ContainsKey(mesh))
+            //Make sure the buffers exist - positions, normals, etc
+            EnsureAtlasBuffers(tier);
+
+            if (state.MeshOffsets.ContainsKey(mesh))
                 return true; // already packed
 
             int vertexCount = mesh.VertexCount;
@@ -507,7 +1281,7 @@ namespace XREngine.Rendering.Commands
                 foreach (IndexTriangle tri in mesh.Triangles)
                 {
                     // Store indices relative to the mesh; DrawElementsIndirect will offset by baseVertex.
-                    _indirectFaceIndices.Add(new IndexTriangle(
+                    state.IndirectFaceIndices.Add(new IndexTriangle(
                         tri.Point0,
                         tri.Point1,
                         tri.Point2));
@@ -528,7 +1302,7 @@ namespace XREngine.Rendering.Commands
 
                 for (int i = 0; i + 2 < indices.Length; i += 3)
                 {
-                    _indirectFaceIndices.Add(new IndexTriangle(
+                    state.IndirectFaceIndices.Add(new IndexTriangle(
                         indices[i],
                         indices[i + 1],
                         indices[i + 2]));
@@ -541,11 +1315,11 @@ namespace XREngine.Rendering.Commands
                 return false;
             }
 
-            int firstVertex = _atlasVertexCount;
-            int firstIndex = _atlasIndexCount;
+            int firstVertex = state.VertexCount;
+            int firstIndex = state.IndexCount;
 
             // Grow per-attribute buffers (power-of-two growth to reduce reallocs)
-            VerifyBufferLengths(firstVertex + vertexCount);
+            VerifyBufferLengths(state, firstVertex + vertexCount);
 
             // Batched copy: direct memory move instead of per-element setters
             unsafe
@@ -569,34 +1343,408 @@ namespace XREngine.Rendering.Commands
                     }
                 }
 
-                CopyArray(_atlasPositions, firstVertex, positions);
-                CopyArray(_atlasNormals, firstVertex, normals);
-                CopyArray(_atlasTangents, firstVertex, tangents);
-                CopyArray(_atlasUV0, firstVertex, uv0);
+                CopyArray(state.Positions, firstVertex, positions);
+                CopyArray(state.Normals, firstVertex, normals);
+                CopyArray(state.Tangents, firstVertex, tangents);
+                CopyArray(state.UV0, firstVertex, uv0);
             }
 
-            _atlasVertexCount = firstVertex + positions.Length;
-            _atlasIndexCount = firstIndex + indexCountAdded;
-            _atlasMeshOffsets[mesh] = (firstVertex, firstIndex, indexCountAdded);
-            _atlasDirty = true; // we've written client-side; PushSubData below in rebuild
+            state.VertexCount = firstVertex + positions.Length;
+            state.IndexCount = firstIndex + indexCountAdded;
+            state.MeshOffsets[mesh] = new AtlasAllocation(firstVertex, firstIndex, positions.Length, indexCountAdded, positions.Length, indexCountAdded);
+            _activeAtlasTiers[mesh] = tier;
+            MarkAtlasDirty(tier); // we've written client-side; PushSubData below in rebuild
+            SyncLegacyDynamicAtlasState();
             return true;
         }
 
-        private void VerifyBufferLengths(int needed)
+        private bool ReserveMeshInStreamingAtlas(XRMesh mesh, uint meshID, string meshLabel, int maxVertexCount, int maxIndexCount, out string? failureReason)
         {
-            if (_atlasPositions!.ElementCount < needed)
-                _atlasPositions.Resize((uint)XRMath.NextPowerOfTwo(needed));
-            if (_atlasNormals!.ElementCount < needed)
-                _atlasNormals.Resize((uint)XRMath.NextPowerOfTwo(needed));
-            if (_atlasTangents!.ElementCount < needed)
-                _atlasTangents.Resize((uint)XRMath.NextPowerOfTwo(needed));
-            if (_atlasUV0!.ElementCount < needed)
-                _atlasUV0.Resize((uint)XRMath.NextPowerOfTwo(needed));
+            failureReason = null;
+            if (maxVertexCount <= 0)
+            {
+                failureReason = "requires a positive streaming vertex capacity";
+                return false;
+            }
+
+            maxIndexCount = Math.Max(maxIndexCount, 0);
+            if ((maxIndexCount % 3) != 0)
+                maxIndexCount += 3 - (maxIndexCount % 3);
+
+            EnsureAtlasBuffers(EAtlasTier.Streaming);
+
+            Vector3[] positions = new Vector3[mesh.VertexCount];
+            Vector3[] normals = new Vector3[mesh.VertexCount];
+            Vector4[] tangents = new Vector4[mesh.VertexCount];
+            Vector2[] uv0 = new Vector2[mesh.VertexCount];
+            for (uint v = 0; v < mesh.VertexCount; v++)
+            {
+                positions[v] = mesh.GetPosition(v);
+                normals[v] = mesh.GetNormal(v);
+                tangents[v] = mesh.GetTangentWithSign(v);
+                uv0[v] = mesh.GetTexCoord(v, 0);
+            }
+
+            List<IndexTriangle> triangles = [];
+            if (mesh.Triangles is not null && mesh.Triangles.Count > 0)
+            {
+                triangles.AddRange(mesh.Triangles);
+            }
+            else if (mesh.Type == EPrimitiveType.Triangles && mesh.IndexCount > 0)
+            {
+                int[]? indices = mesh.GetIndices(EPrimitiveType.Triangles);
+                if (indices is null || indices.Length == 0)
+                {
+                    failureReason = "has no triangle indices";
+                    return false;
+                }
+
+                for (int i = 0; i + 2 < indices.Length; i += 3)
+                    triangles.Add(new IndexTriangle(indices[i], indices[i + 1], indices[i + 2]));
+            }
+            else
+            {
+                failureReason = "has no index data";
+                return false;
+            }
+
+            int actualIndexCount = triangles.Count * 3;
+            if (maxVertexCount < positions.Length)
+            {
+                failureReason = $"streaming vertex capacity {maxVertexCount} is smaller than mesh vertex count {positions.Length}";
+                return false;
+            }
+
+            if (maxIndexCount < actualIndexCount)
+            {
+                failureReason = $"streaming index capacity {maxIndexCount} is smaller than mesh index count {actualIndexCount}";
+                return false;
+            }
+
+            for (int slot = 0; slot < _streamingAtlases.Length; slot++)
+            {
+                AtlasTierState state = _streamingAtlases[slot];
+                if (state.MeshOffsets.ContainsKey(mesh))
+                    continue;
+
+                int firstVertex = state.VertexCount;
+                int firstIndex = state.IndexCount;
+                VerifyBufferLengths(state, firstVertex + maxVertexCount);
+
+                unsafe
+                {
+                    static void CopyArray<T>(XRDataBuffer? buffer, int startIndex, T[] src) where T : struct
+                    {
+                        if (buffer is null || src.Length == 0)
+                            return;
+
+                        uint spanBytes = (uint)(src.Length * Marshal.SizeOf<T>());
+                        var handle = GCHandle.Alloc(src, GCHandleType.Pinned);
+                        try
+                        {
+                            VoidPtr dst = buffer.Address + (int)(startIndex * buffer.ElementSize);
+                            Memory.Move(dst, handle.AddrOfPinnedObject(), spanBytes);
+                        }
+                        finally
+                        {
+                            handle.Free();
+                        }
+                    }
+
+                    CopyArray(state.Positions, firstVertex, positions);
+                    CopyArray(state.Normals, firstVertex, normals);
+                    CopyArray(state.Tangents, firstVertex, tangents);
+                    CopyArray(state.UV0, firstVertex, uv0);
+                }
+
+                foreach (IndexTriangle triangle in triangles)
+                    state.IndirectFaceIndices.Add(triangle);
+
+                int reservedTriangleCount = maxIndexCount / 3;
+                IndexTriangle streamingPaddingTriangle = new IndexTriangle(0, 0, 0)!;
+                for (int i = triangles.Count; i < reservedTriangleCount; i++)
+                    state.IndirectFaceIndices.Add(streamingPaddingTriangle);
+
+                state.VertexCount = firstVertex + maxVertexCount;
+                state.IndexCount = firstIndex + maxIndexCount;
+                state.MeshOffsets[mesh] = new AtlasAllocation(firstVertex, firstIndex, positions.Length, actualIndexCount, maxVertexCount, maxIndexCount);
+                state.Dirty = true;
+            }
+
+            _streamingReservations[mesh] = (maxVertexCount, maxIndexCount);
+            _activeAtlasTiers[mesh] = EAtlasTier.Streaming;
+
+            EnsureMeshDataCapacity(meshID + 1);
+            MeshDataBuffer.Set(meshID, new MeshDataEntry
+            {
+                IndexCount = (uint)actualIndexCount,
+                FirstIndex = (uint)_streamingAtlases[_streamingRenderSlot].MeshOffsets[mesh].FirstIndex,
+                FirstVertex = (uint)_streamingAtlases[_streamingRenderSlot].MeshOffsets[mesh].FirstVertex,
+                Flags = ComposeMeshDataFlags(EAtlasTier.Streaming)
+            });
+            _meshDataDirty = true;
+            return true;
         }
 
-        private bool TryPrepareAtlasIndexBuffer(int requiredIndices)
+        public void LoadStaticMeshBatch(IEnumerable<XRMesh> meshes)
         {
-            if (_atlasIndices is null)
+            if (meshes is null)
+                return;
+
+            using (_lock.EnterScope())
+            {
+                foreach (XRMesh mesh in meshes)
+                {
+                    if (mesh is null)
+                        continue;
+
+                    if (!ValidateMeshForGpu(mesh, out var validationFailure))
+                    {
+                        string invalidLabel = mesh.Name ?? "<unnamed>";
+                        RecordUnsupportedMesh(mesh, invalidLabel, validationFailure);
+                        continue;
+                    }
+
+                    string meshLabel = mesh.Name ?? "<unnamed>";
+                    GetOrCreateMeshID(mesh, out uint meshID);
+                    if (!AppendMeshToAtlas(mesh, EAtlasTier.Static, meshLabel, out var failureReason))
+                    {
+                        RecordUnsupportedMesh(mesh, meshLabel, failureReason ?? "static atlas registration failed");
+                        continue;
+                    }
+
+                    EnsureMeshDataCapacity(meshID + 1);
+                    _meshDataDirty = true;
+                }
+
+                if (_meshDataDirty)
+                {
+                    UpdateMeshDataBufferFromAtlas();
+                    _meshDataDirty = false;
+                }
+
+                RebuildAtlasIfDirty(EAtlasTier.Static);
+            }
+        }
+
+        public bool RegisterStreamingMesh(XRMesh mesh, int maxVertexCount, int maxIndexCount, out uint meshID, out string? failureReason)
+        {
+            meshID = 0;
+            failureReason = null;
+            if (mesh is null)
+            {
+                failureReason = "mesh is null";
+                return false;
+            }
+
+            using (_lock.EnterScope())
+            {
+                if (!ValidateMeshForGpu(mesh, out var validationFailure))
+                {
+                    failureReason = validationFailure;
+                    return false;
+                }
+
+                GetOrCreateMeshID(mesh, out meshID);
+                string meshLabel = mesh.Name ?? $"Mesh_{meshID}";
+                if (!ReserveMeshInStreamingAtlas(mesh, meshID, meshLabel, maxVertexCount, maxIndexCount, out failureReason))
+                    return false;
+
+                if (_meshDataDirty)
+                {
+                    MeshDataBuffer.PushSubData();
+                    _meshDataDirty = false;
+                }
+
+                RebuildAtlasIfDirty(EAtlasTier.Streaming);
+                return true;
+            }
+        }
+
+        public bool TryGetStreamingWritePointers(uint meshID, out StreamingWritePointers pointers)
+        {
+            pointers = default;
+            if (meshID == 0 || !_idToMesh.TryGetValue(meshID, out XRMesh? mesh) || mesh is null)
+                return false;
+
+            if (!_streamingReservations.TryGetValue(mesh, out var reservation))
+                return false;
+
+            AtlasTierState state = GetStreamingWriteTierState();
+            if (!state.MeshOffsets.TryGetValue(mesh, out AtlasAllocation allocation))
+                return false;
+
+            state.Positions?.MapBufferData();
+            state.Normals?.MapBufferData();
+            state.Tangents?.MapBufferData();
+            state.UV0?.MapBufferData();
+            state.Indices?.MapBufferData();
+
+            XRDataBuffer? positionsBuffer = state.Positions;
+            XRDataBuffer? normalsBuffer = state.Normals;
+            XRDataBuffer? tangentsBuffer = state.Tangents;
+            XRDataBuffer? uv0Buffer = state.UV0;
+            XRDataBuffer? indicesBuffer = state.Indices;
+            if (positionsBuffer is null || normalsBuffer is null || tangentsBuffer is null || uv0Buffer is null || indicesBuffer is null)
+                return false;
+
+            pointers = new StreamingWritePointers(
+                positionsBuffer.Address + (int)(allocation.FirstVertex * positionsBuffer.ElementSize),
+                normalsBuffer.Address + (int)(allocation.FirstVertex * normalsBuffer.ElementSize),
+                tangentsBuffer.Address + (int)(allocation.FirstVertex * tangentsBuffer.ElementSize),
+                uv0Buffer.Address + (int)(allocation.FirstVertex * uv0Buffer.ElementSize),
+                indicesBuffer.Address + (int)(allocation.FirstIndex * indicesBuffer.ElementSize),
+                reservation.maxVertexCount,
+                reservation.maxIndexCount);
+            return true;
+        }
+
+        public bool CommitStreamingMesh(uint meshID, int vertexCount, int indexCount)
+        {
+            if (meshID == 0 || !_idToMesh.TryGetValue(meshID, out XRMesh? mesh) || mesh is null)
+                return false;
+
+            if (!_streamingReservations.TryGetValue(mesh, out var reservation))
+                return false;
+
+            if (vertexCount < 0 || vertexCount > reservation.maxVertexCount || indexCount < 0 || indexCount > reservation.maxIndexCount)
+                return false;
+
+            if ((indexCount % 3) != 0)
+                return false;
+
+            foreach (AtlasTierState state in _streamingAtlases)
+            {
+                if (!state.MeshOffsets.TryGetValue(mesh, out AtlasAllocation allocation))
+                    continue;
+
+                state.MeshOffsets[mesh] = new AtlasAllocation(
+                    allocation.FirstVertex,
+                    allocation.FirstIndex,
+                    vertexCount,
+                    indexCount,
+                    allocation.ReservedVertexCount,
+                    allocation.ReservedIndexCount);
+            }
+
+            EnsureMeshDataCapacity(meshID + 1);
+            MeshDataBuffer.Set(meshID, new MeshDataEntry
+            {
+                IndexCount = (uint)indexCount,
+                FirstIndex = (uint)_streamingAtlases[_streamingRenderSlot].MeshOffsets[mesh].FirstIndex,
+                FirstVertex = (uint)_streamingAtlases[_streamingRenderSlot].MeshOffsets[mesh].FirstVertex,
+                Flags = ComposeMeshDataFlags(EAtlasTier.Streaming)
+            });
+            MeshDataBuffer.PushSubData();
+            return true;
+        }
+
+        public void AdvanceStreamingAtlasFrame()
+        {
+            _streamingRenderSlot = _streamingWriteSlot;
+            _streamingWriteSlot = (_streamingWriteSlot + 1) % _streamingAtlases.Length;
+        }
+
+        public bool UnregisterStreamingMesh(uint meshID)
+        {
+            if (meshID == 0 || !_idToMesh.TryGetValue(meshID, out XRMesh? mesh) || mesh is null)
+                return false;
+
+            if (!_streamingReservations.Remove(mesh))
+                return false;
+
+            foreach (AtlasTierState state in _streamingAtlases)
+                state.MeshOffsets.Remove(mesh);
+
+            if (_activeAtlasTiers.TryGetValue(mesh, out var tier) && tier == EAtlasTier.Streaming)
+                _activeAtlasTiers.Remove(mesh);
+
+            MeshDataBuffer.Set(meshID, default(MeshDataEntry));
+            MeshDataBuffer.PushSubData();
+            return true;
+        }
+
+        public bool MigrateMesh(uint meshID, EAtlasTier fromTier, EAtlasTier toTier)
+        {
+            if (meshID == 0 || fromTier == toTier)
+                return false;
+
+            if (!_idToMesh.TryGetValue(meshID, out XRMesh? mesh) || mesh is null)
+                return false;
+
+            if (!_activeAtlasTiers.TryGetValue(mesh, out var currentTier) || currentTier != fromTier)
+                return false;
+
+            string meshLabel = _meshDebugLabels.TryGetValue(mesh, out var storedLabel)
+                ? storedLabel
+                : mesh.Name ?? $"Mesh_{meshID}";
+
+            bool migrated;
+            string? failureReason;
+            if (toTier == EAtlasTier.Streaming)
+            {
+                int reserveVertexCount = mesh.VertexCount;
+                IList<IndexTriangle>? triangles = mesh.Triangles;
+                int triangleCount = triangles is null ? 0 : triangles.Count;
+                int reserveIndexCount = mesh.IndexCount > 0 ? mesh.IndexCount : triangleCount * 3;
+                migrated = ReserveMeshInStreamingAtlas(mesh, meshID, meshLabel, reserveVertexCount, reserveIndexCount, out failureReason);
+            }
+            else
+            {
+                migrated = AppendMeshToAtlas(mesh, toTier, meshLabel, out failureReason);
+            }
+
+            if (!migrated)
+            {
+                if (!string.IsNullOrWhiteSpace(failureReason))
+                    Debug.LogWarning($"[GPUScene] Failed to migrate mesh '{meshLabel}' from {fromTier} to {toTier}: {failureReason}");
+                return false;
+            }
+
+            if (fromTier == EAtlasTier.Streaming)
+            {
+                foreach (AtlasTierState state in _streamingAtlases)
+                    state.MeshOffsets.Remove(mesh);
+                _streamingReservations.Remove(mesh);
+            }
+            else
+            {
+                RemoveSubmeshFromAtlas(mesh, fromTier);
+            }
+
+            _activeAtlasTiers[mesh] = toTier;
+            UpdateMeshDataBufferFromAtlas();
+            RebuildAtlasIfDirty(toTier);
+            return true;
+        }
+
+        public void PromoteDynamicToStatic(IEnumerable<uint> meshIds)
+        {
+            if (meshIds is null)
+                return;
+
+            using (_lock.EnterScope())
+            {
+                foreach (uint meshID in meshIds)
+                    _ = MigrateMesh(meshID, EAtlasTier.Dynamic, EAtlasTier.Static);
+            }
+        }
+
+        private void VerifyBufferLengths(AtlasTierState state, int needed)
+        {
+            if (state.Positions!.ElementCount < needed)
+                state.Positions.Resize((uint)XRMath.NextPowerOfTwo(needed));
+            if (state.Normals!.ElementCount < needed)
+                state.Normals.Resize((uint)XRMath.NextPowerOfTwo(needed));
+            if (state.Tangents!.ElementCount < needed)
+                state.Tangents.Resize((uint)XRMath.NextPowerOfTwo(needed));
+            if (state.UV0!.ElementCount < needed)
+                state.UV0.Resize((uint)XRMath.NextPowerOfTwo(needed));
+        }
+
+        private static bool TryPrepareAtlasIndexBuffer(AtlasTierState state, int requiredIndices)
+        {
+            if (state.Indices is null)
                 return false;
 
             if (requiredIndices <= 0)
@@ -606,69 +1754,80 @@ namespace XREngine.Rendering.Commands
             if (desiredCapacity < (uint)requiredIndices)
                 desiredCapacity = (uint)requiredIndices;
 
-            if (_atlasIndices.ElementCount < desiredCapacity)
-                _atlasIndices.Resize(desiredCapacity);
+            if (state.Indices.ElementCount < desiredCapacity)
+                state.Indices.Resize(desiredCapacity);
 
-            if (_atlasIndices.TryGetAddress(out var writeBase) && writeBase.IsValid)
+            if (state.Indices.TryGetAddress(out var writeBase) && writeBase.IsValid)
                 return true;
 
-            _atlasIndices.ClientSideSource?.Dispose();
-            _atlasIndices.ClientSideSource = DataSource.Allocate(desiredCapacity * (uint)sizeof(uint));
+            state.Indices.ClientSideSource?.Dispose();
+            state.Indices.ClientSideSource = DataSource.Allocate(desiredCapacity * (uint)sizeof(uint));
 
-            return _atlasIndices.TryGetAddress(out writeBase) && writeBase.IsValid;
+            return state.Indices.TryGetAddress(out writeBase) && writeBase.IsValid;
         }
 
         /// <summary>
         /// Rebuilds (uploads) atlas GPU buffers if marked dirty. Currently only adjusts counts.
         /// </summary>
         public void RebuildAtlasIfDirty()
+            => RebuildAtlasIfDirty(EAtlasTier.Dynamic);
+
+        public void RebuildAllAtlasesIfDirty()
         {
-            if (!_atlasDirty)
+            RebuildAtlasIfDirty(EAtlasTier.Static);
+            RebuildAtlasIfDirty(EAtlasTier.Dynamic);
+            RebuildAtlasIfDirty(EAtlasTier.Streaming);
+        }
+
+        public void RebuildAtlasIfDirty(EAtlasTier tier)
+        {
+            AtlasTierState state = GetTierState(tier);
+            if (!state.Dirty)
                 return;
 
-            EnsureAtlasBuffers();
+            EnsureAtlasBuffers(tier);
 
             // Grow buffers to required counts (no shrinking to avoid churn)
-            if (_atlasPositions!.ElementCount < _atlasVertexCount)
-                _atlasPositions.Resize((uint)_atlasVertexCount);
+            if (state.Positions!.ElementCount < state.VertexCount)
+                state.Positions.Resize((uint)state.VertexCount);
 
-            if (_atlasNormals!.ElementCount < _atlasVertexCount)
-                _atlasNormals.Resize((uint)_atlasVertexCount);
+            if (state.Normals!.ElementCount < state.VertexCount)
+                state.Normals.Resize((uint)state.VertexCount);
 
-            if (_atlasTangents!.ElementCount < _atlasVertexCount)
-                _atlasTangents.Resize((uint)_atlasVertexCount);
+            if (state.Tangents!.ElementCount < state.VertexCount)
+                state.Tangents.Resize((uint)state.VertexCount);
 
-            if (_atlasUV0!.ElementCount < _atlasVertexCount)
-                _atlasUV0.Resize((uint)_atlasVertexCount);
+            if (state.UV0!.ElementCount < state.VertexCount)
+                state.UV0.Resize((uint)state.VertexCount);
 
-            _atlasPositions.PushSubData();
-            _atlasNormals.PushSubData();
-            _atlasTangents.PushSubData();
-            _atlasUV0.PushSubData();
+            state.Positions.PushSubData();
+            state.Normals.PushSubData();
+            state.Tangents.PushSubData();
+            state.UV0.PushSubData();
 
-            if (_atlasIndices is not null)
+            if (state.Indices is not null)
             {
-                IndexTriangle[] faceSnapshot = _indirectFaceIndices.Count > 0
-                    ? [.. _indirectFaceIndices]
+                IndexTriangle[] faceSnapshot = state.IndirectFaceIndices.Count > 0
+                    ? [.. state.IndirectFaceIndices]
                     : [];
 
                 int requiredIndices = faceSnapshot.Length * 3;
                 if (requiredIndices > 0)
                 {
-                    _atlasIndexCount = requiredIndices;
+                    state.IndexCount = requiredIndices;
 
                     // Determine optimal index element size based on vertex count
                     // Note: For simplicity and MDI compatibility, we always use u32 indices.
-                    // Future optimization: use u16 when _atlasVertexCount < 65536
-                    _atlasIndexElementSize = IndexSize.FourBytes;
+                    // Future optimization: use u16 when state.VertexCount < 65536
+                    state.IndexElementSize = IndexSize.FourBytes;
 
-                    if (!TryPrepareAtlasIndexBuffer(requiredIndices))
+                    if (!TryPrepareAtlasIndexBuffer(state, requiredIndices))
                     {
-                        Debug.LogWarning("[GPUScene] Failed to prepare atlas index buffer; skipping atlas upload to avoid memory corruption.");
+                        Debug.LogWarning($"[GPUScene] Failed to prepare {GetTierLabel(tier)} atlas index buffer; skipping atlas upload to avoid memory corruption.");
                         return;
                     }
 
-                    uint capacity = _atlasIndices.ElementCount;
+                    uint capacity = state.Indices.ElementCount;
                     uint writeIndex = 0;
 
                     for (int i = 0; i < faceSnapshot.Length; ++i)
@@ -680,26 +1839,30 @@ namespace XREngine.Rendering.Commands
                         }
 
                         var tri = faceSnapshot[i];
-                        _atlasIndices.SetDataRawAtIndex(writeIndex++, (uint)tri.Point0);
-                        _atlasIndices.SetDataRawAtIndex(writeIndex++, (uint)tri.Point1);
-                        _atlasIndices.SetDataRawAtIndex(writeIndex++, (uint)tri.Point2);
+                        state.Indices.SetDataRawAtIndex(writeIndex++, (uint)tri.Point0);
+                        state.Indices.SetDataRawAtIndex(writeIndex++, (uint)tri.Point1);
+                        state.Indices.SetDataRawAtIndex(writeIndex++, (uint)tri.Point2);
                     }
 
-                    _atlasIndexCount = (int)writeIndex;
+                    state.IndexCount = (int)writeIndex;
                     uint byteLength = writeIndex * (uint)sizeof(uint);
-                    _atlasIndices.PushSubData(0, byteLength);
+                    state.Indices.PushSubData(0, byteLength);
                 }
                 else
                 {
-                    _atlasIndexCount = 0;
-                    _atlasIndices.PushSubData(0, 0);
+                    state.IndexCount = 0;
+                    state.Indices.PushSubData(0, 0);
                 }
             }
 
             UpdateMeshDataBufferFromAtlas();
 
-            _atlasDirty = false;
+            state.Dirty = false;
+            if (tier == EAtlasTier.Dynamic)
+                _atlasDirty = false;
             _atlasVersion++;
+            state.Version++;
+            SyncLegacyDynamicAtlasState();
 
             // Notify listeners that atlas was rebuilt (EBO may have changed)
             try
@@ -717,17 +1880,22 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         private void UpdateMeshDataBufferFromAtlas()
         {
-            foreach (var kvp in _atlasMeshOffsets)
+            foreach (var kvp in _activeAtlasTiers)
             {
-                GetOrCreateMeshID(kvp.Key, out uint meshID);
+                XRMesh mesh = kvp.Key;
+                EAtlasTier tier = kvp.Value;
+                AtlasTierState state = GetTierState(tier);
+                if (!state.MeshOffsets.TryGetValue(mesh, out AtlasAllocation allocation))
+                    continue;
 
-                var (vFirst, iFirst, iCount) = kvp.Value;
+                GetOrCreateMeshID(mesh, out uint meshID);
+
                 MeshDataEntry entry = new()
                 {
-                    IndexCount = (uint)iCount,
-                    FirstIndex = (uint)iFirst,
-                    FirstVertex = (uint)vFirst,
-                    BaseInstance = 0
+                    IndexCount = (uint)allocation.IndexCount,
+                    FirstIndex = (uint)allocation.FirstIndex,
+                    FirstVertex = (uint)allocation.FirstVertex,
+                    Flags = ComposeMeshDataFlags(tier)
                 };
                 MeshDataBuffer.Set(meshID, entry);
             }
@@ -745,6 +1913,11 @@ namespace XREngine.Rendering.Commands
         {
             _meshDataBuffer?.Destroy();
             _meshDataBuffer = MakeMeshDataBuffer();
+
+            _lodTableBuffer?.Destroy();
+            _lodTableBuffer = MakeLodTableBuffer();
+            _lodRequestBuffer?.Destroy();
+            _lodRequestBuffer = MakeLodRequestBuffer();
 
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = MakeCommandsInputBuffer();
@@ -764,8 +1937,33 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void Destroy()
         {
+            static void DestroyTierBuffers(AtlasTierState state)
+            {
+                state.Positions?.Destroy();
+                state.Positions = null;
+                state.Normals?.Destroy();
+                state.Normals = null;
+                state.Tangents?.Destroy();
+                state.Tangents = null;
+                state.UV0?.Destroy();
+                state.UV0 = null;
+                state.Indices?.Destroy();
+                state.Indices = null;
+                state.Dirty = false;
+                state.VertexCount = 0;
+                state.IndexCount = 0;
+                state.Version = 0;
+                state.IndexElementSize = IndexSize.FourBytes;
+                state.MeshOffsets.Clear();
+                state.IndirectFaceIndices.Clear();
+            }
+
             _meshDataBuffer?.Destroy();
             _meshDataBuffer = null;
+            _lodTableBuffer?.Destroy();
+            _lodTableBuffer = null;
+            _lodRequestBuffer?.Destroy();
+            _lodRequestBuffer = null;
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = null;
             _allLoadedTransparencyMetadataBuffer?.Destroy();
@@ -775,15 +1973,15 @@ namespace XREngine.Rendering.Commands
             _updatingTransparencyMetadataBuffer?.Destroy();
             _updatingTransparencyMetadataBuffer = null;
 
-            _atlasPositions?.Destroy();
+            DestroyTierBuffers(_staticAtlas);
+            DestroyTierBuffers(_dynamicAtlas);
+            foreach (AtlasTierState streamingState in _streamingAtlases)
+                DestroyTierBuffers(streamingState);
+
             _atlasPositions = null;
-            _atlasNormals?.Destroy();
             _atlasNormals = null;
-            _atlasTangents?.Destroy();
             _atlasTangents = null;
-            _atlasUV0?.Destroy();
             _atlasUV0 = null;
-            _atlasIndices?.Destroy();
             _atlasIndices = null;
             _atlasDirty = false;
             _atlasVertexCount = 0;
@@ -793,6 +1991,10 @@ namespace XREngine.Rendering.Commands
             _indirectFaceIndices.Clear();
             _atlasVersion = 0;
             _atlasIndexElementSize = IndexSize.FourBytes;
+            _activeAtlasTiers.Clear();
+            _streamingReservations.Clear();
+            _streamingWriteSlot = 0;
+            _streamingRenderSlot = 0;
 
             _commandAabbBuffer?.Destroy();
             _commandAabbBuffer = null;
@@ -806,8 +2008,12 @@ namespace XREngine.Rendering.Commands
             _materialIDMap.Clear();
             _idToMaterial.Clear();
             _idToMesh.Clear();
+            _renderableLogicalMeshIdMap.Clear();
+            _standaloneLogicalMeshIdMap.Clear();
+            _logicalMeshStates.Clear();
             _nextMeshID = 1;
             _nextMaterialID = 1;
+            _nextLogicalMeshID = 1;
             _totalCommandCount = 0;
             _updatingCommandCount = 0;
             _bounds = new AABB();
@@ -1060,8 +2266,8 @@ namespace XREngine.Rendering.Commands
             /// <summary>First vertex offset in the atlas vertex buffers.</summary>
             public uint FirstVertex;
 
-            /// <summary>Base instance for instanced rendering (usually 0).</summary>
-            public uint BaseInstance;
+            /// <summary>Per-entry flags. Low bits encode the active atlas tier.</summary>
+            public uint Flags;
         }
 
         /// <summary>Render buffer - read by the render thread. Contains stable command data.</summary>
@@ -1249,15 +2455,13 @@ namespace XREngine.Rendering.Commands
                             continue;
                         }
 
-                        GetOrCreateMeshID(mesh, out uint meshID);
-
-                        if (!AddSubmeshToAtlas(mesh, meshID, meshLabel, out var atlasFailure))
+                        if (!ResolveLogicalMeshRegistration(renderInfo, mesh, (uint)subMeshIndex, meshLabel, out uint meshID, out uint logicalMeshID, out uint lodCount, out var atlasFailure))
                         {
                             RecordUnsupportedMesh(mesh, meshLabel, atlasFailure ?? "atlas registration failed");
                             continue;
                         }
 
-                        var gpuCommand = ConvertToGPUCommand(renderInfo, meshCmd, mesh, m, (uint)subMeshIndex);
+                        var gpuCommand = ConvertToGPUCommand(renderInfo, meshCmd, mesh, m, meshID, logicalMeshID, lodCount, (uint)subMeshIndex);
                         if (gpuCommand is null)
                         {
                             SceneLog($"Skipping adding mesh command submesh {subMeshIndex} due to conversion failure.");
@@ -1276,6 +2480,7 @@ namespace XREngine.Rendering.Commands
                         commandValue.Reserved1 = index;
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, commandValue);
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
+                        AcquireLogicalMeshResidency(commandValue.LogicalMeshID);
 
                         if (IsGpuSceneLoggingEnabled())
                         {
@@ -1335,14 +2540,23 @@ namespace XREngine.Rendering.Commands
 
         private void RemoveSubmeshFromAtlas(XRMesh mesh)
         {
-            if (mesh is null || !_atlasMeshOffsets.TryGetValue(mesh, out var atlas))
+            if (mesh is null || !_activeAtlasTiers.TryGetValue(mesh, out var tier))
+                return;
+
+            RemoveSubmeshFromAtlas(mesh, tier);
+        }
+
+        private void RemoveSubmeshFromAtlas(XRMesh mesh, EAtlasTier tier)
+        {
+            AtlasTierState state = GetTierState(tier);
+            if (!state.MeshOffsets.TryGetValue(mesh, out AtlasAllocation atlas))
                 return;
 
             // Remove data from the atlas and compact client-side buffers so later meshes keep valid offsets.
-            int indexOffset = atlas.firstIndex;
-            int indexCount = atlas.indexCount;
-            int vertexOffset = atlas.firstVertex;
-            int vertexCount = mesh.VertexCount;
+            int indexOffset = atlas.FirstIndex;
+            int indexCount = atlas.IndexCount;
+            int vertexOffset = atlas.FirstVertex;
+            int vertexCount = atlas.ReservedVertexCount;
 
             // Convert index counts from index-space (per uint) to triangle-space (per IndexTriangle).
             int triangleOffset = indexOffset / 3;
@@ -1351,29 +2565,29 @@ namespace XREngine.Rendering.Commands
             if (indexCount % 3 != 0)
             {
                 Debug.LogWarning($"Mesh '{mesh.Name}' stored with a non-multiple-of-three index count ({indexCount}). Clamping removal to available triangles.");
-                triangleCount = System.Math.Min(triangleCount + 1, _indirectFaceIndices.Count - triangleOffset);
+                triangleCount = System.Math.Min(triangleCount + 1, state.IndirectFaceIndices.Count - triangleOffset);
             }
 
-            if (triangleOffset < 0 || triangleOffset >= _indirectFaceIndices.Count)
+            if (triangleOffset < 0 || triangleOffset >= state.IndirectFaceIndices.Count)
             {
-                Debug.LogWarning($"Atlas removal offset out of range for mesh '{mesh.Name}'. Offset={triangleOffset}, Count={triangleCount}, Total={_indirectFaceIndices.Count}.");
+                Debug.LogWarning($"Atlas removal offset out of range for mesh '{mesh.Name}'. Offset={triangleOffset}, Count={triangleCount}, Total={state.IndirectFaceIndices.Count}.");
                 triangleCount = 0;
             }
-            else if (triangleOffset + triangleCount > _indirectFaceIndices.Count)
+            else if (triangleOffset + triangleCount > state.IndirectFaceIndices.Count)
             {
-                triangleCount = _indirectFaceIndices.Count - triangleOffset;
+                triangleCount = state.IndirectFaceIndices.Count - triangleOffset;
             }
 
             int removedTriangleCount = triangleCount > 0 ? triangleCount : 0;
             if (removedTriangleCount > 0)
-                _indirectFaceIndices.RemoveRange(triangleOffset, removedTriangleCount);
+                state.IndirectFaceIndices.RemoveRange(triangleOffset, removedTriangleCount);
 
-            int removedIndexCount = removedTriangleCount * 3;
+            int removedIndexCount = atlas.ReservedIndexCount;
 
             // Compact vertex attribute buffers by sliding higher ranges down over the removed span.
             if (vertexCount > 0)
             {
-                int verticesToMove = _atlasVertexCount - (vertexOffset + vertexCount);
+                int verticesToMove = state.VertexCount - (vertexOffset + vertexCount);
                 if (verticesToMove > 0)
                 {
                     unsafe
@@ -1389,49 +2603,44 @@ namespace XREngine.Rendering.Commands
                             Memory.Move(dst, src, byteCount);
                         }
 
-                        SlideDown(_atlasPositions, vertexOffset, vertexCount, verticesToMove);
-                        SlideDown(_atlasNormals, vertexOffset, vertexCount, verticesToMove);
-                        SlideDown(_atlasTangents, vertexOffset, vertexCount, verticesToMove);
-                        SlideDown(_atlasUV0, vertexOffset, vertexCount, verticesToMove);
+                        SlideDown(state.Positions, vertexOffset, vertexCount, verticesToMove);
+                        SlideDown(state.Normals, vertexOffset, vertexCount, verticesToMove);
+                        SlideDown(state.Tangents, vertexOffset, vertexCount, verticesToMove);
+                        SlideDown(state.UV0, vertexOffset, vertexCount, verticesToMove);
                     }
                 }
             }
 
             // Update offsets for remaining meshes now that we compacted buffers.
-            List<XRMesh> meshesToAdjust = [.. _atlasMeshOffsets.Keys];
+            List<XRMesh> meshesToAdjust = [.. state.MeshOffsets.Keys];
             foreach (XRMesh otherMesh in meshesToAdjust)
             {
                 if (otherMesh == mesh)
                     continue;
 
-                var entry = _atlasMeshOffsets[otherMesh];
-                if (vertexCount > 0 && entry.firstVertex > vertexOffset)
-                    entry.firstVertex -= vertexCount;
-                if (removedIndexCount > 0 && entry.firstIndex > indexOffset)
-                    entry.firstIndex -= removedIndexCount;
-                _atlasMeshOffsets[otherMesh] = entry;
+                AtlasAllocation entry = state.MeshOffsets[otherMesh];
+                int adjustedFirstVertex = entry.FirstVertex;
+                int adjustedFirstIndex = entry.FirstIndex;
+                if (vertexCount > 0 && adjustedFirstVertex > vertexOffset)
+                    adjustedFirstVertex -= vertexCount;
+                if (removedIndexCount > 0 && adjustedFirstIndex > indexOffset)
+                    adjustedFirstIndex -= removedIndexCount;
+                state.MeshOffsets[otherMesh] = new AtlasAllocation(adjustedFirstVertex, adjustedFirstIndex, entry.VertexCount, entry.IndexCount, entry.ReservedVertexCount, entry.ReservedIndexCount);
             }
 
-            _atlasMeshOffsets.Remove(mesh);
+            state.MeshOffsets.Remove(mesh);
+            _activeAtlasTiers.Remove(mesh);
 
             // Adjust aggregated counts after compaction.
-            _atlasVertexCount -= vertexCount;
-            _atlasIndexCount -= removedIndexCount;
-            if (_atlasVertexCount < 0)
-                _atlasVertexCount = 0;
-            if (_atlasIndexCount < 0)
-                _atlasIndexCount = 0;
+            state.VertexCount -= vertexCount;
+            state.IndexCount -= removedIndexCount;
+            if (state.VertexCount < 0)
+                state.VertexCount = 0;
+            if (state.IndexCount < 0)
+                state.IndexCount = 0;
 
-            MarkAtlasDirty();
-        }
-
-        private bool AddSubmeshToAtlas(XRMesh mesh, uint meshID, string meshLabel, out string? failureReason)
-        {
-            if (!EnsureSubmeshInAtlas(mesh, meshID, meshLabel, out failureReason))
-                return false;
-
-            IncrementAtlasMeshRefCount(mesh);
-            return true;
+            MarkAtlasDirty(tier);
+            SyncLegacyDynamicAtlasState();
         }
 
         /// <summary>
@@ -1442,8 +2651,12 @@ namespace XREngine.Rendering.Commands
         {
             failureReason = null;
 
+            EAtlasTier tier = _activeAtlasTiers.TryGetValue(mesh, out var existingTier)
+                ? existingTier
+                : EAtlasTier.Dynamic;
+
             // Ensure mesh geometry recorded in atlas buffers: vertex + index data
-            if (!AppendMeshToAtlas(mesh, meshLabel, out failureReason))
+            if (!AppendMeshToAtlas(mesh, tier, meshLabel, out failureReason))
             {
                 EnsureMeshDataCapacity(meshID + 1);
                 MeshDataBuffer.Set(meshID, default(MeshDataEntry));
@@ -1451,7 +2664,8 @@ namespace XREngine.Rendering.Commands
                 return false;
             }
 
-            if (!_atlasMeshOffsets.TryGetValue(mesh, out var atlas))
+            AtlasTierState state = GetTierState(tier);
+            if (!state.MeshOffsets.TryGetValue(mesh, out AtlasAllocation atlas))
             {
                 failureReason = "did not produce atlas offsets";
                 EnsureMeshDataCapacity(meshID + 1);
@@ -1462,7 +2676,9 @@ namespace XREngine.Rendering.Commands
 
             // Update length of mesh data buffer if needed - this provides indices into the atlas data
             EnsureMeshDataCapacity(meshID + 1); // +1 because index-based capacity
-            (int vFirst, int iFirst, int iCount) = atlas;
+            int vFirst = atlas.FirstVertex;
+            int iFirst = atlas.FirstIndex;
+            int iCount = atlas.IndexCount;
             if (iCount <= 0)
             {
                 failureReason = "produced zero indices after atlas packing";
@@ -1476,7 +2692,7 @@ namespace XREngine.Rendering.Commands
                 IndexCount = (uint)iCount,
                 FirstIndex = (uint)iFirst,
                 FirstVertex = (uint)vFirst,
-                BaseInstance = 0
+                Flags = ComposeMeshDataFlags(tier)
             };
             MeshDataBuffer.Set(meshID, entry);
 
@@ -1485,19 +2701,40 @@ namespace XREngine.Rendering.Commands
         }
 
         private void IncrementAtlasMeshRefCount(XRMesh mesh)
+            => IncrementAtlasMeshRefCount(mesh, 1);
+
+        private void IncrementAtlasMeshRefCount(XRMesh mesh, int amount)
         {
-            if (mesh is null)
+            if (mesh is null || amount <= 0)
                 return;
 
             if (!_atlasMeshRefCounts.TryGetValue(mesh, out int count))
                 count = 0;
 
-            _atlasMeshRefCounts[mesh] = count + 1;
+            _atlasMeshRefCounts[mesh] = count + amount;
+        }
+
+        private void IncrementAtlasMeshRefCount(uint meshID, int amount, string context)
+        {
+            if (meshID == 0 || amount <= 0)
+                return;
+
+            if (!_idToMesh.TryGetValue(meshID, out XRMesh? mesh) || mesh is null)
+            {
+                if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
+                    Debug.LogWarning($"[GPUScene] {context}: unable to resolve MeshID={meshID} for atlas refcount increment.");
+                return;
+            }
+
+            IncrementAtlasMeshRefCount(mesh, amount);
         }
 
         private void DecrementAtlasMeshRefCount(uint meshID, string context)
+            => DecrementAtlasMeshRefCount(meshID, context, 1);
+
+        private void DecrementAtlasMeshRefCount(uint meshID, string context, int amount)
         {
-            if (meshID == 0)
+            if (meshID == 0 || amount <= 0)
                 return;
 
             if (!_idToMesh.TryGetValue(meshID, out var mesh) || mesh is null)
@@ -1514,7 +2751,7 @@ namespace XREngine.Rendering.Commands
                 count = 0;
             }
 
-            count -= 1;
+            count -= amount;
             if (count > 0)
             {
                 _atlasMeshRefCounts[mesh] = count;
@@ -1530,6 +2767,17 @@ namespace XREngine.Rendering.Commands
 
             // Remove atlas geometry only when no commands reference it.
             RemoveSubmeshFromAtlas(mesh);
+        }
+
+        private bool TryGetActiveAtlasAllocation(XRMesh mesh, out EAtlasTier tier, out AtlasAllocation allocation)
+        {
+            allocation = default;
+            tier = EAtlasTier.Dynamic;
+            if (!_activeAtlasTiers.TryGetValue(mesh, out tier))
+                return false;
+
+            AtlasTierState state = GetTierState(tier);
+            return state.MeshOffsets.TryGetValue(mesh, out allocation);
         }
 
         private readonly Dictionary<uint, (IRenderCommandMesh command, int subMeshIndex)> _commandIndexLookup = [];
@@ -1551,17 +2799,17 @@ namespace XREngine.Rendering.Commands
 
             EnsureMeshDataCapacity(meshID + 1);
 
-            // CPU-side lookup: _atlasMeshOffsets is the authoritative source, avoiding GPU readback.
+            // CPU-side lookup: atlas tier state is the authoritative source, avoiding GPU readback.
             if (_idToMesh.TryGetValue(meshID, out var mesh) && mesh is not null)
             {
-                if (_atlasMeshOffsets.TryGetValue(mesh, out var offsets) && offsets.indexCount > 0)
+                if (TryGetActiveAtlasAllocation(mesh, out EAtlasTier tier, out AtlasAllocation allocation) && allocation.IndexCount > 0)
                 {
                     entry = new MeshDataEntry
                     {
-                        IndexCount = (uint)offsets.indexCount,
-                        FirstIndex = (uint)offsets.firstIndex,
-                        FirstVertex = (uint)offsets.firstVertex,
-                        BaseInstance = 0
+                        IndexCount = (uint)allocation.IndexCount,
+                        FirstIndex = (uint)allocation.FirstIndex,
+                        FirstVertex = (uint)allocation.FirstVertex,
+                        Flags = ComposeMeshDataFlags(tier)
                     };
                     return true;
                 }
@@ -1590,14 +2838,14 @@ namespace XREngine.Rendering.Commands
                 }
 
                 // Re-check CPU-side cache after hydration
-                if (_atlasMeshOffsets.TryGetValue(mesh, out offsets) && offsets.indexCount > 0)
+                if (TryGetActiveAtlasAllocation(mesh, out tier, out allocation) && allocation.IndexCount > 0)
                 {
                     entry = new MeshDataEntry
                     {
-                        IndexCount = (uint)offsets.indexCount,
-                        FirstIndex = (uint)offsets.firstIndex,
-                        FirstVertex = (uint)offsets.firstVertex,
-                        BaseInstance = 0
+                        IndexCount = (uint)allocation.IndexCount,
+                        FirstIndex = (uint)allocation.FirstIndex,
+                        FirstVertex = (uint)allocation.FirstVertex,
+                        Flags = ComposeMeshDataFlags(tier)
                     };
                     return true;
                 }
@@ -1690,6 +2938,7 @@ namespace XREngine.Rendering.Commands
             // Capture removed command before we overwrite slots (swap-remove).
             GPUIndirectRenderCommand removedCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(targetIndex);
             uint removedMeshId = removedCommand.MeshID;
+            uint removedLogicalMeshId = removedCommand.LogicalMeshID;
 
             uint lastIndex = UpdatingCommandCount - 1;
 
@@ -1730,7 +2979,10 @@ namespace XREngine.Rendering.Commands
             }
 
             // Update mesh atlas lifetime after structural changes.
-            DecrementAtlasMeshRefCount(removedMeshId, "RemoveCommandAtIndex");
+            if (removedLogicalMeshId != 0)
+                ReleaseLogicalMeshResidency(removedLogicalMeshId, "RemoveCommandAtIndex");
+            else
+                DecrementAtlasMeshRefCount(removedMeshId, "RemoveCommandAtIndex");
             --UpdatingCommandCount;
         }
 
@@ -1867,12 +3119,11 @@ namespace XREngine.Rendering.Commands
         /// <param name="material">The material to use.</param>
         /// <param name="submeshLocalIndex">The submesh index within the mesh renderer.</param>
         /// <returns>The GPU command, or null if conversion failed.</returns>
-        private GPUIndirectRenderCommand? ConvertToGPUCommand(RenderInfo renderInfo, IRenderCommandMesh command, XRMesh? mesh, XRMaterial? material, uint submeshLocalIndex)
+        private GPUIndirectRenderCommand? ConvertToGPUCommand(RenderInfo renderInfo, IRenderCommandMesh command, XRMesh? mesh, XRMaterial? material, uint meshID, uint logicalMeshID, uint lodCount, uint submeshLocalIndex)
         {
             if (mesh is null || material is null)
                 return null;
 
-            GetOrCreateMeshID(mesh, out uint meshID);
             GetOrCreateMaterialID(material, out uint materialID);
 
             Matrix4x4 modelMatrix = command.WorldMatrixIsModelMatrix ? command.WorldMatrix : Matrix4x4.Identity;
@@ -1891,7 +3142,7 @@ namespace XREngine.Rendering.Commands
                 Flags = 0,
                 LODLevel = 0,
                 ShaderProgramID = 0,
-                Reserved0 = 0,
+                LogicalMeshID = logicalMeshID,
                 Reserved1 = 0
             };
 
@@ -1913,6 +3164,9 @@ namespace XREngine.Rendering.Commands
                 // LayerMask is consumed by GPU culling paths (GPURenderCulling*.comp).
                 gpuCommand.LayerMask = 1u << info3d.Layer;
             }
+
+            if (lodCount > 1)
+                flags |= (uint)GPUIndirectRenderFlags.LODEnabled;
 
             gpuCommand.Flags = flags;
             return gpuCommand;
@@ -2003,19 +3257,15 @@ namespace XREngine.Rendering.Commands
                         return true;
                     }
 
-                    GetOrCreateMeshID(mesh, out uint newMeshID);
                     GetOrCreateMaterialID(material, out uint newMaterialID);
 
-                    if (!_atlasMeshOffsets.ContainsKey(mesh))
+                    string resolvedMeshLabel = EnsureMeshDebugLabel(mesh, meshCmd.Mesh, renderInfo, subMeshIndex);
+                    if (!ResolveLogicalMeshRegistration(renderInfo, mesh, (uint)subMeshIndex, resolvedMeshLabel, out uint newMeshID, out uint newLogicalMeshID, out uint lodCount, out var atlasFailure))
                     {
-                        string meshLabel = EnsureMeshDebugLabel(mesh, meshCmd.Mesh, renderInfo, subMeshIndex);
-                        if (!EnsureSubmeshInAtlas(mesh, newMeshID, meshLabel, out var atlasFailure))
-                        {
-                            atlasFailure ??= "atlas registration failed";
-                            RecordUnsupportedMesh(mesh, meshLabel, atlasFailure);
-                            RemoveMeshCommandIndices(meshCmd, indices);
-                            return true;
-                        }
+                        atlasFailure ??= "atlas registration failed";
+                        RecordUnsupportedMesh(mesh, resolvedMeshLabel, atlasFailure);
+                        RemoveMeshCommandIndices(meshCmd, indices);
+                        return true;
                     }
 
                     var existing = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
@@ -2031,6 +3281,7 @@ namespace XREngine.Rendering.Commands
                     updated.InstanceCount = meshCmd.Instances == 0 ? 1u : meshCmd.Instances;
                     updated.RenderPass = (uint)meshCmd.RenderPass;
                     updated.RenderDistance = meshCmd.RenderDistance.ClampMin(0.0f);
+                    updated.LogicalMeshID = newLogicalMeshID;
                     updated.Reserved1 = index;
 
                     uint flags = 0;
@@ -2045,13 +3296,15 @@ namespace XREngine.Rendering.Commands
 
                         updated.LayerMask = 1u << info3d.Layer;
                     }
+                    if (lodCount > 1)
+                        flags |= (uint)GPUIndirectRenderFlags.LODEnabled;
                     updated.Flags = flags;
                     UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(material));
 
-                    if (existing.MeshID != newMeshID)
+                    if (existing.LogicalMeshID != newLogicalMeshID)
                     {
-                        IncrementAtlasMeshRefCount(mesh);
-                        DecrementAtlasMeshRefCount(existing.MeshID, "TryUpdateMeshCommand(mesh changed)");
+                        AcquireLogicalMeshResidency(newLogicalMeshID);
+                        ReleaseLogicalMeshResidency(existing.LogicalMeshID, "TryUpdateMeshCommand(mesh changed)");
                     }
 
                     if (!existing.Equals(updated))

@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Presents a named texture or FBO color attachment to the current renderer's window backbuffer.
 /// When a viewport index is supplied, presentation is clipped to that viewport region.
 /// </summary>
+[RenderPipelineScriptCommand]
 public sealed class VPRC_RenderToWindow : ViewportRenderCommand
 {
     private const string PresentShaderCode = """

@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Reads a single pixel from a named texture mip/layer into a pipeline vector variable.
 /// Coordinates are mip-space texel coordinates.
 /// </summary>
+[RenderPipelineScriptCommand]
 public class VPRC_ReadbackPixel : ViewportRenderCommand
 {
     public string? SourceTextureName { get; set; }

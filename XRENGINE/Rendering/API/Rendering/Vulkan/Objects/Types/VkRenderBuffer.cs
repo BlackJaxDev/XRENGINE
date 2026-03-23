@@ -120,8 +120,14 @@ public unsafe partial class VulkanRenderer
                 }
 
                 if (_image.Handle != 0)
+                {
                     Api!.DestroyImage(Device, _image, null);
-                if (_memory.Handle != 0)
+                    if (Renderer._imageAllocations.TryRemove(_image.Handle, out VulkanMemoryAllocation alloc))
+                        Renderer.FreeMemoryAllocation(alloc);
+                    else if (_memory.Handle != 0)
+                        Api!.FreeMemory(Device, _memory, null);
+                }
+                else if (_memory.Handle != 0)
                     Api!.FreeMemory(Device, _memory, null);
             }
 
@@ -182,22 +188,16 @@ public unsafe partial class VulkanRenderer
                     throw new Exception("Failed to create Vulkan render buffer image.");
             }
 
-            Api!.GetImageMemoryRequirements(Device, _image, out MemoryRequirements requirements);
+            VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(_image, MemoryPropertyFlags.DeviceLocalBit);
+            Renderer._imageAllocations[_image.Handle] = allocation;
+            _memory = allocation.Memory;
 
-            MemoryAllocateInfo allocInfo = new()
+            if (Api!.BindImageMemory(Device, _image, _memory, allocation.Offset) != Result.Success)
             {
-                SType = StructureType.MemoryAllocateInfo,
-                AllocationSize = requirements.Size,
-                MemoryTypeIndex = Renderer.FindMemoryType(requirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit),
-            };
-
-            fixed (DeviceMemory* memoryPtr = &_memory)
-            {
-                Renderer.AllocateMemory(allocInfo, memoryPtr);
-            }
-
-            if (Api!.BindImageMemory(Device, _image, _memory, 0) != Result.Success)
+                Renderer._imageAllocations.TryRemove(_image.Handle, out _);
+                Renderer.FreeMemoryAllocation(allocation);
                 throw new Exception("Failed to bind memory for render buffer image.");
+            }
 
             Debug.VulkanEvery(
                 $"Vulkan.DedicatedRenderBuffer.{Data.Name ?? "unnamed"}",
@@ -211,7 +211,7 @@ public unsafe partial class VulkanRenderer
                 info.Usage);
 
             // Track VRAM allocation
-            _allocatedVRAMBytes = (long)requirements.Size;
+            _allocatedVRAMBytes = (long)allocation.Size;
             Engine.Rendering.Stats.AddRenderBufferAllocation(_allocatedVRAMBytes);
         }
 

@@ -206,7 +206,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             using (Profiler.Start("PhysicsChainComponent.Prepare.HierarchyRecalc"))
             {
                 long hierarchyStart = Stopwatch.GetTimestamp();
-                pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Parallel).Wait();
+                RefreshPreparedParticleTree(pt);
                 GPUPhysicsChainDispatcher.RecordHierarchyRecalcTicks(Stopwatch.GetTimestamp() - hierarchyStart);
             }
 
@@ -370,19 +370,60 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         }
     }
 
+    private static void RefreshPreparedParticleTree(ParticleTree pt)
+    {
+        List<Particle> particles = pt.Particles;
+        int particleCount = particles.Count;
+        for (int i = 0; i < particleCount; ++i)
+        {
+            Particle particle = particles[i];
+            Transform? transform = particle.Transform;
+            if (transform is null)
+            {
+                particle.PreparedWorldChanged = particle.ParentIndex >= 0
+                    && particle.ParentIndex < particleCount
+                    && particles[particle.ParentIndex].PreparedWorldChanged;
+                continue;
+            }
+
+            bool forceWorldRecalc = particle.ParentIndex >= 0
+                && particle.ParentIndex < particleCount
+                && particles[particle.ParentIndex].PreparedWorldChanged;
+            particle.PreparedWorldChanged = transform.RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow: false);
+        }
+    }
+
+    private List<Transform> CollectConfiguredRoots()
+    {
+        _configuredRootsScratch.Clear();
+        _configuredRootSetScratch.Clear();
+
+        if (Root is not null && _configuredRootSetScratch.Add(Root))
+            _configuredRootsScratch.Add(Root);
+
+        if (Roots is not null)
+        {
+            for (int i = 0; i < Roots.Count; ++i)
+            {
+                Transform? root = Roots[i];
+                if (root is not null && _configuredRootSetScratch.Add(root))
+                    _configuredRootsScratch.Add(root);
+            }
+        }
+
+        if (_configuredRootsScratch.Count == 0)
+        {
+            Transform fallbackRoot = SceneNode.GetTransformAs<Transform>(true)!;
+            _configuredRootSetScratch.Add(fallbackRoot);
+            _configuredRootsScratch.Add(fallbackRoot);
+        }
+
+        return _configuredRootsScratch;
+    }
+
     private bool IsRootChanged()
     {
-        var roots = new List<Transform>();
-        if (Root != null)
-            roots.Add(Root);
-        
-        if (Roots != null)
-            foreach (var root in Roots)
-                if (root != null && !roots.Contains(root))
-                    roots.Add(root);
-
-        if (roots.Count == 0)
-            roots.Add(SceneNode.GetTransformAs<Transform>(true)!);
+        List<Transform> roots = CollectConfiguredRoots();
 
         if (roots.Count != _particleTrees.Count)
             return true;
@@ -551,26 +592,9 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         _particleTrees.Clear();
 
-        if (Root != null)
-            AppendParticleTree(Root);
-        
-        if (Roots != null)
-        {
-            for (int i = 0; i < Roots.Count; ++i)
-            {
-                Transform root = Roots[i];
-                if (root == null)
-                    continue;
-
-                if (_particleTrees.Exists(x => x.Root == root))
-                    continue;
-
-                AppendParticleTree(root);
-            }
-        }
-
-        if (_particleTrees.Count == 0)
-            AppendParticleTree(SceneNode.GetTransformAs<Transform>(true)!);
+        List<Transform> roots = CollectConfiguredRoots();
+        for (int i = 0; i < roots.Count; ++i)
+            AppendParticleTree(roots[i]);
 
         _objectScale = MathF.Abs(Transform.LossyWorldScale.X);
         _objectPrevPosition = Transform.WorldTranslation;
@@ -1195,11 +1219,75 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 // Refresh the parent's world + inverse-world matrices so that the
                 // child's SetWorldTranslation (which uses ParentInverseWorldMatrix)
                 // computes the correct local translation.
-                pTfm.RecalculateMatrices(forceWorldRecalc: true);
+                pTfm.RecalculateMatrices(forceWorldRecalc: false);
             }
 
             cTfm?.SetWorldTranslation(childPosition);
         }
+    }
+
+    private static void RunParticleUpdateRange(List<PhysicsChainComponent> works, int startInclusive, int endExclusive)
+    {
+        for (int i = startInclusive; i < endExclusive; ++i)
+            works[i].UpdateParticles();
+    }
+
+    private static void EnsureParallelWorkItemCapacity(int count)
+    {
+        if (_parallelWorkItems.Length >= count)
+            return;
+
+        int previousLength = _parallelWorkItems.Length;
+        Array.Resize(ref _parallelWorkItems, count);
+        for (int i = previousLength; i < _parallelWorkItems.Length; ++i)
+            _parallelWorkItems[i] = new PhysicsChainBatchWorkItem();
+    }
+
+    private static void ExecuteParallelWorks(int workCount)
+    {
+        int sliceCount = Math.Min(workCount, Math.Max(Environment.ProcessorCount, 1));
+        if (sliceCount <= 1)
+        {
+            RunParticleUpdateRange(_effectiveWorks, 0, workCount);
+            return;
+        }
+
+        int queuedSliceCount = sliceCount - 1;
+        EnsureParallelWorkItemCapacity(queuedSliceCount);
+
+        int baseSliceSize = workCount / sliceCount;
+        int remainder = workCount % sliceCount;
+        int start = 0;
+        int workItemIndex = 0;
+
+        for (int sliceIndex = 0; sliceIndex < sliceCount; ++sliceIndex)
+        {
+            int sliceSize = baseSliceSize + (sliceIndex < remainder ? 1 : 0);
+            int end = start + sliceSize;
+            if (sliceIndex == 0)
+            {
+                RunParticleUpdateRange(_effectiveWorks, start, end);
+            }
+            else
+            {
+                PhysicsChainBatchWorkItem workItem = _parallelWorkItems[workItemIndex++];
+                workItem.Configure(_effectiveWorks, start, end);
+                ThreadPool.UnsafeQueueUserWorkItem(static state => state.Run(), workItem, preferLocal: false);
+            }
+
+            start = end;
+        }
+
+        Exception? firstFault = null;
+        for (int i = 0; i < workItemIndex; ++i)
+        {
+            PhysicsChainBatchWorkItem workItem = _parallelWorkItems[i];
+            workItem.Wait();
+            firstFault ??= workItem.Fault;
+        }
+
+        if (firstFault is not null)
+            throw new AggregateException("Physics chain parallel update failed.", firstFault);
     }
 
     private static void AddPendingWork(PhysicsChainComponent db)
@@ -1213,6 +1301,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 return;
 
             _effectiveWorks.Clear();
+            _effectiveWorkSet.Clear();
 
             while (_pendingWorks.TryDequeue(out PhysicsChainComponent? db))
             {
@@ -1220,7 +1309,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                     continue;
 
                 db.CheckDistance();
-                if (db.IsNeedUpdate())
+                if (db.IsNeedUpdate() && _effectiveWorkSet.Add(db))
                     _effectiveWorks.Add(db);
             }
 
@@ -1235,21 +1324,10 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             for (int i = 0; i < workCount; ++i)
                 _effectiveWorks[i]?.Prepare();
 
-            _scheduledWorkHandles.Clear();
-
-            for (int i = 0; i < workCount; ++i)
-            {
-                PhysicsChainComponent? db = _effectiveWorks[i];
-                if (db is null)
-                    continue;
-                if (JobManager.IsJobWorkerThread)
-                    db.UpdateParticles();
-                else
-                    _scheduledWorkHandles.Add(Engine.Jobs.Schedule(new ActionJob(db.UpdateParticles), JobPriority.High));
-            }
-
-            for (int i = 0; i < _scheduledWorkHandles.Count; ++i)
-                _scheduledWorkHandles[i].Wait();
+            if (JobManager.IsJobWorkerThread)
+                RunParticleUpdateRange(_effectiveWorks, 0, workCount);
+            else
+                ExecuteParallelWorks(workCount);
 
             for (int i = 0; i < workCount; ++i)
             {
@@ -1261,5 +1339,45 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 component._preUpdateCount = 0;
             }
         }
+    }
+
+    private sealed class PhysicsChainBatchWorkItem
+    {
+        private readonly ManualResetEventSlim _completed = new(true);
+        private List<PhysicsChainComponent>? _works;
+        private int _startInclusive;
+        private int _endExclusive;
+
+        public Exception? Fault { get; private set; }
+
+        public void Configure(List<PhysicsChainComponent> works, int startInclusive, int endExclusive)
+        {
+            _works = works;
+            _startInclusive = startInclusive;
+            _endExclusive = endExclusive;
+            Fault = null;
+            _completed.Reset();
+        }
+
+        public void Run()
+        {
+            try
+            {
+                List<PhysicsChainComponent>? works = _works;
+                if (works is not null)
+                    RunParticleUpdateRange(works, _startInclusive, _endExclusive);
+            }
+            catch (Exception ex)
+            {
+                Fault = ex;
+            }
+            finally
+            {
+                _completed.Set();
+            }
+        }
+
+        public void Wait()
+            => _completed.Wait();
     }
 }

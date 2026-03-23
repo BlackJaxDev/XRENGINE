@@ -709,15 +709,23 @@ public unsafe partial class VulkanRenderer
         _imguiFontImageView = default;
 
         if (_imguiFontImage.Handle != 0)
+        {
             Api.DestroyImage(device, _imguiFontImage, null);
-        _imguiFontImage = default;
-
-        if (_imguiFontImageMemory.Handle != 0)
+            if (_imageAllocations.TryRemove(_imguiFontImage.Handle, out VulkanMemoryAllocation alloc))
+                FreeMemoryAllocation(alloc);
+            else if (_imguiFontImageMemory.Handle != 0)
+                Api.FreeMemory(device, _imguiFontImageMemory, null);
+        }
+        else if (_imguiFontImageMemory.Handle != 0)
             Api.FreeMemory(device, _imguiFontImageMemory, null);
+        _imguiFontImage = default;
         _imguiFontImageMemory = default;
 
         if (_imguiDescriptorPool.Handle != 0)
+        {
             Api.DestroyDescriptorPool(device, _imguiDescriptorPool, null);
+            Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+        }
         _imguiDescriptorPool = default;
 
         if (_imguiDescriptorSetLayout.Handle != 0)
@@ -807,19 +815,16 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateImage(device, ref imageInfo, null, out _imguiFontImage) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui font image.");
 
-        Api.GetImageMemoryRequirements(device, _imguiFontImage, out MemoryRequirements memRequirements);
-        MemoryAllocateInfo allocInfo = new()
+        VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_imguiFontImage, MemoryPropertyFlags.DeviceLocalBit);
+        _imageAllocations[_imguiFontImage.Handle] = allocation;
+        _imguiFontImageMemory = allocation.Memory;
+
+        if (Api.BindImageMemory(device, _imguiFontImage, _imguiFontImageMemory, allocation.Offset) != Result.Success)
         {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memRequirements.Size,
-            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
-        };
-
-        if (Api.AllocateMemory(device, ref allocInfo, null, out _imguiFontImageMemory) != Result.Success)
-            throw new InvalidOperationException("Failed to allocate ImGui font image memory.");
-
-        if (Api.BindImageMemory(device, _imguiFontImage, _imguiFontImageMemory, 0) != Result.Success)
+            _imageAllocations.TryRemove(_imguiFontImage.Handle, out _);
+            FreeMemoryAllocation(allocation);
             throw new InvalidOperationException("Failed to bind ImGui font image memory.");
+        }
 
         ImageViewCreateInfo viewInfo = new()
         {
@@ -903,6 +908,8 @@ public unsafe partial class VulkanRenderer
         if (Api.CreateDescriptorPool(device, ref poolInfo, null, out _imguiDescriptorPool) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui descriptor pool.");
 
+        Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
+
         DescriptorSetLayout descriptorLayout = _imguiDescriptorSetLayout;
         DescriptorSetAllocateInfo allocInfo = new()
         {
@@ -980,7 +987,7 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException($"Unsupported ImGui image layout transition {oldLayout} -> {newLayout}.");
         }
 
-        Api!.CmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, 0, null, 0, null, 1, &barrier);
+        CmdPipelineBarrierTracked(commandBuffer, srcStage, dstStage, 0, 0, null, 0, null, 1, &barrier);
     }
 
     private void EnsureImGuiPipeline()

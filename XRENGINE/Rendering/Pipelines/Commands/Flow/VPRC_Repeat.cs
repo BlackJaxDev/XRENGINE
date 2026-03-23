@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Useful for iterative effects: ping-pong blur, multi-bounce GI approximation,
     /// or any multi-pass refinement technique.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_Repeat : ViewportRenderCommand
     {
         /// <summary>

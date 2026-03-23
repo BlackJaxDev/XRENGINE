@@ -67,6 +67,9 @@ namespace XREngine.Rendering.OpenGL
             {
                 Dbg($"OnMeshChanged -> {mesh?.Name ?? "null"}", "Lifecycle");
                 Destroy();
+
+                if (mesh is not null)
+                    Renderer.MeshGenerationQueue.EnqueueGeneration(this);
             }
 
             /// <summary>

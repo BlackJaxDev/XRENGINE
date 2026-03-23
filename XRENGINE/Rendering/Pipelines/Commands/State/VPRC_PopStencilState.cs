@@ -4,6 +4,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Pops stencil state pushed by <see cref="VPRC_PushStencilState"/>.
     /// Disables stencil testing and resets to default state.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_PopStencilState : ViewportPopStateRenderCommand
     {
         protected override void Execute()

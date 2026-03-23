@@ -39,6 +39,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     ///
     /// Persistence/recycling, non-linear grids, and ray-traced irradiance integration are subsequent steps.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_SurfelGIPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;

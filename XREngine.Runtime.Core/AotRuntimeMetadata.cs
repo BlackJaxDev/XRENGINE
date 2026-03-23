@@ -6,6 +6,7 @@ namespace XREngine;
 public sealed partial class AotRuntimeMetadata
 {
     public string[] KnownTypeAssemblyQualifiedNames { get; set; } = [];
+    public string[] PublishedRuntimeAssetTypeNames { get; set; } = [];
     public AotTransformTypeInfo[] TransformTypes { get; set; } = [];
     public AotTypeRedirectInfo[] TypeRedirects { get; set; } = [];
     public AotWorldObjectReplicationInfo[] WorldObjectReplications { get; set; } = [];

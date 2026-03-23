@@ -1,0 +1,38 @@
+// Example render-pipeline script showing the currently supported DSL surface.
+set UseAo = true;
+set SelectedCascade = CascadeIndices[1];
+
+clear(Color=true, Depth=true);
+depthWrite(Allow=true);
+
+if (UseAo) {
+    when(VariableName=ShowOverlay, Comparison=Truthy) {
+        debugOverlay(
+            SourceTextureName="DepthView",
+            ChannelMode=Depth,
+            NormalizedRegion=vec4(0.65, 0.65, 0.3, 0.3)
+        );
+    }
+} else {
+    annotation(Label="AO disabled");
+}
+
+switch (2) {
+    case 0: {
+        annotation(Label="Fast path");
+    }
+    case 1: {
+        annotation(Label="Quality path");
+    }
+    default: {
+        annotation(Label="Fallback path");
+    }
+}
+
+repeat(2) {
+    annotation(Label="Blur iteration");
+}
+
+foreach_cascade(DirectionalLightIndex=0, BindCascadeFrameBuffer=false, ClearDepth=true) {
+    annotation(Label="Per-cascade work");
+}

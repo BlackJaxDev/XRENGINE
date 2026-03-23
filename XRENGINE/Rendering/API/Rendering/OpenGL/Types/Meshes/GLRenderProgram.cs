@@ -110,6 +110,21 @@ namespace XREngine.Rendering.OpenGL
                 }
                 return true;
             }
+
+            private void CacheUniformLocation(string name)
+            {
+                if (string.IsNullOrEmpty(name) || _uniformCache.ContainsKey(name))
+                    return;
+
+                int location = Api.GetUniformLocation(BindingId, name);
+                _uniformCache.TryAdd(name, location);
+
+                if (location >= 0)
+                    _locationNameCache[location] = name;
+                else
+                    _failedUniforms.TryAdd(name, 0);
+            }
+
             /// <summary>
             /// If the program has been generated and linked successfully,
             /// this will return the location of the attribute with the given name.

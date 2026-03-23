@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Use this to build custom passes that render a subset of the scene — e.g., only objects
     /// on a specific layer, with a specific tag, or matching a material type.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_RenderMeshesFiltered : ViewportRenderCommand
     {
         /// <summary>

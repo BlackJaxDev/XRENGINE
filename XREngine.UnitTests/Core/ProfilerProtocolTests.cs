@@ -105,6 +105,16 @@ public sealed class ProfilerProtocolTests
             DrawCalls = 1234,
             MultiDrawCalls = 56,
             TrianglesRendered = 9_876_543,
+            VulkanDeviceLocalAllocationCount = 7,
+            VulkanDeviceLocalAllocatedBytes = 70_000,
+            VulkanUploadAllocationCount = 3,
+            VulkanUploadAllocatedBytes = 30_000,
+            VulkanReadbackAllocationCount = 2,
+            VulkanReadbackAllocatedBytes = 20_000,
+            VulkanDescriptorPoolCreateCount = 5,
+            VulkanDescriptorPoolDestroyCount = 4,
+            VulkanDescriptorPoolResetCount = 6,
+            VulkanQueueSubmitCount = 8,
             AllocatedVRAMBytes = 512 * 1024 * 1024L,
             AllocatedBufferBytes = 128 * 1024 * 1024L,
             AllocatedTextureBytes = 256 * 1024 * 1024L,
@@ -169,6 +179,16 @@ public sealed class ProfilerProtocolTests
         clone.DrawCalls.ShouldBe(1234);
         clone.MultiDrawCalls.ShouldBe(56);
         clone.TrianglesRendered.ShouldBe(9_876_543);
+        clone.VulkanDeviceLocalAllocationCount.ShouldBe(7);
+        clone.VulkanDeviceLocalAllocatedBytes.ShouldBe(70_000);
+        clone.VulkanUploadAllocationCount.ShouldBe(3);
+        clone.VulkanUploadAllocatedBytes.ShouldBe(30_000);
+        clone.VulkanReadbackAllocationCount.ShouldBe(2);
+        clone.VulkanReadbackAllocatedBytes.ShouldBe(20_000);
+        clone.VulkanDescriptorPoolCreateCount.ShouldBe(5);
+        clone.VulkanDescriptorPoolDestroyCount.ShouldBe(4);
+        clone.VulkanDescriptorPoolResetCount.ShouldBe(6);
+        clone.VulkanQueueSubmitCount.ShouldBe(8);
         clone.AllocatedVRAMBytes.ShouldBe(512 * 1024 * 1024L);
         clone.FBOBandwidthBytes.ShouldBe(100_000_000);
         clone.FBOBindCount.ShouldBe(42);

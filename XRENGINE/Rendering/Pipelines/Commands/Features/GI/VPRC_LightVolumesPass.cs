@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Samples baked light volumes into a screen-space GI texture and composites the result into the forward target.
     /// Supports both mono and stereo (VR) rendering modes.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_LightVolumesPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;

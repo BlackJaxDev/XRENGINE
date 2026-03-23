@@ -491,6 +491,7 @@ namespace XREngine.Rendering.Commands
         public XRRenderProgram? _buildGpuBatchesComputeShader;
         public XRRenderProgram? _materialScatterComputeShader;
         //public XRRenderProgram? RadixIndexSortComputeShader;
+        private XRRenderProgram? _lodSelectComputeShader;
         public XRRenderProgram? _indirectRenderTaskShader;
         public XRRenderProgram? _buildHotCommandsProgram;
         public XRRenderProgram? _resetCountersComputeShader;

@@ -139,6 +139,11 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     // prepare data
     private float _deltaTime;
     private List<PhysicsChainColliderBase>? _effectiveColliders;
+    private readonly List<Transform> _configuredRootsScratch = [];
+    private readonly HashSet<Transform> _configuredRootSetScratch = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Transform, int> _gpuDrivenParticleIndexByTransform = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<int, int> _gpuDrivenFirstChildIndexByParticle = [];
+    private readonly Dictionary<int, Vector3> _gpuDrivenRestDirectionByParticle = [];
 
     // Thread-safe snapshots populated in Prepare() before jobs are scheduled.
     // Jobs read from these arrays instead of the mutable lists to avoid races.
@@ -149,7 +154,8 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private static readonly ConcurrentQueue<PhysicsChainComponent> _pendingWorks = [];
     private static readonly List<PhysicsChainComponent> _effectiveWorks = [];
-    private static readonly List<JobHandle> _scheduledWorkHandles = [];
+    private static readonly HashSet<PhysicsChainComponent> _effectiveWorkSet = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private static PhysicsChainBatchWorkItem[] _parallelWorkItems = [];
     private static readonly object _executeWorksSync = new();
 
     private static int _updateCount;

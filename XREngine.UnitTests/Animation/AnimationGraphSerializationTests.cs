@@ -47,10 +47,14 @@ public sealed class AnimationGraphSerializationTests
     {
         BlendTree1D original = CreateSampleBlendTree();
 
-        byte[] payload = MemoryPackSerializer.Serialize(original);
+        BlendTree1DSerializedModel model = (BlendTree1DSerializedModel)BlendTreeSerialization.CreateModel(original);
+        byte[] payload = MemoryPackSerializer.Serialize(model);
         payload.Length.ShouldBeGreaterThan(0);
 
-        BlendTree1D? clone = MemoryPackSerializer.Deserialize<BlendTree1D>(payload);
+        BlendTree1DSerializedModel? cloneModel = MemoryPackSerializer.Deserialize<BlendTree1DSerializedModel>(payload);
+        cloneModel.ShouldNotBeNull();
+
+        BlendTree1D? clone = BlendTreeSerialization.CreateRuntimeBlendTree(typeof(BlendTree1D), cloneModel) as BlendTree1D;
         clone.ShouldNotBeNull();
 
         AssertBlendTreesEquivalent(original, clone!);
@@ -91,10 +95,14 @@ public sealed class AnimationGraphSerializationTests
     {
         BlendTree2D original = CreateSampleBlendTree2D();
 
-        byte[] payload = MemoryPackSerializer.Serialize(original);
+        BlendTree2DSerializedModel model = (BlendTree2DSerializedModel)BlendTreeSerialization.CreateModel(original);
+        byte[] payload = MemoryPackSerializer.Serialize(model);
         payload.Length.ShouldBeGreaterThan(0);
 
-        BlendTree2D? clone = MemoryPackSerializer.Deserialize<BlendTree2D>(payload);
+        BlendTree2DSerializedModel? cloneModel = MemoryPackSerializer.Deserialize<BlendTree2DSerializedModel>(payload);
+        cloneModel.ShouldNotBeNull();
+
+        BlendTree2D? clone = BlendTreeSerialization.CreateRuntimeBlendTree(typeof(BlendTree2D), cloneModel) as BlendTree2D;
         clone.ShouldNotBeNull();
 
         AssertBlendTreesEquivalent(original, clone!);
@@ -134,10 +142,14 @@ public sealed class AnimationGraphSerializationTests
     {
         BlendTreeDirect original = CreateSampleBlendTreeDirect();
 
-        byte[] payload = MemoryPackSerializer.Serialize(original);
+        BlendTreeDirectSerializedModel model = (BlendTreeDirectSerializedModel)BlendTreeSerialization.CreateModel(original);
+        byte[] payload = MemoryPackSerializer.Serialize(model);
         payload.Length.ShouldBeGreaterThan(0);
 
-        BlendTreeDirect? clone = MemoryPackSerializer.Deserialize<BlendTreeDirect>(payload);
+        BlendTreeDirectSerializedModel? cloneModel = MemoryPackSerializer.Deserialize<BlendTreeDirectSerializedModel>(payload);
+        cloneModel.ShouldNotBeNull();
+
+        BlendTreeDirect? clone = BlendTreeSerialization.CreateRuntimeBlendTree(typeof(BlendTreeDirect), cloneModel) as BlendTreeDirect;
         clone.ShouldNotBeNull();
 
         AssertBlendTreesEquivalent(original, clone!);
@@ -177,13 +189,17 @@ public sealed class AnimationGraphSerializationTests
     {
         AnimStateMachine original = CreateSampleStateMachine();
 
-        byte[] payload = MemoryPackSerializer.Serialize(original);
+        AnimStateMachineSerializedModel model = AnimStateMachineSerialization.CreateModel(original);
+        byte[] payload = MemoryPackSerializer.Serialize(model);
         payload.Length.ShouldBeGreaterThan(0);
 
-        AnimStateMachine? clone = MemoryPackSerializer.Deserialize<AnimStateMachine>(payload);
-        clone.ShouldNotBeNull();
+        AnimStateMachineSerializedModel? cloneModel = MemoryPackSerializer.Deserialize<AnimStateMachineSerializedModel>(payload);
+        cloneModel.ShouldNotBeNull();
 
-        AssertStateMachinesEquivalent(original, clone!);
+        AnimStateMachine clone = new();
+        AnimStateMachineSerialization.ApplyModel(clone, cloneModel);
+
+        AssertStateMachinesEquivalent(original, clone);
     }
 
     private static AnimStateMachine CreateSampleStateMachine()

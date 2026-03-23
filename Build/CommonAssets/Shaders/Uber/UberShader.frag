@@ -4,19 +4,22 @@
 
 #include "common.glsl"
 #include "uniforms.glsl"
+#undef PI
+#pragma snippet "ForwardLighting"
+#pragma snippet "AmbientOcclusionSampling"
 
 // ============================================
 // Fragment Inputs
 // ============================================
-in vec4 v_Uv01;
-in vec4 v_Uv23;
-in vec3 v_WorldPos;
-in vec3 v_WorldNormal;
-in vec3 v_WorldTangent;
-in float v_TangentSign;
-in vec4 v_VertexColor;
-in vec3 v_LocalPos;
-in vec3 v_ViewDir;
+layout(location = 0) in vec4 v_Uv01;
+layout(location = 1) in vec4 v_Uv23;
+layout(location = 2) in vec3 v_WorldPos;
+layout(location = 3) in vec3 v_WorldNormal;
+layout(location = 4) in vec3 v_WorldTangent;
+layout(location = 5) in float v_TangentSign;
+layout(location = 6) in vec4 v_VertexColor;
+layout(location = 7) in vec3 v_LocalPos;
+layout(location = 8) in vec3 v_ViewDir;
 
 // ============================================
 // Fragment Output
@@ -95,6 +98,10 @@ vec2 getUV(int uvIndex, ToonMesh mesh) {
 // Normal Mapping
 // ============================================
 vec3 calculateNormal(ToonMesh mesh) {
+    if (abs(_BumpScale) <= EPSILON) {
+        return mesh.vertexNormal;
+    }
+
     vec2 normalUV = transformUV(getUV(_BumpMapUV, mesh), _BumpMap_ST);
     normalUV = panUV(normalUV, _BumpMapPan, u_Time);
     
@@ -205,18 +212,135 @@ float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
 }
 
 // ============================================
+// Forward Lighting Helpers
+// ============================================
+PBRData buildSurfacePbrData(vec2 uv, vec3 baseColor) {
+    if (_PBRBRDF > 0.5) {
+        return calculatePBRMaps(uv, baseColor);
+    }
+
+    PBRData pbr;
+    pbr.metallic = 0.0;
+    pbr.perceptualRoughness = clamp(1.0 - _SpecularSmoothness, 0.04, 1.0);
+    pbr.roughness = pbr.perceptualRoughness * pbr.perceptualRoughness;
+    pbr.reflectionMask = 1.0;
+    pbr.specularMask = 1.0;
+    pbr.F0 = vec3(0.04);
+    pbr.diffuseColor = baseColor;
+    pbr.specularColor = vec3(1.0);
+    return pbr;
+}
+
+float resolveSpecularIntensity(PBRData pbr) {
+    float baseStrength = _PBRBRDF > 0.5 ? _PBRSpecularStrength : _SpecularStrength;
+    return max(baseStrength * pbr.specularMask, 0.0);
+}
+
+vec3 resolveSurfaceRms(PBRData pbr) {
+    return vec3(
+        clamp(pbr.perceptualRoughness, 0.0, 1.0),
+        clamp(pbr.metallic, 0.0, 1.0),
+        resolveSpecularIntensity(pbr));
+}
+
+float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
+    if (_LightDataAOStrengthR <= 0.0) {
+        return 1.0;
+    }
+
+    vec2 aoUV = transformUV(getUV(_LightingAOMapsUV, mesh), _LightingAOMaps_ST);
+    aoUV = panUV(aoUV, _LightingAOMapsPan, u_Time);
+    float aoSample = texture(_LightingAOMaps, aoUV).r;
+    return mix(1.0, aoSample, saturate(_LightDataAOStrengthR));
+}
+
+vec3 calculateForwardAmbientLighting(ToonMesh mesh, vec3 baseColor, vec3 normal, PBRData pbr, float ambientOcclusion) {
+    return XRENGINE_CalculateAmbientPbr(
+        normal,
+        mesh.worldPos,
+        baseColor,
+        mesh.viewDir,
+        resolveSurfaceRms(pbr),
+        ambientOcclusion);
+}
+
+vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, PBRData pbr, bool skipPrimaryDirectional) {
+    vec3 totalLight = vec3(0.0);
+    vec3 rms = resolveSurfaceRms(pbr);
+    int startIndex = skipPrimaryDirectional ? 1 : 0;
+
+    for (int i = startIndex; i < DirLightCount; ++i) {
+        totalLight += XRENGINE_CalcDirLight(
+            DirectionalLights[i],
+            normal,
+            mesh.worldPos,
+            baseColor,
+            rms,
+            pbr.F0,
+            i == 0);
+    }
+
+    return totalLight;
+}
+
+vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, PBRData pbr) {
+    vec3 totalLight = vec3(0.0);
+    vec3 rms = resolveSurfaceRms(pbr);
+
+    if (ForwardPlusEnabled) {
+        ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;
+        int tileCountX = (int(ForwardPlusScreenSize.x) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
+        int tileIndex = tileCoord.y * tileCountX + tileCoord.x;
+        int baseIndex = tileIndex * ForwardPlusMaxLightsPerTile;
+
+        for (int o = 0; o < ForwardPlusMaxLightsPerTile; ++o) {
+            int lightIndex = ForwardPlusVisibleIndices[baseIndex + o];
+            if (lightIndex < 0) {
+                break;
+            }
+
+            ForwardPlusLocalLight l = ForwardPlusLocalLights[lightIndex];
+            totalLight += (l.Color_Type.w < 0.5)
+                ? XRENGINE_CalcForwardPlusPointLight(l, normal, mesh.worldPos, baseColor, rms, pbr.F0)
+                : XRENGINE_CalcForwardPlusSpotLight(l, normal, mesh.worldPos, baseColor, rms, pbr.F0);
+        }
+
+        return totalLight;
+    }
+
+    for (int i = 0; i < PointLightCount; ++i) {
+        totalLight += XRENGINE_CalcPointLight(PointLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0);
+    }
+
+    for (int i = 0; i < SpotLightCount; ++i) {
+        totalLight += XRENGINE_CalcSpotLight(SpotLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0);
+    }
+
+    return totalLight;
+}
+
+vec3 calculateForwardDirectLighting(ToonMesh mesh, vec3 baseColor, vec3 normal, PBRData pbr, bool skipPrimaryDirectional) {
+    return calculateForwardDirectionalLighting(mesh, normal, baseColor, pbr, skipPrimaryDirectional)
+        + calculateForwardLocalLighting(mesh, normal, baseColor, pbr);
+}
+
+// ============================================
 // Lighting Calculation
 // ============================================
-ToonLight calculateLighting(ToonMesh mesh, vec3 normal) {
+ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
     ToonLight light;
     
-    // Light direction (from surface to light)
-    light.direction = normalize(-u_LightDirection);
-    light.color = u_LightColor * u_LightIntensity;
+    if (DirLightCount > 0) {
+        light.direction = normalize(-DirectionalLights[0].Direction);
+        light.color = DirectionalLights[0].Base.Color * DirectionalLights[0].Base.DiffuseIntensity;
+    } else {
+        light.direction = vec3(0.0, 1.0, 0.0);
+        light.color = vec3(0.0);
+    }
     light.attenuation = 1.0;
     
     // Indirect/ambient lighting
-    light.indirectColor = u_AmbientColor * u_AmbientIntensity;
+    light.indirectColor = indirectColor;
     if (_LightingIndirectUsesNormals > 0.0) {
         // Simple hemisphere lighting
         float upFactor = dot(normal, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
@@ -258,39 +382,22 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal) {
 // Shadow Map Sampling
 // ============================================
 float sampleShadowMap(vec3 worldPos, vec3 normal, float nDotL) {
-    if (!ShadowMapEnabled)
+    if (DirLightCount <= 0)
         return 1.0;
-
-    float maxBias = 0.04;
-    float minBias = 0.001;
-
-    vec4 fragPosLightSpace = u_LightSpaceMatrix * vec4(worldPos, 1.0);
-    vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    fragCoord = fragCoord * 0.5 + 0.5;
-
-    // Outside shadow map bounds: treat as fully lit
-    if (fragCoord.x < 0.0 || fragCoord.x > 1.0 ||
-        fragCoord.y < 0.0 || fragCoord.y > 1.0 ||
-        fragCoord.z < 0.0 || fragCoord.z > 1.0)
-        return 1.0;
-
-    float bias = max(maxBias * (1.0 - max(nDotL, 0.0)), minBias);
-
-    float depth = texture(ShadowMap, fragCoord.xy).r;
-    return (fragCoord.z - bias) > depth ? 0.0 : 1.0;
+    return XRENGINE_ReadShadowMapDir(worldPos, normal, max(nDotL, 0.0));
 }
 
 // ============================================
 // Shading Modes
 // ============================================
-vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh) {
+vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
     if (_ShadingEnabled < 0.5) {
         // No shading - just apply light color
         return baseColor * (light.color + light.indirectColor);
     }
     
     // Sample directional light shadow map
-    float shadowMapFactor = sampleShadowMap(mesh.worldPos, mesh.worldNormal, light.nDotL);
+    float shadowMapFactor = sampleShadowMap(mesh.worldPos, normal, light.nDotL);
     
     vec3 finalLight;
     float shadow = 1.0;
@@ -584,7 +691,12 @@ void main() {
     }
     
     // Calculate lighting
-    ToonLight light = calculateLighting(mesh, mesh.worldNormal);
+    float screenAmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
+    float materialAmbientOcclusion = sampleMaterialAmbientOcclusion(mesh);
+    float combinedAmbientOcclusion = saturate(screenAmbientOcclusion * materialAmbientOcclusion);
+    PBRData surfacePbr = buildSurfacePbrData(mesh.uv[0], fragData.baseColor);
+    vec3 ambientLighting = calculateForwardAmbientLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, combinedAmbientOcclusion);
+    ToonLight light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
     
     // Apply back face coloring
     if (_EnableBackFace > 0.5) {
@@ -598,7 +710,13 @@ void main() {
     }
     
     // Apply shading
-    fragData.finalColor = applyShading(fragData.baseColor, light, mesh);
+    bool useStylizedPrimaryLighting = _ShadingEnabled > 0.5 && _LightingMode != 6;
+    if (useStylizedPrimaryLighting) {
+        fragData.finalColor = applyShading(fragData.baseColor, light, mesh, mesh.worldNormal);
+        fragData.finalColor += calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, true);
+    } else {
+        fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
+    }
     
     // Apply subsurface scattering
     if (_EnableSSS > 0.5) {
@@ -609,20 +727,6 @@ void main() {
         vec3 sss = _SSSColor.rgb * (light.color + light.indirectColor * _SSSAmbient) * sssStrength;
         fragData.finalColor += sss;
     }
-    
-    // Apply PBR / Reflections & Specular
-    PBRLightData pbrLightData;
-    pbrLightData.NdotL = light.nDotL;
-    pbrLightData.NdotV = light.nDotV;
-    pbrLightData.NdotH = light.nDotH;
-    pbrLightData.LdotH = light.lDotH;
-    pbrLightData.lightColor = light.color;
-    pbrLightData.indirectColor = light.indirectColor;
-    pbrLightData.reflectionDir = light.reflectionDir;
-    pbrLightData.lightMap = light.lightMap;
-    
-    fragData.finalColor = applyPBR(fragData.finalColor, mesh.uv[0], fragData.baseColor, 
-                                   mesh.worldNormal, mesh.viewDir, pbrLightData, fragData.emission);
     
     // Calculate matcap
     vec3 matcapColor = calculateMatcap(mesh, mesh.worldNormal, light, fragData.emission);

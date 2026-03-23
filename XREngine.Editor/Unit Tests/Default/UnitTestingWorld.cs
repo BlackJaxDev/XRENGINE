@@ -147,6 +147,25 @@ public static partial class EditorUnitTests
             _ => CreateUnitTestWorld(setUI, isServer),
         };
 
+    public static XRWorld CreateUberShaderWorld(bool setUI, bool isServer)
+    {
+        ApplyRenderSettingsFromToggles();
+
+        var scene = new XRScene("Uber Shader Scene");
+        var rootNode = new SceneNode("Root Node");
+        scene.RootNodes.Add(rootNode);
+
+        Pawns.CreatePlayerPawn(setUI, isServer, rootNode);
+        if (Toggles.DirLight)
+            Lighting.AddDirLight(rootNode);
+
+        AddUberShaderPreviewGrid(rootNode);
+
+        var world = new XRWorld("Uber Shader World", scene);
+        Undo.TrackWorld(world);
+        return world;
+    }
+
     private static void AddMirror(SceneNode rootNode)
     {
         SceneNode mirrorNode = rootNode.NewChild("MirrorNode");

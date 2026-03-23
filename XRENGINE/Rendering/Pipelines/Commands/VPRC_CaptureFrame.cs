@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Captures a named texture, a named FBO color attachment, or the current output FBO color attachment.
 /// The captured pixels can be written to a pipeline data buffer and optionally exported to disk.
 /// </summary>
+[RenderPipelineScriptCommand]
 public sealed class VPRC_CaptureFrame : ViewportRenderCommand
 {
     public string? SourceTextureName { get; set; }

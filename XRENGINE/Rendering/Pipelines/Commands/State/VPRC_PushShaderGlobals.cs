@@ -2,6 +2,7 @@ using System.Numerics;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_PushShaderGlobals : ViewportStateRenderCommand<VPRC_PopShaderGlobals>
     {
         public Dictionary<string, bool> BoolUniforms { get; } = [];

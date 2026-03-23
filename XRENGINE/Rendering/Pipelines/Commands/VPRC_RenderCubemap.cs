@@ -5,6 +5,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_RenderCubemap : ViewportRenderCommand
     {
         private readonly RenderCommandCollection?[] _faceCommands = new RenderCommandCollection?[6];

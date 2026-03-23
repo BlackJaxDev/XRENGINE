@@ -138,14 +138,18 @@ public unsafe partial class VulkanRenderer
         if (_swapchainDepthImage.Handle != 0)
         {
             Api!.DestroyImage(device, _swapchainDepthImage, null);
+            if (_imageAllocations.TryRemove(_swapchainDepthImage.Handle, out VulkanMemoryAllocation alloc))
+                FreeMemoryAllocation(alloc);
+            else if (_swapchainDepthMemory.Handle != 0)
+                Api!.FreeMemory(device, _swapchainDepthMemory, null);
             _swapchainDepthImage = default;
         }
-
-        if (_swapchainDepthMemory.Handle != 0)
+        else if (_swapchainDepthMemory.Handle != 0)
         {
             Api!.FreeMemory(device, _swapchainDepthMemory, null);
-            _swapchainDepthMemory = default;
         }
+
+        _swapchainDepthMemory = default;
     }
 
     private void CreateDepth()
@@ -171,20 +175,16 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateImage(device, ref imageInfo, null, out _swapchainDepthImage) != Result.Success)
             throw new Exception("Failed to create swapchain depth image.");
 
-        Api!.GetImageMemoryRequirements(device, _swapchainDepthImage, out MemoryRequirements memRequirements);
+        VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_swapchainDepthImage, MemoryPropertyFlags.DeviceLocalBit);
+        _imageAllocations[_swapchainDepthImage.Handle] = allocation;
+        _swapchainDepthMemory = allocation.Memory;
 
-        MemoryAllocateInfo allocInfo = new()
+        if (Api!.BindImageMemory(device, _swapchainDepthImage, _swapchainDepthMemory, allocation.Offset) != Result.Success)
         {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memRequirements.Size,
-            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
-        };
-
-        if (Api!.AllocateMemory(device, ref allocInfo, null, out _swapchainDepthMemory) != Result.Success)
-            throw new Exception("Failed to allocate swapchain depth memory.");
-
-        if (Api!.BindImageMemory(device, _swapchainDepthImage, _swapchainDepthMemory, 0) != Result.Success)
+            _imageAllocations.TryRemove(_swapchainDepthImage.Handle, out _);
+            FreeMemoryAllocation(allocation);
             throw new Exception("Failed to bind swapchain depth memory.");
+        }
 
         ImageViewCreateInfo viewInfo = new()
         {

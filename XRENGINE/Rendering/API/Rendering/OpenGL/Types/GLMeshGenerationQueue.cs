@@ -22,10 +22,10 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Whether frame-budgeted generation is enabled.
-            /// When disabled, generation happens immediately.
-            /// Disabled by default as it can cause rendering issues - enable only for debugging load spikes.
+            /// When disabled, generation happens immediately from the draw path except during shadow passes,
+            /// where cold-start generation is always deferred to avoid multiplying startup stalls.
             /// </summary>
-            public bool Enabled { get; set; } = false;
+            public bool Enabled { get; set; } = true;
 
             /// <summary>
             /// Number of meshes pending generation.
@@ -66,6 +66,9 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void ProcessGeneration()
             {
+                if (!Enabled)
+                    return;
+
                 if (_pendingGeneration.IsEmpty)
                     return;
 

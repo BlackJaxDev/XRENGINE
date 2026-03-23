@@ -2,6 +2,7 @@ using XREngine.Data.Colors;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
+[RenderPipelineScriptCommand]
 public class VPRC_ClearTextureByName : ViewportRenderCommand
 {
     public string? TextureName { get; set; }

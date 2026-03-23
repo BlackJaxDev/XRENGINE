@@ -97,6 +97,8 @@ public unsafe partial class VulkanRenderer
 					Debug.VulkanWarning("Failed to create Vulkan descriptor pool for mesh renderer.");
 					return false;
 				}
+
+				Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
 			}
 
 			DescriptorSetLayout[] layoutArray = [.. layouts];

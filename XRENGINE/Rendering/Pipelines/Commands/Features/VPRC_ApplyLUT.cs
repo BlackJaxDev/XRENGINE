@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Applies a standalone LUT texture to a named input texture, supporting either 3D LUTs or 2D strip LUTs.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public sealed class VPRC_ApplyLUT : ViewportRenderCommand
     {
         private const string Lut3DShaderCode = """

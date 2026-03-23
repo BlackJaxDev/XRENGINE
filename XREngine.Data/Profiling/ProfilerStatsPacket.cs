@@ -41,6 +41,16 @@ public sealed partial class RenderStatsPacket
     public double VulkanFramePresentMs { get; set; }
     public double VulkanFrameTotalMs { get; set; }
     public double VulkanFrameGpuCommandBufferMs { get; set; }
+    public int VulkanDeviceLocalAllocationCount { get; set; }
+    public long VulkanDeviceLocalAllocatedBytes { get; set; }
+    public int VulkanUploadAllocationCount { get; set; }
+    public long VulkanUploadAllocatedBytes { get; set; }
+    public int VulkanReadbackAllocationCount { get; set; }
+    public long VulkanReadbackAllocatedBytes { get; set; }
+    public int VulkanDescriptorPoolCreateCount { get; set; }
+    public int VulkanDescriptorPoolDestroyCount { get; set; }
+    public int VulkanDescriptorPoolResetCount { get; set; }
+    public int VulkanQueueSubmitCount { get; set; }
 
     // VRAM
     public long AllocatedVRAMBytes { get; set; }

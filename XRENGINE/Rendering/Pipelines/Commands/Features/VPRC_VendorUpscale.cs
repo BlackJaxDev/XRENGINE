@@ -13,6 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// When the source FBO is a plain <see cref="XRFrameBuffer"/> (not <see cref="XRQuadFrameBuffer"/>),
     /// resolves its first color texture and presents it via a passthrough quad.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_VendorUpscale : VPRC_RenderQuadFBO
     {
         public string? DepthTextureName { get; set; }

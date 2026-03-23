@@ -18,6 +18,7 @@ public enum ERenderGroupSource
 /// This exposes a serializable grouping primitive using existing engine data such as material
 /// names, mesh names, material render passes, or command type names.
 /// </summary>
+[RenderPipelineScriptCommand]
 public class VPRC_RenderByRenderGroup : ViewportRenderCommand
 {
     public int RenderPass { get; set; }

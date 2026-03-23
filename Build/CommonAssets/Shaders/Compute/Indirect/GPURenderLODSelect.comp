@@ -1,0 +1,127 @@
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+const uint COMMAND_FLOATS = 48u;
+const uint LOD_TABLE_FLOATS = 12u;
+const uint FLAG_LOD_ENABLED = 1u << 15u;
+
+layout(std430, binding = 0) buffer CulledCommandsBuffer
+{
+    float culled[];
+};
+
+layout(std430, binding = 1) readonly buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
+
+layout(std430, binding = 2) readonly buffer LODTableBuffer
+{
+    float lodTable[];
+};
+
+layout(std430, binding = 3) buffer LODRequestBuffer
+{
+    uint lodRequestMask[];
+};
+
+uniform vec3 CameraPosition;
+uniform int InputCommandCount;
+
+uint ReadMeshDataId(uint entryBase, uint lodLevel)
+{
+    return floatBitsToUint(lodTable[entryBase + 1u + lodLevel]);
+}
+
+float ReadMaxDistance(uint entryBase, uint lodLevel)
+{
+    return lodTable[entryBase + 5u + lodLevel];
+}
+
+uint FindNearestLoadedMeshDataId(uint entryBase, uint lodCount, uint preferredLevel, out uint resolvedLevel)
+{
+    resolvedLevel = preferredLevel;
+
+    uint preferredMeshId = ReadMeshDataId(entryBase, preferredLevel);
+    if (preferredMeshId != 0u)
+        return preferredMeshId;
+
+    for (int lodLevel = int(preferredLevel) - 1; lodLevel >= 0; --lodLevel)
+    {
+        uint meshId = ReadMeshDataId(entryBase, uint(lodLevel));
+        if (meshId != 0u)
+        {
+            resolvedLevel = uint(lodLevel);
+            return meshId;
+        }
+    }
+
+    for (uint lodLevel = preferredLevel + 1u; lodLevel < lodCount; ++lodLevel)
+    {
+        uint meshId = ReadMeshDataId(entryBase, lodLevel);
+        if (meshId != 0u)
+        {
+            resolvedLevel = lodLevel;
+            return meshId;
+        }
+    }
+
+    return 0u;
+}
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    uint dispatchCount = InputCommandCount > 0 ? uint(InputCommandCount) : 0u;
+    uint total = min(dispatchCount, CulledCount);
+    if (idx >= total)
+        return;
+
+    uint base = idx * COMMAND_FLOATS;
+    if (base + 46u >= uint(culled.length()))
+        return;
+
+    uint flags = floatBitsToUint(culled[base + 45u]);
+    if ((flags & FLAG_LOD_ENABLED) == 0u)
+        return;
+
+    uint logicalMeshID = floatBitsToUint(culled[base + 46u]);
+    if (logicalMeshID == 0u)
+        return;
+
+    uint entryBase = logicalMeshID * LOD_TABLE_FLOATS;
+    if (entryBase + 8u >= uint(lodTable.length()))
+        return;
+
+    uint lodCount = floatBitsToUint(lodTable[entryBase + 0u]);
+    if (lodCount <= 1u)
+        return;
+
+    vec3 center = vec3(culled[base + 32u], culled[base + 33u], culled[base + 34u]);
+    float radius = culled[base + 35u];
+    float distanceToCamera = max(0.0, length(CameraPosition - center) - radius);
+
+    uint selectedLevel = 0u;
+    uint maxLevel = min(lodCount, 4u);
+    for (uint lodLevel = 0u; lodLevel < maxLevel; ++lodLevel)
+    {
+        selectedLevel = lodLevel;
+        if (distanceToCamera <= ReadMaxDistance(entryBase, lodLevel))
+            break;
+    }
+
+    uint resolvedLevel = selectedLevel;
+    uint selectedMeshID = FindNearestLoadedMeshDataId(entryBase, maxLevel, selectedLevel, resolvedLevel);
+    if (selectedMeshID == 0u)
+        return;
+
+    if (resolvedLevel != selectedLevel && logicalMeshID < uint(lodRequestMask.length()))
+        atomicOr(lodRequestMask[logicalMeshID], 1u << min(selectedLevel, 31u));
+
+    culled[base + 36u] = uintBitsToFloat(selectedMeshID);
+    culled[base + 37u] = uintBitsToFloat((selectedMeshID << 16u) | (floatBitsToUint(culled[base + 37u]) & 0xFFFFu));
+    culled[base + 44u] = uintBitsToFloat(resolvedLevel);
+}

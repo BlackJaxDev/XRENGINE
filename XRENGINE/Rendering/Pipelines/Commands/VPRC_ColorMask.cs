@@ -1,6 +1,7 @@
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_ColorMask : ViewportRenderCommand
     {
         public bool Red { get; set; } = true;

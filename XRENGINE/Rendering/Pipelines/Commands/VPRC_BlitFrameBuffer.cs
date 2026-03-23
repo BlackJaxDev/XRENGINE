@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Performs a framebuffer blit/resolve between two cached FBOs.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_BlitFrameBuffer : ViewportRenderCommand
     {
         public string? SourceFBOName { get; set; }

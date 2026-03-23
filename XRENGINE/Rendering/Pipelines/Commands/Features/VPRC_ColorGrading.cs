@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Applies standalone color grading using either authored settings or the active camera's color grading stage.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public sealed class VPRC_ColorGrading : ViewportRenderCommand
     {
         private const string ColorGradingShaderCode = """

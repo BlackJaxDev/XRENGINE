@@ -988,10 +988,26 @@ public unsafe partial class VulkanRenderer
                 DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
             };
 
-            Api!.CmdPipelineBarrier(
+            // Narrow dst stage based on target layout instead of AllCommandsBit.
+            PipelineStageFlags dstStage = target switch
+            {
+                ImageLayout.DepthStencilAttachmentOptimal =>
+                    PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+                ImageLayout.ColorAttachmentOptimal =>
+                    PipelineStageFlags.ColorAttachmentOutputBit,
+                ImageLayout.General =>
+                    PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit,
+                ImageLayout.ShaderReadOnlyOptimal =>
+                    PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                ImageLayout.TransferDstOptimal or ImageLayout.TransferSrcOptimal =>
+                    PipelineStageFlags.TransferBit,
+                _ => PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit,
+            };
+
+            CmdPipelineBarrierTracked(
                 scope.CommandBuffer,
                 PipelineStageFlags.TopOfPipeBit,
-                PipelineStageFlags.AllCommandsBit,
+                dstStage,
                 DependencyFlags.None,
                 0, null, 0, null,
                 1, &barrier);
@@ -1076,29 +1092,27 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            Api!.GetImageMemoryRequirements(device, image, out MemoryRequirements memRequirements);
+            VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(image, MemoryPropertyFlags.DeviceLocalBit);
+            _imageAllocations[image.Handle] = allocation;
+            memory = allocation.Memory;
 
-            MemoryAllocateInfo allocInfo = new()
-            {
-                SType = StructureType.MemoryAllocateInfo,
-                AllocationSize = memRequirements.Size,
-                MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
-            };
-
-            fixed (DeviceMemory* memPtr = &memory)
-            {
-                AllocateMemory(allocInfo, memPtr);
-            }
-
-            Result bindResult = Api!.BindImageMemory(device, image, memory, 0);
+            Result bindResult = Api!.BindImageMemory(device, image, memory, allocation.Offset);
             if (bindResult != Result.Success)
+            {
+                _imageAllocations.TryRemove(image.Handle, out _);
+                FreeMemoryAllocation(allocation);
+                memory = default;
                 throw new Exception($"Failed to bind device memory for Vulkan image group '{group.Key}'. Result={bindResult}.");
+            }
         }
         catch
         {
             if (memory.Handle != 0)
             {
-                Api!.FreeMemory(device, memory, null);
+                if (_imageAllocations.TryRemove(image.Handle, out VulkanMemoryAllocation fallbackAlloc))
+                    FreeMemoryAllocation(fallbackAlloc);
+                else
+                    Api!.FreeMemory(device, memory, null);
                 memory = default;
             }
 
@@ -1151,27 +1165,27 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            Api!.GetBufferMemoryRequirements(device, buffer, out MemoryRequirements memRequirements);
+            VulkanMemoryAllocation allocation = AllocateBufferMemoryWithFallback(buffer, MemoryPropertyFlags.DeviceLocalBit);
+            _bufferAllocations[buffer.Handle] = allocation;
+            memory = allocation.Memory;
 
-            MemoryAllocateInfo allocInfo = new()
-            {
-                SType = StructureType.MemoryAllocateInfo,
-                AllocationSize = memRequirements.Size,
-                MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
-            };
-
-            fixed (DeviceMemory* memPtr = &memory)
-                AllocateMemory(allocInfo, memPtr);
-
-            Result bindResult = Api!.BindBufferMemory(device, buffer, memory, 0);
+            Result bindResult = Api!.BindBufferMemory(device, buffer, memory, allocation.Offset);
             if (bindResult != Result.Success)
+            {
+                _bufferAllocations.TryRemove(buffer.Handle, out _);
+                FreeMemoryAllocation(allocation);
+                memory = default;
                 throw new Exception($"Failed to bind device memory for Vulkan buffer group '{group.Key}'. Result={bindResult}.");
+            }
         }
         catch
         {
             if (memory.Handle != 0)
             {
-                Api!.FreeMemory(device, memory, null);
+                if (_bufferAllocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation fallbackAlloc))
+                    FreeMemoryAllocation(fallbackAlloc);
+                else
+                    Api!.FreeMemory(device, memory, null);
                 memory = default;
             }
 
@@ -1190,14 +1204,18 @@ public unsafe partial class VulkanRenderer
         if (buffer.Handle != 0)
         {
             Api!.DestroyBuffer(device, buffer, null);
-            buffer = default;
+            if (_bufferAllocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation alloc))
+                FreeMemoryAllocation(alloc);
+            else if (memory.Handle != 0)
+                Api!.FreeMemory(device, memory, null);
         }
-
-        if (memory.Handle != 0)
+        else if (memory.Handle != 0)
         {
             Api!.FreeMemory(device, memory, null);
-            memory = default;
         }
+
+        buffer = default;
+        memory = default;
     }
 
     public bool TryGetPhysicalImage(string resourceName, out Image image)
@@ -1221,6 +1239,12 @@ public unsafe partial class VulkanRenderer
         IReadOnlyCollection<RenderPassMetadata>? passMetadata = null)
     {
         passMetadata ??= Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata;
+
+        // Short-circuit: well-known EDefaultRenderPass values are always valid.
+        // Metadata may lag behind runtime enqueues (conditional pipeline paths,
+        // hot-reload) — accept standard passes without warning.
+        if (passIndex != int.MinValue && Enum.IsDefined(typeof(EDefaultRenderPass), passIndex))
+            return passIndex;
 
         bool hasMetadata = passMetadata is { Count: > 0 };
         bool passDefinedInMetadata = hasMetadata && passMetadata!.Any(m => m.PassIndex == passIndex);

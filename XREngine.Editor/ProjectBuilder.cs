@@ -377,6 +377,7 @@ internal static class ProjectBuilder
                 KnownTypeAssemblyQualifiedNames = [.. allTypes
                     .Select(t => t.AssemblyQualifiedName!)
                     .OrderBy(x => x, StringComparer.Ordinal)],
+                PublishedRuntimeAssetTypeNames = PublishedCookedAssetRegistry.SnapshotRegisteredTypeNames(),
                 TransformTypes = [.. allTypes
                     .Where(t => !t.IsAbstract && t.IsSubclassOf(typeof(TransformBase)))
                     .Select(t => new AotTransformTypeInfo
@@ -994,6 +995,10 @@ internal static class ProjectBuilder
         ArgumentNullException.ThrowIfNull(instance);
         Type runtimeType = instance.GetType();
         string typeName = CookedAssetTypeReference.Encode(runtimeType, aotMetadata);
+
+        if (PublishedCookedAssetRegistry.TrySerialize(instance, out byte[] runtimePayload))
+            return new CookedAssetBlob(typeName, CookedAssetFormat.RuntimeBinaryV1, runtimePayload);
+
         byte[] payload = CookedBinarySerializer.Serialize(instance);
         return new CookedAssetBlob(typeName, CookedAssetFormat.BinaryV1, payload);
     }

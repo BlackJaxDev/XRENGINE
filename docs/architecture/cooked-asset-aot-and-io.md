@@ -2,7 +2,7 @@
 
 [← Architecture index](README.md)
 
-> Status: **Implemented** (AOT type references); **Deferred** (DirectStorage asset packer reads).
+> Status: **Implemented** (AOT type references, registry-backed runtime cooked assets); **Deferred** (DirectStorage asset packer reads).
 
 ## 1. Problem Statement
 
@@ -43,7 +43,8 @@ for the current design.
 │  CookedAssetReader.LoadAsset()                           │
 │    ← reads CookedAssetBlob from archive                  │
 │    ← CookedAssetTypeReference.Resolve() resolves type    │
-│    ← CookedBinarySerializer.Deserialize() hydrates       │
+│    ← runtime format dispatch chooses registry-backed     │
+│       RuntimeBinaryV1 or generic BinaryV1 hydrate path   │
 │                                                          │
 │  CookedBinarySerializer (MemoryPack path)                │
 │    └─ XRAssetMemoryPackAdapter.Deserialize()             │
@@ -58,10 +59,12 @@ for the current design.
 |------|----------|------|
 | `CookedAssetTypeReference` | `Core/Files/CookedAssetTypeReference.cs` | Shared encode/resolve for type references in cooked envelopes |
 | `CookedAssetBlob` | `Core/Files/CookedAssetBlob.cs` | MemoryPack envelope: type reference + format tag + binary payload |
+| `PublishedCookedAssetRegistry` | `Core/Files/PublishedCookedAssetRegistry.cs` | Explicit registry of published runtime asset serializers used by shipped builds |
 | `XRAssetMemoryPackEnvelope` | `Core/Files/XRAsset.MemoryPack.cs` | Inner envelope used when CookedBinarySerializer falls through to MemoryPack for `XRAsset` subclasses |
 | `AotRuntimeMetadata` | `Core/Engine/AotRuntimeMetadata.cs` | MemoryPack-serializable table of all known types, redirects, replication info |
 | `AotRuntimeMetadataStore` | `Core/Engine/AotRuntimeMetadataStore.cs` | Lazy-loaded singleton that reads `AotRuntimeMetadata.bin` from the config archive |
-| `CookedBinarySerializer` | `Core/Files/CookedBinary/CookedBinarySerializer.cs` | Module-dispatched binary serializer for the engine's native wire format |
+| `CookedBinarySerializer` | `Core/Files/CookedBinary/CookedBinarySerializer.cs` | Module-dispatched binary serializer for the engine's general native wire format |
+| `RuntimeCookedBinarySerializer` | `XREngine.Runtime.Rendering/Core/Files/RuntimeCookedBinarySerializer.cs` | Explicit runtime serializer used by registered published asset types |
 | `AssetPacker` | `Core/Files/AssetPacker/AssetPacker.cs` | Archive pack/repack/compact/read for cooked content and config |
 | `DirectStorageIO` | `Core/Files/DirectStorageIO.cs` | Windows DirectStorage abstraction for CPU and GPU I/O |
 
@@ -101,6 +104,17 @@ AOT metadata is generated in step 2 because it requires scanning all loaded
 assemblies (including the compiled game assembly from step 1). Content blobs are
 written in step 1, before metadata exists, so they use assembly-qualified name
 strings.
+
+Runtime-cooked published assets are now distinguished by `CookedAssetFormat.RuntimeBinaryV1`.
+The build pipeline selects that format only for types registered in `PublishedCookedAssetRegistry`
+(currently explicit runtime-rendering assets such as `XRMesh` and `XRTexture2D`, plus bounded animation assets such as
+`AnimationClip`, `BlendTree1D`, `BlendTree2D`, `BlendTreeDirect`, and `AnimStateMachine`).
+Published AOT runtime validates those types against `AotRuntimeMetadata.PublishedRuntimeAssetTypeNames`
+before dispatching to the registered runtime serializer.
+
+The current policy boundary is deliberate: only assets with explicit bounded payloads are registered.
+Custom handlers that still depend on open-ended reflection or unrestricted runtime type activation remain on the generic
+editor/dev cooked-binary path until they gain an explicit published-runtime serializer.
 
 ### Alternative considered: generate metadata before content
 

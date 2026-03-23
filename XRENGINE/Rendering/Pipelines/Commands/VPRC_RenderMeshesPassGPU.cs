@@ -22,4 +22,4 @@ namespace XREngine.Rendering.Pipelines.Commands
             => ActivePipelineInstance.MeshRenderCommands.RenderGPU(RenderPass);
     }
     */
-} 
+}

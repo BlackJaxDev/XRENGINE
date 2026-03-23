@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Generates the necessary textures and framebuffers for SSAO in the render pipeline depending on the current render area.
     /// </summary>
     /// <param name="pipeline"></param>
+    [RenderPipelineScriptCommand]
     public class VPRC_SSAOPass : ViewportRenderCommand
     {
         private static void Log(string message)

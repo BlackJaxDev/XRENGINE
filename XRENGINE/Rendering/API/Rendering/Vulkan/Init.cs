@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using Buffer = Silk.NET.Vulkan.Buffer;
 using System;
 using System.Linq;
 using XREngine.Data.Colors;
@@ -34,6 +35,37 @@ namespace XREngine.Rendering.Vulkan
 
             CreateSyncObjects();
             CreateFrameTimingResources();
+            InitializeMemoryAllocator();
+            InitializeSynchronizationBackend();
+            InitializeDynamicUniformRingBuffers();
+        }
+
+        /// <summary>
+        /// Whether any device memory type supports <see cref="MemoryPropertyFlags.LazilyAllocatedBit"/>.
+        /// True on most mobile/tiler GPUs; false on typical discrete desktop GPUs.
+        /// </summary>
+        internal bool SupportsLazyAllocation { get; private set; }
+
+        private void InitializeMemoryAllocator()
+        {
+            // Probe for lazy allocation support (TransientAttachment optimization).
+            Api!.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memProps);
+            for (int i = 0; i < memProps.MemoryTypeCount; i++)
+            {
+                if (memProps.MemoryTypes[i].PropertyFlags.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit))
+                {
+                    SupportsLazyAllocation = true;
+                    break;
+                }
+            }
+
+            EVulkanAllocatorBackend backend = Engine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
+            _memoryAllocator = backend switch
+            {
+                EVulkanAllocatorBackend.Suballocator => new VulkanBlockAllocator(this),
+                _ => new VulkanLegacyAllocator(this),
+            };
+            Debug.Vulkan($"[Vulkan] Memory allocator initialized: {backend} (lazyAlloc={SupportsLazyAllocation})");
         }
 
         public override void CleanUp()
@@ -62,6 +94,12 @@ namespace XREngine.Rendering.Vulkan
             _resourceAllocator.DestroyPhysicalImages(this);
             _resourceAllocator.DestroyPhysicalBuffers(this);
             _stagingManager.Destroy(this);
+            if (_memoryAllocator is VulkanBlockAllocator blockAllocator)
+                blockAllocator.DestroyAllBlocks(Api!, device);
+            _memoryAllocator?.Dispose();
+            _memoryAllocator = null;
+            _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
+            DestroyDynamicUniformRingBuffers();
             DestroyFrameTimingResources();
 
             DestroySyncObjects();
@@ -135,16 +173,97 @@ namespace XREngine.Rendering.Vulkan
 
         private void AllocateMemory(MemoryAllocateInfo allocInfo, DeviceMemory* memPtr)
         {
-            AllocationCallbacks callbacks = new()
+            Result result = Api!.AllocateMemory(device, ref allocInfo, null, memPtr);
+            if (result == Result.ErrorOutOfDeviceMemory || result == Result.ErrorOutOfHostMemory)
             {
-                PfnAllocation = new PfnAllocationFunction(Allocated),
-                PfnReallocation = new PfnReallocationFunction(Reallocated),
-                PfnFree = new PfnFreeFunction(Freed),
-                PfnInternalAllocation = new PfnInternalAllocationNotification(InternalAllocated),
-                PfnInternalFree = new PfnInternalFreeNotification(InternalFreed)
-            };
-            if (Api!.AllocateMemory(device, ref allocInfo, null, memPtr) != Result.Success)
-                throw new Exception("Failed to allocate memory.");
+                Debug.VulkanWarning(
+                    $"[Vulkan] OOM during AllocateMemory (size={allocInfo.AllocationSize}, memType={allocInfo.MemoryTypeIndex}). Result={result}");
+                throw new VulkanOutOfMemoryException(
+                    $"Vulkan memory allocation failed ({result}). Size={allocInfo.AllocationSize}",
+                    MemoryPropertyFlags.None);
+            }
+            if (result != Result.Success)
+                throw new Exception($"Failed to allocate memory. Result={result}");
+        }
+
+        /// <summary>
+        /// Attempts to allocate memory for a buffer through the active allocator,
+        /// with automatic fallback to host-visible memory on OOM.
+        /// </summary>
+        internal VulkanMemoryAllocation AllocateBufferMemoryWithFallback(
+            Buffer buffer, MemoryPropertyFlags requiredProperties)
+        {
+            IVulkanMemoryAllocator alloc = MemoryAllocator;
+            if (alloc.TryAllocateForBuffer(Api!, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation))
+                return allocation;
+
+            // OOM — attempt fallback to host-visible if the original was device-local.
+            if (requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit))
+            {
+                MemoryPropertyFlags fallback = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
+                Debug.VulkanWarning(
+                    $"[Vulkan] OOM for buffer (requested {requiredProperties}). Falling back to {fallback}.");
+                if (alloc.TryAllocateForBuffer(Api!, device, buffer, fallback, out allocation))
+                {
+                    Engine.Rendering.Stats.RecordVulkanOomFallback();
+                    return allocation;
+                }
+            }
+
+            throw new VulkanOutOfMemoryException(
+                $"Vulkan buffer allocation failed with no viable fallback. Requested={requiredProperties}",
+                requiredProperties);
+        }
+
+        /// <summary>
+        /// Attempts to allocate memory for an image through the active allocator,
+        /// with automatic fallback chain: requested → DeviceLocal (if lazy was requested) → HostVisible on OOM.
+        /// Callers may include <see cref="MemoryPropertyFlags.LazilyAllocatedBit"/> for transient attachments;
+        /// the allocator will strip it if the device doesn't support lazy allocation.
+        /// </summary>
+        internal VulkanMemoryAllocation AllocateImageMemoryWithFallback(
+            Image image, MemoryPropertyFlags requiredProperties)
+        {
+            IVulkanMemoryAllocator alloc = MemoryAllocator;
+
+            // Strip lazy if device doesn't support it, to avoid guaranteed first-try failure.
+            if (requiredProperties.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit) && !SupportsLazyAllocation)
+                requiredProperties &= ~MemoryPropertyFlags.LazilyAllocatedBit;
+
+            if (alloc.TryAllocateForImage(Api!, device, image, requiredProperties, out VulkanMemoryAllocation allocation))
+                return allocation;
+
+            // If lazy was requested, retry without it (device-local only).
+            if (requiredProperties.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit))
+            {
+                MemoryPropertyFlags withoutLazy = requiredProperties & ~MemoryPropertyFlags.LazilyAllocatedBit;
+                if (alloc.TryAllocateForImage(Api!, device, image, withoutLazy, out allocation))
+                    return allocation;
+            }
+
+            if (requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit))
+            {
+                MemoryPropertyFlags fallback = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
+                Debug.VulkanWarning(
+                    $"[Vulkan] OOM for image (requested {requiredProperties}). Falling back to {fallback}.");
+                if (alloc.TryAllocateForImage(Api!, device, image, fallback, out allocation))
+                {
+                    Engine.Rendering.Stats.RecordVulkanOomFallback();
+                    return allocation;
+                }
+            }
+
+            throw new VulkanOutOfMemoryException(
+                $"Vulkan image allocation failed with no viable fallback. Requested={requiredProperties}",
+                requiredProperties);
+        }
+
+        /// <summary>Frees a memory allocation through the active allocator.</summary>
+        internal void FreeMemoryAllocation(VulkanMemoryAllocation allocation)
+        {
+            if (allocation.IsNull)
+                return;
+            MemoryAllocator.Free(Api!, device, allocation);
         }
 
         public static unsafe void* Allocated(void* pUserData, nuint size, nuint alignment, SystemAllocationScope allocationScope)
@@ -369,7 +488,48 @@ namespace XREngine.Rendering.Vulkan
         }
         public override byte GetStencilIndex(float x, float y)
         {
-            throw new NotImplementedException();
+            XRFrameBuffer? fbo = GetCurrentReadFrameBuffer() ?? GetCurrentDrawFrameBuffer();
+            int sampleX;
+            int sampleY;
+
+            if (fbo is not null)
+            {
+                sampleX = Math.Clamp((int)x, 0, Math.Max((int)fbo.Width - 1, 0));
+                sampleY = Math.Clamp((int)y, 0, Math.Max((int)fbo.Height - 1, 0));
+
+                if (TryResolveBlitImage(
+                        fbo,
+                        _lastPresentedImageIndex,
+                        GetReadBufferMode(),
+                        wantColor: false,
+                        wantDepth: false,
+                        wantStencil: true,
+                        out BlitImageInfo stencilSource,
+                        isSource: true) &&
+                    TryReadStencilPixel(stencilSource, sampleX, sampleY, out byte stencilValue))
+                {
+                    return stencilValue;
+                }
+            }
+
+            if (_swapchainDepthImage.Handle == 0)
+                return 0;
+
+            sampleX = Math.Clamp((int)x, 0, Math.Max((int)swapChainExtent.Width - 1, 0));
+            sampleY = Math.Clamp((int)y, 0, Math.Max((int)swapChainExtent.Height - 1, 0));
+
+            BlitImageInfo swapchainStencilSource = ResolveSwapchainBlitImage(
+                _lastPresentedImageIndex,
+                wantColor: false,
+                wantDepth: false,
+                wantStencil: true);
+
+            if (!swapchainStencilSource.IsValid)
+                return 0;
+
+            return TryReadStencilPixel(swapchainStencilSource, sampleX, sampleY, out byte swapchainStencil)
+                ? swapchainStencil
+                : (byte)0;
         }
         public override void SetCroppingEnabled(bool enabled)
         {

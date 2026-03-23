@@ -30,6 +30,7 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsNvCopyMemoryIndirect;
         private bool _supportsDynamicRendering;
         private bool _supportsIndexTypeUint8;
+        private bool _supportsSynchronization2;
         private bool _supportsFragmentStoresAndAtomics;
         private bool _supportsVertexPipelineStoresAndAtomics;
         private bool _supportsGeometryShader;
@@ -43,6 +44,7 @@ namespace XREngine.Rendering.Vulkan
         public bool SupportsBufferDeviceAddress => _supportsBufferDeviceAddress;
         public bool SupportsDynamicRendering => _supportsDynamicRendering;
         public bool SupportsIndexTypeUint8 => _supportsIndexTypeUint8;
+        public bool SupportsSynchronization2 => _supportsSynchronization2;
         public bool SupportsFragmentStoresAndAtomics => _supportsFragmentStoresAndAtomics;
         public bool SupportsVertexPipelineStoresAndAtomics => _supportsVertexPipelineStoresAndAtomics;
         public bool SupportsGeometryShader => _supportsGeometryShader;
@@ -95,6 +97,7 @@ namespace XREngine.Rendering.Vulkan
         [
             "VK_KHR_multiview",
             "VK_KHR_draw_indirect_count",
+            "VK_KHR_synchronization2",
             "VK_KHR_shader_draw_parameters",
             "VK_EXT_index_type_uint8",
             "VK_EXT_descriptor_indexing",

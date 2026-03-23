@@ -4,6 +4,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Backward-compatible mesh rendering command alias.
     /// Shared path routing now lives in <see cref="VPRC_RenderMeshesPassShared"/>.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_RenderMeshesPass : VPRC_RenderMeshesPassShared
     {
         public VPRC_RenderMeshesPass()

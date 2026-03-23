@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// This FBO may be null if the pipeline is not rendering to a framebuffer.
     /// </summary>
     /// <param name="pipeline"></param>
+    [RenderPipelineScriptCommand]
     public class VPRC_BindOutputFBO : ViewportStateRenderCommand<VPRC_UnbindFBO>
     {
         public bool Write { get; set; } = true;

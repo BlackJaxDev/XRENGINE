@@ -899,6 +899,242 @@ namespace XREngine
             return mat;
         }
 
+        public static ShaderVar[] CreateDefaultForwardPlusUberShaderParameters(float bumpScale = 0.0f)
+        {
+            Vector4 identitySt = new(1.0f, 1.0f, 0.0f, 0.0f);
+
+            return
+            [
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_Color"),
+                new ShaderInt(0, "_ColorThemeIndex"),
+
+                new ShaderVector4(identitySt, "_MainTex_ST"),
+                new ShaderVector2(Vector2.Zero, "_MainTexPan"),
+                new ShaderInt(0, "_MainTexUV"),
+
+                new ShaderVector4(identitySt, "_BumpMap_ST"),
+                new ShaderVector2(Vector2.Zero, "_BumpMapPan"),
+                new ShaderInt(0, "_BumpMapUV"),
+                new ShaderFloat(bumpScale, "_BumpScale"),
+
+                new ShaderVector4(identitySt, "_AlphaMask_ST"),
+                new ShaderVector2(Vector2.Zero, "_AlphaMaskPan"),
+                new ShaderInt(0, "_AlphaMaskUV"),
+                new ShaderInt(0, "_MainAlphaMaskMode"),
+                new ShaderFloat(1.0f, "_AlphaMaskBlendStrength"),
+                new ShaderFloat(0.0f, "_AlphaMaskValue"),
+                new ShaderFloat(0.0f, "_AlphaMaskInvert"),
+                new ShaderFloat(0.5f, "_Cutoff"),
+                new ShaderInt(0, "_Mode"),
+                new ShaderFloat(1.0f, "_AlphaForceOpaque"),
+                new ShaderFloat(0.0f, "_AlphaMod"),
+
+                new ShaderFloat(0.0f, "_MainColorAdjustToggle"),
+                new ShaderVector4(identitySt, "_MainColorAdjustTexture_ST"),
+                new ShaderVector2(Vector2.Zero, "_MainColorAdjustTexturePan"),
+                new ShaderInt(0, "_MainColorAdjustTextureUV"),
+                new ShaderFloat(0.0f, "_Saturation"),
+                new ShaderFloat(0.0f, "_MainBrightness"),
+                new ShaderFloat(0.0f, "_MainHueShiftToggle"),
+                new ShaderFloat(0.0f, "_MainHueShift"),
+                new ShaderFloat(0.0f, "_MainHueShiftSpeed"),
+                new ShaderInt(0, "_MainHueShiftColorSpace"),
+                new ShaderFloat(0.0f, "_MainHueShiftReplace"),
+
+                new ShaderFloat(1.0f, "_ShadingEnabled"),
+                new ShaderInt(6, "_LightingMode"),
+                new ShaderInt(0, "_LightingColorMode"),
+                new ShaderInt(2, "_LightingMapMode"),
+                new ShaderInt(0, "_LightingDirectionMode"),
+                new ShaderFloat(0.0f, "_LightingCapEnabled"),
+                new ShaderFloat(10.0f, "_LightingCap"),
+                new ShaderFloat(0.0f, "_LightingMinLightBrightness"),
+                new ShaderFloat(0.0f, "_LightingMonochromatic"),
+                new ShaderFloat(0.0f, "_LightingIndirectUsesNormals"),
+                new ShaderVector3(new Vector3(1.0f, 1.0f, 1.0f), "_LightingShadowColor"),
+                new ShaderFloat(1.0f, "_ShadowStrength"),
+                new ShaderFloat(0.0f, "_LightingIgnoreAmbientColor"),
+                new ShaderFloat(0.0f, "_ShadowOffset"),
+                new ShaderFloat(0.0f, "_ForceFlatRampedLightmap"),
+                new ShaderVector4(new Vector4(0.0f, 0.0f, 0.0f, 1.0f), "_ShadowColor"),
+                new ShaderFloat(0.5f, "_ShadowBorder"),
+                new ShaderFloat(0.05f, "_ShadowBlur"),
+                new ShaderFloat(0.0f, "_LightingWrappedWrap"),
+                new ShaderFloat(0.0f, "_LightingWrappedNormalization"),
+                new ShaderFloat(0.0f, "_LightingGradientStart"),
+                new ShaderFloat(1.0f, "_LightingGradientEnd"),
+
+                new ShaderVector4(identitySt, "_LightingAOMaps_ST"),
+                new ShaderVector2(Vector2.Zero, "_LightingAOMapsPan"),
+                new ShaderInt(0, "_LightingAOMapsUV"),
+                new ShaderFloat(0.0f, "_LightDataAOStrengthR"),
+                new ShaderVector4(identitySt, "_LightingShadowMasks_ST"),
+                new ShaderFloat(0.0f, "_LightingShadowMaskStrengthR"),
+
+                new ShaderFloat(0.0f, "_EnableEmission"),
+                new ShaderVector4(identitySt, "_EmissionMap_ST"),
+                new ShaderVector2(Vector2.Zero, "_EmissionMapPan"),
+                new ShaderInt(0, "_EmissionMapUV"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_EmissionColor"),
+                new ShaderFloat(1.0f, "_EmissionStrength"),
+                new ShaderFloat(0.0f, "_EmissionScrollingEnabled"),
+                new ShaderVector2(Vector2.Zero, "_EmissionScrollingSpeed"),
+                new ShaderFloat(0.0f, "_EmissionScrollingVertexColor"),
+
+                new ShaderFloat(0.0f, "_MatcapEnable"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_MatcapColor"),
+                new ShaderFloat(1.0f, "_MatcapIntensity"),
+                new ShaderFloat(0.0f, "_MatcapBorder"),
+                new ShaderInt(0, "_MatcapUVMode"),
+                new ShaderFloat(0.0f, "_MatcapReplace"),
+                new ShaderFloat(0.0f, "_MatcapMultiply"),
+                new ShaderFloat(0.0f, "_MatcapAdd"),
+                new ShaderFloat(0.0f, "_MatcapEmissionStrength"),
+                new ShaderFloat(0.0f, "_MatcapLightMask"),
+                new ShaderFloat(1.0f, "_MatcapNormal"),
+                new ShaderVector4(identitySt, "_MatcapMask_ST"),
+                new ShaderInt(0, "_MatcapMaskChannel"),
+                new ShaderFloat(0.0f, "_MatcapMaskInvert"),
+
+                new ShaderFloat(0.0f, "_EnableRimLighting"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_RimLightColor"),
+                new ShaderFloat(0.5f, "_RimWidth"),
+                new ShaderFloat(0.5f, "_RimSharpness"),
+                new ShaderFloat(0.0f, "_RimLightColorBias"),
+                new ShaderFloat(0.0f, "_RimEmission"),
+                new ShaderFloat(0.0f, "_RimHideInShadow"),
+                new ShaderInt(0, "_RimStyle"),
+                new ShaderFloat(1.0f, "_RimBlendStrength"),
+                new ShaderInt(0, "_RimBlendMode"),
+                new ShaderVector4(identitySt, "_RimMask_ST"),
+                new ShaderInt(0, "_RimMaskChannel"),
+
+                new ShaderFloat(0.0f, "_StylizedSpecular"),
+                new ShaderVector4(identitySt, "_SpecularMap_ST"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_SpecularTint"),
+                new ShaderFloat(0.5f, "_SpecularSmoothness"),
+                new ShaderFloat(1.0f, "_SpecularStrength"),
+                new ShaderInt(0, "_SpecularType"),
+
+                new ShaderFloat(0.0f, "_DetailEnabled"),
+                new ShaderVector4(identitySt, "_DetailMask_ST"),
+                new ShaderVector4(identitySt, "_DetailTex_ST"),
+                new ShaderVector2(Vector2.Zero, "_DetailTexPan"),
+                new ShaderVector3(new Vector3(1.0f, 1.0f, 1.0f), "_DetailTint"),
+                new ShaderFloat(0.0f, "_DetailTexIntensity"),
+                new ShaderFloat(0.0f, "_DetailBrightness"),
+                new ShaderVector4(identitySt, "_DetailNormalMap_ST"),
+                new ShaderVector2(Vector2.Zero, "_DetailNormalMapPan"),
+                new ShaderFloat(0.0f, "_DetailNormalMapScale"),
+
+                new ShaderFloat(0.0f, "_MainVertexColoringEnabled"),
+                new ShaderFloat(0.0f, "_MainVertexColoringLinearSpace"),
+                new ShaderFloat(1.0f, "_MainVertexColoring"),
+                new ShaderFloat(0.0f, "_MainUseVertexColorAlpha"),
+
+                new ShaderFloat(0.0f, "_EnableBackFace"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_BackFaceColor"),
+                new ShaderFloat(0.0f, "_BackFaceBlendMode"),
+                new ShaderFloat(0.0f, "_BackFaceEmission"),
+                new ShaderFloat(1.0f, "_BackFaceAlpha"),
+
+                new ShaderFloat(0.0f, "_EnableGlitter"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_GlitterColor"),
+                new ShaderFloat(1.0f, "_GlitterDensity"),
+                new ShaderFloat(1.0f, "_GlitterSize"),
+                new ShaderFloat(1.0f, "_GlitterSpeed"),
+                new ShaderFloat(1.0f, "_GlitterBrightness"),
+                new ShaderFloat(0.0f, "_GlitterMinAngle"),
+                new ShaderFloat(1.0f, "_GlitterMaxAngle"),
+                new ShaderFloat(0.0f, "_GlitterRainbow"),
+
+                new ShaderFloat(0.0f, "_EnableFlipbook"),
+                new ShaderFloat(1.0f, "_FlipbookColumns"),
+                new ShaderFloat(1.0f, "_FlipbookRows"),
+                new ShaderFloat(0.0f, "_FlipbookFrameRate"),
+                new ShaderFloat(0.0f, "_FlipbookFrame"),
+                new ShaderFloat(0.0f, "_FlipbookManualFrame"),
+                new ShaderFloat(0.0f, "_FlipbookBlendMode"),
+                new ShaderFloat(0.0f, "_FlipbookCrossfade"),
+
+                new ShaderFloat(0.0f, "_EnableSSS"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_SSSColor"),
+                new ShaderFloat(1.0f, "_SSSPower"),
+                new ShaderFloat(0.0f, "_SSSDistortion"),
+                new ShaderFloat(1.0f, "_SSSScale"),
+                new ShaderFloat(0.0f, "_SSSAmbient"),
+
+                new ShaderFloat(0.0f, "_EnableDissolve"),
+                new ShaderFloat(0.0f, "_DissolveType"),
+                new ShaderFloat(0.0f, "_DissolveProgress"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_DissolveEdgeColor"),
+                new ShaderFloat(0.05f, "_DissolveEdgeWidth"),
+                new ShaderFloat(0.0f, "_DissolveEdgeEmission"),
+                new ShaderVector4(identitySt, "_DissolveNoiseTexture_ST"),
+                new ShaderFloat(1.0f, "_DissolveNoiseStrength"),
+                new ShaderVector3(Vector3.Zero, "_DissolveStartPoint"),
+                new ShaderVector3(Vector3.UnitY, "_DissolveEndPoint"),
+                new ShaderFloat(0.0f, "_DissolveInvert"),
+                new ShaderFloat(0.5f, "_DissolveCutoff"),
+
+                new ShaderFloat(0.0f, "_EnableParallax"),
+                new ShaderFloat(0.0f, "_ParallaxMode"),
+                new ShaderVector4(identitySt, "_ParallaxMap_ST"),
+                new ShaderFloat(0.05f, "_ParallaxStrength"),
+                new ShaderFloat(8.0f, "_ParallaxMinSamples"),
+                new ShaderFloat(32.0f, "_ParallaxMaxSamples"),
+                new ShaderFloat(0.5f, "_ParallaxOffset"),
+                new ShaderFloat(0.0f, "_ParallaxMapChannel"),
+
+                new ShaderFloat(0.0f, "_PBRBRDF"),
+                new ShaderFloat(0.0f, "_PBRMetallicMultiplier"),
+                new ShaderFloat(1.0f, "_PBRRoughnessMultiplier"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_PBRReflectionTint"),
+                new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_PBRSpecularTint"),
+                new ShaderFloat(1.0f, "_PBRReflectionStrength"),
+                new ShaderFloat(1.0f, "_PBRSpecularStrength"),
+                new ShaderFloat(1.0f, "_RefSpecFresnel"),
+                new ShaderFloat(0.0f, "_RefSpecFresnelAlpha"),
+                new ShaderVector4(identitySt, "_PBRMetallicMaps_ST"),
+                new ShaderVector2(Vector2.Zero, "_PBRMetallicMapsPan"),
+                new ShaderInt(0, "_PBRMetallicMapsUV"),
+                new ShaderInt(0, "_PBRMetallicMapsMetallicChannel"),
+                new ShaderInt(1, "_PBRMetallicMapsRoughnessChannel"),
+                new ShaderInt(2, "_PBRMetallicMapsReflectionMaskChannel"),
+                new ShaderInt(3, "_PBRMetallicMapsSpecularMaskChannel"),
+                new ShaderFloat(0.0f, "_PBRMetallicMapInvert"),
+                new ShaderFloat(0.0f, "_PBRRoughnessMapInvert"),
+                new ShaderFloat(0.0f, "_PBRReflectionMaskInvert"),
+                new ShaderFloat(0.0f, "_PBRSpecularMaskInvert"),
+                new ShaderFloat(0.0f, "_PBRForceFallback"),
+                new ShaderFloat(0.0f, "_PBRLitFallback"),
+                new ShaderFloat(0.0f, "_Specular2ndLayer"),
+                new ShaderFloat(1.0f, "_PBRSpecularStrength2"),
+                new ShaderFloat(1.0f, "_PBRRoughnessMultiplier2"),
+                new ShaderFloat(0.0f, "_PBRNormalSelect"),
+                new ShaderFloat(0.0f, "_PBRGSAAEnabled"),
+                new ShaderFloat(0.15f, "_GSAAVariance"),
+                new ShaderFloat(0.2f, "_GSAAThreshold"),
+            ];
+        }
+
+        public static RenderingParameters CreateForwardPlusUberShaderRenderOptions()
+            => new()
+            {
+                CullMode = ECullMode.Back,
+                DepthTest = new DepthTest()
+                {
+                    UpdateDepth = true,
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Lequal,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.Camera
+                    | EUniformRequirements.Lights
+                    | EUniformRequirements.ViewportDimensions
+                    | EUniformRequirements.RenderTime,
+            };
+
         public static void MakeMaterialForwardPlusUberShader(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
             int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
@@ -938,48 +1174,11 @@ namespace XREngine
             mat.Shaders.Add(vert);
             mat.Shaders.Add(frag);
 
-            mat.Parameters =
-            [
-                new ShaderVector4(new Vector4(1, 1, 1, 1), "_Color"),
-                new ShaderVector4(new Vector4(1, 1, 0, 0), "_MainTex_ST"),
-                new ShaderVector2(Vector2.Zero, "_MainTexPan"),
-                new ShaderInt(0, "_MainTexUV"),
-
-                new ShaderVector4(new Vector4(1, 1, 0, 0), "_BumpMap_ST"),
-                new ShaderVector2(Vector2.Zero, "_BumpMapPan"),
-                new ShaderInt(0, "_BumpMapUV"),
-                new ShaderFloat(bumpScale, "_BumpScale"),
-
-                new ShaderFloat(1.0f, "_ShadingEnabled"),
-                new ShaderInt(6, "_LightingMode"),
-                new ShaderVector3(new Vector3(1, 1, 1), "_LightingShadowColor"),
-                new ShaderFloat(1.0f, "_ShadowStrength"),
-                new ShaderFloat(0.0f, "_LightingMinLightBrightness"),
-                new ShaderFloat(0.0f, "_LightingMonochromatic"),
-                new ShaderFloat(0.0f, "_LightingCapEnabled"),
-                new ShaderFloat(10.0f, "_LightingCap"),
-
-                new ShaderInt(0, "_MainAlphaMaskMode"),
-                new ShaderFloat(0.0f, "_AlphaMod"),
-                new ShaderFloat(1.0f, "_AlphaForceOpaque"),
-                new ShaderFloat(0.5f, "_Cutoff"),
-                new ShaderInt(0, "_Mode"),
-            ];
+            mat.Parameters = CreateDefaultForwardPlusUberShaderParameters(bumpScale);
 
             mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
             mat.Name = name;
-            mat.RenderOptions = new RenderingParameters()
-            {
-                CullMode = ECullMode.Back,
-                DepthTest = new DepthTest()
-                {
-                    UpdateDepth = true,
-                    Enabled = ERenderParamUsage.Enabled,
-                    Function = EComparison.Lequal,
-                },
-                BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.ViewportDimensions,
-            };
+            mat.RenderOptions = CreateForwardPlusUberShaderRenderOptions();
         }
 
         public static XRMaterial MakeMaterialForwardPlusUberShader(XRTexture[] textureList, List<TextureSlot> textures, string name)

@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -78,6 +79,7 @@ namespace XREngine.Rendering.Commands
                 resetStopwatch.Elapsed);
 
             Cull(scene, camera);
+            SelectVisibleCommandLods(scene, camera);
             ClassifyTransparencyDomains(scene);
 
             // Phase 2: do not early-out based on CPU-visible counters.
@@ -278,6 +280,38 @@ namespace XREngine.Rendering.Commands
             _indirectRenderTaskShader.DispatchCompute(dispatchGroups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
             Dbg($"Indirect dispatch groups={dispatchGroups} visible={VisibleCommandCount}", "Indirect");
+        }
+
+        private void SelectVisibleCommandLods(GPUScene scene, XRCamera camera)
+        {
+            if (_lodSelectComputeShader is null ||
+                _culledSceneToRenderBuffer is null ||
+                _culledCountBuffer is null ||
+                !scene.HasLogicalMeshEntries)
+            {
+                return;
+            }
+
+            uint dispatchCommands = VisibleCommandCount;
+            if (IsCpuReadbackCountDisabledForPass())
+                dispatchCommands = _culledSceneToRenderBuffer.ElementCount;
+
+            if (dispatchCommands == 0)
+                return;
+
+            _lodSelectComputeShader.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? Vector3.Zero);
+            _lodSelectComputeShader.Uniform("InputCommandCount", (int)dispatchCommands);
+
+            _culledSceneToRenderBuffer.BindTo(_lodSelectComputeShader, 0);
+            _culledCountBuffer.BindTo(_lodSelectComputeShader, 1);
+            scene.LODTableBuffer.BindTo(_lodSelectComputeShader, 2);
+            scene.LODRequestBuffer.BindTo(_lodSelectComputeShader, 3);
+
+            uint dispatchGroups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(dispatchCommands).Item1);
+            const EMemoryBarrierMask postLodBarrier = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command;
+            _lodSelectComputeShader.DispatchCompute(dispatchGroups, 1, 1, postLodBarrier);
+            AbstractRenderer.Current?.MemoryBarrier(postLodBarrier);
+            _culledHotCommandsValid = false;
         }
 
         private void BindIndirectShaderUniforms()
@@ -1449,6 +1483,7 @@ namespace XREngine.Rendering.Commands
             _buildGpuBatchesComputeShader?.Destroy();
             _materialScatterComputeShader?.Destroy();
             _classifyTransparencyComputeShader?.Destroy();
+            _lodSelectComputeShader?.Destroy();
             _indirectRenderTaskShader?.Destroy();
             _buildHotCommandsProgram?.Destroy();
             _indirectRenderer?.Destroy();

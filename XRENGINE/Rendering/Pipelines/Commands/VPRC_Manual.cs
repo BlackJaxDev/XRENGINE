@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Runs a method to manually apply render state changes.
     /// </summary>
     /// <param name="pipeline"></param>
+    [RenderPipelineScriptCommand]
     public class VPRC_Manual : ViewportRenderCommand
     {
         public Action? ManualAction { get; set; }

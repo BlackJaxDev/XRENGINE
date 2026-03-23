@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// and depth-stencil individually. Required because glBlitFramebuffer only operates on
     /// one color read/draw buffer pair at a time.
     /// </summary>
+    [RenderPipelineScriptCommand]
     public class VPRC_ResolveMsaaGBuffer : ViewportRenderCommand
     {
         private XRMaterial? _depthResolveMaterial;

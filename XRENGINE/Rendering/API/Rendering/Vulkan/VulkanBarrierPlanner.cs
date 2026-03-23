@@ -510,7 +510,7 @@ internal sealed class VulkanBarrierPlanner
             => stage switch
             {
                 ERenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
-                ERenderGraphPassStage.Transfer => PipelineStageFlags.AllCommandsBit,
+                ERenderGraphPassStage.Transfer => PipelineStageFlags.TransferBit,
                 _ => PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit
             };
 
@@ -518,7 +518,7 @@ internal sealed class VulkanBarrierPlanner
             => stage switch
             {
                 ERenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
-                ERenderGraphPassStage.Transfer => PipelineStageFlags.AllCommandsBit,
+                ERenderGraphPassStage.Transfer => PipelineStageFlags.TransferBit,
                 _ => PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.VertexShaderBit
             };
 

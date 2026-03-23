@@ -5,12 +5,12 @@
 // ============================================
 // Vertex Attributes
 // ============================================
-layout(location = 0) in vec3 a_Position;
-layout(location = 1) in vec3 a_Normal;
-layout(location = 2) in vec4 a_Tangent;
-layout(location = 3) in vec2 a_TexCoord0;
-layout(location = 4) in vec2 a_TexCoord1;
-layout(location = 5) in vec4 a_Color;
+layout(location = 0) in vec3 Position;
+layout(location = 1) in vec3 Normal;
+layout(location = 2) in vec4 Tangent;
+layout(location = 3) in vec2 TexCoord0;
+layout(location = 4) in vec2 TexCoord1;
+layout(location = 5) in vec4 Color0;
 
 // ============================================
 // Uniforms (using engine-standard names)
@@ -44,34 +44,32 @@ uniform vec4 _MainTex_ST;
 // ============================================
 // Vertex Outputs
 // ============================================
-out VS_OUT {
-    vec2 uv;
-    vec4 vertexColor;
-    vec3 worldPos;
-    float distanceFade;
-} vs_out;
+layout(location = 0) out vec2 v_Uv;
+layout(location = 1) out vec4 v_VertexColor;
+layout(location = 2) out vec3 v_WorldPos;
+layout(location = 3) out float v_DistanceFade;
 
 // ============================================
 // Main
 // ============================================
 void main() {
     // Transform position to world space
-    vec4 worldPos = u_ModelMatrix * vec4(a_Position, 1.0);
-    vs_out.worldPos = worldPos.xyz;
+    vec4 worldPos = u_ModelMatrix * vec4(Position, 1.0);
+    v_WorldPos = worldPos.xyz;
     
     // Transform normal to world space
-    vec3 worldNormal = normalize(u_NormalMatrix * a_Normal);
+    vec3 worldNormal = normalize(u_NormalMatrix * Normal);
     
     // Calculate UV
-    vs_out.uv = a_TexCoord0 * _MainTex_ST.xy + _MainTex_ST.zw;
-    vs_out.vertexColor = a_Color;
+    v_Uv = TexCoord0 * _MainTex_ST.xy + _MainTex_ST.zw;
+    v_VertexColor = Color0;
     
     // Sample outline mask (if we had access to textures in vertex shader)
     // In practice, you might use vertex colors for this
     float outlineMask = 1.0;
     
     // Vertex color width modulation (using alpha channel)
-    float vertexColorWidth = mix(1.0, a_Color.a, _OutlineVertexColorWidth);
+    float vertexColorWidth = mix(1.0, Color0.a, _OutlineVertexColorWidth);
     
     // Calculate distance from camera for distance fade
     float dist = length(u_CameraPosition - worldPos.xyz);
@@ -81,15 +79,15 @@ void main() {
     if (_OutlineDistanceFadeEnd > _OutlineDistanceFadeStart) {
         distanceFade = 1.0 - smoothstep(_OutlineDistanceFadeStart, _OutlineDistanceFadeEnd, dist);
     }
-    vs_out.distanceFade = distanceFade;
+    v_DistanceFade = distanceFade;
     
     // Calculate outline width with modulations
     float finalWidth = _OutlineWidth * outlineMask * vertexColorWidth * distanceFade;
     
     // Convert width from world units to clip space
     // This ensures consistent width regardless of distance
-    vec4 clipPos = u_MVPMatrix * vec4(a_Position, 1.0);
-    vec4 clipNormal = u_MVPMatrix * vec4(a_Position + worldNormal * 0.01, 1.0);
+    vec4 clipPos = u_MVPMatrix * vec4(Position, 1.0);
+    vec4 clipNormal = u_MVPMatrix * vec4(Position + worldNormal * 0.01, 1.0);
     vec2 screenNormal = normalize((clipNormal.xy / clipNormal.w) - (clipPos.xy / clipPos.w));
     
     // Expand vertex along normal in clip space
@@ -99,7 +97,7 @@ void main() {
     offset.x /= aspect;
     
     // Alternative: World space expansion (simpler, but width varies with distance)
-    vec3 expandedPos = a_Position + a_Normal * finalWidth * 0.01;
+    vec3 expandedPos = Position + Normal * finalWidth * 0.01;
     
     // Final position
     gl_Position = u_MVPMatrix * vec4(expandedPos, 1.0);

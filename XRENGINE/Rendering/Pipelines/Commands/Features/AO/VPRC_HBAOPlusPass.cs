@@ -9,6 +9,7 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_HBAOPlusPass : ViewportRenderCommand
     {
         private static void Log(string message)

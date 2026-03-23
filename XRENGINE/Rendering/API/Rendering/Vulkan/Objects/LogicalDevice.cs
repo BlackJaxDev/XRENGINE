@@ -2,6 +2,7 @@ using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Vulkan.Extensions.NV;
+using System.Text;
 using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan;
@@ -18,6 +19,7 @@ public unsafe partial class VulkanRenderer
     private Queue transferQueue;
     private bool _supportsMultipleGraphicsQueues;
     private bool _supportsTimelineSemaphores;
+    private bool _supportsSynchronization2Feature;
 
     public Device Device => device;
     public Queue GraphicsQueue => graphicsQueue;
@@ -96,6 +98,26 @@ public unsafe partial class VulkanRenderer
             descriptorIndexingFeatures.DescriptorBindingStorageImageUpdateAfterBind ||
             descriptorIndexingFeatures.DescriptorBindingStorageBufferUpdateAfterBind ||
             descriptorIndexingFeatures.DescriptorBindingUniformBufferUpdateAfterBind;
+    }
+
+    private unsafe void QuerySynchronization2Capabilities()
+    {
+        _supportsSynchronization2Feature = false;
+
+        PhysicalDeviceSynchronization2Features synchronization2Features = new()
+        {
+            SType = StructureType.PhysicalDeviceSynchronization2Features,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &synchronization2Features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        _supportsSynchronization2Feature = synchronization2Features.Synchronization2;
     }
 
     private unsafe void QueryNvMemoryDecompressionCapabilities(
@@ -466,6 +488,8 @@ public unsafe partial class VulkanRenderer
         bool descriptorIndexingExtensionEnabled = extensionsArray.Contains("VK_EXT_descriptor_indexing");
         bool descriptorIndexingRequestedByProfile = VulkanFeatureProfile.EnableDescriptorIndexing;
         QueryDescriptorIndexingCapabilities();
+        bool synchronization2ExtensionEnabled = extensionsArray.Contains("VK_KHR_synchronization2");
+        QuerySynchronization2Capabilities();
 
         bool descriptorIndexingCapabilityReady =
             _supportsRuntimeDescriptorArray &&
@@ -538,6 +562,7 @@ public unsafe partial class VulkanRenderer
 
         QueryTimelineSemaphoreCapabilities(out bool timelineSemaphoreFeatureSupported);
         bool enableTimelineSemaphoreFeature = timelineSemaphoreFeatureSupported;
+        bool enableSynchronization2Feature = synchronization2ExtensionEnabled && _supportsSynchronization2Feature;
 
         _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
@@ -612,6 +637,13 @@ public unsafe partial class VulkanRenderer
             TimelineSemaphore = enableTimelineSemaphoreFeature,
         };
 
+        PhysicalDeviceSynchronization2Features synchronization2FeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceSynchronization2Features,
+            PNext = null,
+            Synchronization2 = enableSynchronization2Feature,
+        };
+
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing)
         {
@@ -667,6 +699,12 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &timelineSemaphoreFeatureEnable;
         }
 
+        if (enableSynchronization2Feature)
+        {
+            synchronization2FeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &synchronization2FeatureEnable;
+        }
+
         PhysicalDeviceFeatures2 featureChain = new()
         {
             SType = StructureType.PhysicalDeviceFeatures2,
@@ -709,6 +747,7 @@ public unsafe partial class VulkanRenderer
         _supportsDynamicRendering = dynamicRenderingFeatureSupported;
         _supportsIndexTypeUint8 = enableIndexTypeUint8Feature;
         _supportsTimelineSemaphores = enableTimelineSemaphoreFeature;
+        _supportsSynchronization2 = enableSynchronization2Feature;
         Engine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
         Engine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
 
@@ -779,6 +818,13 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarning(
                     "[Vulkan] Timeline semaphores unsupported or disabled (featureSupported={0}). Renderer timeline synchronization path requires this feature.",
                     timelineSemaphoreFeatureSupported);
+            }
+
+            if (synchronization2ExtensionEnabled && !enableSynchronization2Feature)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] VK_KHR_synchronization2 present but disabled (featureSupported={0}). Renderer will remain on legacy barrier/submit APIs.",
+                    _supportsSynchronization2Feature);
             }
 
         // Load optional extensions
@@ -886,5 +932,79 @@ public unsafe partial class VulkanRenderer
 
         if (descriptorIndexingExtensionLoaded && _supportsDescriptorIndexing)
             Debug.Vulkan("[Vulkan] VK_EXT_descriptor_indexing enabled for descriptor update-after-bind support.");
+
+        LogStartupCapabilitySnapshot();
+    }
+
+    private void LogStartupCapabilitySnapshot()
+    {
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+        Api!.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
+
+        bool hasAccelerationStructure = IsDeviceExtensionSupported("VK_KHR_acceleration_structure");
+        bool hasRayTracingPipeline = IsDeviceExtensionSupported("VK_KHR_ray_tracing_pipeline") && Engine.Rendering.State.HasVulkanRayTracing;
+
+        LogCapability("AccelerationStructure", hasAccelerationStructure, "Optional");
+        LogCapability("DescriptorIndexing", _supportsDescriptorIndexing, "Optional");
+        LogCapability("DrawIndirectCount", _supportsDrawIndirectCount, "Optional");
+        LogCapability("Multiview", Engine.Rendering.State.HasVulkanMultiView, "Optional");
+        LogCapability("RayTracingPipeline", hasRayTracingPipeline, "DisabledByProfile");
+        LogCapability("TimelineSemaphore", _supportsTimelineSemaphores, "Required");
+        LogCapability("Synchronization2", _supportsSynchronization2Feature, "Optional");
+
+        Debug.Vulkan(
+            "[Vulkan] Capability.MaxMemoryAllocationCount status=Required supported=True value={0}",
+            properties.Limits.MaxMemoryAllocationCount);
+
+        Debug.Vulkan(
+            "[Vulkan] Capability.MemoryHeaps status=Required supported=True {0}",
+            FormatMemoryHeaps(memoryProperties));
+
+        Debug.Vulkan(
+            "[Vulkan] Capability.MemoryTypes status=Required supported=True {0}",
+            FormatMemoryTypes(memoryProperties));
+    }
+
+    private static void LogCapability(string name, bool supported, string classification)
+        => Debug.Vulkan(
+            "[Vulkan] Capability.{0} status={1} supported={2}",
+            name,
+            classification,
+            supported);
+
+    private static string FormatMemoryHeaps(PhysicalDeviceMemoryProperties memoryProperties)
+    {
+        if (memoryProperties.MemoryHeapCount == 0)
+            return "none";
+
+        StringBuilder builder = new();
+        for (int i = 0; i < memoryProperties.MemoryHeapCount; i++)
+        {
+            if (builder.Length > 0)
+                builder.Append("; ");
+
+            MemoryHeap heap = memoryProperties.MemoryHeaps[i];
+            builder.Append($"heap{i}:size={heap.Size},flags={heap.Flags}");
+        }
+
+        return builder.ToString();
+    }
+
+    private static string FormatMemoryTypes(PhysicalDeviceMemoryProperties memoryProperties)
+    {
+        if (memoryProperties.MemoryTypeCount == 0)
+            return "none";
+
+        StringBuilder builder = new();
+        for (int i = 0; i < memoryProperties.MemoryTypeCount; i++)
+        {
+            if (builder.Length > 0)
+                builder.Append("; ");
+
+            MemoryType memoryType = memoryProperties.MemoryTypes[i];
+            builder.Append($"type{i}:heap={memoryType.HeapIndex},flags={memoryType.PropertyFlags}");
+        }
+
+        return builder.ToString();
     }
 }

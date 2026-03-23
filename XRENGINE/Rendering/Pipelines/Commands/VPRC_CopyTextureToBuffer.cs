@@ -3,6 +3,7 @@ using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_CopyTextureToBuffer : ViewportRenderCommand
     {
         public string? SourceTextureName { get; set; }

@@ -150,8 +150,17 @@ namespace XREngine.Rendering.Vulkan
 
             foreach (var (buf, mem) in retired)
             {
+                // Free through allocator if tracked, otherwise direct FreeMemory.
                 if (buf.Handle != 0 && destroyedBuffers.Add(buf.Handle))
+                {
+                    if (_bufferAllocations.TryRemove(buf.Handle, out VulkanMemoryAllocation allocation))
+                    {
+                        Api!.DestroyBuffer(device, buf, null);
+                        FreeMemoryAllocation(allocation);
+                        continue;
+                    }
                     Api!.DestroyBuffer(device, buf, null);
+                }
 
                 if (mem.Handle != 0 && freedMemories.Add(mem.Handle))
                     Api!.FreeMemory(device, mem, null);
@@ -212,8 +221,15 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (r.Image.Handle != 0)
                     Api!.DestroyImage(device, r.Image, null);
+
+                // Free through allocator if tracked, otherwise direct FreeMemory.
                 if (r.Memory.Handle != 0)
-                    Api!.FreeMemory(device, r.Memory, null);
+                {
+                    if (_imageAllocations.TryRemove(r.Image.Handle, out VulkanMemoryAllocation allocation))
+                        FreeMemoryAllocation(allocation);
+                    else
+                        Api!.FreeMemory(device, r.Memory, null);
+                }
             }
             list.Clear();
         }

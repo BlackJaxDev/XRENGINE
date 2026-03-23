@@ -19,8 +19,14 @@ namespace XREngine.Rendering.Commands
         public uint LayerMask;
         public uint LODLevel;
         public uint Flags;
-        public uint Reserved0;
+        public uint LogicalMeshID;
         public uint Reserved1;
+
+        public uint Reserved0
+        {
+            readonly get => LogicalMeshID;
+            set => LogicalMeshID = value;
+        }
 
         public void SetBoundingSphere(Vector3 center, float radius)
             => BoundingSphere = new Vector4(center, radius);
@@ -40,7 +46,7 @@ namespace XREngine.Rendering.Commands
                 ShaderProgramID = ShaderProgramID,
                 RenderDistance = RenderDistance,
                 SourceCommandIndex = sourceCommandIndex,
-                Reserved0 = Reserved0,
+                LogicalMeshID = LogicalMeshID,
             };
 
         public GPUIndirectRenderCommandCold ToCold()
@@ -50,7 +56,7 @@ namespace XREngine.Rendering.Commands
                 PrevWorldMatrix = PrevWorldMatrix,
                 ShaderProgramID = ShaderProgramID,
                 RenderDistance = RenderDistance,
-                Reserved0 = Reserved0,
+                LogicalMeshID = LogicalMeshID,
                 Reserved1 = Reserved1,
             };
 
@@ -70,7 +76,7 @@ namespace XREngine.Rendering.Commands
                 LayerMask = hot.LayerMask,
                 LODLevel = hot.LODLevel,
                 Flags = hot.Flags,
-                Reserved0 = cold.Reserved0,
+                LogicalMeshID = cold.LogicalMeshID,
                 Reserved1 = cold.Reserved1,
             };
     }
@@ -90,7 +96,13 @@ namespace XREngine.Rendering.Commands
         public uint ShaderProgramID;
         public float RenderDistance;
         public uint SourceCommandIndex;
-        public uint Reserved0;
+        public uint LogicalMeshID;
+
+        public uint Reserved0
+        {
+            readonly get => LogicalMeshID;
+            set => LogicalMeshID = value;
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -100,8 +112,14 @@ namespace XREngine.Rendering.Commands
         public Matrix4x4 PrevWorldMatrix;
         public uint ShaderProgramID;
         public float RenderDistance;
-        public uint Reserved0;
+        public uint LogicalMeshID;
         public uint Reserved1;
+
+        public uint Reserved0
+        {
+            readonly get => LogicalMeshID;
+            set => LogicalMeshID = value;
+        }
     }
 
     [Flags]

@@ -134,11 +134,7 @@ namespace XREngine.Rendering.Vulkan
             ulong bufferSize = (ulong)(w * h) * pixelStride;
 
             // Create a host-visible staging buffer to receive the image copy.
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                bufferSize,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
 
             try
             {
@@ -194,8 +190,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and compute luminance on CPU.
-            void* mappedPtr;
-            if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 callback?.Invoke(false, 0f);
@@ -246,11 +241,7 @@ namespace XREngine.Rendering.Vulkan
 
             ulong bufferSize = pixelSize;
 
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                bufferSize,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
 
             try
             {
@@ -277,7 +268,7 @@ namespace XREngine.Rendering.Vulkan
                     DstAccessMask = AccessFlags.TransferReadBit,
                 };
 
-                Api!.CmdPipelineBarrier(
+                CmdPipelineBarrierTracked(
                     scope.CommandBuffer,
                     PipelineStageFlags.LateFragmentTestsBit,
                     PipelineStageFlags.TransferBit,
@@ -316,7 +307,7 @@ namespace XREngine.Rendering.Vulkan
                     DstAccessMask = AccessFlags.DepthStencilAttachmentWriteBit | AccessFlags.DepthStencilAttachmentReadBit,
                 };
 
-                Api!.CmdPipelineBarrier(
+                CmdPipelineBarrierTracked(
                     scope.CommandBuffer,
                     PipelineStageFlags.TransferBit,
                     PipelineStageFlags.EarlyFragmentTestsBit,
@@ -329,8 +320,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and read depth value
-            void* mappedPtr;
-            if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return 1.0f;
@@ -390,11 +380,7 @@ namespace XREngine.Rendering.Vulkan
             ulong bufferSize = pixelSize;
 
             // Create staging buffer
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                bufferSize,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
 
             // Allocate command buffer
             CommandBufferAllocateInfo allocateInfo = new()
@@ -457,7 +443,7 @@ namespace XREngine.Rendering.Vulkan
                 DstAccessMask = AccessFlags.TransferReadBit,
             };
 
-            Api!.CmdPipelineBarrier(
+            CmdPipelineBarrierTracked(
                 commandBuffer,
                 PipelineStageFlags.LateFragmentTestsBit,
                 PipelineStageFlags.TransferBit,
@@ -496,7 +482,7 @@ namespace XREngine.Rendering.Vulkan
                 DstAccessMask = AccessFlags.DepthStencilAttachmentWriteBit | AccessFlags.DepthStencilAttachmentReadBit,
             };
 
-            Api!.CmdPipelineBarrier(
+            CmdPipelineBarrierTracked(
                 commandBuffer,
                 PipelineStageFlags.TransferBit,
                 PipelineStageFlags.EarlyFragmentTestsBit,
@@ -514,7 +500,9 @@ namespace XREngine.Rendering.Vulkan
 
             Result depthSubmitResult;
             lock (_oneTimeSubmitLock)
-                depthSubmitResult = Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, fence);
+            {
+                depthSubmitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, fence);
+            }
 
             if (depthSubmitResult != Result.Success)
             {
@@ -631,11 +619,7 @@ namespace XREngine.Rendering.Vulkan
             ulong pixelStride = 4; // BGRA8
             ulong bufferSize = pixelStride;
 
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                bufferSize,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
 
             try
             {
@@ -679,8 +663,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and read pixel
-            void* mappedPtr;
-            if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 colorCallback?.Invoke(ColorF4.Transparent);
@@ -761,11 +744,7 @@ namespace XREngine.Rendering.Vulkan
             ulong pixelStride = 4; // BGRA8
             ulong bufferSize = (ulong)(w * h) * pixelStride;
 
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                bufferSize,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
 
             try
             {
@@ -808,8 +787,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            void* mappedPtr;
-            if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 imageCallback?.Invoke(null!, 0);
@@ -870,11 +848,7 @@ namespace XREngine.Rendering.Vulkan
             ulong pixelSize = 16; // sizeof(Vector4) = 4 floats
             ulong bufferSize = pixelSize * (ulong)layerCount;
 
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                bufferSize,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
 
             try
             {
@@ -916,8 +890,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and compute average luminance
-            void* mappedPtr;
-            if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
@@ -962,11 +935,7 @@ namespace XREngine.Rendering.Vulkan
             ulong pixelSize = 16; // sizeof(Vector4) = 4 floats
             ulong bufferSize = pixelSize;
 
-            var (stagingBuffer, stagingMemory) = CreateBuffer(
-                bufferSize,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
 
             try
             {
@@ -1008,8 +977,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and read the pixel
-            void* mappedPtr;
-            if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
@@ -1096,7 +1064,7 @@ namespace XREngine.Rendering.Vulkan
                     clampedLayer,
                     ImageAspectFlags.ColorBit,
                     ImageLayout.ShaderReadOnlyOptimal,
-                    PipelineStageFlags.AllCommandsBit,
+                    PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                     AccessFlags.MemoryReadBit,
                     out BlitImageInfo source))
             {

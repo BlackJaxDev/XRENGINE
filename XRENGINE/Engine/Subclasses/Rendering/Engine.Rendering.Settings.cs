@@ -38,6 +38,7 @@ namespace XREngine
                 _settings.PropertyChanged += HandleSettingsPropertyChanged;
                 _settings.PhysicsVisualizeSettings.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
                 _settings.PhysicsGpuMemorySettings.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
+                _settings.VulkanRobustnessSettings.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
             }
             /// <summary>
             /// The global rendering settings for the engine.
@@ -55,12 +56,14 @@ namespace XREngine
                         _settings.PropertyChanged -= HandleSettingsPropertyChanged;
                         _settings.PhysicsVisualizeSettings.PropertyChanged -= HandlePhysicsVisualizeSettingsChanged;
                         _settings.PhysicsGpuMemorySettings.PropertyChanged -= HandlePhysicsGpuMemorySettingsChanged;
+                        _settings.VulkanRobustnessSettings.PropertyChanged -= HandleVulkanRobustnessSettingsChanged;
                     }
 
                     _settings = value ?? new EngineSettings();
                     _settings.PropertyChanged += HandleSettingsPropertyChanged;
                     _settings.PhysicsVisualizeSettings.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
                     _settings.PhysicsGpuMemorySettings.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
+                    _settings.VulkanRobustnessSettings.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
                     ApplyEngineSettingChange(null);
                     SettingsChanged?.Invoke();
                 }
@@ -86,6 +89,15 @@ namespace XREngine
                         current.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
                 }
 
+                if (e.PropertyName == nameof(EngineSettings.VulkanRobustnessSettings))
+                {
+                    if (e.PreviousValue is VulkanRobustnessSettings previous)
+                        previous.PropertyChanged -= HandleVulkanRobustnessSettingsChanged;
+
+                    if (e.NewValue is VulkanRobustnessSettings current)
+                        current.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
+                }
+
                 ApplyEngineSettingChange(e.PropertyName);
                 SettingsChanged?.Invoke();
             }
@@ -96,6 +108,11 @@ namespace XREngine
             }
 
             private static void HandlePhysicsGpuMemorySettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+            {
+                SettingsChanged?.Invoke();
+            }
+
+            private static void HandleVulkanRobustnessSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
             {
                 SettingsChanged?.Invoke();
             }
@@ -384,7 +401,7 @@ namespace XREngine
                 private float _vrFoveationVisibilityMargin = 0.05f;
                 private bool _vrFoveationForceFullResForUiAndNearField = true;
                 private float _vrFoveationFullResNearDistanceMeters = 1.5f;
-                private bool _populateVertexDataInParallel = false;
+                private bool _populateVertexDataInParallel = true;
                 private bool _processMeshImportsAsynchronously = true;
                 private bool _useInterleavedMeshBuffer = false;
                 private bool _enableSecondaryGpuCompute = false;
@@ -1279,6 +1296,7 @@ namespace XREngine
                     set => SetField(ref _physicsGpuMemorySettings, value);
                 }
 
+                private VulkanRobustnessSettings _vulkanRobustnessSettings = new();
                 private PhysicsVisualizeSettings _physicsVisualizeSettings = new();
                 /// <summary>
                 /// If true, physics visualization will be enabled for debugging purposes.
@@ -1293,6 +1311,17 @@ namespace XREngine
 
                 /// <summary>
                 /// If true, vertex data population will be performed in parallel to improve performance.
+
+                /// <summary>
+                /// Settings that gate allocator, synchronization, and descriptor-update robustness migrations for Vulkan.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Controls staged Vulkan backend migrations for allocator, synchronization, and descriptor update paths.")]
+                public VulkanRobustnessSettings VulkanRobustnessSettings
+                {
+                    get => _vulkanRobustnessSettings;
+                    set => SetField(ref _vulkanRobustnessSettings, value ?? new VulkanRobustnessSettings());
+                }
                 /// </summary>
                 [Category("Performance")]
                 [Description("If true, vertex data population will be performed in parallel to improve performance.")]

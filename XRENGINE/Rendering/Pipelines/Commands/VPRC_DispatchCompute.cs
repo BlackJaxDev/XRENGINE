@@ -3,6 +3,7 @@ using static XREngine.Rendering.XRRenderProgram;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_DispatchCompute : ViewportRenderCommand
     {
         private readonly XRRenderProgram _computeProgram = new(false, false);

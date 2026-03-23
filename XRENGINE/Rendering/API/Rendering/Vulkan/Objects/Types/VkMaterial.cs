@@ -423,6 +423,8 @@ namespace XREngine.Rendering.Vulkan
                         WarnOnce("Failed to create Vulkan descriptor pool for material.");
                         return false;
                     }
+
+                    Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
                 }
 
                 DescriptorSetLayout[] layoutArray = [.. program.DescriptorSetLayouts];
@@ -445,6 +447,7 @@ namespace XREngine.Rendering.Vulkan
                         if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
                         {
                             Api.DestroyDescriptorPool(Device, descriptorPool, null);
+                            Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
                             WarnOnce("Failed to allocate Vulkan descriptor sets for material.");
                             return false;
                         }
@@ -456,6 +459,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!TryCreateUniformResources(bindings, frameCount, out Dictionary<(uint set, uint binding), UniformBindingResource> uniformResources))
                 {
                     Api!.DestroyDescriptorPool(Device, descriptorPool, null);
+                    Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
                     return false;
                 }
 
@@ -550,7 +554,10 @@ namespace XREngine.Rendering.Vulkan
                 DestroyUniformResources(state.UniformBindings);
 
                 if (state.DescriptorPool.Handle != 0)
+                {
                     Api!.DestroyDescriptorPool(Device, state.DescriptorPool, null);
+                    Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                }
             }
 
             #endregion

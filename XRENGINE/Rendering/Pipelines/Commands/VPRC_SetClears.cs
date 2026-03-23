@@ -2,6 +2,7 @@ using XREngine.Data.Colors;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderPipelineScriptCommand]
     public class VPRC_SetClears : ViewportRenderCommand
     {
         public ColorF4? DefaultColor { get; set; }

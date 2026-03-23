@@ -1,4 +1,5 @@
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
 using XREngine.Scene;
 
@@ -40,13 +41,28 @@ namespace XREngine.Rendering.Pipelines.Commands
             int height,
             bool gpuDispatch = false)
         {
-            using var areaScope = pipeline.RenderState.PushRenderArea(width, height);
-            using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(renderPass);
-            using var cameraScope = pipeline.RenderState.PushRenderingCamera(camera);
-            if (gpuDispatch)
-                collection.RenderGPU(renderPass);
-            else
-                collection.RenderCPU(renderPass, false, camera);
+            BoundingRectangle previousCrop = pipeline.RenderState.CurrentCropRegion;
+            bool hadCrop = previousCrop.Width > 0 && previousCrop.Height > 0;
+
+            AbstractRenderer.Current?.SetCroppingEnabled(false);
+            try
+            {
+                using var areaScope = pipeline.RenderState.PushRenderArea(width, height);
+                using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(renderPass);
+                using var cameraScope = pipeline.RenderState.PushRenderingCamera(camera);
+                if (gpuDispatch)
+                    collection.RenderGPU(renderPass);
+                else
+                    collection.RenderCPU(renderPass, false, camera);
+            }
+            finally
+            {
+                if (hadCrop)
+                {
+                    AbstractRenderer.Current?.SetCroppingEnabled(true);
+                    AbstractRenderer.Current?.CropRenderArea(previousCrop);
+                }
+            }
         }
 
         internal static StateObject PushSceneCapturePass()

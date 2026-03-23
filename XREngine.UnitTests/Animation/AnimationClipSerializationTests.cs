@@ -47,13 +47,17 @@ public sealed class AnimationClipSerializationTests
     {
         AnimationClip original = CreateSampleClip();
 
-        byte[] payload = MemoryPackSerializer.Serialize(original);
+        AnimationClipSerializedModel model = AnimationClipSerialization.CreateModel(original);
+        byte[] payload = MemoryPackSerializer.Serialize(model);
         payload.Length.ShouldBeGreaterThan(0);
 
-        AnimationClip? clone = MemoryPackSerializer.Deserialize<AnimationClip>(payload);
-        clone.ShouldNotBeNull();
+        AnimationClipSerializedModel? cloneModel = MemoryPackSerializer.Deserialize<AnimationClipSerializedModel>(payload);
+        cloneModel.ShouldNotBeNull();
 
-        AssertClipsEquivalent(original, clone!);
+        AnimationClip clone = new();
+        AnimationClipSerialization.ApplyModel(clone, cloneModel);
+
+        AssertClipsEquivalent(original, clone);
     }
 
     private static AnimationClip CreateSampleClip()

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -295,6 +296,15 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         float cellDepth = MathF.Max(size.Z, 1.0f) + 2.0f;
         int columns = (int)MathF.Ceiling(MathF.Sqrt(copyCount));
 
+        // Apply the centering offset to the benchmark root BEFORE spawning copies
+        // so that all bone world matrices, invBind snapshots, and particle positions
+        // are captured at their final world-space locations.
+        Transform benchmarkTransform = benchmarkRoot.GetTransformAs<Transform>(true) ?? benchmarkRoot.SetTransform<Transform>();
+        benchmarkTransform.Translation = new Vector3(
+            -((columns - 1) * cellWidth) * 0.5f,
+            0.0f,
+            -((MathF.Ceiling(copyCount / (float)columns) - 1) * cellDepth) * 0.5f);
+
         for (int index = 0; index < copyCount; index++)
         {
             int row = index / columns;
@@ -309,13 +319,10 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
                 0.0f,
                 row * cellDepth);
             CenterWithinCell(instanceTransform, entry.Bounds, desiredCenter);
+            instanceTransform.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: true, childRecalcType: ELoopType.Parallel).Wait();
+            EditorUnitTests.RebuildPhysicsChainSkinnedBoxVisual(instanceRoot);
+            ResetBenchmarkInstancePhysicsChains(instanceRoot);
         }
-
-        Transform benchmarkTransform = benchmarkRoot.GetTransformAs<Transform>(true) ?? benchmarkRoot.SetTransform<Transform>();
-        benchmarkTransform.Translation = new Vector3(
-            -((columns - 1) * cellWidth) * 0.5f,
-            0.0f,
-            -((MathF.Ceiling(copyCount / (float)columns) - 1) * cellDepth) * 0.5f);
     }
 
     private void StopBenchmark(bool destroyInstances, bool updateStatus, bool cancelled)
@@ -493,6 +500,20 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         if (!includeDebugDisplays)
             DisableBenchmarkDebugVisuals(targetRoot);
     }
+
+    /// <summary>
+    /// Reinitializes all physics chain particles in the benchmark instance so their
+    /// positions and object-move tracking match the post-placement world transforms.
+    /// Without this, particles retain factory-time positions and the first simulation
+    /// frame sees a huge positional delta that makes the chains fly off.
+    /// </summary>
+    private static void ResetBenchmarkInstancePhysicsChains(SceneNode instanceRoot)
+    {
+        List<PhysicsChainComponent> chains = CollectComponents<PhysicsChainComponent>(instanceRoot);
+        for (int i = 0; i < chains.Count; i++)
+            chains[i].SetupParticles();
+    }
+
 
     private static void SyncPhysicsChainComponents(SceneNode sourceRoot, SceneNode targetRoot, bool includeDebugDisplays)
     {

@@ -1,4 +1,6 @@
+using System;
 using System.Numerics;
+using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
@@ -15,7 +17,28 @@ namespace XREngine.UnitTests.Physics;
 [TestFixture]
 public sealed class GPUPhysicsChainDispatcherTests
 {
+    private const BindingFlags StaticFlags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+
+    private static readonly Action<long, bool> RecordCpuUploadBytesMethod = CreateStaticDelegate<Action<long, bool>>("RecordCpuUploadBytes");
+    private static readonly Action<long, bool> RecordGpuCopyBytesMethod = CreateStaticDelegate<Action<long, bool>>("RecordGpuCopyBytes");
+    private static readonly Action<long, bool> RecordCpuReadbackBytesMethod = CreateStaticDelegate<Action<long, bool>>("RecordCpuReadbackBytes");
+    private static readonly Action<long> RecordHierarchyRecalcTicksMethod = CreateStaticDelegate<Action<long>>("RecordHierarchyRecalcTicks");
+
     #region Test Helpers
+
+    private static TDelegate CreateStaticDelegate<TDelegate>(string methodName) where TDelegate : Delegate
+    {
+        MethodInfo method = typeof(GPUPhysicsChainDispatcher).GetMethod(methodName, StaticFlags)
+            ?? throw new InvalidOperationException($"Method '{methodName}' was not found.");
+        return method.CreateDelegate<TDelegate>();
+    }
+
+    private static void SetStaticField<T>(string fieldName, T value)
+    {
+        FieldInfo field = typeof(GPUPhysicsChainDispatcher).GetField(fieldName, StaticFlags)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' was not found.");
+        field.SetValue(null, value);
+    }
 
     private static (SceneNode rootNode, Transform rootBone, Transform[] childBones) CreateBoneHierarchy(int boneCount = 5, float boneLength = 0.1f)
     {
@@ -131,7 +154,9 @@ public sealed class GPUPhysicsChainDispatcherTests
         var (node, rootBone, _) = CreateBoneHierarchy(3);
         var component = CreateTestComponent(node, rootBone, useBatched: false);
 
-        dispatcher.IsRegistered(component).ShouldBeFalse();
+        dispatcher.IsRegistered(component).ShouldBeTrue();
+
+        dispatcher.Unregister(component);
     }
 
     [Test]
@@ -210,6 +235,69 @@ public sealed class GPUPhysicsChainDispatcherTests
         Should.NotThrow(() => dispatcher.Reset());
     }
 
+    [Test]
+    public void BandwidthPressureSnapshot_TracksRecordedCountersAndDelta()
+    {
+        GPUPhysicsChainDispatcher.ResetBandwidthPressureStats();
+        SetStaticField("s_residentParticleBytes", 4096L);
+        SetStaticField("s_dispatchGroupCount", 2);
+        SetStaticField("s_dispatchIterationCount", 5);
+
+        RecordCpuUploadBytesMethod(128L, false);
+        RecordCpuUploadBytesMethod(64L, true);
+        RecordGpuCopyBytesMethod(32L, true);
+        RecordCpuReadbackBytesMethod(16L, false);
+        RecordHierarchyRecalcTicksMethod(250L);
+
+        GPUPhysicsChainBandwidthSnapshot baseline = new();
+        GPUPhysicsChainBandwidthSnapshot snapshot = GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
+        GPUPhysicsChainBandwidthSnapshot delta = snapshot.Delta(baseline);
+
+        snapshot.CpuUploadBytes.ShouldBe(192L);
+        snapshot.GpuCopyBytes.ShouldBe(32L);
+        snapshot.CpuReadbackBytes.ShouldBe(16L);
+        snapshot.StandaloneCpuUploadBytes.ShouldBe(128L);
+        snapshot.BatchedCpuUploadBytes.ShouldBe(64L);
+        snapshot.BatchedGpuCopyBytes.ShouldBe(32L);
+        snapshot.StandaloneCpuReadbackBytes.ShouldBe(16L);
+        snapshot.DispatchGroupCount.ShouldBe(2);
+        snapshot.DispatchIterationCount.ShouldBe(5);
+        snapshot.ResidentParticleBytes.ShouldBe(4096L);
+        snapshot.HierarchyRecalcTicks.ShouldBe(250L);
+        snapshot.TotalTransferBytes.ShouldBe(240L);
+
+        delta.ShouldBe(snapshot);
+    }
+
+    [Test]
+    public void ResetBandwidthPressureStats_ClearsTransferAndDispatchCounters()
+    {
+        GPUPhysicsChainDispatcher.ResetBandwidthPressureStats();
+        SetStaticField("s_residentParticleBytes", 0L);
+        SetStaticField("s_dispatchGroupCount", 3);
+        SetStaticField("s_dispatchIterationCount", 7);
+
+        RecordCpuUploadBytesMethod(10L, false);
+        RecordGpuCopyBytesMethod(20L, false);
+        RecordCpuReadbackBytesMethod(30L, true);
+        RecordHierarchyRecalcTicksMethod(40L);
+
+        GPUPhysicsChainDispatcher.ResetBandwidthPressureStats();
+        GPUPhysicsChainBandwidthSnapshot snapshot = GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
+
+        snapshot.CpuUploadBytes.ShouldBe(0L);
+        snapshot.GpuCopyBytes.ShouldBe(0L);
+        snapshot.CpuReadbackBytes.ShouldBe(0L);
+        snapshot.StandaloneCpuUploadBytes.ShouldBe(0L);
+        snapshot.StandaloneCpuReadbackBytes.ShouldBe(0L);
+        snapshot.BatchedCpuUploadBytes.ShouldBe(0L);
+        snapshot.BatchedGpuCopyBytes.ShouldBe(0L);
+        snapshot.BatchedCpuReadbackBytes.ShouldBe(0L);
+        snapshot.DispatchGroupCount.ShouldBe(0);
+        snapshot.DispatchIterationCount.ShouldBe(0);
+        snapshot.HierarchyRecalcTicks.ShouldBe(0L);
+    }
+
     #endregion
 
     #region Integration Tests
@@ -230,13 +318,19 @@ public sealed class GPUPhysicsChainDispatcherTests
         // Submit data (simulated)
         var particles = new List<GPUPhysicsChainDispatcher.GPUParticleData>
         {
-            new() { Position = Vector3.Zero, ParentIndex = -1 },
-            new() { Position = new Vector3(0, -0.1f, 0), ParentIndex = 0 }
+            new() { Position = Vector3.Zero, PrevPosition = Vector3.Zero, PreviousPhysicsPosition = Vector3.Zero },
+            new() { Position = new Vector3(0, -0.1f, 0), PrevPosition = new Vector3(0, -0.1f, 0), PreviousPhysicsPosition = new Vector3(0, -0.1f, 0) }
+        };
+
+        var particleStaticData = new List<GPUPhysicsChainDispatcher.GPUParticleStaticData>
+        {
+            new() { ParentIndex = -1, Radius = 0.05f, BoneLength = 0.1f, TreeIndex = 0 },
+            new() { ParentIndex = 0, Radius = 0.05f, BoneLength = 0.1f, TreeIndex = 0 }
         };
 
         var trees = new List<GPUPhysicsChainDispatcher.GPUParticleTreeData>
         {
-            new() { LocalGravity = new Vector3(0, -9.8f, 0), ParticleStart = 0, ParticleCount = 2 }
+            new() { RestGravity = new Vector3(0, -9.8f, 0) }
         };
 
         var transforms = new List<Matrix4x4> { Matrix4x4.Identity, Matrix4x4.Identity };
@@ -245,6 +339,7 @@ public sealed class GPUPhysicsChainDispatcherTests
         Should.NotThrow(() => dispatcher.SubmitData(
             component,
             particles,
+            particleStaticData,
             trees,
             transforms,
             colliders,
@@ -256,7 +351,13 @@ public sealed class GPUPhysicsChainDispatcherTests
             objectMove: Vector3.Zero,
             freezeAxis: 0,
             loopCount: 1,
-            timeVar: 0.016f
+            timeVar: 0.016f,
+            executionGeneration: 1,
+            submissionId: 1,
+            staticDataVersion: 1,
+            particleStateVersion: 1,
+            transformDataSignature: 1,
+            colliderDataSignature: 0
         ));
 
         // Unregister
@@ -287,23 +388,35 @@ public sealed class GPUPhysicsChainDispatcherTests
         {
             var particles = new List<GPUPhysicsChainDispatcher.GPUParticleData>
             {
-                new() { Position = Vector3.Zero, ParentIndex = -1 }
+                new() { Position = Vector3.Zero, PrevPosition = Vector3.Zero, PreviousPhysicsPosition = Vector3.Zero }
+            };
+
+            var particleStaticData = new List<GPUPhysicsChainDispatcher.GPUParticleStaticData>
+            {
+                new() { ParentIndex = -1, Radius = 0.05f, BoneLength = 0.1f, TreeIndex = 0 }
             };
 
             var trees = new List<GPUPhysicsChainDispatcher.GPUParticleTreeData>
             {
-                new() { ParticleStart = 0, ParticleCount = 1 }
+                new() { RestGravity = new Vector3(0, -9.8f, 0) }
             };
 
             Should.NotThrow(() => dispatcher.SubmitData(
                 component,
                 particles,
+                particleStaticData,
                 trees,
                 [Matrix4x4.Identity],
                 [],
                 0.016f, 1.0f, 1.0f,
                 Vector3.Zero, new Vector3(0, -9.8f, 0), Vector3.Zero,
-                0, 1, 0.016f
+                0, 1, 0.016f,
+                executionGeneration: 1,
+                submissionId: component.GetHashCode(),
+                staticDataVersion: 1,
+                particleStateVersion: 1,
+                transformDataSignature: 1,
+                colliderDataSignature: 0
             ));
         }
 
