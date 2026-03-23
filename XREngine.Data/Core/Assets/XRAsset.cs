@@ -344,6 +344,22 @@ namespace XREngine.Core.Files
         public virtual async Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
             => await Task.Run(() => Load3rdParty(filePath, context));
 
+            /// <summary>
+            /// Loads asset data from a 3rd-party file format with import options and an import context.
+            /// </summary>
+            /// <param name="filePath">The path to the 3rd-party file to load.</param>
+            /// <param name="importOptions">Importer-specific options supplied by the asset pipeline.</param>
+            /// <param name="context">Import context supplied by the engine's asset pipeline.</param>
+            /// <returns>
+            /// <see langword="true"/> if the file was successfully loaded; otherwise, <see langword="false"/>.
+            /// </returns>
+            /// <remarks>
+            /// Override this method when your asset type needs both cache-aware auxiliary paths and
+            /// caller-supplied import options during conversion.
+            /// </remarks>
+            public virtual bool Load3rdParty(string filePath, object? importOptions, AssetImportContext context)
+                => Load3rdParty(filePath, context);
+
         /// <summary>
         /// Imports a 3rd-party file into this asset with optional import settings.
         /// </summary>

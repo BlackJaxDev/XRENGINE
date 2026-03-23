@@ -64,14 +64,30 @@ public static class BootstrapWorldFactory
 
         if (settings.LightProbe || settings.Skybox)
         {
+            bool addLightProbe = settings.LightProbe;
+            bool addSkybox = settings.Skybox;
             string[] names = ["warm_restaurant_4k"];
             Random random = new();
-            XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[random.Next(0, names.Length)]}.exr");
+            string skyTextureName = $"{names[random.Next(0, names.Length)]}.exr";
 
-            if (settings.LightProbe)
-                BootstrapLightingBuilder.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
-            if (settings.Skybox)
-                BootstrapModelBuilder.AddSkybox(rootNode, skyEquirect);
+            Action setupEnvironment = () =>
+            {
+                XRTexture2D? skyEquirect = addSkybox || addLightProbe
+                    ? Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", skyTextureName)
+                    : null;
+
+                if (addLightProbe)
+                    BootstrapLightingBuilder.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
+                if (addSkybox)
+                    BootstrapModelBuilder.AddSkybox(rootNode, skyEquirect);
+            };
+
+            if (!BootstrapStartupWork.TryQueueDeferredWork(
+                setupEnvironment,
+                "[BootstrapWorldFactory] Deferred startup environment setup until the first visible frame."))
+            {
+                setupEnvironment();
+            }
         }
 
         if (settings.Mirror)
@@ -112,8 +128,20 @@ public static class BootstrapWorldFactory
 
             _ = BootstrapPawnFactory.CreatePlayerPawn(setUI, isServer, rootNode);
             BootstrapLightingBuilder.AddDirLight(rootNode);
-            BootstrapLightingBuilder.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
-            BootstrapModelBuilder.AddSkybox(rootNode, null);
+
+            Action setupEnvironment = () =>
+            {
+                BootstrapLightingBuilder.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
+                BootstrapModelBuilder.AddSkybox(rootNode, null);
+            };
+
+            if (!BootstrapStartupWork.TryQueueDeferredWork(
+                setupEnvironment,
+                "[BootstrapWorldFactory] Deferred default-world environment setup until the first visible frame."))
+            {
+                setupEnvironment();
+            }
+
             AddDefaultGridFloor(rootNode);
 
             return new XRWorld("Default World", scene);

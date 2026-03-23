@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using XREngine.Audio;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Trees;
 using XREngine.Input;
@@ -253,6 +254,16 @@ namespace XREngine
         /// Gets whether any engine window currently has focus.
         /// </summary>
         public static bool LastFocusState { get; private set; } = true;
+
+        /// <summary>
+        /// When enabled, windows render a minimal non-black startup presentation before heavier UI/world work is ready.
+        /// </summary>
+        public static bool StartupPresentationEnabled { get; set; }
+
+        /// <summary>
+        /// Clear color used for the temporary startup presentation.
+        /// </summary>
+        public static ColorF4 StartupPresentationClearColor { get; set; } = new(0.08f, 0.09f, 0.11f, 1.0f);
 
         #endregion
 

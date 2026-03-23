@@ -501,7 +501,7 @@ namespace XREngine
         private T? Load3rdPartyWithCache<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
-            bool hasCachePath = TryResolveCachePath(filePath, typeof(T), out string cachePath);
+            bool hasCachePath = TryResolveCachePath(filePath, typeof(T), cacheVariantKey: null, out string cachePath);
 
             if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
             {
@@ -525,7 +525,7 @@ namespace XREngine
         private XRAsset? Load3rdPartyWithCache(string filePath, string ext, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type)
         {
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
-            bool hasCachePath = TryResolveCachePath(filePath, type, out string cachePath);
+            bool hasCachePath = TryResolveCachePath(filePath, type, cacheVariantKey: null, out string cachePath);
 
             if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, type, out XRAsset? cachedAsset))
             {
@@ -549,7 +549,7 @@ namespace XREngine
         private async Task<T?> Load3rdPartyWithCacheAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
-            bool hasCachePath = TryResolveCachePath(filePath, typeof(T), out string cachePath);
+            bool hasCachePath = TryResolveCachePath(filePath, typeof(T), cacheVariantKey: null, out string cachePath);
 
             if (hasTimestamp && hasCachePath)
             {
@@ -580,7 +580,48 @@ namespace XREngine
             return timestampUtc != DateTime.MinValue;
         }
 
-        private bool TryResolveCachePath(string filePath, Type assetType, out string cachePath)
+        internal T? Load3rdPartyVariantWithCache<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, object? importOptions, string cacheVariantKey, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false) where T : XRAsset, new()
+            => RunOnJobThreadBlocking(() => Load3rdPartyVariantWithCacheCore<T>(filePath, importOptions, cacheVariantKey), priority, bypassJobThread);
+
+        private T? Load3rdPartyVariantWithCacheCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, object? importOptions, string cacheVariantKey) where T : XRAsset, new()
+        {
+            filePath = Path.GetFullPath(filePath);
+            if (!File.Exists(filePath))
+            {
+                AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load3rdPartyVariantWithCache)}");
+                return null;
+            }
+
+            if (!TryGetSourceTimestamp(filePath, out DateTime timestampUtc))
+                return null;
+
+            if (!TryResolveCachePath(filePath, typeof(T), cacheVariantKey, out string cachePath))
+                return null;
+
+            if (TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
+            {
+                cachedAsset!.FilePath = filePath;
+                cachedAsset.OriginalPath = filePath;
+                cachedAsset.OriginalLastWriteTimeUtc = timestampUtc;
+                return cachedAsset;
+            }
+
+            var asset = new T
+            {
+                FilePath = filePath,
+                OriginalPath = filePath,
+                OriginalLastWriteTimeUtc = timestampUtc,
+            };
+
+            var context = CreateImportContext(filePath, cacheVariantKey);
+            if (!asset.Load3rdParty(filePath, importOptions, context))
+                return null;
+
+            TryWriteCacheAsset(cachePath, asset);
+            return asset;
+        }
+
+        private bool TryResolveCachePath(string filePath, Type assetType, string? cacheVariantKey, out string cachePath)
         {
             cachePath = string.Empty;
             if (string.IsNullOrWhiteSpace(GameCachePath))
@@ -609,11 +650,19 @@ namespace XREngine
                 ? GameCachePath!
                 : Path.Combine(GameCachePath!, cacheSubfolder);
 
-            cachePath = string.IsNullOrWhiteSpace(relativeDirectory)
-                ? Path.Combine(cacheRoot, cacheFileName)
-                : Path.Combine(cacheRoot, relativeDirectory, cacheFileName);
+            string? cacheDirectory = string.IsNullOrWhiteSpace(relativeDirectory)
+                ? cacheRoot
+                : Path.Combine(cacheRoot, relativeDirectory);
+
+            if (!string.IsNullOrWhiteSpace(cacheVariantKey))
+                cacheDirectory = Path.Combine(cacheDirectory, cacheVariantKey);
+
+            cachePath = Path.Combine(cacheDirectory, cacheFileName);
             return true;
         }
+
+        private bool TryResolveCachePath(string filePath, Type assetType, out string cachePath)
+            => TryResolveCachePath(filePath, assetType, cacheVariantKey: null, out cachePath);
 
         private static string? TryMakeRelativeTo(string normalizedSource, string? root)
         {
@@ -650,6 +699,15 @@ namespace XREngine
             catch (Exception ex)
             {
                 Debug.LogWarning($"Failed to read cached asset '{cachePath}'. {ex.Message}");
+                try
+                {
+                    if (File.Exists(cachePath))
+                        File.Delete(cachePath);
+                }
+                catch
+                {
+                }
+
                 return false;
             }
         }
@@ -737,6 +795,9 @@ namespace XREngine
         }
 
         private AssetImportContext CreateImportContext(string filePath)
+            => CreateImportContext(filePath, cacheVariantKey: null);
+
+        private AssetImportContext CreateImportContext(string filePath, string? cacheVariantKey)
         {
             string? cacheDir = null;
             if (!string.IsNullOrWhiteSpace(GameCachePath))
@@ -759,6 +820,9 @@ namespace XREngine
                     cacheDir = string.IsNullOrWhiteSpace(relativeDirectory)
                         ? cacheRoot
                         : Path.Combine(cacheRoot, relativeDirectory);
+
+                    if (!string.IsNullOrWhiteSpace(cacheVariantKey))
+                        cacheDir = Path.Combine(cacheDir, cacheVariantKey);
                 }
             }
 

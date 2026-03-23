@@ -189,8 +189,6 @@ Completed areas:
 - editor tooling for Steam Audio materials and probes
 - supporting audio architecture documentation
 
-The remaining work is no longer architecture design or playback-path plumbing. It is narrow end-to-end validation, tracked in [docs/work/todo/steam-audio.md](../work/todo/steam-audio.md).
-
 ## Runtime Status
 
 The V2 playback path now routes uploaded PCM through `EffectsProcessor.ProcessBuffer(...)` across the full source buffer, not just the first internal Steam Audio frame.
@@ -198,6 +196,14 @@ The V2 playback path now routes uploaded PCM through `EffectsProcessor.ProcessBu
 That closes the remaining playback-path implementation gap from the original design. Static and streaming uploads that use `AudioSource.SetBufferData(...)` now hand complete mono input buffers to Steam Audio, receive chunked stereo output, and pass that processed PCM to the selected transport.
 
 The remaining work is validation of that shipped path in editor/runtime scenarios.
+
+## Remaining Validation
+
+The remaining Steam Audio work is now operational validation rather than architecture or playback-path implementation.
+
+- Run the editor and verify the V2 OpenAL transport path preserves existing baseline playback behavior.
+- Verify OpenAL transport plus Steam Audio effects in the `AudioTesting` world by playing a mono source and confirming HRTF spatialization.
+- Verify Steam Audio occlusion by placing geometry between listener and source and confirming audible attenuation and occlusion.
 
 ## Current Mitigations
 

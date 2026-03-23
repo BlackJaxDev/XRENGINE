@@ -914,6 +914,24 @@ namespace XREngine.Rendering
                     }
                 }
 
+                if (Engine.StartupPresentationEnabled)
+                {
+                    using var startupPresentationSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.StartupPresentationMarker");
+                    var fullRegion = new BoundingRectangle(0, 0, Window.FramebufferSize.X, Window.FramebufferSize.Y);
+                    int markerWidth = Math.Min(96, Window.FramebufferSize.X);
+                    int markerHeight = Math.Min(96, Window.FramebufferSize.Y);
+                    var markerRegion = new BoundingRectangle(0, 0, markerWidth, markerHeight);
+
+                    Renderer.BindFrameBuffer(EFramebufferTarget.Framebuffer, null);
+                    Renderer.SetRenderArea(fullRegion);
+                    Renderer.SetCroppingEnabled(true);
+                    Renderer.CropRenderArea(markerRegion);
+                    Renderer.ClearColor(Engine.StartupPresentationClearColor);
+                    Renderer.Clear(color: true, depth: false, stencil: false);
+                    Renderer.SetCroppingEnabled(false);
+                    Renderer.SetRenderArea(fullRegion);
+                }
+
                 // Allow the renderer to perform any per-window end-of-frame work (e.g., Vulkan acquire/submit/present).
                 // This MUST run even when viewport rendering fails, otherwise Vulkan never presents and the window
                 // shows uninitialized (white) content. With empty/partial frame ops, the Vulkan backend will at

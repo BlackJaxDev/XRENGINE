@@ -1,0 +1,109 @@
+#version 460 core
+
+layout(local_size_x = 64) in;
+
+const uint COMMAND_FLOATS = 48u;
+const uint KEY_UINTS = 4u;
+const uint DRAW_UINTS = 5u;
+const uint MATERIAL_TIER_COUNT = 3u;
+const uint INVALID_MATERIAL_SLOT = 0xFFFFFFFFu;
+
+layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { float culled[]; };
+layout(std430, binding = 1) readonly buffer MeshDataBuffer { uint meshData[]; };
+layout(std430, binding = 2) readonly buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
+layout(std430, binding = 3) readonly buffer SortKeysBuffer { uint sortKeys[]; };
+layout(std430, binding = 4) readonly buffer MaterialSlotLookupBuffer { uint materialSlots[]; };
+layout(std430, binding = 5) buffer IndirectDrawBuffer { uint indirectDraws[]; };
+layout(std430, binding = 6) buffer DrawCountBuffer { uint drawCounts[]; };
+layout(std430, binding = 7) buffer OverflowFlagBuffer { uint overflowFlag; };
+
+uniform int CurrentRenderPass;
+uniform int MaxMaterialSlotLookup;
+uniform int MaxBucketCount;
+uniform int MaxIndirectDrawsPerBucket;
+
+uvec4 LoadKey(uint index)
+{
+    uint base = index * KEY_UINTS;
+    return uvec4(
+        sortKeys[base + 0u],
+        sortKeys[base + 1u],
+        sortKeys[base + 2u],
+        sortKeys[base + 3u]);
+}
+
+void StoreDrawCommand(uint bucketIndex, uint drawIndexInBucket, uint count, uint instanceCount, uint firstIndex, uint baseVertex, uint baseInstance)
+{
+    uint globalDrawIndex = bucketIndex * uint(MaxIndirectDrawsPerBucket) + drawIndexInBucket;
+    uint base = globalDrawIndex * DRAW_UINTS;
+    indirectDraws[base + 0u] = count;
+    indirectDraws[base + 1u] = instanceCount;
+    indirectDraws[base + 2u] = firstIndex;
+    indirectDraws[base + 3u] = baseVertex;
+    indirectDraws[base + 4u] = baseInstance;
+}
+
+void main()
+{
+    uint sortedIndex = gl_GlobalInvocationID.x;
+    if (sortedIndex >= CulledCount)
+        return;
+
+    uvec4 key = LoadKey(sortedIndex);
+    uint culledCommandIndex = key.w;
+    uint commandBase = culledCommandIndex * COMMAND_FLOATS;
+    if (commandBase + COMMAND_FLOATS > uint(culled.length()))
+        return;
+
+    uint meshID = floatBitsToUint(culled[commandBase + 36u]);
+    uint materialID = floatBitsToUint(culled[commandBase + 38u]);
+    uint instanceCount = floatBitsToUint(culled[commandBase + 39u]);
+    uint renderPass = floatBitsToUint(culled[commandBase + 40u]);
+
+    if (instanceCount == 0u)
+        return;
+
+    if (CurrentRenderPass >= 0 &&
+        renderPass != uint(CurrentRenderPass) &&
+        renderPass != 0xFFFFFFFFu)
+    {
+        return;
+    }
+
+    if (materialID >= uint(MaxMaterialSlotLookup) || materialID >= uint(materialSlots.length()))
+        return;
+
+    uint slotIndex = materialSlots[materialID];
+    if (slotIndex == INVALID_MATERIAL_SLOT)
+        return;
+
+    uint tier = 0u;
+    uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier;
+    if (bucketIndex >= uint(MaxBucketCount) || bucketIndex >= uint(drawCounts.length()))
+        return;
+
+    uint meshBase = meshID * 4u;
+    if (meshBase + 3u >= uint(meshData.length()))
+        return;
+
+    uint indexCount = meshData[meshBase + 0u];
+    if (indexCount == 0u)
+        return;
+
+    uint firstIndex = meshData[meshBase + 1u];
+    uint baseVertex = meshData[meshBase + 2u];
+
+    uint drawIndexInBucket = atomicAdd(drawCounts[bucketIndex], 1u);
+    if (drawIndexInBucket >= uint(MaxIndirectDrawsPerBucket))
+    {
+        overflowFlag = 1u;
+        return;
+    }
+
+    StoreDrawCommand(bucketIndex, drawIndexInBucket, indexCount, instanceCount, firstIndex, baseVertex, culledCommandIndex);
+}

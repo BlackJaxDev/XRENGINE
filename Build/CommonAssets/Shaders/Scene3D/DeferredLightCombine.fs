@@ -11,11 +11,21 @@ const float MAX_REFLECTION_LOD = 4.0f; // Deprecated; retained to avoid breaking
 layout(location = 0) out vec4 OutLo; //Diffuse Light Color, to start off the HDR Scene Texture
 layout(location = 0) in vec3 FragPos;
 
+#ifdef XRENGINE_MSAA_DEFERRED
+layout(binding = 0) uniform sampler2DMS AlbedoOpacity;
+layout(binding = 1) uniform sampler2DMS Normal;
+layout(binding = 2) uniform sampler2DMS RMSE;
+#else
 layout(binding = 0) uniform sampler2D AlbedoOpacity;
 layout(binding = 1) uniform sampler2D Normal;
 layout(binding = 2) uniform sampler2D RMSE;
+#endif
 layout(binding = 3) uniform sampler2D AmbientOcclusionTexture;
+ #ifdef XRENGINE_MSAA_DEFERRED
+layout(binding = 4) uniform sampler2DMS DepthView; //Depth
+#else
 layout(binding = 4) uniform sampler2D DepthView; //Depth
+#endif
 
 #ifdef XRENGINE_MSAA_DEFERRED
 layout(binding = 5) uniform sampler2DMS LightingTextureMS;
@@ -308,16 +318,29 @@ void main()
 	//Normalize uv from [-1, 1] to [0, 1]
 	uv = uv * 0.5f + 0.5f;
 
+        ivec2 coord = ivec2(gl_FragCoord.xy);
+#ifdef XRENGINE_MSAA_DEFERRED
+        vec3 albedoColor = texelFetch(AlbedoOpacity, coord, gl_SampleID).rgb;
+        vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
+        vec4 rmse = texelFetch(RMSE, coord, gl_SampleID);
+#else
         vec3 albedoColor = texture(AlbedoOpacity, uv).rgb;
         vec3 normal = XRENGINE_ReadNormal(Normal, uv);
         vec4 rmse = texture(RMSE, uv);
+#endif
         float ao = UseAmbientOcclusion ? pow(texture(AmbientOcclusionTexture, uv).r, max(AmbientOcclusionPower, 0.001f)) : 1.0f;
-        float depth = texture(DepthView, uv).r;
 #ifdef XRENGINE_MSAA_DEFERRED
-        vec3 InLo = max(texelFetch(LightingTextureMS, ivec2(gl_FragCoord.xy), gl_SampleID).rgb, vec3(0.0f));
+        float depth = texelFetch(DepthView, coord, gl_SampleID).r;
+        vec3 InLo = max(texelFetch(LightingTextureMS, coord, gl_SampleID).rgb, vec3(0.0f));
 #else
+        float depth = texture(DepthView, uv).r;
         vec3 InLo = max(texture(LightingTexture, uv).rgb, vec3(0.0f));
 #endif
+        if (depth >= 1.0f)
+        {
+                OutLo = vec4(0.0f);
+                return;
+        }
         vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
         //float fogDensity = noise3(fragPosWS);
 

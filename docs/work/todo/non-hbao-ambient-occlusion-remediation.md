@@ -1,8 +1,10 @@
-# Non-HBAO Ambient Occlusion Remediation TODO
+# Non-HBAO Ambient Occlusion Status And Remediation TODO
 
 Last Updated: 2026-03-11
 Current Status: non-HBAO AO modes have now been audited against the current code and external references. The MSVO path was confirmed to expose dead UI controls, those controls have been removed from the post-process schema, the misleading SAO selector entry has been removed, the live AO API now uses honest names with compatibility aliases for old enum values, GTAO now has a first real gather plus denoise path, and VXAO now has an explicit enum/schema/pipeline scaffold plus dedicated shared-voxel design and TODO docs instead of existing only as a research note.
 Scope: current non-HBAO AO modes plus roadmap support planning for GTAO and VXAO. HBAO/HBAO+ are handled in separate docs.
+
+This document now consolidates the prior non-HBAO AO audit and the follow-up remediation backlog into one canonical work doc.
 
 ## Current Reality
 
@@ -20,6 +22,24 @@ What remains problematic:
 - `MultiViewAmbientOcclusion` is still a custom local name with no confirmed canonical external algorithm family.
 - `SpatialHashRaytraced` still needs stronger validation before it can be treated as production-stable.
 - GTAO now has an early runtime implementation, while VXAO is still only a deliberate scaffold and planning target.
+
+## Consolidated Audit Summary
+
+Current classification of the non-HBAO AO families:
+
+- `ScreenSpace` is an honestly named legacy SSAO path.
+- `MultiViewAmbientOcclusion` is coherent, but it is a repo-local custom AO mode rather than a confirmed canonical published family.
+- `ScalableAmbientObscurance` and `MultiScaleVolumetricObscurance` still map to one simplified multi-radius obscurance pass that does not match canonical SAO closely enough.
+- `SpatialHashRaytraced` is an experimental compute AO path and should remain documented as such until stronger validation exists.
+- GTAO is the strongest modern canonical screen-space follow-on for this area.
+- VXAO is a longer-range shared-voxel roadmap item, not a small extension of the current screen-space pass set.
+
+Recommended current readiness order:
+
+1. `ScreenSpace`
+2. `MultiViewAmbientOcclusion`
+3. `SpatialHashRaytraced`
+4. `ScalableAmbientObscurance` / `MultiScaleVolumetricObscurance`
 
 ## Target Outcome
 
@@ -176,3 +196,10 @@ Recommended future non-HBAO target order if new families are approved:
 ## Suggested Next Step
 
 The next concrete code task after this TODO should be Phase 1: decide whether the current SAO/MSVO entries stay visible at all before HBAO+ and any future GTAO work redefine the engine's modern AO lineup.
+
+## Research Sources
+
+- McGuire, Mara, Luebke, `Scalable Ambient Obscurance`, HPG 2012
+- McGuire and Mara, `Efficient GPU Screen-Space Ray Tracing`, JCGT 2014
+- Jimenez, Wu, Pesce, Jarabo, `Practical Real-Time Strategies for Accurate Indirect Occlusion`
+- NVIDIA, `VXAO: Voxel Ambient Occlusion`

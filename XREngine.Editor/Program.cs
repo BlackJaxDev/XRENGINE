@@ -10,6 +10,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using XREngine;
 using XREngine.Audio;
 using XREngine.Components;
@@ -38,6 +39,8 @@ internal class Program
     private static XRWindow? s_startupWindow;
     private static int s_startupWindowHooked;
     private static int s_captureInFlight;
+    private static int s_deferredStartupWorkFlushed;
+    private static int s_fontPrewarmStarted;
     private static int s_startupTimerStopped;
     private static string? s_bootstrapTracePath;
 
@@ -148,13 +151,19 @@ internal class Program
             XREngine.Engine.UserSettings.RenderLibrary = EditorUnitTests.Toggles.RenderAPI;
             XREngine.Engine.UserSettings.PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI;
             WriteBootstrapTrace($"Applied unit-test overrides: Render={EditorUnitTests.Toggles.RenderAPI}, Physics={EditorUnitTests.Toggles.PhysicsAPI}");
+            StartStartupFontPrewarm();
             
             // Initialize MCP server after last project or sandbox editor preferences are loaded
             McpServerHost.Initialize(args);
 
             // Assign the target world AFTER all settings have been applied and BEFORE windows are created, 
             // so that the render pipeline and other systems can be properly initialized.
+            RuntimeBootstrapState.DeferNonEssentialStartupWorkUntilStartupCompletes = true;
+            WriteBootstrapTrace("Deferring startup model imports until first visible frame.");
+            Stopwatch targetWorldStopwatch = Stopwatch.StartNew();
             settings.StartupWindows[0].TargetWorld = GetTargetWorld(ResolveWorldMode(args));
+            targetWorldStopwatch.Stop();
+            WriteBootstrapTrace($"Target world created in {targetWorldStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
             WriteBootstrapTrace($"BeforeCreateWindows configured target world '{settings.StartupWindows[0].TargetWorld?.Name ?? "<null>"}'.");
         }
         Engine.BeforeCreateWindows += BeforeWindowsCreated;
@@ -317,9 +326,40 @@ internal class Program
             if (s_startupStopwatch is not null)
                 return;
 
+            BootstrapStartupWork.ResetDeferredWork();
+            s_startupWindow = null;
+            s_startupWindowHooked = 0;
+            s_captureInFlight = 0;
+            s_deferredStartupWorkFlushed = 0;
+            s_fontPrewarmStarted = 0;
+            s_startupTimerStopped = 0;
+            Engine.StartupPresentationEnabled = true;
             s_startupStopwatch = Stopwatch.StartNew();
             Engine.Windows.PostAdded += OnStartupWindowAdded;
         }
+    }
+
+    private static void StartStartupFontPrewarm()
+    {
+        if (Interlocked.CompareExchange(ref s_fontPrewarmStarted, 1, 0) != 0)
+            return;
+
+        WriteBootstrapTrace("Starting default UI font prewarm.");
+        _ = Task.Run(() =>
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            try
+            {
+                _ = FontGlyphSet.LoadDefaultUIFont();
+                stopwatch.Stop();
+                WriteBootstrapTrace($"Default UI font prewarmed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms.");
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                WriteBootstrapTrace($"Default UI font prewarm failed after {stopwatch.Elapsed.TotalMilliseconds:F0} ms: {ex.Message}");
+            }
+        });
     }
 
     private static void OnStartupWindowAdded(XRWindow window)
@@ -328,7 +368,7 @@ internal class Program
             return;
 
         s_startupWindow = window;
-        //window.PostRenderViewportsCallback += OnStartupPostRenderViewports;
+        window.PostRenderViewportsCallback += OnStartupPostRenderViewports;
     }
 
     private static void OnStartupPostRenderViewports()
@@ -374,10 +414,25 @@ internal class Program
             return;
 
         s_startupStopwatch?.Stop();
+        Engine.StartupPresentationEnabled = false;
         var elapsed = s_startupStopwatch?.Elapsed.TotalMilliseconds ?? 0;
         EngineDebug.Out($"{messagePrefix} in {elapsed:F0} ms.");
         window.PostRenderViewportsCallback -= OnStartupPostRenderViewports;
         Engine.Windows.PostAdded -= OnStartupWindowAdded;
+        FlushDeferredStartupWork();
+    }
+
+    private static void FlushDeferredStartupWork()
+    {
+        if (Interlocked.CompareExchange(ref s_deferredStartupWorkFlushed, 1, 0) != 0)
+            return;
+
+        WriteBootstrapTrace("Flushing deferred startup work.");
+        _ = Engine.InvokeOnMainThread(() =>
+        {
+            BootstrapStartupWork.FlushDeferredWork();
+            WriteBootstrapTrace("Deferred startup work flushed.");
+        }, "Program.FlushDeferredStartupWork", executeNowIfAlreadyMainThread: true);
     }
 
     /// <summary>

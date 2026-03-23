@@ -271,6 +271,18 @@ namespace XREngine.Rendering
             // Material map from scene (ID -> XRMaterial)
             var materialMap = renderPasses.GetMaterialMap(scene);
 
+            if (renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
+            {
+                RenderZeroReadbackMaterialTiers(
+                    renderPasses,
+                    camera,
+                    scene,
+                    vaoRenderer,
+                    currentRenderPass,
+                    materialMap);
+                return;
+            }
+
             if (batches is null || batches.Count == 0)
                 RenderTraditional(
                     renderPasses,
@@ -1026,7 +1038,7 @@ namespace XREngine.Rendering
                     ValidateIndirectBufferState(indirectDrawBuffer, drawOffset + effectiveDrawCount, stride);
 
                 if (usingCountPath)
-                    renderer.MultiDrawElementsIndirectCount(effectiveDrawCount, stride, byteOffset);
+                    renderer.MultiDrawElementsIndirectCount(effectiveDrawCount, stride, byteOffset, 0);
                 else
                     renderer.MultiDrawElementsIndirectWithOffset(effectiveDrawCount, stride, byteOffset);
 
@@ -2582,6 +2594,156 @@ namespace XREngine.Rendering
 
             if (textBatchBuffersAttached)
                 DetachIndirectTextBatchBuffers(vaoRenderer);
+        }
+
+        private void RenderZeroReadbackMaterialTiers(
+            GPURenderPassCollection renderPasses,
+            XRCamera camera,
+            GPUScene scene,
+            XRMeshRenderer? vaoRenderer,
+            int currentRenderPass,
+            IReadOnlyDictionary<uint, XRMaterial> materialMap)
+        {
+            var renderer = AbstractRenderer.Current;
+            if (renderer is null)
+            {
+                Debug.LogWarning("No active renderer for zero-readback indirect path.");
+                return;
+            }
+
+            XRDataBuffer? indirectDrawBuffer = renderPasses.MaterialTierIndirectDrawBuffer;
+            XRDataBuffer? parameterBuffer = renderPasses.MaterialTierDrawCountBuffer;
+            XRDataBuffer? culledCommandsBuffer = renderPasses.CulledSceneToRenderBuffer;
+            if (indirectDrawBuffer is null || parameterBuffer is null || culledCommandsBuffer is null)
+            {
+                Debug.LogWarning("Zero-readback indirect path missing material-tier buffers.");
+                return;
+            }
+
+            IReadOnlyList<uint> materialSlotIds = renderPasses.MaterialSlotIds;
+            if (materialSlotIds.Count == 0)
+                return;
+
+            XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
+            XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
+            bool useGpuInstanceTransforms =
+                renderPasses.GpuBatchingPreparedThisFrame &&
+                instanceTransformBuffer is not null &&
+                instanceSourceIndexBuffer is not null;
+
+            Matrix4x4 defaultModelMatrix = Matrix4x4.Identity;
+            uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
+            uint maxDrawsPerBucket = Math.Max(renderPasses.MaxDrawsPerMaterialTier, 1u);
+
+            for (int slotIndex = 0; slotIndex < materialSlotIds.Count; ++slotIndex)
+            {
+                uint materialId = materialSlotIds[slotIndex];
+                XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
+
+                XRMaterial? sourceMaterial = null;
+                if (materialId != 0)
+                    materialMap.TryGetValue(materialId, out sourceMaterial);
+
+                XRMaterial? material = ResolveEffectiveGpuMaterial(sourceMaterial, overrideMaterial);
+                if (material is null)
+                {
+                    XRMaterial? invalidMaterial = XRMaterial.InvalidMaterial;
+                    if (invalidMaterial is null)
+                        continue;
+
+                    material = invalidMaterial;
+                }
+
+                if (TryDetectTextVertexShader(material.Shaders, out _))
+                {
+                    GpuWarn(LogCategory.Draw, "Skipping zero-readback material slot {0} (MaterialID={1}) because text-material support still requires CPU-prepared glyph buffers.", slotIndex, materialId);
+                    continue;
+                }
+
+                uint effectiveMaterialId = (uint)material.GetHashCode();
+                var program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
+                if (program is null)
+                    continue;
+
+                renderer.SetMaterialUniforms(material, program);
+                renderer.ApplyRenderParameters(material.RenderOptions);
+
+                for (uint tier = 0; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
+                {
+                    uint bucketIndex = ((uint)slotIndex * GPUBatchingBindings.MaterialTierCount) + tier;
+                    nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
+                    nuint countByteOffset = (nuint)(bucketIndex * sizeof(uint));
+
+                    DispatchRenderIndirectCountBucket(
+                        indirectDrawBuffer,
+                        vaoRenderer,
+                        culledCommandsBuffer,
+                        instanceTransformBuffer,
+                        instanceSourceIndexBuffer,
+                        useGpuInstanceTransforms,
+                        maxDrawsPerBucket,
+                        indirectByteOffset,
+                        parameterBuffer,
+                        countByteOffset,
+                        program,
+                        camera,
+                        defaultModelMatrix);
+                }
+            }
+        }
+
+        private static void DispatchRenderIndirectCountBucket(
+            XRDataBuffer indirectDrawBuffer,
+            XRMeshRenderer? vaoRenderer,
+            XRDataBuffer culledCommandsBuffer,
+            XRDataBuffer? instanceTransformBuffer,
+            XRDataBuffer? instanceSourceIndexBuffer,
+            bool useInstanceTransformBuffer,
+            uint maxDrawCount,
+            nuint indirectByteOffset,
+            XRDataBuffer parameterBuffer,
+            nuint countByteOffset,
+            XRRenderProgram graphicsProgram,
+            XRCamera camera,
+            Matrix4x4 modelMatrix)
+        {
+            var renderer = AbstractRenderer.Current;
+            if (renderer is null || maxDrawCount == 0)
+                return;
+
+            graphicsProgram.Use();
+            culledCommandsBuffer.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+            instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
+            instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
+            graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
+            renderer.SetEngineUniforms(graphicsProgram, camera);
+            graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
+
+            var version = vaoRenderer?.GetDefaultVersion();
+            renderer.BindVAOForRenderer(version);
+            if (vaoRenderer is not null)
+                renderer.ConfigureVAOAttributesForProgram(graphicsProgram, version);
+
+            IndirectParityChecklist parity = BuildIndirectParityChecklist(renderer, indirectDrawBuffer, parameterBuffer, version);
+            if (!parity.UsesCountDrawPath)
+            {
+                renderer.BindVAOForRenderer(null);
+                return;
+            }
+
+            renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
+            renderer.BindParameterBuffer(parameterBuffer);
+            try
+            {
+                renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                renderer.MultiDrawElementsIndirectCount(maxDrawCount, (uint)Marshal.SizeOf<DrawElementsIndirectCommand>(), indirectByteOffset, countByteOffset);
+            }
+            finally
+            {
+                renderer.UnbindParameterBuffer();
+                renderer.UnbindDrawIndirectBuffer();
+                renderer.BindVAOForRenderer(null);
+            }
         }
 
         public struct RenderingStats

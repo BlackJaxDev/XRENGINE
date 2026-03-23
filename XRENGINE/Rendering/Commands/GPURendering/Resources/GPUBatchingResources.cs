@@ -20,8 +20,18 @@ namespace XREngine.Rendering.Commands
         public uint PackedPassPipelineState;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GPUMaterialSlotEntry
+    {
+        public uint MaterialID;
+        public uint SlotIndex;
+    }
+
     public static class GPUBatchingBindings
     {
+        public const uint MaterialTierCount = 3u;
+        public const uint InvalidMaterialSlot = 0xFFFFFFFFu;
+
         // Graphics vertex-shader bindings
         public const int InstanceTransformBuffer = 9;
         public const int InstanceSourceIndexBuffer = 10;
@@ -47,6 +57,16 @@ namespace XREngine.Rendering.Commands
         public const int BuildBatchesTruncation = 12;
         public const int BuildBatchesStats = 13;
         public const int BuildBatchesSortScratch = 14;
+
+        // Compute GPURenderMaterialScatter.comp bindings
+        public const int MaterialScatterInputCommands = 0;
+        public const int MaterialScatterMeshData = 1;
+        public const int MaterialScatterCulledCount = 2;
+        public const int MaterialScatterSortKeys = 3;
+        public const int MaterialScatterMaterialSlotLookup = 4;
+        public const int MaterialScatterIndirectDraws = 5;
+        public const int MaterialScatterDrawCounts = 6;
+        public const int MaterialScatterOverflow = 7;
     }
 
     public static class GPUBatchingLayout
@@ -54,6 +74,7 @@ namespace XREngine.Rendering.Commands
         public const uint SortKeyUIntCount = 4;
         public const uint BatchRangeUIntCount = 4;
         public const uint InstanceTransformFloatCount = 16;
+        public const uint MaterialSlotEntryUIntCount = 1;
 
         public static readonly uint SortKeyStride = (uint)Marshal.SizeOf<GPUSortKeyEntry>();
         public static readonly uint BatchRangeStride = (uint)Marshal.SizeOf<GPUBatchRangeEntry>();

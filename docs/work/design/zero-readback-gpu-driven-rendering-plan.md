@@ -23,7 +23,7 @@ The GPU must handle the rest without CPU readback or CPU-side draw orchestration
 
 The core change is architectural, not cosmetic: the current path still performs CPU-visible reads of GPU-produced counters and batch ranges, then iterates material batches on the CPU to issue indirect draws. That design preserves much of the synchronization cost of a traditional renderer while paying the complexity cost of a GPU-driven one. The target design removes all runtime CPU readbacks from the shipping GPU path.
 
-This plan supersedes the hybrid assumptions in `docs/work/design/IndirectGPURendering-Design.md` where CPU batch iteration remained part of the render loop.
+This plan supersedes the earlier hybrid assumptions where CPU batch iteration remained part of the render loop. The indirect GPU rendering architecture reference is now consolidated into `docs/work/todo/gpu-rendering.md`.
 
 ---
 

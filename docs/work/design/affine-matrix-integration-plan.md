@@ -252,6 +252,6 @@ Adopt `AffineMatrix4x3` as an internal optimization type in the transform and re
 
 ## Related Documents
 
-- [Affine Matrix Audit](../audit/affine-matrix4x3-audit-2026-03-18.md)
+- [Affine Matrix Phase 4 Closeout - 2026-03-19](../audit/affine-matrix-phase4-closeout-2026-03-19.md)
 - [XREngine.Data/Transforms/AffineMatrix4x3.cs](../../../XREngine.Data/Transforms/AffineMatrix4x3.cs)
 - [XREngine.Benchmarks/AffineMatrixBenchmarks.cs](../../../XREngine.Benchmarks/AffineMatrixBenchmarks.cs)

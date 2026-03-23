@@ -810,7 +810,7 @@ namespace XREngine.Rendering
         /// </summary>
         public abstract void MultiDrawElementsIndirect(uint drawCount, uint stride);
         public abstract void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset);
-        public abstract void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset = 0);
+        public abstract void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset = 0, nuint countByteOffset = 0);
 
         /// <summary>
         /// Apply the given render parameters (depth/blend/cull/stencil, etc.).

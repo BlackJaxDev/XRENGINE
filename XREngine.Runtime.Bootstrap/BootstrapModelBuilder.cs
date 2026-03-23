@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -17,6 +19,11 @@ public static class BootstrapModelBuilder
             Debug.LogWarning("[BootstrapModelBuilder] Model import requested, but no bootstrap model-import bridge is registered.");
             return;
         }
+
+        if (BootstrapStartupWork.TryQueueDeferredWork(
+            () => importBridge.ImportModels(desktopDir, rootNode, characterParentNode),
+            "[BootstrapModelBuilder] Deferred startup model imports until the first visible frame."))
+            return;
 
         importBridge.ImportModels(desktopDir, rootNode, characterParentNode);
     }

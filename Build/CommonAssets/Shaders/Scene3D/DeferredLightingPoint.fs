@@ -127,6 +127,7 @@ in vec3 rms)
 }
 void main()
 {
+    vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
 #ifdef XRENGINE_MSAA_DEFERRED
 	ivec2 coord = ivec2(gl_FragCoord.xy);
 	vec3 albedo = texelFetch(AlbedoOpacity, coord, gl_SampleID).rgb;
@@ -134,14 +135,18 @@ void main()
 	vec3 rms = texelFetch(RMSE, coord, gl_SampleID).rgb;
 	float depth = texelFetch(DepthView, coord, gl_SampleID).r;
 #else
-	vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
-
 	//Retrieve shading information from GBuffer textures
 	vec3 albedo = texture(AlbedoOpacity, uv).rgb;
 	vec3 normal = XRENGINE_ReadNormal(Normal, uv);
 	vec3 rms = texture(RMSE, uv).rgb;
 	float depth = texture(DepthView, uv).r;
 #endif
+
+	if (depth >= 1.0f)
+	{
+		OutColor = vec3(0.0f);
+		return;
+	}
 
 	//Resolve world fragment position using depth and screen UV
 	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);

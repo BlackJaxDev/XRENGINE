@@ -770,6 +770,10 @@ public partial class DefaultRenderPipeline2
             }
         };
 
+        // Wire probe/AO binding through the material's SettingUniforms so that probe sampler
+        // locations are registered in _boundSamplerLocations BEFORE BindFallbackSamplers runs.
+        lightCombineMat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);
+
         var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat) { Name = LightCombineFBOName };
 
         if (diffuseTexture is not IFrameBufferAttachement attach)
@@ -780,7 +784,6 @@ public partial class DefaultRenderPipeline2
         }
         lightCombineFBO.SetRenderTargets((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
 
-        lightCombineFBO.SettingUniforms += LightCombineFBO_SettingUniforms;
         return lightCombineFBO;
     }
 
@@ -994,11 +997,11 @@ public partial class DefaultRenderPipeline2
         var msaaLightingTexture = GetTexture<XRTexture>(MsaaLightingTextureName)!;
 
         XRTexture[] textures = [
-            GetTexture<XRTexture>(AlbedoOpacityTextureName)!,
-            GetTexture<XRTexture>(NormalTextureName)!,
-            GetTexture<XRTexture>(RMSETextureName)!,
+            GetTexture<XRTexture>(MsaaAlbedoOpacityTextureName)!,
+            GetTexture<XRTexture>(MsaaNormalTextureName)!,
+            GetTexture<XRTexture>(MsaaRMSETextureName)!,
             GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName)!,
-            GetTexture<XRTexture>(DepthViewTextureName)!,
+            GetTexture<XRTexture>(MsaaDepthViewTextureName)!,
             msaaLightingTexture,
             GetTexture<XRTexture>(BRDFTextureName)!,
         ];
@@ -1017,12 +1020,18 @@ public partial class DefaultRenderPipeline2
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                StencilTest = new()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
                 RequiredEngineUniforms = EUniformRequirements.Camera
             }
         };
 
+        // Wire through material SettingUniforms (same reason as non-MSAA path above).
+        mat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);
+
         var fbo = new XRQuadFrameBuffer(mat, true, false) { Name = MsaaLightCombineFBOName };
-        fbo.SettingUniforms += LightCombineFBO_SettingUniforms;
         return fbo;
     }
 }

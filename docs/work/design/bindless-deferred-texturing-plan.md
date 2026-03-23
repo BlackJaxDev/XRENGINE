@@ -6,7 +6,7 @@ Scope: renderer-level plan for adding bindless deferred texturing to XRENGINE ac
 
 Related docs:
 
-- [Indirect GPU Rendering Architecture](IndirectGPURendering-Design.md)
+- [GPU-Based Rendering TODO](../todo/gpu-rendering.md)
 - [GPU Render Pass Pipeline](gpu-render-pass-pipeline.md)
 - [Transparency And OIT Implementation Plan](transparency-and-oit-implementation-plan.md)
 - [OpenGL Renderer](../../architecture/rendering/opengl-renderer.md)

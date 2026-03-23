@@ -162,6 +162,7 @@ namespace XREngine.Rendering.Commands
         private bool _passValidateCopyCommandAtomicBounds;
         private bool _passAllowCpuFallback;
         private bool _passDiagnosticReadbacksEnabled;
+        private bool _passEnableZeroReadbackMaterialScatter;
         private int _forbiddenFallbackLogBudget = 8;
 
         public static void ConfigureIndirectDebug(Action<IndirectDebugSettings> configure)
@@ -232,8 +233,15 @@ namespace XREngine.Rendering.Commands
             _passValidationLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectValidationLogging;
 
             bool shippingFast = IsShippingHotOnlyProfile();
-            _passDisableCpuReadbackCount = shippingFast || IndirectDebug.DisableCpuReadbackCount;
-            _passEnableCpuBatching = !shippingFast && IndirectDebug.EnableCpuBatching;
+
+            _passEnableZeroReadbackMaterialScatter = shippingFast
+                || (Engine.EditorPreferences?.Debug?.EnableZeroReadbackMaterialScatter == true)
+                || Engine.EffectiveSettings.EnableZeroReadbackMaterialScatter;
+            EnableZeroReadbackMaterialScatter = _passEnableZeroReadbackMaterialScatter;
+
+            // When zero-readback scatter is active, all CPU count readbacks are redundant.
+            _passDisableCpuReadbackCount = shippingFast || IndirectDebug.DisableCpuReadbackCount || _passEnableZeroReadbackMaterialScatter;
+            _passEnableCpuBatching = !shippingFast && !_passEnableZeroReadbackMaterialScatter && IndirectDebug.EnableCpuBatching;
             _passProbeSourceCommands = !shippingFast && IndirectDebug.ProbeSourceCommandsBeforeCopy;
             _passLogCountBufferWrites = !shippingFast && IndirectDebug.LogCountBufferWrites && _passDebugLoggingEnabled;
             _passValidateCopyCommandAtomicBounds = IndirectDebug.ValidateCopyCommandAtomicBounds;
@@ -245,6 +253,7 @@ namespace XREngine.Rendering.Commands
                 && (!VulkanFeatureProfile.IsActive || VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
 
             _passDiagnosticReadbacksEnabled = !shippingFast
+                && !_passEnableZeroReadbackMaterialScatter
                 && (_passDebugLoggingEnabled
                     || _passValidationLoggingEnabled
                     || !_passDisableCpuReadbackCount
@@ -480,6 +489,7 @@ namespace XREngine.Rendering.Commands
         //public XRRenderProgram? RadixSortComputeShader;
         public XRRenderProgram? _buildKeysComputeShader;
         public XRRenderProgram? _buildGpuBatchesComputeShader;
+        public XRRenderProgram? _materialScatterComputeShader;
         //public XRRenderProgram? RadixIndexSortComputeShader;
         public XRRenderProgram? _indirectRenderTaskShader;
         public XRRenderProgram? _buildHotCommandsProgram;
@@ -571,6 +581,9 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _indirectOverflowFlagBuffer;
         private XRDataBuffer? _gpuBatchRangeBuffer;
         private XRDataBuffer? _gpuBatchCountBuffer;
+        private XRDataBuffer? _materialSlotLookupBuffer;
+        private XRDataBuffer? _materialTierIndirectDrawBuffer;
+        private XRDataBuffer? _materialTierDrawCountBuffer;
         private XRDataBuffer? _instanceTransformBuffer;
         private XRDataBuffer? _instanceSourceIndexBuffer;
         private XRDataBuffer? _materialAggregationBuffer;
@@ -579,8 +592,13 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _exactTransparentVisibleIndexBuffer;
         private XRDataBuffer? _transparencyDomainCountBuffer;
         private bool _gpuBatchingPreparedThisFrame;
+        private bool _zeroReadbackMaterialScatterPreparedThisFrame;
+        private readonly List<uint> _materialSlotIds = [];
+        private uint _materialTierBucketCount;
+        private uint _maxDrawsPerMaterialTier;
         public bool EnableGpuDrivenBatching { get; set; } = true;
         public bool EnableGpuDrivenInstancing { get; set; } = true;
+        public bool EnableZeroReadbackMaterialScatter { get; set; } = false;
 
         /// <summary>
         /// If true, the material ID is included in the sorting key to reduce overdraw.
@@ -638,6 +656,9 @@ namespace XREngine.Rendering.Commands
         public XRDataBuffer? CulledCountBuffer => _culledCountBuffer;
         public XRDataBuffer? DrawCountBuffer => _drawCountBuffer;
         public XRDataBuffer? IndirectDrawBuffer => _indirectDrawBuffer;
+        public XRDataBuffer? MaterialTierIndirectDrawBuffer => _materialTierIndirectDrawBuffer;
+        public XRDataBuffer? MaterialTierDrawCountBuffer => _materialTierDrawCountBuffer;
+        public XRDataBuffer? MaterialSlotLookupBuffer => _materialSlotLookupBuffer;
         public XRDataBuffer? IndirectOverflowFlagBuffer => _indirectOverflowFlagBuffer;
         public XRDataBuffer? TruncationFlagBuffer => _truncationFlagBuffer;
         public XRDataBuffer? StatsBuffer => _statsBuffer;
@@ -645,6 +666,10 @@ namespace XREngine.Rendering.Commands
         public XRDataBuffer? ApproximateTransparentVisibleIndexBuffer => _approximateTransparentVisibleIndexBuffer;
         public XRDataBuffer? ExactTransparentVisibleIndexBuffer => _exactTransparentVisibleIndexBuffer;
         public XRDataBuffer? TransparencyDomainCountBuffer => _transparencyDomainCountBuffer;
+        public IReadOnlyList<uint> MaterialSlotIds => _materialSlotIds;
+        public uint MaterialTierBucketCount => _materialTierBucketCount;
+        public uint MaxDrawsPerMaterialTier => _maxDrawsPerMaterialTier;
+        public bool ZeroReadbackMaterialScatterPreparedThisFrame => _zeroReadbackMaterialScatterPreparedThisFrame;
         public uint CommandCapacity => _lastMaxCommands == 0u ? GPUScene.MinCommandCount : _lastMaxCommands;
 
         // Returns the current scene material map (ID -> XRMaterial)

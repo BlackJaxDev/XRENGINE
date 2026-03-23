@@ -63,6 +63,7 @@ public unsafe partial class VulkanRenderer
         uint DrawCount,
         uint Stride,
         nuint ByteOffset,
+        nuint CountByteOffset,
         bool UseCount,
         FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 

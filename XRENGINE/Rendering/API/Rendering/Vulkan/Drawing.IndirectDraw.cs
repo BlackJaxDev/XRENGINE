@@ -169,6 +169,7 @@ namespace XREngine.Rendering.Vulkan
                 drawCount,
                 stride,
                 byteOffset,
+                0,
                 UseCount: false,
                 CaptureFrameOpContext()));
 
@@ -176,7 +177,7 @@ namespace XREngine.Rendering.Vulkan
             Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
         }
 
-        public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset)
+        public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
         {
             if (!_supportsDrawIndirectCount)
             {
@@ -212,6 +213,7 @@ namespace XREngine.Rendering.Vulkan
                 maxDrawCount,
                 stride,
                 byteOffset,
+                countByteOffset,
                 UseCount: true,
                 CaptureFrameOpContext()));
 

@@ -646,6 +646,10 @@ namespace XREngine.Rendering.Commands
             if (CulledSceneToRenderBuffer is null)
                 return;
 
+            // CPU occlusion queries require reading count from GPU — skip when readback is disabled.
+            if (IsCpuReadbackCountDisabledForPass())
+                return;
+
             uint inputCount = ReadUIntAt(_culledCountBuffer!, GPUScene.VisibleCountDrawIndex);
             if (inputCount == 0u)
                 return;
@@ -678,6 +682,10 @@ namespace XREngine.Rendering.Commands
         {
             if (CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
                 return 0u;
+
+            // CPU temporal filter requires GPU count readback — pass through all candidates when disabled.
+            if (IsCpuReadbackCountDisabledForPass())
+                return candidates;
 
             uint inputCount = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
             if (inputCount == 0u)

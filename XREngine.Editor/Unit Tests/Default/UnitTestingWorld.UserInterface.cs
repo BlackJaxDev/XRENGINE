@@ -202,6 +202,12 @@ public static partial class EditorUnitTests
         public static UICanvasComponent CreateEditorUI(SceneNode parent, CameraComponent? screenSpaceCamera, PawnComponent? pawnForInput = null)
         {
             using var profilerScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI");
+            var createUiStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            Debug.Out(
+                "[StartupUI] CreateEditorUI begin: DrawSpace={0}, EditorType={1}, Rive={2}",
+                Toggles.CameraUIDrawSpaceOnInit,
+                Toggles.EditorType,
+                Toggles.RiveUI);
 
             // Create as a root/editor node (not parented under gameplay nodes).
             // Editor-only migration in the world instance only applies to root nodes.
@@ -335,6 +341,7 @@ public static partial class EditorUnitTests
             if (addDearImGui)
             {
                 using var imGuiScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI.DearImGui");
+                var imGuiStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 SceneNode dearImGuiNode = new(rootCanvasNode) { Name = "Dear ImGui Node" };
                 var tfm = dearImGuiNode.SetTransform<UIBoundableTransform>();
                 tfm.MinAnchor = new Vector2(0.0f, 0.0f);
@@ -345,11 +352,14 @@ public static partial class EditorUnitTests
 
                 var dearImGuiComponent = dearImGuiNode.AddComponent<DearImGuiComponent>();
                 dearImGuiComponent?.Draw += EditorImGuiUI.RenderEditor;
+                imGuiStopwatch.Stop();
+                Debug.Out("[StartupUI] DearImGui node ready in {0:F1} ms.", imGuiStopwatch.Elapsed.TotalMilliseconds);
             }
             
             if (Toggles.EditorType == UnitTestEditorType.Native)
             {
                 using var editorUiScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI.Native");
+                var nativeUiStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 //This will take care of editor UI arrangement operations for us
                 var mainUINode = rootCanvasNode.NewChild<UIEditorComponent>(out UIEditorComponent? editorComp);
                 if (editorComp.UITransform is UIBoundableTransform tfm)
@@ -367,12 +377,17 @@ public static partial class EditorUnitTests
 
                 GameCSProjLoader.OnAssemblyLoaded += GameCSProjLoader_OnAssemblyLoaded;
                 GameCSProjLoader.OnAssemblyUnloaded += GameCSProjLoader_OnAssemblyUnloaded;
+                nativeUiStopwatch.Stop();
+                Debug.Out("[StartupUI] Native editor UI ready in {0:F1} ms.", nativeUiStopwatch.Elapsed.TotalMilliseconds);
             }
 
             AddFPSText(null, rootCanvasNode);
 
             if (Toggles.VRPawn && Toggles.PreviewVRStereoViews)
                 CreateVRStereoPreviewOverlay(rootCanvasNode);
+
+            createUiStopwatch.Stop();
+            Debug.Out("[StartupUI] CreateEditorUI complete in {0:F1} ms.", createUiStopwatch.Elapsed.TotalMilliseconds);
 
             return canvas;
         }
