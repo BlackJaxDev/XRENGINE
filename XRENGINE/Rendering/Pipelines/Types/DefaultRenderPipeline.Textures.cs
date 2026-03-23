@@ -431,7 +431,7 @@ public partial class DefaultRenderPipeline
         t.MinFilter = ETexMinFilter.Nearest;
         t.MagFilter = ETexMagFilter.Nearest;
         t.Name = MsaaAlbedoOpacityTextureName;
-        t.SamplerName = MsaaAlbedoOpacityTextureName;
+        t.SamplerName = AlbedoOpacityTextureName;
         return t;
     }
 
@@ -447,7 +447,7 @@ public partial class DefaultRenderPipeline
         t.MinFilter = ETexMinFilter.Nearest;
         t.MagFilter = ETexMagFilter.Nearest;
         t.Name = MsaaNormalTextureName;
-        t.SamplerName = MsaaNormalTextureName;
+        t.SamplerName = NormalTextureName;
         return t;
     }
 
@@ -460,7 +460,7 @@ public partial class DefaultRenderPipeline
             EPixelType.UnsignedByte);
         t.MultiSampleCount = MsaaSampleCount;
         t.Name = MsaaRMSETextureName;
-        t.SamplerName = MsaaRMSETextureName;
+        t.SamplerName = RMSETextureName;
         return t;
     }
 
@@ -492,7 +492,7 @@ public partial class DefaultRenderPipeline
         {
             DepthStencilViewFormat = EDepthStencilFmt.Depth,
             Name = MsaaDepthViewTextureName,
-            SamplerName = MsaaDepthViewTextureName,
+            SamplerName = DepthViewTextureName,
         };
     }
 
@@ -552,7 +552,7 @@ public partial class DefaultRenderPipeline
             EPixelType.HalfFloat);
         t.MultiSampleCount = MsaaSampleCount;
         t.Name = MsaaLightingTextureName;
-        t.SamplerName = MsaaLightingTextureName;
+        t.SamplerName = "LightingTextureMS";
         return t;
     }
 

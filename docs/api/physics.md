@@ -137,4 +137,5 @@ Known gaps to keep in mind:
 - [Scene System](scene.md)
 - [Rendering System](rendering.md)
 - [Animation System](animation.md)
-- [GPU Physics Chain Verification](../work/design/gpu-physics-chain-engine-verification.md)
+- [Physics Chain Speed Update TODO](../work/todo/physics-chain-speed-update-todo.md)
+- [GPU Physics Chain Zero-Readback Skinned Mesh Plan](../work/design/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)

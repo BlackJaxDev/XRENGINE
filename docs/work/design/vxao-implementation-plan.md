@@ -33,7 +33,7 @@ Relevant current code and docs:
 - `XREngine/Rendering/Pipelines/Commands/Features/VPRC_VoxelConeTracingPass.cs`
 - `XREngine/Rendering/Pipelines/Types/DefaultRenderPipeline.Textures.cs`
 - `docs/features/gi/voxel-cone-tracing.md`
-- `docs/work/design/non-hbao-ambient-occlusion-audit.md`
+- `docs/work/todo/non-hbao-ambient-occlusion-remediation.md`
 
 What exists today:
 

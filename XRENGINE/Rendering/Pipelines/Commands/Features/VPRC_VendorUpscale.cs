@@ -1,4 +1,7 @@
+using System;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.DLSS;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.XeSS;
 
@@ -7,6 +10,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Attempts to run a vendor-provided upscale pass (Intel XeSS or NVIDIA DLSS) before the final blit.
     /// Falls back to the standard quad blit when no upscaler is available.
+    /// When the source FBO is a plain <see cref="XRFrameBuffer"/> (not <see cref="XRQuadFrameBuffer"/>),
+    /// resolves its first color texture and presents it via a passthrough quad.
     /// </summary>
     public class VPRC_VendorUpscale : VPRC_RenderQuadFBO
     {
@@ -19,6 +24,68 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static bool _reportedDlssApiMismatch;
         private static bool _reportedXessFrameGenUnavailable;
 
+        private XRMaterial? _fallbackMaterial;
+        private XRQuadFrameBuffer? _fallbackQuad;
+        private XRTexture? _fallbackSourceTexture;
+
+        private const string FallbackShaderCode = """
+#version 450
+
+layout(location = 0) out vec4 OutColor;
+layout(location = 0) in vec3 FragPos;
+
+uniform sampler2D SourceTexture;
+
+void main()
+{
+    vec2 clipXY = FragPos.xy;
+    if (clipXY.x < -1.0 || clipXY.x > 1.0 || clipXY.y < -1.0 || clipXY.y > 1.0)
+        discard;
+
+    vec2 uv = clipXY * 0.5 + 0.5;
+    OutColor = texture(SourceTexture, uv);
+}
+""";
+
+        internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
+        {
+            base.AllocateContainerResources(instance);
+            if (_fallbackQuad is not null)
+                return;
+
+            _fallbackMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, FallbackShaderCode))
+            {
+                RenderOptions = new RenderingParameters()
+                {
+                    DepthTest = new DepthTest()
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
+                        Function = EComparison.Always,
+                        UpdateDepth = false,
+                    }
+                }
+            };
+
+            _fallbackQuad = new XRQuadFrameBuffer(_fallbackMaterial);
+            _fallbackQuad.SettingUniforms += FallbackSettingUniforms;
+        }
+
+        internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
+        {
+            if (_fallbackQuad is not null)
+            {
+                _fallbackQuad.SettingUniforms -= FallbackSettingUniforms;
+                _fallbackQuad.Destroy();
+                _fallbackQuad = null;
+            }
+
+            _fallbackMaterial?.Destroy();
+            _fallbackMaterial = null;
+            _fallbackSourceTexture = null;
+
+            base.ReleaseContainerResources(instance);
+        }
+
         protected override void Execute()
         {
             if (TryRunXess())
@@ -27,7 +94,40 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (TryRunDlss())
                 return;
 
-            base.Execute();
+            // Standard quad blit requires XRQuadFrameBuffer.
+            if (FrameBufferName is not null &&
+                ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName) is not null)
+            {
+                base.Execute();
+                return;
+            }
+
+            // Source is a plain XRFrameBuffer (e.g., SMAA output).
+            // Resolve its first color texture and present via passthrough quad.
+            FallbackBlit();
+        }
+
+        private void FallbackBlit()
+        {
+            if (FrameBufferName is null || _fallbackQuad is null)
+                return;
+
+            if (!VPRCSourceTextureHelpers.TryResolveColorTexture(
+                    ActivePipelineInstance, null, FrameBufferName, out XRTexture? colorTexture, out _)
+                || colorTexture is null)
+                return;
+
+            _fallbackSourceTexture = colorTexture;
+            _fallbackQuad.Render(
+                TargetFrameBufferName is not null
+                    ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
+                    : null);
+        }
+
+        private void FallbackSettingUniforms(XRRenderProgram program)
+        {
+            if (_fallbackSourceTexture is not null)
+                program.Sampler("SourceTexture", _fallbackSourceTexture, 0);
         }
 
         private bool TryRunXess()

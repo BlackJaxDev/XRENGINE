@@ -875,10 +875,8 @@ namespace XREngine.Rendering.Commands
                         }
                         else
                         {
-                            // Fallback: copy via struct array to avoid componentCount mismatch
-                            var commands = _updatingCommandsBuffer.GetDataArrayRawAtIndex<GPUIndirectRenderCommand>(0, (int)elementCount);
-                            _allLoadedCommandsBuffer.SetDataArrayRawAtIndex(0, commands);
-                            _allLoadedCommandsBuffer.PushSubData(0, byteCount);
+                            // Both buffers should always have client-side sources; if not, the copy cannot proceed.
+                            Debug.LogWarning("GPUScene: Command buffer TryGetAddress failed during swap — client-side source missing.");
                         }
                     }
                 }
@@ -905,9 +903,8 @@ namespace XREngine.Rendering.Commands
                         }
                         else
                         {
-                            var metadata = _updatingTransparencyMetadataBuffer.GetDataArrayRawAtIndex<GPUTransparencyMetadata>(0, (int)elementCount);
-                            _allLoadedTransparencyMetadataBuffer.SetDataArrayRawAtIndex(0, metadata);
-                            _allLoadedTransparencyMetadataBuffer.PushSubData(0, byteCount);
+                            // Both buffers should always have client-side sources; if not, the copy cannot proceed.
+                            Debug.LogWarning("GPUScene: Transparency metadata buffer TryGetAddress failed during swap — client-side source missing.");
                         }
                     }
                 }
@@ -1554,15 +1551,21 @@ namespace XREngine.Rendering.Commands
 
             EnsureMeshDataCapacity(meshID + 1);
 
-            if (meshID < MeshDataBuffer.ElementCount)
-            {
-                entry = MeshDataBuffer.GetDataRawAtIndex<MeshDataEntry>(meshID);
-                if (entry.IndexCount != 0)
-                    return true;
-            }
-
+            // CPU-side lookup: _atlasMeshOffsets is the authoritative source, avoiding GPU readback.
             if (_idToMesh.TryGetValue(meshID, out var mesh) && mesh is not null)
             {
+                if (_atlasMeshOffsets.TryGetValue(mesh, out var offsets) && offsets.indexCount > 0)
+                {
+                    entry = new MeshDataEntry
+                    {
+                        IndexCount = (uint)offsets.indexCount,
+                        FirstIndex = (uint)offsets.firstIndex,
+                        FirstVertex = (uint)offsets.firstVertex,
+                        BaseInstance = 0
+                    };
+                    return true;
+                }
+
                 if (_unsupportedMeshMessages.ContainsKey(mesh))
                 {
                     SceneLog($"TryGetMeshDataEntry: meshID={meshID} already marked unsupported (mesh={mesh.Name ?? "<unnamed>"}).");
@@ -1586,9 +1589,18 @@ namespace XREngine.Rendering.Commands
                     _meshDataDirty = false;
                 }
 
-                entry = MeshDataBuffer.GetDataRawAtIndex<MeshDataEntry>(meshID);
-                if (entry.IndexCount != 0)
+                // Re-check CPU-side cache after hydration
+                if (_atlasMeshOffsets.TryGetValue(mesh, out offsets) && offsets.indexCount > 0)
+                {
+                    entry = new MeshDataEntry
+                    {
+                        IndexCount = (uint)offsets.indexCount,
+                        FirstIndex = (uint)offsets.firstIndex,
+                        FirstVertex = (uint)offsets.firstVertex,
+                        BaseInstance = 0
+                    };
                     return true;
+                }
             }
 
             entry = default;

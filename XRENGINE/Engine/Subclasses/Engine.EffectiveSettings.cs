@@ -235,6 +235,16 @@ namespace XREngine
                     UserSettings?.EnableGpuIndirectCpuFallbackOverride);
 
             /// <summary>
+            /// Gets the effective zero-readback material scatter setting.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static bool EnableZeroReadbackMaterialScatter
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.EnableZeroReadbackMaterialScatter,
+                    GameSettings?.EnableZeroReadbackMaterialScatterOverride,
+                    UserSettings?.EnableZeroReadbackMaterialScatterOverride);
+
+            /// <summary>
             /// Gets the effective anti-aliasing mode.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>

@@ -32,6 +32,17 @@ The engine process has **two background threads** when profiling is active:
 | `XREngine.ProfilerStats` | BelowNormal | Drains the `ConcurrentQueue<ProfilerEvent>`, builds per-thread call-tree snapshots at ~30 Hz, publishes via volatile reference swap (lock-free). |
 | `XREngine.ProfilerSender` | BelowNormal | Every ~33 ms: reads engine snapshots via 6 delegate collectors, serializes with MemoryPack, sends as UDP datagrams to `127.0.0.1:9142`. |
 
+## Implementation Status
+
+The remote-profiler design is now implemented in shipping repo code:
+
+- `XREngine.Profiler` provides the standalone Silk.NET + ImGui application.
+- `XREngine.Profiler.UI` provides the shared panel renderer used by both the standalone app and the editor.
+- `Engine.ProfilerSender.cs` and `UdpProfilerSender` bridge engine snapshots into the UDP protocol.
+- Editor preferences can enable UDP sending at runtime and optionally launch the standalone profiler on startup.
+
+Published launcher builds compile out the runtime profiler sender and related live profiling hooks behind `XRE_PUBLISHED`, so shipped builds do not keep the editor/developer profiling surface active.
+
 ## Engine-Side Overhead
 
 ### When profiling is **disabled** (default)

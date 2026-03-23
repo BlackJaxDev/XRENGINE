@@ -3614,10 +3614,10 @@ void main()
             Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
         }
 
-        public override unsafe void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset)
+        public override unsafe void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
         {
             var (prim, elem) = GetActivePrimitiveAndElementType();
-            Api.MultiDrawElementsIndirectCount(prim, elem, (void*)byteOffset, IntPtr.Zero, maxDrawCount, stride);
+            Api.MultiDrawElementsIndirectCount(prim, elem, (void*)byteOffset, (IntPtr)countByteOffset, maxDrawCount, stride);
             Engine.Rendering.Stats.IncrementMultiDrawCalls();
             // Note: actual draw count is determined by GPU, we track max as approximation
             Engine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);

@@ -122,6 +122,7 @@ namespace XREngine
                 private bool _enableGpuIndirectDebugLogging = false;
                 private bool _enableGpuIndirectCpuFallback = false;
                 private bool _enableGpuIndirectValidationLogging = false;
+                private bool _enableZeroReadbackMaterialScatter = false;
 
                 /// <summary>
                 /// Whether to enable frame logging for performance profiling.
@@ -187,6 +188,19 @@ namespace XREngine
                 {
                     get => _enableGpuIndirectValidationLogging;
                     set => SetField(ref _enableGpuIndirectValidationLogging, value);
+                }
+
+                /// <summary>
+                /// Whether to enable zero-readback material scatter for GPU-driven rendering.
+                /// When enabled, the GPU scatter shader writes per-material indirect draw commands
+                /// and the CPU never reads GPU buffers during the rendering hot path.
+                /// </summary>
+                [Category("GPU Rendering")]
+                [Description("Enable zero-readback material scatter for GPU-driven rendering. Eliminates CPU readback of GPU batch ranges.")]
+                public bool EnableZeroReadbackMaterialScatter
+                {
+                    get => _enableZeroReadbackMaterialScatter;
+                    set => SetField(ref _enableZeroReadbackMaterialScatter, value);
                 }
 
                 #endregion

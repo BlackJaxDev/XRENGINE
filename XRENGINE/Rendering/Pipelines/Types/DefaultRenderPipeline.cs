@@ -909,7 +909,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 MsaaLightCombineFBOName,
                 CreateMsaaLightCombineFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateMsaaFbo);
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 DepthPreloadFBOName,
                 CreateDepthPreloadFBO,
@@ -2324,6 +2325,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         if (!UsesLightProbeGI)
         {
+            Debug.RenderingEvery("ProbeGI.Disabled", TimeSpan.FromSeconds(5),
+                "[ProbeGI] GI mode disabled (UsesLightProbeGI=false)");
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
@@ -2334,6 +2337,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
         var world = RenderingWorld;
         if (world is null)
         {
+            Debug.RenderingEvery("ProbeGI.NoWorld", TimeSpan.FromSeconds(5),
+                "[ProbeGI] RenderingWorld is null");
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
@@ -2345,6 +2350,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
         var readyProbes = GetReadyProbes(probes);
         if (readyProbes.Count == 0)
         {
+            Debug.RenderingEvery("ProbeGI.NoReady", TimeSpan.FromSeconds(5),
+                "[ProbeGI] No ready probes. Total={0}, Ready=0 (need IrradianceTexture+PrefilterTexture)", probes.Count);
             ClearProbeResources();
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
@@ -2365,11 +2372,20 @@ public partial class DefaultRenderPipeline : RenderPipeline
         program.Uniform("ForwardPbrResourcesEnabled", enabled);
         if (!enabled)
         {
+            Debug.RenderingEvery("ProbeGI.NotEnabled", TimeSpan.FromSeconds(5),
+                "[ProbeGI] Resources not ready after build. BRDF={0}, IrrArr={1}, PreArr={2}, PosBuffer={3}, ParamBuffer={4}",
+                brdfTexture is not null, _probeIrradianceArray is not null,
+                _probePrefilterArray is not null, _probePositionBuffer is not null,
+                _probeParamBuffer is not null);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
             program.Uniform("UseProbeGrid", false);
             return false;
         }
+
+        Debug.RenderingEvery("ProbeGI.Bound", TimeSpan.FromSeconds(10),
+            "[ProbeGI] Probes bound successfully. Ready={0}, ProbeCount={1}",
+            readyProbes.Count, (int)_probePositionBuffer!.ElementCount);
 
         program.Sampler("IrradianceArray", _probeIrradianceArray!, 7);
         program.Sampler("PrefilterArray", _probePrefilterArray!, 8);

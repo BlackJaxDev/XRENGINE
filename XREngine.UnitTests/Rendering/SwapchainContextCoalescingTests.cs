@@ -84,7 +84,7 @@ public sealed class SwapchainContextCoalescingTests
     /// <summary>Creates an <see cref="IndirectDrawOp"/> (always targets swapchain — Target is always null).</summary>
     private static IndirectDrawOp SwapchainIndirectDraw(int passIndex, FrameOpContext ctx) =>
         new(passIndex, IndirectBuffer: null!, ParameterBuffer: null, DrawCount: 0,
-            Stride: 0, ByteOffset: 0, UseCount: false, Context: ctx);
+            Stride: 0, ByteOffset: 0, CountByteOffset: 0, UseCount: false, Context: ctx);
 
     /// <summary>Creates a <see cref="ComputeDispatchOp"/> (never targets swapchain).</summary>
     private static ComputeDispatchOp ComputeDispatch(int passIndex, FrameOpContext ctx) =>

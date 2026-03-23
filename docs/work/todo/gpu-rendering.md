@@ -1,505 +1,781 @@
-# GPU-Based Rendering TODO (OpenGL + Vulkan)
+# GPU-Driven Rendering Pipeline — Zero-Readback Architecture TODO
 
-Last Updated: 2026-02-11
-Current Status: Not production-ready
-Primary Objective: Ship a fully GPU-driven, VR-first render path with minimal CPU stalls and backend parity across OpenGL and Vulkan.
+Last Updated: 2026-03-22
+Status: Active development — core pipeline functional, LOD system and zero-readback completion remain.
 
-## Vision
+## Executive Summary
 
-The render thread should submit work, not build work.
+The GPU-driven rendering pipeline must achieve **zero CPU readbacks** in the shipping render path. All culling (BVH traversal, frustum, occlusion), LOD selection, sort/batch generation, and draw dispatch must execute entirely on the GPU. The CPU's role is scene ingest (command add/remove/update via subdata) and issuing a fixed sequence of compute dispatches followed by `MultiDrawElementsIndirectCount` — nothing more.
 
-Target runtime behavior:
-1. Scene changes stream to GPU buffers with subdata updates and no per-frame full rebuilds.
-2. Culling, pass filtering, occlusion culling, command compaction, material/pipeline binning, and draw count generation run on GPU.
-3. CPU does not map/read large GPU buffers in the hot path.
-4. Multi-draw indirect is used consistently on OpenGL and Vulkan with equivalent behavior.
-5. One visibility/cull flow fans out efficiently to VR stereo outputs (full + foveated) and desktop mirror without duplicate scene traversal.
+Two rendering paths are supported:
+1. **Traditional indirect multi-draw** — GPU builds `DrawElementsIndirectCommand` arrays, CPU issues `MultiDrawElementsIndirectCount` per material state group.
+2. **Meshlet-based mesh shaders** — GPU task shaders cull meshlets, mesh shaders emit triangles. No indirect draw buffer needed.
 
-## Production Gates
+Both paths share the same scene representation (`GPUScene`), BVH, and culling infrastructure.
 
-The pipeline is production-ready only when all gates are true:
+---
 
-- Correctness
-  - No missing or wrong draws during object move/add/remove/material changes.
-  - No invalid draw command references after atlas changes.
-  - Pass filtering, frustum/BVH culling, and occlusion culling produce deterministic, valid command sets.
-- Performance
-  - No per-frame CPU readback/mapping in shipping mode for culling/batching decisions.
-  - No forced CPU fallback path in shipping mode.
-  - Frame time remains stable under high command counts and frequent streaming.
-  - VR path avoids per-eye CPU scene traversal and per-eye command rebuild in default mode.
-- Backend parity
-  - OpenGL and Vulkan produce equivalent visibility and draw results on the same scenes.
-  - Count-draw and fallback behavior are explicitly tested per backend.
-  - VR stereo/multiview fallbacks are explicit and produce equivalent visible sets.
-- Test coverage
-  - Unit and integration tests cover ingest, cull, occlusion, indirect build, batching, and remove/move edge cases.
-  - VR tests cover single-pass stereo, multiview/NV fallback, foveated outputs, and mirror output correctness.
+## Table of Contents
 
-## Current Reality (Code Snapshot)
+1. [Current Pipeline Architecture (Audit Snapshot)](#current-pipeline-architecture)
+2. [CPU Readback Audit](#cpu-readback-audit)
+3. [LOD System Audit](#lod-system-audit)
+4. [Meshlet System Audit](#meshlet-system-audit)
+5. [Target Architecture](#target-architecture)
+   - [Tiered Mesh Atlas Architecture](#tiered-mesh-atlas-architecture)
+   - [Zero-Readback Draw Dispatch](#zero-readback-draw-dispatch-architecture)
+   - [LOD Atlas Architecture](#lod-atlas-architecture)
+   - [Meshlet Integration](#meshlet-integration-architecture)
+6. [Phase Plan](#phase-plan)
+7. [Completed Phases (Summary)](#completed-phases)
+8. [Test Backlog](#test-backlog)
 
-What exists now:
-- GPU scene command buffers, mesh atlas, mesh metadata buffer.
-- Compute shaders for reset, culling, indirect command generation.
-- Material batching path and MDI submission.
-- OpenGL and Vulkan indirect API hooks are implemented.
+---
 
-Current blockers:
-- Culling path is effectively forced to passthrough when debug preference is unset.
-  - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
-- Command payloads are created on add/remove, but no robust per-frame command update path exists for transform/material churn.
-  - `XRENGINE/Rendering/Commands/GPUScene.cs`
-  - `XRENGINE/Rendering/VisualScene3D.cs`
-- Bounding sphere values used for culling/BVH are not guaranteed world-space transformed.
-  - `XRENGINE/Rendering/Commands/GPUScene.cs`
-  - `Build/CommonAssets/Shaders/Compute/GPURenderCulling.comp`
-  - `Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_aabb_from_commands.comp`
-- Shared mesh atlas lifetime is unsafe without mesh reference counting on remove.
-  - `XRENGINE/Rendering/Commands/GPUScene.cs`
-- Batching still depends on CPU-side material grouping and optional CPU sort.
-  - `XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
-- Hi-Z occlusion assets exist but are not integrated into the active render path.
-  - `XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs`
-  - `XRENGINE/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`
-  - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
-  - `Build/CommonAssets/Shaders/Compute/GPURenderHiZSoACulling.comp`
-- VR stereo plumbing exists, but a unified GPU-driven per-view fan-out path is not locked down.
-  - OpenGL: OVR multiview and NV stereo extension paths need consistent integration with culled command output.
-  - Vulkan: parallel secondary command generation exists but needs explicit scheduling for full + foveated + mirror outputs.
-- Atlas buffers are not fully cleaned up in scene destroy path.
-  - `XRENGINE/Rendering/Commands/GPUScene.cs`
+## Current Pipeline Architecture
 
-## Target Pipeline (End State)
+### Pipeline Flow (as-built)
 
-1. Scene ingest
-  - Renderable/submesh registration writes compact command records and mesh/material IDs.
-  - Dirty commands are updated incrementally each frame.
-2. Atlas and metadata maintenance
-  - Mesh atlas uses ref-counted residency.
-  - Mesh metadata is always valid for every referenced mesh ID.
-3. GPU culling by pass
-  - BVH/frustum culling consumes camera data and pass ID.
-  - Output is a compact visible command list with count buffer.
-4. Occlusion culling
-  - GPU mode: depth prepass + Hi-Z pyramid + conservative sphere/AABB tests.
-  - CPU-compatible mode: async hardware occlusion query path with conservative temporal hysteresis.
-5. GPU binning and ordering
-  - Visible commands are keyed by material/pipeline/pass and sorted or bucketed on GPU.
-  - Batch ranges are GPU-generated.
-6. GPU indirect build
-  - Draw commands are built from visible/sorted command buffers.
-  - Count buffer feeds `MultiDrawElementsIndirectCount` where supported.
-7. VR view fan-out
-  - Shared visible list expands into per-view workloads (left/right, full/foveated, mirror).
-  - Stereo-capable paths avoid duplicated CPU submission.
-8. Submission
-  - Per-batch/state dispatch with minimal CPU involvement.
-  - OpenGL and Vulkan follow the same logical flow.
+```
+┌───────────────────────────────────────────────────────────────────┐
+│ CPU: GPUScene — command add/remove/update (subdata to GPU)        │
+│   192-byte GPUIndirectRenderCommand per renderable                │
+│   (WorldMatrix, PrevWorldMatrix, BoundingSphere, MeshID,          │
+│    SubmeshID, MaterialID, InstanceCount, RenderPass,              │
+│    ShaderProgramID, RenderDistance, LayerMask, LODLevel, Flags)   │
+└───────────────────────┬───────────────────────────────────────────┘
+                        │ PushSubData
+           ┌────────────▼─────────────┐
+           │ bvh_aabb_from_commands   │  Sphere → AABB extraction
+           └────────────┬─────────────┘
+           ┌────────────▼─────────────┐
+           │ bvh_build (4-stage LBVH) │  Morton sort → leaf → internal → parent → root
+           └────────────┬─────────────┘
+           ┌────────────▼─────────────┐
+           │ bvh_refit (dynamic)      │  Bottom-up bounds propagation with atomics
+           └────────────┬─────────────┘
+           ┌────────────▼─────────────┐
+           │ bvh_sah_refine (opt.)    │  SAH cost refinement for shallow nodes
+           └────────────┬─────────────┘
+           ┌────────────▼──────────────────────────────────┐
+           │ bvh_frustum_cull                              │
+           │   Stack-based DFS, plane slab tests           │
+           │   Distance rejection, per-view append         │
+           │   Atomic counters → CulledCount buffer        │
+           └────────────┬──────────────────────────────────┘
+           ┌────────────▼─────────────┐
+           │ GPURenderBuildKeys       │  Encode (pass|shader|state|material) sort keys
+           └────────────┬─────────────┘
+           ┌────────────▼──────────────────────────────────┐
+           │ GPURenderRadixIndexSort (4 LSB passes)        │
+           │   Phase 0: histogram, Phase 1: prefix scan,   │
+           │   Phase 2: scatter (×4 bytes)                 │
+           └────────────┬──────────────────────────────────┘
+           ┌────────────▼──────────────────────────────────┐
+           │ GPURenderBuildBatches (single WG 1×1×1)       │
+           │   Detect material boundaries                  │
+           │   Emit DrawElementsIndirectCommand per batch   │
+           │   Write BatchRangeBuffer + BatchCountBuffer   │
+           │   Write InstanceTransformBuffer               │
+           └────────────┬──────────────────────────────────┘
+                        │
+           ┌────────────▼──────────────────────────────────┐
+           │ *** CPU READBACK BARRIER ***                   │
+           │   ReadGpuBatchRanges(): MapBufferData on       │
+           │     BatchRangeBuffer → List<DrawBatch>        │
+           │   ReadUIntAt: transparency domain counts       │
+           │   ReadUIntAt: visible command counts           │
+           └────────────┬──────────────────────────────────┘
+                        │
+           ┌────────────▼──────────────────────────────────┐
+           │ CPU: foreach (batch in batches)               │
+           │   Resolve material from batch.MaterialID      │
+           │   Bind shader program + uniforms              │
+           │   MultiDrawElementsIndirectWithOffset(        │
+           │     count=batch.Count,                        │
+           │     offset=batch.Offset * stride)             │
+           └───────────────────────────────────────────────┘
+```
+
+### Component Responsibilities
+
+| Component | File(s) | Role |
+|-----------|---------|------|
+| **GPUScene** | `XREngine/Rendering/Commands/GPUScene.cs` | Owns command buffers, mesh atlas (positions, normals, tangents, UV0, indices), mesh metadata buffer, BVH tree buffer. Append/remove with ref counting, incremental subdata updates. |
+| **GPURenderPassCollection** | `XREngine/Rendering/Commands/GPURenderPassCollection.*.cs` (7 partials: Core, CullingAndSoA, IndirectAndMaterials, Occlusion, ShadersAndInit, Sorting, ViewSet) | Culling dispatch, sort key generation, radix sort, batch building, indirect command generation, Hi-Z occlusion, ViewSet management. |
+| **HybridRenderingManager** | `XREngine/Rendering/HybridRenderingManager.cs` | Path selection (meshlet vs traditional), per-batch material binding, draw submission via `MultiDrawElementsIndirect[Count]`. |
+
+### Mesh Atlas
+
+Single scene-level atlas VAO with interleaved attribute streams:
+- `binding=0` Positions (vec3)
+- `binding=1` Normals (vec3)
+- `binding=2` Tangents (vec4)
+- `binding=3` UV0 (vec2)
+- Element buffer: u32 indices
+
+Meshes are appended incrementally with ref counting. Power-of-2 growth, `PushSubData` to GPU. `MeshDataBuffer` stores per-mesh metadata: `uint4 [IndexCount, FirstIndex, BaseVertex, Flags]`.
+
+### Compute Shader Inventory (Indirect Pipeline)
+
+| Shader | Purpose | Dispatch |
+|--------|---------|----------|
+| `GPURenderResetCounters.comp` | Zero atomic counters | 1×1×1 |
+| `bvh_aabb_from_commands.comp` | Sphere→AABB extraction | N commands |
+| `bvh_build.comp` | 4-stage LBVH construction | N commands |
+| `bvh_refit.comp` | Bottom-up bounds propagation | N commands |
+| `bvh_sah_refine.comp` | Shallow node SAH refinement | conditional |
+| `bvh_frustum_cull.comp` | Stack-based BVH traversal + frustum | N commands |
+| `GPURenderCulling.comp` | Flat frustum cull (non-BVH) | N commands |
+| `GPURenderCullingSoA.comp` | SoA variant of frustum cull | N commands |
+| `GPURenderHiZSoACulling.comp` | Hi-Z occlusion + frustum | N commands |
+| `GPURenderBuildKeys.comp` | Sort key extraction | N visible |
+| `GPURenderRadixIndexSort.comp` | 4-pass LSD radix sort | N visible |
+| `GPURenderBuildBatches.comp` | Batch boundary detection + indirect command emit | 1×1×1 |
+| `GPURenderBuildHotCommands.comp` | Optional SoA compaction | N visible |
+| `GPURenderCopyCount3.comp` | Copy count for parameter buffer | 1×1×1 |
+| `GPURenderCopyCommands.comp` | Command staging copy | N commands |
+| `GPURenderClassifyTransparencyDomains.comp` | Classify opaque/masked/transparent | N visible |
+
+### Draw Submission (Current)
+
+`HybridRenderingManager.RenderTraditionalBatched()`:
+1. Reads batch ranges from GPU → `List<DrawBatch>` (CPU readback)
+2. Coalesces contiguous same-material batches
+3. For each batch: resolves `XRMaterial`, binds shader program, sets uniforms, calls `MultiDrawElementsIndirectWithOffset`
+4. Supports `MultiDrawElementsIndirectCount` via `GL_ARB_indirect_parameters` / `VK_KHR_draw_indirect_count` when batch ranges are NOT used
+
+### Extension Support
+
+| Extension | Status | Usage |
+|-----------|--------|-------|
+| `GL_ARB_indirect_parameters` | Active | `MultiDrawElementsIndirectCount` — GPU-sourced draw count |
+| `GL_NV_mesh_shader` | Scaffolded | Task/mesh shader dispatch (not wired into pipeline) |
+| `GL_ARB_buffer_storage` | Active | Persistent/coherent buffer mapping |
+| `VK_KHR_draw_indirect_count` | Active | Vulkan equivalent of indirect parameters |
+
+---
+
+## CPU Readback Audit
+
+Every site where the CPU reads data back from the GPU in the rendering hot path.
+
+### Critical Path Readbacks (Always Executed)
+
+| # | Location | Buffer | Data | Bytes/Frame | Purpose | Eliminable? |
+|---|----------|--------|------|-------------|---------|-------------|
+| 1 | `GPURenderPassCollection.CullingAndSoA.cs:334` | `_culledCountBuffer` | 2×uint (draws, instances) | 8 B | Determines dispatch sizes for downstream stages | **Yes** — use `CommandCapacity` as upper bound (already gated by `IsCpuReadbackCountDisabledForPass`) |
+| 2 | `GPURenderPassCollection.IndirectAndMaterials.cs:440-443` | `_transparencyDomainCountBuffer` | 4×uint (opaque, masked, approx, exact) | 16 B | Routes geometry into separate transparency passes | **Yes** — split into 3 separate `MultiDrawElementsIndirectCount` calls with per-domain count buffers |
+| 3 | `GPURenderPassCollection.IndirectAndMaterials.cs:459` | `_gpuBatchCountBuffer` | 1×uint | 4 B | Number of material batches | **Yes** — move to per-material `MultiDrawElementsIndirectCount` |
+| 4 | `GPURenderPassCollection.IndirectAndMaterials.cs:474` | `_gpuBatchRangeBuffer` | N × `GPUBatchRangeEntry` (offset, count, materialID) | ~1.2 KB | Batch boundary info for CPU material loop | **Yes** — THE critical bottleneck. Requires architectural change. |
+| 5 | `GPURenderPassCollection.Occlusion.cs:649` | `_culledCountBuffer` | 1×uint | 4 B | Hi-Z candidate count for next stage | **Yes** — use parameter buffer path |
+
+### Conditional/Debug Readbacks
+
+| # | Location | Buffer | Gate | Purpose |
+|---|----------|--------|------|---------|
+| 6 | `GPUScene.cs:879` | `_meshDataBuffer` | Fallback path | GetDataArrayRawAtIndex for mesh entry reads |
+| 7 | `GPUScene.cs:1290` | Command buffer | Debug validation (budget=8) | Roundtrip command validation |
+| 8 | `GPUScene.cs:1559/1589` | `_meshDataBuffer` | Remove/update path | Mesh data entry reads for ref count management |
+| 9 | `HybridRenderingManager.cs:515-530` | Parameter buffer | Count path unavailable | Fallback draw count |
+| 10 | Various `_statsBuffer` reads | Stats buffer | Debug/diagnostic flags | Performance counters |
+| 11 | Various overflow flag reads | Overflow buffers | Diagnostic mode | Buffer overflow detection |
+
+### Correctly Async Readbacks (Not Hot Path)
+
+| Location | Buffer | Mechanism |
+|----------|--------|-----------|
+| `GPUPhysicsChainDispatcher.cs:1156-1181` | Physics particles | `FenceSync` + `ClientWaitSync` double-buffered |
+| `BvhRaycastDispatcher.cs:229-254` | Raycast hits | Persistent `GL_ARB_buffer_storage` + async fence |
+
+### The Core Problem
+
+**Readback #4 is the architectural bottleneck.** The CPU reads back `GPUBatchRangeEntry` structs (materialID + offset + count) so it can iterate batches and bind the correct material/shader per batch before issuing `MultiDrawElementsIndirect`. This creates a full GPU→CPU sync point every frame.
+
+The reason this exists: different materials require different shader programs and render state, and OpenGL/Vulkan have no mechanism to switch shader programs mid-draw-call. Each material boundary requires a separate draw call with the correct program bound.
+
+---
+
+## LOD System Audit
+
+### What Exists
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| `SubMeshLOD` class | Exists | `XRMesh`, `XRMaterial`, `MaxVisibleDistance`, `GenerateAsync` |
+| `SubMesh.LODs` | Exists | `SortedSet<SubMeshLOD>` sorted by distance |
+| `GPUIndirectRenderCommand.LODLevel` field | Exists | uint at offset 176, always set to 0 |
+| `GPUIndirectRenderFlags.LODEnabled` flag | Exists | Bit 15, never set |
+| `GPUIndirectRenderCommandHot.LODLevel` | Exists | Propagated in Hot/Cold split |
+| LOD selection unit tests | Exist | `LodSelection_NearDistance_HighestLod` etc. in `GpuIndirectRenderDispatchTests.cs` |
+| `TerrainLOD.comp` | Exists | Distance-based terrain chunk LOD (separate system) |
+
+### What Does NOT Exist
+
+- **GPU-side LOD selection compute shader** — no shader reads `RenderDistance` and selects LOD level
+- **Per-LOD mesh atlas entries** — all LODs for a mesh are not tracked in the atlas; only the single active mesh is loaded
+- **LOD distance thresholds in GPU buffer** — no per-command LOD distance array on GPU
+- **Dynamic LOD atlas residency** — no mechanism to load/unload LOD meshes from the atlas at runtime
+- **LOD transition smoothing** — no dithered or morphed LOD transitions
+- **Meshlet LOD** — no meshlet-level LOD (e.g., nanite-style cluster group merging)
+
+### Gap Summary
+
+The LOD infrastructure is CPU-side scaffolding only. The GPU pipeline renders exactly one mesh per command at LOD 0. There is no mechanism for the GPU to select a different LOD or for the atlas to contain multiple LODs per mesh that can be swapped dynamically.
+
+---
+
+## Meshlet System Audit
+
+### What Exists
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| `Meshlet` struct (56 bytes) | Complete | Bounding sphere, vertex/triangle offset/count, mesh ID, material ID |
+| `MeshletCollection` | Complete | SSBO management, task/mesh shader loading, `DrawMeshTask` dispatch |
+| `MeshletGenerator` | Complete | Uses meshoptimizer via P/Invoke (64 verts, 124 tris default) |
+| `MeshletMaterial` (48 bytes) | Complete | PBR material struct for meshlet SSBO |
+| `MeshletCulling.task` shader | Complete | Per-meshlet frustum culling, atomic visibility counter |
+| `MeshletRender.mesh` shader | Complete | Cooperative vertex/triangle output, MVP transform |
+| `MeshletShading.fs` shader | Complete | PBR shading with directional light |
+| `VPRC_RenderMeshesPassMeshlet` | **STUBBED** | Logs warning, falls back to traditional path |
+| `HasMeshShaderExt` capability flag | Complete | Runtime detection of `GL_NV_mesh_shader` |
+
+### What Does NOT Exist
+
+- **Meshlet rendering integration** — `VPRC_RenderMeshesPassMeshlet` is a stub, no actual meshlet rendering occurs in the pipeline
+- **Meshlet occlusion culling** — task shader does frustum only, no Hi-Z or per-meshlet occlusion
+- **Meshlet LOD** — no cluster group / DAG-based LOD for meshlets
+- **Meshlet BVH** — meshlet culling uses flat iteration, not BVH traversal
+- **Vulkan mesh shaders** — commented out / WIP
+- **`GL_EXT_mesh_shader`** — only NV extension is used; no EXT/KHR path
+
+---
+
+## Target Architecture
+
+### Design Principles
+
+1. **Zero CPU readbacks in shipping mode.** The CPU never reads GPU buffer contents during rendering. All data flows CPU→GPU only.
+2. **Tiered mesh atlas.** Three atlas tiers — Static (write-once, match-lifetime), Dynamic (load/unload on demand), and Streaming (real-time per-vertex writes) — serve the full spectrum of mesh lifetime patterns without one-size-fits-all compromises.
+3. **Dynamic LOD atlas.** Multiple LOD meshes per object are resident in the atlas (potentially spanning tiers). LOD selection happens on GPU based on screen-space size or distance.
+4. **GPU-driven everything.** BVH build/refit, frustum+occlusion culling, LOD selection, sort, batch, and indirect command generation are all compute dispatches.
+5. **Dual render path.** Traditional indirect multi-draw and meshlet mesh shaders share scene data and culling. The meshlet path is preferred when hardware supports it.
+6. **Material state changes are finite and pre-bound.** The CPU pre-binds all distinct material programs before the frame. Draw dispatch uses per-material indirect command lists, eliminating the need for batch-range readback.
+
+### Tiered Mesh Atlas Architecture
+
+The current system uses a single monolithic mesh atlas. This is insufficient — different geometry has fundamentally different lifetime and mutation patterns. The atlas is split into **three tiers**, each backed by its own set of attribute + index buffers but sharing the same vertex format and binding layout so a single VAO can multiplex across them.
+
+| Tier | Name | Lifetime | Mutation | Buffer Strategy | Use Case |
+|------|------|----------|----------|-----------------|----------|
+| **0** | **Static** | Scene/match lifetime | Never (write-once at load) | `GL_STATIC_DRAW` / `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT` only. Immutable after upload. | World geometry, map architecture, static props, skybox meshes — anything that stays resident for the duration of a level/match. |
+| **1** | **Dynamic** | On-demand | Rare (load/unload, never per-vertex edit) | `GL_DYNAMIC_DRAW` with ref-counted append/remove, power-of-2 growth, defragmentation pass on threshold. | Spawned/despawned objects, pickups, projectiles, characters entering/leaving, LOD meshes streamed in/out. |
+| **2** | **Streaming** | Per-frame or continuous | Frequent per-vertex writes | `GL_STREAM_DRAW` or persistent coherent mapping (`GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT`). Triple-buffered to avoid pipeline stalls. | Real-time modeling tools, procedural mesh generation, cloth/softbody CPU output, deformable terrain sculpting. |
+
+#### Design Rules
+
+1. **Each tier is a separate set of attribute buffers + element buffer**, but all three share the same attribute layout (positions, normals, tangents, UV0, indices). They register into the same `MeshDataBuffer` with a tier tag so compute shaders consume all tiers uniformly.
+2. **Commands reference mesh data entries regardless of tier.** The `MeshID` in `GPUIndirectRenderCommand` indexes into the unified `MeshDataBuffer`; the entry's `BaseVertex` and `FirstIndex` resolve into the correct tier's buffers. The draw call binds the appropriate tier's VAO (or sub-range of a combined VAO).
+3. **Static tier is filled once during scene load** and is never touched again. No `PushSubData`, no resize, no defrag. This is the common case for most geometry in a shipped game and should be the fastest path — the driver can place it in device-local VRAM with no staging overhead after the initial upload.
+4. **Dynamic tier uses the existing append/remove + ref-counting system** (current `GPUScene` atlas behavior). It grows via power-of-2 reallocation and uses `PushSubData` for incremental writes. A periodic defragmentation pass compacts holes left by removed meshes (copy surviving entries and update `MeshDataBuffer` offsets).
+5. **Streaming tier is triple-buffered** with persistent coherent mapping. Frame N writes to buffer slot `N % 3`; the GPU reads from slot `(N - 2) % 3`.  The CPU writes vertices directly into the mapped pointer — no staging copies, no `PushSubData`. Meshes in this tier have a fixed maximum vertex/index count declared at registration; they cannot grow.
+6. **BVH and culling are tier-agnostic.** All commands, regardless of which tier holds their mesh data, participate in the same BVH build/refit/cull pipeline. The only per-tier distinction is buffer binding at draw time.
+7. **LOD entries can span tiers.** A static mesh's LOD 0 might live in the static tier (always resident), while its LOD 2 lives in the dynamic tier (streamed in only when needed at that distance). The `LODTableBuffer` records per-LOD mesh data IDs that may point into different tiers.
+
+#### Per-Tier VAO Binding at Draw Time
+
+Since all tiers share attribute format, the three VAOs differ only in which buffers are bound. During the material-scatter draw loop, the per-material indirect commands are further partitioned by tier (a 2-bit tier tag in `MeshDataBuffer.Flags`). The GPU scatter shader writes commands into `PerMaterial × PerTier` buckets, giving the CPU a fixed `Materials × 3` iteration:
+
+```
+foreach material in ActiveMaterials:
+    bind material program + state
+    foreach tier in [Static, Dynamic, Streaming]:
+        bind tier's VAO
+        bind (material, tier) indirect buffer segment
+        bind (material, tier) count buffer as parameter
+        MultiDrawElementsIndirectCount(maxDraws)
+```
+
+The inner tier loop is a constant 3 iterations — no GPU readback needed. Empty buckets (count = 0 on GPU) are free due to `MultiDrawElementsIndirectCount` reading 0 and issuing no draws.
+
+#### Migration Between Tiers
+
+Meshes can be promoted or demoted between tiers at runtime:
+- **Dynamic → Static:** When a level finishes loading and geometry is known to be permanent, bulk-copy from dynamic to static tier buffers, update `MeshDataBuffer` entries, release dynamic slots. This is an offline operation (loading screen / async).
+- **Dynamic → Streaming:** When a mesh becomes editable (e.g., user enters modeling mode), allocate a streaming slot, copy current geometry, update `MeshDataBuffer`, release dynamic slot.
+- **Streaming → Dynamic:** When editing ends, copy final geometry to dynamic tier, release streaming slot.
+
+Migration is always a copy + remap + release, never an in-place mutation. This keeps each tier's invariants (immutable, ref-counted, or triple-buffered) intact.
+
+### Zero-Readback Draw Dispatch Architecture
+
+The fundamental change: instead of one sorted indirect buffer with GPU-generated batch ranges read back to CPU, use **N per-material indirect buffers** with GPU-written draw counts. The CPU iterates a known list of materials (not read from GPU) and issues one `MultiDrawElementsIndirectCount` per material.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ GPU COMPUTE PIPELINE (all dispatches, no readbacks)             │
+│                                                                 │
+│  Commands[N] ─→ BVH Build ─→ BVH Frustum Cull ─→ Hi-Z Cull   │
+│                                                    │            │
+│                                        CulledCommands[visible]  │
+│                                                    │            │
+│                              ┌─────────────────────▼──────────┐ │
+│                              │ LOD Select (GPU compute)       │ │
+│                              │ Per-command: distance → LOD    │ │
+│                              │ Update MeshID/atlas offsets    │ │
+│                              └─────────────────────┬──────────┘ │
+│                                                    │            │
+│                              ┌─────────────────────▼──────────┐ │
+│                              │ Material Scatter (GPU compute) │ │
+│                              │ Scatter visible commands into  │ │
+│                              │ per-material indirect buffers  │ │
+│                              │ Each buffer has own count      │ │
+│                              └────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                         │
+           ┌─────────────▼───────────────────────────────────┐
+           │ CPU: foreach (material in scene.ActiveMaterials) │
+           │   Bind material program + state                  │
+           │   Bind material's IndirectBuffer                 │
+           │   Bind material's CountBuffer as parameter       │
+           │   MultiDrawElementsIndirectCount(maxDraws)       │
+           │   // GPU reads actual count from CountBuffer     │
+           └─────────────────────────────────────────────────┘
+```
+
+**Key insight:** The CPU knows which materials exist (it registered them). It does NOT need to know how many draws each material has — `MultiDrawElementsIndirectCount` reads that from the GPU parameter buffer. The GPU scatter shader writes commands directly into per-material buffers and atomically increments per-material counts.
+
+### LOD Atlas Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ MESH ATLAS (single VAO, all LODs resident)                      │
+│                                                                 │
+│  ┌──────────┬──────────┬──────────┬──────────┬─────────────┐   │
+│  │ Mesh A   │ Mesh A   │ Mesh A   │ Mesh B   │ Mesh B      │   │
+│  │ LOD 0    │ LOD 1    │ LOD 2    │ LOD 0    │ LOD 1       │   │
+│  │ 10K tri  │ 2K tri   │ 500 tri  │ 5K tri   │ 1K tri      │   │
+│  └──────────┴──────────┴──────────┴──────────┴─────────────┘   │
+│                                                                 │
+│  MeshDataBuffer entry per LOD:                                  │
+│    { IndexCount, FirstIndex, BaseVertex, Flags }                │
+│                                                                 │
+│  LODTableBuffer per logical mesh:                               │
+│    { LOD0_MeshDataID, LOD1_MeshDataID, LOD2_MeshDataID,        │
+│      LOD0_MaxDist, LOD1_MaxDist, LOD2_MaxDist, LODCount }     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Each logical mesh has multiple entries in `MeshDataBuffer` (one per LOD). LOD entries may reside in different atlas tiers — e.g., LOD 0 in the Static tier (always resident), LOD 2 in the Dynamic tier (streamed in on demand). A new `LODTableBuffer` maps logical mesh ID → per-LOD mesh data IDs + distance thresholds. The GPU LOD selection shader reads camera distance and picks the right `MeshDataID`, writing it into the command's `MeshID` field before the indirect build stage. The tier tag in `MeshDataBuffer.Flags` ensures the draw loop binds the correct VAO for whichever tier the selected LOD lives in.
+
+### Meshlet Integration Architecture
+
+```
+Scene Commands ─→ BVH Cull ─→ LOD Select ─→ ┬─ Traditional Path
+                                              │    (indirect multi-draw)
+                                              │
+                                              └─ Meshlet Path
+                                                   │
+                                         ┌─────────▼──────────┐
+                                         │ Meshlet Expansion   │
+                                         │ (GPU compute)       │
+                                         │ Expand visible cmds │
+                                         │ into meshlet ranges │
+                                         └─────────┬──────────┘
+                                                   │
+                                         ┌─────────▼──────────┐
+                                         │ Task Shader         │
+                                         │ Per-meshlet frustum │
+                                         │ + occlusion cull    │
+                                         └─────────┬──────────┘
+                                                   │
+                                         ┌─────────▼──────────┐
+                                         │ Mesh Shader         │
+                                         │ Cooperative vertex  │
+                                         │ + triangle output   │
+                                         └─────────────────────┘
+```
+
+The meshlet path reuses the same BVH cull and LOD selection. After LOD selection, instead of building `DrawElementsIndirectCommand` arrays, visible commands are expanded into meshlet ranges and dispatched via `DrawMeshTasksIndirectCount`.
+
+---
 
 ## Phase Plan
 
-## Phase 0 - Baseline Safety and Switches
+### Phase 7 — Zero-Readback Material Dispatch
 
-Outcome: stop shipping with debug behavior and establish measurable baseline.
+**Outcome:** Eliminate ALL remaining CPU readbacks from the shipping render path. The CPU iterates a known material list and issues `MultiDrawElementsIndirectCount` per material — it never reads GPU buffers.
 
-- [x] Change passthrough default to off for non-debug/shipping configurations.
-- [x] Keep passthrough available only via explicit debug override.
-- [x] Add one runtime log line per frame mode: passthrough, frustum, or BVH culling.
-- [x] Add counters for CPU fallback usage and expose them in GPU stats/debug UI.
-- [x] Add config validation on startup to warn on unsafe defaults.
+#### 7A — Per-Material Indirect Buffers
 
-## Phase 1 - Correctness First (Scene -> Atlas -> Cull)
+- [x] Add `MaterialSlotRegistry` to `GPURenderPassCollection` that maps each active MaterialID → a slot index (0..M-1), maintained incrementally on material add/remove.
+- [x] Allocate a `PerMaterialIndirectDrawBuffer` as a single large SSBO logically partitioned into M segments, each holding up to `MaxDrawsPerMaterial` `DrawElementsIndirectCommand` entries.
+- [x] Allocate a `PerMaterialDrawCountBuffer` (M × uint) — the parameter buffer source for each material's `MultiDrawElementsIndirectCount` call.
+- [x] Push `MaterialSlotRegistry` mapping to GPU as a uniform buffer or SSBO.
 
-Outcome: all data written to GPU is valid and stays valid through add/remove/move.
+Primary files:
+- `XREngine/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
+- `XREngine/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`
 
-- [x] Implement command update API in `GPUScene` for existing commands.
-  - [x] Update world matrix, previous world matrix, bounds, material ID, pass, instance count, flags.
-  - [x] Avoid remove/re-add churn for simple transform updates.
-- [x] Hook dirty command updates from scene/render-info collection.
-- [x] Fix bounding sphere computation to world space (including scale).
-  - [x] Use conservative radius for non-uniform scale.
-- [x] Add mesh atlas reference counting.
-  - [x] Increment on first use by command.
-  - [x] Decrement on command removal.
-  - [x] Remove atlas data only at zero ref count.
-- [x] Ensure `Destroy()` cleans atlas buffers and related state.
+#### 7B — GPU Material × Tier Scatter Shader
 
-Acceptance criteria:
-- Moving objects remain correctly culled and rendered across many frames.
-- Removing one renderer that shares a mesh does not corrupt other draws.
-- No stale material/pass data after runtime changes.
+- [x] Write `GPURenderMaterialScatter.comp` that:
+  - Reads the sorted visible command list and per-command `MaterialID`.
+  - Looks up material slot index from the registry buffer.
+  - Reads tier tag (2-bit) from `MeshDataBuffer[meshID].Flags` to determine atlas tier.
+  - Computes bucket index: `slot * 3 + tier`.
+  - Atomically increments `PerMaterialTierDrawCountBuffer[bucket]`.
+  - Writes `DrawElementsIndirectCommand` into `PerMaterialTierIndirectDrawBuffer[bucket][count]` using atlas offsets from `MeshDataBuffer`.
+- [x] Dispatch after sort, replacing `GPURenderBuildBatches.comp` for the zero-readback path.
+- [x] Add barrier: `ShaderStorage | Command` after scatter.
+- [x] Initially, until the tiered atlas (Phase 8) ships, all meshes are tier 0 (Static) — the scatter shader still works, the inner loop just always hits one tier.
 
-## Phase 2 - Remove CPU Stalls from Hot Path
+Primary files:
+- New: `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderMaterialScatter.comp`
+- `XREngine/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
 
-Outcome: render loop no longer depends on CPU readback/mapping for core decisions.
+#### 7C — Zero-Readback Draw Submission
 
-- [x] Remove CPU-side culled-buffer inspection for normal batch building.
-- [x] Keep CPU sanitizer/fallback as debug-only path guarded by explicit setting.
-- [x] Avoid per-frame mapping of count/command buffers in shipping mode.
-- [x] Use GPU count buffer directly for draw submission.
-- [x] Add profiling markers that report:
-  - [x] number of mapped buffers in frame
-  - [x] bytes read back from GPU
-  - [x] number of CPU fallback events
+- [x] Add `RenderZeroReadback()` method to `HybridRenderingManager` that:
+  - Iterates `MaterialSlotRegistry` (CPU-known list, no GPU reads).
+  - Per material × per tier (constant 3 iterations):
+    - Binds the tier's VAO.
+    - Binds the `(material, tier)` segment of `PerMaterialTierIndirectDrawBuffer` as `GL_DRAW_INDIRECT_BUFFER`.
+    - Binds `PerMaterialTierDrawCountBuffer[slot * 3 + tier]` as `GL_PARAMETER_BUFFER`.
+    - Calls `MultiDrawElementsIndirectCount(maxDrawsPerMaterialTier, stride, byteOffset)`.
+    - Empty buckets (GPU count = 0) issue zero draws — no CPU check needed.
+  - Skips materials with statically-known zero commands (materials not in scene).
+- [x] Make this the default path when `IsCpuReadbackCountDisabledForPass()` is true.
+- [x] Keep existing batch-readback path as debug/fallback only.
 
-Acceptance criteria:
-- Shipping mode performs zero large-buffer readbacks for culling/batching.
-- CPU fallback count remains zero in normal scenes.
+Primary files:
+- `XREngine/Rendering/HybridRenderingManager.cs`
 
-## Phase 3 - Occlusion Culling (GPU + CPU-Compatible)
+#### 7D — Eliminate Remaining Count Readbacks
 
-Outcome: add robust occlusion culling that works in both GPU-dispatch and CPU-compatible modes without introducing stalls.
+- [x] Transparency domain counts: split into 3 per-domain `MultiDrawElementsIndirectCount` calls with per-domain count buffers written by GPU compute. Remove `ReadUIntAt` on `_transparencyDomainCountBuffer`.
+- [x] Visible command count: use `CommandCapacity` as conservative upper bound for all downstream dispatches (already supported by `IsCpuReadbackCountDisabledForPass()`). Ensure this flag is ON by default in shipping mode.
+- [x] Hi-Z candidate count: use parameter buffer path, no CPU readback.
+- [x] Remove `ReadGpuBatchRanges()` from default path entirely.
 
-- [x] Define occlusion mode matrix and runtime switch:
-  - [x] `Disabled`
-  - [x] `GPU_HiZ`
-  - [x] `CPU_QueryAsync`
-- [x] GPU path (`GPU_HiZ`):
-  - [x] Add depth-only prepass for opaque occluders.
-  - [x] Build Hi-Z pyramid every frame from prepass depth.
-  - [x] Integrate Hi-Z compute into active culling flow after frustum/BVH reject and before indirect build.
-  - [x] Use conservative sphere-first test, then AABB refinement for borderline cases.
-  - [x] Keep uncertain results visible (never hard-cull on ambiguous depth tests).
-- [x] CPU-compatible path (`CPU_QueryAsync`):
-  - [x] Add backend-agnostic async occlusion query manager using existing render query abstractions.
-  - [x] Use previous-frame query results only (no same-frame wait/read stalls).
-  - [x] Batch query submission for occlusion candidates (not all draws).
-  - [x] Default to visible when query data is unavailable/late.
-- [x] Shared temporal policy (both modes):
-  - [x] Track per-command visibility history.
-  - [x] Apply hysteresis: require N consecutive occluded frames before hiding.
-  - [x] Immediately re-test when camera jump/FOV change/object transform delta exceeds threshold.
-  - [x] Reset temporal state on scene load, teleport, or large topology changes.
-- [x] Integrate pass-awareness:
-  - [x] Ensure occlusion tests operate per render pass and do not hide required shadow/depth-only contributors.
-- [x] Add instrumentation:
-  - [x] candidates tested
-  - [x] occluded accepted
-  - [x] false-positive recoveries
-  - [x] temporal overrides
+Primary files:
+- `XREngine/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
+- `XREngine/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
+- `XREngine/Rendering/Commands/GPURenderPassCollection.Occlusion.cs`
+
+#### 7E — GPU Mesh Data Entry for Remove/Update
+
+- [x] Move mesh data entry lookups (`GPUScene.cs:1559/1589`) to CPU-side cache instead of GPU readback. `GPUScene` already tracks `_atlasMeshOffsets` — use this dictionary instead of reading `_meshDataBuffer` from GPU.
+- [x] Remove `GetDataArrayRawAtIndex` fallback from hot path.
+
+Primary files:
+- `XREngine/Rendering/Commands/GPUScene.cs`
 
 Acceptance criteria:
-- Occlusion is stable (no obvious popping) under camera motion and animated transforms.
-- GPU mode adds no CPU readback stalls.
-- CPU-compatible mode uses async query latency and does not block the render thread.
-- OpenGL and Vulkan produce equivalent visible-set behavior for the same test scenes.
+- Zero `ReadUIntAt`, `MapBufferData`, `GetDataArrayRawAtIndex`, or any GPU→CPU data read during the rendering hot path in shipping mode.
+- `Engine.Rendering.Stats.GpuReadbackBytes` reports 0 for a full frame in shipping config.
+- Debug/diagnostic readbacks remain available behind explicit flags.
 
-## Phase 4 - Fully GPU-Driven Batching and Instancing
+---
 
-Outcome: material/pass grouping and instancing are GPU generated.
+### Phase 8 — Tiered Mesh Atlas
 
-- [x] Implement GPU key generation for visible commands.
-  - [x] Key includes pass, material/pipeline, mesh, and required render-state bits.
-- [x] Implement GPU sort or bucket pipeline and output batch ranges.
-- [x] Replace CPU `BuildMaterialBatches` dependency in default path.
-- [x] Implement true instancing aggregation:
-  - [x] group identical mesh/material/pass
-  - [x] emit one indirect draw with instance count > 1
-  - [x] store per-instance transforms in instance data buffer
-- [x] Keep CPU batching path as emergency debug fallback only.
+**Outcome:** The monolithic mesh atlas is replaced by three purpose-built tiers (Static, Dynamic, Streaming), each with buffer strategies tuned to their mutation patterns. All tiers share attribute format and feed into the same compute/cull/draw pipeline.
 
-Acceptance criteria:
-- Batch counts no longer depend on CPU sort toggle.
-- Large scenes show reduced draw command count via instancing aggregation.
+#### 8A — Atlas Tier Infrastructure
 
-## Phase 5 - VR-First Stereo and Multi-View Efficiency
+- [ ] Add `EAtlasTier` enum: `Static = 0`, `Dynamic = 1`, `Streaming = 2`.
+- [ ] Split current `GPUScene` atlas buffers into three sets of `(positions, normals, tangents, uv0, indices)` buffers, one per tier.
+- [ ] Add a 2-bit tier tag to `MeshDataBuffer.Flags` so compute shaders and the scatter shader can identify which tier a mesh entry belongs to.
+- [ ] Create per-tier VAOs that share attribute format but bind to the tier's specific buffers.
 
-Outcome: one scene/cull flow efficiently drives stereo full, stereo foveated, and desktop mirror outputs.
+Primary files:
+- `XREngine/Rendering/Commands/GPUScene.cs`
+- `XREngine/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`
 
-- [x] Define a `ViewSet` model for all outputs in a frame:
-  - [x] left eye full
-  - [x] right eye full
-  - [x] left eye foveated
-  - [x] right eye foveated
-  - [x] desktop mirror
-- [x] Build visibility once (shared frustum/BVH + occlusion), then derive per-view visibility with lightweight refinement.
-- [x] Add per-command view/pass masks and per-view constants in GPU buffers.
-- [x] OpenGL stereo path:
-  - [x] Make OVR multiview the preferred single-pass route when available.
-  - [x] Keep NV stereo shader extension path as explicit fallback.
-  - [x] Ensure both paths consume the same culled/indirect command data.
-- [x] Vulkan stereo path:
-  - [x] Build secondary command buffers in parallel for pass x view partitions.
-  - [x] Schedule full + foveated + mirror outputs without render-thread blocking.
-  - [x] Use multiview render paths where available; keep a parity fallback path.
-- [x] Foveated rendering integration:
-  - [x] Define per-view foveation tiers/regions and shading-rate policy.
-  - [x] Reuse visibility where safe; add conservative margin to avoid edge popping.
-  - [x] Force near-field/UI/critical layers into full-res path.
-- [x] Mirror integration:
-  - [x] Build mirror from already rendered eye textures by default (compose/blit), not a full extra scene render.
-  - [x] Keep full scene mirror render as opt-in debug/quality mode only.
-- [x] CPU-stall safeguards:
-  - [x] Use per-frame ring buffers for view constants and avoid per-eye realloc/map churn.
-  - [x] Eliminate same-frame waits for GPU-generated per-view command counts.
-- [x] Add VR telemetry:
-  - [x] per-view visible counts
-  - [x] per-view draw counts
-  - [x] command-buffer build time by worker
-  - [x] render-thread submit time for VR frame
+#### 8B — Static Tier (Write-Once)
 
-Acceptance criteria:
-- VR frame uses one scene ingest/cull flow for all outputs.
-- CPU render-thread cost scales sublinearly with number of views/outputs.
-- No stereo mismatch/pop artifacts introduced by per-view refinement.
-- OpenGL and Vulkan produce equivalent visible-set behavior in VR test scenes.
+- [ ] Allocate static tier buffers with `GL_STATIC_DRAW` / `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT` (immutable after upload).
+- [ ] Provide `LoadStaticMeshBatch(meshes[])` API that bulk-uploads all static geometry during scene load. Pack tightly with no gaps.
+- [ ] After upload, release CPU-side staging data. The static tier has no `PushSubData` — it is frozen.
+- [ ] Static meshes still get `MeshDataBuffer` entries and participate in BVH/culling normally.
 
-### Phase 5 Ticket Breakdown (File/Class Map)
+Primary files:
+- `XREngine/Rendering/Commands/GPUScene.cs`
 
-- [x] `VR-01` Define `ViewSet` frame model and lifecycle owner.
-  - Scope: create a single per-frame model for full-eye, foveated-eye, and mirror outputs.
-  - Primary files/classes:
-    - `XRENGINE/Engine/Engine.VRState.cs` (`CollectVisibleStereo`, `SwapBuffersStereo`, `Render`)
-    - `XRENGINE/Rendering/XRViewport.cs` (`RenderStereo`)
-    - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs` (runtime mode switches)
-  - Implementation status:
-    - [x] Added `GPUViewFlags`, `GPUViewMask`, `GPUViewDescriptor`, and `GPUViewConstants` schema in `XRENGINE/Rendering/Commands/GPUViewSet.cs`.
-    - [x] Added runtime layout validation (`Marshal.SizeOf` assertions) in `XRENGINE/Rendering/Commands/GPUViewSet.cs` and `XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs`.
-    - [x] Added `ConfigureViewSet(...)` and view-capacity tracking in `XRENGINE/Rendering/Commands/GPURenderPassCollection.ViewSet.cs`.
-    - [x] Wire per-frame `ViewSet` construction from VR frame lifecycle (`Engine.VRState` / `XRViewport`).
-    - [x] Route per-frame `ViewSet` data into active cull/render dispatch.
-  - Done when:
-    - One frame-level `ViewSet` object is built once per frame and handed to GPU culling/render stages.
-    - No per-eye CPU scene traversal is required for default VR path.
+#### 8C — Dynamic Tier (Load/Unload)
 
-- [x] `VR-02` Add per-command view eligibility without overloading command payload semantics.
-  - Scope: avoid abusing `GPUIndirectRenderCommand.Reserved*`; use sidecar view-mask buffer.
-  - Primary files/classes:
-    - `XRENGINE/Rendering/Commands/GPUIndirectRenderCommand.cs`
-    - `XRENGINE/Rendering/Commands/GPUScene.cs` (command add/remove/update path)
-    - `Build/CommonAssets/Shaders/Compute/GPURenderCulling.comp`
-    - `Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_frustum_cull.comp`
-  - Done when:
-    - command-view mask data is generated/updated incrementally with command changes.
-    - culling/refinement stages can filter by view mask without CPU readback.
+- [ ] Migrate current atlas append/remove behavior to the dynamic tier. This is the existing ref-counted, power-of-2 growth system.
+- [ ] Add periodic defragmentation: when fragmentation (holes / total) exceeds a threshold, compact surviving entries, update `MeshDataBuffer` offsets, and issue a single `PushSubData` of the compacted region.
+- [ ] All LOD streaming (Phase 9) targets the dynamic tier by default.
 
-- [x] `VR-03` Allocate/bind `ViewSet` GPU buffers with stable binding contracts.
-  - Scope: add view descriptor/constants buffers and per-view visible/count buffers.
-  - Primary files/classes:
-    - `XRENGINE/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`
-    - `XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs`
-    - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
-  - Implementation status:
-    - [x] Added buffer scaffolding: `ViewDescriptorBuffer`, `ViewConstantsBuffer`, `CommandViewMaskBuffer`, `PerViewVisibleIndicesBuffer`, `PerViewDrawCountBuffer` in `XRENGINE/Rendering/Commands/GPURenderPassCollection.ViewSet.cs`.
-    - [x] Added buffer binding slot constants (`11`-`15`) in `XRENGINE/Rendering/Commands/GPUViewSet.cs`.
-    - [x] Integrated allocation/regeneration into `RegenerateBuffers(...)` in `XRENGINE/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`.
-    - [x] Integrated reset/disposal lifecycle hooks in `XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`.
-    - [x] Bind and consume these buffers in culling/indirect compute paths.
-    - [x] Validate full OpenGL/Vulkan parity for the new view buffers.
-  - Done when:
-    - all new buffers are created, resized, reset, and rebound with deterministic binding points.
-    - OpenGL and Vulkan run identical logical binding layout.
+Primary files:
+- `XREngine/Rendering/Commands/GPUScene.cs`
 
-- [x] `VR-04` Implement shared-cull then per-view refinement compute flow.
-  - Scope: one main visible list, then lightweight per-view refinement and per-view draw counts.
-  - Primary files/classes:
-    - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
-    - `Build/CommonAssets/Shaders/Compute/GPURenderCulling.comp`
-    - `Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_frustum_cull.comp`
-    - `Build/CommonAssets/Shaders/Compute/GPURenderIndirect.comp`
-  - Done when:
-    - one cull dispatch produces shared candidates.
-    - per-view refinement dispatches output view-partitioned ranges and indirect counts.
+#### 8D — Streaming Tier (Real-Time Writes)
 
-- [x] `VR-05` OpenGL single-pass stereo integration with unified command data.
-  - Scope: keep OVR multiview preferred, NV stereo fallback, both using same culled/indirect buffers.
-  - Primary files/classes:
-    - `XRENGINE/Rendering/XRMeshRenderer.cs`
-    - `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs`
-    - `XRENGINE/Rendering/API/Rendering/Objects/Textures/2D/XRTexture2DArray.cs`
-    - `XRENGINE/Rendering/API/Rendering/Objects/Render Targets/XRFrameBuffer.cs`
-  - Done when:
-    - OVR and NV paths select shader variants differently but consume same draw payload source.
+- [ ] Allocate streaming tier buffers with persistent coherent mapping (`GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT`).
+- [ ] Triple-buffer the streaming tier: frame N writes to slot `N % 3`, GPU reads from slot `(N - 2) % 3`. Use fence sync to ensure the write target is not in flight.
+- [ ] Provide `RegisterStreamingMesh(maxVertexCount, maxIndexCount)` that pre-allocates a fixed slot in the streaming tier. The mesh cannot grow beyond this reservation.
+- [ ] Provide `GetStreamingWritePointer(meshID)` that returns the mapped pointer for the current frame's write slot. The caller writes vertices/indices directly — no copies, no `PushSubData`.
+- [ ] On `UnregisterStreamingMesh`, release the slot for reuse.
+- [ ] Use case: real-time modeling tool, procedural mesh generators, cloth/softbody CPU solvers, terrain sculpting.
 
-- [x] `VR-06` Vulkan parallel command-buffer fan-out for pass x view partitions.
-  - Scope: schedule secondary command recording per pass/view, then execute in primary without render-thread stalls.
-  - Primary files/classes:
-    - `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandPool.cs`
-    - `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs`
-    - `XRENGINE/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs`
-  - Implementation status:
-    - [x] Added per-thread Vulkan command pools for parallel recording contexts in `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandPool.cs`.
-    - [x] Added parallel secondary command-buffer batch recording for blit/indirect ops in `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs`.
-    - [x] Wire explicit OpenXR pass x view partition recording/execution on Vulkan runtime path.
-  - Done when:
-    - secondary command recording uses per-thread pools and avoids per-frame queue-idle waits in hot path.
-    - full + foveated + mirror view partitions are recordable in parallel.
+Primary files:
+- `XREngine/Rendering/Commands/GPUScene.cs`
+- `XREngine/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` (persistent mapping)
 
-- [x] `VR-07` Foveated output policy and safe visibility margining.
-  - Scope: define tiering/regions and conservative refinement rules to avoid stereo/foveation popping.
-  - Primary files/classes:
-    - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs`
-    - `XRENGINE/Engine/Engine.VRState.cs`
-    - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
-  - Implementation status:
-    - [x] Added per-view foveation policy settings and ViewSet descriptor population.
-    - [x] Add conservative visibility margin policy for edge-pop suppression.
-    - [x] Force near-field/UI-critical layers into full-res path.
-  - Done when:
-    - per-view foveation parameters are written each frame.
-    - near-field/UI-critical meshes are forced to full-res path.
+#### 8E — Tier Migration
 
-- [x] `VR-08` Mirror output defaults to composition, not full extra scene render.
-  - Scope: compose/blit mirror from already rendered eye textures in default mode.
-  - Primary files/classes:
-    - `XRENGINE/Rendering/API/XRWindow.cs`
-    - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs`
-    - `XRENGINE/Engine/Engine.VRState.cs`
-  - Done when:
-    - desktop mirror can be shown while in VR without second full scene traversal by default.
+- [ ] Add `MigrateMesh(meshID, fromTier, toTier)` API:
+  - Allocates in target tier, copies geometry, updates `MeshDataBuffer` entry (BaseVertex, FirstIndex, tier tag), releases source slot.
+  - Runs off the hot path (loading screen, end of edit session, etc.).
+- [ ] Bulk migration: `PromoteDynamicToStatic(meshIDs[])` for level-load finalization.
+- [ ] Update `LODTableBuffer` entries if migrated meshes have LOD entries in the table.
 
-- [x] `VR-09` Telemetry and guardrails for VR frame health.
-  - Scope: expose per-view visibility/draw counts and command-build timing.
-  - Primary files/classes:
-    - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs`
-    - `XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
-    - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
-  - Done when:
-    - stats show per-view counts and command build timing in debug UI/profiler.
-    - regressions are visible without GPU readback in shipping path.
-
-### ViewSet Data Layout and GPU Buffer Schema (Phase 5 v0)
-
-Source-of-truth intent:
-- One `ViewSet` per frame.
-- Command payload (`GPUIndirectRenderCommand`) remains stable; per-view data lives in sidecar buffers.
-- Same binding contract on OpenGL and Vulkan.
-
-Proposed C# CPU mirror layout (implementation target):
-
-```csharp
-[Flags]
-public enum GPUViewFlags : uint
-{
-    None = 0,
-    StereoEyeLeft = 1u << 0,
-    StereoEyeRight = 1u << 1,
-    FullRes = 1u << 2,
-    Foveated = 1u << 3,
-    Mirror = 1u << 4,
-    UsesSharedVisibility = 1u << 5
-}
-
-[StructLayout(LayoutKind.Sequential)]
-public struct GPUViewDescriptor
-{
-    public uint ViewId;           // Stable index in this frame's ViewSet
-    public uint ParentViewId;     // 0xFFFFFFFF if none (e.g., full-res roots)
-    public uint Flags;            // GPUViewFlags
-    public uint RenderPassMaskLo; // Pass mask bits [0..31]
-
-    public uint RenderPassMaskHi; // Pass mask bits [32..63]
-    public uint OutputLayer;      // Texture array layer / attachment slice
-    public uint ViewRectX;        // Pixel rect origin
-    public uint ViewRectY;
-
-    public uint ViewRectW;        // Pixel rect size
-    public uint ViewRectH;
-    public uint VisibleOffset;    // Offset into PerViewVisibleIndices buffer
-    public uint VisibleCapacity;  // Capacity reserved for this view
-
-    public Vector4 FoveationA;    // xy=centerUV, z=innerRadius, w=outerRadius
-    public Vector4 FoveationB;    // x=innerRate, y=midRate, z=outerRate, w=reserved
-}
-
-[StructLayout(LayoutKind.Sequential)]
-public struct GPUViewConstants
-{
-    public Matrix4x4 View;
-    public Matrix4x4 Projection;
-    public Matrix4x4 ViewProjection;
-    public Matrix4x4 PrevViewProjection;
-    public Vector4 CameraPositionAndNear; // xyz + near
-    public Vector4 CameraForwardAndFar;   // xyz + far
-}
-```
-
-Proposed GPU sidecar buffers (new, in addition to current command/indirect buffers):
-- `binding = 11` `ViewDescriptorBuffer` (`GPUViewDescriptor[]`)
-  - Producer: CPU once per frame.
-  - Consumer: cull refinement + indirect build + backend submit path.
-- `binding = 12` `ViewConstantsBuffer` (`GPUViewConstants[]`)
-  - Producer: CPU once per frame.
-  - Consumer: per-view culling/refinement and shaders requiring per-view matrices.
-- `binding = 13` `CommandViewMaskBuffer` (`uint2[]` bitmask per command)
-  - `x`: view bits [0..31], `y`: view bits [32..63].
-  - Producer: CPU incremental updates on add/remove/material/pass changes.
-  - Consumer: cull/refinement filters.
-- `binding = 14` `PerViewVisibleIndicesBuffer` (`uint[]`)
-  - Producer: GPU refinement stage writes compact command indices per view.
-  - Consumer: indirect build stage.
-- `binding = 15` `PerViewDrawCountBuffer` (`uint[]`)
-  - Producer: GPU indirect build writes final draw counts per view.
-  - Consumer: draw submission (`*IndirectCount` path where available).
-
-Update cadence and ownership:
-- Frame-begin CPU writes:
-  - `ViewDescriptorBuffer`, `ViewConstantsBuffer`.
-- Scene-dirty CPU writes:
-  - `CommandViewMaskBuffer` subdata ranges only.
-- GPU per-pass writes:
-  - reset per-view counters -> refine visibility -> build per-view indirect counts.
-
-Backend constraints:
-- OpenGL and Vulkan must use the same binding indices and struct packing.
-- Add startup/assert checks for `Marshal.SizeOf<GPUViewDescriptor>()` and `Marshal.SizeOf<GPUViewConstants>()` matching shader expectations.
-- Keep `GPUIndirectRenderCommand.Reserved1` semantics unchanged (currently used as source index during compaction paths).
-
-## Phase 6 - OpenGL/Vulkan Parity Lockdown
-
-Outcome: same logical behavior and validated output on both backends.
-
-- [x] Build parity checklist for indirect features:
-  - [x] draw indirect buffer binding
-  - [x] parameter buffer binding
-  - [x] count draw support and fallback behavior
-  - [x] index-buffer validation and sync
-- [x] Add cross-backend integration tests that compare:
-  - [x] visible command count
-  - [x] draw count
-  - [x] sampled command signatures (mesh/material/pass)
-- [x] Resolve any backend-specific stride/offset/count differences.
-- [x] Document known extension requirements and runtime capability matrix.
-
-Implementation notes:
-- Runtime parity checklist and dispatch-path selection are centralized in `XRENGINE/Rendering/HybridRenderingManager.cs` (`IndirectParityChecklist`, `BuildIndirectParityChecklist`, and dispatch logging).
-- Cross-backend parity snapshot/signature comparison utilities are in `XRENGINE/Rendering/Commands/GPURendering/Validation/GpuBackendParityValidator.cs`.
-- Phase 6 test coverage is in `XREngine.UnitTests/Rendering/GpuBackendParityTests.cs`.
-- Backend capability matrix doc: `docs/features/gpu_indirect_backend_capability_matrix.md`.
+Primary files:
+- `XREngine/Rendering/Commands/GPUScene.cs`
 
 Acceptance criteria:
-- Same test scenes pass on OpenGL and Vulkan with equivalent results.
+- Static tier meshes have zero per-frame CPU cost after upload.
+- Dynamic tier supports add/remove/defrag without corrupting other tiers.
+- Streaming tier allows direct per-vertex writes every frame with no stalls or copies.
+- BVH/culling/sort/batch/draw pipeline works identically across all three tiers.
+- Tier tag in `MeshDataBuffer.Flags` is correctly consumed by scatter shader to route indirect commands to the right VAO.
 
-## Phase 7 - Production Hardening
+---
 
-Outcome: stable long-running behavior under stress.
+### Phase 9 — Dynamic LOD Atlas
+
+**Outcome:** Multiple LOD levels per mesh are tracked in the atlas (across tiers). GPU selects the active LOD per command per frame. LOD meshes can be loaded/unloaded from the dynamic tier on demand.
+
+#### 9A — LOD Table Buffer
+
+- [ ] Add `LODTableEntry` struct:
+  ```csharp
+  [StructLayout(LayoutKind.Sequential)]
+  public struct LODTableEntry
+  {
+      public uint LODCount;           // Number of LOD levels (1-N)
+      public uint LOD0_MeshDataID;    // MeshDataBuffer index for LOD 0
+      public uint LOD1_MeshDataID;
+      public uint LOD2_MeshDataID;
+      public uint LOD3_MeshDataID;    // Max 4 LODs initially
+      public float LOD0_MaxDistance;
+      public float LOD1_MaxDistance;
+      public float LOD2_MaxDistance;
+      public float LOD3_MaxDistance;
+  }
+  ```
+- [ ] Add `_lodTableBuffer` SSBO to `GPUScene`.
+- [ ] Map logical mesh ID → LOD table entry. When a mesh with LODs is registered, all LOD meshes are appended to the atlas and the LOD table is populated.
+- [ ] Add `LogicalMeshID` field to `GPUIndirectRenderCommand` (repurpose `Reserved0`).
+
+Primary files:
+- `XREngine/Rendering/Commands/GPUScene.cs`
+- `XREngine.Runtime.Rendering/Commands/GPUIndirectRenderCommand.cs`
+
+#### 9B — GPU LOD Selection Shader
+
+- [ ] Write `GPURenderLODSelect.comp` that:
+  - Per visible command: reads camera position, computes distance to bounding sphere center.
+  - Looks up `LODTableEntry` from `_lodTableBuffer[LogicalMeshID]`.
+  - Selects LOD level based on distance thresholds (or screen-space projected size for more accuracy).
+  - Writes selected `MeshDataID` into the command's `MeshID` field in the culled command buffer.
+  - Writes selected `LODLevel` into the command.
+- [ ] Dispatch after frustum/BVH cull, before sort/batch.
+- [ ] If `LODCount == 1` or `LODEnabled` flag is not set, skip (pass through existing MeshID).
+
+Primary files:
+- New: `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp`
+- `XREngine/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
+
+#### 9C — Dynamic LOD Atlas Residency
+
+- [ ] Extend the dynamic tier to track per-LOD entries separately (each LOD is a distinct atlas entry with its own ref count).
+- [ ] On mesh registration: load all LOD meshes into atlas if they're known (LOD 0 may go to static tier, higher LODs to dynamic). Mark higher LODs as "pending" if they need async loading.
+- [ ] Add `RequestLODLoad(logicalMeshID, lodLevel)` and `ReleaseLOD(logicalMeshID, lodLevel)` to `GPUScene`.
+- [ ] GPU LOD selection writes "LOD requests" to a small request buffer. CPU reads request buffer (async, not on hot path) periodically to trigger LOD streaming into the dynamic tier.
+- [ ] When a LOD mesh finishes loading, update `MeshDataBuffer` and `LODTableBuffer` entries via subdata.
+
+Primary files:
+- `XREngine/Rendering/Commands/GPUScene.cs`
+- `XREngine/Models/Meshes/SubMesh.cs`
+- `XREngine/Models/Meshes/SubMeshLOD.cs`
+
+#### 9D — LOD Transition Smoothing
+
+- [ ] Add dithered LOD transitions: during LOD switch, render both LODs with per-pixel dither pattern that cross-fades over N frames.
+- [ ] Track `PreviousLODLevel` and `LODTransitionProgress` per command (use `Reserved1` or add to Hot struct).
+- [ ] Fragment shader samples dither pattern and discards pixels based on transition progress.
+
+Primary files:
+- New: `Build/CommonAssets/Shaders/Common/lod_dither.glslinc`
+- Fragment shader includes
+- `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp` (transition tracking)
+
+Acceptance criteria:
+- GPU selects LOD per command, no CPU involvement in LOD selection.
+- Atlas contains multiple LOD meshes simultaneously.
+- LOD transitions are smooth (no visible popping).
+- LODs can be loaded/unloaded without stalling the render thread.
+
+---
+
+### Phase 10 — Meshlet Pipeline Integration
+
+**Outcome:** Meshlet rendering path is fully functional as an alternative to indirect multi-draw, sharing scene data and culling.
+
+#### 10A — Meshlet Data in Atlas
+
+- [ ] Extend `GPUScene` to generate and store meshlets alongside traditional atlas data.
+- [ ] Per mesh in atlas, store a meshlet range: `{ meshletOffset, meshletCount }` in `MeshDataBuffer` or a sidecar buffer.
+- [ ] `MeshletGenerator.Build()` runs on mesh registration (can be async).
+- [ ] Store meshlet vertex indices, triangle indices, and meshlet descriptors in dedicated SSBOs managed by `GPUScene` (not per-`MeshletCollection`).
+
+Primary files:
+- `XREngine/Rendering/Commands/GPUScene.cs`
+- `XREngine/Rendering/Meshlets/MeshletGenerator.cs`
+- `XREngine/Rendering/Meshlets/Meshlet.cs`
+
+#### 10B — Implement VPRC_RenderMeshesPassMeshlet
+
+- [ ] Replace stub with actual meshlet dispatch.
+- [ ] After LOD selection, expand visible commands into meshlet ranges.
+- [ ] Use `DrawMeshTasksIndirectCount` (or `DrawMeshTasksIndirect` with GPU-written count) to dispatch task shader groups.
+- [ ] Task shader: per-meshlet frustum + occlusion cull (already exists in `MeshletCulling.task`, needs Hi-Z integration).
+- [ ] Mesh shader: vertex/triangle output (already exists in `MeshletRender.mesh`).
+
+Primary files:
+- `XREngine/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs`
+- `XREngine/Rendering/Meshlets/MeshletCollection.cs`
+- `Build/CommonAssets/Shaders/Meshlets/MeshletCulling.task`
+- `Build/CommonAssets/Shaders/Meshlets/MeshletRender.mesh`
+
+#### 10C — EXT_mesh_shader Support
+
+- [ ] Add `GL_EXT_mesh_shader` path alongside existing `GL_NV_mesh_shader`.
+- [ ] EXT uses different local size and dispatch semantics — abstract behind capability flag.
+- [ ] Vulkan mesh shader support via `VK_EXT_mesh_shader`.
+- [ ] Runtime fallback: EXT preferred → NV fallback → traditional indirect.
+
+Primary files:
+- `XREngine/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs`
+- `XREngine/Rendering/Meshlets/MeshletCollection.cs`
+
+#### 10D — Meshlet LOD (Future)
+
+- [ ] Investigate nanite-style cluster group merging for continuous LOD at meshlet granularity.
+- [ ] This is a stretch goal — traditional per-mesh LOD (Phase 8) is the default first.
+
+Acceptance criteria:
+- Meshlet path renders correctly on NV mesh shader hardware.
+- No fallback to traditional path when mesh shaders are available and enabled.
+- Meshlet path shares BVH cull and LOD selection with traditional path.
+- Performance is equal or better than traditional path on mesh-shader-capable GPUs.
+
+---
+
+### Phase 11 — Production Hardening and Stress Testing
+
+**Outcome:** Stable long-running behavior under stress with zero readbacks confirmed.
 
 - [ ] Run stress tests:
-  - [ ] massive add/remove bursts
-  - [ ] continuous transform animation
-  - [ ] many-pass scenes
-  - [ ] high material diversity
+  - [ ] 100K+ command scenes with all paths active.
+  - [ ] Massive add/remove bursts (1000+ objects/frame).
+  - [ ] Continuous transform animation on all objects.
+  - [ ] Many-pass scenes (shadow + depth + forward + transparency).
+  - [ ] High material diversity (500+ unique materials).
+  - [ ] LOD streaming with rapid distance changes.
+- [ ] Validate zero GPU readback bytes in shipping mode across all stress scenarios.
 - [ ] Validate no memory leaks or stale resources after repeated scene load/unload.
 - [ ] Add crash-safe handling for buffer overflow/truncation with diagnostics.
+- [ ] Profile and optimize:
+  - [ ] Material scatter shader occupancy and throughput.
+  - [ ] Per-material indirect buffer memory usage (fragmentation).
+  - [ ] LOD selection shader cost vs. saved triangle count.
+  - [ ] Meshlet expansion overhead vs. traditional path.
 - [ ] Finalize docs for runtime toggles, debug tools, and fallback behavior.
 
 Acceptance criteria:
-- 30+ minute stress run with no corruption, leak growth, or fallback thrashing.
+- 30+ minute stress run with zero readbacks, no corruption, no leak growth, no fallback thrashing.
+- GPU stats dashboard shows 0 readback bytes in shipping config.
 
-## Immediate Sprint Start (Recommended Order)
+---
 
-1. Disable forced passthrough default and prove frustum/BVH path is active.
-2. Add incremental command update path in `GPUScene` and wire dirty updates.
-3. Fix world-space bounds generation for culling and BVH AABB build.
-4. Implement mesh atlas reference counting and safe remove behavior.
-5. Land occlusion Phase 3 baseline (`GPU_HiZ` + `CPU_QueryAsync` scaffolding) with telemetry.
-6. Land `VR-01` + `VR-03`: `ViewSet` model + buffer scaffolding.
-7. Land `VR-02` + `VR-04`: command view-mask sidecar + per-view refinement flow.
-8. Land `VR-05` + `VR-06`: OpenGL single-pass integration and Vulkan parallel fan-out.
-9. Land `VR-07` + `VR-08`: foveation policy and mirror-compose default path.
-10. Add regression tests (`VR_*`) + telemetry (`VR-09`) before parity hardening.
+## Completed Phases
 
-## Test Backlog (Must Add)
+<details>
+<summary>Phase 0–6 (completed, click to expand)</summary>
+
+### Phase 0 — Baseline Safety and Switches ✓
+
+- [x] Disabled passthrough default for non-debug configurations.
+- [x] Added runtime log for frame mode (passthrough/frustum/BVH).
+- [x] Added CPU fallback counters in GPU stats.
+- [x] Added config validation on startup.
+
+### Phase 1 — Correctness First (Scene → Atlas → Cull) ✓
+
+- [x] Incremental command update API in `GPUScene` (world matrix, bounds, material, pass, flags).
+- [x] Dirty command updates wired from scene/render-info collection.
+- [x] World-space bounding sphere computation with conservative non-uniform scale radius.
+- [x] Mesh atlas reference counting (increment on use, decrement on remove, free at zero).
+- [x] `Destroy()` cleans atlas buffers and related state.
+
+### Phase 2 — Remove CPU Stalls from Hot Path ✓
+
+- [x] Removed CPU-side culled-buffer inspection for normal batch building.
+- [x] CPU sanitizer/fallback is debug-only behind explicit setting.
+- [x] GPU count buffer used directly for draw submission.
+- [x] Profiling markers: mapped buffers/frame, readback bytes, CPU fallback events.
+
+### Phase 3 — Occlusion Culling ✓
+
+- [x] GPU Hi-Z path: depth prepass → Hi-Z pyramid → conservative sphere/AABB test.
+- [x] CPU async query path with previous-frame-only latency.
+- [x] Temporal hysteresis (N consecutive occluded frames before hiding).
+- [x] Reset on camera jump / scene topology change.
+- [x] Pass-aware (shadow/depth contributors not hidden).
+- [x] Instrumentation (candidates, occluded, false-positive recoveries, temporal overrides).
+
+### Phase 4 — Fully GPU-Driven Batching ✓
+
+- [x] GPU key generation (pass|material|pipeline|mesh|state bits).
+- [x] GPU radix sort pipeline with batch range output.
+- [x] CPU `BuildMaterialBatches` replaced in default path.
+- [x] True instancing aggregation (group identical mesh/material/pass, `instanceCount > 1`).
+- [x] CPU batching path retained as debug fallback.
+
+### Phase 5 — VR Stereo and Multi-View ✓
+
+- [x] `ViewSet` model (left/right full, left/right foveated, desktop mirror).
+- [x] Shared visibility with per-view lightweight refinement.
+- [x] Per-command view/pass masks in sidecar buffers.
+- [x] OpenGL: OVR multiview preferred, NV stereo fallback.
+- [x] Vulkan: parallel secondary command-buffer fan-out per pass×view.
+- [x] Foveated rendering: per-view tiers/regions, near-field forced to full-res.
+- [x] Mirror: compose/blit from rendered eye textures by default.
+- [x] VR telemetry (per-view visible/draw counts, command-build timing).
+
+### Phase 6 — OpenGL/Vulkan Parity ✓
+
+- [x] Parity checklist (draw indirect, parameter buffer, count draw, index sync).
+- [x] Cross-backend integration tests (visible count, draw count, command signatures).
+- [x] Backend capability matrix documented.
+- [x] Runtime parity snapshot and validation in `GpuBackendParityValidator`.
+
+</details>
+
+---
+
+## Test Backlog
+
+### Completed Tests
+
+<details>
+<summary>Click to expand completed test list</summary>
 
 - [x] `GPUScene_AddRemove_SharedMeshRefCount_RemainsValid`
 - [x] `GPUScene_UpdateCommand_TransformChange_UpdatesCullingBounds`
@@ -516,35 +792,86 @@ Acceptance criteria:
 - [x] `VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock`
 - [x] `VR_Foveated_PerViewRefinement_NoStereoPopping`
 - [x] `VR_Mirror_Compose_NoExtraSceneTraversal_DefaultMode`
+- [x] `LodSelection_NearDistance_HighestLod`
+- [x] `LodSelection_MediumDistance_MediumLod`
+- [x] `LodSelection_FarDistance_LowestLod`
+- [x] `LodSelection_BeyondAllDistances_MaxLod`
 
-## Test Backlog (Next Wave)
+</details>
+
+### Pending Tests — Phase 7 (Zero-Readback)
+
+- [ ] `ZeroReadback_ShippingMode_ZeroGpuReadbackBytes_FullFrame`
+- [ ] `ZeroReadback_PerMaterialScatter_CorrectDrawCounts`
+- [ ] `ZeroReadback_PerMaterialScatter_EmptyMaterial_ZeroDraws`
+- [ ] `ZeroReadback_TransparencyDomains_SplitWithoutReadback`
+- [ ] `ZeroReadback_MaterialAddRemove_RegistryUpdatesCorrectly`
+- [ ] `ZeroReadback_FallbackPath_StillFunctional_WhenEnabled`
+- [ ] `ZeroReadback_LargeScene_NoStalls_NoReadbacks`
+
+### Pending Tests — Phase 8 (Tiered Atlas)
+
+- [ ] `TieredAtlas_StaticTier_ZeroCpuCostAfterUpload`
+- [ ] `TieredAtlas_StaticTier_BulkLoad_AllMeshesRendered`
+- [ ] `TieredAtlas_DynamicTier_AddRemove_RefCountCorrect`
+- [ ] `TieredAtlas_DynamicTier_Defragmentation_NoCorruption`
+- [ ] `TieredAtlas_StreamingTier_PerFrameWrite_NoStall`
+- [ ] `TieredAtlas_StreamingTier_TripleBuffer_NoPipelineHazard`
+- [ ] `TieredAtlas_MigrateDynamicToStatic_MeshStillRendered`
+- [ ] `TieredAtlas_MigrateDynamicToStreaming_EditAndMigrateBack`
+- [ ] `TieredAtlas_ScatterShader_CorrectTierBucket_PerDraw`
+- [ ] `TieredAtlas_AllTiersActive_SingleFrame_CorrectOutput`
+
+### Pending Tests — Phase 9 (LOD)
+
+- [ ] `LOD_GPUSelection_CorrectLevelByDistance`
+- [ ] `LOD_GPUSelection_FallbackToLOD0_WhenSingleLOD`
+- [ ] `LOD_AtlasResidency_MultipleLODs_CoexistInAtlas`
+- [ ] `LOD_AtlasResidency_UnloadUnusedLOD_RefCountZero`
+- [ ] `LOD_DitherTransition_NoPoppingOnSwitch`
+- [ ] `LOD_StreamingRequest_AsyncLoad_NoRenderStall`
+- [ ] `LOD_TableBuffer_CorrectMeshDataIDs_AfterAtlasRebuild`
+
+### Pending Tests — Phase 10 (Meshlet)
+
+- [ ] `Meshlet_RenderPath_ProducesCorrectOutput_NVMeshShader`
+- [ ] `Meshlet_TaskShaderCull_MatchesBVHFrustumResults`
+- [ ] `Meshlet_SharedBVHCull_ThenMeshletExpansion`
+- [ ] `Meshlet_FallbackToTraditional_WhenMeshShaderUnavailable`
+- [ ] `Meshlet_LODIntegration_CorrectMeshletRangePerLOD`
+
+### Pending Tests — Phase 11 (Stress)
+
+- [ ] `Stress_100KCommands_ZeroReadbacks_StableFrameTime`
+- [ ] `Stress_MassAddRemove_1000PerFrame_NoCorruption`
+- [ ] `Stress_LODStreaming_RapidDistanceChange_NoAtlasCorruption`
+- [ ] `Stress_ThirtyMinute_AllPaths_NoLeaks_NoFallbackThrash`
+- [ ] `Stress_HighMaterialDiversity_500Materials_CorrectBatching`
+
+### Backlog (Carried Forward)
 
 - [ ] `GPUScene_Destroy_CleansAtlasBuffers_AndState`
 - [ ] `GPUScene_IncrementalUpdates_NoRemoveReaddChurn_ForTransformOnlyChanges`
 - [ ] `GPUScene_AtlasRefCount_MassRemove_SharedMeshesRemainConsistent`
 - [ ] `GPUCulling_PassMaskFiltering_RejectsWrongPassCommands`
 - [ ] `GPUCulling_CountOverflow_SetsTruncationFlag_AndPreservesValidity`
-- [ ] `GPUCulling_DebugPassthrough_RequiresExplicitOverride`
-- [ ] `Occlusion_GPUHiZ_AmbiguousDepth_KeepsVisible`
-- [ ] `Occlusion_CPUQueryAsync_UsesPreviousFrameResults_WithoutSameFrameWait`
-- [ ] `Occlusion_ResetOnCameraJump_AndSceneTopologyChange`
 - [ ] `IndirectBuild_CountBuffer_DrivesCountDraw_WhenSupported`
 - [ ] `IndirectBuild_FallbackPath_UsesClampedCounts_WhenCountDrawUnsupported`
-- [ ] `IndirectBuild_CommandSignatureParity_OpenGL_Vulkan_LargeScene`
 - [ ] `Batching_GPUGeneratedKeys_StableAcrossFrames_WithMaterialChurn`
 - [ ] `Batching_InstancingAggregation_CombinesEquivalentMeshMaterialPass`
-- [ ] `ViewSet_CommandViewMaskUpdates_TrackMaterialPassAndLayerChanges`
-- [ ] `VR_ViewSet_PerViewCounters_MatchVisibleRanges`
-- [ ] `VR_OpenGL_OVR_NVFallback_Parity_MultiPassFoveatedMirror`
-- [ ] `VR_Vulkan_ParallelRecording_NoQueueIdleInHotPath`
-- [ ] `VR_MirrorCompose_DefaultPath_AvoidsExtraSceneTraversal`
-- [ ] `Stress_ThirtyMinute_AddRemoveAnimate_ManyPasses_NoFallbackThrash`
+
+---
 
 ## Notes for Implementation
 
-- Keep debug features, but isolate them so shipping mode stays GPU-driven.
+- **Shipping mode = zero readbacks.** All debug/diagnostic readbacks are behind explicit flags. The default path never reads GPU buffers.
+- **Per-material indirect buffers** may use a single large SSBO with material-slot-based offsets to avoid many small buffer allocations. The key is that the CPU knows the offsets statically from the material registry.
+- **LOD distance thresholds** should be configurable per-model at import time and overridable at runtime.
+- **Meshlet generation** should happen at mesh import/registration time, not per-frame. Cache meshlet data alongside mesh atlas data.
+- **Material scatter vs. batch sort:** The scatter approach (Phase 7) replaces the sort+batch approach for the zero-readback path. The old sort+batch path remains for debug/validation.
+- **Memory budget:** Per-material indirect buffers need a configurable max-draws-per-material. Default to `CommandCapacity / ActiveMaterialCount` with headroom. Overflow triggers a conservative re-partition.
 - Prefer subdata updates over full buffer uploads for incremental changes.
 - Do not gate correctness on optional extensions.
-- Treat CPU sanitizer/fallback as diagnostics, not primary execution path.
+- Keep debug features isolated so shipping mode stays GPU-driven.
 - Prefer "cull once, fan out many views" over per-eye scene traversal.
 - Keep OpenGL and Vulkan view/pipeline key layouts aligned so VR parity tests stay meaningful.

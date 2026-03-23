@@ -1,6 +1,8 @@
 ﻿using ImageMagick;
 using MemoryPack;
 using SharpFont;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using SkiaSharp;
 using System.Numerics;
 using System.Collections.Concurrent;
@@ -107,6 +109,9 @@ namespace XREngine.Rendering
 
         public override bool Load3rdParty(string filePath, AssetImportContext context)
             => ImportFont(filePath, ResolveImportOptions(filePath), context.ResolveAuxiliaryPath);
+
+        public override bool Load3rdParty(string filePath, object? importOptions, AssetImportContext context)
+            => ImportFont(filePath, importOptions as XRFontImportOptions ?? ResolveImportOptions(filePath), context.ResolveAuxiliaryPath);
 
         public override bool Import3rdParty(string filePath, object? importOptions)
             => ImportFont(filePath, importOptions as XRFontImportOptions ?? ResolveImportOptions(filePath), auxiliaryFileName => ResolveFallbackAuxiliaryPath(filePath, auxiliaryFileName));
@@ -445,7 +450,7 @@ namespace XREngine.Rendering
             ETexMagFilter magFilter,
             bool autoGenerateMipmaps)
         {
-            using var atlasImage = new MagickImage(atlasPath);
+            using Image<Rgba32> atlasImage = Image.Load<Rgba32>(atlasPath);
             var atlasTexture = new XRTexture2D(atlasImage)
             {
                 FilePath = atlasPath,
@@ -458,6 +463,15 @@ namespace XREngine.Rendering
                 MagFilter = magFilter,
                 SizedInternalFormat = sizedInternalFormat,
             };
+
+            if (atlasTexture.Mipmaps is not null)
+            {
+                foreach (Mipmap2D mipmap in atlasTexture.Mipmaps)
+                {
+                    if (mipmap.Data is not null)
+                        mipmap.Data.PreferCompressedYaml = true;
+                }
+            }
 
             return atlasTexture;
         }
@@ -957,6 +971,17 @@ namespace XREngine.Rendering
             float lineHeight = fontSize ?? 0.0f;
             float spaceWidth = glyphs.TryGetValue(" ", out Glyph? spaceGlyph) ? MathF.Max(spaceGlyph.EffectiveAdvance, layoutEmSize * 0.25f) : layoutEmSize * 0.25f;
 
+            // Track line breaks for a single deferred Y-shift pass instead of
+            // shifting all previous quads on every newline/wrap (was O(n*k)).
+            int lineBreakCount = 0;
+            float lineBreakShiftTotal = 0.0f;
+            Span<float> lineBreakHeights = str.Length <= 256
+                ? stackalloc float[Math.Min(str.Length, 256)]
+                : new float[str.Length];
+            Span<int> lineBreakQuadIndices = str.Length <= 256
+                ? stackalloc int[Math.Min(str.Length, 256)]
+                : new int[str.Length];
+
             float scale = (fontSize ?? 1.0f) / layoutEmSize;
             for (int i = 0; i < str.Length; i++)
             {
@@ -964,30 +989,26 @@ namespace XREngine.Rendering
                 bool first = i == 0;
 
                 char ch = str[i];
-                string character = ch.ToString();
-                if (character == " ")
+                if (ch == ' ')
                 {
                     xOffset += spaceWidth;
                     if (!last)
                         xOffset += spacing;
                     continue;
                 }
-                if (character == "\n")
+                if (ch == '\n')
                 {
                     xOffset = offset.X;
-                    //update y translation on all previous characters
-                    for (int j = quads.Count - 1; j >= 0; j--)
-                    {
-                        Vector4 t = quads[j].transform;
-                        t.Y += lineHeight + lineSpacing;
-                        quads[j] = (t, quads[j].uvs);
-                    }
-                    //yOffset += lineHeight + 30.0f;
-                    //Debug.Out($"Line height: {lineHeight}");
+                    lineBreakHeights[lineBreakCount] = lineHeight;
+                    lineBreakQuadIndices[lineBreakCount] = quads.Count;
+                    lineBreakShiftTotal += lineHeight + lineSpacing;
+                    lineBreakCount++;
                     if (fontSize is null)
                         lineHeight = 0.0f;
                     continue;
                 }
+
+                string character = ch.ToString();
                 if (!glyphs.ContainsKey(character))
                 {
                     // Handle missing glyphs (e.g., skip or substitute)
@@ -1008,15 +1029,10 @@ namespace XREngine.Rendering
                 if (wrap != EWrapMode.None && (translateX + scaleX) > maxWidth && maxWidth > 0.0f)
                 {
                     xOffset = offset.X;
-                    //update y translation on all previous characters
-                    for (int j = quads.Count - 1; j >= 0; j--)
-                    {
-                        Vector4 t = quads[j].transform;
-                        t.Y += lineHeight + lineSpacing;
-                        quads[j] = (t, quads[j].uvs);
-                    }
-                    //yOffset += lineHeight + 30.0f;
-                    //Debug.Out($"Line height: {lineHeight}");
+                    lineBreakHeights[lineBreakCount] = lineHeight;
+                    lineBreakQuadIndices[lineBreakCount] = quads.Count;
+                    lineBreakShiftTotal += lineHeight + lineSpacing;
+                    lineBreakCount++;
                     if (fontSize is null)
                         lineHeight = 0.0f;
                     translateX = (xOffset + glyph.Bearing.X) * scale;
@@ -1034,13 +1050,7 @@ namespace XREngine.Rendering
                 float u1 = (glyph.Position.X + glyph.EffectiveAtlasSize.X) / atlasSize.X;
                 float v1 = (glyph.Position.Y + glyph.EffectiveAtlasSize.Y) / atlasSize.Y;
 
-                // Add UVs in the order matching the quad vertices
-                // Assuming quad vertices are defined in this order:
-                // Bottom-left (0, 0)
-                // Bottom-right (1, 0)
-                // Top-right (1, 1)
-                // Top-left (0, 1)
-                Vector4 uvs = new(u0, v0, u1, v1); // Bottom-left to Top-right
+                Vector4 uvs = new(u0, v0, u1, v1);
 
                 quads.Add((transform, uvs));
 
@@ -1050,6 +1060,26 @@ namespace XREngine.Rendering
 
                 if (fontSize is null)
                     lineHeight = Math.Max(lineHeight, glyph.Size.Y * scale);
+            }
+
+            // Apply all Y-shifts in a single O(n) pass.
+            // Text builds bottom-up: last line stays at yOffset, earlier lines shift up.
+            if (lineBreakCount > 0)
+            {
+                int segStart = 0;
+                float shift = lineBreakShiftTotal;
+                for (int b = 0; b < lineBreakCount; b++)
+                {
+                    int segEnd = lineBreakQuadIndices[b];
+                    for (int j = segStart; j < segEnd; j++)
+                    {
+                        var (t, u) = quads[j];
+                        t.Y += shift;
+                        quads[j] = (t, u);
+                    }
+                    shift -= lineBreakHeights[b] + lineSpacing;
+                    segStart = segEnd;
+                }
             }
 
             if (fontSize is null)
@@ -1230,20 +1260,27 @@ namespace XREngine.Rendering
 
         private static FontGlyphSet LoadEngineFontDirect(string path, XRFontImportOptions importOptions)
         {
-            var font = new FontGlyphSet
-            {
-                Name = Path.GetFileNameWithoutExtension(path),
-                FilePath = path,
-                OriginalPath = path,
-            };
-
+            bool logTiming = Engine.StartingUp || Engine.StartupPresentationEnabled;
+            var stopwatch = logTiming ? System.Diagnostics.Stopwatch.StartNew() : null;
             string importProfileKey = BuildImportProfileKey(importOptions);
             string? cacheDirectory = ResolveEngineFontCacheDirectory(path, importProfileKey);
-            Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFontDirect: path='{path}', cacheDir='{cacheDirectory ?? "<null>"}'");
+            Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFontDirect: path='{path}', cacheDir='{cacheDirectory ?? "<null>"}', cacheAssetPathMode='asset-manager-variant'");
 
-            var context = new AssetImportContext(path, cacheDirectory);
-            if (!font.ImportFont(path, importOptions, context.ResolveAuxiliaryPath))
-                throw new FileNotFoundException($"Unable to import engine font at {path}");
+            FontGlyphSet font = Engine.Assets.Load3rdPartyVariantWithCache<FontGlyphSet>(path, importOptions, importProfileKey, JobPriority.Highest, bypassJobThread: true)
+                ?? throw new FileNotFoundException($"Unable to import engine font at {path}");
+
+            font.Name ??= Path.GetFileNameWithoutExtension(path);
+            font.FilePath = path;
+            font.OriginalPath = path;
+
+            stopwatch?.Stop();
+            if (stopwatch is not null)
+            {
+                Debug.Out(
+                    "[StartupUI] FontGlyphSet.LoadEngineFontDirect completed in {0:F1} ms for '{1}'.",
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    Path.GetFileName(path));
+            }
 
             return font;
         }

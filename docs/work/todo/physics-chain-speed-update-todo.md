@@ -6,8 +6,6 @@ Scope: reduce `PhysicsChainComponent` CPU cost, GPU transfer bandwidth, synchron
 
 Related docs:
 
-- [GPU Physics Chain Compatibility](../design/gpu-physics-chain-compatibility.md)
-- [GPU Physics Chain Engine Verification](../design/gpu-physics-chain-engine-verification.md)
 - [GPU Physics Chain Zero-Readback Skinned Mesh Plan](../design/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
 
 ## Goal
@@ -26,6 +24,8 @@ Success means:
 
 What the current implementation already does well:
 
+- GPU physics-chain execution is already integrated into the unified `PhysicsChainComponent` behind `UseGPU`, with optional batched dispatch through `GPUPhysicsChainDispatcher`.
+- compute shader, shader-storage-buffer, and dispatcher plumbing are already present and working in the engine architecture.
 - static particle metadata is versioned in parts of the GPU path,
 - batched GPU dispatch already amortizes compute submission across multiple components,
 - the component already tracks bandwidth counters through `GPUPhysicsChainDispatcher`,
@@ -40,6 +40,15 @@ What currently blocks scale:
 - `UpdatePerTreeParams` uses `stackalloc` but then defeats it with `ToArray()`,
 - CPU multithreaded mode allocates a new `ActionJob` per active component per frame,
 - transform hierarchy recalculation is likely a major CPU cost in `Prepare()` and transform application.
+
+## Consolidated Prior Integration Findings
+
+The earlier GPU-physics-chain compatibility and integration verification notes established these points, which remain true but are no longer separate work docs:
+
+- the GPU path is not a side prototype anymore; it is part of the main `PhysicsChainComponent` surface,
+- the engine already supports the compute-shader, buffer-binding, and batched-dispatch contracts this feature needs,
+- async readback exists as a compatibility mechanism, but one-frame-latency CPU sync is still the wrong default for the primary visible rendering path,
+- current work is therefore focused on removing visible-path readback, upload churn, and hot-path allocation, not on proving that the basic GPU path can execute at all.
 
 ## Optimization Priorities
 

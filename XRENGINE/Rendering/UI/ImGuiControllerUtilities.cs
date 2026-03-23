@@ -84,14 +84,28 @@ internal static class ImGuiControllerUtilities
 
             var io = ImGui.GetIO();
 
+            var atlasLoadStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
             if (!TryLoadEditorFont(io, sizePixels, out string? loadedFontPath))
                 return false;
 
+            atlasLoadStopwatch.Stop();
+
+            var textureRebuildStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
             TryRecreateFontDeviceTexture(controller);
+
+            textureRebuildStopwatch.Stop();
+            string fontFileLabel = Path.GetFileName(loadedFontPath ?? "<unknown>");
 
             lock (_fontLoadedContexts)
                 _fontLoadedContexts.Add(context);
-            Debug.Out($"ImGui font: {Path.GetFileName(loadedFontPath)} loaded @ {sizePixels:0.#}px");
+            Debug.Out(
+                "[StartupUI] ImGui font ready: atlas={0:F1} ms, deviceTexture={1:F1} ms, file={2}",
+                atlasLoadStopwatch.Elapsed.TotalMilliseconds,
+                textureRebuildStopwatch.Elapsed.TotalMilliseconds,
+                fontFileLabel);
+            Debug.Out($"ImGui font: {fontFileLabel} loaded @ {sizePixels:0.#}px");
             return true;
         }
         catch (Exception ex)

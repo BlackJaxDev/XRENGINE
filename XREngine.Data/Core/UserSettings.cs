@@ -211,6 +211,7 @@ namespace XREngine
         private OverrideableSetting<bool> _enableGpuIndirectDebugLoggingOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectCpuFallbackOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectValidationLoggingOverride = new();
+        private OverrideableSetting<bool> _enableZeroReadbackMaterialScatterOverride = new();
 
         // Full cascade settings (User > Project > Engine)
         private OverrideableSetting<EAntiAliasingMode> _antiAliasingModeOverride = new();
@@ -335,6 +336,18 @@ namespace XREngine
         {
             get => _enableGpuIndirectValidationLoggingOverride;
             set => SetField(ref _enableGpuIndirectValidationLoggingOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for zero-readback material scatter.
+        /// Takes precedence over project and engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Debug Overrides")]
+        [Description("User override for zero-readback material scatter.")]
+        public OverrideableSetting<bool> EnableZeroReadbackMaterialScatterOverride
+        {
+            get => _enableZeroReadbackMaterialScatterOverride;
+            set => SetField(ref _enableZeroReadbackMaterialScatterOverride, value ?? new());
         }
 
         /// <summary>

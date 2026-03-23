@@ -32,8 +32,8 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Secondary GPU Context](architecture/secondary-gpu-context.md)
 
 ## Physics and Simulation
-- [GPU Physics Chain Compatibility](work/design/gpu-physics-chain-compatibility.md)
-- [GPU Physics Chain Engine Verification](work/design/gpu-physics-chain-engine-verification.md)
+- [Physics Chain Speed Update TODO](work/todo/physics-chain-speed-update-todo.md)
+- [GPU Physics Chain Zero-Readback Skinned Mesh Plan](work/design/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
 - [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md)
 
 ## Diagnostics
@@ -48,8 +48,8 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 
 ## Work Docs (WIP / TODO / Design)
 - [Work Docs Index](work/README.md)
-- Backlog: [Project TODO](work/backlog/todo.md), [Warnings Remediation Checklist](work/backlog/warnings-todo.md), [Vulkan TODO](work/backlog/VULKAN_TODO.md), [Indirect GPU Rendering TODO](work/backlog/IndirectGPURendering-TODO.md), [GPU Softbody Mesh Rigging TODO](work/todo/gpu-softbody-mesh-rigging-todo.md)
-- Design: [Indirect GPU Rendering Architecture](work/design/IndirectGPURendering-Design.md), [Affine Matrix Integration Plan](work/design/affine-matrix-integration-plan.md), [Bindless Deferred Texturing Plan](work/design/bindless-deferred-texturing-plan.md), [Vulkan Parity Report](work/design/vulkan-parity-report.md), [Vulkan Command Buffer Refactor](work/design/vulkan-command-buffer-refactor.md), [Transparency And OIT Implementation Plan](work/design/transparency-and-oit-implementation-plan.md), [GPU Physics Chain Compatibility](work/design/gpu-physics-chain-compatibility.md), [GPU Physics Chain Engine Verification](work/design/gpu-physics-chain-engine-verification.md), [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md), [Runtime Modularization And Bootstrap Extraction Plan](work/design/runtime-modularization-plan.md), [Runtime Modularization Phase 2 TODO](work/todo/runtime-modularization-phase2-todo.md)
+- Active TODOs and design docs are tracked from [Work Docs Index](work/README.md).
+- Representative design docs: [Affine Matrix Integration Plan](work/design/affine-matrix-integration-plan.md), [Bindless Deferred Texturing Plan](work/design/bindless-deferred-texturing-plan.md), [Transparency And OIT Implementation Plan](work/design/transparency-and-oit-implementation-plan.md), [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md), [Runtime Modularization And Bootstrap Extraction Plan](work/design/runtime-modularization-plan.md)
 
 ## Tips
 - Most API docs cross-link to related systems. Use "Related Documentation" sections at the bottom of each page for deeper dives.

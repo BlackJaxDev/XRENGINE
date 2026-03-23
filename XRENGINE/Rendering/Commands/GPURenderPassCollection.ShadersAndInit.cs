@@ -158,6 +158,7 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCulling.comp", EShaderType.Compute));
             _buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildKeys.comp", EShaderType.Compute));
             _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildBatches.comp", EShaderType.Compute));
+            _materialScatterComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderMaterialScatter.comp", EShaderType.Compute));
             _classifyTransparencyComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClassifyTransparencyDomains.comp", EShaderType.Compute));
             //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Sorting/GPURenderRadixIndexSort.comp", EShaderType.Compute));
             _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderIndirect.comp", EShaderType.Compute));
@@ -855,6 +856,98 @@ namespace XREngine.Rendering.Commands
             EnsureBatchCountBuffer();
             EnsureInstanceDataBuffers(capacity);
             EnsureMaterialAggregationBuffer(1u);
+        }
+
+        private void EnsureMaterialScatterBuffers(uint materialCount, uint capacity)
+        {
+            uint slotCount = Math.Max(materialCount, 1u);
+            uint bucketCount = slotCount * GPUBatchingBindings.MaterialTierCount;
+
+            if (_materialSlotLookupBuffer is null ||
+                _materialSlotLookupBuffer.ComponentType != EComponentType.UInt ||
+                _materialSlotLookupBuffer.ComponentCount != 1u)
+            {
+                _materialSlotLookupBuffer?.Destroy();
+                _materialSlotLookupBuffer = new XRDataBuffer(
+                    "MaterialSlotLookup",
+                    EBufferTarget.ShaderStorageBuffer,
+                    slotCount,
+                    EComponentType.UInt,
+                    1u,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.MaterialScatterMaterialSlotLookup
+                };
+                _materialSlotLookupBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                _materialSlotLookupBuffer.Generate();
+            }
+            else if (_materialSlotLookupBuffer.ElementCount < slotCount)
+            {
+                _materialSlotLookupBuffer.Resize(slotCount);
+            }
+
+            if (_materialTierDrawCountBuffer is null ||
+                _materialTierDrawCountBuffer.ComponentType != EComponentType.UInt ||
+                _materialTierDrawCountBuffer.ComponentCount != 1u)
+            {
+                _materialTierDrawCountBuffer?.Destroy();
+                _materialTierDrawCountBuffer = new XRDataBuffer(
+                    "MaterialTierDrawCounts",
+                    EBufferTarget.ShaderStorageBuffer,
+                    bucketCount,
+                    EComponentType.UInt,
+                    1u,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.MaterialScatterDrawCounts
+                };
+                _materialTierDrawCountBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                _materialTierDrawCountBuffer.Generate();
+            }
+            else if (_materialTierDrawCountBuffer.ElementCount < bucketCount)
+            {
+                _materialTierDrawCountBuffer.Resize(bucketCount);
+            }
+
+            ulong totalIndirectCommands = (ulong)Math.Max(capacity, 1u) * bucketCount;
+            uint boundedIndirectCommands = (uint)Math.Min(totalIndirectCommands, int.MaxValue);
+            if (_materialTierIndirectDrawBuffer is null ||
+                _materialTierIndirectDrawBuffer.ComponentType != EComponentType.UInt ||
+                _materialTierIndirectDrawBuffer.ComponentCount != _indirectCommandComponentCount)
+            {
+                _materialTierIndirectDrawBuffer?.Destroy();
+                _materialTierIndirectDrawBuffer = new XRDataBuffer(
+                    "MaterialTierIndirectDraws",
+                    EBufferTarget.DrawIndirectBuffer,
+                    boundedIndirectCommands,
+                    EComponentType.UInt,
+                    _indirectCommandComponentCount,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.MaterialScatterIndirectDraws
+                };
+                _materialTierIndirectDrawBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                _materialTierIndirectDrawBuffer.Generate();
+            }
+            else if (_materialTierIndirectDrawBuffer.ElementCount < boundedIndirectCommands)
+            {
+                _materialTierIndirectDrawBuffer.Resize(boundedIndirectCommands);
+            }
+
+            _materialTierBucketCount = bucketCount;
+            _maxDrawsPerMaterialTier = Math.Max(capacity, 1u);
         }
 
         private void EnsureTransparencyDomainBuffers(uint capacity)

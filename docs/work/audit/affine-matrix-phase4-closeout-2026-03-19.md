@@ -1,13 +1,19 @@
 # Affine Matrix Phase 4 Closeout - 2026-03-19
 
 Reference design: [Affine Matrix Integration Plan](../design/affine-matrix-integration-plan.md)
-Reference todo: [Affine Matrix Integration TODO](../todo/affine-matrix-integration-todo.md)
-Reference baseline: [Affine Matrix Phase 0 Baseline](affine-matrix-phase0-baseline-2026-03-18.md)
-Reference prior validation: [Affine Matrix Phase 3 Validation - 2026-03-19](affine-matrix-phase3-validation-2026-03-19.md)
+
+This closeout now serves as the consolidated final record for the affine rollout. It supersedes the earlier phase todo, baseline notes, and intermediate validation snapshots.
 
 ## Scope
 
 Phase 4 is a decision checkpoint, not a new storage migration. The goal of this pass was to review the Phase 1-3 benchmark and validation data, rerun the required closeout validation, and decide whether any internal caches or arrays should move from `Matrix4x4` storage to `AffineMatrix4x3`.
+
+## Consolidated Rollout Summary
+
+- Phase 0 established the microbenchmark and scenario baseline.
+- Phases 1 and 2 justified keeping the transform hierarchy and local-matrix fast paths where affinity is guaranteed.
+- Phase 3 stayed intentionally narrow: the affine-only CPU bounds helpers were kept, but the measurements did not justify widening that work into broader storage changes.
+- Phase 4 closes the rollout by keeping the current transient affine fast paths and explicitly rejecting a wider storage-boundary migration.
 
 ## Validation Performed
 

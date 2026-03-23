@@ -292,12 +292,18 @@ namespace XREngine.Rendering.UI
             base.UITransformPropertyChanged(sender, e);
             switch (e.PropertyName)
             {
-                case nameof(UIBoundableTransform.ActualLocalBottomLeftTranslation):
                 case nameof(UIBoundableTransform.ActualSize):
-                    UpdateText(false, false);
+                    if (BoundsAffectGlyphLayout())
+                        UpdateText(false, false);
                     break;
             }
         }
+
+        private bool BoundsAffectGlyphLayout()
+            => WrapMode != FontGlyphSet.EWrapMode.None
+            || FontSize is null
+            || HorizontalAlignment != EHorizontalAlignment.Left
+            || VerticalAlignment != EVerticalAlignment.Bottom;
 
         #endregion
 
@@ -316,40 +322,38 @@ namespace XREngine.Rendering.UI
         //TODO: return and cache max width and height when calculating glyphs instead
         private float CalcAutoWidth(UIBoundableTransform transform)
         {
-            //x = pos x, z = scale x
             using (_glyphLock.EnterScope())
-            {
-                if (_glyphs is null || _glyphs.Count == 0)
-                {
-                    if (string.IsNullOrEmpty(Text))
-                        return 0.0f;
-
-                    Font ??= FontGlyphSet.LoadDefaultUIFont();
-                    return MeasureWidth(Text, Font, FontSize ?? 30.0f);
-                }
-
-                //if (WrapMode != FontGlyphSet.EWrapMode.None)
-                return _glyphs.Max(g => g.transform.X + g.transform.Z);
-                //else
-                //{
-                //    var last = _glyphs[^1];
-                //    return last.transform.X + last.transform.Z;
-                //}
-            }
+                return CalcAutoWidthNoLock();
         }
 
         private float CalcAutoHeight(UIBoundableTransform transform)
         {
-            //y = pos y, w = scale y
             using (_glyphLock.EnterScope())
-            {
-                if (_glyphs is null || _glyphs.Count == 0)
-                    return FontSize ?? 30.0f;
+                return CalcAutoHeightNoLock();
+        }
 
-                float max = _glyphs.Max(g => g.transform.Y);
-                float min = _glyphs.Min(g => g.transform.Y + g.transform.W);
-                return max - min;
+        private float CalcAutoWidthNoLock()
+        {
+            if (_glyphs is null || _glyphs.Count == 0)
+            {
+                if (string.IsNullOrEmpty(Text))
+                    return 0.0f;
+
+                Font ??= FontGlyphSet.LoadDefaultUIFont();
+                return MeasureWidth(Text, Font, FontSize ?? 30.0f);
             }
+
+            return _glyphs.Max(g => g.transform.X + g.transform.Z);
+        }
+
+        private float CalcAutoHeightNoLock()
+        {
+            if (_glyphs is null || _glyphs.Count == 0)
+                return FontSize ?? 30.0f;
+
+            float max = _glyphs.Max(g => g.transform.Y);
+            float min = _glyphs.Min(g => g.transform.Y + g.transform.W);
+            return max - min;
         }
 
         #endregion
@@ -478,7 +482,7 @@ namespace XREngine.Rendering.UI
             {
                 // Per-line centering: center each line independently within the region.
                 // When auto-sizing (w unconstrained), center within the widest line's width.
-                float regionW = w < float.MaxValue * 0.5f ? w : CalcAutoWidth(tfm);
+                float regionW = w < float.MaxValue * 0.5f ? w : CalcAutoWidthNoLock();
 
                 // Detect lines by X-position reset (robust for LTR text with varying glyph Y offsets).
                 int i = 0;
@@ -505,7 +509,7 @@ namespace XREngine.Rendering.UI
             else
             {
                 // Block-level alignment (Right)
-                float textW = CalcAutoWidth(tfm);
+                float textW = CalcAutoWidthNoLock();
                 float offset = HorizontalAlignment switch
                 {
                     EHorizontalAlignment.Right => w - textW - marginRight,
@@ -522,7 +526,7 @@ namespace XREngine.Rendering.UI
         private void AlignQuadsVertical(UIBoundableTransform tfm, float h)
         {
             //Calc max glyph height
-            float textH = CalcAutoHeight(tfm);
+            float textH = CalcAutoHeightNoLock();
             //Calc offset, which is a percentage of the remaining space not taken up by the text
             float offset = VerticalAlignment switch
             {

@@ -1,7 +1,7 @@
 # Runtime Modularization Phase 3 - Physical Code Moves & XRENGINE Reduction
 
 Reference design: [runtime-modularization-plan.md](../design/runtime-modularization-plan.md)
-Previous phase: [runtime-modularization-phase2-todo.md](runtime-modularization-phase2-todo.md)
+Previous phase: Phase 2 is complete and folded into the current modularization plan and Phase 3 cleanup.
 
 Created: 2026-03-16
 

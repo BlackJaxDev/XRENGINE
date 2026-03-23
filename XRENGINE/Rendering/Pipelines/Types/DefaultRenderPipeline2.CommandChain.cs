@@ -357,7 +357,8 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             MsaaLightCombineFBOName,
             CreateMsaaLightCombineFBO,
-            GetDesiredFBOSizeInternal);
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateMsaaFbo);
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             DepthPreloadFBOName,
             CreateDepthPreloadFBO,

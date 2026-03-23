@@ -1122,6 +1122,7 @@ namespace XREngine
         private bool _useDebugOpaquePipeline;
         private bool _forceGpuPassthroughCulling = false;
         private bool _allowGpuCpuFallback = false;
+        private bool _enableZeroReadbackMaterialScatter = false;
         private bool _enableProfilerFrameLogging = true;
         private bool _enableProfilerComponentTiming = true;
         private bool _enableRenderStatisticsTracking = true;
@@ -1430,6 +1431,15 @@ namespace XREngine
         {
             get => _allowGpuCpuFallback;
             set => SetField(ref _allowGpuCpuFallback, value);
+        }
+
+        [Category("GPU Rendering")]
+        [DisplayName("Enable Zero-Readback Material Scatter")]
+        [Description("When true, enables GPU scatter-based material dispatch that eliminates CPU readback of GPU batch ranges during rendering.")]
+        public bool EnableZeroReadbackMaterialScatter
+        {
+            get => _enableZeroReadbackMaterialScatter;
+            set => SetField(ref _enableZeroReadbackMaterialScatter, value);
         }
 
         [Category("Profiling")]
@@ -2080,6 +2090,7 @@ namespace XREngine
             UseDebugOpaquePipeline = source.UseDebugOpaquePipeline;
             ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
             AllowGpuCpuFallback = source.AllowGpuCpuFallback;
+            EnableZeroReadbackMaterialScatter = source.EnableZeroReadbackMaterialScatter;
             EnableProfilerFrameLogging = source.EnableProfilerFrameLogging;
             EnableProfilerComponentTiming = source.EnableProfilerComponentTiming;
             EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
@@ -2183,6 +2194,8 @@ namespace XREngine
                 ForceGpuPassthroughCulling = passthrough.Value;
             if (overrides.AllowGpuCpuFallbackOverride is { HasOverride: true } cpuFallback)
                 AllowGpuCpuFallback = cpuFallback.Value;
+            if (overrides.EnableZeroReadbackMaterialScatterOverride is { HasOverride: true } zeroReadback)
+                EnableZeroReadbackMaterialScatter = zeroReadback.Value;
             if (overrides.EnableProfilerFrameLoggingOverride is { HasOverride: true } profilerLogging)
                 EnableProfilerFrameLogging = profilerLogging.Value;
             if (overrides.EnableProfilerComponentTimingOverride is { HasOverride: true } componentTiming)

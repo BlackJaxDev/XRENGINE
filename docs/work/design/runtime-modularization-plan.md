@@ -13,7 +13,7 @@ This is a design document for the refactor, not an implementation record.
 
 Implementation companions:
 
-- [Runtime Modularization Phase 2 TODO](../todo/runtime-modularization-phase2-todo.md) (complete)
+- Phase 2 is complete and its implementation record has been retired from `docs/work`.
 - [Runtime Modularization Phase 3 TODO](../todo/runtime-modularization-phase3-todo.md) (physical code moves & XRENGINE deletion)
 
 ## Why This Refactor Exists

@@ -69,6 +69,7 @@ namespace XREngine.Rendering.Commands
             }
 
             _gpuBatchingPreparedThisFrame = false;
+            _zeroReadbackMaterialScatterPreparedThisFrame = false;
             Stopwatch resetStopwatch = Stopwatch.StartNew();
             ResetCounters();
             resetStopwatch.Stop();
@@ -119,7 +120,7 @@ namespace XREngine.Rendering.Commands
                 CurrentBatches = batches;
                 _gpuBatchingPreparedThisFrame = batches is not null;
 
-                if (batches is null || batches.Count == 0)
+                if (!_zeroReadbackMaterialScatterPreparedThisFrame && (batches is null || batches.Count == 0))
                 {
                     if (scene.TotalCommandCount > 0)
                     {
@@ -364,9 +365,110 @@ namespace XREngine.Rendering.Commands
             PopulateMaterialAggregationFlags(scene);
             DispatchBuildKeys();
             DispatchBuildGpuBatches(scene);
+            if (EnableZeroReadbackMaterialScatter)
+            {
+                DispatchMaterialScatter(scene);
+                _zeroReadbackMaterialScatterPreparedThisFrame = _materialTierIndirectDrawBuffer is not null &&
+                    _materialTierDrawCountBuffer is not null &&
+                    _materialSlotLookupBuffer is not null &&
+                    _materialSlotIds.Count > 0;
+            }
             UpdateVisibleCountersFromBuffer();
 
+            if (_zeroReadbackMaterialScatterPreparedThisFrame)
+                return null;
+
+            // When readback is disabled (shipping / zero-readback mode), skip batch readback entirely
+            // even if scatter wasn't prepared this frame — fall back to CommandCapacity-based draw.
+            if (IsCpuReadbackCountDisabledForPass())
+                return null;
+
             return ReadGpuBatchRanges();
+        }
+
+        private void DispatchMaterialScatter(GPUScene scene)
+        {
+            if (_materialScatterComputeShader is null ||
+                _keyIndexBufferA is null ||
+                _culledCountBuffer is null)
+            {
+                return;
+            }
+
+            PopulateMaterialSlotLookup(scene);
+            if (_materialSlotLookupBuffer is null ||
+                _materialTierIndirectDrawBuffer is null ||
+                _materialTierDrawCountBuffer is null ||
+                _materialTierBucketCount == 0u ||
+                _maxDrawsPerMaterialTier == 0u)
+            {
+                return;
+            }
+
+            ResetMaterialScatterCounts();
+
+            _materialScatterComputeShader.Uniform("CurrentRenderPass", RenderPass);
+            _materialScatterComputeShader.Uniform("MaxMaterialSlotLookup", (int)_materialSlotLookupBuffer.ElementCount);
+            _materialScatterComputeShader.Uniform("MaxBucketCount", (int)_materialTierBucketCount);
+            _materialScatterComputeShader.Uniform("MaxIndirectDrawsPerBucket", (int)_maxDrawsPerMaterialTier);
+
+            CulledSceneToRenderBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterInputCommands);
+            scene.MeshDataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterMeshData);
+            _culledCountBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterCulledCount);
+            _keyIndexBufferA.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterSortKeys);
+            _materialSlotLookupBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterMaterialSlotLookup);
+            _materialTierIndirectDrawBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterIndirectDraws);
+            _materialTierDrawCountBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterDrawCounts);
+            _indirectOverflowFlagBuffer?.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterOverflow);
+
+            uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
+                ? _keyIndexBufferA.ElementCount
+                : Math.Max(VisibleCommandCount, 1u);
+            uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
+            _materialScatterComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+        }
+
+        private void PopulateMaterialSlotLookup(GPUScene scene)
+        {
+            uint maxMaterialId = 0u;
+            foreach (uint materialId in scene.MaterialMap.Keys)
+            {
+                if (materialId > maxMaterialId)
+                    maxMaterialId = materialId;
+            }
+
+            EnsureMaterialScatterBuffers(maxMaterialId + 1u, CommandCapacity);
+            if (_materialSlotLookupBuffer is null)
+                return;
+
+            _materialSlotIds.Clear();
+
+            for (uint i = 0; i < _materialSlotLookupBuffer.ElementCount; ++i)
+                _materialSlotLookupBuffer.SetDataRawAtIndex(i, GPUBatchingBindings.InvalidMaterialSlot);
+
+            List<uint> materialIds = [.. scene.MaterialMap.Keys];
+            materialIds.Sort();
+
+            for (int slotIndex = 0; slotIndex < materialIds.Count; ++slotIndex)
+            {
+                uint materialId = materialIds[slotIndex];
+                _materialSlotLookupBuffer.SetDataRawAtIndex(materialId, (uint)slotIndex);
+                _materialSlotIds.Add(materialId);
+            }
+
+            _materialSlotLookupBuffer.PushSubData();
+        }
+
+        private void ResetMaterialScatterCounts()
+        {
+            if (_materialTierDrawCountBuffer is null)
+                return;
+
+            for (uint i = 0; i < _materialTierDrawCountBuffer.ElementCount; ++i)
+                _materialTierDrawCountBuffer.SetDataRawAtIndex(i, 0u);
+
+            _materialTierDrawCountBuffer.PushSubData();
         }
 
         private void ClassifyTransparencyDomains(GPUScene scene)
@@ -404,16 +506,28 @@ namespace XREngine.Rendering.Commands
             _classifyTransparencyComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
-            uint opaqueOrOtherCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.OpaqueOrOther);
-            MaskedVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.Masked);
-            ApproximateTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentApproximate);
-            ExactTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentExact);
+            if (ShouldCaptureDiagnosticReadbacksForPass())
+            {
+                // Diagnostic path: read domain counts back to CPU for stats/logging.
+                uint opaqueOrOtherCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.OpaqueOrOther);
+                MaskedVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.Masked);
+                ApproximateTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentApproximate);
+                ExactTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentExact);
 
-            Engine.Rendering.Stats.RecordGpuTransparencyDomainCounts(
-                opaqueOrOtherCount,
-                MaskedVisibleCommandCount,
-                ApproximateTransparentVisibleCommandCount,
-                ExactTransparentVisibleCommandCount);
+                Engine.Rendering.Stats.RecordGpuTransparencyDomainCounts(
+                    opaqueOrOtherCount,
+                    MaskedVisibleCommandCount,
+                    ApproximateTransparentVisibleCommandCount,
+                    ExactTransparentVisibleCommandCount);
+            }
+            else
+            {
+                // Zero-readback path: GPU wrote counts into _transparencyDomainCountBuffer
+                // but we don't read them back. CPU stats remain at 0 (unavailable).
+                MaskedVisibleCommandCount = 0u;
+                ApproximateTransparentVisibleCommandCount = 0u;
+                ExactTransparentVisibleCommandCount = 0u;
+            }
         }
 
         private void DispatchBuildKeys()
@@ -1303,6 +1417,9 @@ namespace XREngine.Rendering.Commands
             _keyIndexBufferA?.Dispose();
             _gpuBatchRangeBuffer?.Dispose();
             _gpuBatchCountBuffer?.Dispose();
+            _materialSlotLookupBuffer?.Dispose();
+            _materialTierIndirectDrawBuffer?.Dispose();
+            _materialTierDrawCountBuffer?.Dispose();
             _instanceTransformBuffer?.Dispose();
             _instanceSourceIndexBuffer?.Dispose();
             _materialAggregationBuffer?.Dispose();
@@ -1330,6 +1447,7 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader?.Destroy();
             _buildKeysComputeShader?.Destroy();
             _buildGpuBatchesComputeShader?.Destroy();
+            _materialScatterComputeShader?.Destroy();
             _classifyTransparencyComputeShader?.Destroy();
             _indirectRenderTaskShader?.Destroy();
             _buildHotCommandsProgram?.Destroy();

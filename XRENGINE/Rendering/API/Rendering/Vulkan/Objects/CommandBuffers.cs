@@ -2196,7 +2196,7 @@ namespace XREngine.Rendering.Vulkan
                     indirectBuffer.Value,
                     bufferOffset,
                     parameterBuffer.Value,
-                    0, // Offset into parameter buffer where count is stored
+                    (ulong)op.CountByteOffset,
                     op.DrawCount,
                     op.Stride);
 
