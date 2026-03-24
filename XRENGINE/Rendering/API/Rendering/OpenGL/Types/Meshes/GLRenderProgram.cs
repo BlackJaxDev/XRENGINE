@@ -809,6 +809,8 @@ namespace XREngine.Rendering.OpenGL
             private static readonly ConcurrentBag<ulong> Failed = [];
             public bool Link(bool force = false)
             {
+                using var prof = Engine.Profiler.Start("GLRenderProgram.Link");
+
                 if (IsLinked)
                     return true;
 
@@ -835,12 +837,16 @@ namespace XREngine.Rendering.OpenGL
                 //{
                     // Hash the fully-resolved source (with #include content inlined) so that
                     // changes to included files correctly invalidate the binary shader cache.
-                    Hash = GetDeterministicHashCode(string.Join(' ', Data.Shaders.Select(ResolveSourceForHash)));
-                    if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
-                        isCached = BinaryCache?.TryGetValue(Hash, out binProg) ?? false;
+                    using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup"))
+                    {
+                        Hash = GetDeterministicHashCode(string.Join(' ', Data.Shaders.Select(ResolveSourceForHash)));
+                        if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                            isCached = BinaryCache?.TryGetValue(Hash, out binProg) ?? false;
+                    }
                     
                     if (isCached)
                     {
+                        using var cacheLoadProf = Engine.Profiler.Start("GLRenderProgram.Link.LoadCachedBinary");
                         //Debug.OpenGL($"[ShaderCache] HIT hash={Hash}");
                         _cachedProgram = binProg;
                         GLEnum format = binProg.Format;
@@ -862,6 +868,7 @@ namespace XREngine.Rendering.OpenGL
                             else
                             {
                                 IsLinked = true;
+                                using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
                                 CacheActiveUniforms();
                                 return true;
                             }
@@ -875,11 +882,14 @@ namespace XREngine.Rendering.OpenGL
                         _cachedProgram = null;
                         Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
 
-                        foreach (GLShader shader in _shaderCache.Values)
-                            if (shader.Data.GenerateAsync)
-                                Engine.EnqueueMainThreadTask(shader.Generate);
-                            else
-                                shader.Generate();
+                        using (Engine.Profiler.Start("GLRenderProgram.Link.GenerateShaders"))
+                        {
+                            foreach (GLShader shader in _shaderCache.Values)
+                                if (shader.Data.GenerateAsync)
+                                    Engine.EnqueueMainThreadTask(shader.Generate);
+                                else
+                                    shader.Generate();
+                        }
 
                         if (_shaderCache.Values.Any(x => !x.IsCompiled))
                         {
@@ -894,28 +904,32 @@ namespace XREngine.Rendering.OpenGL
                         GLShader?[] attached = new GLShader?[shaderCache.Count];
                         int i = 0;
                         bool noErrors = true;
-                        foreach (GLShader shader in shaderCache)
+                        using (Engine.Profiler.Start("GLRenderProgram.Link.AttachShaders"))
                         {
-                            if (shader.IsCompiled)
+                            foreach (GLShader shader in shaderCache)
                             {
-                                Api.AttachShader(bindingId, shader.BindingId);
-                                attached[i++] = shader;
-                            }
-                            else
-                            {
-                                if (noErrors)
+                                if (shader.IsCompiled)
                                 {
-                                    noErrors = false;
-                                    Debug.OpenGLWarning("One or more shaders failed to compile, can't link program.");
+                                    Api.AttachShader(bindingId, shader.BindingId);
+                                    attached[i++] = shader;
                                 }
+                                else
+                                {
+                                    if (noErrors)
+                                    {
+                                        noErrors = false;
+                                        Debug.OpenGLWarning("One or more shaders failed to compile, can't link program.");
+                                    }
 
-                                string? text = shader.Data.Source.Text;
-                                if (text is not null)
-                                    Debug.OpenGL(text);
+                                    string? text = shader.Data.Source.Text;
+                                    if (text is not null)
+                                        Debug.OpenGL(text);
+                                }
                             }
                         }
                         if (noErrors)
                         {
+                            using var linkProf = Engine.Profiler.Start("GLRenderProgram.Link.DriverLinkProgram");
                             Api.LinkProgram(bindingId);
                             Api.GetProgram(bindingId, GLEnum.LinkStatus, out int status);
                             bool linked = status != 0;
@@ -925,19 +939,28 @@ namespace XREngine.Rendering.OpenGL
                                 PrintLinkDebug(bindingId);
                             IsLinked = linked;
                             if (IsLinked)
+                            {
+                                using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
                                 CacheActiveUniforms();
+                            }
                         }
-                        foreach (GLShader? shader in attached)
+                        using (Engine.Profiler.Start("GLRenderProgram.Link.DetachShaders"))
                         {
-                            if (shader is null)
-                                continue;
+                            foreach (GLShader? shader in attached)
+                            {
+                                if (shader is null)
+                                    continue;
 
-                            Api.DetachShader(BindingId, shader.BindingId);
+                                Api.DetachShader(BindingId, shader.BindingId);
+                            }
                         }
-                        _shaderCache.ForEach(x =>
+                        using (Engine.Profiler.Start("GLRenderProgram.Link.DestroyShaderObjects"))
                         {
-                            x.Value.Destroy();
-                        });
+                            _shaderCache.ForEach(x =>
+                            {
+                                x.Value.Destroy();
+                            });
+                        }
                         return IsLinked;
                     }
                 //}
