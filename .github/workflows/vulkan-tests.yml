@@ -25,6 +25,9 @@ jobs:
       - name: Restore
         run: dotnet restore XRENGINE.slnx
 
+      - name: Build OpenVR.NET Dependency
+        run: dotnet build Build/Submodules/OpenVR.NET/OpenVR.NET/OpenVR.NET.csproj --configuration Release
+
       - name: Build Unit Tests
         run: dotnet build XREngine.UnitTests/XREngine.UnitTests.csproj --configuration Release --no-restore
 

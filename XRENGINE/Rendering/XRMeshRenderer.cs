@@ -21,6 +21,12 @@ using static XREngine.Rendering.XRMesh;
 
 namespace XREngine.Rendering
 {
+    public enum EMeshGenerationPriority
+    {
+        Normal = 0,
+        RenderPipeline = 1,
+    }
+
     /// <summary>
     /// Represents a vertex influence from a deformer mesh.
     /// </summary>
@@ -273,6 +279,16 @@ namespace XREngine.Rendering
             foreach (var (mesh, material) in submeshes)
                 Submeshes.Add(new SubMesh() { Mesh = mesh, Material = material, InstanceCount = 1 });
             InitializeDrivableBuffers();
+        }
+
+        private EMeshGenerationPriority _generationPriority;
+        /// <summary>
+        /// Controls how aggressively render backends should cold-start this mesh's GPU resources.
+        /// </summary>
+        public EMeshGenerationPriority GenerationPriority
+        {
+            get => _generationPriority;
+            set => SetField(ref _generationPriority, value);
         }
 
         private BaseVersion GetOrCreateVersion(int versionKey)

@@ -106,6 +106,13 @@ namespace XREngine
         private static EditorPreferencesOverrides _editorPreferencesOverrides = null!;
         private static EditorPreferences _editorPreferences = null!;
 
+        /// <summary>
+        /// When true, settings cascades (Apply* methods) are suppressed.
+        /// Used during static initialization when there are no worlds, viewports,
+        /// or windows for the cascades to act on.
+        /// </summary>
+        private static bool _suppressSettingsCascades;
+
         // ═══════════════════════════════════════════════════════════════════════════════════════════
         // OVERRIDEABLE SETTINGS TRACKING
         // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -191,6 +198,23 @@ namespace XREngine
         /// </summary>
         static Engine()
         {
+            // Claim the current thread as the render thread immediately so that
+            // InvokeOnRenderThread executes inline during static init instead of
+            // queuing to the not-yet-created job system.  Without this,
+            // RenderThreadId == 0 while the main thread has a positive ID, causing
+            // IsRenderThread to return false, which queues tasks, prematurely
+            // creates a JobManager with worker threads, and can deadlock on the
+            // type-initializer lock. Initialize() will re-set this to the same value.
+            RenderThreadId = Environment.CurrentManagedThreadId;
+
+            // Suppress all settings cascades during type initialization.
+            // No worlds, viewports, windows, or audio devices exist yet, so Apply
+            // methods have nothing to act on and can prematurely create the job
+            // system, spawn worker threads, or probe audio hardware—any of which
+            // risk a type-initializer deadlock.  Initialize() will set the real
+            // settings through the property setters and cascade properly.
+            _suppressSettingsCascades = true;
+
             // Initialize default settings objects
             UserSettings = new UserSettings();
             GameSettings = new GameStartupSettings();
@@ -199,6 +223,8 @@ namespace XREngine
             EditorPreferencesOverrides = new EditorPreferencesOverrides();
             _editorPreferences = new EditorPreferences();
             UpdateEffectiveEditorPreferences();
+
+            _suppressSettingsCascades = false;
 
             Debug.InitializeExceptionTracing();
 

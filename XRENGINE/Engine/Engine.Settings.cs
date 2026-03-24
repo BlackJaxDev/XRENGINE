@@ -387,6 +387,9 @@ namespace XREngine
         /// </summary>
         private static void ApplyEffectiveSettingsForProperty(string? propertyName)
         {
+            if (_suppressSettingsCascades)
+                return;
+
             if (string.IsNullOrWhiteSpace(propertyName))
             {
                 ApplyEffectiveSettingsRuntime();
@@ -581,8 +584,12 @@ namespace XREngine
             _editorPreferences.CopyFrom(_globalEditorPreferences);
             _editorPreferences.ApplyOverrides(_editorPreferencesOverrides);
 
-            Rendering.ApplyEditorPreferencesChange(null);
-            ApplyAudioPreferences();
+            if (!_suppressSettingsCascades)
+            {
+                Rendering.ApplyEditorPreferencesChange(null);
+                ApplyAudioPreferences();
+            }
+
             EditorPreferencesChanged?.Invoke(_editorPreferences);
         }
 

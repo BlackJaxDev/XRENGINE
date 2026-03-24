@@ -151,7 +151,18 @@ namespace XREngine
                     options.IsVisible = false;
 
                     if (Engine.Rendering.Settings.AllowSecondaryContextSharingFallback)
-                        XREngine.Debug.RenderingWarning("Secondary context sharing fallback requested, but the current Silk.NET build does not expose shared-context creation. Continuing without sharing.");
+                    {
+                        var primaryCtx = templateWindow.Window.GLContext;
+                        if (primaryCtx is not null)
+                        {
+                            options.SharedContext = primaryCtx;
+                            XREngine.Debug.Rendering("Secondary context sharing enabled via Silk.NET SharedContext.");
+                        }
+                        else
+                        {
+                            XREngine.Debug.RenderingWarning("Secondary context sharing fallback requested, but primary window has no GL context.");
+                        }
+                    }
 
                     var window = new XRWindow(options, templateWindow.UseNativeTitleBar);
                     _headlessWindow = window;

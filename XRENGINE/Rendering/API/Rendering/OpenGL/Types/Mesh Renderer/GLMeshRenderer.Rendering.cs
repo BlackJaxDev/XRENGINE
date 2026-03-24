@@ -23,7 +23,16 @@ namespace XREngine.Rendering.OpenGL
                     XRMaterial? shadowSourceMaterial = localMaterialOverride ?? MeshRenderer.Material;
                     XRMaterial? shadowVariant = shadowSourceMaterial?.ShadowCasterVariant;
                     if (shadowVariant is not null)
-                        return (Renderer.GetOrCreateAPIRenderObject(shadowVariant) as GLMaterial)!;
+                    {
+                        // Fast path: reuse cached GLMaterial when the shadow variant hasn't changed.
+                        if (ReferenceEquals(shadowVariant, _shadowVariantKey) && _shadowMaterialCache is not null)
+                            return _shadowMaterialCache;
+
+                        var glMat = (Renderer.GetOrCreateAPIRenderObject(shadowVariant) as GLMaterial)!;
+                        _shadowVariantKey = shadowVariant;
+                        _shadowMaterialCache = glMat;
+                        return glMat;
+                    }
                 }
 
                 if (renderState?.UseDepthNormalMaterialVariants ?? false)

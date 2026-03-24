@@ -304,11 +304,13 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Start linking the provided program, either synchronously or asynchronously.
+            /// Pre-computes hash + cache lookup before issuing GL work to minimize render-thread stalls.
             /// </summary>
             private void InitiateLink(GLRenderProgram vertexProgram)
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.InitiateLink");
                 vertexProgram.Data.AllowLink();
+                vertexProgram.PrepareLinkData();
                 if (!Data.Parent.GenerateAsync)
                     vertexProgram.Link();
             }

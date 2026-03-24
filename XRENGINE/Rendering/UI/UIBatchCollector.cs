@@ -358,7 +358,10 @@ public sealed class UIBatchCollector : IDisposable
 
         _matQuadMesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
-            material);
+            material)
+        {
+            GenerationPriority = EMeshGenerationPriority.RenderPipeline
+        };
 
         DisableShaderPipelines(_matQuadMesh);
 
@@ -495,6 +498,7 @@ public sealed class UIBatchCollector : IDisposable
         gpu.Mesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
             material);
+        gpu.Mesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
 
         DisableShaderPipelines(gpu.Mesh);
 

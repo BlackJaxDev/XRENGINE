@@ -21,7 +21,9 @@ namespace XREngine.Rendering.OpenGL
                 set => SetField(ref _secondsLive, value);
             }
 
-            public GLRenderProgram? SeparableProgram => Renderer.GenericToAPI<GLRenderProgram>(Data.ShaderPipelineProgram);
+            private GLRenderProgram? _separableProgram;
+            public GLRenderProgram? SeparableProgram
+                => _separableProgram ??= Renderer.GenericToAPI<GLRenderProgram>(Data.ShaderPipelineProgram);
 
             protected override void LinkData()
             {

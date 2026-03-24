@@ -39,6 +39,10 @@ namespace XREngine.Rendering.OpenGL
             private GLRenderProgram? _forcedGeneratedVertexProgram;
             private int _shaderConfigVersion = Engine.Rendering.Settings.ShaderConfigVersion;
 
+            // Cached shadow material lookup to avoid ConcurrentDictionary hit per shadow draw.
+            private XRMaterial? _shadowVariantKey;
+            private GLMaterial? _shadowMaterialCache;
+
             private GLDataBuffer? _triangleIndicesBuffer;
             private GLDataBuffer? _lineIndicesBuffer;
             private GLDataBuffer? _pointIndicesBuffer;
@@ -188,6 +192,9 @@ namespace XREngine.Rendering.OpenGL
         public void RenderMesh(GLMeshRenderer manager, bool preservePreviouslyBound = true, uint instances = 1)
         {
             // Profiler instrumentation removed from this hot path - called per mesh per frame
+            if (SuppressDrawsForOomRecovery)
+                return;
+
             GLMeshRenderer? prev = ActiveMeshRenderer;
             BindMeshRenderer(manager);
             RenderCurrentMesh(instances);
@@ -200,7 +207,7 @@ namespace XREngine.Rendering.OpenGL
         public void RenderCurrentMesh(uint instances = 1)
         {
             // Profiler instrumentation removed from this hot path - called per mesh per frame
-            if (_oomDetectedThisFrame)
+            if (SuppressDrawsForOomRecovery)
                 return;
 
             if (ActiveMeshRenderer?.Mesh is null)

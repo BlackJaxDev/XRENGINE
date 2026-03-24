@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Threading;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
+using XREngine.Core.Files;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -21,8 +23,23 @@ using XREngine.Scene;
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
-public sealed class VulkanTodoP2ValidationTests
+public sealed class VulkanTodoP2ValidationTests : GpuTestBase
 {
+    private IRuntimeShaderServices? _previousShaderServices;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new FileSystemRuntimeShaderServices(ShaderBasePath);
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+        RuntimeShaderServices.Current = _previousShaderServices;
+    }
+
     [Test]
     public void CpuOctreeVisibility_CollectsOnlyIntersectingRenderables()
     {
@@ -295,5 +312,45 @@ public sealed class VulkanTodoP2ValidationTests
             {
                 { (int)EDefaultRenderPass.OpaqueForward, null }
             };
+    }
+
+    private sealed class FileSystemRuntimeShaderServices(string shaderBasePath) : IRuntimeShaderServices
+    {
+        private readonly string _shaderBasePath = shaderBasePath;
+
+        public T? LoadAsset<T>(string filePath) where T : XRAsset, new()
+            => typeof(T) == typeof(XRShader) ? (T?)(object?)LoadShader(filePath) : default;
+
+        public T LoadEngineAsset<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+        {
+            if (typeof(T) != typeof(XRShader))
+                throw new NotSupportedException($"Test shader services only support {nameof(XRShader)} assets, not '{typeof(T)}'.");
+
+            string fullPath = Path.Combine(_shaderBasePath, relativePath);
+            return (T)(XRAsset)LoadShader(fullPath);
+        }
+
+        public Task<T> LoadEngineAssetAsync<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+            => Task.FromResult(LoadEngineAsset<T>(priority, bypassJobThread, assetRoot, relativePath));
+
+        public void LogWarning(string message)
+        {
+        }
+
+        private static XRShader LoadShader(string fullPath)
+        {
+            if (!File.Exists(fullPath))
+                throw new FileNotFoundException("Shader file not found for test runtime services.", fullPath);
+
+            string source = File.ReadAllText(fullPath);
+            TextFile text = TextFile.FromText(source);
+            text.FilePath = fullPath;
+            text.Name = Path.GetFileName(fullPath);
+
+            return new XRShader(XRShader.ResolveType(Path.GetExtension(fullPath)), text)
+            {
+                Name = Path.GetFileNameWithoutExtension(fullPath),
+            };
+        }
     }
 }

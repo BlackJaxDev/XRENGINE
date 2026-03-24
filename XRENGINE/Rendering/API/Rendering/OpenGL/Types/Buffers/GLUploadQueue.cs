@@ -73,10 +73,14 @@ namespace XREngine.Rendering.OpenGL
                 if (_pendingUploads.IsEmpty)
                     return;
 
+                // Bail if the GPU is in OOM recovery — uploading more data would worsen VRAM pressure.
+                if (_renderer._oomDetectedThisFrame)
+                    return;
+
                 var sw = Stopwatch.StartNew();
                 double budgetMs = FrameBudgetMs;
 
-                while (sw.Elapsed.TotalMilliseconds < budgetMs && _pendingUploads.TryDequeue(out var upload))
+                while (!_renderer._oomDetectedThisFrame && sw.Elapsed.TotalMilliseconds < budgetMs && _pendingUploads.TryDequeue(out var upload))
                 {
                     ExecuteUpload(upload);
                 }

@@ -287,6 +287,12 @@ namespace XREngine
                 public static bool HasVulkanRtxIo { get; internal set; }
 
                 /// <summary>
+                /// If true, GL_ARB_parallel_shader_compile is available and enabled.
+                /// Shader compilation and program linking are non-blocking; poll COMPLETION_STATUS_ARB for completion.
+                /// </summary>
+                public static bool HasParallelShaderCompile { get; internal set; }
+
+                /// <summary>
                 /// All OpenGL extensions reported by the current OpenGL context (via GL_NUM_EXTENSIONS + glGetStringi).
                 /// Empty when not using OpenGL or if enumeration failed.
                 /// </summary>
