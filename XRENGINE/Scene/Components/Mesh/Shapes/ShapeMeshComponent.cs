@@ -39,7 +39,7 @@ namespace XREngine.Components.Mesh.Shapes
                     // Propagate the new material to every existing LOD renderer
                     // so the mesh updates immediately without requiring a shape rebuild.
                     foreach (var mesh in Meshes)
-                        foreach (var lod in mesh.LODs)
+                        foreach (RenderableMesh.RenderableLOD lod in mesh.GetLodSnapshot())
                             lod.Renderer.Material = Material;
                     break;
             }

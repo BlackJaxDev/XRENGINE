@@ -320,8 +320,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
                 row * cellDepth);
             CenterWithinCell(instanceTransform, entry.Bounds, desiredCenter);
             instanceTransform.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: true, childRecalcType: ELoopType.Parallel).Wait();
-            EditorUnitTests.RebuildPhysicsChainSkinnedBoxVisual(instanceRoot);
-            ResetBenchmarkInstancePhysicsChains(instanceRoot);
+            RefreshPhysicsChainRigAfterMove(instanceRoot);
         }
     }
 
@@ -502,9 +501,9 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     }
 
     /// <summary>
-    /// Reinitializes all physics chain particles in the benchmark instance so their
-    /// positions and object-move tracking match the post-placement world transforms.
-    /// Without this, particles retain factory-time positions and the first simulation
+    /// Reinitializes all physics chain particles after a hierarchy move so their
+    /// positions and object-move tracking match the updated world transforms.
+    /// Without this, particles retain pre-move positions and the next simulation
     /// frame sees a huge positional delta that makes the chains fly off.
     /// </summary>
     private static void ResetBenchmarkInstancePhysicsChains(SceneNode instanceRoot)
@@ -512,6 +511,13 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         List<PhysicsChainComponent> chains = CollectComponents<PhysicsChainComponent>(instanceRoot);
         for (int i = 0; i < chains.Count; i++)
             chains[i].SetupParticles();
+    }
+
+    private static void RefreshPhysicsChainRigAfterMove(SceneNode instanceRoot)
+    {
+        bool rebuiltSkinnedVisual = EditorUnitTests.RebuildPhysicsChainSkinnedBoxVisual(instanceRoot);
+        if (!rebuiltSkinnedVisual)
+            ResetBenchmarkInstancePhysicsChains(instanceRoot);
     }
 
 
@@ -657,6 +663,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         if (activeTests.Count == 1)
         {
             CenterAtOrigin(activeTests[0]);
+            RefreshPhysicsChainRigAfterMove(activeTests[0].RootNode);
             UpdateLabelPlacement(activeTests[0]);
             return;
         }
@@ -689,6 +696,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
                 startZ + row * cellDepth);
 
             CenterWithinCell(activeTests[index], desiredCenter);
+            RefreshPhysicsChainRigAfterMove(activeTests[index].RootNode);
             UpdateLabelPlacement(activeTests[index]);
         }
     }

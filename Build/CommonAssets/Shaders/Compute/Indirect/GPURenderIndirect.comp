@@ -6,6 +6,10 @@ layout(local_size_x = 256) in;
 // Constants
 const int COMMAND_FLOATS = 48;      // 192 bytes per command
 const int DRAW_COMMAND_UINTS = 5;   // count, instanceCount, firstIndex, baseVertex, baseInstance
+const uint LOD_TRANSITION_UINTS = 4u;
+const uint LOD_TRANSITION_ACTIVE = 1u;
+const uint PREVIOUS_LOD_DRAW_FLAG = 0x40000000u;
+const uint COMMAND_INDEX_MASK = 0x3FFFFFFFu;
 
 /* Command layout (float[48]):
  00-15 WorldMatrix, 16-31 PrevWorldMatrix, 32-35 BoundingSphere, 36 MeshID, 37 SubmeshID, 38 MaterialID,
@@ -26,6 +30,7 @@ layout(std430, binding = 4) buffer DrawCountBuffer { uint DrawCount; };
 
 // Overflow flag specific to indirect build (distinct from culling overflow)
 layout(std430, binding = 5) buffer IndirectOverflowFlagBuffer { uint IndirectOverflowFlag; };
+layout(std430, binding = 10) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
 
 // Optional sorted key-index list: pairs [key, originalIndex]
 //layout(std430, binding = 6) buffer KeyIndexBuffer { uint keyIndexPairs[]; };
@@ -100,6 +105,43 @@ uniform int SourceViewId;
 uniform int UseHotCommands;
 //uniform int UseSorted;             // 1 = use keyIndexPairs for ordering
 
+void TryEmitDraw(uint meshID, uint instanceCount, uint commandIndex, bool previousLod)
+{
+    if (instanceCount == 0u)
+        return;
+
+    uint submeshOffset = meshID * 4u;
+    if (submeshOffset + 3u >= submeshData.length())
+        return;
+
+    uint indexCount = submeshData[submeshOffset + 0u];
+    if (indexCount == 0u)
+        return;
+
+    uint outIndex = atomicAdd(DrawCount, 1u);
+    if (outIndex >= uint(MaxIndirectDraws))
+    {
+        atomicExchange(IndirectOverflowFlag, 1u);
+        atomicExchange(TruncationFlag, 1u);
+        return;
+    }
+
+    uint drawBase = outIndex * DRAW_COMMAND_UINTS;
+    uint firstIndex = submeshData[submeshOffset + 1u];
+    uint baseVertex = submeshData[submeshOffset + 2u];
+    uint baseInstance = commandIndex & COMMAND_INDEX_MASK;
+    if (previousLod)
+        baseInstance |= PREVIOUS_LOD_DRAW_FLAG;
+
+    indirectDraws[drawBase + 0u] = indexCount;
+    indirectDraws[drawBase + 1u] = instanceCount;
+    indirectDraws[drawBase + 2u] = firstIndex;
+    indirectDraws[drawBase + 3u] = baseVertex;
+    indirectDraws[drawBase + 4u] = baseInstance;
+    if (StatsEnabled != 0u)
+        atomicAdd(StatsDrawCount, 1u);
+}
+
 void main()
 {
     uint logicalIdx = gl_GlobalInvocationID.x;
@@ -161,55 +203,22 @@ void main()
     if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass) && renderPass != 0xFFFFFFFFu)
         return;
 
-    // Deterministic output layout: one indirect slot per visible command.
-    // This keeps batching offsets consistent with the culled command buffer order.
-    uint outIndex = logicalIdx;
-    if (logicalIdx == 0u)
-    {
-        uint capped = min(total, uint(MaxIndirectDraws));
-        DrawCount = capped;
-        if (total > uint(MaxIndirectDraws))
-        {
-            atomicExchange(IndirectOverflowFlag, 1u);
-            atomicExchange(TruncationFlag, 1u);
-        }
-    }
-
-    if (outIndex >= uint(MaxIndirectDraws))
-        return;
-
-    uint drawBase = outIndex * DRAW_COMMAND_UINTS;
-
-    // Default to a no-op draw to avoid consuming stale commands.
-    indirectDraws[drawBase + 0u] = 0u;
-    indirectDraws[drawBase + 1u] = 0u;
-    indirectDraws[drawBase + 2u] = 0u;
-    indirectDraws[drawBase + 3u] = 0u;
-    indirectDraws[drawBase + 4u] = 0u;
-
     if (instanceCount == 0u)
         return;
 
-    // MeshDataBuffer is indexed by MeshID (uint4 per mesh): [IndexCount, FirstIndex, BaseVertex, BaseInstance]
-    uint submeshOffset = meshID * 4u;
-    if (submeshOffset + 3u >= submeshData.length())
-        return;
+    uint transitionBase = idx * LOD_TRANSITION_UINTS;
+    bool transitionActive = false;
+    uint previousMeshID = 0u;
+    if (transitionBase + 3u < uint(lodTransitions.length()))
+    {
+        previousMeshID = lodTransitions[transitionBase + 0u];
+        uint transitionFlags = lodTransitions[transitionBase + 2u];
+        float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
+        transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;
+    }
 
-    uint indexCount = submeshData[submeshOffset + 0u];
-    if (indexCount == 0u)
-        return; // defensive skip
-    
-    uint firstIndex = submeshData[submeshOffset + 1u];
-    uint baseVertex = submeshData[submeshOffset + 2u];
-    // Encode the culled-command index into baseInstance so the graphics vertex shader can
-    // fetch per-draw data (world matrix, etc.) via gl_BaseInstance.
-    uint baseInstance = idx;
+    if (transitionActive)
+        TryEmitDraw(previousMeshID, instanceCount, idx, true);
 
-    indirectDraws[drawBase + 0u] = indexCount;
-    indirectDraws[drawBase + 1u] = instanceCount;
-    indirectDraws[drawBase + 2u] = firstIndex;
-    indirectDraws[drawBase + 3u] = baseVertex;
-    indirectDraws[drawBase + 4u] = baseInstance;
-    if (StatsEnabled != 0u)
-        atomicAdd(StatsDrawCount, 1u);
+    TryEmitDraw(meshID, instanceCount, idx, false);
 }

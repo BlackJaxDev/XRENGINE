@@ -24,6 +24,11 @@ public sealed class GPUPhysicsChainDispatcherTests
     private static readonly Action<long, bool> RecordCpuReadbackBytesMethod = CreateStaticDelegate<Action<long, bool>>("RecordCpuReadbackBytes");
     private static readonly Action<long> RecordHierarchyRecalcTicksMethod = CreateStaticDelegate<Action<long>>("RecordHierarchyRecalcTicks");
 
+    private sealed class HashCollidingPhysicsChainComponent : PhysicsChainComponent
+    {
+        public override int GetHashCode() => 1;
+    }
+
     #region Test Helpers
 
     private static TDelegate CreateStaticDelegate<TDelegate>(string methodName) where TDelegate : Delegate
@@ -64,6 +69,19 @@ public sealed class GPUPhysicsChainDispatcherTests
     private static PhysicsChainComponent CreateTestComponent(SceneNode node, Transform root, bool useBatched = true)
     {
         var component = node.AddComponent<PhysicsChainComponent>()!;
+        component.UseGPU = true;
+        component.Root = root;
+        component.Damping = 0.1f;
+        component.Elasticity = 0.1f;
+        component.Stiffness = 0.1f;
+        component.Gravity = new Vector3(0, -9.8f, 0);
+        component.UseBatchedDispatcher = useBatched;
+        return component;
+    }
+
+    private static PhysicsChainComponent CreateHashCollidingComponent(SceneNode node, Transform root, bool useBatched = true)
+    {
+        var component = node.AddComponent<HashCollidingPhysicsChainComponent>()!;
         component.UseGPU = true;
         component.Root = root;
         component.Damping = 0.1f;
@@ -147,7 +165,7 @@ public sealed class GPUPhysicsChainDispatcherTests
     }
 
     [Test]
-    public void IsRegistered_ReturnsFalseForUnregisteredComponent()
+    public void IsRegistered_ReturnsTrueForActivatedGpuComponent()
     {
         var dispatcher = GPUPhysicsChainDispatcher.Instance;
 
@@ -182,6 +200,28 @@ public sealed class GPUPhysicsChainDispatcherTests
         // Cleanup
         foreach (var component in components)
             dispatcher.Unregister(component);
+    }
+
+    [Test]
+    public void HashCollidingComponents_CanBothBeRegistered()
+    {
+        var dispatcher = GPUPhysicsChainDispatcher.Instance;
+        int initialCount = dispatcher.RegisteredComponentCount;
+
+        var (node1, rootBone1, _) = CreateBoneHierarchy(3);
+        var (node2, rootBone2, _) = CreateBoneHierarchy(3);
+        var component1 = CreateHashCollidingComponent(node1, rootBone1, useBatched: false);
+        var component2 = CreateHashCollidingComponent(node2, rootBone2, useBatched: false);
+
+        dispatcher.Register(component1);
+        dispatcher.Register(component2);
+
+        dispatcher.RegisteredComponentCount.ShouldBe(initialCount + 2);
+        dispatcher.IsRegistered(component1).ShouldBeTrue();
+        dispatcher.IsRegistered(component2).ShouldBeTrue();
+
+        dispatcher.Unregister(component1);
+        dispatcher.Unregister(component2);
     }
 
     [Test]

@@ -801,9 +801,50 @@ namespace XREngine.Rendering
 
             if ((Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning)
                 PopulateBoneMatrixBuffers();
-            
+
             if ((Mesh?.HasBlendshapes ?? false) && Engine.Rendering.Settings.AllowBlendshapes)
                 PopulateBlendshapeWeightsBuffer();
+        }
+
+        /// <summary>
+        /// Ensures skinning buffers (bone matrices) are initialized if the mesh has skinning data.
+        /// Call this before attempting to bind GPU-driven bone palette shaders if there's a chance
+        /// the buffers weren't created during renderer construction.
+        /// </summary>
+        /// <returns>True if BoneMatricesBuffer is available after this call; false otherwise.</returns>
+        public bool EnsureSkinningBuffers()
+        {
+            if (BoneMatricesBuffer is not null)
+                return true;
+
+            if (Mesh is null)
+            {
+                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Mesh is null, cannot initialize skinning buffers. Renderer={GetHashCode():X}");
+                return false;
+            }
+
+            if (!Mesh.HasSkinning)
+            {
+                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Mesh '{Mesh.Name}' has no skinning data. Renderer={GetHashCode():X}");
+                return false;
+            }
+
+            if (!Engine.Rendering.Settings.AllowSkinning)
+            {
+                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Skinning is disabled in render settings. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
+                return false;
+            }
+
+            Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: BoneMatricesBuffer was null, initializing late. This may indicate a timing issue with mesh/renderer creation. Mesh='{Mesh.Name}', UtilizedBones={Mesh.UtilizedBones?.Length ?? 0}, Renderer={GetHashCode():X}");
+            PopulateBoneMatrixBuffers();
+
+            if (BoneMatricesBuffer is null)
+            {
+                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: PopulateBoneMatrixBuffers did not create buffer. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
+                return false;
+            }
+
+            return true;
         }
 
         private void PopulateBlendshapeWeightsBuffer()
@@ -1123,15 +1164,55 @@ namespace XREngine.Rendering
 
             _bonesInvalidated = false;
 
+            if (_dirtyBoneIndices.Count == 0)
+                return;
+
             foreach (var index in _dirtyBoneIndices)
             {
                 int i = (int)index;
                 BoneMatricesBuffer.Set(index, _dirtyBoneMatrices[i]);
                 _dirtyBoneFlags[i] = false;
             }
-            _dirtyBoneIndices.Clear();
 
-            BoneMatricesBuffer.PushSubData();
+            PushDirtyBoneRanges(BoneMatricesBuffer, _dirtyBoneIndices);
+            _dirtyBoneIndices.Clear();
+        }
+
+        private static void PushDirtyBoneRanges(XRDataBuffer buffer, List<uint> dirtyBoneIndices)
+        {
+            uint elementSize = buffer.ElementSize;
+            if (elementSize == 0)
+            {
+                buffer.PushSubData();
+                return;
+            }
+
+            dirtyBoneIndices.Sort();
+
+            uint rangeStart = dirtyBoneIndices[0];
+            uint previous = rangeStart;
+            for (int i = 1; i < dirtyBoneIndices.Count; ++i)
+            {
+                uint current = dirtyBoneIndices[i];
+                if (current == previous + 1u)
+                {
+                    previous = current;
+                    continue;
+                }
+
+                PushDirtyBoneRange(buffer, rangeStart, previous, elementSize);
+                rangeStart = current;
+                previous = current;
+            }
+
+            PushDirtyBoneRange(buffer, rangeStart, previous, elementSize);
+        }
+
+        private static void PushDirtyBoneRange(XRDataBuffer buffer, uint startIndex, uint endIndex, uint elementSize)
+        {
+            int byteOffset = checked((int)(startIndex * elementSize));
+            uint byteLength = checked((endIndex - startIndex + 1u) * elementSize);
+            buffer.PushSubData(byteOffset, byteLength);
         }
 
         internal void RegisterGpuDrivenBoneIndices(IReadOnlyList<uint> boneIndices)

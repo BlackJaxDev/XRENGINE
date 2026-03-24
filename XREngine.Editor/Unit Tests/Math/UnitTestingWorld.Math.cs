@@ -1196,12 +1196,6 @@ public static partial class EditorUnitTests
     {
         ArgumentNullException.ThrowIfNull(testNode);
 
-        Transform testTransform = testNode.GetTransformAs<Transform>(true)!;
-        testTransform.RecalculateMatrixHierarchy(
-            forceWorldRecalc: true,
-            setRenderMatrixNow: true,
-            childRecalcType: ELoopType.Parallel).Wait();
-
         PhysicsChainComponent? chain = testNode.FindFirstDescendantComponent<PhysicsChainComponent>();
         if (chain?.Root is not Transform rootTransform)
             return false;
@@ -1215,6 +1209,13 @@ public static partial class EditorUnitTests
 
         if (visualNode is null)
             return false;
+
+        SceneNode visualParentNode = visualNode.Parent ?? testNode;
+        Transform testTransform = visualParentNode.GetTransformAs<Transform>(true)!;
+        testTransform.RecalculateMatrixHierarchy(
+            forceWorldRecalc: true,
+            setRenderMatrixNow: true,
+            childRecalcType: ELoopType.Parallel).Wait();
 
         ModelComponent? modelComponent = visualNode.FindFirstDescendantComponent<ModelComponent>();
         if (modelComponent?.Model is not Model existingModel)
@@ -1266,8 +1267,8 @@ public static partial class EditorUnitTests
 
         // Reinitialize particles at the current (post-move) bone positions so the
         // simulation doesn't see a huge _objectMove delta on its first frame.
-        // This also rebuilds GPU-driven renderer bindings with the new mesh.
         chain.SetupParticles();
+           chain.InvalidateGpuDrivenRenderers();
         return true;
     }
 

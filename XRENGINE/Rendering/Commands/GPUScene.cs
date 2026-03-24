@@ -1050,7 +1050,7 @@ namespace XREngine.Rendering.Commands
         private static List<(XRMesh mesh, float maxDistance)> CollectRenderableLodSet(RenderableMesh renderable, uint submeshIndex, XRMesh fallbackMesh)
         {
             List<(XRMesh mesh, float maxDistance)> lodMeshes = [];
-            foreach (RenderableMesh.RenderableLOD lod in renderable.LODs)
+            foreach (RenderableMesh.RenderableLOD lod in renderable.GetLodSnapshot())
             {
                 var submeshes = lod.Renderer.GetMeshes();
                 if (submeshIndex >= (uint)submeshes.Length)
@@ -2169,6 +2169,55 @@ namespace XREngine.Rendering.Commands
             return buffer;
         }
 
+        private static XRDataBuffer MakeLodTransitionBuffer()
+        {
+            var buffer = new XRDataBuffer(
+                "RenderLodTransitionBuffer",
+                EBufferTarget.ShaderStorageBuffer,
+                MinCommandCount,
+                EComponentType.UInt,
+                LodTransitionUIntCount,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = true,
+                StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
+                RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
+            };
+            buffer.Generate();
+            buffer.PushSubData();
+            buffer.MapBufferData();
+            return buffer;
+        }
+
+        private void EnsureLodTransitionBufferCapacity(uint requiredSize)
+        {
+            XRDataBuffer buffer = LodTransitionBuffer;
+            if (requiredSize <= buffer.ElementCount)
+                return;
+
+            buffer.Resize(requiredSize);
+            buffer.PushSubData();
+        }
+
+        private void SyncLodTransitionBufferFromGpu()
+        {
+            if (_lodTransitionBuffer is null)
+                return;
+
+            if (_lodTransitionBuffer.ActivelyMapping.Count == 0)
+                _lodTransitionBuffer.MapBufferData();
+
+            VoidPtr mapped = _lodTransitionBuffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
+            if (!mapped.IsValid || !_lodTransitionBuffer.TryGetAddress(out VoidPtr cpuAddress) || !cpuAddress.IsValid)
+                return;
+
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.ShaderStorage);
+            Memory.Move(cpuAddress, mapped, _lodTransitionBuffer.Length);
+        }
+
         /// <summary>
         /// Creates a new mesh data buffer for storing per-mesh metadata.
         /// </summary>
@@ -2216,6 +2265,30 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Number of uint components per transparency metadata entry.</summary>
         public const uint TransparencyMetadataUIntCount = 4;
+        [StructLayout(LayoutKind.Sequential)]
+        public struct GPULodTransitionState
+        {
+            public const uint ActiveFlag = 1u;
+
+            public uint PreviousMeshID;
+            public uint PreviousLODLevel;
+            public uint Flags;
+            public uint ProgressBits;
+
+            public readonly float Progress
+                => BitConverter.UInt32BitsToSingle(ProgressBits);
+
+            public static GPULodTransitionState Active(uint previousMeshId, uint previousLodLevel, float progress)
+                => new()
+                {
+                    PreviousMeshID = previousMeshId,
+                    PreviousLODLevel = previousLodLevel,
+                    Flags = ActiveFlag,
+                    ProgressBits = BitConverter.SingleToUInt32Bits(progress),
+                };
+        }
+
+        public const uint LodTransitionUIntCount = 4;
 
         /// <summary>Minimum capacity for mesh data entries buffer.</summary>
         private const uint MinMeshDataEntries = 16;
@@ -2275,6 +2348,8 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Render buffer - read by the render thread. Contains stable per-command transparency metadata.</summary>
         private XRDataBuffer? _allLoadedTransparencyMetadataBuffer;
+    /// <summary>Per-command LOD transition state shared across frames.</summary>
+    private XRDataBuffer? _lodTransitionBuffer;
 
         /// <summary>Updating buffer - written by Add/Remove operations. Swapped to render buffer.</summary>
         private XRDataBuffer? _updatingCommandsBuffer;
@@ -2288,6 +2363,7 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public XRDataBuffer AllLoadedCommandsBuffer => _allLoadedCommandsBuffer ??= MakeCommandsInputBuffer();
         public XRDataBuffer AllLoadedTransparencyMetadataBuffer => _allLoadedTransparencyMetadataBuffer ??= MakeTransparencyMetadataBuffer();
+            public XRDataBuffer LodTransitionBuffer => _lodTransitionBuffer ??= MakeLodTransitionBuffer();
         
         /// <summary>
         /// Gets the updating command buffer being written to by Add/Remove operations.
@@ -2351,6 +2427,7 @@ namespace XREngine.Rendering.Commands
             uint safeRequired = Math.Max(requiredCapacity, MinCommandCount);
             using (_lock.EnterScope())
             {
+                SyncLodTransitionBufferFromGpu();
                 VerifyUpdatingBufferSize(safeRequired);
                 VerifyCommandBufferSize(safeRequired);
                 return AllLoadedCommandsBuffer.ElementCount;
@@ -2385,6 +2462,7 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
+                SyncLodTransitionBufferFromGpu();
                 uint startCommandCount = UpdatingCommandCount;
                 bool anyAdded = false;
                 SceneLog($"Adding commands for {renderInfo.Owner?.GetType().Name ?? "<null>"}");
@@ -2480,6 +2558,7 @@ namespace XREngine.Rendering.Commands
                         commandValue.Reserved1 = index;
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, commandValue);
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
+                                                LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
                         AcquireLogicalMeshResidency(commandValue.LogicalMeshID);
 
                         if (IsGpuSceneLoggingEnabled())
@@ -2527,6 +2606,7 @@ namespace XREngine.Rendering.Commands
 
                     uint byteOffset = startCommandCount * elementSize;
                     uint byteCount = addedCount * elementSize;
+                                        LodTransitionBuffer.PushSubData((int)(startCommandCount * LodTransitionBuffer.ElementSize), addedCount * LodTransitionBuffer.ElementSize);
                     UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
                     SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in UpdatingCommandsBuffer");
 
@@ -2886,6 +2966,7 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
+                SyncLodTransitionBufferFromGpu();
                 bool anyRemoved = false;
                 foreach (RenderCommand command in info.RenderCommands)
                 {
@@ -2911,6 +2992,7 @@ namespace XREngine.Rendering.Commands
                 if (anyRemoved)
                 {
                     UpdatingCommandsBuffer.PushSubData();
+                    LodTransitionBuffer.PushSubData();
 
                     if (_meshDataDirty)
                     {
@@ -2948,9 +3030,11 @@ namespace XREngine.Rendering.Commands
             {
                 GPUIndirectRenderCommand lastCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
                 GPUTransparencyMetadata lastMetadata = UpdatingTransparencyMetadataBuffer.GetDataRawAtIndex<GPUTransparencyMetadata>(lastIndex);
+                GPULodTransitionState lastTransition = LodTransitionBuffer.GetDataRawAtIndex<GPULodTransitionState>(lastIndex);
                 lastCommand.Reserved1 = targetIndex;
                 UpdatingCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
                 UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(targetIndex, lastMetadata);
+                LodTransitionBuffer.SetDataRawAtIndex(targetIndex, lastTransition);
 
                 if (_commandIndexLookup.TryGetValue(lastIndex, out var movedCommand))
                 {
@@ -2978,6 +3062,8 @@ namespace XREngine.Rendering.Commands
                 _commandIndexLookup.Remove(lastIndex);
             }
 
+            LodTransitionBuffer.SetDataRawAtIndex(lastIndex, default(GPULodTransitionState));
+
             // Update mesh atlas lifetime after structural changes.
             if (removedLogicalMeshId != 0)
                 ReleaseLogicalMeshResidency(removedLogicalMeshId, "RemoveCommandAtIndex");
@@ -2997,11 +3083,13 @@ namespace XREngine.Rendering.Commands
             SceneLog($"Resizing updating command buffer from {currentCapacity} to {nextPowerOfTwo}.");
             UpdatingCommandsBuffer.Resize(nextPowerOfTwo);
             UpdatingTransparencyMetadataBuffer.Resize(nextPowerOfTwo);
+            EnsureLodTransitionBufferCapacity(nextPowerOfTwo);
             uint newCapacity = UpdatingCommandsBuffer.ElementCount;
             if (newCapacity > currentCapacity)
             {
                 ZeroUpdatingCommandRange(currentCapacity, newCapacity - currentCapacity);
                 ZeroUpdatingTransparencyMetadataRange(currentCapacity, newCapacity - currentCapacity);
+                ZeroLodTransitionRange(currentCapacity, newCapacity - currentCapacity);
             }
         }
 
@@ -3106,6 +3194,25 @@ namespace XREngine.Rendering.Commands
             AllLoadedTransparencyMetadataBuffer.PushSubData((int)byteOffset, byteCount);
         }
 
+        private void ZeroLodTransitionRange(uint startIndex, uint count)
+        {
+            if (count == 0)
+                return;
+
+            var blank = default(GPULodTransitionState);
+            uint end = startIndex + count;
+            for (uint i = startIndex; i < end; ++i)
+                LodTransitionBuffer.SetDataRawAtIndex(i, blank);
+
+            uint elementSize = LodTransitionBuffer.ElementSize;
+            if (elementSize == 0)
+                elementSize = LodTransitionUIntCount * sizeof(uint);
+
+            uint byteOffset = startIndex * elementSize;
+            uint byteCount = count * elementSize;
+            LodTransitionBuffer.PushSubData((int)byteOffset, byteCount);
+        }
+
         #endregion
 
         #region Command Conversion
@@ -3189,6 +3296,7 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
+                SyncLodTransitionBufferFromGpu();
                 if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices) || indices.Count == 0)
                     return false;
 
@@ -3310,6 +3418,8 @@ namespace XREngine.Rendering.Commands
                     if (!existing.Equals(updated))
                     {
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, updated);
+                        if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
+                            LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
                         anyChanged = true;
                         minIndex = Math.Min(minIndex, index);
                         maxIndex = Math.Max(maxIndex, index);
@@ -3328,6 +3438,7 @@ namespace XREngine.Rendering.Commands
                     uint byteOffset = minIndex * elementSize;
                     uint byteCount = (maxIndex - minIndex + 1) * elementSize;
                     UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+                    LodTransitionBuffer.PushSubData((int)(minIndex * LodTransitionBuffer.ElementSize), (maxIndex - minIndex + 1) * LodTransitionBuffer.ElementSize);
 
                     if (_meshDataDirty)
                     {

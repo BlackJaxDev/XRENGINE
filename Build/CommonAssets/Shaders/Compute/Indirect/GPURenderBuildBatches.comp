@@ -8,6 +8,10 @@ const uint DRAW_UINTS = 5u;
 const uint BATCH_UINTS = 4u;
 const uint INSTANCE_MATRIX_FLOATS = 16u;
 const uint LEGACY_BASEINSTANCE_FLAG = 0x80000000u;
+const uint PREVIOUS_LOD_DRAW_FLAG = 0x40000000u;
+const uint COMMAND_INDEX_MASK = 0x3FFFFFFFu;
+const uint LOD_TRANSITION_UINTS = 4u;
+const uint LOD_TRANSITION_ACTIVE = 1u;
 
 layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { float culled[]; };
 layout(std430, binding = 1) readonly buffer MeshDataBuffer { uint meshData[]; };
@@ -48,6 +52,7 @@ layout(std430, binding = 13) buffer StatsBuffer
     uint StatsBvhRayTimeHi;
 };
 layout(std430, binding = 14) buffer SortScratchBuffer { uint sortScratch[]; };
+layout(std430, binding = 15) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
 
 uniform int MaxIndirectDraws;
 uniform int MaxBatchRanges;
@@ -280,6 +285,7 @@ void main()
     uint currentDrawFirstIndex = 0u;
     uint currentDrawBaseVertex = 0u;
     bool currentDrawCanAggregate = false;
+    bool overflowed = false;
 
     for (uint sortedIdx = 0u; sortedIdx < total; ++sortedIdx)
     {
@@ -306,131 +312,157 @@ void main()
         if (instanceCount == 0u)
             continue;
 
-        uint meshBase = meshID * 4u;
-        if (meshBase + 3u >= uint(meshData.length()))
-            continue;
-
-        uint indexCount = meshData[meshBase + 0u];
-        if (indexCount == 0u)
-            continue;
-
-        uint firstIndex = meshData[meshBase + 1u];
-        uint baseVertex = meshData[meshBase + 2u];
         uint packedState = ((renderPass & 0xFFu) << 24u) |
                            ((shaderProgramID & 0x0FFFu) << 12u) |
                            (flags & 0x0FFFu);
-
-        bool usesInstanceBuffer = instanceCount == 1u;
-        bool allowAggregate = usesInstanceBuffer &&
-                              EnableInstancingAggregation != 0u &&
-                              MaterialAllowsAggregation(materialID);
-
-        bool appendToCurrentDraw =
-            hasActiveDraw &&
-            allowAggregate &&
-            currentDrawCanAggregate &&
-            materialID == currentDrawMaterial &&
-            meshID == currentDrawMesh &&
-            packedState == currentDrawPackedState &&
-            firstIndex == currentDrawFirstIndex &&
-            baseVertex == currentDrawBaseVertex;
-
-        if (appendToCurrentDraw)
+        uint transitionBase = culledCommandIndex * LOD_TRANSITION_UINTS;
+        bool transitionActive = false;
+        uint previousMeshID = 0u;
+        if (transitionBase + 3u < uint(lodTransitions.length()))
         {
-            if (instanceWrite >= maxInstances)
+            previousMeshID = lodTransitions[transitionBase + 0u];
+            uint transitionFlags = lodTransitions[transitionBase + 2u];
+            float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
+            transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;
+        }
+
+        uint variantCount = transitionActive ? 2u : 1u;
+        for (uint variantIndex = 0u; variantIndex < variantCount; ++variantIndex)
+        {
+            bool previousVariant = transitionActive && variantIndex == 0u;
+            uint drawMeshID = previousVariant ? previousMeshID : meshID;
+
+            uint meshBase = drawMeshID * 4u;
+            if (meshBase + 3u >= uint(meshData.length()))
+                continue;
+
+            uint indexCount = meshData[meshBase + 0u];
+            if (indexCount == 0u)
+                continue;
+
+            uint firstIndex = meshData[meshBase + 1u];
+            uint baseVertex = meshData[meshBase + 2u];
+            bool usesInstanceBuffer = !transitionActive && instanceCount == 1u;
+            bool allowAggregate = usesInstanceBuffer &&
+                                  EnableInstancingAggregation != 0u &&
+                                  MaterialAllowsAggregation(materialID);
+
+            bool appendToCurrentDraw =
+                hasActiveDraw &&
+                allowAggregate &&
+                currentDrawCanAggregate &&
+                materialID == currentDrawMaterial &&
+                drawMeshID == currentDrawMesh &&
+                packedState == currentDrawPackedState &&
+                firstIndex == currentDrawFirstIndex &&
+                baseVertex == currentDrawBaseVertex;
+
+            if (appendToCurrentDraw)
+            {
+                if (instanceWrite >= maxInstances)
+                {
+                    SetOverflowFlags();
+                    overflowed = true;
+                    break;
+                }
+
+                CopyInstanceWorldMatrix(instanceWrite, commandBase);
+                instanceSourceIndices[instanceWrite] = culledCommandIndex;
+
+                uint drawBase = currentDrawIndex * DRAW_UINTS;
+                indirectDraws[drawBase + 1u] += 1u;
+                ++instanceWrite;
+                continue;
+            }
+
+            if (drawWrite >= maxIndirect)
             {
                 SetOverflowFlags();
+                overflowed = true;
                 break;
             }
 
-            CopyInstanceWorldMatrix(instanceWrite, commandBase);
-            instanceSourceIndices[instanceWrite] = culledCommandIndex;
+            uint drawBaseInstance;
+            uint drawInstanceCount;
 
-            uint drawBase = currentDrawIndex * DRAW_UINTS;
-            indirectDraws[drawBase + 1u] += 1u;
-            ++instanceWrite;
-            continue;
+            if (usesInstanceBuffer)
+            {
+                if (instanceWrite >= maxInstances)
+                {
+                    SetOverflowFlags();
+                    overflowed = true;
+                    break;
+                }
+
+                CopyInstanceWorldMatrix(instanceWrite, commandBase);
+                instanceSourceIndices[instanceWrite] = culledCommandIndex;
+                drawBaseInstance = instanceWrite;
+                drawInstanceCount = 1u;
+                ++instanceWrite;
+            }
+            else
+            {
+                drawBaseInstance = (culledCommandIndex & COMMAND_INDEX_MASK) | LEGACY_BASEINSTANCE_FLAG;
+                if (previousVariant)
+                    drawBaseInstance |= PREVIOUS_LOD_DRAW_FLAG;
+                drawInstanceCount = instanceCount;
+            }
+
+            uint drawBase = drawWrite * DRAW_UINTS;
+            indirectDraws[drawBase + 0u] = indexCount;
+            indirectDraws[drawBase + 1u] = drawInstanceCount;
+            indirectDraws[drawBase + 2u] = firstIndex;
+            indirectDraws[drawBase + 3u] = baseVertex;
+            indirectDraws[drawBase + 4u] = drawBaseInstance;
+
+            currentDrawIndex = drawWrite;
+            hasActiveDraw = true;
+            currentDrawMaterial = materialID;
+            currentDrawMesh = drawMeshID;
+            currentDrawPackedState = packedState;
+            currentDrawFirstIndex = firstIndex;
+            currentDrawBaseVertex = baseVertex;
+            currentDrawCanAggregate = allowAggregate;
+
+            ++drawWrite;
+
+            bool startNewBatch =
+                !hasActiveBatch ||
+                materialID != currentBatchMaterial ||
+                packedState != currentBatchPackedState;
+
+            if (startNewBatch)
+            {
+                if (hasActiveBatch)
+                {
+                    uint prevBatchBase = (batchWrite - 1u) * BATCH_UINTS;
+                    batchRanges[prevBatchBase + 1u] = (drawWrite - 1u) - currentBatchOffset;
+                }
+
+                if (batchWrite >= maxBatchRanges)
+                {
+                    SetOverflowFlags();
+                    overflowed = true;
+                    break;
+                }
+
+                currentBatchOffset = drawWrite - 1u;
+                currentBatchMaterial = materialID;
+                currentBatchPackedState = packedState;
+
+                uint batchBase = batchWrite * BATCH_UINTS;
+                batchRanges[batchBase + 0u] = currentBatchOffset;
+                batchRanges[batchBase + 1u] = 0u;
+                batchRanges[batchBase + 2u] = materialID;
+                batchRanges[batchBase + 3u] = packedState;
+
+                ++batchWrite;
+                hasActiveBatch = true;
+            }
         }
 
-        if (drawWrite >= maxIndirect)
-        {
-            SetOverflowFlags();
+        if (overflowed)
             break;
-        }
-
-        uint drawBaseInstance;
-        uint drawInstanceCount;
-
-        if (usesInstanceBuffer)
-        {
-            if (instanceWrite >= maxInstances)
-            {
-                SetOverflowFlags();
-                break;
-            }
-
-            CopyInstanceWorldMatrix(instanceWrite, commandBase);
-            instanceSourceIndices[instanceWrite] = culledCommandIndex;
-            drawBaseInstance = instanceWrite;
-            drawInstanceCount = 1u;
-            ++instanceWrite;
-        }
-        else
-        {
-            drawBaseInstance = (culledCommandIndex & 0x7FFFFFFFu) | LEGACY_BASEINSTANCE_FLAG;
-            drawInstanceCount = instanceCount;
-        }
-
-        uint drawBase = drawWrite * DRAW_UINTS;
-        indirectDraws[drawBase + 0u] = indexCount;
-        indirectDraws[drawBase + 1u] = drawInstanceCount;
-        indirectDraws[drawBase + 2u] = firstIndex;
-        indirectDraws[drawBase + 3u] = baseVertex;
-        indirectDraws[drawBase + 4u] = drawBaseInstance;
-
-        currentDrawIndex = drawWrite;
-        hasActiveDraw = true;
-        currentDrawMaterial = materialID;
-        currentDrawMesh = meshID;
-        currentDrawPackedState = packedState;
-        currentDrawFirstIndex = firstIndex;
-        currentDrawBaseVertex = baseVertex;
-        currentDrawCanAggregate = allowAggregate;
-
-        ++drawWrite;
-
-        bool startNewBatch =
-            !hasActiveBatch ||
-            materialID != currentBatchMaterial ||
-            packedState != currentBatchPackedState;
-
-        if (startNewBatch)
-        {
-            if (hasActiveBatch)
-            {
-                uint prevBatchBase = (batchWrite - 1u) * BATCH_UINTS;
-                batchRanges[prevBatchBase + 1u] = (drawWrite - 1u) - currentBatchOffset;
-            }
-
-            if (batchWrite >= maxBatchRanges)
-            {
-                SetOverflowFlags();
-                break;
-            }
-
-            currentBatchOffset = drawWrite - 1u;
-            currentBatchMaterial = materialID;
-            currentBatchPackedState = packedState;
-
-            uint batchBase = batchWrite * BATCH_UINTS;
-            batchRanges[batchBase + 0u] = currentBatchOffset;
-            batchRanges[batchBase + 1u] = 0u;
-            batchRanges[batchBase + 2u] = materialID;
-            batchRanges[batchBase + 3u] = packedState;
-
-            ++batchWrite;
-            hasActiveBatch = true;
-        }
     }
 
     if (hasActiveBatch && batchWrite > 0u)

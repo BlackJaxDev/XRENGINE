@@ -1376,7 +1376,7 @@ namespace XREngine.Rendering
                     return true;
             }
 
-            foreach (var lod in mesh.LODs)
+            foreach (RenderableMesh.RenderableLOD lod in mesh.GetLodSnapshot())
             {
                 var material = lod.Renderer.Material;
                 if (material is not null && material.RenderPass == (int)EDefaultRenderPass.Background)
@@ -1416,8 +1416,7 @@ namespace XREngine.Rendering
             triangleIndices = new IndexTriangle();
             triangleIndex = -1;
 
-            var lodNode = mesh.CurrentLOD ?? mesh.LODs.First;
-            var renderer = lodNode?.Value.Renderer;
+            var renderer = mesh.GetCurrentOrFirstLodRenderer();
             if (renderer is null)
                 return false;
 

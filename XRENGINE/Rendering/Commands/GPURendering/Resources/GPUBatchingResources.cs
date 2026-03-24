@@ -57,6 +57,7 @@ namespace XREngine.Rendering.Commands
         public const int BuildBatchesTruncation = 12;
         public const int BuildBatchesStats = 13;
         public const int BuildBatchesSortScratch = 14;
+        public const int BuildBatchesLodTransitions = 15;
 
         // Compute GPURenderMaterialScatter.comp bindings
         public const int MaterialScatterInputCommands = 0;
@@ -67,6 +68,7 @@ namespace XREngine.Rendering.Commands
         public const int MaterialScatterIndirectDraws = 5;
         public const int MaterialScatterDrawCounts = 6;
         public const int MaterialScatterOverflow = 7;
+        public const int MaterialScatterLodTransitions = 8;
     }
 
     public static class GPUBatchingLayout

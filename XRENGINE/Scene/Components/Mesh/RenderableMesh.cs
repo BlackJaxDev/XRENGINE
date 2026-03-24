@@ -71,8 +71,24 @@ namespace XREngine.Components.Scene.Mesh
             _skinnedRootRenderMatrixInverse = Matrix4x4.Invert(matrix, out var inv) ? inv : Matrix4x4.Identity;
         }
 
-        public XRMeshRenderer? CurrentLODRenderer => CurrentLOD?.Value?.Renderer;
-        public XRMesh? CurrentLODMesh => CurrentLOD?.Value?.Renderer?.Mesh;
+        private readonly object _lodsLock = new();
+
+        public XRMeshRenderer? CurrentLODRenderer
+        {
+            get
+            {
+                lock (_lodsLock)
+                    return _currentLOD?.Value?.Renderer;
+            }
+        }
+        public XRMesh? CurrentLODMesh
+        {
+            get
+            {
+                lock (_lodsLock)
+                    return _currentLOD?.Value?.Renderer?.Mesh;
+            }
+        }
 
         private LinkedListNode<RenderableLOD>? _currentLOD = null;
         public LinkedListNode<RenderableLOD>? CurrentLOD
@@ -143,25 +159,29 @@ namespace XREngine.Components.Scene.Mesh
             Component = component;
             RootBone = mesh.RootBone;
 
-            foreach (var lod in mesh.LODs)
+            lock (_lodsLock)
             {
-                var renderer = lod.NewRenderer();
-                renderer.SettingUniforms += SettingUniforms;
-                void UpdateReferences(object? s, IXRPropertyChangedEventArgs e)
+                foreach (var lod in mesh.LODs)
                 {
-                    if (e.PropertyName == nameof(SubMeshLOD.Mesh))
+                    var renderer = lod.NewRenderer();
+                    renderer.SettingUniforms += SettingUniforms;
+                    void UpdateReferences(object? s, IXRPropertyChangedEventArgs e)
                     {
-                        TrackBones(renderer.Mesh, false);
-                        renderer.Mesh = lod.Mesh;
-                        TrackBones(renderer.Mesh, true);
-                        MarkSkinnedDataDirty();
+                        if (e.PropertyName == nameof(SubMeshLOD.Mesh))
+                        {
+                            TrackBones(renderer.Mesh, false);
+                            renderer.Mesh = lod.Mesh;
+                            TrackBones(renderer.Mesh, true);
+                            MarkSkinnedDataDirty();
+                        }
+                        else if (e.PropertyName == nameof(SubMeshLOD.Material))
+                            renderer.Material = lod.Material;
                     }
-                    else if (e.PropertyName == nameof(SubMeshLOD.Material))
-                        renderer.Material = lod.Material;
+                    lod.PropertyChanged += UpdateReferences;
+                    LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance));
+                    TrackBones(lod.Mesh, true);
                 }
-                lod.PropertyChanged += UpdateReferences;
-                LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance));
-                TrackBones(lod.Mesh, true);
+
             }
 
             _renderBoundsCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, DoRenderBounds);
@@ -172,14 +192,29 @@ namespace XREngine.Components.Scene.Mesh
             _bindPoseBounds = RenderInfo.LocalCullingVolume ?? mesh.Bounds;
             RenderInfo.PreCollectCommandsCallback = BeforeAdd;
 
-            if (LODs.Count > 0)
-                CurrentLOD = LODs.First;
+            lock (_lodsLock)
+            {
+                if (LODs.Count > 0)
+                    CurrentLOD = LODs.First;
+            }
             
             // Set initial mesh renderer for GPU scene (will be updated in BeforeAdd if needed)
             _rc.Mesh = CurrentLODRenderer;
             var mat = CurrentLODRenderer?.Material;
             if (mat is not null)
                 _rc.RenderPass = mat.RenderPass;
+        }
+
+        internal RenderableLOD[] GetLodSnapshot()
+        {
+            lock (_lodsLock)
+                return [.. LODs];
+        }
+
+        internal XRMeshRenderer? GetCurrentOrFirstLodRenderer()
+        {
+            lock (_lodsLock)
+                return _currentLOD?.Value?.Renderer ?? LODs.First?.Value?.Renderer;
         }
 
         private void DoRenderBounds()
@@ -802,28 +837,38 @@ namespace XREngine.Components.Scene.Mesh
             => UpdateLOD(camera.DistanceFromRenderNearPlane(Component.Transform.RenderTranslation));
         public void UpdateLOD(float distanceToCamera)
         {
-            if (LODs.Count == 0)
-                return;
-
-            if (CurrentLOD is null)
+            lock (_lodsLock)
             {
-                CurrentLOD = LODs.First;
-                return;
+                if (LODs.Count == 0)
+                    return;
+
+                if (_currentLOD is null)
+                {
+                    CurrentLOD = LODs.First;
+                    return;
+                }
+
+                while (_currentLOD.Next is not null && distanceToCamera > _currentLOD.Value.MaxVisibleDistance)
+                    CurrentLOD = _currentLOD.Next;
+
+                if (_currentLOD.Previous is not null && distanceToCamera < _currentLOD.Previous.Value.MaxVisibleDistance)
+                    CurrentLOD = _currentLOD.Previous;
             }
-
-            while (CurrentLOD.Next is not null && distanceToCamera > CurrentLOD.Value.MaxVisibleDistance)
-                CurrentLOD = CurrentLOD.Next;
-
-            if (CurrentLOD.Previous is not null && distanceToCamera < CurrentLOD.Previous.Value.MaxVisibleDistance)
-                CurrentLOD = CurrentLOD.Previous;
         }
 
         public void Dispose()
         {
             UntrackAllBones();
-            foreach (var lod in LODs)
+            RenderableLOD[] lods;
+            lock (_lodsLock)
+            {
+                lods = [.. LODs];
+                CurrentLOD = null;
+                LODs.Clear();
+            }
+
+            foreach (RenderableLOD lod in lods)
                 lod.Renderer.Destroy();
-            LODs.Clear();
             GC.SuppressFinalize(this);
         }
 
@@ -831,7 +876,7 @@ namespace XREngine.Components.Scene.Mesh
         public float? Intersect(Segment localSpaceSegment, out Triangle? triangle)
         {
             triangle = null;
-            return CurrentLOD?.Value?.Renderer?.Mesh?.Intersect(localSpaceSegment, out triangle);
+            return CurrentLODRenderer?.Mesh?.Intersect(localSpaceSegment, out triangle);
         }
 
         public Segment GetLocalSegment(Segment worldSegment, bool skinnedMesh)
@@ -964,7 +1009,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void RootBone_WorldMatrixPreviewChanged(TransformBase rootBone, Matrix4x4 worldMatrix)
         {
-            bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             if (!hasSkinning)
                 return;
 
@@ -989,7 +1034,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void Component_WorldMatrixPreviewChanged(TransformBase component, Matrix4x4 worldMatrix)
         {
-            bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
                 if (RootBone is not null)
@@ -1004,7 +1049,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ApplyImmediateRenderMatrixUpdate(Matrix4x4? componentMatrix, Matrix4x4? rootMatrix)
         {
-            bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
                 Matrix4x4 basis = RootBone is null
@@ -1064,7 +1109,7 @@ namespace XREngine.Components.Scene.Mesh
                 rootMatrix = _pendingRootBoneRenderMatrix;
             }
 
-            bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
                 Matrix4x4 basis = RootBone is null ? componentMatrix : rootMatrix;
