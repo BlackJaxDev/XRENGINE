@@ -1,5 +1,11 @@
+using System.Numerics;
+using System.Reflection;
 using NUnit.Framework;
+using XREngine;
 using XREngine.Components;
+using XREngine.Components.Lights;
+using XREngine.Rendering;
+using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -8,6 +14,10 @@ namespace XREngine.UnitTests.Scene;
 [TestFixture]
 public class SceneNodeLifecycleTests
 {
+    private static readonly PropertyInfo s_worldProperty = typeof(RuntimeWorldObjectBase).GetProperty(
+        nameof(RuntimeWorldObjectBase.World),
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
+
     [Test]
     public void AddComponent_AfterBeginPlay_InvokesComponentBeginPlay()
     {
@@ -81,6 +91,59 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void AssigningAndClearingWorldOutsidePlay_TogglesExistingComponentActivation()
+    {
+        SceneNode node = new("LifecycleRoot");
+        LifecycleTrackingComponent component = node.AddComponent<LifecycleTrackingComponent>()!;
+        StubRuntimeWorldContext world = new(isPlaySessionActive: false);
+
+        SetWorld(node, world);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(component.ActivationCount, Is.EqualTo(1));
+            Assert.That(component.DeactivationCount, Is.Zero);
+        });
+
+        SetWorld(node, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(component.ActivationCount, Is.EqualTo(1));
+            Assert.That(component.DeactivationCount, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void AssigningPlayWorld_DoesNotPreActivateExistingComponents()
+    {
+        SceneNode node = new("LifecycleRoot");
+        LifecycleTrackingComponent component = node.AddComponent<LifecycleTrackingComponent>()!;
+        StubRuntimeWorldContext world = new(isPlaySessionActive: true);
+
+        SetWorld(node, world);
+
+        Assert.That(component.ActivationCount, Is.Zero);
+
+        node.OnActivated();
+
+        Assert.That(component.ActivationCount, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void AddingRootNodeToEditWorld_RegistersChildDirectionalLightsImmediately()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode root = new("Root");
+        SceneNode lightNode = new(root, "DirectionalLight");
+        DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
+
+        world.RootNodes.Add(root);
+
+        Assert.That(world.Lights.DynamicDirectionalLights, Does.Contain(light));
+    }
+
+    [Test]
     public void Constructor_UsesRuntimeSceneNodeService_DefaultTransformFactory()
     {
         IRuntimeSceneNodeServices previous = RuntimeSceneNodeServices.Current;
@@ -137,9 +200,25 @@ public class SceneNodeLifecycleTests
 
     private sealed class LifecycleTrackingComponent : XRComponent
     {
+        public int ActivationCount { get; private set; }
+
+        public int DeactivationCount { get; private set; }
+
         public int BeginPlayCount { get; private set; }
 
         public int EndPlayCount { get; private set; }
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            ActivationCount++;
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            DeactivationCount++;
+        }
 
         protected override void OnBeginPlay()
         {
@@ -186,6 +265,30 @@ public class SceneNodeLifecycleTests
         {
         }
     }
+
+    private sealed class StubRuntimeWorldContext(bool isPlaySessionActive) : IRuntimeWorldContext
+    {
+        public bool IsPlaySessionActive { get; } = isPlaySessionActive;
+
+        public void RegisterTick(ETickGroup group, int order, WorldTick tick)
+        {
+        }
+
+        public void UnregisterTick(ETickGroup group, int order, WorldTick tick)
+        {
+        }
+
+        public void AddDirtyRuntimeObject(RuntimeWorldObjectBase worldObject)
+        {
+        }
+
+        public void EnqueueRuntimeWorldMatrixChange(RuntimeWorldObjectBase worldObject, Matrix4x4 worldMatrix)
+        {
+        }
+    }
+
+    private static void SetWorld(SceneNode node, IRuntimeWorldContext? world)
+        => s_worldProperty.SetValue(node, world);
 
     private delegate bool ValidateTransformAssignment(object node, object transform, out string? warningMessage);
 }

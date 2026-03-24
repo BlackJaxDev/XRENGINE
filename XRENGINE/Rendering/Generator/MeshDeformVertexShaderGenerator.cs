@@ -38,6 +38,11 @@ namespace XREngine.Rendering.Shaders.Generator
         public virtual bool UseNVStereo => false;
 
         /// <summary>
+        /// When <c>true</c>, emits <c>FragTransformId</c> at location 21 and the <c>TransformId</c> uniform.
+        /// </summary>
+        public bool EmitTransformId { get; set; } = true;
+
+        /// <summary>
         /// Creates a new mesh deform vertex shader generator.
         /// </summary>
         /// <param name="mesh">The mesh to generate the shader for.</param>
@@ -165,11 +170,17 @@ namespace XREngine.Rendering.Shaders.Generator
                     OutputVars.Add(string.Format(FragColorName, i), (12u + (uint)i, EShaderVarType._vec4));
 
             OutputVars.Add(FragPosLocalName, (20, EShaderVarType._vec3));
+
+            if (EmitTransformId)
+                OutputVars.Add(FragTransformIdName, (21, EShaderVarType._float));
         }
 
         private void AddUniforms()
         {
             UniformNames.Add(EEngineUniform.ModelMatrix.ToString(), (EShaderVarType._mat4, false));
+
+            if (EmitTransformId)
+                UniformNames.Add("TransformId", (EShaderVarType._uint, false));
 
             if (UseOVRMultiView || UseNVStereo)
             {
@@ -196,6 +207,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
         // Output variable names
         public const string FragPosLocalName = "FragPosLocal";
+        public const string FragTransformIdName = "FragTransformId";
         public const string FragPosName = "FragPos";
         public const string FragNormName = "FragNorm";
         public const string FragTanName = "FragTan";
@@ -335,6 +347,13 @@ namespace XREngine.Rendering.Shaders.Generator
             if (_texCoordsUsed != 0)
                 for (int i = 0; i < _texCoordsUsed; ++i)
                     Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
+
+            if (EmitTransformId)
+            {
+                Line("uint _xreTransformId = uint(gl_BaseInstance);");
+                Line("if (_xreTransformId == 0u) _xreTransformId = TransformId;");
+                Line($"{FragTransformIdName} = uintBitsToFloat(_xreTransformId);");
+            }
         }
 
         /// <summary>
@@ -588,10 +607,10 @@ namespace XREngine.Rendering.Shaders.Generator
 
             void AssignCameraSpace()
             {
-                string viewMatrixExpr = UseOVRMultiView || UseNVStereo
+                string viewMatrixExpression = UseOVRMultiView || UseNVStereo
                     ? $"inverse({invViewMatrixName})"
                     : $"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}";
-                Line($"mat4 {ViewMatrixName}{index} = {viewMatrixExpr};");
+                Line($"mat4 {ViewMatrixName}{index} = {viewMatrixExpression};");
                 Line($"mat4 {ModelViewMatrixName}{index} = {ViewMatrixName}{index} * {EEngineUniform.ModelMatrix};");
                 Line($"mat4 {ModelViewProjMatrixName}{index} = {projMatrixName} * {ModelViewMatrixName}{index};");
                 Line($"{finalPositionName} = {ModelViewProjMatrixName}{index} * {localInputPositionName};");

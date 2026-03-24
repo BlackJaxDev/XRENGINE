@@ -285,7 +285,7 @@ public sealed class UIBatchCollector : IDisposable
 
         // Force-generate the mesh renderer to bypass any deferred generation.
         // This ensures the first frame renders immediately (matches the text batch path).
-        var version = _matQuadMesh!.GetDefaultVersion();
+        var version = GetImmediateRenderVersion(_matQuadMesh!);
         version.Generate();
 
         Debug.UIEvery(
@@ -319,7 +319,7 @@ public sealed class UIBatchCollector : IDisposable
 
             // Force-generate the mesh renderer to bypass any deferred generation.
             // This ensures the first frame renders immediately.
-            var version = gpu.Mesh!.GetDefaultVersion();
+            var version = GetImmediateRenderVersion(gpu.Mesh!);
             version.Generate();
 
             gpu.Mesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
@@ -470,10 +470,14 @@ public sealed class UIBatchCollector : IDisposable
 
         XRShader vertexShader = XRShader.EngineShader(
             Path.Combine("Common", "UITextBatched.vs"), EShaderType.Vertex);
+        XRShader stereoMv2VertexShader = XRShader.EngineShader(
+            Path.Combine("Common", "UITextBatchedStereoMV2.vs"), EShaderType.Vertex);
+        XRShader stereoNvVertexShader = XRShader.EngineShader(
+            Path.Combine("Common", "UITextBatchedStereoNV.vs"), EShaderType.Vertex);
         XRShader fragmentShader = XRShader.EngineShader(
             Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment);
 
-        var material = new XRMaterial(Array.Empty<ShaderVar>(), [fontAtlas], [vertexShader, fragmentShader])
+        var material = new XRMaterial(Array.Empty<ShaderVar>(), [fontAtlas], [vertexShader, stereoMv2VertexShader, stereoNvVertexShader, fragmentShader])
         {
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
             RenderOptions = new RenderingParameters
@@ -501,6 +505,20 @@ public sealed class UIBatchCollector : IDisposable
 
         _textGPU[fontAtlas] = gpu;
         return gpu;
+    }
+
+    private static XRMeshRenderer.BaseVersion GetImmediateRenderVersion(XRMeshRenderer mesh)
+    {
+        if (Engine.Rendering.State.IsStereoPass)
+        {
+            if (Engine.Rendering.Settings.PreferNVStereo && Engine.Rendering.State.IsNVIDIA)
+                return mesh.GetNVStereoVersion();
+
+            if (Engine.Rendering.State.HasAnyMultiViewExtension)
+                return mesh.GetOVRMultiViewVersion();
+        }
+
+        return mesh.GetDefaultVersion();
     }
 
     private static void DisableShaderPipelines(XRMeshRenderer mesh)

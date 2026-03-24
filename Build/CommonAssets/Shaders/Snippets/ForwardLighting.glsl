@@ -3,6 +3,7 @@
 
 #pragma snippet "LightStructs"
 #pragma snippet "LightAttenuation"
+#pragma snippet "ShadowSampling"
 
 const float PI = 3.14159265359;
 const float MAX_REFLECTION_LOD = 4.0;
@@ -75,6 +76,10 @@ uniform float ShadowBase;
 uniform float ShadowMult;
 uniform float ShadowBiasMin;
 uniform float ShadowBiasMax;
+uniform int ShadowSamples;
+uniform float ShadowFilterRadius;
+uniform bool EnablePCSS;
+uniform bool EnableCascadedShadows;
 
 uniform int DirLightCount; 
 uniform DirLight DirectionalLights[2];
@@ -459,7 +464,7 @@ float XRENGINE_ViewDepthFromWorldPos(vec3 fragPosWS)
 
 int XRENGINE_GetPrimaryDirLightCascadeIndex(vec3 fragPosWS)
 {
-    if (!UseCascadedDirectionalShadows || DirLightCount <= 0)
+    if (!UseCascadedDirectionalShadows || !EnableCascadedShadows || DirLightCount <= 0)
         return -1;
 
     DirLight primaryLight = DirectionalLights[0];
@@ -481,29 +486,20 @@ float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseF
 {
     mat4 lightMatrix = DirectionalLights[0].CascadeMatrices[cascadeIndex];
     vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;
-    vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0);
-    vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    fragCoord = fragCoord * 0.5 + 0.5;
+    vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
 
-    if (fragCoord.x < 0.0 || fragCoord.x > 1.0 ||
-        fragCoord.y < 0.0 || fragCoord.y > 1.0 ||
-        fragCoord.z < 0.0 || fragCoord.z > 1.0)
-        return 1.0;
+    if (!XRENGINE_ShadowCoordInBounds(fragCoord))
+        return -1.0;
 
     float bias = XRENGINE_GetShadowBias(diffuseFactor);
-
-    float shadow = 0.0;
-    vec2 texelSize = 1.0 / vec2(textureSize(ShadowMapArray, 0).xy);
-    for (int x = -1; x <= 1; ++x)
+    if (EnablePCSS)
     {
-        for (int y = -1; y <= 1; ++y)
-        {
-            float pcfDepth = texture(ShadowMapArray, vec3(fragCoord.xy + vec2(x, y) * texelSize, float(cascadeIndex))).r;
-            shadow += (fragCoord.z - bias) > pcfDepth ? 0.0 : 1.0;
-        }
+        int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
+        float filterRadius = ShadowFilterRadius * (1.0 + float(cascadeIndex) * 0.35);
+        return XRENGINE_SampleShadowMapArraySoft(ShadowMapArray, fragCoord, float(cascadeIndex), bias, sampleCount, filterRadius);
     }
 
-    return shadow * 0.111111111;
+    return XRENGINE_SampleShadowMapArrayPCF(ShadowMapArray, fragCoord, float(cascadeIndex), bias, 3);
 }
 
 // Shadow map reading for primary directional light (uses standalone ShadowMap sampler)
@@ -514,34 +510,28 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
 
     int cascadeIndex = XRENGINE_GetPrimaryDirLightCascadeIndex(fragPos);
     if (cascadeIndex >= 0)
-        return XRENGINE_ReadCascadeShadowMapDir(fragPos, normal, diffuseFactor, cascadeIndex);
+    {
+        float cascadeShadow = XRENGINE_ReadCascadeShadowMapDir(fragPos, normal, diffuseFactor, cascadeIndex);
+        if (cascadeShadow >= 0.0)
+            return cascadeShadow;
+    }
 
     mat4 lightMatrix = PrimaryDirLightWorldToLightProjMatrix * inverse(PrimaryDirLightWorldToLightInvViewMatrix);
     vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;
-    vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0);
-    vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    fragCoord = fragCoord * 0.5 + 0.5;
+    vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
 
     // Outside shadow map bounds: treat as fully lit
-    if (fragCoord.x < 0.0 || fragCoord.x > 1.0 ||
-        fragCoord.y < 0.0 || fragCoord.y > 1.0 ||
-        fragCoord.z < 0.0 || fragCoord.z > 1.0)
+    if (!XRENGINE_ShadowCoordInBounds(fragCoord))
         return 1.0;
 
     float bias = XRENGINE_GetShadowBias(diffuseFactor);
-
-    float shadow = 0.0;
-    vec2 texelSize = 1.0 / vec2(textureSize(ShadowMap, 0));
-    for (int x = -1; x <= 1; ++x)
+    if (EnablePCSS)
     {
-        for (int y = -1; y <= 1; ++y)
-        {
-            float pcfDepth = texture(ShadowMap, fragCoord.xy + vec2(x, y) * texelSize).r;
-            shadow += (fragCoord.z - bias) > pcfDepth ? 0.0 : 1.0;
-        }
+        int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
+        return XRENGINE_SampleShadowMapSoft(ShadowMap, fragCoord, bias, sampleCount, ShadowFilterRadius);
     }
 
-    return shadow * 0.111111111;
+    return XRENGINE_SampleShadowMapPCF(ShadowMap, fragCoord, bias, 3);
 }
 
 vec3 XRENGINE_CalculateDirectPbrLight(vec3 lightColor, float diffuseIntensity, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0, float attenuation)

@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Animation;
 using XREngine.Components;
+using XREngine.Components.Capture.Lights;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene;
 using XREngine.Data.Core;
@@ -159,7 +160,23 @@ public static partial class EditorUnitTests
         if (Toggles.DirLight)
             Lighting.AddDirLight(rootNode);
 
+        // IBL environment: without a light probe the Uber PBR shader renders near-black.
+        // Use realtime progressive capture so the probe converges over several frames,
+        // then auto-disables after 5 seconds once the scene is stable.
+        if (Toggles.LightProbe || Toggles.Skybox)
+        {
+            string[] names = ["warm_restaurant_4k"];
+            XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[0]}.exr");
+
+            if (Toggles.LightProbe)
+                    Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 1.25f, -7.5f));
+
+            if (Toggles.Skybox)
+                Models.AddSkybox(rootNode, skyEquirect);
+        }
+
         AddUberShaderPreviewGrid(rootNode);
+        AddUberShaderReferenceGrid(rootNode);
 
         var world = new XRWorld("Uber Shader World", scene);
         Undo.TrackWorld(world);

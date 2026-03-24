@@ -125,6 +125,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ModelComponentEditor");
+
         if (component is not ModelComponent modelComponent)
         {
             EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
@@ -145,6 +147,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void DrawComponentProperties(ModelComponent modelComponent)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ModelComponentEditor.ComponentProperties");
+
         if (!ImGui.CollapsingHeader("Component", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
@@ -181,6 +185,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void DrawModelOverview(ModelComponent modelComponent)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ModelComponentEditor.ModelOverview");
+
         Model? model = modelComponent.Model;
         if (model is null)
         {
@@ -198,7 +204,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         DrawUnifiedBlendshapeControls(modelComponent);
 
-        if (!ImGui.CollapsingHeader("Submeshes", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Submeshes"))
             return;
 
         var panelState = s_submeshPanelStates.GetValue(modelComponent, _ => new SubmeshPanelState());
@@ -243,6 +249,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void DrawUnifiedBlendshapeControls(ModelComponent modelComponent)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ModelComponentEditor.Blendshapes");
+
         var runtimeMeshes = modelComponent.Meshes;
         if (runtimeMeshes.Count == 0)
             return;
@@ -280,7 +288,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (blendshapeValues.Count == 0)
             return;
 
-        if (!ImGui.CollapsingHeader("Blendshapes (All LODs)", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Blendshapes (All LODs)"))
             return;
 
         if (ImGui.BeginTable("Blendshapes_All", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
@@ -637,6 +645,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void DrawSubmeshSection(ModelComponent modelComponent, int index, SubMesh subMesh, RenderableMesh? runtimeMesh)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ModelComponentEditor.SubmeshSection");
+
         ImGui.PushID($"Submesh{index}");
 
         string headerLabel = BuildSubmeshHeaderLabel(index, subMesh, runtimeMesh);
@@ -662,11 +672,13 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void DrawBlendshapeControls(ModelComponent modelComponent, int submeshIndex, int lodIndex, RenderableMesh.RenderableLOD? runtimeLOD)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ModelComponentEditor.SubmeshBlendshapes");
+
         XRMeshRenderer? renderer = runtimeLOD?.Renderer;
         if (renderer?.Mesh is null || !renderer.Mesh.HasBlendshapes)
             return;
 
-        if (!ImGui.CollapsingHeader($"Blendshapes##Blend_{submeshIndex}_{lodIndex}", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader($"Blendshapes##Blend_{submeshIndex}_{lodIndex}"))
             return;
 
         var mesh = renderer.Mesh;
@@ -721,6 +733,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void DrawMaterialControls(int submeshIndex, int lodIndex, SubMeshLOD lod, RenderableMesh.RenderableLOD? runtimeLOD)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ModelComponentEditor.MaterialControls");
+
         XRMeshRenderer? renderer = runtimeLOD?.Renderer;
         XRMaterialBase? assetMaterial = lod.Material;
         XRMaterialBase? runtimeMaterial = renderer?.Material;
@@ -732,7 +746,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return;
         }
 
-        if (!ImGui.CollapsingHeader($"Material##Mat_{submeshIndex}_{lodIndex}", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader($"Material##Mat_{submeshIndex}_{lodIndex}"))
             return;
 
         if (assetMaterial is not null)
@@ -912,6 +926,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void DrawTexturePreviewCell(XRTexture? texture, float? maxSize)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ModelComponentEditor.TexturePreview");
+
         if (texture is null)
         {
             ImGui.TextDisabled("<null>");

@@ -17,6 +17,11 @@ namespace XREngine.Rendering
         "fs", "vs", "gs", "tcs", "tes", "cs", "ts", "ms")]
     public class XRShader : GenericRenderObject
     {
+        private readonly object _resolvedSourceCacheLock = new();
+        private string? _resolvedSourceCache;
+        private string? _resolvedSourceCachePath;
+        private string? _resolvedSourceCacheText;
+
         internal EShaderType _type = EShaderType.Fragment;
         public EShaderType Type
         {
@@ -149,6 +154,7 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Source):
+                    InvalidateResolvedSourceCache();
                     if (field is TextFile newSource)
                         newSource.TextChanged += OnSourceTextChanged;
                     OnSourceTextChanged();
@@ -158,8 +164,73 @@ namespace XREngine.Rendering
 
         private void OnSourceTextChanged()
         {
+            InvalidateResolvedSourceCache();
+
             //When the source text changes, we need to mark the shader as dirty so it can be recompiled
             MarkDirty();
+        }
+
+        private void InvalidateResolvedSourceCache()
+        {
+            lock (_resolvedSourceCacheLock)
+            {
+                _resolvedSourceCache = null;
+                _resolvedSourceCachePath = null;
+                _resolvedSourceCacheText = null;
+            }
+
+            _existingUniforms.Clear();
+        }
+
+        public string GetResolvedSource(bool annotateIncludes = false)
+        {
+            TryGetResolvedSource(out string resolvedSource, annotateIncludes, logFailures: true);
+            return resolvedSource;
+        }
+
+        public bool TryGetResolvedSource(out string resolvedSource, bool annotateIncludes = false, bool logFailures = true)
+        {
+            string sourceText = Source?.Text ?? string.Empty;
+            string? sourcePath = Source?.FilePath;
+
+            if (!annotateIncludes)
+            {
+                lock (_resolvedSourceCacheLock)
+                {
+                    if (_resolvedSourceCache is not null &&
+                        string.Equals(_resolvedSourceCacheText, sourceText, StringComparison.Ordinal) &&
+                        string.Equals(_resolvedSourceCachePath, sourcePath, StringComparison.Ordinal))
+                    {
+                        resolvedSource = _resolvedSourceCache;
+                        return true;
+                    }
+                }
+            }
+
+            try
+            {
+                resolvedSource = ShaderSourceResolver.ResolveSource(sourceText, sourcePath, annotateIncludes: annotateIncludes);
+
+                if (!annotateIncludes)
+                {
+                    lock (_resolvedSourceCacheLock)
+                    {
+                        _resolvedSourceCache = resolvedSource;
+                        _resolvedSourceCacheText = sourceText;
+                        _resolvedSourceCachePath = sourcePath;
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (logFailures)
+                    RuntimeShaderServices.Current?.LogWarning($"Failed to resolve shader source for '{Name ?? FilePath ?? "UnnamedShader"}': {ex.Message}");
+
+                resolvedSource = sourceText;
+                return false;
+            }
         }
 
         public enum EExtensionBehavior
@@ -193,9 +264,9 @@ namespace XREngine.Rendering
             if (allowedBehaviors.Length == 0)
                 return true;
 
-            int end = text.IndexOf('\r', index);
+            int end = text.IndexOfAny(['\r', '\n'], index);
             if (end == -1)
-                return false;
+                end = text.Length;
 
             string line = text[index..end];
 
@@ -228,8 +299,7 @@ namespace XREngine.Rendering
             if (Source is null)
                 return false;
 
-            string? text = Source.Text;
-            if (text is null)
+            if (!TryGetResolvedSource(out string text, logFailures: false) || string.IsNullOrEmpty(text))
                 return false;
 
             //If the uniform name has a . in it, it's in a struct

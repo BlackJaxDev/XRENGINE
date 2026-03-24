@@ -558,7 +558,7 @@ namespace XREngine
 
         private static readonly ConcurrentDictionary<(string path, string samplerName), XRTexture2D> _uberSamplerTextureCache = new();
 
-        private static XRTexture2D GetOrCreateUberSamplerTexture(string filePath, string samplerName)
+        public static XRTexture2D GetOrCreateUberSamplerTexture(string filePath, string samplerName)
         {
             return _uberSamplerTextureCache.GetOrAdd((filePath, samplerName), static key =>
             {
@@ -1167,11 +1167,15 @@ namespace XREngine
 
             mat.Textures = [main, bump];
 
-            XRShader vert = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.vert"));
-            XRShader frag = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.frag"));
+            XRShader vert = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.vert"), EShaderType.Vertex);
+            XRShader vertOvr = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader_OVR.vert"), EShaderType.Vertex);
+            XRShader vertNv = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader_NV.vert"), EShaderType.Vertex);
+            XRShader frag = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.frag"), EShaderType.Fragment);
 
             mat.Shaders.Clear();
             mat.Shaders.Add(vert);
+            mat.Shaders.Add(vertOvr);
+            mat.Shaders.Add(vertNv);
             mat.Shaders.Add(frag);
 
             mat.Parameters = CreateDefaultForwardPlusUberShaderParameters(bumpScale);

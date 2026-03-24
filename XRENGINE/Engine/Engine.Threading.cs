@@ -279,12 +279,8 @@ namespace XREngine
         {
             if (IsRenderThread)
             {
-                var entry = LogMainThreadInvoke(reason, executeNowIfAlreadyRenderThread
-                    ? MainThreadInvokeMode.Inline
-                    : MainThreadInvokeMode.AlreadyOnRenderThread);
-
                 if (executeNowIfAlreadyRenderThread)
-                    ExecuteLoggedMainThreadInvoke(task, entry, queuedAtTimestamp: null);
+                    task();
 
                 return false;
             }

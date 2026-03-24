@@ -110,6 +110,30 @@ namespace XREngine.Rendering
 
             protected abstract string? GenerateVertexShaderSource();
 
+            protected bool FragmentConsumesTransformId()
+            {
+                var material = Parent?.Material;
+                if (material?.Shaders is null)
+                    return false;
+
+                foreach (var shader in material.Shaders)
+                {
+                    if (shader is null || shader.Type != EShaderType.Fragment)
+                        continue;
+
+                    string? source = shader.Source?.Text;
+                    if (string.IsNullOrEmpty(source))
+                        continue;
+
+                    if (source.Contains(DefaultVertexShaderGenerator.FragTransformIdName, StringComparison.Ordinal) ||
+                        source.Contains("location = 21", StringComparison.Ordinal) ||
+                        source.Contains("location=21", StringComparison.Ordinal))
+                        return true;
+                }
+
+                return false;
+            }
+
             public delegate void DelRenderRequested(Matrix4x4 worldMatrix, Matrix4x4 prevWorldMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode);
             /// <summary>
             /// Tells all renderers to render this mesh.
@@ -148,30 +172,6 @@ namespace XREngine.Rendering
 
                 return gen.Generate();
             }
-
-            private bool FragmentConsumesTransformId()
-            {
-                var material = Parent?.Material;
-                if (material?.Shaders is null)
-                    return false;
-
-                foreach (var shader in material.Shaders)
-                {
-                    if (shader is null || shader.Type != EShaderType.Fragment)
-                        continue;
-
-                    string? source = shader.Source?.Text;
-                    if (string.IsNullOrEmpty(source))
-                        continue;
-
-                    if (source.Contains(DefaultVertexShaderGenerator.FragTransformIdName, StringComparison.Ordinal) ||
-                        source.Contains("location = 21", StringComparison.Ordinal) ||
-                        source.Contains("location=21", StringComparison.Ordinal))
-                        return true;
-                }
-
-                return false;
-            }
         }
 
         [MemoryPackIgnore]
@@ -184,16 +184,24 @@ namespace XREngine.Rendering
         /// <returns></returns>
         private BaseVersion GetVersion(bool forceNoStereo = false)
         {
-            bool stereoPass = !forceNoStereo && Engine.Rendering.State.IsStereoPass;
+            bool stereoPass = !forceNoStereo && Engine.Rendering.State.IsStereoPass && CanUseVrSpecificVersions();
             bool useMeshDeform = DeformMeshRenderer is not null && _meshDeformInfluences is not null;
 
             BaseVersion ver;
             bool preferNV = Engine.Rendering.Settings.PreferNVStereo;
+            bool hasNvMaterialVertexShader = MaterialHasMatchingVertexShader(HasNVStereoViewRendering);
+            bool hasMultiViewMaterialVertexShader = MaterialHasMatchingVertexShader(HasMultiViewExtension);
             
             if (useMeshDeform)
             {
                 // Use mesh deform versions
-                if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
+                if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
+                    ver = GetMeshDeformNVStereoVersion();
+                else if (stereoPass && hasMultiViewMaterialVertexShader)
+                    ver = GetMeshDeformOVRMultiViewVersion();
+                else if (stereoPass && hasNvMaterialVertexShader)
+                    ver = GetMeshDeformNVStereoVersion();
+                else if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
                     ver = GetMeshDeformNVStereoVersion();
                 else if (stereoPass && Engine.Rendering.State.HasAnyMultiViewExtension)
                     ver = GetMeshDeformOVRMultiViewVersion();
@@ -203,7 +211,13 @@ namespace XREngine.Rendering
             else
             {
                 // Use standard versions
-                if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
+                if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
+                    ver = GetNVStereoVersion();
+                else if (stereoPass && hasMultiViewMaterialVertexShader)
+                    ver = GetOVRMultiViewVersion();
+                else if (stereoPass && hasNvMaterialVertexShader)
+                    ver = GetNVStereoVersion();
+                else if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
                     ver = GetNVStereoVersion();
                 else if (stereoPass && Engine.Rendering.State.HasAnyMultiViewExtension)
                     ver = GetOVRMultiViewVersion();
@@ -214,13 +228,25 @@ namespace XREngine.Rendering
             return ver;
         }
 
-        public BaseVersion GetDefaultVersion() => GeneratedVertexShaderVersions[0];
-        public BaseVersion GetOVRMultiViewVersion() => GeneratedVertexShaderVersions[1];
-        public BaseVersion GetNVStereoVersion() => GeneratedVertexShaderVersions[2];
+        private bool MaterialHasMatchingVertexShader(Func<XRShader, bool> selector)
+        {
+            var material = Material;
+            if (material?.VertexShaders is null || material.VertexShaders.Count == 0)
+                return false;
+
+            return material.VertexShaders.Any(selector);
+        }
+
+        private static bool CanUseVrSpecificVersions()
+            => Engine.VRState.IsInVR;
+
+        public BaseVersion GetDefaultVersion() => GetOrCreateVersion(0);
+        public BaseVersion GetOVRMultiViewVersion() => GetOrCreateVersion(1);
+        public BaseVersion GetNVStereoVersion() => GetOrCreateVersion(2);
         
-        public BaseVersion GetMeshDeformDefaultVersion() => GeneratedVertexShaderVersions[3];
-        public BaseVersion GetMeshDeformOVRMultiViewVersion() => GeneratedVertexShaderVersions[4];
-        public BaseVersion GetMeshDeformNVStereoVersion() => GeneratedVertexShaderVersions[5];
+        public BaseVersion GetMeshDeformDefaultVersion() => GetOrCreateVersion(3);
+        public BaseVersion GetMeshDeformOVRMultiViewVersion() => GetOrCreateVersion(4);
+        public BaseVersion GetMeshDeformNVStereoVersion() => GetOrCreateVersion(5);
 
         private static bool HasNVStereoViewRendering(XRShader x)
             => x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
@@ -239,7 +265,6 @@ namespace XREngine.Rendering
             _mesh = mesh;
             _material = material;
             InitializeDrivableBuffers();
-            InitializeVersions();
         }
         public XRMeshRenderer(params (XRMesh mesh, XRMaterial material)[] submeshes)
             : this((IEnumerable<(XRMesh mesh, XRMaterial material)>)submeshes) { }
@@ -248,19 +273,26 @@ namespace XREngine.Rendering
             foreach (var (mesh, material) in submeshes)
                 Submeshes.Add(new SubMesh() { Mesh = mesh, Material = material, InstanceCount = 1 });
             InitializeDrivableBuffers();
-            InitializeVersions();
         }
 
-        private void InitializeVersions()
+        private BaseVersion GetOrCreateVersion(int versionKey)
         {
-            GeneratedVertexShaderVersions.Add(0, new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, true));
-            GeneratedVertexShaderVersions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasMultiViewExtension, false));
-            GeneratedVertexShaderVersions.Add(2, new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, false));
-            
-            // Mesh deform versions (used when DeformMeshRenderer is set)
-            GeneratedVertexShaderVersions.Add(3, new MeshDeformVersion(this, NoSpecialExtensions, true));
-            GeneratedVertexShaderVersions.Add(4, new MeshDeformVersion(this, HasMultiViewExtension, false) { UseOVRMultiView = true });
-            GeneratedVertexShaderVersions.Add(5, new MeshDeformVersion(this, HasNVStereoViewRendering, false) { UseNVStereo = true });
+            if (GeneratedVertexShaderVersions.TryGetValue(versionKey, out var existing))
+                return existing;
+
+            BaseVersion created = versionKey switch
+            {
+                0 => new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, true),
+                1 => new Version<OVRMultiViewVertexShaderGenerator>(this, HasMultiViewExtension, false),
+                2 => new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, false),
+                3 => new MeshDeformVersion(this, NoSpecialExtensions, true),
+                4 => new MeshDeformVersion(this, HasMultiViewExtension, false) { UseOVRMultiView = true },
+                5 => new MeshDeformVersion(this, HasNVStereoViewRendering, false) { UseNVStereo = true },
+                _ => throw new ArgumentOutOfRangeException(nameof(versionKey), versionKey, "Unknown mesh renderer shader version."),
+            };
+
+            GeneratedVertexShaderVersions.Add(versionKey, created);
+            return created;
         }
 
         /// <summary>
@@ -284,13 +316,20 @@ namespace XREngine.Rendering
                 int maxInfluences = parent.MaxMeshDeformInfluences;
                 bool optimizeToVec4 = parent.OptimizeMeshDeformToVec4;
 
-                ShaderGeneratorBase generator;
+                MeshDeformVertexShaderGenerator generator;
                 if (UseOVRMultiView)
                     generator = new OVRMultiViewMeshDeformVertexShaderGenerator(m, maxInfluences, optimizeToVec4);
                 else if (UseNVStereo)
                     generator = new NVStereoMeshDeformVertexShaderGenerator(m, maxInfluences, optimizeToVec4);
                 else
                     generator = new MeshDeformVertexShaderGenerator(m, maxInfluences, optimizeToVec4);
+
+                if (!FragmentConsumesTransformId())
+                {
+                    generator.EmitTransformId = false;
+                    generator.OutputVars.Remove(MeshDeformVertexShaderGenerator.FragTransformIdName);
+                    generator.UniformNames.Remove("TransformId");
+                }
 
                 return generator.Generate();
             }

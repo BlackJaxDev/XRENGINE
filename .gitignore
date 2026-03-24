@@ -416,3 +416,4 @@ Screenshots/
 .dotnet/
 .matplot_venv/
 Build/TempValidation/
+Build/Dependencies/MsdfAtlasGen/

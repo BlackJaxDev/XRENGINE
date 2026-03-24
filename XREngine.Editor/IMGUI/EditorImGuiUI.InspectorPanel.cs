@@ -1384,6 +1384,7 @@ public static partial class EditorImGuiUI
 
             try
             {
+                using var profilerScope = Engine.Profiler.Start($"UI.ComponentEditor.{component.GetType().Name}");
                 editor.DrawInspector(component, visited);
             }
             catch (Exception ex)
