@@ -588,8 +588,10 @@ namespace XREngine.Rendering.Shaders.Generator
 
             void AssignCameraSpace()
             {
-                string viewMatrixUniform = $"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}";
-                Line($"mat4 {ViewMatrixName}{index} = {viewMatrixUniform};");
+                string viewMatrixExpr = UseOVRMultiView || UseNVStereo
+                    ? $"inverse({invViewMatrixName})"
+                    : $"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}";
+                Line($"mat4 {ViewMatrixName}{index} = {viewMatrixExpr};");
                 Line($"mat4 {ModelViewMatrixName}{index} = {ViewMatrixName}{index} * {EEngineUniform.ModelMatrix};");
                 Line($"mat4 {ModelViewProjMatrixName}{index} = {projMatrixName} * {ModelViewMatrixName}{index};");
                 Line($"{finalPositionName} = {ModelViewProjMatrixName}{index} * {localInputPositionName};");

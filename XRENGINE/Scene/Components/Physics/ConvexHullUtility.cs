@@ -48,7 +48,7 @@ internal static class ConvexHullUtility
         if (mesh is not null)
             return true;
 
-        foreach (var lod in renderable.LODs)
+        foreach (RenderableMesh.RenderableLOD lod in renderable.GetLodSnapshot())
         {
             if (lod.Renderer?.Mesh is XRMesh candidate)
             {

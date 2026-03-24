@@ -600,6 +600,7 @@ namespace XREngine.Rendering.Commands
         public bool EnableGpuDrivenBatching { get; set; } = true;
         public bool EnableGpuDrivenInstancing { get; set; } = true;
         public bool EnableZeroReadbackMaterialScatter { get; set; } = false;
+    public uint LodTransitionFrameCount { get; set; } = 8u;
 
         /// <summary>
         /// If true, the material ID is included in the sorting key to reduce overdraw.
@@ -672,6 +673,7 @@ namespace XREngine.Rendering.Commands
         public uint MaxDrawsPerMaterialTier => _maxDrawsPerMaterialTier;
         public bool ZeroReadbackMaterialScatterPreparedThisFrame => _zeroReadbackMaterialScatterPreparedThisFrame;
         public uint CommandCapacity => _lastMaxCommands == 0u ? GPUScene.MinCommandCount : _lastMaxCommands;
+    public uint MaxIndirectDrawCapacity => Math.Max(CommandCapacity * 2u, 1u);
 
         // Returns the current scene material map (ID -> XRMaterial)
         public IReadOnlyDictionary<uint, XRMaterial> GetMaterialMap(GPUScene scene)

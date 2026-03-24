@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
@@ -75,7 +76,10 @@ namespace XREngine.Components.Scene.Mesh
                         {
                             foreach (SubMesh mesh in Model.Meshes)
                                 if (_meshLinks.TryRemove(mesh, out RenderableMesh? mesh2))
+                                {
                                     Meshes.Remove(mesh2);
+                                    mesh2.Dispose();
+                                }
 
                             Model.Meshes.PostAnythingAdded -= AddMesh;
                             Model.Meshes.PostAnythingRemoved -= RemoveMesh;
@@ -137,7 +141,7 @@ namespace XREngine.Components.Scene.Mesh
         private static void WarmupMeshBVH(RenderableMesh renderable)
         {
             // Prime static BVH for each LOD mesh
-            foreach (var lod in renderable.LODs)
+            foreach (RenderableMesh.RenderableLOD lod in renderable.GetLodSnapshot())
                 lod.Renderer.Mesh?.GenerateBVH();
 
             // Kick skinned BVH build so hit-tests have data ready
@@ -161,8 +165,8 @@ namespace XREngine.Components.Scene.Mesh
 
         private static IEnumerable WarmupMeshBVHJob(RenderableMesh renderable)
         {
-            var lods = renderable.LODs;
-            int staticCount = lods?.Count ?? 0;
+            RenderableMesh.RenderableLOD[] lods = renderable.GetLodSnapshot();
+            int staticCount = lods.Length;
             int totalSteps = staticCount + (renderable.IsSkinned ? 1 : 0);
             if (totalSteps <= 0)
             {
@@ -176,15 +180,12 @@ namespace XREngine.Components.Scene.Mesh
 
             // Prime static BVH for each LOD mesh
             int lodIndex = 0;
-            if (lods is not null)
+            foreach (RenderableMesh.RenderableLOD lod in lods)
             {
-                foreach (var lod in lods)
-                {
-                    lodIndex++;
-                    lod.Renderer.Mesh?.GenerateBVH();
-                    completed++;
-                    yield return JobProgress.FromRange(completed, totalSteps, $"Static BVH LOD {lodIndex}/{staticCount}");
-                }
+                lodIndex++;
+                lod.Renderer.Mesh?.GenerateBVH();
+                completed++;
+                yield return JobProgress.FromRange(completed, totalSteps, $"Static BVH LOD {lodIndex}/{staticCount}");
             }
 
             // Kick skinned BVH build so hit-tests have data ready.
@@ -232,7 +233,10 @@ namespace XREngine.Components.Scene.Mesh
         private void RemoveMesh(SubMesh item)
         {
             if (_meshLinks.TryRemove(item, out RenderableMesh? mesh))
+            {
                 Meshes.Remove(mesh);
+                mesh.Dispose();
+            }
         }
 
         [RequiresDynamicCode("")]
@@ -254,7 +258,18 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         public IEnumerable<XRMeshRenderer> GetAllRenderersWhere(Predicate<XRMeshRenderer> predicate)
-            => Meshes.SelectMany(x => x.LODs).Select(x => x.Renderer).Where(x => predicate(x));
+        {
+            List<XRMeshRenderer> renderers = [];
+            foreach (RenderableMesh mesh in Meshes)
+                foreach (RenderableMesh.RenderableLOD lod in mesh.GetLodSnapshot())
+                {
+                    XRMeshRenderer renderer = lod.Renderer;
+                    if (predicate(renderer))
+                        renderers.Add(renderer);
+                }
+
+            return renderers;
+        }
 
         public void SetBlendShapeWeight(string blendshapeName, float percentage, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
         {

@@ -102,7 +102,7 @@ public class GaussianSplatComponent : ModelComponent
 
     private void MeshAdded(RenderableMesh mesh)
     {
-        foreach (var lod in mesh.LODs)
+        foreach (RenderableMesh.RenderableLOD lod in mesh.GetLodSnapshot())
             lod.Renderer.SettingUniforms += RendererOnSettingUniforms;
 
         UpdateRenderCommandInstances(mesh);
@@ -110,7 +110,7 @@ public class GaussianSplatComponent : ModelComponent
 
     private void MeshRemoved(RenderableMesh mesh)
     {
-        foreach (var lod in mesh.LODs)
+        foreach (RenderableMesh.RenderableLOD lod in mesh.GetLodSnapshot())
             lod.Renderer.SettingUniforms -= RendererOnSettingUniforms;
     }
 

@@ -417,7 +417,7 @@ namespace XREngine.Rendering.Commands
             }
 
             // Track remap needs per-buffer
-            EnsureIndirectDrawBuffer(capacity);
+            EnsureIndirectDrawBuffer(MaxIndirectDrawCapacity);
             _culledCountNeedsMap = EnsureParameterBuffer(ref _culledCountBuffer, "CulledCount", GPUScene.VisibleCountComponents);
             _culledCountNeedsMap |= EnsureParameterBuffer(ref _cullCountScratchBuffer, "CulledCountScratch", GPUScene.VisibleCountComponents);
             _drawCountNeedsMap = EnsureParameterBuffer(ref _drawCountBuffer, "DrawCount");
@@ -918,7 +918,8 @@ namespace XREngine.Rendering.Commands
                 _materialTierDrawCountBuffer.Resize(bucketCount);
             }
 
-            ulong totalIndirectCommands = (ulong)Math.Max(capacity, 1u) * bucketCount;
+            uint maxDrawsPerBucket = Math.Max(capacity * 2u, 1u);
+            ulong totalIndirectCommands = (ulong)maxDrawsPerBucket * bucketCount;
             uint boundedIndirectCommands = (uint)Math.Min(totalIndirectCommands, int.MaxValue);
             if (_materialTierIndirectDrawBuffer is null ||
                 _materialTierIndirectDrawBuffer.ComponentType != EComponentType.UInt ||
@@ -948,7 +949,7 @@ namespace XREngine.Rendering.Commands
             }
 
             _materialTierBucketCount = bucketCount;
-            _maxDrawsPerMaterialTier = Math.Max(capacity, 1u);
+            _maxDrawsPerMaterialTier = maxDrawsPerBucket;
         }
 
         private void EnsureTransparencyDomainBuffers(uint capacity)

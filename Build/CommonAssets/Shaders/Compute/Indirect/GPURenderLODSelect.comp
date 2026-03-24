@@ -5,6 +5,8 @@ layout(local_size_x = 256) in;
 const uint COMMAND_FLOATS = 48u;
 const uint LOD_TABLE_FLOATS = 12u;
 const uint FLAG_LOD_ENABLED = 1u << 15u;
+const uint LOD_TRANSITION_UINTS = 4u;
+const uint LOD_TRANSITION_ACTIVE = 1u;
 
 layout(std430, binding = 0) buffer CulledCommandsBuffer
 {
@@ -28,8 +30,14 @@ layout(std430, binding = 3) buffer LODRequestBuffer
     uint lodRequestMask[];
 };
 
+layout(std430, binding = 4) buffer LODTransitionBuffer
+{
+    uint lodTransitions[];
+};
+
 uniform vec3 CameraPosition;
 uniform int InputCommandCount;
+uniform float TransitionFrameStep;
 
 uint ReadMeshDataId(uint entryBase, uint lodLevel)
 {
@@ -121,7 +129,42 @@ void main()
     if (resolvedLevel != selectedLevel && logicalMeshID < uint(lodRequestMask.length()))
         atomicOr(lodRequestMask[logicalMeshID], 1u << min(selectedLevel, 31u));
 
+    uint currentMeshID = floatBitsToUint(culled[base + 36u]);
+    uint currentLodLevel = floatBitsToUint(culled[base + 44u]);
+    uint transitionBase = idx * LOD_TRANSITION_UINTS;
+    if (transitionBase + 3u >= uint(lodTransitions.length()))
+        return;
+
+    uint previousMeshID = lodTransitions[transitionBase + 0u];
+    uint previousLodLevel = lodTransitions[transitionBase + 1u];
+    uint transitionFlags = lodTransitions[transitionBase + 2u];
+    float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
+    bool transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u;
+
+    if (selectedMeshID != currentMeshID || resolvedLevel != currentLodLevel)
+    {
+        previousMeshID = currentMeshID;
+        previousLodLevel = currentLodLevel;
+        transitionFlags = previousMeshID != 0u ? LOD_TRANSITION_ACTIVE : 0u;
+        transitionProgress = previousMeshID != 0u ? 0.0 : 1.0;
+    }
+    else if (transitionActive)
+    {
+        transitionProgress = min(transitionProgress + max(TransitionFrameStep, 0.0), 1.0);
+        if (transitionProgress >= 1.0)
+        {
+            previousMeshID = 0u;
+            previousLodLevel = resolvedLevel;
+            transitionFlags = 0u;
+        }
+    }
+
     culled[base + 36u] = uintBitsToFloat(selectedMeshID);
     culled[base + 37u] = uintBitsToFloat((selectedMeshID << 16u) | (floatBitsToUint(culled[base + 37u]) & 0xFFFFu));
     culled[base + 44u] = uintBitsToFloat(resolvedLevel);
+
+    lodTransitions[transitionBase + 0u] = previousMeshID;
+    lodTransitions[transitionBase + 1u] = previousLodLevel;
+    lodTransitions[transitionBase + 2u] = transitionFlags;
+    lodTransitions[transitionBase + 3u] = floatBitsToUint(transitionProgress);
 }

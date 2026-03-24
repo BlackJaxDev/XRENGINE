@@ -301,11 +301,13 @@ namespace XREngine.Rendering.Commands
 
             _lodSelectComputeShader.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? Vector3.Zero);
             _lodSelectComputeShader.Uniform("InputCommandCount", (int)dispatchCommands);
+            _lodSelectComputeShader.Uniform("TransitionFrameStep", 1.0f / Math.Max(LodTransitionFrameCount, 1u));
 
             _culledSceneToRenderBuffer.BindTo(_lodSelectComputeShader, 0);
             _culledCountBuffer.BindTo(_lodSelectComputeShader, 1);
             scene.LODTableBuffer.BindTo(_lodSelectComputeShader, 2);
             scene.LODRequestBuffer.BindTo(_lodSelectComputeShader, 3);
+            scene.LodTransitionBuffer.BindTo(_lodSelectComputeShader, 4);
 
             uint dispatchGroups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(dispatchCommands).Item1);
             const EMemoryBarrierMask postLodBarrier = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command;
@@ -333,6 +335,7 @@ namespace XREngine.Rendering.Commands
             _culledCountBuffer?.BindTo(_indirectRenderTaskShader!, 3);
             _drawCountBuffer?.BindTo(_indirectRenderTaskShader!, 4);
             _indirectOverflowFlagBuffer?.BindTo(_indirectRenderTaskShader!, 5);
+            scene.LodTransitionBuffer.BindTo(_indirectRenderTaskShader!, 10);
 
             if (_truncationFlagBuffer is not null)
             {
@@ -454,6 +457,7 @@ namespace XREngine.Rendering.Commands
             _materialTierIndirectDrawBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterIndirectDraws);
             _materialTierDrawCountBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterDrawCounts);
             _indirectOverflowFlagBuffer?.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterOverflow);
+            scene.LodTransitionBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterLodTransitions);
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
                 ? _keyIndexBufferA.ElementCount
@@ -630,6 +634,7 @@ namespace XREngine.Rendering.Commands
             _indirectOverflowFlagBuffer?.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesIndirectOverflow);
             _truncationFlagBuffer?.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesTruncation);
             _statsBuffer?.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesStats);
+            scene.LodTransitionBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesLodTransitions);
 
             _buildGpuBatchesComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);

@@ -24,8 +24,13 @@ namespace XREngine.Rendering
         private const uint IndirectCommandSsboBinding = 7;
         private const uint InstanceTransformSsboBinding = GPUBatchingBindings.InstanceTransformBuffer;
         private const uint InstanceSourceIndexSsboBinding = GPUBatchingBindings.InstanceSourceIndexBuffer;
+        private const uint LodTransitionSsboBinding = 16;
         private const int IndirectCommandFloatCount = 48;
         private const int IndirectTextGlyphOffsetFloatIndex = 46;
+        private const uint IndirectLegacyBaseInstanceFlag = 0x80000000u;
+        private const uint IndirectPreviousLodBaseInstanceFlag = 0x40000000u;
+        private const uint IndirectBaseInstanceCommandIndexMask = 0x3FFFFFFFu;
+        private const string FragLodTransitionRoleName = "XreFragLodTransitionRole";
         private const string GlyphTransformsBufferName = "GlyphTransformsBuffer";
         private const string GlyphTexCoordsBufferName = "GlyphTexCoordsBuffer";
         private const string GlyphRotationsBufferName = "GlyphRotationsBuffer";
@@ -389,6 +394,7 @@ namespace XREngine.Rendering
             XRDataBuffer? indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
             XRDataBuffer? culledCommandsBuffer,
+            XRDataBuffer? lodTransitionBuffer,
             XRDataBuffer? instanceTransformBuffer,
             XRDataBuffer? instanceSourceIndexBuffer,
             bool useInstanceTransformBuffer,
@@ -430,6 +436,7 @@ namespace XREngine.Rendering
                 // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader.
                 // Use a dedicated binding to avoid colliding with material SSBOs (for example text glyph buffers).
                 culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+                lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
                 instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
                 instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
                 graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
@@ -945,6 +952,7 @@ namespace XREngine.Rendering
             XRDataBuffer? indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
             XRDataBuffer? culledCommandsBuffer,
+            XRDataBuffer? lodTransitionBuffer,
             XRDataBuffer? instanceTransformBuffer,
             XRDataBuffer? instanceSourceIndexBuffer,
             bool useInstanceTransformBuffer,
@@ -972,6 +980,7 @@ namespace XREngine.Rendering
 
                 // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader
                 culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+                lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
                 instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
                 instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
                 graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
@@ -1245,6 +1254,7 @@ namespace XREngine.Rendering
                     indirectDrawBuffer,
                     vaoRenderer,
                     culledBuffer,
+                    scene.LodTransitionBuffer,
                     null,
                     null,
                     false,
@@ -1399,6 +1409,7 @@ namespace XREngine.Rendering
                 indirectDrawBuffer,
                 vaoRenderer,
                 culledBuffer,
+                scene.LodTransitionBuffer,
                 null,
                 null,
                 false,
@@ -1581,7 +1592,11 @@ namespace XREngine.Rendering
             }
 
             bool useTextVertexPath = TryDetectTextVertexShader(shaderList, out bool includeTextRotations);
-            bool fragmentConsumesTransformId = FragmentConsumesTransformId(shaderList);
+            bool emitLodTransitionRole = false;
+            if (!useTextVertexPath)
+                AugmentIndirectFragmentShaders(shaderList, out emitLodTransitionRole);
+
+            bool fragmentConsumesTransformId = emitLodTransitionRole || FragmentConsumesTransformId(shaderList);
             if (useTextVertexPath)
             {
                 GpuDebug(
@@ -1601,7 +1616,7 @@ namespace XREngine.Rendering
 
             XRShader? generatedVertexShader = useTextVertexPath
                 ? CreateGpuIndirectTextVertexShader(includeTextRotations, fragmentConsumesTransformId)
-                : CreateGpuIndirectVertexShader(vaoRenderer, fragmentConsumesTransformId);
+                : CreateGpuIndirectVertexShader(vaoRenderer, fragmentConsumesTransformId, emitLodTransitionRole);
             if (generatedVertexShader is not null)
                 shaderList.Add(generatedVertexShader);
 
@@ -1624,7 +1639,7 @@ namespace XREngine.Rendering
             return program;
         }
 
-        private XRShader? CreateGpuIndirectVertexShader(XRMeshRenderer? vaoRenderer, bool emitTransformId)
+        private XRShader? CreateGpuIndirectVertexShader(XRMeshRenderer? vaoRenderer, bool emitTransformId, bool emitLodTransitionRole)
         {
             // Build a vertex shader compatible with the engine's default fragment shader expectations,
             // but sourcing ModelMatrix from the culled command buffer via gl_BaseInstance.
@@ -1637,6 +1652,9 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(std430, binding = {InstanceSourceIndexSsboBinding}) buffer InstanceSourceIndexBuffer {{ uint instanceSourceIndex[]; }};");
             sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
             sb.AppendLine("const int INSTANCE_MATRIX_FLOATS = 16;");
+            sb.AppendLine($"const uint XRE_LEGACY_BASEINSTANCE_FLAG = 0x{IndirectLegacyBaseInstanceFlag:X8}u;");
+            sb.AppendLine($"const uint XRE_PREVIOUS_LOD_BASEINSTANCE_FLAG = 0x{IndirectPreviousLodBaseInstanceFlag:X8}u;");
+            sb.AppendLine($"const uint XRE_BASEINSTANCE_COMMAND_INDEX_MASK = 0x{IndirectBaseInstanceCommandIndexMask:X8}u;");
             sb.AppendLine();
 
             uint location = 0;
@@ -1675,6 +1693,8 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
             if (emitTransformId)
                 sb.AppendLine($"layout(location=21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            if (emitLodTransitionRole)
+                sb.AppendLine($"layout(location=22) flat out uint {FragLodTransitionRoleName};");
             sb.AppendLine();
 
             sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -1707,17 +1727,19 @@ namespace XREngine.Rendering
             sb.AppendLine();
             sb.AppendLine("uint ResolveCommandIndex(uint rawBaseInstance, uint instanceLinearIndex)");
             sb.AppendLine("{");
-            sb.AppendLine("    uint baseIndex = rawBaseInstance;");
-            sb.AppendLine("    if (UseInstanceTransformBuffer != 0 && instanceLinearIndex < uint(instanceSourceIndex.length()))");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance & XRE_BASEINSTANCE_COMMAND_INDEX_MASK;");
+            sb.AppendLine("    bool useLegacyBaseInstance = (rawBaseInstance & XRE_LEGACY_BASEINSTANCE_FLAG) != 0u;");
+            sb.AppendLine("    if (UseInstanceTransformBuffer != 0 && !useLegacyBaseInstance && instanceLinearIndex < uint(instanceSourceIndex.length()))");
             sb.AppendLine("        return instanceSourceIndex[instanceLinearIndex];");
             sb.AppendLine("    return baseIndex;");
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("mat4 ResolveModelMatrix(uint rawBaseInstance, uint instanceLinearIndex)");
             sb.AppendLine("{");
-            sb.AppendLine("    uint baseIndex = rawBaseInstance;");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance & XRE_BASEINSTANCE_COMMAND_INDEX_MASK;");
+            sb.AppendLine("    bool useLegacyBaseInstance = (rawBaseInstance & XRE_LEGACY_BASEINSTANCE_FLAG) != 0u;");
             sb.AppendLine("    uint instanceCapacity = uint(instanceWorld.length()) / uint(INSTANCE_MATRIX_FLOATS);");
-            sb.AppendLine("    if (UseInstanceTransformBuffer != 0 && instanceLinearIndex < instanceCapacity)");
+            sb.AppendLine("    if (UseInstanceTransformBuffer != 0 && !useLegacyBaseInstance && instanceLinearIndex < instanceCapacity)");
             sb.AppendLine("        return LoadWorldMatrixFromInstances(instanceLinearIndex);");
             sb.AppendLine("    return LoadWorldMatrixFromCommands(baseIndex);");
             sb.AppendLine("}");
@@ -1726,12 +1748,14 @@ namespace XREngine.Rendering
             sb.AppendLine("void main()");
             sb.AppendLine("{");
             sb.AppendLine("    uint rawBaseInstance = uint(gl_BaseInstance);");
-            sb.AppendLine("    uint baseIndex = rawBaseInstance;");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance & XRE_BASEINSTANCE_COMMAND_INDEX_MASK;");
             sb.AppendLine("    uint instanceLinearIndex = baseIndex + uint(gl_InstanceID);");
             sb.AppendLine("    mat4 ModelMatrix = ResolveModelMatrix(rawBaseInstance, instanceLinearIndex);");
             sb.AppendLine("    uint commandIndex = ResolveCommandIndex(rawBaseInstance, instanceLinearIndex);");
             if (emitTransformId)
                 sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
+            if (emitLodTransitionRole)
+                sb.AppendLine($"    {FragLodTransitionRoleName} = (rawBaseInstance & XRE_PREVIOUS_LOD_BASEINSTANCE_FLAG) != 0u ? 1u : 0u;");
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -1923,6 +1947,98 @@ namespace XREngine.Rendering
             }
 
             return false;
+        }
+
+        private static void AugmentIndirectFragmentShaders(List<XRShader> shaders, out bool emitLodTransitionRole)
+        {
+            emitLodTransitionRole = false;
+
+            for (int i = 0; i < shaders.Count; ++i)
+            {
+                XRShader shader = shaders[i];
+                if (shader.Type != EShaderType.Fragment)
+                    continue;
+
+                string? source = shader.Source?.Text;
+                if (string.IsNullOrWhiteSpace(source) || !TryAugmentIndirectFragmentShader(source, out string augmentedSource))
+                    continue;
+
+                shaders[i] = new XRShader(EShaderType.Fragment, augmentedSource)
+                {
+                    Name = shader.Name
+                };
+                emitLodTransitionRole = true;
+            }
+        }
+
+        private static bool TryAugmentIndirectFragmentShader(string source, out string augmentedSource)
+        {
+            const string mainSignature = "void main";
+            augmentedSource = source;
+
+            int versionLineEnd = source.IndexOf('\n');
+            if (versionLineEnd < 0)
+                return false;
+
+            bool hasTransformId = source.Contains(DefaultVertexShaderGenerator.FragTransformIdName, StringComparison.Ordinal) ||
+                source.Contains("location = 21", StringComparison.Ordinal) ||
+                source.Contains("location=21", StringComparison.Ordinal);
+            bool hasRole = source.Contains(FragLodTransitionRoleName, StringComparison.Ordinal) ||
+                source.Contains("location = 22", StringComparison.Ordinal) ||
+                source.Contains("location=22", StringComparison.Ordinal);
+
+            var helper = new StringBuilder();
+            helper.AppendLine();
+            if (!hasTransformId)
+                helper.AppendLine($"layout(location = 21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            if (!hasRole)
+                helper.AppendLine($"layout(location = 22) flat in uint {FragLodTransitionRoleName};");
+            helper.AppendLine($"layout(std430, binding = {LodTransitionSsboBinding}) readonly buffer XreLodTransitionBuffer {{ uint xreLodTransitions[]; }};");
+            helper.AppendLine("const uint XRE_LOD_TRANSITION_ACTIVE = 1u;");
+            helper.AppendLine("const uint XRE_LOD_TRANSITION_UINTS = 4u;");
+            helper.AppendLine();
+            helper.AppendLine("float XRE_BayerDither4x4(vec2 fragCoord)");
+            helper.AppendLine("{");
+            helper.AppendLine("    ivec2 p = ivec2(mod(floor(fragCoord), 4.0));");
+            helper.AppendLine("    const float bayer[16] = float[16](");
+            helper.AppendLine("        0.0, 8.0, 2.0, 10.0,");
+            helper.AppendLine("        12.0, 4.0, 14.0, 6.0,");
+            helper.AppendLine("        3.0, 11.0, 1.0, 9.0,");
+            helper.AppendLine("        15.0, 7.0, 13.0, 5.0);");
+            helper.AppendLine("    return (bayer[p.y * 4 + p.x] + 0.5) / 16.0;");
+            helper.AppendLine("}");
+            helper.AppendLine();
+            helper.AppendLine("void XRE_ApplyLodTransitionDither()");
+            helper.AppendLine("{");
+            helper.AppendLine($"    uint commandIndex = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
+            helper.AppendLine("    uint base = commandIndex * XRE_LOD_TRANSITION_UINTS;");
+            helper.AppendLine("    if (base + 3u >= uint(xreLodTransitions.length()))");
+            helper.AppendLine("        return;");
+            helper.AppendLine("    uint flags = xreLodTransitions[base + 2u];");
+            helper.AppendLine("    if ((flags & XRE_LOD_TRANSITION_ACTIVE) == 0u)");
+            helper.AppendLine("        return;");
+            helper.AppendLine("    float progress = clamp(uintBitsToFloat(xreLodTransitions[base + 3u]), 0.0, 1.0);");
+            helper.AppendLine($"    float coverage = {FragLodTransitionRoleName} != 0u ? (1.0 - progress) : progress;");
+            helper.AppendLine("    if (coverage <= 0.0)");
+            helper.AppendLine("        discard;");
+            helper.AppendLine("    if (coverage >= 1.0)");
+            helper.AppendLine("        return;");
+            helper.AppendLine("    if (coverage < XRE_BayerDither4x4(gl_FragCoord.xy))");
+            helper.AppendLine("        discard;");
+            helper.AppendLine("}");
+
+            augmentedSource = source.Insert(versionLineEnd, helper.ToString());
+
+            int mainIndex = augmentedSource.IndexOf(mainSignature, StringComparison.Ordinal);
+            if (mainIndex < 0)
+                return false;
+
+            int braceIndex = augmentedSource.IndexOf('{', mainIndex);
+            if (braceIndex < 0)
+                return false;
+
+            augmentedSource = augmentedSource.Insert(braceIndex + 1, "\n    XRE_ApplyLodTransitionDither();");
+            return true;
         }
 
         private void DetachIndirectTextBatchBuffers(XRMeshRenderer? vaoRenderer)
@@ -2581,6 +2697,7 @@ namespace XREngine.Rendering
                     indirectDrawBuffer,
                     vaoRenderer,
                     renderPasses.CulledSceneToRenderBuffer,
+                    scene.LodTransitionBuffer,
                     instanceTransformBuffer,
                     instanceSourceIndexBuffer,
                     useGpuInstanceTransforms && !isTextBatch,
@@ -2681,6 +2798,7 @@ namespace XREngine.Rendering
                         indirectDrawBuffer,
                         vaoRenderer,
                         culledCommandsBuffer,
+                        scene.LodTransitionBuffer,
                         instanceTransformBuffer,
                         instanceSourceIndexBuffer,
                         useGpuInstanceTransforms,
@@ -2733,6 +2851,7 @@ namespace XREngine.Rendering
             XRDataBuffer indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
             XRDataBuffer culledCommandsBuffer,
+            XRDataBuffer? lodTransitionBuffer,
             XRDataBuffer? instanceTransformBuffer,
             XRDataBuffer? instanceSourceIndexBuffer,
             bool useInstanceTransformBuffer,
@@ -2750,6 +2869,7 @@ namespace XREngine.Rendering
 
             graphicsProgram.Use();
             culledCommandsBuffer.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+            lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
             instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
             instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
             graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);

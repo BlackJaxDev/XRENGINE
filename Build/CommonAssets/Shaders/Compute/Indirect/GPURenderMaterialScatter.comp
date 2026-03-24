@@ -8,6 +8,10 @@ const uint DRAW_UINTS = 5u;
 const uint MATERIAL_TIER_COUNT = 3u;
 const uint INVALID_MATERIAL_SLOT = 0xFFFFFFFFu;
 const uint MESH_DATA_ATLAS_TIER_MASK = 0x3u;
+const uint LOD_TRANSITION_UINTS = 4u;
+const uint LOD_TRANSITION_ACTIVE = 1u;
+const uint PREVIOUS_LOD_DRAW_FLAG = 0x40000000u;
+const uint COMMAND_INDEX_MASK = 0x3FFFFFFFu;
 
 layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { float culled[]; };
 layout(std430, binding = 1) readonly buffer MeshDataBuffer { uint meshData[]; };
@@ -22,6 +26,7 @@ layout(std430, binding = 4) readonly buffer MaterialSlotLookupBuffer { uint mate
 layout(std430, binding = 5) buffer IndirectDrawBuffer { uint indirectDraws[]; };
 layout(std430, binding = 6) buffer DrawCountBuffer { uint drawCounts[]; };
 layout(std430, binding = 7) buffer OverflowFlagBuffer { uint overflowFlag; };
+layout(std430, binding = 8) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
 
 uniform int CurrentRenderPass;
 uniform int MaxMaterialSlotLookup;
@@ -47,6 +52,51 @@ void StoreDrawCommand(uint bucketIndex, uint drawIndexInBucket, uint count, uint
     indirectDraws[base + 2u] = firstIndex;
     indirectDraws[base + 3u] = baseVertex;
     indirectDraws[base + 4u] = baseInstance;
+}
+
+void TryEmitDraw(uint meshID, uint materialID, uint instanceCount, uint commandIndex, bool previousLod)
+{
+    if (instanceCount == 0u)
+        return;
+
+    if (materialID >= uint(MaxMaterialSlotLookup) || materialID >= uint(materialSlots.length()))
+        return;
+
+    uint slotIndex = materialSlots[materialID];
+    if (slotIndex == INVALID_MATERIAL_SLOT)
+        return;
+
+    uint meshBase = meshID * 4u;
+    if (meshBase + 3u >= uint(meshData.length()))
+        return;
+
+    uint indexCount = meshData[meshBase + 0u];
+    if (indexCount == 0u)
+        return;
+
+    uint tierFlags = meshData[meshBase + 3u];
+    uint tier = tierFlags & MESH_DATA_ATLAS_TIER_MASK;
+    if (tier >= MATERIAL_TIER_COUNT)
+        tier = 0u;
+
+    uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier;
+    if (bucketIndex >= uint(MaxBucketCount) || bucketIndex >= uint(drawCounts.length()))
+        return;
+
+    uint drawIndexInBucket = atomicAdd(drawCounts[bucketIndex], 1u);
+    if (drawIndexInBucket >= uint(MaxIndirectDrawsPerBucket))
+    {
+        overflowFlag = 1u;
+        return;
+    }
+
+    uint firstIndex = meshData[meshBase + 1u];
+    uint baseVertex = meshData[meshBase + 2u];
+    uint baseInstance = commandIndex & COMMAND_INDEX_MASK;
+    if (previousLod)
+        baseInstance |= PREVIOUS_LOD_DRAW_FLAG;
+
+    StoreDrawCommand(bucketIndex, drawIndexInBucket, indexCount, instanceCount, firstIndex, baseVertex, baseInstance);
 }
 
 void main()
@@ -76,39 +126,19 @@ void main()
         return;
     }
 
-    if (materialID >= uint(MaxMaterialSlotLookup) || materialID >= uint(materialSlots.length()))
-        return;
-
-    uint slotIndex = materialSlots[materialID];
-    if (slotIndex == INVALID_MATERIAL_SLOT)
-        return;
-
-    uint meshBase = meshID * 4u;
-    if (meshBase + 3u >= uint(meshData.length()))
-        return;
-
-    uint tierFlags = meshData[meshBase + 3u];
-    uint tier = tierFlags & MESH_DATA_ATLAS_TIER_MASK;
-    if (tier >= MATERIAL_TIER_COUNT)
-        tier = 0u;
-
-    uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier;
-    if (bucketIndex >= uint(MaxBucketCount) || bucketIndex >= uint(drawCounts.length()))
-        return;
-
-    uint indexCount = meshData[meshBase + 0u];
-    if (indexCount == 0u)
-        return;
-
-    uint firstIndex = meshData[meshBase + 1u];
-    uint baseVertex = meshData[meshBase + 2u];
-
-    uint drawIndexInBucket = atomicAdd(drawCounts[bucketIndex], 1u);
-    if (drawIndexInBucket >= uint(MaxIndirectDrawsPerBucket))
+    uint transitionBase = culledCommandIndex * LOD_TRANSITION_UINTS;
+    bool transitionActive = false;
+    uint previousMeshID = 0u;
+    if (transitionBase + 3u < uint(lodTransitions.length()))
     {
-        overflowFlag = 1u;
-        return;
+        previousMeshID = lodTransitions[transitionBase + 0u];
+        uint transitionFlags = lodTransitions[transitionBase + 2u];
+        float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
+        transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;
     }
 
-    StoreDrawCommand(bucketIndex, drawIndexInBucket, indexCount, instanceCount, firstIndex, baseVertex, culledCommandIndex);
+    if (transitionActive)
+        TryEmitDraw(previousMeshID, materialID, instanceCount, culledCommandIndex, true);
+
+    TryEmitDraw(meshID, materialID, instanceCount, culledCommandIndex, false);
 }
