@@ -74,8 +74,13 @@ namespace XREngine.Components.Scene.Mesh
                         if (Model != null)
                         {
                             foreach (SubMesh mesh in Model.Meshes)
+                            {
                                 if (_meshLinks.TryRemove(mesh, out RenderableMesh? mesh2))
+                                {
                                     Meshes.Remove(mesh2);
+                                    mesh2.Dispose();
+                                }
+                            }
 
                             Model.Meshes.PostAnythingAdded -= AddMesh;
                             Model.Meshes.PostAnythingRemoved -= RemoveMesh;
@@ -106,6 +111,11 @@ namespace XREngine.Components.Scene.Mesh
         {
             using var t = Engine.Profiler.Start("ModelComponent.ModelChanged");
 
+            // Dispose any remaining renderable meshes not already cleaned up in
+            // OnPropertyChanging. This unsubscribes bone transform events and destroys
+            // GPU buffers, preventing leaked subscriptions and stale SSBO references.
+            foreach (RenderableMesh mesh in Meshes)
+                mesh.Dispose();
             Meshes.Clear();
             if (Model is null)
                 return;

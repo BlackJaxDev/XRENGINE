@@ -848,10 +848,12 @@ namespace XREngine.Rendering.Shaders.Generator
         /// </summary>
         private void DeclareVP(string viewMatrixName, string invViewMatrixName, string projMatrixName, string viewProjMatrixName)
         {
-            // Use the precomputed ViewMatrix uniform for better precision in motion vectors
-            // ViewMatrix uniform contains camera.Transform.InverseRenderMatrix, computed on CPU with higher precision
-            string viewMatrixUniform = $"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}";
-            Line($"mat4 {viewMatrixName} = {viewMatrixUniform};");
+            // Stereo variants only bind per-eye inverse-view matrices, so derive the matching
+            // view matrix from the selected eye instead of referencing the mono ViewMatrix_VTX uniform.
+            string viewMatrixExpression = UseOVRMultiView || UseNVStereo
+                ? $"inverse({invViewMatrixName})"
+                : $"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}";
+            Line($"mat4 {viewMatrixName} = {viewMatrixExpression};");
             Line($"mat4 {viewProjMatrixName} = {projMatrixName} * {viewMatrixName};");
         }
 
@@ -861,10 +863,12 @@ namespace XREngine.Rendering.Shaders.Generator
         /// </summary>
         private void DeclareMVP(string viewMatrixName, string invViewMatrixName, string projMatrixName, string modelViewMatrixName, string modelViewProjMatrixName)
         {
-            // Use the precomputed ViewMatrix uniform for better precision in motion vectors
-            // ViewMatrix uniform contains camera.Transform.InverseRenderMatrix, computed on CPU with higher precision
-            string viewMatrixUniform = $"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}";
-            Line($"mat4 {viewMatrixName} = {viewMatrixUniform};");
+            // Stereo variants only bind per-eye inverse-view matrices, so derive the matching
+            // view matrix from the selected eye instead of referencing the mono ViewMatrix_VTX uniform.
+            string viewMatrixExpression = UseOVRMultiView || UseNVStereo
+                ? $"inverse({invViewMatrixName})"
+                : $"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}";
+            Line($"mat4 {viewMatrixName} = {viewMatrixExpression};");
             Line($"mat4 {modelViewMatrixName} = {viewMatrixName} * {EEngineUniform.ModelMatrix};");
             Line($"mat4 {modelViewProjMatrixName} = {projMatrixName} * {modelViewMatrixName};");
         }

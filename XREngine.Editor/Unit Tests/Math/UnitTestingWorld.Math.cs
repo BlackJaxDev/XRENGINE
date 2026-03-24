@@ -1197,10 +1197,10 @@ public static partial class EditorUnitTests
         ArgumentNullException.ThrowIfNull(testNode);
 
         Transform testTransform = testNode.GetTransformAs<Transform>(true)!;
-        testTransform.RecalculateMatrixHierarchy(
-            forceWorldRecalc: true,
-            setRenderMatrixNow: true,
-            childRecalcType: ELoopType.Parallel).Wait();
+        // NOTE: Callers are responsible for ensuring the hierarchy is up-to-date
+        // before invoking this method (e.g. via RecalculateMatrixHierarchy). The
+        // previous blocking .Wait() here was redundant with the caller's recalc
+        // and cost ~1 blocking wait per benchmark copy.
 
         PhysicsChainComponent? chain = testNode.FindFirstDescendantComponent<PhysicsChainComponent>();
         if (chain?.Root is not Transform rootTransform)

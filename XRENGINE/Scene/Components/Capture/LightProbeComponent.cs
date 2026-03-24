@@ -534,6 +534,7 @@ namespace XREngine.Components.Capture.Lights
         protected override void InitializeForCapture()
         {
             base.InitializeForCapture();
+            ConfigureCaptureRenderPipelines();
 
             if (EnvironmentTextureOctahedral is null)
                 return;
@@ -545,6 +546,18 @@ namespace XREngine.Components.Capture.Lights
                 (int)Math.Max(1u, Resolution),
                 GetOctaExtent(IrradianceResolution),
                 GetOctaExtent(Resolution));
+        }
+
+        private void ConfigureCaptureRenderPipelines()
+        {
+            foreach (XRViewport? viewport in Viewports)
+            {
+                if (viewport is null)
+                    continue;
+
+                viewport.RenderPipeline = new LightProbeRenderPipeline();
+                viewport.SetRenderPipelineFromCamera = false;
+            }
         }
 
         public void InitializeStatic()

@@ -40,6 +40,7 @@ These are repository-default expectations unless a task explicitly says otherwis
 - `XREngine.VRClient/` - standalone VR client executable.
 - `XREngine.UnitTests/` - test project for engine/editor subsystems.
 - `Assets/UnitTestingWorldSettings.jsonc` - startup world toggles file used by unit-testing world flows.
+- `Build/Logs/` - per-run log root when file logging is enabled; each session gets its own subdirectory.
 - `.vscode/tasks.json` and `.vscode/launch.json` - source of truth for local run/debug task orchestration.
 - `ExecTool.bat` - interactive launcher for all `Tools/` scripts (see §6).
 - `docs/` - architecture, API guides, rendering notes, backlog/design docs.
@@ -76,6 +77,7 @@ When working on editor tooling or features, default to the ImGui path unless the
 
 - Editor CLI:
   - `dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj`
+  - add `--unit-testing` or `XRE_WORLD_MODE=UnitTesting` to boot the Unit Testing World instead of the default world
 - Common VS Code tasks (preferred for local orchestration):
   - `Build-Editor`, `Build-Server`, `Build-VRClient`
   - `Start-Editor-NoDebug`, `Start-Server-NoDebug`
@@ -87,6 +89,13 @@ When working on editor tooling or features, default to the ImGui path unless the
     - `Start-PoseSourceClient-NoDebug`
     - `Start-PoseReceiverClient-NoDebug`
     - `Start-LocalPoseSync-NoDebug`
+  - `Generate-UnitTestingWorldSettings` regenerates the JSONC settings files and schema from `UnitTestingWorld.Toggles`
+
+### Logs and Diagnostics
+
+- When file logging is enabled, per-run engine logs are written under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`.
+- Profiler traces in that same run directory include `profiler-main-thread-invokes.log` and `profiler-fps-drops.log`.
+- Math Intersections benchmark runs also write `math-intersections-benchmarks.log` into the same session directory.
 
 ### ExecTool (interactive script launcher)
 
@@ -116,6 +125,16 @@ Use `.vscode/launch.json` profiles as canonical local debug setup, including:
 - `Debug P2P Client (Peer client separate, no server)`
 - `Debug VRClient (Editor runs separately)`
 - Profiler configurations
+
+### Unit Testing World Settings
+
+- The canonical settings file is `Assets/UnitTestingWorldSettings.jsonc`; the server mirror lives at `XREngine.Server/Assets/UnitTestingWorldSettings.jsonc`.
+- The file is loaded relative to the process working directory, so the VS Code launch configs intentionally set `cwd` to the workspace root for the editor flows.
+- The JSONC files are mapped to `.vscode/schemas/unit-testing-world-settings.schema.json`, so editors get hover docs, enum completion, and import-flag snippets while editing.
+- Edit the JSONC directly for day-to-day tuning. If the settings type changes, regenerate the schema and both JSONC outputs with `Tools/Generate-UnitTestingWorldSettings.ps1` or the `Generate-UnitTestingWorldSettings` task.
+- `Editor (Unit Testing World)` and the `Start-Pose*` tasks are the normal entry points for unit-test-world validation.
+- The pose/networking test world is driven by `XRE_UNIT_TEST_WORLD_KIND=NetworkingPose` plus the role env vars used by the pose tasks (`server`, `sender`, `receiver`).
+- `Assets/UnitTestingWorldSettings.jsonc` controls the selected unit-test world and its toggles, including render API, import lists, physics, lighting, and related startup behavior.
 
 ## 7) Testing and Validation Policy
 
