@@ -29,6 +29,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private readonly RenderCommandMesh3D _shadowVolumeRC = new((int)EDefaultRenderPass.OpaqueForward);
         private readonly List<FrustumIntersectionAabb> _cameraIntersections = new(6);
         private bool _previewBoundingVolume = false;
+        private XRWorldInstance? _registeredDynamicWorld;
 
         private long _lastMovedTicks;
         private uint _movementVersion = 0;
@@ -83,7 +84,57 @@ namespace XREngine.Components.Capture.Lights.Types
                     if (ShadowMap?.Material is not null)
                         ShadowMap.Material.SettingUniforms += SetShadowMapUniforms;
                     break;
+                case nameof(World):
+                    SyncDynamicWorldRegistration();
+                    break;
+                case nameof(Type):
+                    if (Type == ELightType.Dynamic)
+                        SyncDynamicWorldRegistration();
+                    else
+                        ClearDynamicWorldRegistration();
+                    break;
             }
+        }
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            SyncDynamicWorldRegistration();
+        }
+
+        protected virtual void RegisterDynamicLight(XRWorldInstance world)
+        {
+        }
+
+        protected virtual void UnregisterDynamicLight(XRWorldInstance world)
+        {
+        }
+
+        private void SyncDynamicWorldRegistration()
+        {
+            XRWorldInstance? currentWorld = WorldAs<XRWorldInstance>();
+
+            if (_registeredDynamicWorld is not null &&
+                (_registeredDynamicWorld != currentWorld || Type != ELightType.Dynamic || !IsActiveInHierarchy))
+            {
+                UnregisterDynamicLight(_registeredDynamicWorld);
+                _registeredDynamicWorld = null;
+            }
+
+            if (Type != ELightType.Dynamic || !IsActiveInHierarchy || currentWorld is null || ReferenceEquals(_registeredDynamicWorld, currentWorld))
+                return;
+
+            RegisterDynamicLight(currentWorld);
+            _registeredDynamicWorld = currentWorld;
+        }
+
+        private void ClearDynamicWorldRegistration()
+        {
+            if (_registeredDynamicWorld is null)
+                return;
+
+            UnregisterDynamicLight(_registeredDynamicWorld);
+            _registeredDynamicWorld = null;
         }
 
         /// <summary>
@@ -104,6 +155,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
             RenderInfo = RenderInfo3D.New(this, _shadowVolumeRC);
             RenderInfo.IsVisible = Engine.EditorPreferences.Debug.VisualizeDirectionalLightVolumes;
+            RenderInfo.CastsShadows = false;
+            RenderInfo.ReceivesShadows = false;
             RenderInfo.VisibleInLightingProbes = false;
             RenderedObjects = [RenderInfo];
         }
@@ -233,6 +286,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override void OnComponentDeactivated()
         {
+            ClearDynamicWorldRegistration();
             base.OnComponentDeactivated();
             ShadowMap?.Destroy();
         }

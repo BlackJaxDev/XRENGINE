@@ -1327,7 +1327,7 @@ namespace XREngine.Rendering
                 if (shader is null)
                     return;
 
-                string? source = shader.Source?.Text;
+                string source = shader.GetResolvedSource();
                 if (string.IsNullOrWhiteSpace(source))
                     return;
 

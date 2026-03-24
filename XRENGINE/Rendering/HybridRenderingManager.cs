@@ -1824,6 +1824,7 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location = 0) out vec3 FragPos;");
             sb.AppendLine("layout(location = 1) out vec3 FragNorm;");
             sb.AppendLine("layout(location = 4) out vec2 FragUV0;");
+            sb.AppendLine("layout(location = 5) flat out vec4 GlyphUVBounds;");
             sb.AppendLine($"layout(location = 20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
             if (emitTransformId)
                 sb.AppendLine($"layout(location = 21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
@@ -1894,6 +1895,7 @@ namespace XREngine.Rendering
             sb.AppendLine("        FragPos = clipPos.xyz / max(clipPos.w, 1e-6);");
             sb.AppendLine("    mat3 normalMatrix = transpose(inverse(mat3(ModelMatrix)));");
             sb.AppendLine("    FragNorm = normalize(normalMatrix * Normal);");
+            sb.AppendLine("    GlyphUVBounds = uv;");
             sb.AppendLine("    FragUV0 = mix(uv.xy, uv.zw, Position.xy);");
             sb.AppendLine("    gl_Position = clipPos;");
             sb.AppendLine("}");
@@ -1920,6 +1922,11 @@ namespace XREngine.Rendering
                 bool hasGlyphTransforms = source.Contains("GlyphTransformsBuffer", StringComparison.Ordinal);
                 bool hasGlyphTexCoords = source.Contains("GlyphTexCoordsBuffer", StringComparison.Ordinal);
                 if (!hasGlyphTransforms || !hasGlyphTexCoords)
+                    continue;
+
+                // Skip batched text shaders (UITextBatched) that handle their own per-instance
+                // data via TextInstanceBuffer. The GPU-indirect replacement VS doesn't support that path.
+                if (source.Contains("TextInstanceBuffer", StringComparison.Ordinal))
                     continue;
 
                 includeRotations = source.Contains("GlyphRotationsBuffer", StringComparison.Ordinal);

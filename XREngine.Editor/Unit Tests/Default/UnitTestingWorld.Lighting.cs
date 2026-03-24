@@ -41,7 +41,7 @@ public static partial class EditorUnitTests
 
                         probeComp!.Name = "TestLightProbe";
                         probeComp.SetCaptureResolution(128, false);
-                        probeComp.RealtimeCapture = false;
+                        probeComp.RealtimeCapture = true;
                         probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
                         probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(Toggles.LightProbeCaptureMs);
                         if (Toggles.StopRealtimeCaptureSec is not null)
@@ -56,8 +56,10 @@ public static partial class EditorUnitTests
             var dirLightNode = new SceneNode(rootNode) { Name = "TestDirectionalLightNode" };
             var dirLightTransform = dirLightNode.SetTransform<Transform>();
             dirLightTransform.Translation = new Vector3(0.0f, 0.0f, 0.0f);
-            //Face the light directly down
-            dirLightTransform.Rotation = Quaternion.CreateFromYawPitchRoll(-120, 95, 0);// Quaternion.CreateFromAxisAngle(Vector3.UnitX, XRMath.DegToRad(-70.0f));
+            dirLightTransform.Rotation = Quaternion.CreateFromYawPitchRoll(
+                XRMath.DegToRad(-120.0f),
+                XRMath.DegToRad(-55.0f),
+                0.0f);
             //dirLightTransform.RegisterAnimationTick<Transform>(t => t.Rotation *= Quaternion.CreateFromAxisAngle(Globals.Backward, Engine.DilatedDelta));
             if (!dirLightNode.TryAddComponent<DirectionalLightComponent>(out var dirLightComp))
                 return;

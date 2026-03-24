@@ -352,6 +352,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         Resources.DestroyAllPhysicalResources();
     }
 
+    /// <summary>
+    /// Destroys GPU resource instances but retains descriptor metadata so the
+    /// command chain's cache-or-create commands can recreate them on the next frame
+    /// without losing registry structure.
+    /// </summary>
+    public void InvalidatePhysicalResources()
+    {
+        Resources.DestroyAllPhysicalResources(retainDescriptors: true);
+    }
+
     public void ViewportResized(Vector2 size)
     {
         //DestroyCache();
@@ -362,8 +372,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     }
     public void InternalResolutionResized(int internalWidth, int internalHeight)
     {
-        //We only need to destroy the internal resolution data
-        DestroyCache();
+        // Only destroy physical GPU resources; retain descriptor metadata so
+        // cache-or-create commands detect the missing instances and recreate them
+        // on the very next frame instead of requiring a full registry rebuild.
+        InvalidatePhysicalResources();
     }
 
     public T? GetTexture<T>(string name) where T : XRTexture

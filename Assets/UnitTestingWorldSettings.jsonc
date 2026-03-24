@@ -5,7 +5,7 @@
   "$id": "1",
   // Selects which unit-test world factory the editor or server boots into.
   // WorldKind: Default, AudioTesting, MathIntersections, MeshEditing, UberShader, PhysxTesting, NetworkingPose
-  "WorldKind": "UberShader",
+  "WorldKind": "Default",
 
   // Debug visualize.
   // Draws octree structure overlays for visibility and partitioning diagnostics.

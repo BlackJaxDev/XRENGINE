@@ -508,6 +508,14 @@ namespace XREngine.Scene
             {
                 switch (propName)
                 {
+                    case nameof(World):
+                        if (field is IRuntimeWorldContext previousWorld &&
+                            !previousWorld.IsPlaySessionActive &&
+                            IsActiveInHierarchy)
+                        {
+                            DeactivateComponents();
+                        }
+                        break;
                     case nameof(Transform):
                         if (_transform != null)
                             UnlinkTransform();
@@ -530,8 +538,16 @@ namespace XREngine.Scene
                     break;
                 case nameof(World):
                     Transform.World = World;
+                    if (World is not null)
+                        Transform.RecalculateMatrixHierarchy(true, true, ELoopType.Sequential).GetAwaiter().GetResult();
                     foreach (var component in Components)
                         component.World = World;
+                    if (World is not null &&
+                        !World.IsPlaySessionActive &&
+                        IsActiveInHierarchy)
+                    {
+                        ActivateComponents();
+                    }
                     break;
                 case nameof(Transform):
                     if (_transform != null)

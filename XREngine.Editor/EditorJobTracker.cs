@@ -20,13 +20,15 @@ public static class EditorJobTracker
         float Progress,
         string? Status,
         TrackedJobState State,
-        DateTime UpdatedAt);
+        DateTime UpdatedAt,
+        bool IsDeterminate);
 
     private sealed class TrackedJob(Job job, string label, Func<object?, string?>? payloadFormatter)
     {
         public Job Job { get; } = job;
         public string Label { get; } = label;
         public float Progress { get; set; }
+        public bool HasDeterminateProgress { get; set; }
         public string? Status { get; set; }
         public TrackedJobState State { get; set; } = TrackedJobState.Running;
         public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
@@ -99,7 +101,8 @@ public static class EditorJobTracker
                     t.State == TrackedJobState.Running ? t.Progress : 1f,
                     t.Status,
                     t.State,
-                    t.LastUpdated))];
+                    t.LastUpdated,
+                    t.HasDeterminateProgress))];
         }
     }
 
@@ -111,7 +114,10 @@ public static class EditorJobTracker
                 return;
 
             if (!float.IsNaN(progress))
+            {
                 tracked.Progress = Math.Clamp(progress, 0f, 1f);
+                tracked.HasDeterminateProgress = true;
+            }
 
             if (payload is not null)
             {

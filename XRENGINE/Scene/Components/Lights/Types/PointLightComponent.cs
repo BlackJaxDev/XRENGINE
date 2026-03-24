@@ -157,22 +157,22 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             base.OnComponentActivated();
 
-            if (Type == ELightType.Dynamic)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicPointLights.Add(this);
-
             for (int i = 0; i < _viewports.Length; i++)
                 _viewports[i].WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
         }
         protected override void OnComponentDeactivated()
         {
-            if (Type == ELightType.Dynamic)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicPointLights.Remove(this);
-
             for (int i = 0; i < _viewports.Length; i++)
                 _viewports[i].WorldInstanceOverride = null;
 
             base.OnComponentDeactivated();
         }
+
+        protected override void RegisterDynamicLight(XRWorldInstance world)
+            => world.Lights.DynamicPointLights.Add(this);
+
+        protected override void UnregisterDynamicLight(XRWorldInstance world)
+            => world.Lights.DynamicPointLights.Remove(this);
 
         /// <summary>
         /// This is to set uniforms in the GBuffer lighting shader 
@@ -270,22 +270,5 @@ namespace XREngine.Components.Capture.Lights.Types
             }
         }
 
-        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
-        {
-            bool change = base.OnPropertyChanging(propName, field, @new);
-            if (change)
-            {
-                switch (propName)
-                {
-                    case nameof(Type):
-                        if (Type == ELightType.Dynamic)
-                            WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicPointLights.Add(this);
-                        else
-                            WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicPointLights.Remove(this);
-                        break;
-                }
-            }
-            return change;
-        }
     }
 }

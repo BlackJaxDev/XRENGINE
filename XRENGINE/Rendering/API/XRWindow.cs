@@ -635,6 +635,10 @@ namespace XREngine.Rendering
 
             Renderer.FrameBufferInvalidated();
 
+            // Clear any circuit breaker backoff so the next frame renders immediately
+            // with freshly recreated resources instead of waiting out old failures.
+            ResetRenderCircuitBreaker();
+
             //var timer = Engine.Time.Timer;
             //await timer.DispatchCollectVisible();
             //await timer.DispatchSwapBuffers();

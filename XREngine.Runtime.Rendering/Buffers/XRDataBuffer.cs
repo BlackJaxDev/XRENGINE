@@ -460,11 +460,12 @@ namespace XREngine.Rendering
                 throw new InvalidOperationException($"Raw byte payload length mismatch for buffer '{AttributeName}'. Expected {byteLength} bytes, got {data.Length}.");
 
             EnsureClientSideSourceLength(byteLength);
+            DataSource clientSideSource = _clientSideSource ?? throw new InvalidOperationException($"Failed to allocate client-side storage for buffer '{AttributeName}'.");
 
             if (byteLength > 0)
             {
-                fixed (byte* src = data)
-                    Memory.Move(_clientSideSource.Address, src, byteLength);
+                fixed (byte* src = &MemoryMarshal.GetReference(data))
+                    Memory.Move(clientSideSource.Address, src, byteLength);
             }
 
             ClearGpuCompressedPayload();
@@ -808,13 +809,15 @@ namespace XREngine.Rendering
                 Remapper remapper = new();
                 var arr = items as T[] ?? [.. items];
                 remapper.Remap(arr, null);
+                int[] implementationTable = remapper.ImplementationTable ?? throw new InvalidOperationException($"Remapper did not produce an implementation table for buffer '{AttributeName}'.");
                 _elementCount = remapper.ImplementationLength;
                 EnsureClientSideSourceLength(Length);
+                DataSource clientSideSource = _clientSideSource ?? throw new InvalidOperationException($"Failed to allocate client-side storage for buffer '{AttributeName}'.");
                 uint stride = ElementSize;
                 for (uint i = 0; i < remapper.ImplementationLength; ++i)
                 {
-                    VoidPtr addr = _clientSideSource.Address[i, stride];
-                    T value = arr[remapper.ImplementationTable![i]];
+                    VoidPtr addr = clientSideSource.Address[i, stride];
+                    T value = arr[implementationTable[i]];
                     WriteStructValue(addr, value);
                 }
                 return remapper;
@@ -823,11 +826,12 @@ namespace XREngine.Rendering
             {
                 _elementCount = (uint)count;
                 EnsureClientSideSourceLength(Length);
+                DataSource clientSideSource = _clientSideSource ?? throw new InvalidOperationException($"Failed to allocate client-side storage for buffer '{AttributeName}'.");
                 uint stride = ElementSize;
                 uint i = 0;
                 foreach (var value in items)
                 {
-                    VoidPtr addr = _clientSideSource.Address[i, stride];
+                    VoidPtr addr = clientSideSource.Address[i, stride];
                     WriteStructValue(addr, value);
                     i++;
                 }
@@ -846,13 +850,15 @@ namespace XREngine.Rendering
             {
                 Remapper remapper = new();
                 remapper.Remap(list, null);
+                int[] implementationTable = remapper.ImplementationTable ?? throw new InvalidOperationException($"Remapper did not produce an implementation table for buffer '{AttributeName}'.");
                 _elementCount = remapper.ImplementationLength;
                 EnsureClientSideSourceLength(Length);
+                DataSource clientSideSource = _clientSideSource ?? throw new InvalidOperationException($"Failed to allocate client-side storage for buffer '{AttributeName}'.");
                 uint stride = ElementSize;
                 for (uint i = 0; i < remapper.ImplementationLength; ++i)
                 {
-                    VoidPtr addr = _clientSideSource.Address[i, stride];
-                    T value = list[remapper.ImplementationTable![i]];
+                    VoidPtr addr = clientSideSource.Address[i, stride];
+                    T value = list[implementationTable[i]];
                     WriteStructValue(addr, value);
                 }
                 return remapper;
@@ -861,10 +867,11 @@ namespace XREngine.Rendering
             {
                 _elementCount = (uint)list.Count;
                 EnsureClientSideSourceLength(Length);
+                DataSource clientSideSource = _clientSideSource ?? throw new InvalidOperationException($"Failed to allocate client-side storage for buffer '{AttributeName}'.");
                 uint stride = ElementSize;
                 for (uint i = 0; i < list.Count; ++i)
                 {
-                    VoidPtr addr = _clientSideSource.Address[i, stride];
+                    VoidPtr addr = clientSideSource.Address[i, stride];
                     T value = list[(int)i];
                     WriteStructValue(addr, value);
                 }
@@ -882,14 +889,16 @@ namespace XREngine.Rendering
             {
                 Remapper remapper = new();
                 remapper.Remap(list, null);
+                int[] implementationTable = remapper.ImplementationTable ?? throw new InvalidOperationException($"Remapper did not produce an implementation table for buffer '{AttributeName}'.");
 
                 _elementCount = remapper.ImplementationLength;
                 EnsureClientSideSourceLength(Length);
+                DataSource clientSideSource = _clientSideSource ?? throw new InvalidOperationException($"Failed to allocate client-side storage for buffer '{AttributeName}'.");
                 uint stride = ElementSize;
                 for (uint i = 0; i < remapper.ImplementationLength; ++i)
                 {
-                    var item = list[remapper.ImplementationTable![i]];
-                    item.Write(_clientSideSource.Address[i, stride]);
+                    var item = list[implementationTable[i]];
+                    item.Write(clientSideSource.Address[i, stride]);
                 }
                 return remapper;
             }
@@ -897,11 +906,12 @@ namespace XREngine.Rendering
             {
                 _elementCount = (uint)list.Count;
                 EnsureClientSideSourceLength(Length);
+                DataSource clientSideSource = _clientSideSource ?? throw new InvalidOperationException($"Failed to allocate client-side storage for buffer '{AttributeName}'.");
                 uint stride = ElementSize;
                 for (uint i = 0; i < list.Count; ++i)
                 {
                     var item = list[(int)i];
-                    item.Write(_clientSideSource.Address[i, stride]);
+                    item.Write(clientSideSource.Address[i, stride]);
                 }
                 return null;
             }

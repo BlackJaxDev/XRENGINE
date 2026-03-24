@@ -826,15 +826,9 @@ namespace XREngine.Rendering.Physics.Physx
             try
             {
                 XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-                XRShader stereoMV2VertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoMV2.vs"), EShaderType.Vertex);
-                XRShader[] vertexShaders = Engine.Rendering.State.IsVulkan
-                    ? [vertShader, stereoMV2VertShader]
-                    :
-                    [
-                        vertShader,
-                        stereoMV2VertShader,
-                        ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoNV.vs"), EShaderType.Vertex),
-                    ];
+                // Stereo VS variants are excluded — multiview extensions are incompatible
+                // with the geometry shaders used for debug primitive expansion.
+                XRShader[] vertexShaders = [vertShader];
 
                 XRShader geomShader = ShaderHelper.LoadEngineShader(
                     Path.Combine("Common", "Debug", "gs", _useCompressedBuffers ? "PointInstanceCompressed.gs" : "PointInstance.gs"),
@@ -868,15 +862,7 @@ namespace XREngine.Rendering.Physics.Physx
             try
             {
                 XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-                XRShader stereoMV2VertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoMV2.vs"), EShaderType.Vertex);
-                XRShader[] vertexShaders = Engine.Rendering.State.IsVulkan
-                    ? [vertShader, stereoMV2VertShader]
-                    :
-                    [
-                        vertShader,
-                        stereoMV2VertShader,
-                        ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoNV.vs"), EShaderType.Vertex),
-                    ];
+                XRShader[] vertexShaders = [vertShader];
 
                 XRShader geomShader = ShaderHelper.LoadEngineShader(
                     Path.Combine("Common", "Debug", "gs", _useCompressedBuffers ? "LineInstanceCompressed.gs" : "LineInstance.gs"),
@@ -910,15 +896,7 @@ namespace XREngine.Rendering.Physics.Physx
             try
             {
                 XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-                XRShader stereoMV2VertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoMV2.vs"), EShaderType.Vertex);
-                XRShader[] vertexShaders = Engine.Rendering.State.IsVulkan
-                    ? [vertShader, stereoMV2VertShader]
-                    :
-                    [
-                        vertShader,
-                        stereoMV2VertShader,
-                        ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoNV.vs"), EShaderType.Vertex),
-                    ];
+                XRShader[] vertexShaders = [vertShader];
 
                 XRShader geomShader = ShaderHelper.LoadEngineShader(
                     Path.Combine("Common", "Debug", "gs", _useCompressedBuffers ? "TriangleInstanceCompressed.gs" : "TriangleInstance.gs"),

@@ -2,6 +2,7 @@
 
 #pragma snippet "NormalEncoding"
 #pragma snippet "LightAttenuation"
+#pragma snippet "ShadowSampling"
 #pragma snippet "PBRFunctions"
 #pragma snippet "DepthUtils"
 
@@ -33,6 +34,9 @@ uniform float ShadowMult = 2.5f;
 uniform float ShadowBiasMin = 0.05f;
 uniform float ShadowBiasMax = 10.0f;
 uniform bool LightHasShadowMap = true; // Added
+uniform int ShadowSamples = 16;
+uniform float ShadowFilterRadius = 0.001f;
+uniform bool EnablePCSS = true;
 
 struct PointLight
 {
@@ -43,6 +47,33 @@ struct PointLight
     float Brightness;
 };
 uniform PointLight LightData;
+
+const vec3 LocalShadowCubeKernel[20] = vec3[](
+	vec3( 1.0,  1.0,  1.0), vec3( 1.0, -1.0,  1.0),
+	vec3(-1.0,  1.0,  1.0), vec3(-1.0, -1.0,  1.0),
+	vec3( 1.0,  1.0, -1.0), vec3( 1.0, -1.0, -1.0),
+	vec3(-1.0,  1.0, -1.0), vec3(-1.0, -1.0, -1.0),
+	vec3( 1.0,  0.0,  0.0), vec3(-1.0,  0.0,  0.0),
+	vec3( 0.0,  1.0,  0.0), vec3( 0.0, -1.0,  0.0),
+	vec3( 0.0,  0.0,  1.0), vec3( 0.0,  0.0, -1.0),
+	vec3( 1.0,  1.0,  0.0), vec3( 1.0, -1.0,  0.0),
+	vec3(-1.0,  1.0,  0.0), vec3(-1.0, -1.0,  0.0),
+	vec3( 0.0,  1.0,  1.0), vec3( 0.0, -1.0, -1.0)
+);
+
+float SampleShadowCubePCFLocal(in samplerCube shadowMap, in vec3 shadowDir, in float compareDepth, in float bias, in float farPlaneDist, in float sampleRadius)
+{
+	float lit = 0.0f;
+
+	for (int i = 0; i < 20; ++i)
+	{
+		vec3 sampleDir = normalize(shadowDir + LocalShadowCubeKernel[i] * sampleRadius);
+		float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
+		lit += (compareDepth - bias) <= sampleDepth ? 1.0f : 0.0f;
+	}
+
+	return lit / 20.0f;
+}
 
 float GetShadowBias(in float NoL)
 {
@@ -55,8 +86,26 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragToLightWS, in float 
 {
     if (!LightHasShadowMap) return 1.0f;
     float bias = GetShadowBias(NoL);
-    float closestDepth = texture(ShadowMap, fragToLightWS).r * farPlaneDist;
-    return (lightDist - bias) <= closestDepth ? 1.0f : 0.0f;
+	if (EnablePCSS)
+	{
+		int sampleCount = ShadowSamples > 1 ? ShadowSamples : 20;
+		float sampleRadius = max(0.035f, ShadowFilterRadius * 24.0f);
+		int clampedSamples = clamp(sampleCount, 1, 20);
+		float lit = 0.0f;
+		for (int i = 0; i < 20; ++i)
+		{
+			if (i >= clampedSamples)
+				break;
+
+			vec3 sampleDir = normalize(fragToLightWS + LocalShadowCubeKernel[i] * sampleRadius);
+			float sampleDepth = texture(ShadowMap, sampleDir).r * farPlaneDist;
+			lit += (lightDist - bias) <= sampleDepth ? 1.0f : 0.0f;
+		}
+
+		return lit / float(clampedSamples);
+	}
+
+	return SampleShadowCubePCFLocal(ShadowMap, fragToLightWS, lightDist, bias, farPlaneDist, 0.035f);
 }
 vec3 CalcColor(
 in float NoL,

@@ -1405,15 +1405,7 @@ public partial class PhysicsChainComponent
     private XRMaterial? CreateGpuDebugPointMaterial()
     {
         XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-        XRShader stereoMV2VertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoMV2.vs"), EShaderType.Vertex);
-        XRShader[] vertexShaders = Engine.Rendering.State.IsVulkan
-            ? [vertShader, stereoMV2VertShader]
-            :
-            [
-                vertShader,
-                stereoMV2VertShader,
-                ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoNV.vs"), EShaderType.Vertex),
-            ];
+        XRShader[] vertexShaders = [vertShader];
 
         XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "gs", "PointInstance.gs"), EShaderType.Geometry);
         XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitivePoint.fs"), EShaderType.Fragment);
@@ -1433,15 +1425,7 @@ public partial class PhysicsChainComponent
     private XRMaterial? CreateGpuDebugLineMaterial()
     {
         XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-        XRShader stereoMV2VertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoMV2.vs"), EShaderType.Vertex);
-        XRShader[] vertexShaders = Engine.Rendering.State.IsVulkan
-            ? [vertShader, stereoMV2VertShader]
-            :
-            [
-                vertShader,
-                stereoMV2VertShader,
-                ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitiveStereoNV.vs"), EShaderType.Vertex),
-            ];
+        XRShader[] vertexShaders = [vertShader];
 
         XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "gs", "LineInstance.gs"), EShaderType.Geometry);
         XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);

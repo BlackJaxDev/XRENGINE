@@ -246,7 +246,27 @@ namespace XREngine.Rendering.Pipelines.Commands
             EnsureResourcesAllocated(instance);
 
             for (int i = 0; i < _commands.Count; i++)
-                _commands[i].ExecuteIfShould();
+            {
+                try
+                {
+                    _commands[i].ExecuteIfShould();
+                }
+                catch (Exception ex)
+                {
+                    // Isolate individual command failures so one bad factory (e.g., a
+                    // missing texture during FBO recreation after resize) does not abort
+                    // the entire command chain. Subsequent commands that succeed will
+                    // populate the resource registry, allowing the failing command to
+                    // recover on the next frame once its dependencies are available.
+                    Debug.RenderingWarningEvery(
+                        $"VPRC.Execute.{_commands[i].GetType().Name}.{i}",
+                        TimeSpan.FromSeconds(1),
+                        "[RenderDiag] Command [{0}] {1} threw: {2}",
+                        i,
+                        _commands[i].GetType().Name,
+                        ex.Message);
+                }
+            }
         }
         public void CollectVisible()
         {
