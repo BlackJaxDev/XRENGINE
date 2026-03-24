@@ -14,6 +14,13 @@ namespace XREngine.Rendering.OpenGL
             public const string EXT_GL_NV_STEREO_VIEW_RENDERING = "GL_NV_stereo_view_rendering";
             
             private bool _isCompiled = false;
+            private bool _compilePending;
+
+            /// <summary>
+            /// GL_COMPLETION_STATUS_ARB (0x91B1) — used to poll non-blocking compile/link when
+            /// GL_ARB_parallel_shader_compile is available.
+            /// </summary>
+            internal const int GL_COMPLETION_STATUS_ARB = 0x91B1;
 
             protected override void UnlinkData()
             {
@@ -64,6 +71,41 @@ namespace XREngine.Rendering.OpenGL
             {
                 get => _isCompiled;
                 set => SetField(ref _isCompiled, value);
+            }
+
+            /// <summary>
+            /// True when an async compile has been dispatched but completion has not yet been confirmed.
+            /// Only meaningful when GL_ARB_parallel_shader_compile is active.
+            /// </summary>
+            public bool IsCompilePending => _compilePending;
+
+            /// <summary>
+            /// Polls the driver for async shader-compilation completion (GL_ARB_parallel_shader_compile).
+            /// Returns <c>true</c> when compilation is resolved (check <see cref="IsCompiled"/> for success/failure).
+            /// Returns <c>false</c> if the shader is still being compiled by the driver.
+            /// </summary>
+            public bool PollCompileCompletion()
+            {
+                if (!_compilePending)
+                    return true;
+
+                Api.GetShader(BindingId, (GLEnum)GL_COMPLETION_STATUS_ARB, out int complete);
+                if (complete == 0)
+                    return false; // Still compiling
+
+                // Compilation finished — query actual result
+                _compilePending = false;
+                Api.GetShader(BindingId, GLEnum.CompileStatus, out int status);
+                IsCompiled = status != 0;
+
+                if (!IsCompiled)
+                {
+                    Api.GetShaderInfoLog(BindingId, out string? info);
+                    if (!string.IsNullOrEmpty(info))
+                        Debug.OpenGLWarning(info);
+                }
+
+                return true;
             }
 
             public EventList<GLRenderProgram> ActivePrograms { get; } = [];
@@ -117,7 +159,7 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 Api.ShaderSource(BindingId, trueScript);
-                if (compile && !Compile(out _))
+                if (compile && !Compile(out _) && !_compilePending)
                     Debug.OpenGLWarning(GetFullSource(true));
             }
 
@@ -142,13 +184,21 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Compiles the shader with debug information.
+            /// When GL_ARB_parallel_shader_compile is active, the call is non-blocking:
+            /// <see cref="IsCompilePending"/> will be <c>true</c> and callers must poll via
+            /// <see cref="PollCompileCompletion"/>.
             /// </summary>
-            /// <param name="info"></param>
-            /// <param name="printLogInfo"></param>
-            /// <returns></returns>
             public bool Compile(out string? info, bool printLogInfo = true)
             {
                 Api.CompileShader(BindingId);
+
+                if (Engine.Rendering.State.HasParallelShaderCompile)
+                {
+                    _compilePending = true;
+                    info = null;
+                    return false; // Compilation in progress — caller must poll
+                }
+
                 Api.GetShader(BindingId, GLEnum.CompileStatus, out int status);
                 Api.GetShaderInfoLog(BindingId, out info);
                 IsCompiled = status != 0;
@@ -158,19 +208,24 @@ namespace XREngine.Rendering.OpenGL
                         Debug.OpenGLWarning(info);
                     else if (!IsCompiled)
                         Debug.OpenGLWarning("Unable to compile shader, but no error was returned.");
-                    //else
-                    //    Debug.Out("Shader compiled successfully.");
                 }
                 return IsCompiled;
             }
 
             /// <summary>
             /// Compiles the shader.
+            /// When GL_ARB_parallel_shader_compile is active, the call is non-blocking.
             /// </summary>
-            /// <returns></returns>
             public bool Compile()
             {
                 Api.CompileShader(BindingId);
+
+                if (Engine.Rendering.State.HasParallelShaderCompile)
+                {
+                    _compilePending = true;
+                    return false;
+                }
+
                 Api.GetShader(BindingId, GLEnum.CompileStatus, out int status);
                 IsCompiled = status != 0;
                 return IsCompiled;

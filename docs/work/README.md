@@ -58,6 +58,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/native-hierarchy-porting-plan.md](design/native-hierarchy-porting-plan.md)
 - [design/openxr-implementation-comparison.md](design/openxr-implementation-comparison.md)
 - [design/runtime-modularization-plan.md](design/runtime-modularization-plan.md)
+- [design/shadow-pass-material-binding-optimization-plan.md](design/shadow-pass-material-binding-optimization-plan.md)
 - [design/slang-shader-cross-compile-plan.md](design/slang-shader-cross-compile-plan.md)
 - [design/transparency-and-oit-implementation-plan.md](design/transparency-and-oit-implementation-plan.md)
 - [design/vxao-implementation-plan.md](design/vxao-implementation-plan.md)

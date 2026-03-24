@@ -30,6 +30,22 @@ namespace XREngine.Rendering
     [MemoryPackable]
     public partial class XRTexture2D : XRTexture, IFrameBufferAttachement, ICookedBinarySerializable
     {
+        private const int MaxConcurrentProgressiveOpenGlUploads = 4;
+        private const long CaptureDeferralBacklogBytesPerFrame = 24L * 1024L * 1024L;
+
+        private static readonly ConcurrentDictionary<XRTexture2D, byte> _progressiveUploads = [];
+        private static int _activeProgressiveUploadCount;
+        private static long _progressiveUploadBytesScheduledThisFrame;
+        private static long _progressiveUploadBytesFrameTicks = -1;
+        private static long _progressiveUploadTelemetryFrameTicks = -1;
+
+        public static int ActiveProgressiveUploadCount => Volatile.Read(ref _activeProgressiveUploadCount);
+        public static int QueuedProgressiveUploadCount => _progressiveUploads.Count;
+        public static long ProgressiveUploadBytesScheduledThisFrame => GetProgressiveUploadBytesScheduledThisFrame();
+        public static bool HasLargeProgressiveUploadBacklog
+            => ActiveProgressiveUploadCount >= MaxConcurrentProgressiveOpenGlUploads
+                && ProgressiveUploadBytesScheduledThisFrame >= CaptureDeferralBacklogBytesPerFrame;
+
         public override void Reload(string path)
         {
             Load3rdParty(path);
@@ -391,11 +407,28 @@ namespace XREngine.Rendering
 
         private static void ScheduleProgressiveOpenGlUpload(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted)
         {
+            if (!_progressiveUploads.TryAdd(texture, 0))
+            {
+                RuntimeRenderingHostServices.Current.LogOutput(
+                    $"[UploadMipmaps] Skipping duplicate progressive upload for '{texture.Name}'. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
+                return;
+            }
+
             int uploadToken = Interlocked.Increment(ref texture._progressiveUploadToken);
+            bool slotAcquired = false;
+            bool waitLogged = false;
 
             void CleanupProgressiveUpload()
             {
                 texture.ShouldLoadDataFromInternalPBO = false;
+
+                if (slotAcquired)
+                {
+                    slotAcquired = false;
+                    Interlocked.Decrement(ref _activeProgressiveUploadCount);
+                }
+
+                _progressiveUploads.TryRemove(texture, out _);
 
                 var mipmaps = texture.Mipmaps;
                 if (mipmaps is null)
@@ -416,19 +449,15 @@ namespace XREngine.Rendering
                 var mipmaps = texture.Mipmaps;
                 if (mipmaps is null || mipmaps.Length == 0)
                 {
+                    _progressiveUploads.TryRemove(texture, out _);
                     onCompleted?.Invoke();
                     return;
                 }
-
-                texture.ShouldLoadDataFromInternalPBO = true;
 
                 int smallestResidentMip = mipmaps.Length - 1;
                 int originalLargestLevel = texture.LargestMipmapLevel;
                 int originalSmallestAllowedLevel = texture.SmallestAllowedMipmapLevel;
                 int nextMipToUpload = smallestResidentMip;
-
-                RuntimeRenderingHostServices.Current.LogOutput(
-                    $"[UploadMipmaps] Starting progressive upload for '{texture.Name}' ({mipmaps[0].Width}x{mipmaps[0].Height}), {mipmaps.Length} mipmaps.");
 
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(() =>
                 {
@@ -447,6 +476,27 @@ namespace XREngine.Rendering
                     if (!RuntimeRenderingHostServices.Current.IsRendererActive)
                         return false;
 
+                    if (!slotAcquired)
+                    {
+                        int active = Interlocked.Increment(ref _activeProgressiveUploadCount);
+                        if (active > MaxConcurrentProgressiveOpenGlUploads)
+                        {
+                            Interlocked.Decrement(ref _activeProgressiveUploadCount);
+                            if (!waitLogged)
+                            {
+                                waitLogged = true;
+                                RuntimeRenderingHostServices.Current.LogOutput(
+                                    $"[UploadMipmaps] Deferring progressive upload for '{texture.Name}' until a slot is free. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
+                            }
+                            return false;
+                        }
+
+                        slotAcquired = true;
+                        texture.ShouldLoadDataFromInternalPBO = true;
+                        RuntimeRenderingHostServices.Current.LogOutput(
+                            $"[UploadMipmaps] Starting progressive upload for '{texture.Name}' ({mipmaps[0].Width}x{mipmaps[0].Height}), {mipmaps.Length} mipmaps. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
+                    }
+
                     if (nextMipToUpload < 0)
                     {
                         texture.LargestMipmapLevel = originalLargestLevel;
@@ -459,6 +509,8 @@ namespace XREngine.Rendering
 
                     texture.LargestMipmapLevel = nextMipToUpload;
                     texture.SmallestAllowedMipmapLevel = smallestResidentMip;
+
+                    RegisterProgressiveUploadBytesForCurrentFrame(mipmaps[nextMipToUpload].Data?.Length ?? 0);
 
                     texture.LoadFromPBO(nextMipToUpload);
                     texture.PushMipLevel(nextMipToUpload);
@@ -473,6 +525,33 @@ namespace XREngine.Rendering
                 StartCoroutine();
             else
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(StartCoroutine);
+        }
+
+        private static long GetProgressiveUploadBytesScheduledThisFrame()
+        {
+            long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            if (Volatile.Read(ref _progressiveUploadBytesFrameTicks) != currentFrame)
+                return 0L;
+
+            return Interlocked.Read(ref _progressiveUploadBytesScheduledThisFrame);
+        }
+
+        private static void RegisterProgressiveUploadBytesForCurrentFrame(long bytes)
+        {
+            if (bytes <= 0)
+                return;
+
+            long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            long previousFrame = Interlocked.Exchange(ref _progressiveUploadBytesFrameTicks, currentFrame);
+            if (previousFrame != currentFrame)
+                Interlocked.Exchange(ref _progressiveUploadBytesScheduledThisFrame, 0L);
+
+            long total = Interlocked.Add(ref _progressiveUploadBytesScheduledThisFrame, bytes);
+            if (Interlocked.Exchange(ref _progressiveUploadTelemetryFrameTicks, currentFrame) != currentFrame)
+            {
+                RuntimeRenderingHostServices.Current.LogOutput(
+                    $"[UploadMipmaps] Telemetry: active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}, bytesScheduledThisFrame={total}");
+            }
         }
 
         private static bool HasAssetExtension(string filePath)

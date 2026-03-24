@@ -2,6 +2,7 @@ using Extensions;
 using Silk.NET.OpenGL;
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Numerics;
 using System.Linq;
 using System.Text;
@@ -47,6 +48,7 @@ namespace XREngine.Rendering.OpenGL
             private readonly ConcurrentDictionary<string, byte> _failedUniforms = new();
 
             private readonly record struct UniformInfo(GLEnum Type, int Size);
+            internal readonly record struct UniformMetadataEntry(string Name, GLEnum Type, int Size);
 
             private static XRTexture2D? _fallbackTexture2D;
             private static XRTexture2DArray? _fallbackTexture2DArray;
@@ -456,6 +458,11 @@ namespace XREngine.Rendering.OpenGL
             private void Reset()
             {
                 IsLinked = false;
+                _asyncLinkPhase = EAsyncLinkPhase.Idle;
+                _asyncAttachedShaders = null;
+                _asyncBinaryUploadPending = false;
+                _hashComputed = false;
+                _linkDataPrepared = false;
                 _attribCache.Clear();
                 _uniformCache.Clear();
                 _failedAttributes.Clear();
@@ -509,6 +516,54 @@ namespace XREngine.Rendering.OpenGL
                         }
                     }
                 }
+            }
+
+            private bool TryRestoreCachedUniformMetadata(UniformMetadataEntry[]? metadata)
+            {
+                if (metadata is not { Length: > 0 })
+                    return false;
+
+                _uniformMetadata.Clear();
+                foreach (var entry in metadata)
+                {
+                    if (string.IsNullOrEmpty(entry.Name))
+                        continue;
+
+                    _uniformMetadata[entry.Name] = new UniformInfo(entry.Type, entry.Size);
+                }
+
+                return _uniformMetadata.Count > 0;
+            }
+
+            private UniformMetadataEntry[] SnapshotUniformMetadata()
+            {
+                if (_uniformMetadata.Count == 0)
+                    return [];
+
+                var snapshot = new UniformMetadataEntry[_uniformMetadata.Count];
+                int index = 0;
+                foreach (var pair in _uniformMetadata)
+                    snapshot[index++] = new UniformMetadataEntry(pair.Key, pair.Value.Type, pair.Value.Size);
+                return snapshot;
+            }
+
+            private void PromoteCurrentUniformMetadataToCachedProgram()
+            {
+                if (_cachedProgram is not BinaryProgram cachedProgram)
+                    return;
+
+                if (cachedProgram.Uniforms is { Length: > 0 })
+                    return;
+
+                var metadata = SnapshotUniformMetadata();
+                if (metadata.Length == 0)
+                    return;
+
+                var updated = cachedProgram with { Uniforms = metadata };
+                _cachedProgram = updated;
+                if (BinaryCache is not null)
+                    BinaryCache[Hash] = updated;
+                WriteToBinaryShaderCache(updated);
             }
 
             public void BeginBindingBatch()
@@ -692,6 +747,66 @@ namespace XREngine.Rendering.OpenGL
             //TODO: serialize this cache and load on startup
             private static ConcurrentDictionary<ulong, BinaryProgram>? BinaryCache = null;
 
+            private static string GetShaderCacheDirectoryPath()
+                => Path.Combine(Environment.CurrentDirectory, "ShaderCache");
+
+            private static string GetBinaryShaderCacheMetaPath(string binaryFilePath)
+                => $"{binaryFilePath}.meta";
+
+            private static UniformMetadataEntry[]? ReadUniformMetadataCache(string metaPath)
+            {
+                if (!File.Exists(metaPath))
+                    return null;
+
+                try
+                {
+                    var entries = new List<UniformMetadataEntry>();
+                    foreach (string line in File.ReadLines(metaPath))
+                    {
+                        if (string.IsNullOrWhiteSpace(line))
+                            continue;
+
+                        string[] parts = line.Split('\t');
+                        if (parts.Length != 3)
+                            continue;
+
+                        string name = parts[0];
+                        if (string.IsNullOrEmpty(name))
+                            continue;
+
+                        if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int typeValue))
+                            continue;
+                        if (!int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int size))
+                            continue;
+
+                        entries.Add(new UniformMetadataEntry(name, (GLEnum)typeValue, size));
+                    }
+
+                    return entries.Count == 0 ? null : [.. entries];
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            private static void WriteUniformMetadataCache(string metaPath, UniformMetadataEntry[] metadata)
+            {
+                if (metadata.Length == 0)
+                    return;
+
+                var sb = new StringBuilder(metadata.Length * 32);
+                foreach (var entry in metadata)
+                    sb.Append(entry.Name)
+                        .Append('\t')
+                        .Append(((int)entry.Type).ToString(CultureInfo.InvariantCulture))
+                        .Append('\t')
+                        .Append(entry.Size.ToString(CultureInfo.InvariantCulture))
+                        .AppendLine();
+
+                File.WriteAllText(metaPath, sb.ToString());
+            }
+
             internal static void ReadBinaryShaderCache(string currentVer)
             {
                 if (BinaryCache is not null)
@@ -699,8 +814,7 @@ namespace XREngine.Rendering.OpenGL
 
                 BinaryCache = new();
 
-                string dir = Environment.CurrentDirectory;
-                string path = Path.Combine(dir, "ShaderCache");
+                string path = GetShaderCacheDirectoryPath();
                 if (!Directory.Exists(path))
                     return;
 
@@ -729,7 +843,8 @@ namespace XREngine.Rendering.OpenGL
                         {
                             byte[] binary = File.ReadAllBytes(filePath);
                             GLEnum format = (GLEnum)Enum.Parse(typeof(GLEnum), parts[1]);
-                            BinaryProgram binaryProgram = (binary, format, (uint)binary.Length);
+                            UniformMetadataEntry[]? metadata = ReadUniformMetadataCache(GetBinaryShaderCacheMetaPath(filePath));
+                            BinaryProgram binaryProgram = new(binary, format, (uint)binary.Length, metadata);
                             BinaryCache.TryAdd(hash, binaryProgram);
                         }
                     }
@@ -747,20 +862,20 @@ namespace XREngine.Rendering.OpenGL
                     ver = new((sbyte*)Api.GetString(StringName.Version));
                 }
 
-                string dir = Environment.CurrentDirectory;
-                string path = Path.Combine(dir, "ShaderCache");
+                string path = GetShaderCacheDirectoryPath();
                 if (!Directory.Exists(path))
                     Directory.CreateDirectory(path);
                 path = Path.Combine(path, $"{Hash}-{binary.Format}-{ver}.bin");
                 File.WriteAllBytes(path, binary.Binary);
+                if (binary.Uniforms is { Length: > 0 })
+                    WriteUniformMetadataCache(GetBinaryShaderCacheMetaPath(path), binary.Uniforms);
             }
             
             public static void DeleteFromBinaryShaderCache(ulong hash, GLEnum format)
             {
                 BinaryCache?.TryRemove(hash, out _);
                 //Delete any matching file (hash-format-*.bin pattern)
-                string dir = Environment.CurrentDirectory;
-                string path = Path.Combine(dir, "ShaderCache");
+                string path = GetShaderCacheDirectoryPath();
                 if (!Directory.Exists(path))
                     return;
                     
@@ -771,6 +886,9 @@ namespace XREngine.Rendering.OpenGL
                     try
                     {
                         File.Delete(filePath);
+                        string metaPath = GetBinaryShaderCacheMetaPath(filePath);
+                        if (File.Exists(metaPath))
+                            File.Delete(metaPath);
                     }
                     catch
                     {
@@ -781,6 +899,55 @@ namespace XREngine.Rendering.OpenGL
 
             public ulong Hash { get; private set; }
             private BinaryProgram? _cachedProgram = null;
+
+            // Pre-computed link data: populated by PrepareLinkData() on any thread,
+            // consumed by Link() on the GL thread to skip the expensive CacheLookup phase.
+            private volatile bool _linkDataPrepared;
+            private ulong _preparedHash;
+            private bool _preparedIsCached;
+            private BinaryProgram _preparedBinProg;
+
+            // Async binary upload state: set when a glProgramBinary call has been
+            // dispatched to the shared context thread and we are waiting for completion.
+            private volatile bool _asyncBinaryUploadPending;
+
+            /// <summary>
+            /// Async link phases used when GL_ARB_parallel_shader_compile is active.
+            /// </summary>
+            private enum EAsyncLinkPhase : byte
+            {
+                /// <summary>No async operation in progress.</summary>
+                Idle,
+                /// <summary>Shaders dispatched for async compilation; polling COMPLETION_STATUS_ARB.</summary>
+                Compiling,
+                /// <summary>glLinkProgram dispatched; polling COMPLETION_STATUS_ARB on the program.</summary>
+                Linking,
+            }
+
+            private EAsyncLinkPhase _asyncLinkPhase;
+            private GLShader?[]? _asyncAttachedShaders;
+
+            /// <summary>
+            /// Pre-computes the shader source hash and binary cache lookup.
+            /// Safe to call from any thread. The result is consumed once by the next <see cref="Link"/> call.
+            /// Saves ~2-5ms of CPU work that would otherwise block the GL thread.
+            /// </summary>
+            public void PrepareLinkData()
+            {
+                if (_linkDataPrepared || IsLinked || _shaderCache.IsEmpty)
+                    return;
+
+                ulong hash = CalcHash(Data.Shaders.Select(ResolveSourceForHash));
+                bool isCached = false;
+                BinaryProgram binProg = default;
+                if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                    isCached = BinaryCache?.TryGetValue(hash, out binProg) ?? false;
+
+                _preparedHash = hash;
+                _preparedIsCached = isCached;
+                _preparedBinProg = binProg;
+                _linkDataPrepared = true;
+            }
 
             public bool HasUniform(string name)
             {
@@ -807,12 +974,204 @@ namespace XREngine.Rendering.OpenGL
 
             //private static object HashLock = new();
             private static readonly ConcurrentBag<ulong> Failed = [];
+
+            /// <summary>
+            /// Tracks hashes currently being compiled from source so that duplicate
+            /// GLRenderProgram instances with the same shader source can defer instead
+            /// of redundantly compiling. Cleared when compilation succeeds (binary cached)
+            /// or fails (added to <see cref="Failed"/>).
+            /// </summary>
+            private static readonly ConcurrentDictionary<ulong, byte> InFlightCompilations = new();
+
+            /// <summary>
+            /// True once <see cref="Hash"/> has been computed for this instance.
+            /// Avoids redundant CalcHash calls while the instance is deferring.
+            /// Reset in <see cref="Reset"/>.
+            /// </summary>
+            private bool _hashComputed;
+
+            /// <summary>
+            /// Continues an in-progress async compile/link operation (GL_ARB_parallel_shader_compile).
+            /// Called from <see cref="Link"/> when <see cref="_asyncLinkPhase"/> is not Idle.
+            /// </summary>
+            private bool ContinueAsyncLink()
+            {
+                uint bindingId = BindingId;
+
+                if (_asyncLinkPhase == EAsyncLinkPhase.Compiling)
+                {
+                    using var prof = Engine.Profiler.Start("GLRenderProgram.ContinueAsyncLink.PollCompile");
+
+                    bool anyPending = false;
+                    bool anyFailed = false;
+                    foreach (GLShader shader in _shaderCache.Values)
+                    {
+                        if (shader.IsCompilePending)
+                        {
+                            if (!shader.PollCompileCompletion())
+                                anyPending = true;
+                            else if (!shader.IsCompiled)
+                                anyFailed = true;
+                        }
+                        else if (!shader.IsCompiled)
+                        {
+                            anyFailed = true;
+                        }
+                    }
+
+                    if (anyPending && !anyFailed)
+                        return false; // Still compiling — retry next frame
+
+                    if (anyFailed)
+                    {
+                        Debug.OpenGLWarning($"Failed to compile program with hash {Hash}.");
+                        Failed.Add(Hash);
+                        InFlightCompilations.TryRemove(Hash, out _);
+                        CleanupAsyncLink();
+                        return false;
+                    }
+
+                    // All shaders compiled — attach and dispatch link
+                    var shaderCache = _shaderCache.Values;
+                    var attached = new GLShader?[shaderCache.Count];
+                    int i = 0;
+                    bool noErrors = true;
+                    foreach (GLShader shader in shaderCache)
+                    {
+                        if (shader.IsCompiled)
+                        {
+                            Api.AttachShader(bindingId, shader.BindingId);
+                            attached[i++] = shader;
+                        }
+                        else
+                        {
+                            if (noErrors)
+                            {
+                                noErrors = false;
+                                Debug.OpenGLWarning("One or more shaders failed to compile, can't link program.");
+                            }
+                            string? text = shader.Data.Source.Text;
+                            if (text is not null)
+                                Debug.OpenGL(text);
+                        }
+                    }
+
+                    if (!noErrors)
+                    {
+                        InFlightCompilations.TryRemove(Hash, out _);
+                        CleanupAsyncLink();
+                        return false;
+                    }
+
+                    Api.LinkProgram(bindingId);
+                    _asyncAttachedShaders = attached;
+                    _asyncLinkPhase = EAsyncLinkPhase.Linking;
+                    return false; // Will poll link completion next frame
+                }
+
+                if (_asyncLinkPhase == EAsyncLinkPhase.Linking)
+                {
+                    using var prof = Engine.Profiler.Start("GLRenderProgram.ContinueAsyncLink.PollLink");
+
+                    Api.GetProgram(bindingId, (GLEnum)GLShader.GL_COMPLETION_STATUS_ARB, out int complete);
+                    if (complete == 0)
+                        return false; // Still linking — retry next frame
+
+                    Api.GetProgram(bindingId, GLEnum.LinkStatus, out int status);
+                    bool linked = status != 0;
+                    if (linked)
+                    {
+                        CacheActiveUniforms();
+                        CacheBinary(bindingId);
+                    }
+                    else
+                    {
+                        PrintLinkDebug(bindingId);
+                    }
+
+                    IsLinked = linked;
+                    InFlightCompilations.TryRemove(Hash, out _);
+
+                    // Detach and destroy shader objects
+                    if (_asyncAttachedShaders is not null)
+                    {
+                        foreach (GLShader? shader in _asyncAttachedShaders)
+                        {
+                            if (shader is null)
+                                continue;
+                            Api.DetachShader(bindingId, shader.BindingId);
+                        }
+                        _asyncAttachedShaders = null;
+                    }
+                    _shaderCache.ForEach(x => x.Value.Destroy());
+                    _asyncLinkPhase = EAsyncLinkPhase.Idle;
+                    return IsLinked;
+                }
+
+                return false;
+            }
+
+            /// <summary>
+            /// Resets async link state and destroys any attached shader objects.
+            /// </summary>
+            private void CleanupAsyncLink()
+            {
+                if (_asyncAttachedShaders is not null)
+                {
+                    uint bindingId = BindingId;
+                    foreach (GLShader? shader in _asyncAttachedShaders)
+                    {
+                        if (shader is null)
+                            continue;
+                        Api.DetachShader(bindingId, shader.BindingId);
+                    }
+                    _asyncAttachedShaders = null;
+                }
+                _shaderCache.ForEach(x => x.Value.Destroy());
+                _asyncLinkPhase = EAsyncLinkPhase.Idle;
+            }
+
             public bool Link(bool force = false)
             {
                 using var prof = Engine.Profiler.Start("GLRenderProgram.Link");
 
                 if (IsLinked)
                     return true;
+
+                // Check for completed async binary upload from the shared context thread.
+                if (_asyncBinaryUploadPending)
+                {
+                    var queue = Renderer.ProgramBinaryUploadQueue;
+                    if (queue is not null && TryGetBindingId(out uint pendingId) && queue.TryGetResult(pendingId, out var asyncResult))
+                    {
+                        _asyncBinaryUploadPending = false;
+                        if (asyncResult.Status == GLProgramBinaryUploadQueue.UploadStatus.Success)
+                        {
+                            IsLinked = true;
+                            if (!TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms))
+                            {
+                                using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
+                                CacheActiveUniforms();
+                                PromoteCurrentUniformMetadataToCachedProgram();
+                            }
+                            return true;
+                        }
+                        else
+                        {
+                            Debug.OpenGLWarning($"Async program binary upload failed for hash {Hash}. Falling back to source compilation.");
+                            DeleteFromBinaryShaderCache(Hash, asyncResult.Format);
+                            // Fall through to compile from source below.
+                        }
+                    }
+                    else
+                    {
+                        return false; // Upload still in progress.
+                    }
+                }
+
+                // Resume an in-progress async compile/link if the extension is active.
+                if (_asyncLinkPhase != EAsyncLinkPhase.Idle)
+                    return ContinueAsyncLink();
 
                 if (!LinkReady && !force)
                     return false;
@@ -829,20 +1188,34 @@ namespace XREngine.Rendering.OpenGL
                 if (_shaderCache.IsEmpty/* || _shaderCache.Values.Any(x => !x.IsCompiled)*/)
                     return false;
 
-                bool isCached = false;
+                bool isCached;
                 uint bindingId = BindingId;
-                BinaryProgram binProg = default;
+                BinaryProgram binProg;
 
-                //lock (HashLock)
-                //{
-                    // Hash the fully-resolved source (with #include content inlined) so that
-                    // changes to included files correctly invalidate the binary shader cache.
-                    using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup"))
+                // Use pre-computed link data if available (populated by PrepareLinkData on a job thread),
+                // otherwise fall back to computing on the GL thread. Once computed,
+                // _hashComputed prevents redundant CalcHash calls while deferring.
+                if (_linkDataPrepared)
+                {
+                    Hash = _preparedHash;
+                    isCached = _preparedIsCached;
+                    binProg = _preparedBinProg;
+                    _linkDataPrepared = false;
+                    _hashComputed = true;
+                }
+                else
+                {
+                    isCached = false;
+                    binProg = default;
+                    if (!_hashComputed)
                     {
-                        Hash = GetDeterministicHashCode(string.Join(' ', Data.Shaders.Select(ResolveSourceForHash)));
-                        if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
-                            isCached = BinaryCache?.TryGetValue(Hash, out binProg) ?? false;
+                        using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup"))
+                            Hash = CalcHash(Data.Shaders.Select(ResolveSourceForHash));
+                        _hashComputed = true;
                     }
+                    if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                        isCached = BinaryCache?.TryGetValue(Hash, out binProg) ?? false;
+                }
                     
                     if (isCached)
                     {
@@ -857,6 +1230,16 @@ namespace XREngine.Rendering.OpenGL
                         }
                         else
                         {
+                            // Async path: offload glProgramBinary to the shared context thread.
+                            var uploadQueue = Renderer.ProgramBinaryUploadQueue;
+                            if (Engine.Rendering.Settings.AsyncProgramBinaryUpload && uploadQueue is not null && uploadQueue.IsAvailable && uploadQueue.CanEnqueue)
+                            {
+                                uploadQueue.EnqueueUpload(bindingId, binProg.Binary, format, binProg.Length, Hash);
+                                _asyncBinaryUploadPending = true;
+                                return false;
+                            }
+
+                            // Synchronous fallback.
                             fixed (byte* ptr = binProg.Binary)
                                 Api.ProgramBinary(bindingId, format, ptr, binProg.Length);
                             var error = Api.GetError();
@@ -868,8 +1251,12 @@ namespace XREngine.Rendering.OpenGL
                             else
                             {
                                 IsLinked = true;
-                                using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
-                                CacheActiveUniforms();
+                                if (!TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms))
+                                {
+                                    using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
+                                    CacheActiveUniforms();
+                                    PromoteCurrentUniformMetadataToCachedProgram();
+                                }
                                 return true;
                             }
                         }
@@ -877,7 +1264,12 @@ namespace XREngine.Rendering.OpenGL
 
                     if (Failed.Contains(Hash))
                         return false;
-                    else
+
+                    // If another GLRenderProgram with the same hash is already compiling,
+                    // defer until its binary lands in the cache.
+                    if (!InFlightCompilations.TryAdd(Hash, 0))
+                        return false;
+
                     {
                         _cachedProgram = null;
                         Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
@@ -891,10 +1283,20 @@ namespace XREngine.Rendering.OpenGL
                                     shader.Generate();
                         }
 
+                        // When GL_ARB_parallel_shader_compile is active, CompileShader() is non-blocking.
+                        // Shaders may still be compiling — enter the async state machine and return.
+                        if (Engine.Rendering.State.HasParallelShaderCompile &&
+                            _shaderCache.Values.Any(s => s.IsCompilePending))
+                        {
+                            _asyncLinkPhase = EAsyncLinkPhase.Compiling;
+                            return false;
+                        }
+
                         if (_shaderCache.Values.Any(x => !x.IsCompiled))
                         {
                             Debug.OpenGLWarning($"Failed to compile program with hash {Hash}.");
                             Failed.Add(Hash);
+                            InFlightCompilations.TryRemove(Hash, out _);
                             //TODO: return invalid material until shaders are compiled
                             return false;
                         }
@@ -931,18 +1333,27 @@ namespace XREngine.Rendering.OpenGL
                         {
                             using var linkProf = Engine.Profiler.Start("GLRenderProgram.Link.DriverLinkProgram");
                             Api.LinkProgram(bindingId);
+
+                            // When the extension is active, LinkProgram is also non-blocking.
+                            if (Engine.Rendering.State.HasParallelShaderCompile)
+                            {
+                                _asyncAttachedShaders = attached;
+                                _asyncLinkPhase = EAsyncLinkPhase.Linking;
+                                return false;
+                            }
+
                             Api.GetProgram(bindingId, GLEnum.LinkStatus, out int status);
                             bool linked = status != 0;
-                            if (linked)
-                                CacheBinary(bindingId);
-                            else
+                            if (!linked)
                                 PrintLinkDebug(bindingId);
                             IsLinked = linked;
                             if (IsLinked)
                             {
                                 using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
                                 CacheActiveUniforms();
+                                CacheBinary(bindingId);
                             }
+                            InFlightCompilations.TryRemove(Hash, out _);
                         }
                         using (Engine.Profiler.Start("GLRenderProgram.Link.DetachShaders"))
                         {
@@ -961,9 +1372,10 @@ namespace XREngine.Rendering.OpenGL
                                 x.Value.Destroy();
                             });
                         }
+                        if (!IsLinked)
+                            InFlightCompilations.TryRemove(Hash, out _);
                         return IsLinked;
                     }
-                //}
             }
 
             private void Value_SourceChanged()
@@ -1028,7 +1440,8 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Api.GetProgramBinary(bindingId, (uint)len, &binaryLength, &format, ptr);
                 }
-                BinaryProgram bin = (binary, format, binaryLength);
+                UniformMetadataEntry[] metadata = SnapshotUniformMetadata();
+                BinaryProgram bin = new(binary, format, binaryLength, metadata.Length == 0 ? null : metadata);
                 var binaryCache = BinaryCache;
                 if (binaryCache is null)
                     return;
@@ -1768,7 +2181,7 @@ namespace XREngine.Rendering.OpenGL
         }
     }
 
-    internal record struct BinaryProgram(byte[] Binary, GLEnum Format, uint Length)
+    internal record struct BinaryProgram(byte[] Binary, GLEnum Format, uint Length, OpenGLRenderer.GLRenderProgram.UniformMetadataEntry[]? Uniforms = null)
     {
         public static implicit operator (byte[] bin, GLEnum fmt, uint len)(BinaryProgram value)
             => (value.Binary, value.Format, value.Length);

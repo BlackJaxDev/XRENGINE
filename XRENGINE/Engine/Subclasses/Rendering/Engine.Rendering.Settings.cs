@@ -324,6 +324,7 @@ namespace XREngine
                 private uint _lightProbeResolution = 512u;
                 private bool _lightProbesCaptureDepth = false;
                 private bool _allowBinaryProgramCaching = true;
+                private bool _asyncProgramBinaryUpload = true;
                 private bool _calculateBlendshapesInComputeShader = false;
                 private bool _calculateSkinningInComputeShader = false;
                 private bool _useGlobalBoneMatricesBufferForComputeSkinning = false;
@@ -743,6 +744,20 @@ namespace XREngine
                 {
                     get => _allowBinaryProgramCaching;
                     set => SetField(ref _allowBinaryProgramCaching, value);
+                }
+
+                /// <summary>
+                /// If true, cached program binaries are uploaded via <c>glProgramBinary</c> on a
+                /// shared background GL context thread instead of the main render thread.
+                /// This prevents rendering stalls during startup and scene transitions.
+                /// Requires <see cref="AllowBinaryProgramCaching"/> to be enabled.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true, cached program binaries are uploaded asynchronously on a shared GL context thread to avoid main-thread stalls. Requires AllowBinaryProgramCaching.")]
+                public bool AsyncProgramBinaryUpload
+                {
+                    get => _asyncProgramBinaryUpload;
+                    set => SetField(ref _asyncProgramBinaryUpload, value);
                 }
 
                 /// <summary>

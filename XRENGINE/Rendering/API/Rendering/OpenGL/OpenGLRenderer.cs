@@ -41,6 +41,7 @@ namespace XREngine.Rendering.OpenGL
         public ExtMemoryObjectFd? EXTMemoryObjectFd { get; }
         public NVBindlessMultiDrawIndirectCount? NVBindlessMultiDrawIndirectCount { get; }
         public ArbMultiDrawIndirect? ArbMultiDrawIndirect { get; }
+        public ArbParallelShaderCompile? ARBParallelShaderCompile { get; }
 
         private static string? _version = null;
         public string? Version
@@ -84,6 +85,7 @@ namespace XREngine.Rendering.OpenGL
             NVBindlessMultiDrawIndirectCount = api.TryGetExtension<NVBindlessMultiDrawIndirectCount>(out var ext11) ? ext11 : null;
             ArbMultiDrawIndirect = api.TryGetExtension<ArbMultiDrawIndirect>(out var ext12) ? ext12 : null;
             NVPathRendering = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVPathRendering ext13) ? ext13 : null;
+            ARBParallelShaderCompile = api.TryGetExtension<ArbParallelShaderCompile>(out var ext14) ? ext14 : null;
         }
 
         private ImGuiController? _imguiController;
@@ -188,7 +190,7 @@ namespace XREngine.Rendering.OpenGL
         protected override IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport)
             => GetOrCreateImGuiBackend();
 
-        private static void InitGL(GL api)
+        private void InitGL(GL api)
         {
             string version;
             unsafe
@@ -236,6 +238,18 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
                 Engine.Rendering.State.HasOvrMultiViewExtension |= hasExtMultiview;
+
+                // Probe for GL_ARB_parallel_shader_compile — enables non-blocking CompileShader/LinkProgram.
+                bool hasParallelShaderCompile = extensions.Any(
+                    e => string.Equals(e, "GL_ARB_parallel_shader_compile", StringComparison.Ordinal));
+                Engine.Rendering.State.HasParallelShaderCompile = hasParallelShaderCompile;
+                if (hasParallelShaderCompile && api.TryGetExtension<ArbParallelShaderCompile>(out var parallelExt))
+                {
+                    // Request unlimited driver shader-compiler threads.
+                    parallelExt.MaxShaderCompilerThreads(0xFFFF_FFFF);
+                    Debug.OpenGL("GL_ARB_parallel_shader_compile enabled — shader compilation is non-blocking.");
+                }
+
                 // Ray tracing / DLSS / XeSS are Vulkan-focused; do not probe GL_NV_ray_tracing on OpenGL startup.
                 Engine.Rendering.State.HasNvRayTracing = false;
                 Engine.Rendering.State.HasVulkanRayTracing = false;
@@ -246,6 +260,9 @@ namespace XREngine.Rendering.OpenGL
             }
 
             GLRenderProgram.ReadBinaryShaderCache(version);
+
+            // Initialize async program binary upload via a shared GL context.
+            InitAsyncProgramBinaryUpload();
 
             api.Enable(EnableCap.Multisample);
             api.Enable(EnableCap.TextureCubeMapSeamless);
@@ -567,6 +584,11 @@ namespace XREngine.Rendering.OpenGL
             _imguiFontValidationCountdown = 0;
             ResetImGuiFrameMarker();
 
+            // Clean up shared context for async program binary uploads
+            _programBinaryUploadQueue = null;
+            _sharedContext?.Dispose();
+            _sharedContext = null;
+
             // Clean up cached luminance front resources
             if (_luminanceFrontTex != 0)
             {
@@ -607,18 +629,95 @@ namespace XREngine.Rendering.OpenGL
         internal long _frameCounter;
 
         /// <summary>
-        /// Set when the NVIDIA driver reports GL_OUT_OF_MEMORY. Cleared at the start of each frame.
-        /// While set, draw calls are skipped to prevent access violations from corrupted GL state.
+        /// Set by the debug callback when the NVIDIA driver reports GL_OUT_OF_MEMORY.
+        /// Consumed (cleared) at the start of each frame by <see cref="ProcessPendingUploads"/>.
+        /// Do NOT use this to suppress draw calls — use <see cref="SuppressDrawsForOomRecovery"/> instead.
         /// </summary>
         internal volatile bool _oomDetectedThisFrame;
 
         /// <summary>
+        /// True while the renderer is inside an OOM cooldown period.
+        /// Suppresses draw calls and GPU allocations until the cooldown expires.
+        /// Kept separate from <see cref="_oomDetectedThisFrame"/> to avoid the cooldown
+        /// self-restarting by reading back its own suppression flag.
+        /// </summary>
+        internal bool SuppressDrawsForOomRecovery;
+
+        /// <summary>
+        /// Remaining frames of OOM cooldown. While positive, all GPU allocations (buffer uploads,
+        /// mesh generation, draw calls) are suppressed to let the driver recover memory.
+        /// </summary>
+        private int _oomCooldownFrames;
+
+        /// <summary>
+        /// Number of frames to suppress GPU allocations after an OOM event.
+        /// Gives the driver time to reclaim memory from destroyed objects.
+        /// </summary>
+        private const int OomCooldownDuration = 10;
+
+        private GLSharedContext? _sharedContext;
+        private GLProgramBinaryUploadQueue? _programBinaryUploadQueue;
+
+        /// <summary>
+        /// Gets the async program binary upload queue, or <c>null</c> if the shared context
+        /// could not be created or async uploads are disabled.
+        /// </summary>
+        public GLProgramBinaryUploadQueue? ProgramBinaryUploadQueue => _programBinaryUploadQueue;
+
+        /// <summary>
+        /// Creates a shared GL context and upload queue for async <c>glProgramBinary</c> calls.
+        /// Must be called from the main render thread after the primary context is fully initialized.
+        /// </summary>
+        private void InitAsyncProgramBinaryUpload()
+        {
+            if (!Engine.Rendering.Settings.AsyncProgramBinaryUpload ||
+                !Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                return;
+
+            var sharedCtx = new GLSharedContext();
+            if (sharedCtx.Initialize(XRWindow))
+            {
+                _sharedContext = sharedCtx;
+                _programBinaryUploadQueue = new GLProgramBinaryUploadQueue(sharedCtx);
+                Debug.OpenGL("[ShaderCache] Async program binary upload enabled via shared GL context.");
+            }
+            else
+            {
+                Debug.OpenGLWarning("[ShaderCache] Failed to create shared context. Program binaries will be uploaded synchronously.");
+                sharedCtx.Dispose();
+            }
+        }
+
+        /// <summary>
         /// Processes pending async buffer uploads and mesh generations within the frame time budget.
+        /// Skips all GPU allocations during OOM cooldown to let the driver recover.
         /// </summary>
         public override void ProcessPendingUploads()
         {
             _frameCounter++;
+
+            // Snapshot and clear the volatile flag set by the debug callback.
+            // This must happen before the cooldown check so the cooldown's own
+            // draw-suppression flag cannot self-restart the timer.
+            bool driverReportedOom = _oomDetectedThisFrame;
             _oomDetectedThisFrame = false;
+
+            // A fresh OOM from the driver starts (or extends) the cooldown.
+            if (driverReportedOom)
+            {
+                if (_oomCooldownFrames == 0)
+                    Debug.OpenGLWarning($"[OOM Recovery] Entering {OomCooldownDuration}-frame cooldown — suspending GPU allocations.");
+                _oomCooldownFrames = OomCooldownDuration;
+            }
+
+            if (_oomCooldownFrames > 0)
+            {
+                _oomCooldownFrames--;
+                SuppressDrawsForOomRecovery = true;
+                return;
+            }
+
+            SuppressDrawsForOomRecovery = false;
             UploadQueue.ProcessUploads();
             MeshGenerationQueue.ProcessGeneration();
         }

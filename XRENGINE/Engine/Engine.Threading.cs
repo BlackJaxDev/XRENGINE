@@ -11,6 +11,7 @@ namespace XREngine
     public static partial class Engine
     {
         private static readonly ConcurrentDictionary<string, byte> _renderDispatchWarningLabels = new(StringComparer.Ordinal);
+        private const int MaxRenderThreadJobsPerDispatch = 128;
 
         #region Public Properties - Threading
 
@@ -378,7 +379,7 @@ namespace XREngine
         private static void ProcessPendingMainThreadWork()
         {
             using var scope = Engine.Profiler.Start("MainThreadJobs.Dispatch");
-            Jobs.ProcessMainThreadJobs();
+            Jobs.ProcessMainThreadJobs(MaxRenderThreadJobsPerDispatch);
         }
 
         private static void ExecuteLoggedMainThreadInvoke(Action task, MainThreadInvokeEntry entry, long? queuedAtTimestamp)

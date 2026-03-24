@@ -72,6 +72,7 @@ namespace XREngine.Scene
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagUpdating = [];
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagRendering = [];
         private readonly Stopwatch _captureBudgetStopwatch = new();
+        private long _lastStreamingPressureLogFrameTicks = -1;
 
         // When shadow collection is culled by camera frusta, some lights may be intentionally skipped.
         // If we still swap their internal shadow-viewport buffers, we can end up swapping in an empty
@@ -138,6 +139,22 @@ namespace XREngine.Scene
 
             _captureQueue.Enqueue(component);
             Debug.Out($"[Lights3D] QueueForCapture: ENQUEUED {component.GetType().Name}, queue size now ~{_captureQueue.Count}");
+        }
+
+        private bool ShouldDeferAuxiliaryCaptures()
+        {
+            if (!XRTexture2D.HasLargeProgressiveUploadBacklog)
+                return false;
+
+            long frameTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            if (_lastStreamingPressureLogFrameTicks != frameTicks)
+            {
+                _lastStreamingPressureLogFrameTicks = frameTicks;
+                Debug.Out(
+                    $"[Lights3D] Deferring shadow/capture work due to texture streaming pressure. active={XRTexture2D.ActiveProgressiveUploadCount}, queued={XRTexture2D.QueuedProgressiveUploadCount}, bytesScheduledThisFrame={XRTexture2D.ProgressiveUploadBytesScheduledThisFrame}");
+            }
+
+            return true;
         }
 
         #endregion
@@ -540,6 +557,9 @@ namespace XREngine.Scene
 
             while (_captureQueue.TryPeek(out _))
             {
+                if (ShouldDeferAuxiliaryCaptures())
+                    break;
+
                 if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
                 {
                     Debug.Out("[Lights3D] CollectVisible: capture budget exceeded, deferring remaining");
@@ -700,6 +720,12 @@ namespace XREngine.Scene
 
                 foreach (SceneCaptureComponentBase capture in _captureBagRendering)
                 {
+                    if (ShouldDeferAuxiliaryCaptures())
+                    {
+                        _captureQueue.Enqueue(capture);
+                        continue;
+                    }
+
                     if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
                     {
                         // push remaining work to next frame
@@ -901,6 +927,9 @@ namespace XREngine.Scene
 
             double budgetMs = CaptureBudgetMilliseconds;
             _captureBudgetStopwatch.Restart();
+
+            if (ShouldDeferAuxiliaryCaptures())
+                return;
 
             foreach (SceneCaptureComponentBase capture in _captureBagRendering)
             {

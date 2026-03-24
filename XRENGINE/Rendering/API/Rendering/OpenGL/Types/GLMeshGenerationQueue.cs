@@ -6,13 +6,22 @@ namespace XREngine.Rendering.OpenGL
     /// <summary>
     /// Manages frame-budgeted mesh generation to prevent FPS stalls when many meshes load at once.
     /// Spreads mesh initialization (VAO/VBO setup, shader compilation) across multiple frames.
+    /// Render-pipeline meshes (FBO quads, cube maps) are processed first without a budget cap
+    /// so that post-process / lighting passes warm instantly.
     /// </summary>
     public unsafe partial class OpenGLRenderer
     {
         public sealed class GLMeshGenerationQueue
         {
             private readonly OpenGLRenderer _renderer;
-            private readonly ConcurrentQueue<GLMeshRenderer> _pendingGeneration = new();
+
+            /// <summary>Render-pipeline meshes: drained every frame with no budget limit.</summary>
+            private readonly ConcurrentQueue<GLMeshRenderer> _priorityQueue = new();
+
+            /// <summary>Normal scene meshes: drained within the per-frame budget.</summary>
+            private readonly ConcurrentQueue<GLMeshRenderer> _normalQueue = new();
+
+            /// <summary>Dedup set – value is unused, presence means "enqueued".</summary>
             private readonly ConcurrentDictionary<GLMeshRenderer, byte> _pendingSet = new();
 
             /// <summary>
@@ -39,7 +48,7 @@ namespace XREngine.Rendering.OpenGL
             /// <summary>
             /// Maximum milliseconds to spend on mesh generation per frame.
             /// </summary>
-            public double FrameBudgetMs { get; set; } = 4.0;
+            public double FrameBudgetMs { get; set; } = 10.0;
 
             private double _savedBudgetMs;
             private volatile bool _budgetBoosted;
@@ -70,7 +79,7 @@ namespace XREngine.Rendering.OpenGL
             /// <summary>
             /// Number of meshes pending generation.
             /// </summary>
-            public int PendingCount => _pendingGeneration.Count;
+            public int PendingCount => _priorityQueue.Count + _normalQueue.Count;
 
             /// <summary>
             /// Checks if a mesh renderer has pending generation.
@@ -85,8 +94,8 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Enqueues a mesh renderer for deferred generation.
-            /// Returns true if the mesh was enqueued, false if it's already pending, already generated,
-            /// or has exceeded its retry limit.
+            /// Pipeline-priority meshes go into a fast lane that is drained every frame without a budget cap.
+            /// Returns true if the mesh was newly enqueued.
             /// </summary>
             public bool EnqueueGeneration(GLMeshRenderer renderer)
             {
@@ -97,12 +106,15 @@ namespace XREngine.Rendering.OpenGL
                 if (_failureCount.TryGetValue(renderer, out int count) && count >= MaxRetries)
                     return false;
 
-                if (_pendingSet.TryAdd(renderer, 0))
-                {
-                    _pendingGeneration.Enqueue(renderer);
-                    return true;
-                }
-                return false;
+                if (!_pendingSet.TryAdd(renderer, 0))
+                    return false;
+
+                if (renderer.MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline)
+                    _priorityQueue.Enqueue(renderer);
+                else
+                    _normalQueue.Enqueue(renderer);
+
+                return true;
             }
 
             /// <summary>
@@ -116,6 +128,8 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Processes pending mesh generations within the frame budget.
+            /// Render-pipeline meshes are drained first without any budget limit.
+            /// Normal scene meshes are then processed within the remaining frame budget.
             /// Call this once per frame from the render thread.
             /// </summary>
             public void ProcessGeneration()
@@ -123,7 +137,11 @@ namespace XREngine.Rendering.OpenGL
                 if (!Enabled)
                     return;
 
-                if (_pendingGeneration.IsEmpty)
+                if (_priorityQueue.IsEmpty && _normalQueue.IsEmpty)
+                    return;
+
+                // Bail if the GPU is in OOM recovery — generating more meshes would worsen VRAM pressure.
+                if (_renderer._oomDetectedThisFrame)
                     return;
 
                 var sw = Stopwatch.StartNew();
@@ -131,48 +149,24 @@ namespace XREngine.Rendering.OpenGL
                 int generated = 0;
                 int failed = 0;
 
-                while (sw.Elapsed.TotalMilliseconds < budgetMs && _pendingGeneration.TryDequeue(out var renderer))
+                // Priority lane: drain all pipeline meshes immediately (no budget limit).
+                while (_priorityQueue.TryDequeue(out var priorityRenderer))
                 {
-                    _pendingSet.TryRemove(renderer, out _);
-                    
-                    // Skip if already generated (might have been generated through another path)
-                    if (renderer.IsGenerated)
-                    {
-                        _failureCount.TryRemove(renderer, out _);
-                        continue;
-                    }
+                    _pendingSet.TryRemove(priorityRenderer, out _);
+                    ProcessRenderer(priorityRenderer, ref generated, ref failed);
 
-                    // Skip if destroyed or data is null
-                    if (renderer.Data is null)
-                        continue;
-
-                    try
-                    {
-                        renderer.Generate();
-
-                        if (renderer.IsGenerated)
-                        {
-                            generated++;
-                            _failureCount.TryRemove(renderer, out _);
-                        }
-                        else
-                        {
-                            // Generate() returned without exception but the object is still not valid.
-                            int failures = _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
-                            failed++;
-                            if (failures >= MaxRetries)
-                                Debug.OpenGLWarning($"[GLMeshGenerationQueue] Giving up on mesh renderer after {failures} failed generation attempts: {renderer.GetDescribingName()}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        int failures = _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
-                        failed++;
-                        Debug.OpenGLException(ex, $"GLMeshGenerationQueue: Failed to generate mesh renderer (attempt {failures}/{MaxRetries})");
-                    }
+                    if (_renderer._oomDetectedThisFrame)
+                        break;
                 }
 
-                if (_budgetBoosted && _pendingGeneration.IsEmpty)
+                // Normal lane: process scene meshes within the frame budget.
+                while (!_renderer._oomDetectedThisFrame && sw.Elapsed.TotalMilliseconds < budgetMs && _normalQueue.TryDequeue(out var renderer))
+                {
+                    _pendingSet.TryRemove(renderer, out _);
+                    ProcessRenderer(renderer, ref generated, ref failed);
+                }
+
+                if (_budgetBoosted && PendingCount == 0)
                 {
                     FrameBudgetMs = _savedBudgetMs;
                     _budgetBoosted = false;
@@ -182,7 +176,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     _totalGenerated += generated;
                     _totalFailed += failed;
-                    int remaining = _pendingGeneration.Count;
+                    int remaining = PendingCount;
                     double elapsed = _logTimer.Elapsed.TotalMilliseconds;
 
                     // Log when: queue empties, failures occur, remaining changes significantly, or periodic interval
@@ -205,7 +199,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void FlushAll()
             {
-                while (_pendingGeneration.TryDequeue(out var renderer))
+                while (_priorityQueue.TryDequeue(out var renderer))
                 {
                     _pendingSet.TryRemove(renderer, out _);
                     if (!renderer.IsGenerated && renderer.Data is not null)
@@ -224,6 +218,63 @@ namespace XREngine.Rendering.OpenGL
                             Debug.OpenGLException(ex, $"GLMeshGenerationQueue: Failed to generate mesh renderer during flush");
                         }
                     }
+                }
+
+                while (_normalQueue.TryDequeue(out var renderer))
+                {
+                    _pendingSet.TryRemove(renderer, out _);
+                    if (!renderer.IsGenerated && renderer.Data is not null)
+                    {
+                        try
+                        {
+                            renderer.Generate();
+                            if (renderer.IsGenerated)
+                                _failureCount.TryRemove(renderer, out _);
+                            else
+                                _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
+                        }
+                        catch (Exception ex)
+                        {
+                            _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
+                            Debug.OpenGLException(ex, $"GLMeshGenerationQueue: Failed to generate mesh renderer during flush");
+                        }
+                    }
+                }
+            }
+
+            private void ProcessRenderer(GLMeshRenderer renderer, ref int generated, ref int failed)
+            {
+                if (renderer.IsGenerated)
+                {
+                    _failureCount.TryRemove(renderer, out _);
+                    return;
+                }
+
+                if (renderer.Data is null)
+                    return;
+
+                try
+                {
+                    renderer.Generate();
+
+                    if (renderer.IsGenerated)
+                    {
+                        generated++;
+                        _failureCount.TryRemove(renderer, out _);
+                    }
+                    else
+                    {
+                        int failures = _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
+                        failed++;
+                        if (failures >= MaxRetries)
+                            Debug.OpenGLWarning($"[GLMeshGenerationQueue] Giving up on mesh renderer after {failures} failed generation attempts: {renderer.GetDescribingName()}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    int failures = _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
+                    failed++;
+                    Debug.OpenGLException(ex, $"GLMeshGenerationQueue: Failed to generate mesh renderer (attempt {failures}/{MaxRetries})");
                 }
             }
         }
