@@ -5,13 +5,16 @@ using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using XREngine.Components;
+using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -21,11 +24,13 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 {
     private const float PreviewMaxEdge = 256.0f;
     private const float PreviewMinEdge = 96.0f;
+    private const int CascadePreviewsPerRow = 2;
 
     /// <summary>
     /// Active camera transitions keyed by camera instance.
     /// </summary>
     private static readonly ConcurrentDictionary<XRCamera, CameraProjectionTransition> _activeTransitions = new();
+    private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> CascadePreviewViews = new();
 
     /// <summary>
     /// Settings for animated camera transitions.
@@ -1526,6 +1531,127 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         if (openDialog)
             ComponentEditorLayout.RequestPreviewDialog(component.SceneNode?.Name ?? "Camera Preview", handle, pixelSize, flipVertically: true);
+
+        DrawActiveCascadeDepthPreviews(component);
+    }
+
+    private static void DrawActiveCascadeDepthPreviews(CameraComponent component)
+    {
+        if (component.DirectionalShadowRenderingMode != EDirectionalShadowRenderingMode.Cascaded)
+            return;
+
+        XRWorldInstance? world = component.WorldAs<XRWorldInstance>();
+        if (world?.Lights is null)
+            return;
+
+        DirectionalLightComponent[] lights;
+        try
+        {
+            lights = [.. world.Lights.DynamicDirectionalLights];
+        }
+        catch (InvalidOperationException)
+        {
+            ImGui.Separator();
+            ImGui.TextDisabled("Cascade previews are updating.");
+            return;
+        }
+
+        bool drewAny = false;
+        foreach (DirectionalLightComponent light in lights)
+        {
+            if (!light.CastsShadows || !light.EnableCascadedShadows)
+                continue;
+
+            XRTexture2DArray? cascadeTexture = light.CascadedShadowMapTexture;
+            int activeCascades = light.ActiveCascadeCount;
+            if (cascadeTexture is null || activeCascades <= 0)
+                continue;
+
+            if (!drewAny)
+            {
+                ImGui.Separator();
+                ImGui.SeparatorText("Directional Shadow Cascades");
+                drewAny = true;
+            }
+
+            DrawCascadePreviewGroup(light, cascadeTexture, activeCascades);
+        }
+    }
+
+    private static void DrawCascadePreviewGroup(DirectionalLightComponent light, XRTexture2DArray cascadeTexture, int activeCascades)
+    {
+        string lightLabel = light.SceneNode?.Name ?? light.Name ?? light.GetType().Name;
+
+        ImGui.PushID(light.GetHashCode());
+        ImGui.TextDisabled($"{lightLabel}: {activeCascades} active cascade(s)");
+
+        for (int cascadeIndex = 0; cascadeIndex < activeCascades; cascadeIndex++)
+        {
+            XRTexture2DArrayView cascadeView = GetOrCreateCascadePreviewView(cascadeTexture, cascadeIndex);
+            if (!TryGetTextureHandle(cascadeView, out nint handle, out string? handleFailure))
+            {
+                ImGui.TextDisabled(handleFailure ?? $"Cascade {cascadeIndex} preview unavailable.");
+                continue;
+            }
+
+            if (cascadeIndex > 0 && cascadeIndex % CascadePreviewsPerRow != 0)
+                ImGui.SameLine();
+
+            Vector2 pixelSize = GetPixelSize(cascadeView);
+            Vector2 displaySize = CalculatePreviewSize(pixelSize);
+            Vector2 uv0 = new(0.0f, 1.0f);
+            Vector2 uv1 = new(1.0f, 0.0f);
+            bool openDialog = false;
+
+            ImGui.BeginGroup();
+            ImGui.Image(handle, displaySize, uv0, uv1);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(
+                    $"{lightLabel} | Cascade {cascadeIndex}\n" +
+                    $"{pixelSize.X:0} x {pixelSize.Y:0} | {cascadeTexture.SizedInternalFormat}\n" +
+                    $"Split Far: {light.GetCascadeSplit(cascadeIndex):F1}");
+                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                    openDialog = true;
+            }
+
+            ImGui.TextDisabled($"Cascade {cascadeIndex}");
+            ImGui.TextDisabled($"Split {light.GetCascadeSplit(cascadeIndex):F1}");
+            if (ImGui.SmallButton($"Open##Cascade{cascadeIndex}"))
+                openDialog = true;
+
+            if (openDialog)
+                ComponentEditorLayout.RequestPreviewDialog($"{lightLabel} Cascade {cascadeIndex}", handle, pixelSize, flipVertically: true);
+
+            ImGui.EndGroup();
+        }
+
+        ImGui.PopID();
+    }
+
+    private static XRTexture2DArrayView GetOrCreateCascadePreviewView(XRTexture2DArray texture, int layerIndex)
+    {
+        var views = CascadePreviewViews.GetOrCreateValue(texture);
+        if (views.TryGetValue(layerIndex, out XRTexture2DArrayView? existing))
+        {
+            existing.MinLevel = 0u;
+            existing.NumLevels = 1u;
+            existing.MinLayer = (uint)layerIndex;
+            existing.NumLayers = 1u;
+            return existing;
+        }
+
+        var view = new XRTexture2DArrayView(texture, 0u, 1u, (uint)layerIndex, 1u, texture.SizedInternalFormat, false, texture.MultiSample)
+        {
+            Name = $"{texture.Name ?? "CascadeShadow"}_Layer{layerIndex}_Preview",
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
+        };
+
+        views[layerIndex] = view;
+        return view;
     }
 
     private static bool TryResolvePreviewTexture(CameraComponent component, out XRTexture? texture, out Vector2 pixelSize, out string? failure)
@@ -1642,19 +1768,47 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         handle = nint.Zero;
         failure = null;
 
-        if (texture is not XRTexture2D texture2D)
+        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
         {
-            failure = "Preview currently supports 2D textures only.";
+            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            if (textureId == IntPtr.Zero)
+            {
+                failure = "Texture has not been uploaded to the GPU yet.";
+                return false;
+            }
+
+            handle = (nint)textureId;
+            return true;
+        }
+
+        OpenGLRenderer? renderer = TryGetOpenGLRenderer();
+        if (renderer is null)
+        {
+            failure = "Preview requires the OpenGL or Vulkan renderer.";
             return false;
         }
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        IGLTexture? glTexture = texture switch
         {
-            failure = "Preview requires the OpenGL renderer.";
+            XRTexture2D texture2D => renderer.GenericToAPI<GLTexture2D>(texture2D),
+            XRTexture2DArrayView textureArrayView => renderer.GenericToAPI<GLTextureView>(textureArrayView),
+            _ => null,
+        };
+
+        if (glTexture is null)
+        {
+            failure = "Preview currently supports 2D textures and array-layer views only.";
             return false;
         }
 
-        var glTexture = renderer.GenericToAPI<GLTexture2D>(texture2D);
+        return TryGetGlTextureHandle(glTexture, out handle, out failure);
+    }
+
+    private static bool TryGetGlTextureHandle(IGLTexture glTexture, out nint handle, out string? failure)
+    {
+        handle = nint.Zero;
+        failure = null;
+
         if (glTexture is null)
         {
             failure = "Texture has not been uploaded to the GPU yet.";
@@ -1669,6 +1823,30 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         handle = (nint)glTexture.BindingId;
         return true;
+    }
+
+    private static OpenGLRenderer? TryGetOpenGLRenderer()
+    {
+        if (AbstractRenderer.Current is OpenGLRenderer current)
+            return current;
+
+        foreach (var window in Engine.Windows)
+            if (window.Renderer is OpenGLRenderer renderer)
+                return renderer;
+
+        return null;
+    }
+
+    private static VulkanRenderer? TryGetVulkanRenderer()
+    {
+        if (AbstractRenderer.Current is VulkanRenderer current)
+            return current;
+
+        foreach (var window in Engine.Windows)
+            if (window.Renderer is VulkanRenderer renderer)
+                return renderer;
+
+        return null;
     }
 
     private static Vector2 CalculatePreviewSize(Vector2 pixelSize)
