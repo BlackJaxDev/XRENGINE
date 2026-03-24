@@ -9,6 +9,7 @@ using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine;
+using XREngine.Rendering.Shaders;
 using static XREngine.Rendering.XRRenderProgram;
 
 namespace XREngine.Rendering.OpenGL
@@ -832,13 +833,15 @@ namespace XREngine.Rendering.OpenGL
 
                 //lock (HashLock)
                 //{
-                    Hash = GetDeterministicHashCode(string.Join(' ', Data.Shaders.Select(x => x.Source.Text ?? string.Empty)));
+                    // Hash the fully-resolved source (with #include content inlined) so that
+                    // changes to included files correctly invalidate the binary shader cache.
+                    Hash = GetDeterministicHashCode(string.Join(' ', Data.Shaders.Select(ResolveSourceForHash)));
                     if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
                         isCached = BinaryCache?.TryGetValue(Hash, out binProg) ?? false;
                     
                     if (isCached)
                     {
-                        //Debug.Out($"Using cached program binary with hash {Hash}.");
+                        //Debug.OpenGL($"[ShaderCache] HIT hash={Hash}");
                         _cachedProgram = binProg;
                         GLEnum format = binProg.Format;
                         if (!Engine.Rendering.Stats.CanAllocateVram(binProg.Length, 0, out long projectedBytes, out long budgetBytes))
@@ -870,6 +873,7 @@ namespace XREngine.Rendering.OpenGL
                     else
                     {
                         _cachedProgram = null;
+                        Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
 
                         foreach (GLShader shader in _shaderCache.Values)
                             if (shader.Data.GenerateAsync)
@@ -1008,6 +1012,29 @@ namespace XREngine.Rendering.OpenGL
 
                 binaryCache.TryAdd(Hash, bin);
                 WriteToBinaryShaderCache(bin);
+            }
+
+            /// <summary>
+            /// Resolves #include directives for hashing so that included-file changes invalidate the cache.
+            /// Falls back to raw source text if resolution fails (e.g., missing include file).
+            /// </summary>
+            private static string ResolveSourceForHash(XRShader shader)
+            {
+                if (shader is null)
+                    return string.Empty;
+
+                try
+                {
+                    string resolved = shader.GetResolvedSource();
+                    if (resolved.Contains("#include"))
+                        Debug.OpenGLWarning($"[ShaderCache] Include resolution left unresolved #include in source (filePath={shader.Source?.FilePath ?? "null"})");
+                    return resolved;
+                }
+                catch (Exception ex)
+                {
+                    Debug.OpenGLWarning($"[ShaderCache] Include resolution failed for hash (filePath={shader.Source?.FilePath ?? "null"}): {ex.Message}. Using raw source.");
+                    return shader.Source?.Text ?? string.Empty;
+                }
             }
 
             private static ulong CalcHash(IEnumerable<string> enumerable)

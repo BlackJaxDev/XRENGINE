@@ -165,7 +165,11 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         for (int shaderIndex = 0; shaderIndex < material.Shaders.Count; shaderIndex++)
         {
             XRShader shader = material.Shaders[shaderIndex];
-            if (shader?.Source?.Text is not { } text)
+            if (shader is null)
+                continue;
+
+            string text = shader.GetResolvedSource();
+            if (string.IsNullOrWhiteSpace(text))
                 continue;
 
             var parsed = ParseShaderSource(text);
@@ -196,7 +200,11 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         for (int shaderIndex = 0; shaderIndex < material.Shaders.Count; shaderIndex++)
         {
             XRShader shader = material.Shaders[shaderIndex];
-            if (shader?.Source?.Text is not { } text)
+            if (shader is null)
+                continue;
+
+            string text = shader.GetResolvedSource();
+            if (string.IsNullOrWhiteSpace(text))
                 continue;
 
             var parsed = ParseShaderSource(text);
@@ -702,7 +710,11 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         for (int shaderIndex = 0; shaderIndex < material.Shaders.Count; shaderIndex++)
         {
             XRShader shader = material.Shaders[shaderIndex];
-            if (shader?.Source?.Text is not { } text)
+            if (shader is null)
+                continue;
+
+            string text = shader.GetResolvedSource();
+            if (string.IsNullOrWhiteSpace(text))
                 continue;
 
             string cleaned = StripComments(text);

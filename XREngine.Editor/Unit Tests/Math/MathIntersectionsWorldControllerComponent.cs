@@ -9,6 +9,7 @@ using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -320,9 +321,18 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
                 row * cellDepth);
             CenterWithinCell(instanceTransform, entry.Bounds, desiredCenter);
             instanceTransform.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: true, childRecalcType: ELoopType.Parallel).Wait();
-            EditorUnitTests.RebuildPhysicsChainSkinnedBoxVisual(instanceRoot);
-            ResetBenchmarkInstancePhysicsChains(instanceRoot);
+            // RebuildPhysicsChainSkinnedBoxVisual already calls SetupParticles internally,
+            // so only run the separate ResetBenchmarkInstancePhysicsChains when no skinned
+            // mesh was rebuilt (avoiding a redundant SetupParticles + GPU binding rebuild).
+            if (!EditorUnitTests.RebuildPhysicsChainSkinnedBoxVisual(instanceRoot))
+                ResetBenchmarkInstancePhysicsChains(instanceRoot);
         }
+
+        // The spawn produced many new meshes that queue for GPU upload. Boost the
+        // per-frame mesh generation budget so the backlog drains in seconds rather
+        // than minutes. The budget auto-restores when the queue empties.
+        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
+            glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(100.0);
     }
 
     private void StopBenchmark(bool destroyInstances, bool updateStatus, bool cancelled)
@@ -477,6 +487,12 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     {
         instanceRoot.IterateComponents<PhysicsChainComponent>(component => component.DebugDrawChains = false, true);
         instanceRoot.IterateComponents<DebugDrawComponent>(component => component.IsActive = false, true);
+
+        // The factory registers a SceneNode tick (Late+Logic) that calls
+        // RecalculateMatrixHierarchy.Wait() every frame for debug visualization.
+        // SceneNode ticks survive component deactivation, so clear them here to
+        // avoid thousands of blocking hierarchy recalcs per frame during benchmarks.
+        ClearSceneNodeTicks(instanceRoot);
     }
 
     /// <summary>

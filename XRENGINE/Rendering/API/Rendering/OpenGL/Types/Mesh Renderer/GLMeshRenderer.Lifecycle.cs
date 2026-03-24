@@ -69,7 +69,10 @@ namespace XREngine.Rendering.OpenGL
                 Destroy();
 
                 if (mesh is not null)
+                {
+                    Renderer.MeshGenerationQueue.ResetRetries(this);
                     Renderer.MeshGenerationQueue.EnqueueGeneration(this);
+                }
             }
 
             /// <summary>

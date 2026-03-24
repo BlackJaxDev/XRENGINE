@@ -180,6 +180,20 @@ namespace XREngine.Components.Scene.Mesh
             var mat = CurrentLODRenderer?.Material;
             if (mat is not null)
                 _rc.RenderPass = mat.RenderPass;
+
+            // Seed startup transform state now that the render command and render info exist.
+            // This avoids the first registration frame depending on a later queued matrix update.
+            if (IsSkinned)
+            {
+                TransformBase basisTransform = RootBone ?? Component.Transform;
+                SetSkinnedRootRenderMatrix(basisTransform.RenderMatrix);
+                RenderInfo.CullingOffsetMatrix = basisTransform.WorldMatrix;
+            }
+            else
+            {
+                _rc.WorldMatrix = Component.Transform.RenderMatrix;
+                RenderInfo.CullingOffsetMatrix = Component.Transform.WorldMatrix;
+            }
         }
 
         private void DoRenderBounds()

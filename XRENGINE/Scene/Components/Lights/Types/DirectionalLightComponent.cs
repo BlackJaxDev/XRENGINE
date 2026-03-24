@@ -47,6 +47,7 @@ namespace XREngine.Components.Lights
         private float[] _cascadePercentages = [0.1f, 0.2f, 0.3f, 0.4f];
         private float _cascadeOverlapPercent = 0.1f;
         private bool _debugCascadeColors;
+        private readonly object _cascadeDataLock = new();
         private readonly List<CascadedShadowAabb> _cascadeAabbs = new(4);
         private readonly List<CascadeShadowSlice> _cascadeShadowSlices = new(MaxCascadeRenderCount);
         private XRTexture2DArray? _cascadeShadowMapTexture;
@@ -54,6 +55,18 @@ namespace XREngine.Components.Lights
         private XRViewport[] _cascadeShadowViewports = [];
         private Transform[] _cascadeShadowTransforms = [];
         private XRCamera[] _cascadeShadowCameras = [];
+
+        public DirectionalLightComponent()
+        {
+            // Match the lightmap bake defaults instead of the legacy near-zero runtime bias curve.
+            // Cascaded directional shadows expose acne much more aggressively when the effective
+            // compare bias never rises above ~1e-4.
+            ShadowExponentBase = 1.0f;
+            ShadowExponent = 1.0f;
+            ShadowMinBias = 0.00001f;
+            ShadowMaxBias = 0.004f;
+        }
+
         /// <summary>
         /// Scale of the orthographic shadow volume.
         /// </summary>
@@ -120,30 +133,106 @@ namespace XREngine.Components.Lights
         /// <summary>
         /// Cascaded shadow AABBs derived from the current camera/light intersection.
         /// </summary>
-        public IReadOnlyList<CascadedShadowAabb> CascadedShadowAabbs => _cascadeAabbs;
+        public IReadOnlyList<CascadedShadowAabb> CascadedShadowAabbs
+        {
+            get
+            {
+                lock (_cascadeDataLock)
+                    return [.. _cascadeAabbs];
+            }
+        }
 
         public XRTexture2DArray? CascadedShadowMapTexture => _cascadeShadowMapTexture;
-        public int ActiveCascadeCount => _cascadeShadowSlices.Count;
+        public int ActiveCascadeCount
+        {
+            get
+            {
+                lock (_cascadeDataLock)
+                    return _cascadeShadowSlices.Count;
+            }
+        }
 
         public float GetCascadeSplit(int index)
-            => index >= 0 && index < _cascadeShadowSlices.Count
-                ? _cascadeShadowSlices[index].SplitFarDistance
-                : float.MaxValue;
+        {
+            lock (_cascadeDataLock)
+                return index >= 0 && index < _cascadeShadowSlices.Count
+                    ? _cascadeShadowSlices[index].SplitFarDistance
+                    : float.MaxValue;
+        }
 
         public Matrix4x4 GetCascadeMatrix(int index)
-            => index >= 0 && index < _cascadeShadowSlices.Count
-                ? _cascadeShadowSlices[index].WorldToLightSpaceMatrix
-                : Matrix4x4.Identity;
+        {
+            lock (_cascadeDataLock)
+                return index >= 0 && index < _cascadeShadowSlices.Count
+                    ? _cascadeShadowSlices[index].WorldToLightSpaceMatrix
+                    : Matrix4x4.Identity;
+        }
 
         public Vector3 GetCascadeCenter(int index)
-            => index >= 0 && index < _cascadeShadowSlices.Count
-                ? _cascadeShadowSlices[index].Center
-                : Vector3.Zero;
+        {
+            lock (_cascadeDataLock)
+                return index >= 0 && index < _cascadeShadowSlices.Count
+                    ? _cascadeShadowSlices[index].Center
+                    : Vector3.Zero;
+        }
 
         public Vector3 GetCascadeHalfExtents(int index)
-            => index >= 0 && index < _cascadeShadowSlices.Count
-                ? _cascadeShadowSlices[index].HalfExtents
-                : Vector3.Zero;
+        {
+            lock (_cascadeDataLock)
+                return index >= 0 && index < _cascadeShadowSlices.Count
+                    ? _cascadeShadowSlices[index].HalfExtents
+                    : Vector3.Zero;
+        }
+
+        private int GetPublishedCascadeViewportCount(XRViewport[] viewports)
+        {
+            lock (_cascadeDataLock)
+                return Math.Min(_cascadeShadowSlices.Count, viewports.Length);
+        }
+
+        private int GetPublishedCascadeRenderCount(XRViewport[] viewports, XRFrameBuffer[] frameBuffers)
+        {
+            lock (_cascadeDataLock)
+                return Math.Min(_cascadeShadowSlices.Count, Math.Min(viewports.Length, frameBuffers.Length));
+        }
+
+        private Box? GetPublishedCascadeCullVolume(int index)
+        {
+            lock (_cascadeDataLock)
+            {
+                if (index < 0 || index >= _cascadeAabbs.Count)
+                    return null;
+
+                CascadedShadowAabb cascade = _cascadeAabbs[index];
+                Matrix4x4 transform =
+                    Matrix4x4.CreateFromQuaternion(cascade.Orientation) *
+                    Matrix4x4.CreateTranslation(cascade.Center);
+                return new Box(Vector3.Zero, cascade.HalfExtents * 2.0f, transform);
+            }
+        }
+
+        private void CopyPublishedCascadeUniformData(Span<float> splits, Span<Matrix4x4> matrices, out int cascadeCount)
+        {
+            int copyCount = Math.Min(MaxCascadeRenderCount, Math.Min(splits.Length, matrices.Length));
+
+            lock (_cascadeDataLock)
+            {
+                cascadeCount = _cascadeShadowSlices.Count;
+                for (int i = 0; i < copyCount; i++)
+                {
+                    if (i < cascadeCount)
+                    {
+                        splits[i] = _cascadeShadowSlices[i].SplitFarDistance;
+                        matrices[i] = _cascadeShadowSlices[i].WorldToLightSpaceMatrix;
+                    }
+                    else
+                    {
+                        splits[i] = float.MaxValue;
+                        matrices[i] = Matrix4x4.Identity;
+                    }
+                }
+            }
+        }
 
         public XRCamera? GetCascadeCamera(int index)
             => index >= 0 && index < _cascadeShadowCameras.Length
@@ -351,8 +440,7 @@ namespace XREngine.Components.Lights
 
         private void ReleaseCascadeShadowResources()
         {
-            _cascadeShadowSlices.Clear();
-            _cascadeAabbs.Clear();
+            ClearCascadeShadows();
 
             for (int i = 0; i < _cascadeShadowViewports.Length; i++)
             {
@@ -399,19 +487,33 @@ namespace XREngine.Components.Lights
             }
         }
 
+        internal void ClearCascadeShadows()
+        {
+            lock (_cascadeDataLock)
+            {
+                _cascadeAabbs.Clear();
+                _cascadeShadowSlices.Clear();
+            }
+        }
+
         internal void UpdateCascadeShadows(XRCamera playerCamera)
         {
-            _cascadeAabbs.Clear();
-            _cascadeShadowSlices.Clear();
-
             if (!CastsShadows || !EnableCascadedShadows || ShadowCamera is null)
+            {
+                ClearCascadeShadows();
                 return;
+            }
 
             EnsureCascadeShadowResources();
             if (_cascadeShadowMapTexture is null || _cascadeShadowCameras.Length == 0)
+            {
+                ClearCascadeShadows();
                 return;
+            }
 
             Frustum playerFrustum = playerCamera.WorldFrustum();
+            List<CascadeShadowSlice> nextShadowSlices = new(Math.Min(_cascadeShadowCameras.Length, MaxCascadeRenderCount));
+            List<CascadedShadowAabb> nextCascadeAabbs = new(Math.Min(_cascadeShadowCameras.Length, MaxCascadeRenderCount));
 
             BuildLightSpaceBasis(out Matrix4x4 worldToLight, out Matrix4x4 lightToWorld, out Quaternion lightRotation, out Vector3 lightDirection);
 
@@ -458,6 +560,10 @@ namespace XREngine.Components.Lights
                 // that are behind the visible slice but still cast into it.
                 min.Z -= shadowDepth;
 
+                Vector3 padding = Vector3.Max((max - min) * (CascadeBoundsPadding * 0.5f), new Vector3(1e-3f));
+                min -= padding;
+                max += padding;
+
                 if (max.X <= min.X || max.Y <= min.Y || max.Z <= min.Z)
                     continue;
 
@@ -471,7 +577,7 @@ namespace XREngine.Components.Lights
                 Matrix4x4 cascadeProj = _cascadeShadowCameras[resourceSlot].ProjectionMatrix;
                 Matrix4x4 viewProj = cascadeView * cascadeProj;
 
-                _cascadeShadowSlices.Add(new CascadeShadowSlice
+                nextShadowSlices.Add(new CascadeShadowSlice
                 {
                     CascadeIndex = cascadeIndex,
                     SplitFarDistance = splitEnd,
@@ -481,8 +587,17 @@ namespace XREngine.Components.Lights
                     WorldToLightSpaceMatrix = viewProj,
                 });
 
-                _cascadeAabbs.Add(new CascadedShadowAabb(0, cascadeIndex, centerWS, halfExtents, lightRotation));
+                nextCascadeAabbs.Add(new CascadedShadowAabb(0, cascadeIndex, centerWS, halfExtents, lightRotation));
                 resourceSlot++;
+            }
+
+            lock (_cascadeDataLock)
+            {
+                _cascadeShadowSlices.Clear();
+                _cascadeShadowSlices.AddRange(nextShadowSlices);
+
+                _cascadeAabbs.Clear();
+                _cascadeAabbs.AddRange(nextCascadeAabbs);
             }
         }
 
@@ -516,16 +631,18 @@ namespace XREngine.Components.Lights
             EnsureCascadeShadowResources();
             for (int i = 0; i < _cascadeShadowViewports.Length; i++)
                 _cascadeShadowViewports[i].WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
-            if (Type == ELightType.Dynamic)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Add(this);
         }
         protected override void OnComponentDeactivated()
         {
             ReleaseCascadeShadowResources();
-            if (Type == ELightType.Dynamic)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Remove(this);
             base.OnComponentDeactivated();
         }
+
+        protected override void RegisterDynamicLight(XRWorldInstance world)
+            => world.Lights.DynamicDirectionalLights.Add(this);
+
+        protected override void UnregisterDynamicLight(XRWorldInstance world)
+            => world.Lights.DynamicDirectionalLights.Remove(this);
 
         public override void SetShadowMapResolution(uint width, uint height)
         {
@@ -541,8 +658,10 @@ namespace XREngine.Components.Lights
             if (ShadowMap is not null)
                 _viewport.CollectVisible(false);
 
-            for (int i = 0; i < _cascadeShadowSlices.Count && i < _cascadeShadowViewports.Length; i++)
-                _cascadeShadowViewports[i].CollectVisible(false);
+            XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
+            int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
+            for (int i = 0; i < cascadeCount; i++)
+                cascadeShadowViewports[i].CollectVisible(false, collectionVolumeOverride: GetPublishedCascadeCullVolume(i));
         }
 
         public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
@@ -553,8 +672,10 @@ namespace XREngine.Components.Lights
             if (ShadowMap is not null)
                 _viewport.SwapBuffers();
 
-            for (int i = 0; i < _cascadeShadowSlices.Count && i < _cascadeShadowViewports.Length; i++)
-                _cascadeShadowViewports[i].SwapBuffers();
+            XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
+            int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
+            for (int i = 0; i < cascadeCount; i++)
+                cascadeShadowViewports[i].SwapBuffers();
 
             lightmapBaker?.ProcessDynamicCachedAutoBake(this);
         }
@@ -576,8 +697,11 @@ namespace XREngine.Components.Lights
             if (ShadowMap?.Material is null)
                 return;
 
-            for (int i = 0; i < _cascadeShadowSlices.Count && i < _cascadeShadowViewports.Length && i < _cascadeShadowFrameBuffers.Length; i++)
-                _cascadeShadowViewports[i].Render(_cascadeShadowFrameBuffers[i], null, null, true, ShadowMap.Material);
+            XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
+            XRFrameBuffer[] cascadeShadowFrameBuffers = _cascadeShadowFrameBuffers;
+            int cascadeCount = GetPublishedCascadeRenderCount(cascadeShadowViewports, cascadeShadowFrameBuffers);
+            for (int i = 0; i < cascadeCount; i++)
+                cascadeShadowViewports[i].Render(cascadeShadowFrameBuffers[i], null, null, true, ShadowMap.Material);
         }
 
         private static bool _loggedShadowCameraOnce = false;
@@ -626,13 +750,15 @@ namespace XREngine.Components.Lights
             program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
             program.Uniform($"{flatPrefix}WorldToLightSpaceMatrix", lightViewProj);  // Pre-computed for deferred shadow mapping
 
-            program.Uniform($"{flatPrefix}CascadeCount", _cascadeShadowSlices.Count);
+            Span<float> cascadeSplits = stackalloc float[MaxCascadeRenderCount];
+            Span<Matrix4x4> cascadeMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
+            CopyPublishedCascadeUniformData(cascadeSplits, cascadeMatrices, out int cascadeCount);
+
+            program.Uniform($"{flatPrefix}CascadeCount", cascadeCount);
             for (int i = 0; i < MaxCascadeRenderCount; i++)
             {
-                float split = i < _cascadeShadowSlices.Count ? _cascadeShadowSlices[i].SplitFarDistance : float.MaxValue;
-                Matrix4x4 cascadeMatrix = i < _cascadeShadowSlices.Count ? _cascadeShadowSlices[i].WorldToLightSpaceMatrix : Matrix4x4.Identity;
-                program.Uniform($"{flatPrefix}CascadeSplits[{i}]", split);
-                program.Uniform($"{flatPrefix}CascadeMatrices[{i}]", cascadeMatrix);
+                program.Uniform($"{flatPrefix}CascadeSplits[{i}]", cascadeSplits[i]);
+                program.Uniform($"{flatPrefix}CascadeMatrices[{i}]", cascadeMatrices[i]);
             }
 
             program.Uniform("DebugCascadeColors", _debugCascadeColors);
@@ -705,12 +831,6 @@ namespace XREngine.Components.Lights
                         EnsureCascadeShadowResources();
                     else
                         ReleaseCascadeShadowResources();
-                    break;
-                case nameof(Type):
-                    if (Type == ELightType.Dynamic)
-                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Add(this);
-                    else
-                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Remove(this);
                     break;
             }
         }

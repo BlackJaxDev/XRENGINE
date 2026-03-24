@@ -6,10 +6,11 @@
 
 // ============================================
 // Transform Matrices (Provided by engine - matches EEngineUniform names)
+// Engine sets vertex-stage camera uniforms with a "_VTX" suffix.
 // ============================================
 uniform mat4 ModelMatrix;
-uniform mat4 ViewMatrix;
-uniform mat4 ProjMatrix;
+uniform mat4 ViewMatrix_VTX;
+uniform mat4 ProjMatrix_VTX;
 
 // Camera (matches EEngineUniform.CameraPosition)
 uniform vec3 CameraPosition;
@@ -21,10 +22,10 @@ uniform float RenderTime;
 // Convenience macros for compatibility with u_ prefix code
 // ============================================
 #define u_ModelMatrix ModelMatrix
-#define u_ViewMatrix ViewMatrix
-#define u_ProjectionMatrix ProjMatrix
-#define u_ModelViewMatrix (ViewMatrix * ModelMatrix)
-#define u_ModelViewProjectionMatrix (ProjMatrix * ViewMatrix * ModelMatrix)
+#define u_ViewMatrix ViewMatrix_VTX
+#define u_ProjectionMatrix ProjMatrix_VTX
+#define u_ModelViewMatrix (ViewMatrix_VTX * ModelMatrix)
+#define u_ModelViewProjectionMatrix (ProjMatrix_VTX * ViewMatrix_VTX * ModelMatrix)
 #define u_CameraPosition CameraPosition
 #define u_Time RenderTime
 #define u_ScreenParams vec4(ScreenWidth, ScreenHeight, 1.0 + 1.0/ScreenWidth, 1.0 + 1.0/ScreenHeight)

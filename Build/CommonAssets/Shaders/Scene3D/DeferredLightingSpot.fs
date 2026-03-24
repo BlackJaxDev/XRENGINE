@@ -34,6 +34,9 @@ uniform float ShadowMult = 3.0f;
 uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 uniform bool LightHasShadowMap = true; // Added
+uniform int ShadowSamples = 16;
+uniform float ShadowFilterRadius = 0.001f;
+uniform bool EnablePCSS = true;
 
 struct SpotLight
 {
@@ -54,6 +57,56 @@ struct SpotLight
 };
 uniform SpotLight LightData;
 
+const vec2 LocalShadowPoissonDisk[16] = vec2[](
+	vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+	vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
+	vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
+	vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
+	vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+	vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+	vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
+	vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790)
+);
+
+float SampleShadowMapSoftLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int sampleCount, in float filterRadius)
+{
+	int clampedSamples = clamp(sampleCount, 1, 16);
+	vec2 texelSize = 1.0f / vec2(textureSize(shadowMap, 0));
+	float radius = max(filterRadius, max(texelSize.x, texelSize.y));
+	float lit = 0.0f;
+
+	for (int i = 0; i < 16; ++i)
+	{
+		if (i >= clampedSamples)
+			break;
+
+		vec2 sampleUv = shadowCoord.xy + LocalShadowPoissonDisk[i] * radius;
+		float sampleDepth = texture(shadowMap, sampleUv).r;
+		lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0f : 0.0f;
+	}
+
+	return lit / float(clampedSamples);
+}
+
+float SampleShadowMapPCFLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int kernelSize)
+{
+	float lit = 0.0f;
+	vec2 texelSize = 1.0f / vec2(textureSize(shadowMap, 0));
+	int halfKernel = kernelSize / 2;
+	float sampleCount = float(kernelSize * kernelSize);
+
+	for (int x = -halfKernel; x <= halfKernel; ++x)
+	{
+		for (int y = -halfKernel; y <= halfKernel; ++y)
+		{
+			float sampleDepth = texture(shadowMap, shadowCoord.xy + vec2(x, y) * texelSize).r;
+			lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0f : 0.0f;
+		}
+	}
+
+	return lit / sampleCount;
+}
+
 float GetShadowBias(in float NoL)
 {
     float mapped = pow(ShadowBase * (1.0f - NoL), ShadowMult);
@@ -65,16 +118,23 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
   if (!LightHasShadowMap) return 1.0f;
   if (NoL <= 0.0f) return 0.0f;
 	vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
-	vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
-	if (!XRENGINE_ShadowCoordInBounds(fragCoord))
+	vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
+	vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
+	fragCoord = fragCoord * 0.5f + 0.5f;
+	if (fragCoord.x < 0.0f || fragCoord.x > 1.0f ||
+		fragCoord.y < 0.0f || fragCoord.y > 1.0f ||
+		fragCoord.z < 0.0f || fragCoord.z > 1.0f)
  return 1.0f;
 	//Create bias depending on angle of normal to the light
 	float bias = GetShadowBias(NoL);
 
-	float depth = texture(ShadowMap, fragCoord.xy).r;
-	float litHard = XRENGINE_SampleShadowMapSimpleAddBias(ShadowMap, fragCoord, bias);
-	float lit = XRENGINE_SampleShadowMapPCFAddBias(ShadowMap, fragCoord, bias, 3);
-	return XRENGINE_BlendShadowFilter(litHard, lit, fragCoord.z - depth, 0.1f);
+	if (EnablePCSS)
+	{
+		int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
+		return SampleShadowMapSoftLocal(ShadowMap, fragCoord, bias, sampleCount, ShadowFilterRadius);
+	}
+
+	return SampleShadowMapPCFLocal(ShadowMap, fragCoord, bias, 3);
 }
 vec3 CalcColor(
 in float NoL,

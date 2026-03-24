@@ -183,8 +183,8 @@ namespace XREngine.Scene
 
             // Support both legacy uniform names (DirLightData/PointLightData/SpotLightData)
             // and dynamically generated forward shader names (DirectionalLights/PointLights/SpotLights).
-            // NOTE: We intentionally do not rely on program.HasUniform(...) here because uniforms may come
-            // from #pragma snippet includes (resolved later), and HasUniform() operates on raw source text.
+            // NOTE: We intentionally do not rely on program.HasUniform(...) here because these bindings are
+            // part of the renderer's required forward-lighting contract rather than optional material features.
             const string dirArrayGenerated = "DirectionalLights";
             const string spotArrayGenerated = "SpotLights";
             const string pointArrayGenerated = "PointLights";
@@ -205,6 +205,7 @@ namespace XREngine.Scene
                 ? backing
                 : null;
             bool ambientOcclusionEnabled = currentPipeline is not null &&
+                (aoSettings?.Enabled ?? true) &&
                 currentPipeline.TryGetTexture(
                     DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
                     out ambientOcclusionTexture) && ambientOcclusionTexture is not null;
@@ -408,6 +409,12 @@ namespace XREngine.Scene
             using var sample = Engine.Profiler.Start("Lights3DCollection.CollectVisibleItems");
 
             //CollectingVisibleShadowMaps = true;
+
+            // Cascaded shadow slices must be finalized before directional-light shadow
+            // viewports collect and swap their render-command buffers for this frame.
+            // If we build the cascades later during RenderShadowMaps(), lighting can
+            // switch over to ShadowMapArray while the cascade buffers are still empty.
+            PrepareDirectionalShadowMaps();
 
             _shadowLightsCollectedThisTick.Clear();
 
@@ -725,6 +732,69 @@ namespace XREngine.Scene
             UpdateCameraLightIntersections(DynamicPointLights, preparedCamera, new ColorF4(1.0f, 0.2f, 0.8f, 1.0f));
         }
 
+        private static bool ViewportPrefersCascadedDirectionalShadows(XRViewport viewport)
+            => viewport.CameraComponent is { DirectionalShadowRenderingMode: EDirectionalShadowRenderingMode.Cascaded };
+
+        private XRCamera? ResolveDirectionalShadowSourceCamera()
+        {
+            XRCamera? fallback = null;
+
+            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+            {
+                if (!ReferenceEquals(viewport.World, World) || viewport.Suppress3DSceneRendering)
+                    continue;
+
+                XRCamera? camera = viewport.ActiveCamera;
+                if (camera is null)
+                    continue;
+
+                if (ViewportPrefersCascadedDirectionalShadows(viewport))
+                    return camera;
+
+                fallback ??= camera;
+            }
+
+            XRViewport?[] vrViewports =
+            [
+                Engine.VRState.LeftEyeViewport,
+                Engine.VRState.RightEyeViewport,
+            ];
+
+            for (int i = 0; i < vrViewports.Length; i++)
+            {
+                XRViewport? viewport = vrViewports[i];
+                if (viewport is null || !ReferenceEquals(viewport.World, World) || viewport.Suppress3DSceneRendering)
+                    continue;
+
+                XRCamera? camera = viewport.ActiveCamera;
+                if (camera is null)
+                    continue;
+
+                if (ViewportPrefersCascadedDirectionalShadows(viewport))
+                    return camera;
+
+                fallback ??= camera;
+            }
+
+            return fallback;
+        }
+
+        private void PrepareDirectionalShadowMaps()
+        {
+            XRCamera? cascadeCamera = ResolveDirectionalShadowSourceCamera();
+
+            foreach (DirectionalLightComponent light in DynamicDirectionalLights)
+            {
+                if (!light.IsActiveInHierarchy)
+                    continue;
+
+                if (cascadeCamera is not null && light.CastsShadows && light.EnableCascadedShadows)
+                    light.UpdateCascadeShadows(cascadeCamera);
+                else
+                    light.ClearCascadeShadows();
+            }
+        }
+
         private void UpdateDirectionalCameraLightIntersections(IReadOnlyList<DirectionalLightComponent> lights, XRCamera camera, PreparedFrustum preparedCamera, ColorF4 debugColor)
         {
             for (int i = 0; i < lights.Count; i++)
@@ -733,7 +803,6 @@ namespace XREngine.Scene
                 _frustumScratch.Clear();
                 light.BuildShadowFrusta(_frustumScratch);
                 light.UpdateCameraIntersections(preparedCamera, _frustumScratch);
-                light.UpdateCascadeShadows(camera);
 
                 RenderIntersectionDebug(light, debugColor);
                 RenderCascadeDebug(light, debugColor);
@@ -816,6 +885,9 @@ namespace XREngine.Scene
         {
             using var sample = Engine.Profiler.Start("Lights3DCollection.RenderShadowMaps");
 
+            if (collectVisibleNow)
+                PrepareDirectionalShadowMaps();
+
             RenderingShadowMaps = true;
 
             foreach (DirectionalLightComponent l in DynamicDirectionalLights)
@@ -897,8 +969,21 @@ namespace XREngine.Scene
                 if (root is null)
                     continue;
 
+                foreach (var light in root.FindAllDescendantComponents<DirectionalLightComponent>())
+                    if (light.IsActiveInHierarchy && light.Type == ELightType.Dynamic)
+                        DynamicDirectionalLights.Add(light);
+
+                foreach (var light in root.FindAllDescendantComponents<SpotLightComponent>())
+                    if (light.IsActiveInHierarchy && light.Type == ELightType.Dynamic)
+                        DynamicSpotLights.Add(light);
+
+                foreach (var light in root.FindAllDescendantComponents<PointLightComponent>())
+                    if (light.IsActiveInHierarchy && light.Type == ELightType.Dynamic)
+                        DynamicPointLights.Add(light);
+
                 foreach (var probe in root.FindAllDescendantComponents<LightProbeComponent>())
-                    AddLightProbe(probe);
+                    if (probe.IsActiveInHierarchy)
+                        AddLightProbe(probe);
             }
         }
 

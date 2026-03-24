@@ -81,15 +81,17 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            if (Type == ELightType.Dynamic)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicSpotLights.Add(this);
         }
         protected override void OnComponentDeactivated()
         {
-            if (Type == ELightType.Dynamic)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicSpotLights.Remove(this);
             base.OnComponentDeactivated();
         }
+
+        protected override void RegisterDynamicLight(XRWorldInstance world)
+            => world.Lights.DynamicSpotLights.Add(this);
+
+        protected override void UnregisterDynamicLight(XRWorldInstance world)
+            => world.Lights.DynamicSpotLights.Remove(this);
 
         public override void SetUniforms(XRRenderProgram program, string? targetStructName = null)
         {
@@ -187,12 +189,6 @@ namespace XREngine.Components.Capture.Lights.Types
                 case nameof(Transform):
                 case nameof(Distance):
                     UpdateCones(Transform.RenderMatrix);
-                    break;
-                case nameof(Type):
-                    if (Type == ELightType.Dynamic)
-                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicSpotLights.Add(this);
-                    else
-                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicSpotLights.Remove(this);
                     break;
             }
         }

@@ -1298,7 +1298,42 @@ public static partial class EditorImGuiUI
             if (snapshots.Count == 0)
                 return;
 
-            var snapshot = snapshots[0];
+            int runningCount = 0;
+            int determinateRunningCount = 0;
+            int indeterminateRunningCount = 0;
+            float aggregateProgress = 0f;
+            EditorJobTracker.TrackedJobSnapshot primaryRunningJob = default;
+            bool hasPrimaryRunningJob = false;
+
+            foreach (var snapshot in snapshots)
+            {
+                if (snapshot.State != EditorJobTracker.TrackedJobState.Running)
+                    continue;
+
+                runningCount++;
+                if (!hasPrimaryRunningJob)
+                {
+                    primaryRunningJob = snapshot;
+                    hasPrimaryRunningJob = true;
+                }
+
+                if (snapshot.IsDeterminate)
+                {
+                    determinateRunningCount++;
+                    aggregateProgress += snapshot.Progress;
+                }
+                else
+                {
+                    indeterminateRunningCount++;
+                }
+            }
+
+            if (runningCount == 0)
+                return;
+
+            if (determinateRunningCount > 0)
+                aggregateProgress /= determinateRunningCount;
+
             var style = ImGui.GetStyle();
             float windowWidth = ImGui.GetWindowWidth();
             float indicatorWidth = Math.Max(160f, Math.Min(320f, windowWidth * 0.35f));
@@ -1312,24 +1347,33 @@ public static partial class EditorImGuiUI
             ImGui.SameLine(0f, 0f);
             ImGui.SetCursorPos(new Vector2(desiredX, cursorY));
 
-            string overlay = BuildJobOverlay(snapshot, snapshots.Count);
+            string overlay = BuildJobOverlay(primaryRunningJob, runningCount);
             float barHeight = ImGui.GetFrameHeight() - style.FramePadding.Y * 2f;
             if (barHeight < 0f)
                 barHeight = ImGui.GetFrameHeight();
 
             var barSize = new Vector2(indicatorWidth, barHeight);
-            var colorOverride = ResolveJobProgressColor(snapshot.State);
-            if (colorOverride.HasValue)
+            if (determinateRunningCount > 0)
             {
-                var color = colorOverride.Value;
-                ImGui.PushStyleColor(ImGuiCol.PlotHistogram, color);
-                ImGui.PushStyleColor(ImGuiCol.PlotHistogramHovered, color);
+                var colorOverride = ResolveJobProgressColor(primaryRunningJob.State);
+                if (colorOverride.HasValue)
+                {
+                    var color = colorOverride.Value;
+                    ImGui.PushStyleColor(ImGuiCol.PlotHistogram, color);
+                    ImGui.PushStyleColor(ImGuiCol.PlotHistogramHovered, color);
+                }
+
+                ImGui.ProgressBar(aggregateProgress, barSize, overlay);
+
+                if (colorOverride.HasValue)
+                    ImGui.PopStyleColor(2);
+            }
+            else
+            {
+                DrawIndeterminateJobHeaderWidget(barSize, overlay);
             }
 
-            ImGui.ProgressBar(snapshot.Progress, barSize, overlay);
-
-            if (colorOverride.HasValue)
-                ImGui.PopStyleColor(2);
+            DrawJobProgressTooltip(snapshots, runningCount, determinateRunningCount, indeterminateRunningCount, aggregateProgress);
         }
 
         private static string BuildJobOverlay(EditorJobTracker.TrackedJobSnapshot snapshot, int jobCount)
@@ -1339,9 +1383,150 @@ public static partial class EditorImGuiUI
                 status = snapshot.Label;
 
             if (jobCount > 1)
-                status = $"{status} (+{jobCount - 1})";
+                return $"{jobCount} jobs running";
 
             return status;
+        }
+
+        private static void DrawIndeterminateJobHeaderWidget(Vector2 size, string overlay)
+        {
+            const float rounding = 6f;
+
+            ImGui.InvisibleButton("##MenuBarJobSpinner", size);
+
+            Vector2 min = ImGui.GetItemRectMin();
+            Vector2 max = ImGui.GetItemRectMax();
+            var drawList = ImGui.GetWindowDrawList();
+            uint background = ImGui.GetColorU32(ImGuiCol.FrameBg);
+            uint border = ImGui.GetColorU32(ImGuiCol.Border);
+            uint textColor = ImGui.GetColorU32(ImGuiCol.Text);
+            Vector4 spinnerColor = new(0.42f, 0.76f, 0.96f, 1f);
+
+            drawList.AddRectFilled(min, max, background, rounding);
+            drawList.AddRect(min, max, border, rounding);
+
+            float spinnerRadius = MathF.Max(4f, MathF.Min(size.Y * 0.28f, 7f));
+            Vector2 center = new(min.X + 14f + spinnerRadius, (min.Y + max.Y) * 0.5f);
+            DrawRadialSpinner(drawList, center, spinnerRadius, spinnerColor);
+
+            Vector2 textPos = new(center.X + spinnerRadius + 8f, min.Y + (size.Y - ImGui.GetTextLineHeight()) * 0.5f);
+            drawList.AddText(textPos, textColor, overlay);
+        }
+
+        private static void DrawJobProgressTooltip(
+            IReadOnlyList<EditorJobTracker.TrackedJobSnapshot> snapshots,
+            int runningCount,
+            int determinateRunningCount,
+            int indeterminateRunningCount,
+            float aggregateProgress)
+        {
+            if (!ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled | ImGuiHoveredFlags.DelayShort))
+                return;
+
+            if (!ImGui.BeginTooltip())
+                return;
+
+            ImGui.TextUnformatted($"Running jobs: {runningCount}");
+            if (determinateRunningCount > 0)
+            {
+                ImGui.SameLine();
+                ImGui.TextDisabled($"Aggregate {aggregateProgress:P0}");
+            }
+
+            if (indeterminateRunningCount > 0)
+                ImGui.TextDisabled($"Indeterminate: {indeterminateRunningCount}");
+
+            ImGui.Separator();
+
+            for (int i = 0; i < snapshots.Count; i++)
+            {
+                DrawTrackedJobTooltipEntry(snapshots[i]);
+                if (i < snapshots.Count - 1)
+                    ImGui.Separator();
+            }
+
+            ImGui.EndTooltip();
+        }
+
+        private static void DrawTrackedJobTooltipEntry(EditorJobTracker.TrackedJobSnapshot snapshot)
+        {
+            string status = snapshot.Status ?? snapshot.Label;
+            if (string.IsNullOrWhiteSpace(status))
+                status = snapshot.Label;
+
+            ImGui.TextUnformatted(snapshot.Label);
+            ImGui.TextDisabled(status);
+
+            float width = MathF.Max(220f, ImGui.CalcTextSize(status).X + 32f);
+            Vector2 size = new(width, ImGui.GetFrameHeight());
+
+            if (snapshot.State == EditorJobTracker.TrackedJobState.Running && !snapshot.IsDeterminate)
+            {
+                DrawInlineSpinnerRow($"##TrackedJobSpinner{snapshot.JobId}", size, status);
+                return;
+            }
+
+            string overlay = snapshot.State switch
+            {
+                EditorJobTracker.TrackedJobState.Faulted => "Failed",
+                EditorJobTracker.TrackedJobState.Canceled => "Canceled",
+                EditorJobTracker.TrackedJobState.Completed => "Completed",
+                _ => $"{snapshot.Progress:P0}"
+            };
+
+            var colorOverride = ResolveJobProgressColor(snapshot.State);
+            if (colorOverride.HasValue)
+            {
+                var color = colorOverride.Value;
+                ImGui.PushStyleColor(ImGuiCol.PlotHistogram, color);
+                ImGui.PushStyleColor(ImGuiCol.PlotHistogramHovered, color);
+            }
+
+            ImGui.ProgressBar(snapshot.Progress, size, overlay);
+
+            if (colorOverride.HasValue)
+                ImGui.PopStyleColor(2);
+        }
+
+        private static void DrawInlineSpinnerRow(string id, Vector2 size, string overlay)
+        {
+            const float rounding = 6f;
+
+            ImGui.InvisibleButton(id, size);
+
+            Vector2 min = ImGui.GetItemRectMin();
+            Vector2 max = ImGui.GetItemRectMax();
+            var drawList = ImGui.GetWindowDrawList();
+            uint background = ImGui.GetColorU32(ImGuiCol.FrameBg);
+            uint border = ImGui.GetColorU32(ImGuiCol.Border);
+            uint textColor = ImGui.GetColorU32(ImGuiCol.Text);
+            Vector4 spinnerColor = new(0.42f, 0.76f, 0.96f, 1f);
+
+            drawList.AddRectFilled(min, max, background, rounding);
+            drawList.AddRect(min, max, border, rounding);
+
+            float spinnerRadius = MathF.Max(4f, MathF.Min(size.Y * 0.28f, 7f));
+            Vector2 center = new(min.X + 14f + spinnerRadius, (min.Y + max.Y) * 0.5f);
+            DrawRadialSpinner(drawList, center, spinnerRadius, spinnerColor);
+
+            Vector2 textPos = new(center.X + spinnerRadius + 8f, min.Y + (size.Y - ImGui.GetTextLineHeight()) * 0.5f);
+            drawList.AddText(textPos, textColor, overlay);
+        }
+
+        private static void DrawRadialSpinner(ImDrawListPtr drawList, Vector2 center, float radius, Vector4 color)
+        {
+            const int dotCount = 10;
+            float time = (float)ImGui.GetTime() * 4.2f;
+            float dotRadius = MathF.Max(1.5f, radius * 0.34f);
+
+            for (int i = 0; i < dotCount; i++)
+            {
+                float normalized = (i + 1f) / dotCount;
+                float angle = time + (i / (float)dotCount) * MathF.PI * 2f;
+                Vector2 offset = new(MathF.Cos(angle) * radius, MathF.Sin(angle) * radius);
+                Vector4 dotColor = new(color.X, color.Y, color.Z, color.W * (0.2f + normalized * 0.8f));
+                drawList.AddCircleFilled(center + offset, dotRadius, ImGui.ColorConvertFloat4ToU32(dotColor), 12);
+            }
         }
 
         private static void DrawDirtyAssetSaveMenuItems()
