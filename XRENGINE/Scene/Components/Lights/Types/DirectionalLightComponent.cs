@@ -22,6 +22,7 @@ namespace XREngine.Components.Lights
         private const float NearZ = 0.01f;
 
         private Vector3 _scale = Vector3.One;
+        private float _cascadedShadowDistance = 200.0f;
 
         public DirectionalLightComponent()
         {
@@ -47,6 +48,44 @@ namespace XREngine.Components.Lights
             get => _scale;
             set => SetField(ref _scale, value);
         }
+
+        /// <summary>
+        /// Maximum camera distance covered by cascaded shadow splits for this light.
+        /// When unset, the system falls back to the source camera shadow collection distance
+        /// and then the camera far plane.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Cascade Distance")]
+        [Description("Maximum view-space distance covered by cascaded shadows. Set to 0 or Infinity to use the source camera shadow distance / far plane.")]
+        public float CascadedShadowDistance
+        {
+            get => _cascadedShadowDistance;
+            set
+            {
+                float normalized = value;
+                if (!float.IsFinite(normalized) || normalized <= 0.0f)
+                    normalized = float.PositiveInfinity;
+
+                SetField(ref _cascadedShadowDistance, normalized);
+            }
+        }
+
+        internal float GetEffectiveCascadedShadowFarDistance(XRCamera sourceCamera)
+        {
+            float near = sourceCamera.NearZ;
+            float effectiveFar = sourceCamera.FarZ;
+            if (!float.IsFinite(effectiveFar) || effectiveFar <= near)
+                effectiveFar = near + 1.0f;
+
+            effectiveFar = ResolveFiniteCascadeDistanceLimit(effectiveFar, sourceCamera.ShadowCollectMaxDistance);
+            effectiveFar = ResolveFiniteCascadeDistanceLimit(effectiveFar, CascadedShadowDistance);
+            return MathF.Max(near + 1e-4f, effectiveFar);
+        }
+
+        private static float ResolveFiniteCascadeDistanceLimit(float current, float candidate)
+            => float.IsFinite(candidate) && candidate > 0.0f
+                ? MathF.Min(current, candidate)
+                : current;
 
         public static XRMesh GetVolumeMesh()
             => XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f));
