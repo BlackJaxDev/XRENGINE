@@ -72,6 +72,7 @@ public class UnitTestingWorldSettings
     public bool DeferredDecal = false;
     public bool AddCameraVRPickup = false;
     public bool Mirror = true;
+    public bool DynamicWaterQuad = false;
     public bool ForceDebugOpaquePipeline = false;
 
     public bool DirLight = true;

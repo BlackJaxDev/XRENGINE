@@ -67,6 +67,9 @@ public sealed class CustomUIComponentEditor : IXRComponentEditor
             case CustomUITextField textField:
                 DrawTextField(textField);
                 break;
+            case CustomUIButtonField buttonField:
+                DrawButtonField(buttonField);
+                break;
             default:
                 ImGui.TextDisabled($"Unsupported control type: {field.GetType().Name}");
                 break;
@@ -125,6 +128,14 @@ public sealed class CustomUIComponentEditor : IXRComponentEditor
     private static void DrawTextField(CustomUITextField field)
     {
         ImGui.TextUnformatted($"{field.Label}: {field.GetValue()}");
+        DrawTooltip(field);
+    }
+
+    private static void DrawButtonField(CustomUIButtonField field)
+    {
+        if (ImGui.Button(field.Label))
+            field.Invoke();
+
         DrawTooltip(field);
     }
 

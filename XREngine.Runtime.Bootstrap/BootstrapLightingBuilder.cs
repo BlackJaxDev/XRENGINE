@@ -48,7 +48,10 @@ public static class BootstrapLightingBuilder
         var dirLightNode = new SceneNode(rootNode) { Name = "TestDirectionalLightNode" };
         var dirLightTransform = dirLightNode.SetTransform<Transform>();
         dirLightTransform.Translation = new Vector3(0.0f, 0.0f, 0.0f);
-        dirLightTransform.Rotation = Quaternion.CreateFromYawPitchRoll(-120, 95, 0);
+        dirLightTransform.Rotation = Quaternion.CreateFromYawPitchRoll(
+            float.DegreesToRadians(-120),
+            float.DegreesToRadians(-55),
+            0.0f);
         if (!dirLightNode.TryAddComponent<DirectionalLightComponent>(out var dirLightComp))
             return;
 

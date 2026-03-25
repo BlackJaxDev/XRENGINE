@@ -78,6 +78,16 @@ public sealed class CustomUIComponent : XRComponent
         _fields.Add(field);
         return field;
     }
+
+    public CustomUIButtonField AddButtonField(
+        string label,
+        Action action,
+        string? helpText = null)
+    {
+        var field = new CustomUIButtonField(label, action, helpText);
+        _fields.Add(field);
+        return field;
+    }
 }
 
 public abstract class CustomUIField(string label, string? helpText = null)
@@ -167,4 +177,14 @@ public sealed class CustomUITextField(
 {
     public string GetValue()
         => getter();
+}
+
+public sealed class CustomUIButtonField(
+    string label,
+    Action action,
+    string? helpText = null)
+    : CustomUIField(label, helpText)
+{
+    public void Invoke()
+        => action();
 }

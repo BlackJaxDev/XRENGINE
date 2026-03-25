@@ -48,7 +48,13 @@ namespace XREngine.Rendering
             EPrimitiveType.LineStripAdjacency => throw new NotImplementedException(),
             EPrimitiveType.TrianglesAdjacency => throw new NotImplementedException(),
             EPrimitiveType.TriangleStripAdjacency => throw new NotImplementedException(),
-            EPrimitiveType.Patches => throw new NotImplementedException(),
+            EPrimitiveType.Patches => PatchVertices switch
+            {
+                1 => _points?.Count ?? 0,
+                2 => _lines?.Count * 2 ?? 0,
+                3 => _triangles?.Count * 3 ?? 0,
+                _ => 0,
+            },
             _ => throw new NotImplementedException(),
         };
 

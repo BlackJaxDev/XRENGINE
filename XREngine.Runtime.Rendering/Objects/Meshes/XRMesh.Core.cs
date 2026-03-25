@@ -69,14 +69,24 @@ public partial class XRMesh : XRAsset
     public List<int>? Points
     {
         get => _points;
-        set { InvalidateIndexBufferCache(EPrimitiveType.Points); SetField(ref _points, value); }
+        set
+        {
+            InvalidateIndexBufferCache(EPrimitiveType.Points);
+            InvalidateIndexBufferCache(EPrimitiveType.Patches);
+            SetField(ref _points, value);
+        }
     }
 
     [Browsable(false)]
     public List<IndexLine>? Lines
     {
         get => _lines;
-        set { InvalidateIndexBufferCache(EPrimitiveType.Lines); SetField(ref _lines, value); }
+        set
+        {
+            InvalidateIndexBufferCache(EPrimitiveType.Lines);
+            InvalidateIndexBufferCache(EPrimitiveType.Patches);
+            SetField(ref _lines, value);
+        }
     }
 
     [Browsable(false)]
@@ -84,7 +94,12 @@ public partial class XRMesh : XRAsset
     public List<IndexTriangle>? Triangles
     {
         get => _triangles;
-        set { InvalidateIndexBufferCache(EPrimitiveType.Triangles); SetField(ref _triangles, value); }
+        set
+        {
+            InvalidateIndexBufferCache(EPrimitiveType.Triangles);
+            InvalidateIndexBufferCache(EPrimitiveType.Patches);
+            SetField(ref _triangles, value);
+        }
     }
 
     [Browsable(false)]
@@ -92,6 +107,18 @@ public partial class XRMesh : XRAsset
     {
         get => _type;
         set => SetField(ref _type, value);
+    }
+
+    private int _patchVertices = 3;
+    public int PatchVertices
+    {
+        get => _patchVertices;
+        set
+        {
+            int normalized = value < 1 ? 1 : value;
+            InvalidateIndexBufferCache(EPrimitiveType.Patches);
+            SetField(ref _patchVertices, normalized);
+        }
     }
 
     private AABB _bounds = new(Vector3.Zero, Vector3.Zero);

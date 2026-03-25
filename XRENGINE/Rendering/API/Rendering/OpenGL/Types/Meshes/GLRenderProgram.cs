@@ -75,8 +75,6 @@ namespace XREngine.Rendering.OpenGL
             /// <returns></returns>
             public int GetUniformLocation(string name)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.GetUniformLocation");
-
                 if (!IsLinked)
                     return -1;
 
@@ -96,8 +94,6 @@ namespace XREngine.Rendering.OpenGL
             }
             private bool GetUniform(string name, out int location)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.GetUniform");
-
                 bool failed = _failedUniforms.ContainsKey(name);
                 if (failed)
                 {
@@ -136,8 +132,6 @@ namespace XREngine.Rendering.OpenGL
             /// <returns></returns>
             public int GetAttributeLocation(string name)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.GetAttributeLocation");
-
                 if (!IsLinked)
                     return -1;
 
@@ -152,8 +146,6 @@ namespace XREngine.Rendering.OpenGL
             }
             private bool GetAttribute(string name, out int location)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.GetAttribute");
-
                 bool failed = _failedAttributes.Contains(name);
                 if (failed)
                 {
@@ -568,10 +560,10 @@ namespace XREngine.Rendering.OpenGL
 
             public void BeginBindingBatch()
             {
-                Interlocked.Exchange(ref _uniformBindingAttempts, 0);
-                Interlocked.Exchange(ref _uniformBindings, 0);
-                Interlocked.Exchange(ref _samplerBindingAttempts, 0);
-                Interlocked.Exchange(ref _samplerBindings, 0);
+                _uniformBindingAttempts = 0;
+                _uniformBindings = 0;
+                _samplerBindingAttempts = 0;
+                _samplerBindings = 0;
                 _boundSamplerLocations.Clear();
             }
 
@@ -659,26 +651,22 @@ namespace XREngine.Rendering.OpenGL
 
             private bool MarkUniformBinding(int location)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.MarkUniformBinding");
-
                 if (location < 0)
                     return false;
 
-                Interlocked.Increment(ref _uniformBindingAttempts);
-                Interlocked.Increment(ref _uniformBindings);
+                _uniformBindingAttempts++;
+                _uniformBindings++;
                 
                 return true;
             }
 
             private bool MarkSamplerBinding(int location)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.MarkSamplerBinding");
-
                 if (location < 0)
                     return false;
 
-                Interlocked.Increment(ref _samplerBindingAttempts);
-                Interlocked.Increment(ref _samplerBindings);
+                _samplerBindingAttempts++;
+                _samplerBindings++;
                 
                 return true;
             }
@@ -821,28 +809,39 @@ namespace XREngine.Rendering.OpenGL
                 foreach (string filePath in Directory.EnumerateFiles(path, "*.bin"))
                 {
                     string name = Path.GetFileNameWithoutExtension(filePath);
-                    string[] parts = name.Split('-');
-                    if (parts.Length != 3)
+
+                    // Parse "hash-format-version" without allocating a string[] via Split.
+                    int firstDash = name.IndexOf('-');
+                    if (firstDash < 0)
+                    {
+                        Debug.OpenGLWarning($"Invalid binary shader cache file name, deleting: {name}");
+                        File.Delete(filePath);
+                        continue;
+                    }
+                    int secondDash = name.IndexOf('-', firstDash + 1);
+                    if (secondDash < 0)
                     {
                         Debug.OpenGLWarning($"Invalid binary shader cache file name, deleting: {name}");
                         File.Delete(filePath);
                         continue;
                     }
 
-                    string fileVer = parts[2];
-                    if (!string.Equals(currentVer, fileVer, StringComparison.OrdinalIgnoreCase))
+                    ReadOnlySpan<char> fileVer = name.AsSpan(secondDash + 1);
+                    if (!fileVer.Equals(currentVer.AsSpan(), StringComparison.OrdinalIgnoreCase))
                     {
-                        Debug.OpenGLWarning($"Binary shader cache file version mismatch, deleting: {fileVer} / {currentVer}");
+                        Debug.OpenGLWarning($"Binary shader cache file version mismatch, deleting: {name}");
                         File.Delete(filePath);
                         continue;
                     }
 
                     try
                     {
-                        if (ulong.TryParse(parts[0], out ulong hash))
+                        ReadOnlySpan<char> hashSpan = name.AsSpan(0, firstDash);
+                        if (ulong.TryParse(hashSpan, out ulong hash))
                         {
                             byte[] binary = File.ReadAllBytes(filePath);
-                            GLEnum format = (GLEnum)Enum.Parse(typeof(GLEnum), parts[1]);
+                            ReadOnlySpan<char> formatSpan = name.AsSpan(firstDash + 1, secondDash - firstDash - 1);
+                            GLEnum format = Enum.Parse<GLEnum>(formatSpan);
                             UniformMetadataEntry[]? metadata = ReadUniformMetadataCache(GetBinaryShaderCacheMetaPath(filePath));
                             BinaryProgram binaryProgram = new(binary, format, (uint)binary.Length, metadata);
                             BinaryCache.TryAdd(hash, binaryProgram);
@@ -973,7 +972,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             //private static object HashLock = new();
-            private static readonly ConcurrentBag<ulong> Failed = [];
+            private static readonly ConcurrentDictionary<ulong, byte> Failed = new();
 
             /// <summary>
             /// Tracks hashes currently being compiled from source so that duplicate
@@ -1025,7 +1024,7 @@ namespace XREngine.Rendering.OpenGL
                     if (anyFailed)
                     {
                         Debug.OpenGLWarning($"Failed to compile program with hash {Hash}.");
-                        Failed.Add(Hash);
+                        Failed.TryAdd(Hash, 0);
                         InFlightCompilations.TryRemove(Hash, out _);
                         CleanupAsyncLink();
                         return false;
@@ -1130,7 +1129,6 @@ namespace XREngine.Rendering.OpenGL
                 _shaderCache.ForEach(x => x.Value.Destroy());
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
             }
-
             public bool Link(bool force = false)
             {
                 using var prof = Engine.Profiler.Start("GLRenderProgram.Link");
@@ -1262,7 +1260,7 @@ namespace XREngine.Rendering.OpenGL
                         }
                     }
 
-                    if (Failed.Contains(Hash))
+                    if (Failed.ContainsKey(Hash))
                         return false;
 
                     // If another GLRenderProgram with the same hash is already compiling,
@@ -1295,7 +1293,7 @@ namespace XREngine.Rendering.OpenGL
                         if (_shaderCache.Values.Any(x => !x.IsCompiled))
                         {
                             Debug.OpenGLWarning($"Failed to compile program with hash {Hash}.");
-                            Failed.Add(Hash);
+                            Failed.TryAdd(Hash, 0);
                             InFlightCompilations.TryRemove(Hash, out _);
                             //TODO: return invalid material until shaders are compiled
                             return false;
@@ -1555,8 +1553,6 @@ namespace XREngine.Rendering.OpenGL
 
             public void Uniform(int location, Vector2 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Vector2)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1567,8 +1563,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Vector3 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Vector3)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1579,8 +1573,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Vector4 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Vector4)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1591,8 +1583,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Quaternion p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Quaternion)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1603,8 +1593,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, int p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Int)");
-
                 if (!MarkUniformBinding(location)) 
                     return;
 
@@ -1621,8 +1609,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, float p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Float)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1633,8 +1619,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, uint p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(UInt)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1645,8 +1629,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, double p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Double)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1657,8 +1639,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Matrix4x4 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Matrix4x4)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1669,8 +1649,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, bool p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Bool)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1717,8 +1695,6 @@ namespace XREngine.Rendering.OpenGL
 
             public void Uniform(int location, IVector2 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(IVector2)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1729,8 +1705,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, IVector3 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(IVector3)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1741,8 +1715,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, IVector4 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(IVector4)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1753,8 +1725,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, IVector2[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(IVector2[])");
-
                 if (!MarkUniformBinding(location) || p.Length == 0)
                     return;
 
@@ -1768,8 +1738,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, IVector3[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(IVector3[])");
-
                 if (!MarkUniformBinding(location) || p.Length == 0)
                     return;
 
@@ -1783,8 +1751,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, IVector4[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(IVector4[])");
-
                 if (!MarkUniformBinding(location) || p.Length == 0)
                     return;
 
@@ -1812,8 +1778,6 @@ namespace XREngine.Rendering.OpenGL
 
             public void Uniform(int location, Vector2[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Vector2[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1827,8 +1791,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Vector3[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Vector3[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1842,8 +1804,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Vector4[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Vector4[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1857,8 +1817,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Quaternion[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Quaternion[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1872,8 +1830,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, int[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Int[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1887,8 +1843,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, float[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Float[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1902,8 +1856,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Span<float> p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Span<Float>)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1920,8 +1872,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, uint[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(UInt[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1935,8 +1885,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, double[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Double[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1950,8 +1898,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Matrix4x4[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Matrix4x4[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1965,8 +1911,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, bool[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(Bool[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1985,8 +1929,6 @@ namespace XREngine.Rendering.OpenGL
 
             public void Uniform(int location, BoolVector2 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(BoolVector2)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -1997,8 +1939,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, BoolVector3 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(BoolVector3)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -2009,8 +1949,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, BoolVector4 p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(BoolVector4)");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -2022,8 +1960,6 @@ namespace XREngine.Rendering.OpenGL
 
             public void Uniform(int location, BoolVector2[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(BoolVector2[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -2043,8 +1979,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, BoolVector3[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(BoolVector3[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 
@@ -2066,8 +2000,6 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, BoolVector4[] p)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Uniform(BoolVector4[])");
-
                 if (!MarkUniformBinding(location))
                     return;
 

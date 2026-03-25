@@ -59,6 +59,11 @@ namespace XREngine.Components.Scene.Mesh
         /// Renders a solid color skybox.
         /// </summary>
         SolidColor,
+
+        /// <summary>
+        /// Renders a procedural sky with day/night cycle, sun, moon, atmospheric scattering, and animated clouds.
+        /// </summary>
+        DynamicProcedural,
     }
 
     /// <summary>
@@ -92,6 +97,17 @@ namespace XREngine.Components.Scene.Mesh
 
         private Vector3 _topColor = new(0.52f, 0.74f, 1.0f);
         private Vector3 _bottomColor = new(0.05f, 0.06f, 0.08f);
+        private bool _autoCycle = true;
+        private float _timeOfDay = 0.25f;
+        private float _dayLengthSeconds = 240.0f;
+        private float _cloudCoverage = 0.45f;
+        private float _cloudScale = 1.4f;
+        private float _cloudSpeed = 0.02f;
+        private float _cloudSharpness = 1.75f;
+        private float _starIntensity = 1.0f;
+        private float _horizonHaze = 1.0f;
+        private float _sunDiscSize = 0.9994f;
+        private float _moonDiscSize = 0.99965f;
 
         // Cached shaders
         private static XRShader? s_vertexShader;
@@ -100,6 +116,7 @@ namespace XREngine.Components.Scene.Mesh
         private static XRShader? s_cubemapShader;
         private static XRShader? s_cubemapArrayShader;
         private static XRShader? s_gradientShader;
+        private static XRShader? s_dynamicShader;
 
         /// <summary>
         /// Creates a new skybox component with default settings.
@@ -208,6 +225,105 @@ namespace XREngine.Components.Scene.Mesh
             set => SetField(ref _cubemapArrayLayer, Math.Max(0, value));
         }
 
+        [Category("Skybox Dynamic")]
+        [DisplayName("Auto Cycle")]
+        [Description("Automatically advances the procedural day/night cycle over time.")]
+        public bool AutoCycle
+        {
+            get => _autoCycle;
+            set => SetField(ref _autoCycle, value);
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Time Of Day")]
+        [Description("Normalized time in [0,1). 0.25 is noon, 0.75 is midnight.")]
+        public float TimeOfDay
+        {
+            get => _timeOfDay;
+            set => SetField(ref _timeOfDay, value - MathF.Floor(value));
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Day Length Seconds")]
+        [Description("Duration of a full day-night-day cycle in seconds.")]
+        public float DayLengthSeconds
+        {
+            get => _dayLengthSeconds;
+            set => SetField(ref _dayLengthSeconds, Math.Max(1.0f, value));
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Cloud Coverage")]
+        [Description("Controls the amount of visible clouds.")]
+        public float CloudCoverage
+        {
+            get => _cloudCoverage;
+            set => SetField(ref _cloudCoverage, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Cloud Scale")]
+        [Description("Controls procedural cloud feature size.")]
+        public float CloudScale
+        {
+            get => _cloudScale;
+            set => SetField(ref _cloudScale, Math.Max(0.05f, value));
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Cloud Speed")]
+        [Description("Controls cloud drift speed.")]
+        public float CloudSpeed
+        {
+            get => _cloudSpeed;
+            set => SetField(ref _cloudSpeed, Math.Max(0.0f, value));
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Cloud Sharpness")]
+        [Description("Controls cloud edge softness and contrast.")]
+        public float CloudSharpness
+        {
+            get => _cloudSharpness;
+            set => SetField(ref _cloudSharpness, Math.Max(0.1f, value));
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Star Intensity")]
+        [Description("Controls night star field visibility.")]
+        public float StarIntensity
+        {
+            get => _starIntensity;
+            set => SetField(ref _starIntensity, Math.Max(0.0f, value));
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Horizon Haze")]
+        [Description("Controls near-horizon atmospheric haze intensity.")]
+        public float HorizonHaze
+        {
+            get => _horizonHaze;
+            set => SetField(ref _horizonHaze, Math.Max(0.0f, value));
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sun Disc Size")]
+        [Description("Higher values produce a tighter/smaller sun disc.")]
+        public float SunDiscSize
+        {
+            get => _sunDiscSize;
+            set => SetField(ref _sunDiscSize, Math.Clamp(value, 0.9f, 0.99999f));
+        }
+
+        [Category("Skybox Dynamic")]
+        [DisplayName("Moon Disc Size")]
+        [Description("Higher values produce a tighter/smaller moon disc.")]
+        public float MoonDiscSize
+        {
+            get => _moonDiscSize;
+            set => SetField(ref _moonDiscSize, Math.Clamp(value, 0.9f, 0.99999f));
+        }
+
         /// <summary>
         /// The material used to render the skybox.
         /// </summary>
@@ -230,6 +346,17 @@ namespace XREngine.Components.Scene.Mesh
                 case nameof(CubemapArrayLayer):
                 case nameof(TopColor):
                 case nameof(BottomColor):
+                case nameof(AutoCycle):
+                case nameof(TimeOfDay):
+                case nameof(DayLengthSeconds):
+                case nameof(CloudCoverage):
+                case nameof(CloudScale):
+                case nameof(CloudSpeed):
+                case nameof(CloudSharpness):
+                case nameof(StarIntensity):
+                case nameof(HorizonHaze):
+                case nameof(SunDiscSize):
+                case nameof(MoonDiscSize):
                     // These are set via uniforms, no rebuild needed
                     break;
             }
@@ -239,6 +366,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             base.OnComponentActivated();
             AttachDebugHooks();
+            RegisterTick(ETickGroup.Normal, ETickOrder.Scene, TickSky);
 
             if (!_loggedActivated)
             {
@@ -252,7 +380,18 @@ namespace XREngine.Components.Scene.Mesh
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
+            UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, TickSky);
             CleanupResources();
+        }
+
+        private void TickSky()
+        {
+            if (!_autoCycle || _mode != ESkyboxMode.DynamicProcedural)
+                return;
+
+            float dt = Math.Max(0.0f, Engine.Delta);
+            float dayLength = Math.Max(1.0f, _dayLengthSeconds);
+            _timeOfDay = (_timeOfDay + dt / dayLength) % 1.0f;
         }
 
         private void AttachDebugHooks()
@@ -327,9 +466,12 @@ namespace XREngine.Components.Scene.Mesh
         private void RebuildMaterial()
         {
             XRShader? vertexShader = GetVertexShader();
-            XRShader? fragmentShader = _mode == ESkyboxMode.Texture
-                ? GetFragmentShaderForProjection(_projection)
-                : GetGradientShader();
+            XRShader? fragmentShader = _mode switch
+            {
+                ESkyboxMode.Texture => GetFragmentShaderForProjection(_projection),
+                ESkyboxMode.DynamicProcedural => GetDynamicShader(),
+                _ => GetGradientShader()
+            };
             
             if (vertexShader is null || fragmentShader is null)
             {
@@ -390,6 +532,19 @@ namespace XREngine.Components.Scene.Mesh
                 Vector3 bottom = _mode == ESkyboxMode.SolidColor ? _topColor : _bottomColor;
                 program.Uniform("SkyboxTopColor", top);
                 program.Uniform("SkyboxBottomColor", bottom);
+            }
+
+            if (_mode == ESkyboxMode.DynamicProcedural)
+            {
+                program.Uniform("SkyTimeOfDay", _timeOfDay);
+                program.Uniform("SkyCloudCoverage", _cloudCoverage);
+                program.Uniform("SkyCloudScale", _cloudScale);
+                program.Uniform("SkyCloudSpeed", _cloudSpeed);
+                program.Uniform("SkyCloudSharpness", _cloudSharpness);
+                program.Uniform("SkyStarIntensity", _starIntensity);
+                program.Uniform("SkyHorizonHaze", _horizonHaze);
+                program.Uniform("SkySunDiscSize", _sunDiscSize);
+                program.Uniform("SkyMoonDiscSize", _moonDiscSize);
             }
             
             if (_projection == ESkyboxProjection.CubemapArray)
@@ -454,6 +609,18 @@ namespace XREngine.Components.Scene.Mesh
 
             // Inline fallback shader
             return s_gradientShader ??= new XRShader(EShaderType.Fragment, GradientShaderSource);
+        }
+
+        private static XRShader GetDynamicShader()
+        {
+            if (s_dynamicShader is not null)
+                return s_dynamicShader;
+
+            s_dynamicShader = Engine.Assets.LoadEngineAsset<XRShader>(
+                JobPriority.Highest,
+                "Shaders", "Scene3D", "SkyboxDynamic.fs");
+
+            return s_dynamicShader ??= new XRShader(EShaderType.Fragment, DynamicShaderSource);
         }
 
         private static XRShader GetEquirectShader()
@@ -759,6 +926,130 @@ void main()
     float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 col = mix(SkyboxBottomColor, SkyboxTopColor, t);
     OutColor = col * SkyboxIntensity;
+}
+";
+
+        private const string DynamicShaderSource = @"
+#version 450
+
+layout (location = 0) out vec3 OutColor;
+layout (location = 0) in vec3 FragClipPos;
+
+uniform float SkyboxIntensity = 1.0;
+uniform float SkyboxRotation = 0.0;
+uniform float SkyTimeOfDay = 0.25;
+uniform float SkyCloudCoverage = 0.45;
+uniform float SkyCloudScale = 1.4;
+uniform float SkyCloudSpeed = 0.02;
+uniform float SkyCloudSharpness = 1.75;
+uniform float SkyStarIntensity = 1.0;
+uniform float SkyHorizonHaze = 1.0;
+uniform float SkySunDiscSize = 0.9994;
+uniform float SkyMoonDiscSize = 0.99965;
+
+uniform mat4 InverseViewMatrix;
+uniform mat4 ProjMatrix;
+
+const float PI = 3.14159265359;
+
+vec3 GetWorldDirection(vec3 clipPos)
+{
+    mat4 invProj = inverse(ProjMatrix);
+    vec4 viewPos = invProj * vec4(clipPos.xy, 1.0, 1.0);
+    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
+    mat3 camRotation = mat3(InverseViewMatrix);
+    return normalize(camRotation * viewDir);
+}
+
+float Hash(vec2 p)
+{
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float Noise(vec2 p)
+{
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(Hash(i + vec2(0.0, 0.0)), Hash(i + vec2(1.0, 0.0)), u.x),
+               mix(Hash(i + vec2(0.0, 1.0)), Hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float Fbm(vec2 p)
+{
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 5; ++i)
+    {
+        v += a * Noise(p);
+        p = p * 2.03 + vec2(17.0, 11.0);
+        a *= 0.5;
+    }
+    return v;
+}
+
+vec3 NightSky(vec3 dir, float nightFactor)
+{
+    float horizonFade = smoothstep(-0.1, 0.35, dir.y);
+    vec3 nightGradient = mix(vec3(0.01, 0.015, 0.03), vec3(0.005, 0.007, 0.015), horizonFade);
+    vec2 st = normalize(dir.xz) * 256.0 + vec2(dir.y * 73.0, dir.x * 41.0);
+    float stars = step(0.9975, Hash(floor(st))) * nightFactor;
+    return nightGradient + stars * vec3(1.0, 0.96, 0.9) * SkyStarIntensity;
+}
+
+void main()
+{
+    vec3 dir = GetWorldDirection(FragClipPos);
+    float cosRot = cos(SkyboxRotation);
+    float sinRot = sin(SkyboxRotation);
+    dir = vec3(dir.x * cosRot - dir.z * sinRot, dir.y, dir.x * sinRot + dir.z * cosRot);
+
+    float angle = SkyTimeOfDay * PI * 2.0;
+    vec3 sunDir = normalize(vec3(cos(angle), sin(angle), 0.2));
+    vec3 moonDir = -sunDir;
+    float sunHeight = sunDir.y;
+
+    float dayFactor = smoothstep(-0.18, 0.1, sunHeight);
+    float nightFactor = 1.0 - dayFactor;
+    float duskFactor = 1.0 - abs(sunHeight) / 0.22;
+    duskFactor = clamp(duskFactor, 0.0, 1.0);
+
+    float h = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 dayHorizon = vec3(0.73, 0.84, 1.0);
+    vec3 dayZenith = vec3(0.15, 0.42, 0.95);
+    vec3 duskHorizon = vec3(1.0, 0.45, 0.18);
+    vec3 duskZenith = vec3(0.26, 0.08, 0.32);
+    vec3 skyDay = mix(dayHorizon, dayZenith, pow(h, 0.45));
+    vec3 skyDusk = mix(duskHorizon, duskZenith, pow(h, 0.65));
+    vec3 skyBase = mix(skyDusk, skyDay, dayFactor);
+
+    float mie = pow(max(dot(dir, sunDir), 0.0), 18.0);
+    float rayleigh = pow(max(dot(dir, sunDir), 0.0), 3.0);
+    vec3 sunsetScatter = (vec3(1.0, 0.34, 0.16) * mie + vec3(0.45, 0.56, 1.0) * rayleigh * 0.4) * duskFactor;
+    vec3 color = skyBase + sunsetScatter;
+
+    float horizon = 1.0 - clamp(abs(dir.y), 0.0, 1.0);
+    color += vec3(0.22, 0.19, 0.15) * pow(horizon, 2.2) * SkyHorizonHaze * duskFactor;
+
+    vec2 cloudUv = normalize(max(abs(dir.y), 0.06) * dir.xz) * SkyCloudScale;
+    cloudUv += vec2(SkyCloudSpeed * SkyTimeOfDay * 240.0, SkyCloudSpeed * SkyTimeOfDay * 120.0);
+    float cloud = Fbm(cloudUv);
+    cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloud, SkyCloudSharpness));
+    vec3 cloudDay = vec3(1.0, 0.98, 0.95);
+    vec3 cloudNight = vec3(0.26, 0.28, 0.35);
+    vec3 cloudTint = mix(cloudNight, cloudDay, dayFactor);
+    color = mix(color, cloudTint + sunsetScatter * 0.35, cloud * (0.25 + 0.55 * dayFactor));
+
+    float sunDisc = smoothstep(SkySunDiscSize, 1.0, dot(dir, sunDir));
+    float sunHalo = pow(max(dot(dir, sunDir), 0.0), 64.0);
+    color += vec3(1.0, 0.92, 0.78) * (sunDisc * 12.0 + sunHalo * 0.75) * dayFactor;
+
+    float moonDisc = smoothstep(SkyMoonDiscSize, 1.0, dot(dir, moonDir));
+    float moonGlow = pow(max(dot(dir, moonDir), 0.0), 48.0);
+    color += vec3(0.74, 0.79, 0.94) * (moonDisc * 2.8 + moonGlow * 0.35) * nightFactor;
+
+    color = mix(NightSky(dir, nightFactor), color, dayFactor + duskFactor * 0.35);
+    OutColor = max(color, vec3(0.0)) * SkyboxIntensity;
 }
 ";
 

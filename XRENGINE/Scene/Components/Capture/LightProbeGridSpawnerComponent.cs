@@ -4,325 +4,853 @@ using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights;
+using XREngine.Components.Physics;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Vectors;
+using XREngine.Data.Geometry;
+using XREngine.Rendering;
+using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Components.Capture
+namespace XREngine.Components.Capture;
+
+/// <summary>
+/// Spawns a grid of child nodes each with a light probe when play begins, and cleans them up when play ends.
+/// </summary>
+public class LightProbeGridSpawnerComponent : XRComponent
 {
+    private readonly record struct ProbeOccluder(ModelComponent Model, StaticRigidBodyComponent? StaticRigidBody);
+
+    private readonly List<SceneNode> _spawnedNodes = new();
+    private readonly List<LightProbeComponent> _spawnedProbes = new();
+
+    private bool _isSequentialCaptureRunning;
+    private int _sequentialCaptureIndex = -1;
+    private int _sequentialCaptureCompletedCount;
+    private LightProbeComponent? _activeCaptureProbe;
+    private uint _activeCaptureVersion;
+    private string _captureStatus = "Idle";
+
+    private IVector3 _probeCounts = new(2, 2, 2);
     /// <summary>
-    /// Spawns a grid of child nodes each with a light probe when play begins, and cleans them up when play ends.
+    /// Number of probes to create along each axis. Values less than one are clamped to one.
     /// </summary>
-    public class LightProbeGridSpawnerComponent : XRComponent
+    [Category("Grid")]
+    public IVector3 ProbeCounts
     {
-        private readonly List<SceneNode> _spawnedNodes = new();
-
-        private IVector3 _probeCounts = new(2, 2, 2);
-        /// <summary>
-        /// Number of probes to create along each axis. Values less than one are clamped to one.
-        /// </summary>
-        [Category("Grid")]
-        public IVector3 ProbeCounts
+        get => _probeCounts;
+        set
         {
-            get => _probeCounts;
-            set
+            var clamped = new IVector3(
+                Math.Max(1, value.X),
+                Math.Max(1, value.Y),
+                Math.Max(1, value.Z));
+            if (SetField(ref _probeCounts, clamped))
+                RegenerateGridIfSpawned();
+        }
+    }
+
+    private Vector3 _spacing = new(1f, 1f, 1f);
+    /// <summary>
+    /// Distance in world units between probes along each axis. Components are clamped to a minimum positive value.
+    /// </summary>
+    [Category("Grid")]
+    public Vector3 Spacing
+    {
+        get => _spacing;
+        set
+        {
+            var clamped = new Vector3(
+                MathF.Max(0.001f, value.X),
+                MathF.Max(0.001f, value.Y),
+                MathF.Max(0.001f, value.Z));
+            if (SetField(ref _spacing, clamped))
+                RegenerateGridIfSpawned();
+        }
+    }
+
+    private Vector3 _offset = Vector3.Zero;
+    /// <summary>
+    /// Local-space offset to apply to the generated grid origin.
+    /// </summary>
+    [Category("Grid")]
+    public Vector3 Offset
+    {
+        get => _offset;
+        set
+        {
+            if (SetField(ref _offset, value))
+                RegenerateGridIfSpawned();
+        }
+    }
+
+    private bool _realtimeCapture = false;
+    private bool _autoCaptureOnActivate = true;
+    private TimeSpan? _realTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(100.0);
+    private uint _irradianceResolution = 32;
+    private LightProbeComponent.EInfluenceShape _influenceShape = LightProbeComponent.EInfluenceShape.Sphere;
+    private Vector3 _influenceOffset = Vector3.Zero;
+    private float _influenceSphereInnerRadius = 0.0f;
+    private float _influenceSphereOuterRadius = 5.0f;
+    private Vector3 _influenceBoxInnerExtents = Vector3.Zero;
+    private Vector3 _influenceBoxOuterExtents = new(5.0f, 5.0f, 5.0f);
+    private bool _parallaxCorrectionEnabled = false;
+    private Vector3 _proxyBoxCenterOffset = Vector3.Zero;
+    private Vector3 _proxyBoxHalfExtents = Vector3.One;
+    private Quaternion _proxyBoxRotation = Quaternion.Identity;
+    private bool _previewProbes;
+    private LightProbeComponent.ERenderPreview _previewDisplay = LightProbeComponent.ERenderPreview.Environment;
+    private bool _adjustProbePositionsAgainstGeometry = true;
+    private float _probeCollisionRadius = 0.25f;
+    private float _pushOutPadding = 0.1f;
+    private float _maxPushOutDistance = 8.0f;
+    private int _maxPushOutSteps = 24;
+
+    private static readonly Vector3[] s_probePushDirections =
+    [
+        Vector3.UnitY,
+        -Vector3.UnitY,
+        Vector3.UnitX,
+        -Vector3.UnitX,
+        Vector3.UnitZ,
+        -Vector3.UnitZ,
+        Vector3.Normalize(new Vector3(1.0f, 1.0f, 1.0f)),
+        Vector3.Normalize(new Vector3(-1.0f, 1.0f, 1.0f)),
+        Vector3.Normalize(new Vector3(1.0f, 1.0f, -1.0f)),
+        Vector3.Normalize(new Vector3(-1.0f, 1.0f, -1.0f)),
+    ];
+
+    [Category("Probe Defaults")]
+    public bool RealtimeCapture
+    {
+        get => _realtimeCapture;
+        set
+        {
+            if (SetField(ref _realtimeCapture, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public bool AutoCaptureOnActivate
+    {
+        get => _autoCaptureOnActivate;
+        set
+        {
+            if (SetField(ref _autoCaptureOnActivate, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public TimeSpan? RealTimeCaptureUpdateInterval
+    {
+        get => _realTimeCaptureUpdateInterval;
+        set
+        {
+            if (SetField(ref _realTimeCaptureUpdateInterval, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public uint IrradianceResolution
+    {
+        get => _irradianceResolution;
+        set
+        {
+            if (SetField(ref _irradianceResolution, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public LightProbeComponent.EInfluenceShape InfluenceShape
+    {
+        get => _influenceShape;
+        set
+        {
+            if (SetField(ref _influenceShape, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public Vector3 InfluenceOffset
+    {
+        get => _influenceOffset;
+        set
+        {
+            if (SetField(ref _influenceOffset, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public float InfluenceSphereInnerRadius
+    {
+        get => _influenceSphereInnerRadius;
+        set
+        {
+            if (SetField(ref _influenceSphereInnerRadius, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public float InfluenceSphereOuterRadius
+    {
+        get => _influenceSphereOuterRadius;
+        set
+        {
+            if (SetField(ref _influenceSphereOuterRadius, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public Vector3 InfluenceBoxInnerExtents
+    {
+        get => _influenceBoxInnerExtents;
+        set
+        {
+            if (SetField(ref _influenceBoxInnerExtents, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public Vector3 InfluenceBoxOuterExtents
+    {
+        get => _influenceBoxOuterExtents;
+        set
+        {
+            if (SetField(ref _influenceBoxOuterExtents, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public bool ParallaxCorrectionEnabled
+    {
+        get => _parallaxCorrectionEnabled;
+        set
+        {
+            if (SetField(ref _parallaxCorrectionEnabled, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public Vector3 ProxyBoxCenterOffset
+    {
+        get => _proxyBoxCenterOffset;
+        set
+        {
+            if (SetField(ref _proxyBoxCenterOffset, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public Vector3 ProxyBoxHalfExtents
+    {
+        get => _proxyBoxHalfExtents;
+        set
+        {
+            if (SetField(ref _proxyBoxHalfExtents, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public Quaternion ProxyBoxRotation
+    {
+        get => _proxyBoxRotation;
+        set
+        {
+            if (SetField(ref _proxyBoxRotation, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Preview")]
+    public bool PreviewProbes
+    {
+        get => _previewProbes;
+        set
+        {
+            if (SetField(ref _previewProbes, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Preview")]
+    public LightProbeComponent.ERenderPreview PreviewDisplay
+    {
+        get => _previewDisplay;
+        set
+        {
+            if (SetField(ref _previewDisplay, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Placement")]
+    public bool AdjustProbePositionsAgainstGeometry
+    {
+        get => _adjustProbePositionsAgainstGeometry;
+        set => SetField(ref _adjustProbePositionsAgainstGeometry, value);
+    }
+
+    [Category("Placement")]
+    public float ProbeCollisionRadius
+    {
+        get => _probeCollisionRadius;
+        set => SetField(ref _probeCollisionRadius, MathF.Max(0.01f, value));
+    }
+
+    [Category("Placement")]
+    public float PushOutPadding
+    {
+        get => _pushOutPadding;
+        set => SetField(ref _pushOutPadding, MathF.Max(0.0f, value));
+    }
+
+    [Category("Placement")]
+    public float MaxPushOutDistance
+    {
+        get => _maxPushOutDistance;
+        set => SetField(ref _maxPushOutDistance, MathF.Max(0.5f, value));
+    }
+
+    [Category("Placement")]
+    public int MaxPushOutSteps
+    {
+        get => _maxPushOutSteps;
+        set => SetField(ref _maxPushOutSteps, Math.Max(1, value));
+    }
+
+    [Browsable(false)]
+    public bool IsSequentialCaptureRunning => _isSequentialCaptureRunning;
+
+    [Browsable(false)]
+    public string CaptureStatus => _captureStatus;
+
+    [Browsable(false)]
+    public IReadOnlyList<LightProbeComponent> SpawnedProbes => _spawnedProbes;
+
+    protected override void OnBeginPlay()
+    {
+        base.OnBeginPlay();
+        SpawnGrid();
+    }
+
+    protected override void OnEndPlay()
+    {
+        StopSequentialCapture("Idle");
+        CleanupGrid();
+        base.OnEndPlay();
+    }
+
+    protected override void OnDestroying()
+    {
+        StopSequentialCapture("Idle");
+        CleanupGrid();
+        base.OnDestroying();
+    }
+
+    public void BeginSequentialCapture()
+    {
+        if (_spawnedProbes.Count == 0)
+        {
+            _captureStatus = "No spawned probes to capture.";
+            return;
+        }
+
+        StopSequentialCapture("Idle");
+
+        _isSequentialCaptureRunning = true;
+        _sequentialCaptureIndex = -1;
+        _sequentialCaptureCompletedCount = 0;
+        _activeCaptureProbe = null;
+        _activeCaptureVersion = 0;
+        _captureStatus = $"Queued 0/{_spawnedProbes.Count} probes.";
+
+        RegisterTick(ETickGroup.Late, ETickOrder.Scene, TickSequentialCapture);
+        QueueNextSequentialCapture();
+    }
+
+    public void CancelSequentialCapture()
+        => StopSequentialCapture($"Canceled after {_sequentialCaptureCompletedCount}/{_spawnedProbes.Count} probes.");
+
+    private void SpawnGrid()
+    {
+        if (_spawnedNodes.Count > 0)
+            return;
+
+        // Ensure the parent has a default transform before spawning children
+        _ = SceneNode.GetTransformAs<Transform>(true)!;
+
+        var counts = ProbeCounts;
+        Vector3 totalSize = new(
+            (counts.X - 1) * Spacing.X,
+            (counts.Y - 1) * Spacing.Y,
+            (counts.Z - 1) * Spacing.Z);
+
+        Vector3 start = -0.5f * totalSize + Offset;
+        ProbeOccluder[] occluders = CollectProbeOccluders();
+
+        for (int x = 0; x < counts.X; ++x)
+        {
+            for (int y = 0; y < counts.Y; ++y)
             {
-                var clamped = new IVector3(
-                    Math.Max(1, value.X),
-                    Math.Max(1, value.Y),
-                    Math.Max(1, value.Z));
-                if (SetField(ref _probeCounts, clamped))
-                    RegenerateGridIfSpawned();
-            }
-        }
-
-        private Vector3 _spacing = new(1f, 1f, 1f);
-        /// <summary>
-        /// Distance in world units between probes along each axis. Components are clamped to a minimum positive value.
-        /// </summary>
-        [Category("Grid")]
-        public Vector3 Spacing
-        {
-            get => _spacing;
-            set
-            {
-                var clamped = new Vector3(
-                    MathF.Max(0.001f, value.X),
-                    MathF.Max(0.001f, value.Y),
-                    MathF.Max(0.001f, value.Z));
-                if (SetField(ref _spacing, clamped))
-                    RegenerateGridIfSpawned();
-            }
-        }
-
-        private Vector3 _offset = Vector3.Zero;
-        /// <summary>
-        /// Local-space offset to apply to the generated grid origin.
-        /// </summary>
-        [Category("Grid")]
-        public Vector3 Offset
-        {
-            get => _offset;
-            set
-            {
-                if (SetField(ref _offset, value))
-                    RegenerateGridIfSpawned();
-            }
-        }
-
-        private bool _realtimeCapture = false;
-        private TimeSpan? _realTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(100.0);
-        private uint _irradianceResolution = 32;
-        private LightProbeComponent.EInfluenceShape _influenceShape = LightProbeComponent.EInfluenceShape.Sphere;
-        private Vector3 _influenceOffset = Vector3.Zero;
-        private float _influenceSphereInnerRadius = 0.0f;
-        private float _influenceSphereOuterRadius = 5.0f;
-        private Vector3 _influenceBoxInnerExtents = Vector3.Zero;
-        private Vector3 _influenceBoxOuterExtents = new(5.0f, 5.0f, 5.0f);
-        private bool _parallaxCorrectionEnabled = false;
-        private Vector3 _proxyBoxCenterOffset = Vector3.Zero;
-        private Vector3 _proxyBoxHalfExtents = Vector3.One;
-        private Quaternion _proxyBoxRotation = Quaternion.Identity;
-
-        [Category("Probe Defaults")]
-        public bool RealtimeCapture
-        {
-            get => _realtimeCapture;
-            set
-            {
-                if (SetField(ref _realtimeCapture, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public TimeSpan? RealTimeCaptureUpdateInterval
-        {
-            get => _realTimeCaptureUpdateInterval;
-            set
-            {
-                if (SetField(ref _realTimeCaptureUpdateInterval, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public uint IrradianceResolution
-        {
-            get => _irradianceResolution;
-            set
-            {
-                if (SetField(ref _irradianceResolution, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public LightProbeComponent.EInfluenceShape InfluenceShape
-        {
-            get => _influenceShape;
-            set
-            {
-                if (SetField(ref _influenceShape, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public Vector3 InfluenceOffset
-        {
-            get => _influenceOffset;
-            set
-            {
-                if (SetField(ref _influenceOffset, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public float InfluenceSphereInnerRadius
-        {
-            get => _influenceSphereInnerRadius;
-            set
-            {
-                if (SetField(ref _influenceSphereInnerRadius, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public float InfluenceSphereOuterRadius
-        {
-            get => _influenceSphereOuterRadius;
-            set
-            {
-                if (SetField(ref _influenceSphereOuterRadius, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public Vector3 InfluenceBoxInnerExtents
-        {
-            get => _influenceBoxInnerExtents;
-            set
-            {
-                if (SetField(ref _influenceBoxInnerExtents, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public Vector3 InfluenceBoxOuterExtents
-        {
-            get => _influenceBoxOuterExtents;
-            set
-            {
-                if (SetField(ref _influenceBoxOuterExtents, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public bool ParallaxCorrectionEnabled
-        {
-            get => _parallaxCorrectionEnabled;
-            set
-            {
-                if (SetField(ref _parallaxCorrectionEnabled, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public Vector3 ProxyBoxCenterOffset
-        {
-            get => _proxyBoxCenterOffset;
-            set
-            {
-                if (SetField(ref _proxyBoxCenterOffset, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public Vector3 ProxyBoxHalfExtents
-        {
-            get => _proxyBoxHalfExtents;
-            set
-            {
-                if (SetField(ref _proxyBoxHalfExtents, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        [Category("Probe Defaults")]
-        public Quaternion ProxyBoxRotation
-        {
-            get => _proxyBoxRotation;
-            set
-            {
-                if (SetField(ref _proxyBoxRotation, value))
-                    ApplyDefaultsToExistingProbes();
-            }
-        }
-
-        protected override void OnBeginPlay()
-        {
-            base.OnBeginPlay();
-            SpawnGrid();
-        }
-
-        protected override void OnEndPlay()
-        {
-            CleanupGrid();
-            base.OnEndPlay();
-        }
-
-        protected override void OnDestroying()
-        {
-            CleanupGrid();
-            base.OnDestroying();
-        }
-
-        private void SpawnGrid()
-        {
-            if (_spawnedNodes.Count > 0)
-                return;
-
-            // Ensure the parent has a default transform before spawning children
-            _ = SceneNode.GetTransformAs<Transform>(true)!;
-
-            var counts = ProbeCounts;
-            Vector3 totalSize = new(
-                (counts.X - 1) * Spacing.X,
-                (counts.Y - 1) * Spacing.Y,
-                (counts.Z - 1) * Spacing.Z);
-
-            Vector3 start = -0.5f * totalSize + Offset;
-
-            for (int x = 0; x < counts.X; ++x)
-            {
-                for (int y = 0; y < counts.Y; ++y)
+                for (int z = 0; z < counts.Z; ++z)
                 {
-                    for (int z = 0; z < counts.Z; ++z)
+                    Vector3 localPos = start + new Vector3(x * Spacing.X, y * Spacing.Y, z * Spacing.Z);
+                    var child = new SceneNode(SceneNode, $"LightProbe[{x},{y},{z}]", new Transform(localPos));
+                    var probe = child.AddComponent<LightProbeComponent>();
+                    if (probe is not null)
                     {
-                        Vector3 localPos = start + new Vector3(x * Spacing.X, y * Spacing.Y, z * Spacing.Z);
-                        var child = new SceneNode(SceneNode, $"LightProbe[{x},{y},{z}]", new Transform(localPos));
-                        var probe = child.AddComponent<LightProbeComponent>();
-                        if (probe is not null)
-                            ApplyDefaults(probe);
-                        _spawnedNodes.Add(child);
+                        ApplyDefaults(probe);
+                        MoveProbeOutOfGeometry(child, probe, occluders);
+                        _spawnedProbes.Add(probe);
                     }
+                    _spawnedNodes.Add(child);
                 }
             }
         }
 
-        private void RegenerateGridIfSpawned()
-        {
-            if (_spawnedNodes.Count == 0)
-                return;
-
-            CleanupGrid();
-            SpawnGrid();
-        }
-
-        private void ApplyDefaultsToExistingProbes()
-        {
-            if (_spawnedNodes.Count == 0)
-                return;
-
-            foreach (var node in _spawnedNodes)
-                if (node.TryGetComponent(out LightProbeComponent? probe) && probe is not null)
-                    ApplyDefaults(probe);
-        }
-
-        private void ApplyDefaults(LightProbeComponent probe)
-        {
-            probe.RealtimeCapture = RealtimeCapture;
-            probe.RealTimeCaptureUpdateInterval = RealTimeCaptureUpdateInterval;
-            probe.IrradianceResolution = IrradianceResolution;
-            probe.InfluenceShape = InfluenceShape;
-            probe.InfluenceOffset = InfluenceOffset;
-            probe.InfluenceSphereInnerRadius = InfluenceSphereInnerRadius;
-            probe.InfluenceSphereOuterRadius = InfluenceSphereOuterRadius;
-            probe.InfluenceBoxInnerExtents = InfluenceBoxInnerExtents;
-            probe.InfluenceBoxOuterExtents = InfluenceBoxOuterExtents;
-            probe.ParallaxCorrectionEnabled = ParallaxCorrectionEnabled;
-            probe.ProxyBoxCenterOffset = ProxyBoxCenterOffset;
-            probe.ProxyBoxHalfExtents = ProxyBoxHalfExtents;
-            probe.ProxyBoxRotation = ProxyBoxRotation;
-        }
-
-        private void CleanupGrid()
-        {
-            if (_spawnedNodes.Count == 0)
-                return;
-
-            foreach (var node in _spawnedNodes)
-                node.Destroy();
-
-            _spawnedNodes.Clear();
-        }
+        _captureStatus = $"Ready: {_spawnedProbes.Count} probes.";
     }
+
+    private void RegenerateGridIfSpawned()
+    {
+        if (_spawnedNodes.Count == 0)
+            return;
+
+        CleanupGrid();
+        SpawnGrid();
+    }
+
+    private void ApplyDefaultsToExistingProbes()
+    {
+        if (_spawnedNodes.Count == 0)
+            return;
+
+        foreach (var probe in _spawnedProbes)
+            ApplyDefaults(probe);
+    }
+
+    private void ApplyDefaults(LightProbeComponent probe)
+    {
+        probe.RealtimeCapture = RealtimeCapture;
+        probe.AutoCaptureOnActivate = AutoCaptureOnActivate;
+        probe.RealTimeCaptureUpdateInterval = RealTimeCaptureUpdateInterval;
+        probe.IrradianceResolution = IrradianceResolution;
+        probe.InfluenceShape = InfluenceShape;
+        probe.InfluenceOffset = InfluenceOffset;
+        probe.InfluenceSphereInnerRadius = InfluenceSphereInnerRadius;
+        probe.InfluenceSphereOuterRadius = InfluenceSphereOuterRadius;
+        probe.InfluenceBoxInnerExtents = InfluenceBoxInnerExtents;
+        probe.InfluenceBoxOuterExtents = InfluenceBoxOuterExtents;
+        probe.ParallaxCorrectionEnabled = ParallaxCorrectionEnabled;
+        probe.ProxyBoxCenterOffset = ProxyBoxCenterOffset;
+        probe.ProxyBoxHalfExtents = ProxyBoxHalfExtents;
+        probe.ProxyBoxRotation = ProxyBoxRotation;
+        probe.AutoShowPreviewOnSelect = !PreviewProbes;
+        probe.PreviewEnabled = PreviewProbes;
+        probe.PreviewDisplay = PreviewDisplay;
+    }
+
+    private void CleanupGrid()
+    {
+        if (_spawnedNodes.Count == 0)
+            return;
+
+        foreach (var node in _spawnedNodes)
+            node.Destroy();
+
+        _spawnedNodes.Clear();
+        _spawnedProbes.Clear();
+    }
+
+    private void TickSequentialCapture()
+    {
+        if (!_isSequentialCaptureRunning)
+            return;
+
+        if (_activeCaptureProbe is null)
+        {
+            if (!QueueNextSequentialCapture())
+                StopSequentialCapture($"Completed {_sequentialCaptureCompletedCount}/{_spawnedProbes.Count} probes.");
+            return;
+        }
+
+        if (!_activeCaptureProbe.IsActiveInHierarchy)
+        {
+            _activeCaptureProbe = null;
+            return;
+        }
+
+        if (_activeCaptureProbe.CaptureVersion == _activeCaptureVersion)
+            return;
+
+        _sequentialCaptureCompletedCount++;
+        _activeCaptureProbe = null;
+
+        if (!QueueNextSequentialCapture())
+            StopSequentialCapture($"Completed {_sequentialCaptureCompletedCount}/{_spawnedProbes.Count} probes.");
+    }
+
+    private bool QueueNextSequentialCapture()
+    {
+        while (++_sequentialCaptureIndex < _spawnedProbes.Count)
+        {
+            LightProbeComponent probe = _spawnedProbes[_sequentialCaptureIndex];
+            if (!probe.IsActiveInHierarchy)
+                continue;
+
+            _activeCaptureProbe = probe;
+            _activeCaptureVersion = probe.CaptureVersion;
+            _captureStatus = $"Capturing {_sequentialCaptureIndex + 1}/{_spawnedProbes.Count}: {probe.SceneNode.Name}";
+            probe.QueueCapture();
+            return true;
+        }
+
+        return false;
+    }
+
+    private void StopSequentialCapture(string status)
+    {
+        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, TickSequentialCapture);
+        _isSequentialCaptureRunning = false;
+        _activeCaptureProbe = null;
+        _activeCaptureVersion = 0;
+        _captureStatus = status;
+    }
+
+    private ProbeOccluder[] CollectProbeOccluders()
+    {
+        if (!AdjustProbePositionsAgainstGeometry)
+            return [];
+
+        XRWorldInstance? world = WorldAs<XRWorldInstance>();
+        if (world is null)
+            return [];
+
+        var occluders = new List<ProbeOccluder>();
+        foreach (SceneNode root in world.RootNodes)
+        {
+            foreach (ModelComponent model in root.FindAllDescendantComponents<ModelComponent>())
+            {
+                if (ReferenceEquals(model.SceneNode, SceneNode))
+                    continue;
+
+                model.SceneNode.TryGetComponent(out StaticRigidBodyComponent? rigidBody);
+                occluders.Add(new ProbeOccluder(model, rigidBody));
+            }
+        }
+
+        return [.. occluders];
+    }
+
+    private void MoveProbeOutOfGeometry(SceneNode probeNode, LightProbeComponent probe, ProbeOccluder[] occluders)
+    {
+        if (occluders.Length == 0)
+            return;
+
+        Vector3 adjustedWorld = probe.Transform.WorldTranslation;
+        bool moved = false;
+
+        for (int pass = 0; pass < 4; pass++)
+        {
+            bool passMoved = false;
+            foreach (ProbeOccluder occluder in occluders)
+            {
+                if (TryResolveAgainstCollider(occluder.StaticRigidBody, adjustedWorld, out Vector3 colliderAdjusted))
+                {
+                    adjustedWorld = colliderAdjusted;
+                    moved = true;
+                    passMoved = true;
+                    continue;
+                }
+
+                if (occluder.StaticRigidBody is not null)
+                    continue;
+
+                if (TryResolveAgainstModelBvh(occluder.Model, adjustedWorld, out Vector3 bvhAdjusted))
+                {
+                    adjustedWorld = bvhAdjusted;
+                    moved = true;
+                    passMoved = true;
+                }
+            }
+
+            if (!passMoved)
+                break;
+        }
+
+        if (!moved)
+            return;
+
+        Matrix4x4 parentInverse = SceneNode.Transform.InverseWorldMatrix;
+        probeNode.GetTransformAs<Transform>(true)!.Translation = Vector3.Transform(adjustedWorld, parentInverse);
+    }
+
+    private bool TryResolveAgainstCollider(StaticRigidBodyComponent? rigidBodyComponent, Vector3 worldPosition, out Vector3 adjustedPosition)
+    {
+        adjustedPosition = worldPosition;
+        if (rigidBodyComponent?.RigidBody is not PhysxRigidActor rigidBody || rigidBody.ShapeCount == 0)
+            return false;
+
+        var testSphere = new IPhysicsGeometry.Sphere(ProbeCollisionRadius);
+        float bestDistance = float.MaxValue;
+        bool found = false;
+
+        foreach (PhysxShape shape in rigidBody.GetShapes())
+        {
+            if (!shape.Overlap(rigidBody, testSphere, (worldPosition, Quaternion.Identity)))
+                continue;
+
+            if (!TryFindColliderExit(shape, rigidBody, worldPosition, testSphere, out Vector3 candidate))
+                continue;
+
+            float distance = Vector3.DistanceSquared(worldPosition, candidate);
+            if (distance >= bestDistance)
+                continue;
+
+            bestDistance = distance;
+            adjustedPosition = candidate;
+            found = true;
+        }
+
+        return found;
+    }
+
+    private bool TryFindColliderExit(
+        PhysxShape shape,
+        PhysxRigidActor rigidBody,
+        Vector3 worldPosition,
+        IPhysicsGeometry.Sphere testSphere,
+        out Vector3 adjustedPosition)
+    {
+        adjustedPosition = worldPosition;
+        AABB bounds = shape.GetWorldBounds(rigidBody, 0.05f);
+        Vector3 boundsCenter = (bounds.Min + bounds.Max) * 0.5f;
+
+        float bestDistance = float.MaxValue;
+        bool found = false;
+        foreach (Vector3 direction in EnumeratePushDirections(worldPosition, boundsCenter))
+        {
+            if (!TryStepOutOfShape(shape, rigidBody, testSphere, worldPosition, direction, bounds, out Vector3 candidate))
+                continue;
+
+            float distance = Vector3.DistanceSquared(worldPosition, candidate);
+            if (distance >= bestDistance)
+                continue;
+
+            bestDistance = distance;
+            adjustedPosition = candidate;
+            found = true;
+        }
+
+        return found;
+    }
+
+    private bool TryStepOutOfShape(
+        PhysxShape shape,
+        PhysxRigidActor rigidBody,
+        IPhysicsGeometry.Sphere testSphere,
+        Vector3 worldPosition,
+        Vector3 direction,
+        AABB bounds,
+        out Vector3 adjustedPosition)
+    {
+        adjustedPosition = worldPosition;
+        Vector3 normalizedDirection = NormalizeOrFallback(direction, Vector3.UnitY);
+        float stepDistance = MathF.Max(ProbeCollisionRadius * 0.5f, 0.05f);
+        float maxDistance = MathF.Max(MaxPushOutDistance, Vector3.Distance(bounds.Min, bounds.Max) + PushOutPadding + ProbeCollisionRadius);
+
+        for (int step = 1; step <= MaxPushOutSteps; step++)
+        {
+            float distance = MathF.Min(stepDistance * step, maxDistance);
+            Vector3 candidate = worldPosition + normalizedDirection * distance;
+            if (shape.Overlap(rigidBody, testSphere, (candidate, Quaternion.Identity)))
+                continue;
+
+            adjustedPosition = candidate + normalizedDirection * PushOutPadding;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryResolveAgainstModelBvh(ModelComponent model, Vector3 worldPosition, out Vector3 adjustedPosition)
+    {
+        adjustedPosition = worldPosition;
+        float bestDistance = float.MaxValue;
+        bool found = false;
+
+        foreach (RenderableMesh renderable in model.Meshes)
+        {
+            if (!renderable.TryGetWorldBounds(out AABB worldBounds) || !Contains(worldBounds, worldPosition))
+                continue;
+
+            if (!TryFindMeshExit(renderable, worldPosition, out Vector3 candidate))
+                continue;
+
+            float distance = Vector3.DistanceSquared(worldPosition, candidate);
+            if (distance >= bestDistance)
+                continue;
+
+            bestDistance = distance;
+            adjustedPosition = candidate;
+            found = true;
+        }
+
+        return found;
+    }
+
+    private bool TryFindMeshExit(RenderableMesh renderable, Vector3 worldPosition, out Vector3 adjustedPosition)
+    {
+        adjustedPosition = worldPosition;
+        if (!renderable.TryGetWorldBounds(out AABB worldBounds))
+            return false;
+
+        Vector3 boundsCenter = (worldBounds.Min + worldBounds.Max) * 0.5f;
+        float bestDistance = float.MaxValue;
+        bool found = false;
+
+        foreach (Vector3 direction in EnumeratePushDirections(worldPosition, boundsCenter))
+        {
+            if (!TryFindMeshExitAlongDirection(renderable, worldPosition, direction, out Vector3 candidate))
+                continue;
+
+            float distance = Vector3.DistanceSquared(worldPosition, candidate);
+            if (distance >= bestDistance)
+                continue;
+
+            bestDistance = distance;
+            adjustedPosition = candidate;
+            found = true;
+        }
+
+        return found;
+    }
+
+    private bool TryFindMeshExitAlongDirection(RenderableMesh renderable, Vector3 worldPosition, Vector3 direction, out Vector3 adjustedPosition)
+    {
+        adjustedPosition = worldPosition;
+        var renderer = renderable.GetCurrentOrFirstLodRenderer();
+        var mesh = renderer?.Mesh;
+        if (mesh is null)
+            return false;
+
+        bool skinned = renderable.IsSkinned;
+        SimpleScene.Util.ssBVH.BVH<Triangle>? bvh = skinned ? renderable.GetSkinnedBvh() : mesh.BVHTree;
+        if (bvh is null)
+        {
+            if (!skinned)
+                _ = mesh.BVHTree;
+            return false;
+        }
+
+        Matrix4x4 worldToLocal;
+        if (skinned)
+        {
+            worldToLocal = renderable.SkinnedBvhWorldToLocalMatrix;
+        }
+        else
+        {
+            TransformBase transform = renderable.Component.Transform;
+            worldToLocal = transform.InverseWorldMatrix;
+        }
+
+        Vector3 normalizedDirection = NormalizeOrFallback(direction, Vector3.UnitY);
+        Vector3 localStart = Vector3.Transform(worldPosition, worldToLocal);
+        Vector3 localFarPoint = Vector3.Transform(worldPosition + normalizedDirection * MaxPushOutDistance, worldToLocal);
+        Vector3 localDirection = localFarPoint - localStart;
+        float maxDistance = localDirection.Length();
+        if (maxDistance <= 1e-4f)
+            return false;
+
+        localDirection /= maxDistance;
+        if (!TryCountRayIntersections(bvh, localStart, localDirection, maxDistance, out int hitCount, out float nearestHitDistance) || hitCount <= 0)
+            return false;
+
+        if ((hitCount & 1) == 0 || nearestHitDistance <= 1e-4f)
+            return false;
+
+        adjustedPosition = worldPosition + normalizedDirection * (nearestHitDistance + PushOutPadding);
+        return true;
+    }
+
+    private static bool TryCountRayIntersections(SimpleScene.Util.ssBVH.BVH<Triangle> bvh, Vector3 origin, Vector3 direction, float maxDistance, out int hitCount, out float nearestHitDistance)
+    {
+        hitCount = 0;
+        nearestHitDistance = float.MaxValue;
+
+        Vector3 segmentEnd = origin + direction * maxDistance;
+        var matches = bvh.Traverse(node => GeoUtil.Intersect.SegmentWithAABB(origin, segmentEnd, node.Min, node.Max, out _, out _));
+        if (matches is null)
+            return false;
+
+        List<float> intersections = [];
+        foreach (var node in matches)
+        {
+            if (node.gobjects is null)
+                continue;
+
+            foreach (Triangle triangle in node.gobjects)
+            {
+                if (!GeoUtil.Intersect.RayWithTriangle(origin, direction, triangle.A, triangle.B, triangle.C, out float hitDistance))
+                    continue;
+
+                if (hitDistance <= 1e-4f || hitDistance > maxDistance)
+                    continue;
+
+                intersections.Add(hitDistance);
+            }
+        }
+
+        if (intersections.Count == 0)
+            return false;
+
+        intersections.Sort();
+        const float epsilon = 1e-3f;
+        float previous = float.MinValue;
+        foreach (float distance in intersections)
+        {
+            if (nearestHitDistance == float.MaxValue)
+                nearestHitDistance = distance;
+
+            if (MathF.Abs(distance - previous) <= epsilon)
+                continue;
+
+            previous = distance;
+            hitCount++;
+        }
+
+        return hitCount > 0;
+    }
+
+    private static IEnumerable<Vector3> EnumeratePushDirections(Vector3 worldPosition, Vector3 boundsCenter)
+    {
+        yield return boundsCenter == worldPosition
+            ? Vector3.UnitY
+            : NormalizeOrFallback(worldPosition - boundsCenter, Vector3.UnitY);
+
+        foreach (Vector3 direction in s_probePushDirections)
+            yield return direction;
+    }
+
+    private static Vector3 NormalizeOrFallback(Vector3 direction, Vector3 fallback)
+        => direction.LengthSquared() <= 1e-6f ? fallback : Vector3.Normalize(direction);
+
+    private static bool Contains(AABB bounds, Vector3 point)
+        => point.X >= bounds.Min.X && point.X <= bounds.Max.X
+        && point.Y >= bounds.Min.Y && point.Y <= bounds.Max.Y
+        && point.Z >= bounds.Min.Z && point.Z <= bounds.Max.Z;
 }

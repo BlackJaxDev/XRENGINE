@@ -50,6 +50,8 @@ namespace XREngine.Rendering.OpenGL
             private IndexSize _trianglesElementType;
             private IndexSize _lineIndicesElementType;
             private IndexSize _pointIndicesElementType;
+            private bool _usesPatchTopology;
+            private int _patchVertexCount = 3;
 
             private bool _buffersBound;
 
@@ -87,6 +89,18 @@ namespace XREngine.Rendering.OpenGL
             {
                 get => _pointIndicesElementType;
                 private set => _pointIndicesElementType = value;
+            }
+
+            public bool UsesPatchTopology
+            {
+                get => _usesPatchTopology;
+                private set => _usesPatchTopology = value;
+            }
+
+            public int PatchVertexCount
+            {
+                get => _patchVertexCount;
+                private set => _patchVertexCount = value < 1 ? 1 : value;
             }
 
             public EConditionalRenderType ConditionalRenderType { get; set; } = EConditionalRenderType.QueryNoWait;
@@ -157,6 +171,28 @@ namespace XREngine.Rendering.OpenGL
 
                 return true;
             }
+
+            private void ConfigureDrawTopology(GLRenderProgram vertexProgram, GLRenderProgram? materialProgram)
+            {
+                EProgramStageMask mask = vertexProgram.Data.GetShaderTypeMask();
+                if (materialProgram is not null && !ReferenceEquals(materialProgram, vertexProgram))
+                    mask |= materialProgram.Data.GetShaderTypeMask();
+
+                bool hasTessellationStages =
+                    mask.HasFlag(EProgramStageMask.TessControlShaderBit) ||
+                    mask.HasFlag(EProgramStageMask.TessEvaluationShaderBit);
+
+                UsesPatchTopology = hasTessellationStages && TriangleIndicesBuffer is not null;
+                PatchVertexCount = 3;
+            }
+
+            internal GLDataBuffer? GetActiveElementBuffer()
+            {
+                if (UsesPatchTopology)
+                    return TriangleIndicesBuffer;
+
+                return TriangleIndicesBuffer ?? LineIndicesBuffer ?? PointIndicesBuffer;
+            }
         }
 
         /// <summary>
@@ -179,7 +215,7 @@ namespace XREngine.Rendering.OpenGL
                 return;
 
             // Ensure an index buffer is bound for any indirect or indexed draws.
-            GLDataBuffer? elem = mesh.TriangleIndicesBuffer ?? mesh.LineIndicesBuffer ?? mesh.PointIndicesBuffer;
+            GLDataBuffer? elem = mesh.GetActiveElementBuffer();
             if (elem != null)
             {
                 // Only generate if not already generated
@@ -221,6 +257,25 @@ namespace XREngine.Rendering.OpenGL
             var lineBuffer = ActiveMeshRenderer.LineIndicesBuffer;
             var pointBuffer = ActiveMeshRenderer.PointIndicesBuffer;
 
+            if (ActiveMeshRenderer.UsesPatchTopology)
+            {
+                uint patchControlPoints = triBuffer?.Data?.ElementCount ?? 0u;
+                if (patchControlPoints > 0)
+                {
+                    ApplyPatchParameters(ActiveMeshRenderer);
+                    Api.DrawElementsInstanced(
+                        GLEnum.Patches,
+                        patchControlPoints,
+                        ToGLEnum(ActiveMeshRenderer.TrianglesElementType),
+                        null,
+                        instances);
+                    Engine.Rendering.Stats.IncrementDrawCalls();
+                    Engine.Rendering.Stats.AddTrianglesRendered((int)(patchControlPoints / 3u * instances));
+                }
+
+                return;
+            }
+
             uint triangles = triBuffer?.Data?.ElementCount ?? 0u;
             if (triangles > 0)
             {
@@ -254,7 +309,9 @@ namespace XREngine.Rendering.OpenGL
                 return;
 
             uint meshCount = 1u;
-            Api.MultiDrawElementsIndirect(GLEnum.Triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, meshCount, 0);
+            var (primitiveType, elementType) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
+            Api.MultiDrawElementsIndirect(primitiveType, elementType, null, meshCount, 0);
         }
     }
 }

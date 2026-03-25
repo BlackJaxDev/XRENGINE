@@ -42,6 +42,14 @@ public partial class XRMesh
         EPrimitiveType.Triangles => _triangles?.SelectMany(x => new[] { x.Point0, x.Point1, x.Point2 }).ToArray(),
         EPrimitiveType.Lines => _lines?.SelectMany(x => new[] { x.Point0, x.Point1 }).ToArray(),
         EPrimitiveType.Points => _points?.Select(x => (int)x).ToArray(),
+        // Patch draws reuse the existing primitive lists as control-point streams.
+        EPrimitiveType.Patches => PatchVertices switch
+        {
+            1 => _points?.Select(x => (int)x).ToArray(),
+            2 => _lines?.SelectMany(x => new[] { x.Point0, x.Point1 }).ToArray(),
+            3 => _triangles?.SelectMany(x => new[] { x.Point0, x.Point1, x.Point2 }).ToArray(),
+            _ => null,
+        },
         _ => null
     };
 

@@ -85,6 +85,7 @@ public static partial class EditorUnitTests
         public bool DeferredDecal = false; //Adds a deferred decal to the scene.
         public bool AddCameraVRPickup = false; //Adds a camera pickup to the scene for testing VR camera pickup.
         public bool Mirror = true; //Adds a mirror to the scene for testing mirror reflection.
+        public bool DynamicWaterQuad = false; //Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path.
         public bool ForceDebugOpaquePipeline = false; //Forces the debug opaque render pipeline instead of the default pipeline.
 
         //Light

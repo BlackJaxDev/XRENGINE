@@ -175,6 +175,15 @@ public static class ShaderHelper
     public static XRShader? UnlitColorFragForward()
          => LoadEngineShader(Path.Combine("Common", "UnlitColoredForward.fs"));
 
+    public static XRShader DynamicWaterFragForward()
+        => LoadEngineShader(Path.Combine("Common", "WaterDynamicForward.fs"));
+
+    public static XRShader DynamicWaterTessCtrlForward()
+        => LoadEngineShader(Path.Combine("Common", "WaterDynamicForward.tesc"));
+
+    public static XRShader DynamicWaterTessEvalForward()
+        => LoadEngineShader(Path.Combine("Common", "WaterDynamicForward.tese"));
+
     #endregion
 
     #region Weighted OIT Forward Shaders

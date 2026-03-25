@@ -93,6 +93,9 @@ public static class BootstrapWorldFactory
         if (settings.Mirror)
             AddMirror(rootNode);
 
+        if (settings.DynamicWaterQuad)
+            BootstrapWaterBuilder.AddDynamicWaterPreview(rootNode);
+
         if (settings.AddPhysics)
             BootstrapPhysicsBuilder.AddPhysics(rootNode, settings.PhysicsBallCount);
 

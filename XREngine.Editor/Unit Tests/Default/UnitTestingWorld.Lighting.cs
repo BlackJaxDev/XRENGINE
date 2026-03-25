@@ -1,5 +1,8 @@
 using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Data.Vectors;
+using XREngine.Components;
+using XREngine.Components.Capture;
 using XREngine.Scene;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
@@ -49,6 +52,58 @@ public static partial class EditorUnitTests
                     }
                 }
             }
+        }
+
+        public static void AddInteractiveLightProbeGrid(SceneNode rootNode, int widthCount, int heightCount, int depthCount, Vector3 spacing, Vector3 center)
+        {
+            var probeRoot = new SceneNode(rootNode) { Name = "LightProbeGridRoot" };
+            var spawner = probeRoot.AddComponent<LightProbeGridSpawnerComponent>()!;
+            spawner.Name = "LightProbeGridSpawner";
+            spawner.ProbeCounts = new IVector3(widthCount, heightCount, depthCount);
+            spawner.Spacing = spacing;
+            spawner.Offset = center;
+            spawner.RealtimeCapture = false;
+            spawner.AutoCaptureOnActivate = false;
+            spawner.IrradianceResolution = 32;
+            spawner.PreviewProbes = false;
+            spawner.PreviewDisplay = LightProbeComponent.ERenderPreview.Environment;
+            spawner.AdjustProbePositionsAgainstGeometry = true;
+            spawner.ProbeCollisionRadius = 0.25f;
+            spawner.PushOutPadding = 0.1f;
+            spawner.MaxPushOutDistance = 8.0f;
+            spawner.MaxPushOutSteps = 24;
+
+            var customUi = probeRoot.AddComponent<CustomUIComponent>()!;
+            customUi.Name = "Light Probe Grid Controls";
+            customUi.AddButtonField(
+                "Capture Probes",
+                spawner.BeginSequentialCapture,
+                "Queues the light probes one at a time so captures complete sequentially instead of all at once.");
+            customUi.AddButtonField(
+                "Cancel Capture",
+                spawner.CancelSequentialCapture,
+                "Stops the sequential capture process.");
+            customUi.AddBoolField(
+                "Show Probe Spheres",
+                () => spawner.PreviewProbes,
+                value => spawner.PreviewProbes = value,
+                "Toggles the preview sphere for every spawned light probe.");
+            customUi.AddButtonField(
+                "Preview Environment",
+                () => spawner.PreviewDisplay = LightProbeComponent.ERenderPreview.Environment,
+                "Displays each probe's environment capture on the preview sphere.");
+            customUi.AddButtonField(
+                "Preview Irradiance",
+                () => spawner.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance,
+                "Displays each probe's irradiance texture on the preview sphere.");
+            customUi.AddButtonField(
+                "Preview Prefilter",
+                () => spawner.PreviewDisplay = LightProbeComponent.ERenderPreview.Prefilter,
+                "Displays each probe's prefilter texture on the preview sphere.");
+            customUi.AddTextField(
+                "Capture Status",
+                () => spawner.CaptureStatus,
+                "Reports sequential capture progress for the light probe grid.");
         }
 
         public static void AddDirLight(SceneNode rootNode)
