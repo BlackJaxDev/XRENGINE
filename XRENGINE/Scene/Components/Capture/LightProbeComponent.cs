@@ -109,6 +109,7 @@ namespace XREngine.Components.Capture.Lights
 
         private bool _autoShowPreviewOnSelect = true;
         private bool _renderInfluenceOnSelection = true;
+        private bool _autoCaptureOnActivate = true;
         private bool _realtime = false;
         private TimeSpan? _realTimeUpdateInterval = TimeSpan.FromMilliseconds(100.0f);
         private uint _irradianceResolution = 32;
@@ -183,6 +184,12 @@ namespace XREngine.Components.Capture.Lights
         {
             get => _renderInfluenceOnSelection;
             set => SetField(ref _renderInfluenceOnSelection, value);
+        }
+
+        public bool AutoCaptureOnActivate
+        {
+            get => _autoCaptureOnActivate;
+            set => SetField(ref _autoCaptureOnActivate, value);
         }
 
         public ERenderPreview PreviewDisplay
@@ -456,7 +463,7 @@ namespace XREngine.Components.Capture.Lights
                 world.Lights.AddLightProbe(this);
                 _registeredWorld = world;
             }
-            if (!RealtimeCapture)
+            if (!RealtimeCapture && AutoCaptureOnActivate)
             {
                 ProgressiveRenderEnabled = false;
                 _startupCaptureTimer.StartSingleFire(() =>

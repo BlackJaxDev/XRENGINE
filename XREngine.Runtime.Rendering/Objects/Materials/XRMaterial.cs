@@ -795,6 +795,71 @@ namespace XREngine.Rendering
 
             return material;
         }
+
+        /// <summary>
+        /// Creates a transparent forward water material that combines GPU tessellation subdivision,
+        /// procedural ocean waves, grab-pass depth-aware blur refraction, fake caustics, foam controls,
+        /// and sphere/capsule driven eddy interaction masks.
+        /// Texture layout:
+        /// Texture0 = scene color grab, Texture1 = scene depth grab.
+        /// Interactors are populated through ShaderVector4 uniforms:
+        /// - InteractorSphereN: xyz=center, w=radius.
+        /// - InteractorCapsuleStartN / InteractorCapsuleEndN: xyz=endpoints, w=radius on start.
+        /// </summary>
+        public static XRMaterial CreateDynamicWaterMaterialForward(
+            XRTexture2D? sceneColorGrab = null,
+            XRTexture2D? sceneDepthGrab = null,
+            ColorF4? shallowColor = null,
+            ColorF4? deepColor = null)
+        {
+            ShaderVar[] parameters =
+            [
+                new ShaderVector4(shallowColor ?? new ColorF4(0.10f, 0.56f, 0.74f, 1.0f), "WaterShallowColor"),
+                new ShaderVector4(deepColor ?? new ColorF4(0.01f, 0.09f, 0.19f, 1.0f), "WaterDeepColor"),
+                new ShaderFloat(0.55f, "WaterTransparency"),
+                new ShaderFloat(0.04f, "RefractionStrength"),
+                new ShaderFloat(2.0f, "DepthBlurRadius"),
+                new ShaderFloat(0.8f, "CausticIntensity"),
+                new ShaderFloat(2.4f, "CausticScale"),
+                new ShaderFloat(0.65f, "FoamIntensity"),
+                new ShaderFloat(0.40f, "FoamThreshold"),
+                new ShaderFloat(0.18f, "FoamSoftness"),
+                new ShaderFloat(1.0f, "OceanWaveIntensity"),
+                new ShaderFloat(0.22f, "WaveScale"),
+                new ShaderFloat(0.7f, "WaveSpeed"),
+                new ShaderFloat(0.40f, "WaveHeight"),
+                new ShaderInt(4, "WaterSubdivision"),
+                new ShaderFloat(1.0f, "EddyIntensity"),
+                new ShaderFloat(0.9f, "EddyRadius"),
+
+                new ShaderInt(0, "InteractorSphereCount"),
+                new ShaderVector4(Vector4.Zero, "InteractorSphere0"),
+                new ShaderVector4(Vector4.Zero, "InteractorSphere1"),
+                new ShaderVector4(Vector4.Zero, "InteractorSphere2"),
+                new ShaderVector4(Vector4.Zero, "InteractorSphere3"),
+
+                new ShaderInt(0, "InteractorCapsuleCount"),
+                new ShaderVector4(Vector4.Zero, "InteractorCapsuleStart0"),
+                new ShaderVector4(Vector4.Zero, "InteractorCapsuleEnd0"),
+                new ShaderVector4(Vector4.Zero, "InteractorCapsuleStart1"),
+                new ShaderVector4(Vector4.Zero, "InteractorCapsuleEnd1"),
+                new ShaderVector4(Vector4.Zero, "InteractorCapsuleStart2"),
+                new ShaderVector4(Vector4.Zero, "InteractorCapsuleEnd2"),
+                new ShaderVector4(Vector4.Zero, "InteractorCapsuleStart3"),
+                new ShaderVector4(Vector4.Zero, "InteractorCapsuleEnd3"),
+            ];
+
+            XRTexture?[] textures = [sceneColorGrab, sceneDepthGrab];
+            XRMaterial material = new(
+                parameters,
+                textures,
+                ShaderHelper.DynamicWaterTessCtrlForward(),
+                ShaderHelper.DynamicWaterTessEvalForward(),
+                ShaderHelper.DynamicWaterFragForward());
+            material.EnableTransparency((int)EDefaultRenderPass.TransparentForward);
+            return material;
+        }
+
         public enum EOpaque
         {
             /// <summary>

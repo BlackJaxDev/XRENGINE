@@ -152,56 +152,35 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                GLMaterial material;
-                using (Engine.Profiler.Start("GLMeshRenderer.Render.GetMaterial"))
-                {
-                    material = GetRenderMaterial(materialOverride);
-                }
+                GLMaterial material = GetRenderMaterial(materialOverride);
 
                 if (GetPrograms(material, out var vtx, out var mat))
                 {
                     Dbg("Programs ready - binding SSBOs and uniforms", "Render");
+                    ConfigureDrawTopology(vtx!, mat);
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.BindBuffers"))
-                    {
-                        if (!BuffersBound)
-                            BindBuffers(vtx!);
-                    }
+                    if (!BuffersBound)
+                        BindBuffers(vtx!);
 
                     if (!BuffersBound)
                         return;
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.BindSSBOs"))
-                    {
-                        BindSSBOs(mat!);
-                        BindSSBOs(vtx!);
-                    }
+                    BindSSBOs(mat!);
+                    BindSSBOs(vtx!);
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.BindSkinnedVertexBuffers"))
-                    {
-                        BindSkinnedVertexBuffers(vtx!);
-                    }
+                    BindSkinnedVertexBuffers(vtx!);
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.PushSkinningData"))
-                    {
-                        MeshRenderer.PushBoneMatricesToGPU();
-                        MeshRenderer.PushBlendshapeWeightsToGPU();
-                    }
+                    MeshRenderer.PushBoneMatricesToGPU();
+                    MeshRenderer.PushBlendshapeWeightsToGPU();
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMeshUniforms"))
-                    {
-                        SetMeshUniforms(modelMatrix, prevModelMatrix, MeshRenderer, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
-                    }
+                    SetMeshUniforms(modelMatrix, prevModelMatrix, MeshRenderer, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
 
                     using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms"))
                     {
                         material.SetUniforms(mat);
                     }
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.CustomUniforms"))
-                    {
-                        OnSettingUniforms(vtx!, mat!);
-                    }
+                    OnSettingUniforms(vtx!, mat!);
 
                     using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw"))
                     {
@@ -232,8 +211,6 @@ namespace XREngine.Rendering.OpenGL
                 GLRenderProgram? materialProgram,
                 EMeshBillboardMode billboardMode)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.SetMeshUniforms");
-
                 bool stereoPass = Engine.Rendering.State.IsStereoPass;
                 var cam = Engine.Rendering.State.RenderingCamera;
                 if (stereoPass)
@@ -290,8 +267,6 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private static void PassCameraUniforms(GLRenderProgram vertexProgram, XRCamera? camera, EEngineUniform invView, EEngineUniform proj)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.PassCameraUniforms");
-
                 Matrix4x4 viewMatrix;
                 Matrix4x4 inverseViewMatrix;
                 Matrix4x4 projMatrix;

@@ -112,7 +112,7 @@ public static partial class EditorUnitTests
             XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[r.Next(0, names.Length - 1)]}.exr");
 
             if (Toggles.LightProbe)
-                Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
+                Lighting.AddInteractiveLightProbeGrid(rootNode, 10, 1, 10, new Vector3(10.0f, 10.0f, 10.0f), new Vector3(0.0f, 50.0f, 0.0f));
             if (Toggles.Skybox)
                 Models.AddSkybox(rootNode, skyEquirect);
         }

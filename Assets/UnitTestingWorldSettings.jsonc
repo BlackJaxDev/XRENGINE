@@ -56,6 +56,8 @@
   "AddCameraVRPickup": false,
   // Adds the mirror test content.
   "Mirror": false,
+  // Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path.
+  "DynamicWaterQuad": false,
   // Forces the debug opaque pipeline instead of the normal material-driven opaque path.
   "ForceDebugOpaquePipeline": false,
 

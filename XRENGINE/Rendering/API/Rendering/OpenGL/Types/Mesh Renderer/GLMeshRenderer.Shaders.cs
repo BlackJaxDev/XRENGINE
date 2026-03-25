@@ -75,7 +75,6 @@ namespace XREngine.Rendering.OpenGL
                 [MaybeNullWhen(false)] out GLRenderProgram? vertexProgram,
                 [MaybeNullWhen(false)] out GLRenderProgram? materialProgram)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.GetPrograms");
                 bool forceShaderPipelines = Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
                 bool materialDiffers = !ReferenceEquals(material, Material);
                 bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
@@ -92,7 +91,6 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private bool GetCombinedProgram(out GLRenderProgram? vertexProgram, out GLRenderProgram? materialProgram)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.GetCombinedProgram");
                 if ((vertexProgram = materialProgram = _combinedProgram) is null)
                 {
                     Dbg("GetCombinedProgram: program null", "Programs");
@@ -120,8 +118,6 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private bool GetPipelinePrograms(GLMaterial material, out GLRenderProgram? vertexProgram, out GLRenderProgram? materialProgram)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.GetPipelinePrograms");
-
                 // OpenGL spec requires glUseProgram(0) before a program pipeline can take effect.
                 // Without this, any previously active combined program overrides the pipeline.
                 Api.UseProgram(0);
@@ -153,7 +149,6 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private bool UseSuppliedVertexShader(out GLRenderProgram? vertexProgram, GLRenderProgram? materialProgram, EProgramStageMask mask)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.UseSuppliedVertexShader");
                 vertexProgram = materialProgram;
                 if (materialProgram?.Link() ?? false)
                 {
@@ -175,7 +170,6 @@ namespace XREngine.Rendering.OpenGL
             /// <returns></returns>
             private bool GenerateVertexShader(out GLRenderProgram? vertexProgram, GLRenderProgram? materialProgram, EProgramStageMask mask)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.GenerateVertexShader");
                 bool forceGeneratedVertexProgram = Engine.Rendering.State.RenderingPipelineState?.ForceGeneratedVertexProgram ?? false;
                 vertexProgram = forceGeneratedVertexProgram
                     ? GetForcedGeneratedVertexProgram()

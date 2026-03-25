@@ -3663,7 +3663,17 @@ void main()
             var renderer = ActiveMeshRenderer;
             if (renderer is not null)
             {
-                if (renderer.TriangleIndicesBuffer is not null)
+                if (renderer.UsesPatchTopology && renderer.TriangleIndicesBuffer is not null)
+                {
+                    primitiveType = PrimitiveType.Patches;
+                    elementType = renderer.TrianglesElementType switch
+                    {
+                        IndexSize.Byte => DrawElementsType.UnsignedByte,
+                        IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+                        _ => DrawElementsType.UnsignedInt,
+                    };
+                }
+                else if (renderer.TriangleIndicesBuffer is not null)
                 {
                     primitiveType = PrimitiveType.Triangles;
                     elementType = renderer.TrianglesElementType switch
@@ -3697,9 +3707,18 @@ void main()
             return (primitiveType, elementType);
         }
 
+        private void ApplyPatchParameters(GLMeshRenderer? renderer)
+        {
+            if (!(renderer?.UsesPatchTopology ?? false))
+                return;
+
+            Api.PatchParameter(GLEnum.PatchVertices, renderer.PatchVertexCount);
+        }
+
         public override unsafe void MultiDrawElementsIndirect(uint drawCount, uint stride)
         {
             var (prim, elem) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
             Api.MultiDrawElementsIndirect(prim, elem, null, drawCount, stride);
             Engine.Rendering.Stats.IncrementMultiDrawCalls();
             Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
@@ -3708,6 +3727,7 @@ void main()
         public override unsafe void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset)
         {
             var (prim, elem) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
             Api.MultiDrawElementsIndirect(prim, elem, (void*)byteOffset, drawCount, stride);
             Engine.Rendering.Stats.IncrementMultiDrawCalls();
             Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
@@ -3716,6 +3736,7 @@ void main()
         public override unsafe void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
         {
             var (prim, elem) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
             Api.MultiDrawElementsIndirectCount(prim, elem, (void*)byteOffset, (IntPtr)countByteOffset, maxDrawCount, stride);
             Engine.Rendering.Stats.IncrementMultiDrawCalls();
             // Note: actual draw count is determined by GPU, we track max as approximation
@@ -3725,6 +3746,7 @@ void main()
         public unsafe void MultiDrawElementsIndirectCountNVBindless(uint drawCountOffset, uint maxDrawCount, uint stride)
         {
             var (prim, elem) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
             NVBindlessMultiDrawIndirectCount?.MultiDrawElementsIndirectBindlessCount(
                 prim,
                 elem,
@@ -3740,6 +3762,7 @@ void main()
         public unsafe void MultiDrawElementsIndirectCount(uint drawCountOffset, uint maxDrawCount, uint stride)
         {
             var (primitiveType, elementType) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
             // Requires GL 4.6 or ARB_indirect_parameters
             Api.MultiDrawElementsIndirectCount(
                 primitiveType,

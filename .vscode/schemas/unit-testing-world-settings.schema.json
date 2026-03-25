@@ -109,6 +109,10 @@
       "type": "boolean",
       "description": "Adds the mirror test content."
     },
+    "DynamicWaterQuad": {
+      "type": "boolean",
+      "description": "Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path."
+    },
     "ForceDebugOpaquePipeline": {
       "type": "boolean",
       "description": "Forces the debug opaque pipeline instead of the normal material-driven opaque path."
