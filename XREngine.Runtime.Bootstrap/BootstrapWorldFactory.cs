@@ -77,7 +77,7 @@ public static class BootstrapWorldFactory
                     : null;
 
                 if (addLightProbe)
-                    BootstrapLightingBuilder.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
+                    BootstrapLightingBuilder.AddInteractiveLightProbeGrid(rootNode, 8, 3, 8, new Vector3(10.0f, 10.0f, 10.0f), Vector3.Zero);
                 if (addSkybox)
                     BootstrapModelBuilder.AddSkybox(rootNode, skyEquirect);
             };

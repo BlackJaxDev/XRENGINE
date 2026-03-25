@@ -696,6 +696,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 UnmapBufferData();
                 _immutableStorageSet = false;
+                _lastPushedLength = 0;
+                _hasPendingUpload = false;
 
                 // Track VRAM deallocation
                 if (_allocatedVRAMBytes > 0)

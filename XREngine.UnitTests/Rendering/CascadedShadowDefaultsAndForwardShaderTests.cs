@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Shouldly;
+using System.IO;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Scene.Transforms;
@@ -24,8 +25,13 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
 
         source.ShouldContain("uniform sampler2DArray ShadowMapArray;");
         source.ShouldContain("uniform bool UseCascadedDirectionalShadows;");
+        source.ShouldContain("uniform bool EnableContactShadows = true;");
+        source.ShouldContain("uniform float ContactShadowDistance = 0.1;");
+        source.ShouldContain("uniform int ContactShadowSamples = 8;");
         source.ShouldContain("int XRENGINE_GetPrimaryDirLightCascadeIndex(vec3 fragPosWS)");
         source.ShouldContain("DirectionalLights[0].CascadeMatrices[cascadeIndex]");
+        source.ShouldContain("XRENGINE_SampleContactShadowArray(");
+        source.ShouldContain("XRENGINE_SampleContactShadow2D(");
         source.ShouldContain("vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;");
     }
 
@@ -49,7 +55,48 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string source = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
 
         source.ShouldContain("vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;");
-        source.ShouldContain("XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS)");
+        source.ShouldContain("uniform bool EnableContactShadows = true;");
+        source.ShouldContain("uniform float ContactShadowDistance = 0.1f;");
+        source.ShouldContain("uniform int ContactShadowSamples = 8;");
+        source.ShouldContain("SampleContactShadowScreenSpaceLocal(");
+    }
+
+    [Test]
+    public void LightSources_DeclareTunedShadowDefaults()
+    {
+        string lightComponentSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "LightComponent.cs"));
+        lightComponentSource.ShouldContain("private float _shadowMaxBias = 0.004f;");
+        lightComponentSource.ShouldContain("private float _shadowMinBias = 0.00001f;");
+        lightComponentSource.ShouldContain("private float _shadowExponent = 1.221f;");
+        lightComponentSource.ShouldContain("private float _shadowExponentBase = 0.035f;");
+        lightComponentSource.ShouldContain("private int _samples = 1;");
+        lightComponentSource.ShouldContain("private float _filterRadius = 0.0012f;");
+        lightComponentSource.ShouldContain("private bool _enableContactShadows = true;");
+        lightComponentSource.ShouldContain("private float _contactShadowDistance = 0.1f;");
+        lightComponentSource.ShouldContain("private int _contactShadowSamples = 8;");
+
+        string directionalSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
+        directionalSource.ShouldContain("ShadowExponentBase = 0.035f;");
+        directionalSource.ShouldContain("ShadowExponent = 1.221f;");
+        directionalSource.ShouldContain("ShadowMinBias = 0.00001f;");
+        directionalSource.ShouldContain("ShadowMaxBias = 0.004f;");
+        directionalSource.ShouldContain("FilterRadius = 0.0012f;");
+    }
+
+    private static string LoadRepoSource(string relativePath)
+    {
+        string dir = AppContext.BaseDirectory;
+        for (int i = 0; i < 10; i++)
+        {
+            string candidate = Path.Combine(dir, relativePath);
+            if (File.Exists(candidate))
+                return File.ReadAllText(candidate);
+
+            dir = Path.GetDirectoryName(dir) ?? dir;
+        }
+
+        Assert.Inconclusive($"Repository source file not found: {relativePath}");
+        return string.Empty;
     }
 
     /// <summary>

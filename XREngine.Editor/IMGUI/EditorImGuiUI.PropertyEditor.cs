@@ -3818,6 +3818,90 @@ public static partial class EditorImGuiUI
                 }
                 handled = true;
             }
+            else if (effectiveType == typeof(Quaternion))
+            {
+                Quaternion quat = currentValue is Quaternion q ? q : Quaternion.Identity;
+                Vector3 euler = QuaternionToEulerDeg(quat);
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.DragFloat3("##Value", ref euler, 0.5f) && canWrite)
+                    {
+                        var newQuat = EulerDegToQuaternion(euler);
+                        if (TryApplyInspectorValue(targets, property, values, newQuat))
+                        {
+                            currentValue = newQuat;
+                            isCurrentlyNull = false;
+                            hasMixedValues = false;
+                        }
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Rotation as Euler angles (Pitch, Yaw, Roll) in degrees");
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                }
+                handled = true;
+            }
+            else if (effectiveType == typeof(TimeSpan))
+            {
+                TimeSpan ts = currentValue is TimeSpan t ? t : TimeSpan.Zero;
+                int days = ts.Days;
+                int hours = ts.Hours;
+                int minutes = ts.Minutes;
+                int seconds = ts.Seconds;
+                int milliseconds = ts.Milliseconds;
+                bool changed = false;
+
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    float availWidth = ImGui.GetContentRegionAvail().X;
+                    if (days != 0)
+                    {
+                        ImGui.SetNextItemWidth(availWidth * 0.15f);
+                        changed |= ImGui.DragInt("##d", ref days, 0.1f, 0, int.MaxValue);
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Days");
+                        ImGui.SameLine(0f, 2f);
+                        ImGui.TextUnformatted(":");
+                        ImGui.SameLine(0f, 2f);
+                    }
+                    float fieldWidth = days != 0 ? availWidth * 0.18f : availWidth * 0.22f;
+                    ImGui.SetNextItemWidth(fieldWidth);
+                    changed |= ImGui.DragInt("##h", ref hours, 0.1f, 0, 23);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Hours");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.TextUnformatted(":");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.SetNextItemWidth(fieldWidth);
+                    changed |= ImGui.DragInt("##m", ref minutes, 0.1f, 0, 59);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Minutes");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.TextUnformatted(":");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.SetNextItemWidth(fieldWidth);
+                    changed |= ImGui.DragInt("##s", ref seconds, 0.1f, 0, 59);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Seconds");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.TextUnformatted(".");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.SetNextItemWidth(fieldWidth);
+                    changed |= ImGui.DragInt("##ms", ref milliseconds, 1f, 0, 999);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Milliseconds");
+
+                    if (changed && canWrite)
+                    {
+                        var newTs = new TimeSpan(days, hours, minutes, seconds, milliseconds);
+                        if (TryApplyInspectorValue(targets, property, values, newTs))
+                        {
+                            currentValue = newTs;
+                            isCurrentlyNull = false;
+                            hasMixedValues = false;
+                        }
+                    }
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                }
+                handled = true;
+            }
             else if (TryDrawColorProperty(targets, property, effectiveType, canWrite, values, ref currentValue, ref isCurrentlyNull))
             {
                 handled = true;
@@ -5093,10 +5177,118 @@ public static partial class EditorImGuiUI
                 return true;
             }
 
+            if (effectiveType == typeof(Quaternion))
+            {
+                Quaternion quat = currentValue is Quaternion q ? q : Quaternion.Identity;
+                Vector3 euler = QuaternionToEulerDeg(quat);
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.DragFloat3(label, ref euler, 0.5f) && canWrite)
+                    {
+                        var newQuat = EulerDegToQuaternion(euler);
+                        if (applyValue(newQuat))
+                        {
+                            currentValue = newQuat;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Rotation as Euler angles (Pitch, Yaw, Roll) in degrees");
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(TimeSpan))
+            {
+                TimeSpan ts = currentValue is TimeSpan t ? t : TimeSpan.Zero;
+                int days = ts.Days;
+                int hours = ts.Hours;
+                int minutes = ts.Minutes;
+                int seconds = ts.Seconds;
+                int milliseconds = ts.Milliseconds;
+                bool changed = false;
+
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    float availWidth = ImGui.GetContentRegionAvail().X;
+                    // Compact layout: D : HH : MM : SS . mmm
+                    if (days != 0)
+                    {
+                        ImGui.SetNextItemWidth(availWidth * 0.15f);
+                        changed |= ImGui.DragInt($"##d{label}", ref days, 0.1f, 0, int.MaxValue);
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Days");
+                        ImGui.SameLine(0f, 2f);
+                        ImGui.TextUnformatted(":");
+                        ImGui.SameLine(0f, 2f);
+                    }
+                    float fieldWidth = days != 0 ? availWidth * 0.18f : availWidth * 0.22f;
+                    ImGui.SetNextItemWidth(fieldWidth);
+                    changed |= ImGui.DragInt($"##h{label}", ref hours, 0.1f, 0, 23);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Hours");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.TextUnformatted(":");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.SetNextItemWidth(fieldWidth);
+                    changed |= ImGui.DragInt($"##m{label}", ref minutes, 0.1f, 0, 59);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Minutes");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.TextUnformatted(":");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.SetNextItemWidth(fieldWidth);
+                    changed |= ImGui.DragInt($"##s{label}", ref seconds, 0.1f, 0, 59);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Seconds");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.TextUnformatted(".");
+                    ImGui.SameLine(0f, 2f);
+                    ImGui.SetNextItemWidth(fieldWidth);
+                    changed |= ImGui.DragInt($"##ms{label}", ref milliseconds, 1f, 0, 999);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Milliseconds");
+
+                    if (changed && canWrite)
+                    {
+                        var newTs = new TimeSpan(days, hours, minutes, seconds, milliseconds);
+                        if (applyValue(newTs))
+                        {
+                            currentValue = newTs;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                return true;
+            }
+
             if (TryDrawNumericEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, applyValue, label))
                 return true;
 
             return false;
+        }
+
+        private static Vector3 QuaternionToEulerDeg(Quaternion q)
+        {
+            float sinX = 2f * (q.W * q.X - q.Y * q.Z);
+            sinX = Math.Clamp(sinX, -1f, 1f);
+            float pitch = MathF.Asin(sinX);
+
+            float sinYCosX = 2f * (q.W * q.Y + q.X * q.Z);
+            float cosYCosX = 1f - 2f * (q.X * q.X + q.Y * q.Y);
+            float yaw = MathF.Atan2(sinYCosX, cosYCosX);
+
+            float sinZCosX = 2f * (q.W * q.Z + q.X * q.Y);
+            float cosZCosX = 1f - 2f * (q.X * q.X + q.Z * q.Z);
+            float roll = MathF.Atan2(sinZCosX, cosZCosX);
+
+            const float radToDeg = 180f / MathF.PI;
+            return new Vector3(pitch * radToDeg, yaw * radToDeg, roll * radToDeg);
+        }
+
+        private static Quaternion EulerDegToQuaternion(Vector3 euler)
+        {
+            const float degToRad = MathF.PI / 180f;
+            return Quaternion.CreateFromYawPitchRoll(
+                euler.Y * degToRad,
+                euler.X * degToRad,
+                euler.Z * degToRad);
         }
 
         private static unsafe bool TryDrawNumericEditor(Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull, Func<object?, bool> applyValue, string label)
@@ -5797,6 +5989,36 @@ public static partial class EditorImGuiUI
                 }
             }
 
+            if (type == typeof(Quaternion))
+            {
+                value = Quaternion.Identity;
+                return true;
+            }
+
+            if (type == typeof(TimeSpan))
+            {
+                value = TimeSpan.Zero;
+                return true;
+            }
+
+            if (type == typeof(Vector2))
+            {
+                value = Vector2.Zero;
+                return true;
+            }
+
+            if (type == typeof(Vector3))
+            {
+                value = Vector3.Zero;
+                return true;
+            }
+
+            if (type == typeof(Vector4))
+            {
+                value = Vector4.Zero;
+                return true;
+            }
+
             value = null;
             return false;
         }
@@ -5838,6 +6060,10 @@ public static partial class EditorImGuiUI
                 return false;
             if (effective == typeof(LayerMask))
                 return false;
+            if (effective == typeof(Quaternion))
+                return false;
+            if (effective == typeof(TimeSpan))
+                return false;
             // Unknown struct — needs expandable editor.
             return true;
         }
@@ -5864,8 +6090,25 @@ public static partial class EditorImGuiUI
                 Vector2 v2 => $"({v2.X:0.###}, {v2.Y:0.###})",
                 Vector3 v3 => $"({v3.X:0.###}, {v3.Y:0.###}, {v3.Z:0.###})",
                 Vector4 v4 => $"({v4.X:0.###}, {v4.Y:0.###}, {v4.Z:0.###}, {v4.W:0.###})",
+                Quaternion q => FormatQuaternionAsEuler(q),
+                TimeSpan ts => FormatTimeSpan(ts),
                 _ => value.ToString() ?? string.Empty
             };
+        }
+
+        private static string FormatQuaternionAsEuler(Quaternion q)
+        {
+            Vector3 euler = QuaternionToEulerDeg(q);
+            return $"({euler.X:0.#}°, {euler.Y:0.#}°, {euler.Z:0.#}°)";
+        }
+
+        private static string FormatTimeSpan(TimeSpan ts)
+        {
+            if (ts.Days != 0)
+                return $"{ts.Days}d {ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+            if (ts.Hours != 0)
+                return $"{ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+            return $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
         }
 
         private sealed record CollectionTypeDescriptor(Type Type, string DisplayName, string Namespace, string AssemblyName)

@@ -72,14 +72,17 @@ uniform bool ShadowMapEnabled;
 uniform bool UseCascadedDirectionalShadows;
 uniform mat4 PrimaryDirLightWorldToLightInvViewMatrix;
 uniform mat4 PrimaryDirLightWorldToLightProjMatrix;
-uniform float ShadowBase;
-uniform float ShadowMult;
-uniform float ShadowBiasMin;
-uniform float ShadowBiasMax;
-uniform int ShadowSamples;
-uniform float ShadowFilterRadius;
-uniform bool EnablePCSS;
-uniform bool EnableCascadedShadows;
+uniform float ShadowBase = 0.035;
+uniform float ShadowMult = 1.221;
+uniform float ShadowBiasMin = 0.00001;
+uniform float ShadowBiasMax = 0.004;
+uniform int ShadowSamples = 1;
+uniform float ShadowFilterRadius = 0.0012;
+uniform bool EnablePCSS = true;
+uniform bool EnableCascadedShadows = true;
+uniform bool EnableContactShadows = true;
+uniform float ContactShadowDistance = 0.1;
+uniform int ContactShadowSamples = 8;
 
 uniform int DirLightCount; 
 uniform DirLight DirectionalLights[2];
@@ -492,14 +495,27 @@ float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseF
         return -1.0;
 
     float bias = XRENGINE_GetShadowBias(diffuseFactor);
+    float contact = EnableContactShadows
+        ? XRENGINE_SampleContactShadowArray(
+            ShadowMapArray,
+            lightMatrix,
+            float(cascadeIndex),
+            fragPos,
+            normal,
+            normalize(-DirectionalLights[0].Direction),
+            ShadowBiasMax,
+            bias,
+            ContactShadowDistance,
+            ContactShadowSamples)
+        : 1.0;
     if (EnablePCSS)
     {
         int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
         float filterRadius = ShadowFilterRadius * (1.0 + float(cascadeIndex) * 0.35);
-        return XRENGINE_SampleShadowMapArraySoft(ShadowMapArray, fragCoord, float(cascadeIndex), bias, sampleCount, filterRadius);
+        return XRENGINE_SampleShadowMapArraySoft(ShadowMapArray, fragCoord, float(cascadeIndex), bias, sampleCount, filterRadius) * contact;
     }
 
-    return XRENGINE_SampleShadowMapArrayPCF(ShadowMapArray, fragCoord, float(cascadeIndex), bias, 3);
+    return XRENGINE_SampleShadowMapArrayPCF(ShadowMapArray, fragCoord, float(cascadeIndex), bias, 3) * contact;
 }
 
 // Shadow map reading for primary directional light (uses standalone ShadowMap sampler)
@@ -525,13 +541,25 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
         return 1.0;
 
     float bias = XRENGINE_GetShadowBias(diffuseFactor);
+    float contact = EnableContactShadows
+        ? XRENGINE_SampleContactShadow2D(
+            ShadowMap,
+            lightMatrix,
+            fragPos,
+            normal,
+            normalize(-DirectionalLights[0].Direction),
+            ShadowBiasMax,
+            bias,
+            ContactShadowDistance,
+            ContactShadowSamples)
+        : 1.0;
     if (EnablePCSS)
     {
         int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
-        return XRENGINE_SampleShadowMapSoft(ShadowMap, fragCoord, bias, sampleCount, ShadowFilterRadius);
+        return XRENGINE_SampleShadowMapSoft(ShadowMap, fragCoord, bias, sampleCount, ShadowFilterRadius) * contact;
     }
 
-    return XRENGINE_SampleShadowMapPCF(ShadowMap, fragCoord, bias, 3);
+    return XRENGINE_SampleShadowMapPCF(ShadowMap, fragCoord, bias, 3) * contact;
 }
 
 vec3 XRENGINE_CalculateDirectPbrLight(vec3 lightColor, float diffuseIntensity, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0, float attenuation)

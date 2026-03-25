@@ -8,6 +8,7 @@ Status: Active development — core pipeline functional, LOD system and zero-rea
 The GPU-driven rendering pipeline must achieve **zero CPU readbacks** in the shipping render path. All culling (BVH traversal, frustum, occlusion), LOD selection, sort/batch generation, and draw dispatch must execute entirely on the GPU. The CPU's role is scene ingest (command add/remove/update via subdata) and issuing a fixed sequence of compute dispatches followed by `MultiDrawElementsIndirectCount` — nothing more.
 
 Two rendering paths are supported:
+
 1. **Traditional indirect multi-draw** — GPU builds `DrawElementsIndirectCommand` arrays, CPU issues `MultiDrawElementsIndirectCount` per material state group.
 2. **Meshlet-based mesh shaders** — GPU task shaders cull meshlets, mesh shaders emit triangles. No indirect draw buffer needed.
 
@@ -108,6 +109,7 @@ Both paths share the same scene representation (`GPUScene`), BVH, and culling in
 ### Mesh Atlas
 
 Single scene-level atlas VAO with interleaved attribute streams:
+
 - `binding=0` Positions (vec3)
 - `binding=1` Normals (vec3)
 - `binding=2` Tangents (vec4)
@@ -140,6 +142,7 @@ Meshes are appended incrementally with ref counting. Power-of-2 growth, `PushSub
 ### Draw Submission (Current)
 
 `HybridRenderingManager.RenderTraditionalBatched()`:
+
 1. Reads batch ranges from GPU → `List<DrawBatch>` (CPU readback)
 2. Coalesces contiguous same-material batches
 3. For each batch: resolves `XRMaterial`, binds shader program, sets uniforms, calls `MultiDrawElementsIndirectWithOffset`
@@ -302,6 +305,7 @@ The inner tier loop is a constant 3 iterations — no GPU readback needed. Empty
 #### Migration Between Tiers
 
 Meshes can be promoted or demoted between tiers at runtime:
+
 - **Dynamic → Static:** When a level finishes loading and geometry is known to be permanent, bulk-copy from dynamic to static tier buffers, update `MeshDataBuffer` entries, release dynamic slots. This is an offline operation (loading screen / async).
 - **Dynamic → Streaming:** When a mesh becomes editable (e.g., user enters modeling mode), allocate a streaming slot, copy current geometry, update `MeshDataBuffer`, release dynamic slot.
 - **Streaming → Dynamic:** When editing ends, copy final geometry to dynamic tier, release streaming slot.
@@ -415,6 +419,7 @@ The meshlet path reuses the same BVH cull and LOD selection. After LOD selection
 - [x] Push `MaterialSlotRegistry` mapping to GPU as a uniform buffer or SSBO.
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
 - `XREngine/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`
 
@@ -432,6 +437,7 @@ Primary files:
 - [x] Initially, until the tiered atlas (Phase 8) ships, all meshes are tier 0 (Static) — the scatter shader still works, the inner loop just always hits one tier.
 
 Primary files:
+
 - New: `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderMaterialScatter.comp`
 - `XREngine/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
 
@@ -450,6 +456,7 @@ Primary files:
 - [x] Keep existing batch-readback path as debug/fallback only.
 
 Primary files:
+
 - `XREngine/Rendering/HybridRenderingManager.cs`
 
 #### 7D — Eliminate Remaining Count Readbacks
@@ -460,6 +467,7 @@ Primary files:
 - [x] Remove `ReadGpuBatchRanges()` from default path entirely.
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
 - `XREngine/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
 - `XREngine/Rendering/Commands/GPURenderPassCollection.Occlusion.cs`
@@ -470,9 +478,11 @@ Primary files:
 - [x] Remove `GetDataArrayRawAtIndex` fallback from hot path.
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPUScene.cs`
 
 Acceptance criteria:
+
 - Zero `ReadUIntAt`, `MapBufferData`, `GetDataArrayRawAtIndex`, or any GPU→CPU data read during the rendering hot path in shipping mode.
 - `Engine.Rendering.Stats.GpuReadbackBytes` reports 0 for a full frame in shipping config.
 - Debug/diagnostic readbacks remain available behind explicit flags.
@@ -491,6 +501,7 @@ Acceptance criteria:
 - [x] Create per-tier VAO binding support that reconfigures the shared indirect renderer against the tier's specific buffers at draw time.
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPUScene.cs`
 - `XREngine/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`
 
@@ -501,6 +512,7 @@ Primary files:
 - [x] Static meshes get `MeshDataBuffer` entries tagged as static and participate in BVH/culling normally.
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPUScene.cs`
 
 #### 8C — Dynamic Tier (Load/Unload)
@@ -510,6 +522,7 @@ Primary files:
 - [x] Keep the dynamic tier as the default residency target for follow-on LOD work.
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPUScene.cs`
 
 #### 8D — Streaming Tier (Real-Time Writes)
@@ -522,6 +535,7 @@ Primary files:
 - [x] Keep the API surface suitable for real-time modeling and procedural mesh update paths.
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPUScene.cs`
 - `XREngine/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` (persistent mapping)
 
@@ -532,9 +546,11 @@ Primary files:
 - [x] Preserve tier-tagged mesh metadata so follow-on LOD table work can target the migrated entries.
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPUScene.cs`
 
 Acceptance criteria:
+
 - Static tier meshes have zero tier-management CPU work after upload.
 - Dynamic tier supports add/remove/compaction without corrupting other tiers.
 - Streaming tier exposes direct mapped-write entry points through the active write slot.
@@ -550,6 +566,7 @@ Acceptance criteria:
 #### 9A — LOD Table Buffer
 
 - [x] Add `LODTableEntry` struct:
+
   ```csharp
   [StructLayout(LayoutKind.Sequential)]
   public struct LODTableEntry
@@ -565,11 +582,13 @@ Acceptance criteria:
       public float LOD3_MaxDistance;
   }
   ```
+
 - [x] Add `_lodTableBuffer` SSBO to `GPUScene`.
 - [x] Map logical mesh ID → LOD table entry. When a mesh with LODs is registered, all LOD meshes are appended to the atlas and the LOD table is populated.
 - [x] Add `LogicalMeshID` field to `GPUIndirectRenderCommand` (repurpose `Reserved0`).
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPUScene.cs`
 - `XREngine.Runtime.Rendering/Commands/GPUIndirectRenderCommand.cs`
 
@@ -585,6 +604,7 @@ Primary files:
 - [x] If `LODCount == 1` or `LODEnabled` flag is not set, skip (pass through existing MeshID).
 
 Primary files:
+
 - New: `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp`
 - `XREngine/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
 
@@ -597,6 +617,7 @@ Primary files:
 - [x] When a requested LOD mesh is loaded, update `MeshDataBuffer` and `LODTableBuffer` entries via subdata.
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPUScene.cs`
 - `XREngine/Models/Meshes/SubMesh.cs`
 - `XREngine/Models/Meshes/SubMeshLOD.cs`
@@ -608,11 +629,13 @@ Primary files:
 - [ ] Fragment shader samples dither pattern and discards pixels based on transition progress.
 
 Primary files:
+
 - New: `Build/CommonAssets/Shaders/Common/lod_dither.glslinc`
 - Fragment shader includes
 - `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp` (transition tracking)
 
 Acceptance criteria:
+
 - GPU selects LOD per command, no CPU involvement in the new LOD-selection stage once visible commands are produced.
 - Atlas contains multiple LOD meshes simultaneously.
 - LOD transitions are smooth (no visible popping).
@@ -632,6 +655,7 @@ Acceptance criteria:
 - [ ] Store meshlet vertex indices, triangle indices, and meshlet descriptors in dedicated SSBOs managed by `GPUScene` (not per-`MeshletCollection`).
 
 Primary files:
+
 - `XREngine/Rendering/Commands/GPUScene.cs`
 - `XREngine/Rendering/Meshlets/MeshletGenerator.cs`
 - `XREngine/Rendering/Meshlets/Meshlet.cs`
@@ -645,6 +669,7 @@ Primary files:
 - [ ] Mesh shader: vertex/triangle output (already exists in `MeshletRender.mesh`).
 
 Primary files:
+
 - `XREngine/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs`
 - `XREngine/Rendering/Meshlets/MeshletCollection.cs`
 - `Build/CommonAssets/Shaders/Meshlets/MeshletCulling.task`
@@ -658,6 +683,7 @@ Primary files:
 - [ ] Runtime fallback: EXT preferred → NV fallback → traditional indirect.
 
 Primary files:
+
 - `XREngine/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs`
 - `XREngine/Rendering/Meshlets/MeshletCollection.cs`
 
@@ -667,6 +693,7 @@ Primary files:
 - [ ] This is a stretch goal — traditional per-mesh LOD (Phase 8) is the default first.
 
 Acceptance criteria:
+
 - Meshlet path renders correctly on NV mesh shader hardware.
 - No fallback to traditional path when mesh shaders are available and enabled.
 - Meshlet path shares BVH cull and LOD selection with traditional path.
@@ -696,6 +723,7 @@ Acceptance criteria:
 - [ ] Finalize docs for runtime toggles, debug tools, and fallback behavior.
 
 Acceptance criteria:
+
 - 30+ minute stress run with zero readbacks, no corruption, no leak growth, no fallback thrashing.
 - GPU stats dashboard shows 0 readback bytes in shipping config.
 

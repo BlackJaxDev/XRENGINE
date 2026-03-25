@@ -20,16 +20,23 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRMaterialFrameBuffer? _shadowMap = null;
         private ELightType _type = ELightType.Dynamic;
         private bool _castsShadows = true;
-        private float _shadowMaxBias = 0.003f;
-        private float _shadowMinBias = 0.000f;
-        private float _shadowExponent = 0.994f;
-        private float _shadowExponentBase = 0.037f;
+        private float _shadowMaxBias = 0.004f;
+        private float _shadowMinBias = 0.00001f;
+        private float _shadowExponent = 1.221f;
+        private float _shadowExponentBase = 0.035f;
         private Matrix4x4 _lightMatrix = Matrix4x4.Identity;
         private Matrix4x4 _meshCenterAdjustMatrix = Matrix4x4.Identity;
         private readonly RenderCommandMesh3D _shadowVolumeRC = new((int)EDefaultRenderPass.OpaqueForward);
         private readonly List<FrustumIntersectionAabb> _cameraIntersections = new(6);
         private bool _previewBoundingVolume = false;
         private XRWorldInstance? _registeredDynamicWorld;
+        private int _samples = 1;
+        private float _filterRadius = 0.0012f;
+        private bool _enablePcss = true;
+        private bool _enableCascadedShadows = true;
+        private bool _enableContactShadows = true;
+        private float _contactShadowDistance = 0.1f;
+        private int _contactShadowSamples = 8;
 
         private long _lastMovedTicks;
         private uint _movementVersion = 0;
@@ -291,13 +298,47 @@ namespace XREngine.Components.Capture.Lights.Types
             ShadowMap?.Destroy();
         }
 
-        public int Samples { get; set; } = 1;
-        public float FilterRadius { get; set; } = 0.001f;
-        public bool EnablePCSS { get; set; } = true;
-        public bool EnableCascadedShadows { get; set; } = true;
-        public bool EnableContactShadows { get; set; } = true;
-        public float ContactShadowDistance { get; set; } = 0.1f;
-        public int ContactShadowSamples { get; set; } = 8;
+        public int Samples
+        {
+            get => _samples;
+            set => SetField(ref _samples, Math.Max(1, value));
+        }
+
+        public float FilterRadius
+        {
+            get => _filterRadius;
+            set => SetField(ref _filterRadius, MathF.Max(0.0f, value));
+        }
+
+        public bool EnablePCSS
+        {
+            get => _enablePcss;
+            set => SetField(ref _enablePcss, value);
+        }
+
+        public bool EnableCascadedShadows
+        {
+            get => _enableCascadedShadows;
+            set => SetField(ref _enableCascadedShadows, value);
+        }
+
+        public bool EnableContactShadows
+        {
+            get => _enableContactShadows;
+            set => SetField(ref _enableContactShadows, value);
+        }
+
+        public float ContactShadowDistance
+        {
+            get => _contactShadowDistance;
+            set => SetField(ref _contactShadowDistance, MathF.Max(0.0f, value));
+        }
+
+        public int ContactShadowSamples
+        {
+            get => _contactShadowSamples;
+            set => SetField(ref _contactShadowSamples, Math.Max(1, value));
+        }
 
         public virtual void SetUniforms(XRRenderProgram program, string? targetStructName = null)
         {

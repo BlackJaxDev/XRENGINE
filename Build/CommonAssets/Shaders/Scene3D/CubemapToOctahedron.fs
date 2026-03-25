@@ -18,5 +18,5 @@ void main()
     // Map from clip space [-1, 1] to UV space [0, 1]
     vec2 uv = clipXY * 0.5f + 0.5f;
     vec3 dir = XRENGINE_DecodeOcta(uv);
-    OutColor = texture(Texture0, dir);
+    OutColor = vec4(texture(Texture0, dir).rgb, 1.0f);
 }
