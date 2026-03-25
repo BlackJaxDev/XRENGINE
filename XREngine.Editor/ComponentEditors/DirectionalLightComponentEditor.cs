@@ -75,6 +75,15 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
             light.CascadeOverlapPercent = overlap;
         ImGuiUndoHelper.TrackDragUndo("Cascade Overlap", light);
 
+        float cascadeDistance = float.IsFinite(light.CascadedShadowDistance)
+            ? light.CascadedShadowDistance
+            : 0.0f;
+        if (ImGui.DragFloat("Cascade Distance", ref cascadeDistance, 1.0f, 0.0f, 100000.0f, "%.1f"))
+            light.CascadedShadowDistance = cascadeDistance;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Maximum camera distance covered by cascade splits.\n0 uses the camera shadow distance / far plane.");
+        ImGuiUndoHelper.TrackDragUndo("Cascade Distance", light);
+
         float[] percentages = light.CascadePercentages;
         if (percentages.Length != light.CascadeCount)
             Array.Resize(ref percentages, light.CascadeCount);
@@ -129,6 +138,11 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
         ImGui.Text($"Casts Shadows: {(castsShadows ? "Yes" : "No")}");
         ImGui.Text($"Cascaded Enabled: {(cascadesEnabled ? "Yes" : "No")}");
         ImGui.Text($"Active Cascades: {activeCascades} / {light.CascadeCount}");
+        string configuredDistance = float.IsFinite(light.CascadedShadowDistance)
+            ? $"{light.CascadedShadowDistance:F1}"
+            : "Auto";
+        ImGui.Text($"Configured Cascade Distance: {configuredDistance}");
+        ImGui.Text($"Effective Cascade Range: {light.CascadeRangeNear:F1} - {light.CascadeRangeFar:F1} ({light.EffectiveCascadeDistance:F1})");
 
         var tex = light.CascadedShadowMapTexture;
         if (tex is not null)
@@ -145,9 +159,10 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
         ImGui.Separator();
 
         // Per-cascade detail table
-        if (ImGui.BeginTable("CascadeSlices", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        if (ImGui.BeginTable("CascadeSlices", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
         {
             ImGui.TableSetupColumn("Idx", ImGuiTableColumnFlags.WidthFixed, 30.0f);
+            ImGui.TableSetupColumn("Split Near", ImGuiTableColumnFlags.WidthFixed, 80.0f);
             ImGui.TableSetupColumn("Split Far", ImGuiTableColumnFlags.WidthFixed, 80.0f);
             ImGui.TableSetupColumn("Center", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableSetupColumn("Half Extents", ImGuiTableColumnFlags.WidthStretch);
@@ -163,6 +178,10 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
                 ImGui.PushStyleColor(ImGuiCol.Text, color);
                 ImGui.Text($"{i}");
                 ImGui.PopStyleColor();
+
+                ImGui.TableNextColumn();
+                float splitNear = i == 0 ? light.CascadeRangeNear : light.GetCascadeSplit(i - 1);
+                ImGui.Text($"{splitNear:F1}");
 
                 ImGui.TableNextColumn();
                 ImGui.Text($"{light.GetCascadeSplit(i):F1}");

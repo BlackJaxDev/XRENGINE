@@ -201,3 +201,21 @@ This materially improves visible shadow receive on scene surfaces that previousl
 1. The forward path still has some debugging-oriented matrix plumbing that may be more complex than necessary. It should be reviewed after the visual regression is confirmed closed.
 2. If directional shadow quality still looks fragile in extreme light orientations, the next diagnostic tool should be a temporary forward-shader visualization mode that outputs the sampled shadow factor directly.
 3. If one-sided materials should only sometimes cast two-sided shadows, the global `CullMode = None` rule for shadow caster variants may eventually need to become a material-level option instead of a universal default.
+
+## Follow-up: Cascaded Shadow Range Clamping
+
+The cascaded directional-shadow path now clamps its split range to the smallest finite value from:
+
+- the source camera `FarZ`,
+- the source camera `ShadowCollectMaxDistance`,
+- the directional light's `CascadedShadowDistance` override.
+
+This avoids distributing cascade texels across the full camera far plane by default when the practical shadowing distance is much shorter.
+
+The directional light inspector now exposes:
+
+- `Cascade Distance` — per-light override for the cascade coverage distance,
+- `Effective Cascade Range` — runtime near/far range used for the current cascade build,
+- per-cascade split near/far distances in the debug table.
+
+This is primarily intended to make the "everything stays in cascade 0" failure mode obvious when debugging scenes such as Sponza.

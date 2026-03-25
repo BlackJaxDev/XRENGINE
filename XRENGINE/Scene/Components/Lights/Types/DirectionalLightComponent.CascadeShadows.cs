@@ -85,6 +85,8 @@ namespace XREngine.Components.Lights
         private readonly List<CascadedShadowAabb> _cascadeAabbs = new(4);
         private readonly List<CascadeShadowSlice> _cascadeShadowSlices = new(MaxCascadeRenderCount);
         private readonly CascadeAabbView _cascadeAabbView;
+        private float _publishedCascadeRangeNear;
+        private float _publishedCascadeRangeFar;
         private XRTexture2DArray? _cascadeShadowMapTexture;
         private XRFrameBuffer[] _cascadeShadowFrameBuffers = [];
         private XRViewport[] _cascadeShadowViewports = [];
@@ -154,6 +156,33 @@ namespace XREngine.Components.Lights
             {
                 lock (_cascadeDataLock)
                     return _cascadeShadowSlices.Count;
+            }
+        }
+
+        public float CascadeRangeNear
+        {
+            get
+            {
+                lock (_cascadeDataLock)
+                    return _publishedCascadeRangeNear;
+            }
+        }
+
+        public float CascadeRangeFar
+        {
+            get
+            {
+                lock (_cascadeDataLock)
+                    return _publishedCascadeRangeFar;
+            }
+        }
+
+        public float EffectiveCascadeDistance
+        {
+            get
+            {
+                lock (_cascadeDataLock)
+                    return MathF.Max(0.0f, _publishedCascadeRangeFar - _publishedCascadeRangeNear);
             }
         }
 
@@ -377,10 +406,14 @@ namespace XREngine.Components.Lights
             Vector3 right = Vector3.Normalize(Vector3.Cross(up, lightDir));
             up = Vector3.Normalize(Vector3.Cross(lightDir, right));
 
+            // The engine's forward direction is -Z (Globals.Forward = (0,0,-1)).
+            // To make the cascade camera look along lightDir, the camera's local -Z
+            // must map to lightDir, i.e. local +Z must map to -lightDir.
+            // Negate both Y and Z to maintain a valid rotation (det = +1).
             worldToLight = new(
-                right.X, up.X, lightDir.X, 0,
-                right.Y, up.Y, lightDir.Y, 0,
-                right.Z, up.Z, lightDir.Z, 0,
+                right.X, -up.X, -lightDir.X, 0,
+                right.Y, -up.Y, -lightDir.Y, 0,
+                right.Z, -up.Z, -lightDir.Z, 0,
                 0, 0, 0, 1);
 
             Matrix4x4.Invert(worldToLight, out lightToWorld);
@@ -432,6 +465,7 @@ namespace XREngine.Components.Lights
                 };
 
                 XROrthographicCameraParameters parameters = new(1.0f, 1.0f, NearZ, 1.0f);
+                parameters.InheritAspectRatio = false; // Shadow cameras need independent W/H
                 parameters.SetOriginPercentages(0.5f, 0.5f);
                 var camera = new XRCamera(transform, parameters);
                 var viewport = new XRViewport(null, width, height)
@@ -486,13 +520,13 @@ namespace XREngine.Components.Lights
             if (camera.Parameters is not XROrthographicCameraParameters ortho)
             {
                 ortho = new XROrthographicCameraParameters(width, height, NearZ, depth - NearZ);
+                ortho.InheritAspectRatio = false;
                 ortho.SetOriginPercentages(0.5f, 0.5f);
                 camera.Parameters = ortho;
             }
             else
             {
-                ortho.Width = width;
-                ortho.Height = height;
+                ortho.Resize(width, height); // Bypass InheritAspectRatio coupling
                 ortho.NearZ = NearZ;
                 ortho.FarZ = depth - NearZ;
             }
@@ -504,6 +538,8 @@ namespace XREngine.Components.Lights
             {
                 _cascadeAabbs.Clear();
                 _cascadeShadowSlices.Clear();
+                _publishedCascadeRangeNear = 0.0f;
+                _publishedCascadeRangeFar = 0.0f;
             }
         }
 
@@ -525,8 +561,6 @@ namespace XREngine.Components.Lights
             Frustum playerFrustum = playerCamera.WorldFrustum();
             BuildLightSpaceBasis(out Matrix4x4 worldToLight, out Matrix4x4 lightToWorld, out Quaternion lightRotation, out Vector3 lightDirection);
 
-            float shadowDepth = MathF.Max(Scale.Z, 1.0f);
-
             int maxCascadeCount = Math.Min(_cascadeShadowCameras.Length, MaxCascadeRenderCount);
             Span<float> percentages = stackalloc float[MaxCascadeRenderCount];
             CopyEffectiveCascadePercentages(percentages, out int percentageCount);
@@ -534,8 +568,19 @@ namespace XREngine.Components.Lights
             CascadedShadowAabb[] nextCascadeAabbs = ArrayPool<CascadedShadowAabb>.Shared.Rent(maxCascadeCount);
 
             float cameraNear = playerCamera.NearZ;
-            float cameraFar = playerCamera.FarZ;
-            float totalDepth = MathF.Max(cameraFar - cameraNear, 1e-4f);
+            float sourceCameraFar = playerCamera.FarZ;
+            if (!float.IsFinite(sourceCameraFar) || sourceCameraFar <= cameraNear)
+                sourceCameraFar = cameraNear + 1.0f;
+
+            float effectiveCascadeFar = GetEffectiveCascadedShadowFarDistance(playerCamera);
+            float totalDepth = MathF.Max(effectiveCascadeFar - cameraNear, 1e-4f);
+            float sourceFrustumDepth = MathF.Max(sourceCameraFar - cameraNear, 1e-4f);
+
+            // Shadow caster capture depth — how far behind each cascade slice (in light
+            // space) we extend to include potential casters. Scale.Z is used because it
+            // already represents the user's intended shadow volume depth and 24-bit depth
+            // precision is adequate even at large values (e.g. 900 → ~17K levels/unit).
+            float shadowDepth = MathF.Max(Scale.Z, totalDepth);
             float cumulative = 0.0f;
             int resourceSlot = 0;
 
@@ -554,13 +599,15 @@ namespace XREngine.Components.Lights
                     float sliceDepth = splitEnd - splitStart;
                     float expand = sliceDepth * _cascadeOverlapPercent * 0.5f;
                     float expandedStart = MathF.Max(cameraNear, splitStart - expand);
-                    float expandedEnd = MathF.Min(cameraFar, splitEnd + expand);
-                    float nearT = Math.Clamp((expandedStart - cameraNear) / totalDepth, 0.0f, 1.0f);
-                    float farT = Math.Clamp((expandedEnd - cameraNear) / totalDepth, 0.0f, 1.0f);
+                    float expandedEnd = MathF.Min(effectiveCascadeFar, splitEnd + expand);
+                    float nearT = Math.Clamp((expandedStart - cameraNear) / sourceFrustumDepth, 0.0f, 1.0f);
+                    float farT = Math.Clamp((expandedEnd - cameraNear) / sourceFrustumDepth, 0.0f, 1.0f);
 
                     GetCascadeBoundsInLightSpace(playerFrustum, nearT, farT, worldToLight, out Vector3 min, out Vector3 max);
 
-                    min.Z -= shadowDepth;
+                    // With the -Z forward convention, positive light-space Z points toward
+                    // the light source. Extend max.Z to capture shadow casters upstream.
+                    max.Z += shadowDepth;
 
                     Vector3 padding = Vector3.Max((max - min) * (CascadeBoundsPadding * 0.5f), new Vector3(1e-3f));
                     min -= padding;
@@ -602,6 +649,9 @@ namespace XREngine.Components.Lights
                     _cascadeAabbs.Clear();
                     for (int i = 0; i < resourceSlot; i++)
                         _cascadeAabbs.Add(nextCascadeAabbs[i]);
+
+                    _publishedCascadeRangeNear = cameraNear;
+                    _publishedCascadeRangeFar = effectiveCascadeFar;
                 }
             }
             finally
