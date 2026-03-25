@@ -150,11 +150,10 @@ namespace XREngine.Rendering.OpenGL
                 if (!BuffersBound)
                     return false;
 
-                // Check if upload queue has any pending buffers at all first (fast path)
-                if (Renderer.UploadQueue.PendingCount == 0)
-                    return true;
-
-                // Use pre-cached list to avoid dictionary enumerator allocation
+                // Validate ALL buffers have live GL objects with uploaded GPU data.
+                // A buffer can report _lastPushedLength > 0 but be destroyed (stale),
+                // or never uploaded without entering the upload queue, so we must
+                // check every buffer unconditionally.
                 var buffers = _allBuffersList;
                 for (int i = 0; i < buffers.Count; i++)
                 {
@@ -209,7 +208,16 @@ namespace XREngine.Rendering.OpenGL
 
         public void BindMeshRenderer(GLMeshRenderer? mesh)
         {
-            Api.BindVertexArray(mesh?.BindingId ?? 0);
+            uint vao = mesh?.BindingId ?? 0;
+            Api.BindVertexArray(vao);
+
+            if (mesh != null && vao == 0)
+            {
+                // VAO generation failed — do not record this renderer as active.
+                ActiveMeshRenderer = null;
+                return;
+            }
+
             ActiveMeshRenderer = mesh;
             if (mesh == null)
                 return;
@@ -249,6 +257,10 @@ namespace XREngine.Rendering.OpenGL
             if (ActiveMeshRenderer?.Mesh is null)
                 return;
 
+            // VAO must still be alive — a deferred Destroy can delete it between frames.
+            if (!ActiveMeshRenderer.IsGenerated)
+                return;
+
             if (!ActiveMeshRenderer.AreBuffersReadyForRendering())
                 return;
 
@@ -260,8 +272,12 @@ namespace XREngine.Rendering.OpenGL
             if (ActiveMeshRenderer.UsesPatchTopology)
             {
                 uint patchControlPoints = triBuffer?.Data?.ElementCount ?? 0u;
-                if (patchControlPoints > 0)
+                if (patchControlPoints > 0
+                    && triBuffer!.IsReadyForRendering
+                    && triBuffer.IsGenerated
+                    && triBuffer.TryGetBindingId(out uint patchEbo) && patchEbo != 0)
                 {
+                    Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, patchEbo);
                     ApplyPatchParameters(ActiveMeshRenderer);
                     Api.DrawElementsInstanced(
                         GLEnum.Patches,
@@ -277,23 +293,35 @@ namespace XREngine.Rendering.OpenGL
             }
 
             uint triangles = triBuffer?.Data?.ElementCount ?? 0u;
-            if (triangles > 0)
+            if (triangles > 0
+                && triBuffer!.IsReadyForRendering
+                && triBuffer.IsGenerated
+                && triBuffer.TryGetBindingId(out uint triEbo) && triEbo != 0)
             {
+                Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, triEbo);
                 Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
                 Engine.Rendering.Stats.IncrementDrawCalls();
                 Engine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
             }
 
             uint lines = lineBuffer?.Data?.ElementCount ?? 0u;
-            if (lines > 0)
+            if (lines > 0
+                && lineBuffer!.IsReadyForRendering
+                && lineBuffer.IsGenerated
+                && lineBuffer.TryGetBindingId(out uint lineEbo) && lineEbo != 0)
             {
+                Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, lineEbo);
                 Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
                 Engine.Rendering.Stats.IncrementDrawCalls();
             }
 
             uint points = pointBuffer?.Data?.ElementCount ?? 0u;
-            if (points > 0)
+            if (points > 0
+                && pointBuffer!.IsReadyForRendering
+                && pointBuffer.IsGenerated
+                && pointBuffer.TryGetBindingId(out uint pointEbo) && pointEbo != 0)
             {
+                Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, pointEbo);
                 Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
                 Engine.Rendering.Stats.IncrementDrawCalls();
             }

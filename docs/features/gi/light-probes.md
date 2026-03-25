@@ -56,14 +56,24 @@ var spawner = sceneNode.AddComponent<LightProbeGridSpawnerComponent>();
 spawner.ProbeCounts = new IVector3(4, 2, 4); // 4x2x4 = 32 probes
 spawner.Spacing = new Vector3(5.0f, 3.0f, 5.0f); // Meters between probes
 spawner.Offset = Vector3.Zero; // Local offset from node position
+spawner.AutoSequentialCaptureOnBeginPlay = false; // Leave startup interactive by default
 
 // Probe defaults applied to spawned probes
 spawner.IrradianceResolution = 32;
 spawner.InfluenceShape = LightProbeComponent.EInfluenceShape.Sphere;
 spawner.InfluenceSphereOuterRadius = 8.0f;
+
+// Optional placement from mesh bounds instead of manual spacing extents
+spawner.UsePlacementBoundsModels = true;
+spawner.PlacementBoundsModels = [roomModelComponent, hallwayModelComponent];
+spawner.PlacementBoundsPadding = new Vector3(0.25f);
 ```
 
 The spawner creates child nodes with `LightProbeComponent` instances when the scene enters play mode and cleans them up when play ends.
+
+When `AutoSequentialCaptureOnBeginPlay` is disabled, call `BeginSequentialCapture()` later or expose it through a `CustomUIComponent` button so probe captures are spread across frames on demand.
+
+When `UsePlacementBoundsModels` is enabled, the spawner distributes probes across the combined world bounds of the selected `ModelComponent` instances instead of deriving positions from `Spacing` and centered extents alone.
 
 ## Influence Regions
 

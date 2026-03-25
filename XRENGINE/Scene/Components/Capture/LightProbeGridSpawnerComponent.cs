@@ -87,6 +87,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
     private bool _realtimeCapture = false;
     private bool _autoCaptureOnActivate = true;
+    private bool _autoSequentialCaptureOnBeginPlay;
     private TimeSpan? _realTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(100.0);
     private uint _irradianceResolution = 32;
     private LightProbeComponent.EInfluenceShape _influenceShape = LightProbeComponent.EInfluenceShape.Sphere;
@@ -101,6 +102,9 @@ public class LightProbeGridSpawnerComponent : XRComponent
     private Quaternion _proxyBoxRotation = Quaternion.Identity;
     private bool _previewProbes;
     private LightProbeComponent.ERenderPreview _previewDisplay = LightProbeComponent.ERenderPreview.Environment;
+    private bool _usePlacementBoundsModels;
+    private ModelComponent[] _placementBoundsModels = [];
+    private Vector3 _placementBoundsPadding = Vector3.Zero;
     private bool _adjustProbePositionsAgainstGeometry = true;
     private float _probeCollisionRadius = 0.25f;
     private float _pushOutPadding = 0.1f;
@@ -141,6 +145,13 @@ public class LightProbeGridSpawnerComponent : XRComponent
             if (SetField(ref _autoCaptureOnActivate, value))
                 ApplyDefaultsToExistingProbes();
         }
+    }
+
+    [Category("Probe Defaults")]
+    public bool AutoSequentialCaptureOnBeginPlay
+    {
+        get => _autoSequentialCaptureOnBeginPlay;
+        set => SetField(ref _autoSequentialCaptureOnBeginPlay, value);
     }
 
     [Category("Probe Defaults")]
@@ -298,6 +309,53 @@ public class LightProbeGridSpawnerComponent : XRComponent
     }
 
     [Category("Placement")]
+    public bool UsePlacementBoundsModels
+    {
+        get => _usePlacementBoundsModels;
+        set
+        {
+            if (SetField(ref _usePlacementBoundsModels, value))
+                RegenerateGridIfSpawned();
+        }
+    }
+
+    [Category("Placement")]
+    public ModelComponent[] PlacementBoundsModels
+    {
+        get => _placementBoundsModels;
+        set
+        {
+            ModelComponent[] normalized = value ?? [];
+            if (SetField(ref _placementBoundsModels, normalized))
+                RegenerateGridIfSpawned();
+        }
+    }
+
+    public void ConfigurePlacementBoundsModels(ModelComponent[]? models, bool enabled)
+    {
+        ModelComponent[] normalized = models ?? [];
+        bool modelsChanged = SetField(ref _placementBoundsModels, normalized);
+        bool enabledChanged = SetField(ref _usePlacementBoundsModels, enabled);
+        if (modelsChanged || enabledChanged)
+            RegenerateGridIfSpawned();
+    }
+
+    [Category("Placement")]
+    public Vector3 PlacementBoundsPadding
+    {
+        get => _placementBoundsPadding;
+        set
+        {
+            var clamped = new Vector3(
+                MathF.Max(0.0f, value.X),
+                MathF.Max(0.0f, value.Y),
+                MathF.Max(0.0f, value.Z));
+            if (SetField(ref _placementBoundsPadding, clamped))
+                RegenerateGridIfSpawned();
+        }
+    }
+
+    [Category("Placement")]
     public bool AdjustProbePositionsAgainstGeometry
     {
         get => _adjustProbePositionsAgainstGeometry;
@@ -345,6 +403,9 @@ public class LightProbeGridSpawnerComponent : XRComponent
     {
         base.OnBeginPlay();
         SpawnGrid();
+
+        if (AutoSequentialCaptureOnBeginPlay)
+            BeginSequentialCapture();
     }
 
     protected override void OnEndPlay()
@@ -394,13 +455,15 @@ public class LightProbeGridSpawnerComponent : XRComponent
         _ = SceneNode.GetTransformAs<Transform>(true)!;
 
         var counts = ProbeCounts;
+        ProbeOccluder[] occluders = CollectProbeOccluders();
+        Matrix4x4 parentInverse = SceneNode.Transform.InverseWorldMatrix;
+
+        bool usePlacementBounds = TryGetPlacementBounds(out AABB placementBounds);
         Vector3 totalSize = new(
             (counts.X - 1) * Spacing.X,
             (counts.Y - 1) * Spacing.Y,
             (counts.Z - 1) * Spacing.Z);
-
         Vector3 start = -0.5f * totalSize + Offset;
-        ProbeOccluder[] occluders = CollectProbeOccluders();
 
         for (int x = 0; x < counts.X; ++x)
         {
@@ -408,16 +471,28 @@ public class LightProbeGridSpawnerComponent : XRComponent
             {
                 for (int z = 0; z < counts.Z; ++z)
                 {
-                    Vector3 localPos = start + new Vector3(x * Spacing.X, y * Spacing.Y, z * Spacing.Z);
-                    var child = new SceneNode(SceneNode, $"LightProbe[{x},{y},{z}]", new Transform(localPos));
+                    Vector3 localPos = usePlacementBounds
+                        ? CalculatePlacementBoundsLocalPosition(placementBounds, counts, x, y, z, parentInverse)
+                        : start + new Vector3(x * Spacing.X, y * Spacing.Y, z * Spacing.Z);
+
+                    // Create the child DETACHED so that AddComponent does not trigger
+                    // OnComponentActivated (and thus AutoCaptureOnActivate) before
+                    // ApplyDefaults has a chance to configure the probe.
+                    var child = new SceneNode($"LightProbe[{x},{y},{z}]", new Transform(localPos));
                     var probe = child.AddComponent<LightProbeComponent>();
                     if (probe is not null)
                     {
                         ApplyDefaults(probe);
-                        MoveProbeOutOfGeometry(child, probe, occluders);
                         _spawnedProbes.Add(probe);
                     }
                     _spawnedNodes.Add(child);
+
+                    // Parent into the tree AFTER defaults are applied — this triggers
+                    // OnBeginPlay + OnComponentActivated with correct settings.
+                    child.Transform.Parent = SceneNode.Transform;
+
+                    if (probe is not null)
+                        MoveProbeOutOfGeometry(child, probe, occluders);
                 }
             }
         }
@@ -430,8 +505,12 @@ public class LightProbeGridSpawnerComponent : XRComponent
         if (_spawnedNodes.Count == 0)
             return;
 
+        bool restartSequentialCapture = _isSequentialCaptureRunning || AutoSequentialCaptureOnBeginPlay;
         CleanupGrid();
         SpawnGrid();
+
+        if (restartSequentialCapture)
+            BeginSequentialCapture();
     }
 
     private void ApplyDefaultsToExistingProbes()
@@ -554,6 +633,54 @@ public class LightProbeGridSpawnerComponent : XRComponent
         }
 
         return [.. occluders];
+    }
+
+    private bool TryGetPlacementBounds(out AABB bounds)
+    {
+        bounds = default;
+        if (!UsePlacementBoundsModels || PlacementBoundsModels.Length == 0)
+            return false;
+
+        bool found = false;
+        foreach (ModelComponent model in PlacementBoundsModels)
+        {
+            if (model is null)
+                continue;
+
+            foreach (RenderableMesh renderable in model.Meshes)
+            {
+                if (!renderable.TryGetWorldBounds(out AABB worldBounds) || !worldBounds.IsValid)
+                    continue;
+
+                bounds = found ? AABB.Union(bounds, worldBounds) : worldBounds;
+                found = true;
+            }
+        }
+
+        if (!found)
+            return false;
+
+        bounds = new AABB(bounds.Min - PlacementBoundsPadding, bounds.Max + PlacementBoundsPadding);
+        return bounds.IsValid;
+    }
+
+    private Vector3 CalculatePlacementBoundsLocalPosition(AABB bounds, IVector3 counts, int x, int y, int z, Matrix4x4 parentInverse)
+    {
+        Vector3 worldPosition = new(
+            CalculatePlacementAxis(bounds.Min.X, bounds.Max.X, counts.X, x),
+            CalculatePlacementAxis(bounds.Min.Y, bounds.Max.Y, counts.Y, y),
+            CalculatePlacementAxis(bounds.Min.Z, bounds.Max.Z, counts.Z, z));
+
+        return Vector3.Transform(worldPosition, parentInverse) + Offset;
+    }
+
+    private static float CalculatePlacementAxis(float min, float max, int count, int index)
+    {
+        if (count <= 1)
+            return (min + max) * 0.5f;
+
+        float t = index / (float)(count - 1);
+        return min + (max - min) * t;
     }
 
     private void MoveProbeOutOfGeometry(SceneNode probeNode, LightProbeComponent probe, ProbeOccluder[] occluders)

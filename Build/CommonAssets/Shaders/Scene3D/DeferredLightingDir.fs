@@ -46,13 +46,16 @@ uniform mat4 ProjMatrix;
 
 uniform float MinFade = 500.0f;
 uniform float MaxFade = 10000.0f;
-uniform float ShadowBase = 1.0f;
-uniform float ShadowMult = 1.0f;
+uniform float ShadowBase = 0.035f;
+uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
-uniform int ShadowSamples = 16;
-uniform float ShadowFilterRadius = 0.001f;
+uniform int ShadowSamples = 1;
+uniform float ShadowFilterRadius = 0.0012f;
 uniform bool EnablePCSS = true;
+uniform bool EnableContactShadows = true;
+uniform float ContactShadowDistance = 0.1f;
+uniform int ContactShadowSamples = 8;
 
 struct DirLight
 {
@@ -163,6 +166,69 @@ float GetShadowBias(in float NoL)
 	return mix(ShadowBiasMin, ShadowBiasMax, mapped);
 }
 
+// Screen-space contact shadows: marches along the light direction in screen space
+// and tests against the depth buffer. Inherently camera-stable because it operates
+// on the current frame's depth buffer rather than shadow map texels.
+float SampleContactShadowScreenSpaceLocal(vec3 fragPosWS, vec3 lightDirWS, float maxDistance, int numSteps)
+{
+	if (maxDistance <= 0.0f || numSteps <= 0) return 1.0f;
+	int steps = clamp(numSteps, 1, 32);
+
+	mat4 viewMatrix = inverse(InverseViewMatrix);
+	vec3 fragPosVS = (viewMatrix * vec4(fragPosWS, 1.0f)).xyz;
+	vec3 lightDirVS = normalize(mat3(viewMatrix) * lightDirWS);
+	vec3 rayEndVS = fragPosVS + lightDirVS * maxDistance;
+
+	vec4 startClip = ProjMatrix * vec4(fragPosVS, 1.0f);
+	vec4 endClip = ProjMatrix * vec4(rayEndVS, 1.0f);
+	vec3 startSS = startClip.xyz / startClip.w * 0.5f + 0.5f;
+	vec3 endSS = endClip.xyz / endClip.w * 0.5f + 0.5f;
+	vec3 rayDelta = endSS - startSS;
+
+	if (length(rayDelta.xy) < 1e-6f) return 1.0f;
+
+	// Interleaved gradient noise (Jimenez 2014)
+	float noise = fract(52.9829189f * fract(dot(gl_FragCoord.xy, vec2(0.06711056f, 0.00583715f))));
+
+	float stepT = 1.0f / float(steps);
+	float occlusion = 0.0f;
+
+	for (int i = 0; i < 32; ++i)
+	{
+		if (i >= steps) break;
+
+		float t = (float(i) + 0.5f + (noise - 0.5f)) * stepT;
+		vec3 sampleSS = startSS + rayDelta * t;
+
+		if (sampleSS.x < 0.0f || sampleSS.x > 1.0f ||
+			sampleSS.y < 0.0f || sampleSS.y > 1.0f)
+			continue;
+
+#ifdef XRENGINE_MSAA_DEFERRED
+		float sceneDepth = texelFetch(DepthView, ivec2(sampleSS.xy * vec2(ScreenWidth, ScreenHeight)), 0).r;
+#else
+		float sceneDepth = texture(DepthView, sampleSS.xy).r;
+#endif
+
+		if (sceneDepth >= 1.0f) continue;
+
+		float rayDepth = sampleSS.z;
+		float depthDiff = rayDepth - sceneDepth;
+
+		float stepDepthSpan = abs(rayDelta.z) * stepT;
+		float maxThickness = max(stepDepthSpan * 5.0f, 0.0005f);
+
+		if (depthDiff > 0.0f && depthDiff < maxThickness)
+		{
+			float hitWeight = 1.0f - smoothstep(0.0f, maxThickness, depthDiff);
+			float distFade = 1.0f - t;
+			occlusion = max(occlusion, hitWeight * distFade);
+		}
+	}
+
+	return 1.0f - occlusion;
+}
+
 float ViewDepthFromWorldPos(in vec3 fragPosWS)
 {
 	mat4 viewMatrix = inverse(InverseViewMatrix);
@@ -201,14 +267,21 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 
 		//Create bias depending on angle of normal to the light
 		float bias = GetShadowBias(NoL);
+		float contact = EnableContactShadows
+			? SampleContactShadowScreenSpaceLocal(
+				fragPosWS,
+				normalize(-LightData.Direction),
+				ContactShadowDistance,
+				ContactShadowSamples)
+			: 1.0f;
 
 		if (EnablePCSS)
 		{
 			int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
-			return SampleShadowMapSoftLocal(ShadowMap, fragCoord, bias, sampleCount, ShadowFilterRadius);
+			return SampleShadowMapSoftLocal(ShadowMap, fragCoord, bias, sampleCount, ShadowFilterRadius) * contact;
 		}
 
-		return SampleShadowMapPCFLocal(ShadowMap, fragCoord, bias, 3);
+		return SampleShadowMapPCFLocal(ShadowMap, fragCoord, bias, 3) * contact;
 }
 
 float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int cascadeIndex)
@@ -225,14 +298,21 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int ca
 			return ReadShadowMap2D(fragPosWS, N, NoL, LightData.WorldToLightSpaceMatrix);
 
 		float bias = GetShadowBias(NoL);
+		float contact = EnableContactShadows
+			? SampleContactShadowScreenSpaceLocal(
+				fragPosWS,
+				normalize(-LightData.Direction),
+				ContactShadowDistance,
+				ContactShadowSamples)
+			: 1.0f;
 		if (EnablePCSS)
 		{
 			int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
 			float filterRadius = ShadowFilterRadius * (1.0f + float(cascadeIndex) * 0.35f);
-			return SampleShadowMapArraySoftLocal(ShadowMapArray, fragCoord, float(cascadeIndex), bias, sampleCount, filterRadius);
+			return SampleShadowMapArraySoftLocal(ShadowMapArray, fragCoord, float(cascadeIndex), bias, sampleCount, filterRadius) * contact;
 		}
 
-		return SampleShadowMapArrayPCFLocal(ShadowMapArray, fragCoord, float(cascadeIndex), bias, 3);
+		return SampleShadowMapArrayPCFLocal(ShadowMapArray, fragCoord, float(cascadeIndex), bias, 3) * contact;
 }
 vec3 CalcColor(
 in float NoL,

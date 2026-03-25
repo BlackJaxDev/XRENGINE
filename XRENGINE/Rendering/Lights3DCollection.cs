@@ -324,6 +324,18 @@ namespace XREngine.Scene
             if (DynamicDirectionalLights.Count > 0)
             {
                 var firstDirLight = DynamicDirectionalLights[0];
+                program.Uniform("ShadowBase", firstDirLight.ShadowExponentBase);
+                program.Uniform("ShadowMult", firstDirLight.ShadowExponent);
+                program.Uniform("ShadowBiasMin", firstDirLight.ShadowMinBias);
+                program.Uniform("ShadowBiasMax", firstDirLight.ShadowMaxBias);
+                program.Uniform("ShadowSamples", firstDirLight.Samples);
+                program.Uniform("ShadowFilterRadius", firstDirLight.FilterRadius);
+                program.Uniform("EnablePCSS", firstDirLight.EnablePCSS);
+                program.Uniform("EnableCascadedShadows", firstDirLight.EnableCascadedShadows);
+                program.Uniform("EnableContactShadows", firstDirLight.EnableContactShadows);
+                program.Uniform("ContactShadowDistance", firstDirLight.ContactShadowDistance);
+                program.Uniform("ContactShadowSamples", firstDirLight.ContactShadowSamples);
+
                 if (firstDirLight.CastsShadows && firstDirLight.ShadowMap?.Material?.Textures.Count > 0)
                 {
                     forwardShadowTex = firstDirLight.ShadowMap.Material.Textures[0];

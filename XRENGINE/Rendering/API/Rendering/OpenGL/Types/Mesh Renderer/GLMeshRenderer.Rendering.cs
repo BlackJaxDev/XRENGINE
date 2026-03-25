@@ -108,10 +108,14 @@ namespace XREngine.Rendering.OpenGL
                 if (!IsGenerated)
                 {
                     bool shadowPass = Engine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false;
+                    bool isRenderPipelinePriority = MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline;
 
-                    // Never let the shadow pass cold-start GL resources, otherwise every shadow viewport
-                    // amplifies the startup cost before the main view has had a chance to warm the mesh.
-                    if (shadowPass || Renderer.MeshGenerationQueue.Enabled)
+                    // Shadow passes never cold-start GL resources to avoid amplifying startup cost.
+                    // Normal scene meshes defer to the frame-budgeted queue when enabled.
+                    // Render-pipeline meshes (fullscreen tri for IBL, UI quads, etc.) always generate
+                    // inline because their output is consumed the same frame — deferring them produces
+                    // black framebuffers.
+                    if (shadowPass || (Renderer.MeshGenerationQueue.Enabled && !isRenderPipelinePriority))
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                         Dbg(shadowPass

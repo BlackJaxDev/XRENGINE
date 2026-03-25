@@ -28,13 +28,12 @@ namespace XREngine.Components.Lights
         {
             _cascadeAabbView = new(this);
 
-            // Match the lightmap bake defaults instead of the legacy near-zero runtime bias curve.
-            // Cascaded directional shadows expose acne much more aggressively when the effective
-            // compare bias never rises above ~1e-4.
-            ShadowExponentBase = 1.0f;
-            ShadowExponent = 1.0f;
+            // Match the tuned runtime defaults used for live shadow-map rendering.
+            ShadowExponentBase = 0.035f;
+            ShadowExponent = 1.221f;
             ShadowMinBias = 0.00001f;
             ShadowMaxBias = 0.004f;
+            FilterRadius = 0.0012f;
         }
 
         /// <summary>

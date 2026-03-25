@@ -118,6 +118,7 @@ namespace XREngine.Components.Capture.Lights
         private XRQuadFrameBuffer? _irradianceFBO;
         private XRQuadFrameBuffer? _prefilterFBO;
         private int _prefilterSourceDimension = 1;
+        private XRTexture? _iblSourceTexture;
         private XRTexture2D? _irradianceTexture;
         private XRTexture2D? _prefilterTexture;
         private XRMeshRenderer? _previewSphere;
@@ -620,11 +621,26 @@ namespace XREngine.Components.Capture.Lights
             _prefilterFBO = new XRQuadFrameBuffer(prefilterMaterial);
             _prefilterFBO.SetRenderTargets((PrefilterTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
 
+            // Store source texture reference and register explicit sampler callbacks
+            // matching the BindOctahedralSampler pattern used by the octahedral encoding
+            // pass (which works correctly). Without these, the source texture may not be
+            // properly bound when the convolution shaders execute.
+            _iblSourceTexture = sourceTexture;
+            _irradianceFBO.SettingUniforms += BindIblSourceSampler;
+            _prefilterFBO.SettingUniforms += BindIblSourceSampler;
+
             CachePreviewSphere();
         }
 
         private void DestroyIblResources()
         {
+            if (_irradianceFBO is not null)
+                _irradianceFBO.SettingUniforms -= BindIblSourceSampler;
+            if (_prefilterFBO is not null)
+                _prefilterFBO.SettingUniforms -= BindIblSourceSampler;
+
+            _iblSourceTexture = null;
+
             _irradianceFBO?.Destroy();
             _irradianceFBO = null;
             _prefilterFBO?.Destroy();
@@ -667,6 +683,15 @@ namespace XREngine.Components.Capture.Lights
                 _prefilterFBO.SetRenderTargets((PrefilterTexture, EFrameBufferAttachment.ColorAttachment0, mip, -1));
                 RunFullscreenProbePass(_prefilterFBO, mipWidth, mipHeight);
             }
+        }
+
+        private void BindIblSourceSampler(XRRenderProgram program)
+        {
+            if (_iblSourceTexture is null)
+                return;
+
+            _iblSourceTexture.Bind();
+            program.Sampler("Texture0", _iblSourceTexture, 0);
         }
 
         private static void RunFullscreenProbePass(XRQuadFrameBuffer fbo, int width, int height)

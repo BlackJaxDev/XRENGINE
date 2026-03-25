@@ -122,6 +122,111 @@ float XRENGINE_SampleShadowMapArraySoft(sampler2DArray shadowMap, vec3 shadowCoo
     return lit / float(clampedSamples);
 }
 
+float XRENGINE_SampleContactShadow2D(
+    sampler2D shadowMap,
+    mat4 lightMatrix,
+    vec3 fragPosWS,
+    vec3 normalWS,
+    vec3 lightDirWS,
+    float receiverOffset,
+    float compareBias,
+    float contactDistance,
+    int contactSamples)
+{
+    if (contactDistance <= 0.0 || contactSamples <= 0)
+        return 1.0;
+
+    int clampedSamples = clamp(contactSamples, 1, 32);
+    float stepSize = contactDistance / float(clampedSamples);
+    vec3 rayOrigin = fragPosWS + normalWS * max(receiverOffset, compareBias * 2.0);
+
+    // Interleaved gradient noise (Jimenez 2014) — temporally stable dithering
+    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+
+    float occlusion = 0.0;
+
+    for (int i = 0; i < 32; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        // Dithered step: center of interval + noise offset
+        float travel = (float(i) + 0.5 + (noise - 0.5)) * stepSize;
+        vec3 samplePosWS = rayOrigin + lightDirWS * travel;
+        vec3 shadowCoord = XRENGINE_ProjectShadowCoord(lightMatrix, samplePosWS);
+        if (!XRENGINE_ShadowCoordInBounds(shadowCoord))
+            continue;
+
+        float shadowDepth = texture(shadowMap, shadowCoord.xy).r;
+        float blockerDelta = shadowCoord.z - shadowDepth;
+        if (blockerDelta <= compareBias)
+            continue;
+
+        // Proportional thickness: stable regardless of shadow map resolution
+        float thickness = max(travel * 0.25, compareBias * 4.0);
+        if (blockerDelta > thickness)
+            continue;
+
+        float depthWeight = 1.0 - smoothstep(compareBias, thickness, blockerDelta);
+        float distWeight = 1.0 - (travel / contactDistance);
+        occlusion = max(occlusion, depthWeight * distWeight);
+    }
+
+    return 1.0 - occlusion;
+}
+
+float XRENGINE_SampleContactShadowArray(
+    sampler2DArray shadowMap,
+    mat4 lightMatrix,
+    float layer,
+    vec3 fragPosWS,
+    vec3 normalWS,
+    vec3 lightDirWS,
+    float receiverOffset,
+    float compareBias,
+    float contactDistance,
+    int contactSamples)
+{
+    if (contactDistance <= 0.0 || contactSamples <= 0)
+        return 1.0;
+
+    int clampedSamples = clamp(contactSamples, 1, 32);
+    float stepSize = contactDistance / float(clampedSamples);
+    vec3 rayOrigin = fragPosWS + normalWS * max(receiverOffset, compareBias * 2.0);
+
+    // Interleaved gradient noise (Jimenez 2014) — temporally stable dithering
+    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+
+    float occlusion = 0.0;
+
+    for (int i = 0; i < 32; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        float travel = (float(i) + 0.5 + (noise - 0.5)) * stepSize;
+        vec3 samplePosWS = rayOrigin + lightDirWS * travel;
+        vec3 shadowCoord = XRENGINE_ProjectShadowCoord(lightMatrix, samplePosWS);
+        if (!XRENGINE_ShadowCoordInBounds(shadowCoord))
+            continue;
+
+        float shadowDepth = texture(shadowMap, vec3(shadowCoord.xy, layer)).r;
+        float blockerDelta = shadowCoord.z - shadowDepth;
+        if (blockerDelta <= compareBias)
+            continue;
+
+        float thickness = max(travel * 0.25, compareBias * 4.0);
+        if (blockerDelta > thickness)
+            continue;
+
+        float depthWeight = 1.0 - smoothstep(compareBias, thickness, blockerDelta);
+        float distWeight = 1.0 - (travel / contactDistance);
+        occlusion = max(occlusion, depthWeight * distWeight);
+    }
+
+    return 1.0 - occlusion;
+}
+
 float XRENGINE_SampleShadowMapSimple(sampler2D shadowMap, vec3 shadowCoord, float bias)
 {
     float depth = texture(shadowMap, shadowCoord.xy).r;
