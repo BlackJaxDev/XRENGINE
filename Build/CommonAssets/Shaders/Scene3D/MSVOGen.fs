@@ -18,7 +18,9 @@ uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform int DepthMode;
 
+uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 bool AOIsFarDepth(float depth)
@@ -30,7 +32,7 @@ bool AOIsFarDepth(float depth)
 vec3 ViewPosFromDepth(float depth, vec2 uv)
 {
     vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(ProjMatrix) * clipSpacePosition;
+    vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
     return viewSpacePosition.xyz / viewSpacePosition.w;
 }
 
@@ -70,7 +72,7 @@ void main()
     uv = uv * 0.5f + 0.5f;
     
     vec3 normal = XRENGINE_ReadNormal(Normal, uv);
-    vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(normal, 0.0f)).rgb);
+    vec3 viewNormal = normalize((ViewMatrix * vec4(normal, 0.0f)).rgb);
     float depth = texture(DepthView, uv).r;
     if (AOIsFarDepth(depth))
     {

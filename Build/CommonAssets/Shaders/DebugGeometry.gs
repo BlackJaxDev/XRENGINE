@@ -67,7 +67,7 @@ uniform float LineSize = 0.01f;
 // MVP matrix for transforming positions.
 uniform mat4 ModelMatrix;
 uniform mat4 InverseViewMatrix;
-uniform mat4 ProjMatrix;
+uniform mat4 ViewProjectionMatrix;
 
 // Helper: Emit a vertex with transformed position.
 void emitDebugVertex(vec3 pos, vec4 col, mat4 mtx)
@@ -78,8 +78,7 @@ void emitDebugVertex(vec3 pos, vec4 col, mat4 mtx)
 
 void main()
 {
-    mat4 ViewMatrix = inverse(InverseViewMatrix);
-    mat4 MVP = ProjMatrix * ViewMatrix * ModelMatrix;
+    mat4 MVP = ViewProjectionMatrix * ModelMatrix;
 
     // --- Debug Points as Billboards ---
     // For each point, output a billboard quad (as a triangle strip).

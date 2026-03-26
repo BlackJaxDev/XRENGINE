@@ -18,7 +18,9 @@ uniform float DetailAO = 0.0f;
 uniform bool UseInputNormals = true;
 uniform float MetersToViewSpaceUnits = 1.0f;
 
+uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 vec3 GetViewNormal(vec2 uv, vec3 centerPos)
@@ -26,7 +28,7 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos)
     if (UseInputNormals)
     {
         vec3 worldNormal = XRENGINE_ReadNormal(Normal, uv);
-        return normalize((inverse(InverseViewMatrix) * vec4(worldNormal, 0.0f)).rgb);
+        return normalize((ViewMatrix * vec4(worldNormal, 0.0f)).rgb);
     }
 
     vec2 texelSize = 1.0f / vec2(textureSize(DepthView, 0));
@@ -36,8 +38,8 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos)
     float depthY = texture(DepthView, uvY).r;
     if (AOIsFarDepth(depthX) || AOIsFarDepth(depthY))
         return vec3(0.0f, 0.0f, 1.0f);
-    vec3 posX = AOViewPosFromDepth(depthX, uvX, ProjMatrix);
-    vec3 posY = AOViewPosFromDepth(depthY, uvY, ProjMatrix);
+    vec3 posX = AOViewPosFromDepth(depthX, uvX, InverseProjMatrix);
+    vec3 posY = AOViewPosFromDepth(depthY, uvY, InverseProjMatrix);
     return normalize(cross(posX - centerPos, posY - centerPos));
 }
 
@@ -55,7 +57,7 @@ float SampleOcclusion(vec3 centerPos, vec3 centerNormal, vec2 sampleUV, float ra
     float sampleDepthRaw = texture(DepthView, sampleUV).r;
     if (AOIsFarDepth(sampleDepthRaw))
         return 0.0f;
-    vec3 samplePos = AOViewPosFromDepth(sampleDepthRaw, sampleUV, ProjMatrix);
+    vec3 samplePos = AOViewPosFromDepth(sampleDepthRaw, sampleUV, InverseProjMatrix);
     vec3 toSample = samplePos - centerPos;
     float distanceSq = dot(toSample, toSample);
     if (distanceSq <= 1e-6f)
@@ -84,7 +86,7 @@ void main()
         OutIntensity = 1.0f;
         return;
     }
-    vec3 centerPos = AOViewPosFromDepth(depth, uv, ProjMatrix);
+    vec3 centerPos = AOViewPosFromDepth(depth, uv, InverseProjMatrix);
     vec3 centerNormal = GetViewNormal(uv, centerPos);
 
     float radiusVS = max(Radius * max(MetersToViewSpaceUnits, 0.001f), 0.001f);

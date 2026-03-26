@@ -584,8 +584,9 @@ namespace XREngine.Rendering.OpenGL
             _imguiFontValidationCountdown = 0;
             ResetImGuiFrameMarker();
 
-            // Clean up shared context for async program binary uploads
+            // Clean up shared context and async queues
             _programBinaryUploadQueue = null;
+            _programCompileLinkQueue = null;
             _sharedContext?.Dispose();
             _sharedContext = null;
 
@@ -657,6 +658,7 @@ namespace XREngine.Rendering.OpenGL
 
         private GLSharedContext? _sharedContext;
         private GLProgramBinaryUploadQueue? _programBinaryUploadQueue;
+        private GLProgramCompileLinkQueue? _programCompileLinkQueue;
 
         /// <summary>
         /// Gets the async program binary upload queue, or <c>null</c> if the shared context
@@ -665,25 +667,45 @@ namespace XREngine.Rendering.OpenGL
         public GLProgramBinaryUploadQueue? ProgramBinaryUploadQueue => _programBinaryUploadQueue;
 
         /// <summary>
-        /// Creates a shared GL context and upload queue for async <c>glProgramBinary</c> calls.
-        /// Must be called from the main render thread after the primary context is fully initialized.
+        /// Gets the async compile+link queue, or <c>null</c> if the shared context
+        /// could not be created or async compilation is disabled.
+        /// </summary>
+        public GLProgramCompileLinkQueue? ProgramCompileLinkQueue => _programCompileLinkQueue;
+
+        /// <summary>
+        /// Creates a shared GL context and the async queues for program binary upload
+        /// and compile+link. Must be called from the main render thread after the
+        /// primary context is fully initialized.
         /// </summary>
         private void InitAsyncProgramBinaryUpload()
         {
-            if (!Engine.Rendering.Settings.AsyncProgramBinaryUpload ||
-                !Engine.Rendering.Settings.AllowBinaryProgramCaching)
+            bool wantBinaryUpload = Engine.Rendering.Settings.AsyncProgramBinaryUpload
+                                 && Engine.Rendering.Settings.AllowBinaryProgramCaching;
+            bool wantCompileLink = Engine.Rendering.Settings.AsyncProgramCompilation;
+
+            if (!wantBinaryUpload && !wantCompileLink)
                 return;
 
             var sharedCtx = new GLSharedContext();
             if (sharedCtx.Initialize(XRWindow))
             {
                 _sharedContext = sharedCtx;
-                _programBinaryUploadQueue = new GLProgramBinaryUploadQueue(sharedCtx);
-                Debug.OpenGL("[ShaderCache] Async program binary upload enabled via shared GL context.");
+
+                if (wantBinaryUpload)
+                {
+                    _programBinaryUploadQueue = new GLProgramBinaryUploadQueue(sharedCtx);
+                    Debug.OpenGL("[ShaderCache] Async program binary upload enabled via shared GL context.");
+                }
+
+                if (wantCompileLink)
+                {
+                    _programCompileLinkQueue = new GLProgramCompileLinkQueue(sharedCtx);
+                    Debug.OpenGL("[ShaderCache] Async program compile+link enabled via shared GL context.");
+                }
             }
             else
             {
-                Debug.OpenGLWarning("[ShaderCache] Failed to create shared context. Program binaries will be uploaded synchronously.");
+                Debug.OpenGLWarning("[ShaderCache] Failed to create shared context. Shader operations will be synchronous.");
                 sharedCtx.Dispose();
             }
         }
@@ -3233,6 +3255,20 @@ void main()
             var inID = glIn?.BindingId ?? 0u;
             var outID = glOut?.BindingId ?? 0u;
 
+            // Guard: verify both FBOs are complete before blitting depth/stencil.
+            // Incomplete FBOs (e.g. unallocated depth textures) cause per-frame
+            // GL_INVALID_OPERATION spam from BlitNamedFramebuffer.
+            if (depthBit || stencilBit)
+            {
+                var srcStatus = Api.CheckNamedFramebufferStatus(inID, FramebufferTarget.ReadFramebuffer);
+                var dstStatus = Api.CheckNamedFramebufferStatus(outID, FramebufferTarget.DrawFramebuffer);
+                if (srcStatus != GLEnum.FramebufferComplete || dstStatus != GLEnum.FramebufferComplete)
+                {
+                    LogBlitSkipOnce(inID, outID, srcStatus, dstStatus);
+                    return;
+                }
+            }
+
             Api.NamedFramebufferReadBuffer(inID, ToGLEnum(readBufferMode));
             Api.BlitNamedFramebuffer(
                 inID,
@@ -3247,6 +3283,16 @@ void main()
                 outY + (int)outH,
                 mask,
                 linearFilter ? BlitFramebufferFilter.Linear : BlitFramebufferFilter.Nearest);
+        }
+
+        private readonly HashSet<(uint, uint)> _blitSkipWarned = [];
+        private void LogBlitSkipOnce(uint srcId, uint dstId, GLEnum srcStatus, GLEnum dstStatus)
+        {
+            if (!_blitSkipWarned.Add((srcId, dstId)))
+                return;
+            Debug.OpenGLWarning(
+                $"Skipping depth/stencil blit: FBO {srcId}→{dstId} incomplete " +
+                $"(src={srcStatus}, dst={dstStatus}).");
         }
 
         public override void BlitWithDrawBuffer(
@@ -4267,20 +4313,22 @@ void main()
             if (stereoPass)
             {
                 var rightCam = Engine.Rendering.State.RenderingStereoRightEyeCamera;
-                PassCameraUniforms(glProgram, camera, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeProjMatrix);
-                PassCameraUniforms(glProgram, rightCam, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeProjMatrix);
+                PassCameraUniforms(glProgram, camera, EEngineUniform.LeftEyeViewMatrix, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeInverseProjMatrix, EEngineUniform.LeftEyeProjMatrix, EEngineUniform.LeftEyeViewProjectionMatrix);
+                PassCameraUniforms(glProgram, rightCam, EEngineUniform.RightEyeViewMatrix, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeInverseProjMatrix, EEngineUniform.RightEyeProjMatrix, EEngineUniform.RightEyeViewProjectionMatrix);
             }
             else
             {
-                PassCameraUniforms(glProgram, camera, EEngineUniform.InverseViewMatrix, EEngineUniform.ProjMatrix);
+                PassCameraUniforms(glProgram, camera, EEngineUniform.ViewMatrix, EEngineUniform.InverseViewMatrix, EEngineUniform.InverseProjMatrix, EEngineUniform.ProjMatrix, EEngineUniform.ViewProjectionMatrix);
             }
         }
 
-        private static void PassCameraUniforms(GLRenderProgram program, XRCamera? camera, EEngineUniform invView, EEngineUniform proj)
+        private static void PassCameraUniforms(GLRenderProgram program, XRCamera? camera, EEngineUniform view, EEngineUniform invView, EEngineUniform invProj, EEngineUniform proj, EEngineUniform viewProj)
         {
             Matrix4x4 viewMatrix;        // The actual view matrix (inverse of camera world transform)
             Matrix4x4 inverseViewMatrix; // The camera's world transform (inverse of view matrix)
+            Matrix4x4 inverseProjMatrix;
             Matrix4x4 projMatrix;
+            Matrix4x4 viewProjectionMatrix;
             if (camera != null)
             {
                 // ViewMatrix is InverseRenderMatrix - the actual view transformation
@@ -4290,19 +4338,30 @@ void main()
                 // Use unjittered projection when rendering motion vectors to match fragment shader expectations
                 bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
                 projMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
+                inverseProjMatrix = useUnjittered ? camera.InverseProjectionMatrixUnjittered : camera.InverseProjectionMatrix;
+                viewProjectionMatrix = useUnjittered ? camera.ViewProjectionMatrixUnjittered : camera.ViewProjectionMatrix;
             }
             else
             {
                 viewMatrix = Matrix4x4.Identity;
                 inverseViewMatrix = Matrix4x4.Identity;
+                inverseProjMatrix = Matrix4x4.Identity;
                 projMatrix = Matrix4x4.Identity;
+                viewProjectionMatrix = Matrix4x4.Identity;
             }
-            // Pass ViewMatrix (actual view transform) for accurate motion vector computation
-            // This avoids single-precision inverse() in shader which causes precision issues for far objects
-            // Use cached uniform names to avoid string allocations per call
-            program.Uniform(EEngineUniform.ViewMatrix.ToVertexUniformName(), viewMatrix);
+
+            program.Uniform(view.ToStringFast(), viewMatrix);
+            program.Uniform(invView.ToStringFast(), inverseViewMatrix);
+            program.Uniform(invProj.ToStringFast(), inverseProjMatrix);
+            program.Uniform(proj.ToStringFast(), projMatrix);
+            program.Uniform(viewProj.ToStringFast(), viewProjectionMatrix);
+
+            // Use cached uniform names to avoid string allocations per call.
+            program.Uniform(view.ToVertexUniformName(), viewMatrix);
             program.Uniform(invView.ToVertexUniformName(), inverseViewMatrix);
+            program.Uniform(invProj.ToVertexUniformName(), inverseProjMatrix);
             program.Uniform(proj.ToVertexUniformName(), projMatrix);
+            program.Uniform(viewProj.ToVertexUniformName(), viewProjectionMatrix);
         }
 
         public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)

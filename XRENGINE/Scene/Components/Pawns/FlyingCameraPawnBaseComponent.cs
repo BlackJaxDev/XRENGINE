@@ -168,9 +168,6 @@ namespace XREngine.Components
         }
         protected virtual void MoveForward(bool pressed)
         {
-            if (pressed)
-                Debug.UI($"[MoveForward] pressed, AllowKeyboardInput={AllowKeyboardInput}, FocusedInteractable={Controller?.FocusedInteractable?.GetType().Name} ('{(Controller?.FocusedInteractable as XRComponent)?.Name}')");
-
             if (AllowKeyboardInput)
                 _incForward += KeyboardTranslateSpeed * (pressed ? 1.0f : -1.0f);
         }

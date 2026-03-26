@@ -11,8 +11,38 @@ namespace XREngine.Runtime.Bootstrap;
 
 public static class BootstrapLightingBuilder
 {
-    public static LightProbeGridSpawnerComponent AddInteractiveLightProbeGrid(SceneNode rootNode, int widthCount, int heightCount, int depthCount, Vector3 spacing, Vector3 center)
+    public static void AddConfiguredLightProbes(SceneNode rootNode)
     {
+        var settings = RuntimeBootstrapState.Settings;
+        switch (settings.LightProbe)
+        {
+            case LightProbeMode.Off:
+                return;
+            case LightProbeMode.Single:
+                Vector3 singlePosition = ToVector3(settings.LightProbeSinglePosition);
+                AddLightProbes(rootNode, 1, 1, 1, 1.0f, 1.0f, 1.0f, singlePosition);
+                return;
+            case LightProbeMode.Grid:
+            case LightProbeMode.ModelGrid:
+                var counts = ClampProbeCounts(settings.LightProbeGridCounts);
+                AddInteractiveLightProbeGrid(
+                    rootNode,
+                    counts.X,
+                    counts.Y,
+                    counts.Z,
+                    ToVector3(settings.LightProbeGridSpacing),
+                    ToVector3(settings.LightProbeGridCenter),
+                    settings.LightProbe == LightProbeMode.ModelGrid);
+                return;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+    }
+
+    public static LightProbeGridSpawnerComponent AddInteractiveLightProbeGrid(SceneNode rootNode, int widthCount, int heightCount, int depthCount, Vector3 spacing, Vector3 center, bool usePlacementBoundsModels)
+    {
+        var settings = RuntimeBootstrapState.Settings;
+
         // Create the node detached so that OnBeginPlay does NOT fire during AddComponent.
         // This ensures all property setters run before SpawnGrid(), preventing the default
         // AutoCaptureOnActivate=true from leaking into spawned probes.
@@ -22,9 +52,7 @@ public static class BootstrapLightingBuilder
         spawner.ProbeCounts = new IVector3(widthCount, heightCount, depthCount);
         spawner.Spacing = spacing;
         spawner.Offset = center;
-        spawner.RealtimeCapture = false;
-        spawner.AutoCaptureOnActivate = false;
-        spawner.AutoSequentialCaptureOnBeginPlay = false;
+        spawner.ConfigurePlacementBoundsModels(null, enabled: usePlacementBoundsModels);
         spawner.IrradianceResolution = 32;
         spawner.PreviewProbes = false;
         spawner.PreviewDisplay = LightProbeComponent.ERenderPreview.Environment;
@@ -33,6 +61,7 @@ public static class BootstrapLightingBuilder
         spawner.PushOutPadding = 0.1f;
         spawner.MaxPushOutDistance = 8.0f;
         spawner.MaxPushOutSteps = 24;
+        ApplyCaptureSettings(spawner, settings);
 
         var customUi = probeRoot.AddComponent<CustomUIComponent>()!;
         customUi.Name = "Light Probe Grid Controls";
@@ -96,16 +125,79 @@ public static class BootstrapLightingBuilder
                     var probeComp = probe.AddComponent<LightProbeComponent>();
 
                     probeComp!.Name = "TestLightProbe";
-                    probeComp.SetCaptureResolution(128, false);
-                    probeComp.RealtimeCapture = true;
+                    probeComp.SetCaptureResolution(settings.LightProbeResolution, false);
                     probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
-                    probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(settings.LightProbeCaptureMs);
-                    if (settings.StopRealtimeCaptureSec is not null)
-                        probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(settings.StopRealtimeCaptureSec.Value);
+                    ApplyCaptureSettings(probeComp, settings);
                 }
             }
         }
     }
+
+    private static void ApplyCaptureSettings(LightProbeComponent probe, UnitTestingWorldSettings settings)
+    {
+        probe.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(settings.LightProbeCaptureMs);
+        probe.StopRealtimeCaptureAfter = settings.LightProbeCapture == LightProbeCaptureMode.Realtime && settings.StopRealtimeCaptureSec is not null
+            ? TimeSpan.FromSeconds(settings.StopRealtimeCaptureSec.Value)
+            : null;
+
+        switch (settings.LightProbeCapture)
+        {
+            case LightProbeCaptureMode.None:
+                probe.RealtimeCapture = false;
+                probe.AutoCaptureOnActivate = false;
+                break;
+            case LightProbeCaptureMode.Startup:
+                probe.RealtimeCapture = false;
+                probe.AutoCaptureOnActivate = true;
+                break;
+            case LightProbeCaptureMode.Realtime:
+                probe.AutoCaptureOnActivate = false;
+                probe.RealtimeCapture = true;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+    }
+
+    private static void ApplyCaptureSettings(LightProbeGridSpawnerComponent spawner, UnitTestingWorldSettings settings)
+    {
+        spawner.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(settings.LightProbeCaptureMs);
+        spawner.StopRealtimeCaptureAfter = settings.LightProbeCapture == LightProbeCaptureMode.Realtime && settings.StopRealtimeCaptureSec is not null
+            ? TimeSpan.FromSeconds(settings.StopRealtimeCaptureSec.Value)
+            : null;
+
+        switch (settings.LightProbeCapture)
+        {
+            case LightProbeCaptureMode.None:
+                spawner.RealtimeCapture = false;
+                spawner.AutoCaptureOnActivate = false;
+                spawner.AutoSequentialCaptureOnBeginPlay = false;
+                break;
+            case LightProbeCaptureMode.Startup:
+                spawner.RealtimeCapture = false;
+                spawner.AutoCaptureOnActivate = false;
+                spawner.AutoSequentialCaptureOnBeginPlay = true;
+                break;
+            case LightProbeCaptureMode.Realtime:
+                spawner.AutoSequentialCaptureOnBeginPlay = false;
+                spawner.AutoCaptureOnActivate = false;
+                spawner.RealtimeCapture = true;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+    }
+
+    private static UnitTestingWorldSettings.ProbeGridCounts ClampProbeCounts(UnitTestingWorldSettings.ProbeGridCounts counts)
+        => new()
+        {
+            X = Math.Max(1, counts.X),
+            Y = Math.Max(1, counts.Y),
+            Z = Math.Max(1, counts.Z),
+        };
+
+    private static Vector3 ToVector3(UnitTestingWorldSettings.TranslationXYZ value)
+        => new(value.X, value.Y, value.Z);
 
     public static void AddDirLight(SceneNode rootNode)
     {

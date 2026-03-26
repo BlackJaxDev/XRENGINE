@@ -24,6 +24,10 @@ uniform int DepthMode;
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
+uniform mat4 LeftEyeViewMatrix;
+uniform mat4 RightEyeViewMatrix;
+uniform mat4 LeftEyeInverseProjMatrix;
+uniform mat4 RightEyeInverseProjMatrix;
 uniform mat4 LeftEyeProjMatrix;
 uniform mat4 RightEyeProjMatrix;
 
@@ -33,19 +37,19 @@ bool AOIsFarDepth(float depth)
     return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
 }
 
-vec3 ViewPosFromDepth(float depth, vec2 uv, mat4 projMatrix)
+vec3 ViewPosFromDepth(float depth, vec2 uv, mat4 inverseProjMatrix)
 {
     vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(projMatrix) * clipSpacePosition;
+    vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
     return viewSpacePosition.xyz / max(viewSpacePosition.w, 1e-5f);
 }
 
-vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 inverseViewMatrix, mat4 projMatrix)
+vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, mat4 inverseProjMatrix)
 {
     if (UseInputNormals)
     {
         vec3 worldNormal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
-        return normalize((inverse(inverseViewMatrix) * vec4(worldNormal, 0.0f)).rgb);
+        return normalize((viewMatrix * vec4(worldNormal, 0.0f)).rgb);
     }
 
     vec2 texelSize = 1.0f / textureSize(DepthView, 0).xy;
@@ -55,8 +59,8 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 inverseViewMatrix, mat4 projMat
     float depthY = texture(DepthView, vec3(uvY, gl_ViewID_OVR)).r;
     if (AOIsFarDepth(depthX) || AOIsFarDepth(depthY))
         return vec3(0.0f, 0.0f, 1.0f);
-    vec3 posX = ViewPosFromDepth(depthX, uvX, projMatrix);
-    vec3 posY = ViewPosFromDepth(depthY, uvY, projMatrix);
+    vec3 posX = ViewPosFromDepth(depthX, uvX, inverseProjMatrix);
+    vec3 posY = ViewPosFromDepth(depthY, uvY, inverseProjMatrix);
     return normalize(cross(posX - centerPos, posY - centerPos));
 }
 
@@ -87,7 +91,8 @@ void main()
     uv = uv * 0.5f + 0.5f;
 
     bool leftEye = gl_ViewID_OVR == 0;
-    mat4 inverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+    mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
+    mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
     mat4 projMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
     float depth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
@@ -96,8 +101,8 @@ void main()
         OutIntensity = 1.0f;
         return;
     }
-    vec3 centerPos = ViewPosFromDepth(depth, uv, projMatrix);
-    vec3 centerNormal = GetViewNormal(uv, centerPos, inverseViewMatrix, projMatrix);
+    vec3 centerPos = ViewPosFromDepth(depth, uv, inverseProjMatrix);
+    vec3 centerNormal = GetViewNormal(uv, centerPos, viewMatrix, inverseProjMatrix);
     vec3 viewDir = normalize(-centerPos);
 
     float radiusVS = max(Radius, 0.001f);

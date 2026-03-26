@@ -32,7 +32,7 @@ public static partial class EditorUnitTests
         Toggles.DirLight2 = false;
         Toggles.PointLight = false;
         Toggles.SpotLight = false;
-        Toggles.LightProbe = false;
+        Toggles.LightProbe = LightProbeMode.Off;
         Toggles.Mirror = false;
         Toggles.Spline = false;
         Toggles.DeferredDecal = false;

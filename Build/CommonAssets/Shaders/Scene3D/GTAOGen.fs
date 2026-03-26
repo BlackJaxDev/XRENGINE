@@ -21,7 +21,9 @@ uniform float ThicknessHeuristic = 1.0f; // 0 = disabled, 1 = full thin-occluder
 uniform bool UseInputNormals = true;
 uniform int DepthMode;
 
+uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 bool AOIsFarDepth(float depth)
@@ -33,7 +35,7 @@ bool AOIsFarDepth(float depth)
 vec3 ViewPosFromDepth(float depth, vec2 uv)
 {
     vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(ProjMatrix) * clipSpacePosition;
+    vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
     return viewSpacePosition.xyz / max(viewSpacePosition.w, 1e-5f);
 }
 
@@ -42,7 +44,7 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos)
     if (UseInputNormals)
     {
         vec3 worldNormal = XRENGINE_ReadNormal(Normal, uv);
-        return normalize((inverse(InverseViewMatrix) * vec4(worldNormal, 0.0f)).rgb);
+        return normalize((ViewMatrix * vec4(worldNormal, 0.0f)).rgb);
     }
 
     vec2 texelSize = 1.0f / vec2(textureSize(DepthView, 0));

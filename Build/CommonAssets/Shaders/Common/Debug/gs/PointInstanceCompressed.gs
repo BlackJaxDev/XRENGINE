@@ -15,19 +15,16 @@ layout(std430, binding = 0) buffer PointsBuffer
 
 #include "Common/Debug/helper/DebugPerVertex.glsl"
 
-uniform mat4 InverseViewMatrix;
-uniform mat4 ProjMatrix;
+uniform mat4 ViewProjectionMatrix;
 uniform float PointSize = 0.01f;
 
 #include "Common/Debug/helper/DebugPointQuad.glsl"
 
 void main()
 {
-    mat4 viewProj = ProjMatrix * inverse(InverseViewMatrix);
-
     int idx = instanceID[0] * 4;
     vec3 center = vec3(PointData[idx], PointData[idx + 1], PointData[idx + 2]);
     vec4 color = unpackUnorm4x8(floatBitsToUint(PointData[idx + 3]));
 
-    EmitPointQuad(viewProj, center, color);
+    EmitPointQuad(ViewProjectionMatrix, center, color);
 }

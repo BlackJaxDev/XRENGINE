@@ -117,7 +117,11 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 if (reqs.HasFlag(EUniformRequirements.RenderTime))
-                    program.Uniform(nameof(EUniformRequirements.RenderTime), SecondsLive);
+                {
+                    program.Uniform(EEngineUniform.RenderTime.ToStringFast(), SecondsLive);
+                    program.Uniform(EEngineUniform.EngineTime.ToStringFast(), Engine.ElapsedTime);
+                    program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), Engine.Time.Timer.Render.Delta);
+                }
                 
                 if (reqs.HasFlag(EUniformRequirements.ViewportDimensions))
                 {

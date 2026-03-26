@@ -15,7 +15,9 @@ uniform float Emission = 0.0;
 uniform bool AmbientOcclusionMultiBounce;
 uniform bool SpecularOcclusionEnabled;
 uniform bool ForwardPbrResourcesEnabled;
+uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
+uniform mat4 ViewProjectionMatrix;
 
 layout(binding = 6) uniform sampler2D BRDF;
 layout(binding = 7) uniform sampler2DArray IrradianceArray;
@@ -46,9 +48,15 @@ layout(std430, binding = 2) readonly buffer LightProbeParameters
     ProbeParam ProbeParams[];
 };
 
+struct ProbeGridCell
+{
+    ivec4 OffsetCount;
+    ivec4 FallbackIndices;
+};
+
 layout(std430, binding = 3) readonly buffer LightProbeGridCells
 {
-    ivec2 CellOffsetCount[];
+    ProbeGridCell GridCells[];
 };
 
 layout(std430, binding = 4) readonly buffer LightProbeGridIndices
@@ -76,13 +84,13 @@ uniform float ShadowBase = 0.035;
 uniform float ShadowMult = 1.221;
 uniform float ShadowBiasMin = 0.00001;
 uniform float ShadowBiasMax = 0.004;
-uniform int ShadowSamples = 1;
+uniform int ShadowSamples = 4;
 uniform float ShadowFilterRadius = 0.0012;
 uniform bool EnablePCSS = true;
 uniform bool EnableCascadedShadows = true;
 uniform bool EnableContactShadows = true;
 uniform float ContactShadowDistance = 0.1;
-uniform int ContactShadowSamples = 8;
+uniform int ContactShadowSamples = 4;
 
 uniform int DirLightCount; 
 uniform DirLight DirectionalLights[2];
@@ -251,6 +259,7 @@ vec3 XRENGINE_ApplyParallax(int probeIndex, vec3 dirWS, vec3 worldPos)
     return normalize(hitWS - ProbePositions[probeIndex].xyz);
 }
 
+#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
 bool XRENGINE_ComputeBarycentric(vec3 p, vec3 a, vec3 b, vec3 c, vec3 d, out vec4 bary)
 {
     mat3 m = mat3(b - a, c - a, d - a);
@@ -317,6 +326,7 @@ void XRENGINE_ResolveProbeWeights(vec3 worldPos, out vec4 weights, out ivec4 ind
     if (sum > 0.0)
         weights /= sum;
 }
+#endif // XRENGINE_PROBE_DEBUG_FALLBACK
 
 void XRENGINE_ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices)
 {
@@ -329,9 +339,30 @@ void XRENGINE_ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4
     vec3 rel = (worldPos - ProbeGridOrigin) / ProbeGridCellSize;
     ivec3 cell = clamp(ivec3(floor(rel)), ivec3(0), ProbeGridDims - ivec3(1));
     int flatIndex = cell.x + cell.y * ProbeGridDims.x + cell.z * ProbeGridDims.x * ProbeGridDims.y;
-    ivec2 offsetCount = CellOffsetCount[flatIndex];
+    ProbeGridCell cellData = GridCells[flatIndex];
+    ivec2 offsetCount = cellData.OffsetCount.xy;
+
     if (offsetCount.y <= 0)
+    {
+        float sum = 0.0;
+        for (int k = 0; k < 4; ++k)
+        {
+            int probeIndex = cellData.FallbackIndices[k];
+            if (probeIndex < 0 || probeIndex >= ProbeCount)
+                continue;
+
+            float dist = length(worldPos - ProbePositions[probeIndex].xyz);
+            float weight = 1.0 / max(dist, 0.0001);
+            weights[k] = weight;
+            indices[k] = probeIndex;
+            sum += weight;
+        }
+
+        if (sum > 0.0)
+            weights /= sum;
+
         return;
+    }
 
     float bestDistances[4] = float[](1e20, 1e20, 1e20, 1e20);
     int bestIndices[4] = int[](-1, -1, -1, -1);
@@ -371,6 +402,26 @@ void XRENGINE_ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4
     }
 
     if (sum > 0.0)
+    {
+        weights /= sum;
+        return;
+    }
+
+    sum = 0.0;
+    for (int k = 0; k < 4; ++k)
+    {
+        int probeIndex = cellData.FallbackIndices[k];
+        if (probeIndex < 0 || probeIndex >= ProbeCount)
+            continue;
+
+        float dist = length(worldPos - ProbePositions[probeIndex].xyz);
+        float weight = 1.0 / max(dist, 0.0001);
+        weights[k] = weight;
+        indices[k] = probeIndex;
+        sum += weight;
+    }
+
+    if (sum > 0.0)
         weights /= sum;
 }
 
@@ -397,15 +448,11 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
     vec4 probeWeights;
     ivec4 probeIndices;
     if (UseProbeGrid)
-    {
         XRENGINE_ResolveProbeWeightsGrid(fragPos, probeWeights, probeIndices);
-        if (probeIndices.x < 0 && probeIndices.y < 0 && probeIndices.z < 0 && probeIndices.w < 0)
-            XRENGINE_ResolveProbeWeights(fragPos, probeWeights, probeIndices);
-    }
+#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
     else
-    {
         XRENGINE_ResolveProbeWeights(fragPos, probeWeights, probeIndices);
-    }
+#endif
 
     vec3 reflectionDir = reflect(-viewDir, normal);
     vec3 irradianceColor = vec3(0.0);
@@ -460,8 +507,7 @@ float XRENGINE_GetShadowBias(float diffuseFactor)
 
 float XRENGINE_ViewDepthFromWorldPos(vec3 fragPosWS)
 {
-    mat4 viewMatrix = inverse(InverseViewMatrix);
-    vec4 viewPos = viewMatrix * vec4(fragPosWS, 1.0);
+    vec4 viewPos = ViewMatrix * vec4(fragPosWS, 1.0);
     return abs(viewPos.z);
 }
 
@@ -495,6 +541,10 @@ float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseF
         return -1.0;
 
     float bias = XRENGINE_GetShadowBias(diffuseFactor);
+    int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
+        ContactShadowSamples,
+        XRENGINE_ViewDepthFromWorldPos(fragPos),
+        ContactShadowDistance);
     float contact = EnableContactShadows
         ? XRENGINE_SampleContactShadowArray(
             ShadowMapArray,
@@ -506,16 +556,18 @@ float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseF
             ShadowBiasMax,
             bias,
             ContactShadowDistance,
-            ContactShadowSamples)
+            contactSampleCount)
         : 1.0;
-    if (EnablePCSS)
-    {
-        int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
-        float filterRadius = ShadowFilterRadius * (1.0 + float(cascadeIndex) * 0.35);
-        return XRENGINE_SampleShadowMapArraySoft(ShadowMapArray, fragCoord, float(cascadeIndex), bias, sampleCount, filterRadius) * contact;
-    }
 
-    return XRENGINE_SampleShadowMapArrayPCF(ShadowMapArray, fragCoord, float(cascadeIndex), bias, 3) * contact;
+    float filterRadius = ShadowFilterRadius * (1.0 + float(cascadeIndex) * 0.35);
+    return XRENGINE_SampleShadowMapArrayFiltered(
+        ShadowMapArray,
+        fragCoord,
+        float(cascadeIndex),
+        bias,
+        ShadowSamples,
+        filterRadius,
+        EnablePCSS) * contact;
 }
 
 // Shadow map reading for primary directional light (uses standalone ShadowMap sampler)
@@ -541,6 +593,10 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
         return 1.0;
 
     float bias = XRENGINE_GetShadowBias(diffuseFactor);
+    int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
+        ContactShadowSamples,
+        XRENGINE_ViewDepthFromWorldPos(fragPos),
+        ContactShadowDistance);
     float contact = EnableContactShadows
         ? XRENGINE_SampleContactShadow2D(
             ShadowMap,
@@ -551,15 +607,16 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
             ShadowBiasMax,
             bias,
             ContactShadowDistance,
-            ContactShadowSamples)
+            contactSampleCount)
         : 1.0;
-    if (EnablePCSS)
-    {
-        int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
-        return XRENGINE_SampleShadowMapSoft(ShadowMap, fragCoord, bias, sampleCount, ShadowFilterRadius) * contact;
-    }
 
-    return XRENGINE_SampleShadowMapPCF(ShadowMap, fragCoord, bias, 3) * contact;
+    return XRENGINE_SampleShadowMapFiltered(
+        ShadowMap,
+        fragCoord,
+        bias,
+        ShadowSamples,
+        ShadowFilterRadius,
+        EnablePCSS) * contact;
 }
 
 vec3 XRENGINE_CalculateDirectPbrLight(vec3 lightColor, float diffuseIntensity, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0, float attenuation)
@@ -599,7 +656,7 @@ vec3 XRENGINE_CalcDirLight(DirLight light, vec3 normal, vec3 fragPos, vec3 albed
 vec3 XRENGINE_CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0)
 {
     vec3 lightVector = light.Position - fragPos;
-    float attenuation = XRENGINE_Attenuate(length(lightVector) / max(light.Brightness, 0.0001), light.Radius / max(light.Brightness, 0.0001));
+    float attenuation = XRENGINE_Attenuate(length(lightVector), light.Radius) * light.Brightness;
     return XRENGINE_CalculateDirectPbrLight(light.Base.Color, light.Base.DiffuseIntensity, normalize(lightVector), normal, fragPos, albedo, rms, F0, attenuation);
 }
 
@@ -610,7 +667,7 @@ vec3 XRENGINE_CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 alb
     float clampedCosine = max(0.0, dot(-lightDir, normalize(light.Direction)));
     float spotEffect = smoothstep(light.OuterCutoff, light.InnerCutoff, clampedCosine);
     float spotAttn = pow(clampedCosine, light.Exponent);
-    float distAttn = XRENGINE_Attenuate(length(lightVector) / max(light.Base.Brightness, 0.0001), light.Base.Radius / max(light.Base.Brightness, 0.0001));
+    float distAttn = XRENGINE_Attenuate(length(lightVector), light.Base.Radius) * light.Base.Brightness;
     return spotEffect * spotAttn * XRENGINE_CalculateDirectPbrLight(light.Base.Base.Color, light.Base.Base.DiffuseIntensity, lightDir, normal, fragPos, albedo, rms, F0, distAttn);
 }
 
@@ -622,7 +679,7 @@ vec3 XRENGINE_CalcForwardPlusColor(vec3 lightColor, float diffuseIntensity, vec3
 vec3 XRENGINE_CalcForwardPlusPointLight(ForwardPlusLocalLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0)
 {
     vec3 lightVector = light.PositionWS.xyz - fragPos;
-    float attenuation = XRENGINE_Attenuate(length(lightVector) / max(light.Params.y, 0.0001), light.Params.x / max(light.Params.y, 0.0001));
+    float attenuation = XRENGINE_Attenuate(length(lightVector), light.Params.x) * max(light.Params.y, 0.0001);
     return XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, normalize(lightVector), normal, fragPos, albedo, rms, F0, attenuation);
 }
 
@@ -635,7 +692,7 @@ vec3 XRENGINE_CalcForwardPlusSpotLight(ForwardPlusLocalLight light, vec3 normal,
     float spotEffect = smoothstep(light.SpotAngles.y, light.SpotAngles.x, clampedCosine);
 
     float spotAttn = pow(clampedCosine, light.DirectionWS_Exponent.w);
-    float distAttn = XRENGINE_Attenuate(length(lightVector) / max(light.Params.y, 0.0001), light.Params.x);
+    float distAttn = XRENGINE_Attenuate(length(lightVector), light.Params.x) * max(light.Params.y, 0.0001);
 
     return spotEffect * spotAttn * XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, lightToPosN, normal, fragPos, albedo, rms, F0, distAttn);
 }

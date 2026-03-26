@@ -165,7 +165,10 @@ namespace XREngine.Rendering.Models.Materials.Textures
                 EPixelInternalFormat? internalFormatForce = null;
                 if (!Data.Resizable && !_storageSet)
                 {
-                    Api.TexStorage2D(GLEnum.TextureCubeMap, (uint)Data.SmallestMipmapLevel, ToGLEnum(Data.SizedInternalFormat), Data.Extent, Data.Extent);
+                    // SmallestMipmapLevel is the zero-based INDEX of the smallest mip (e.g., 10 for 1024px).
+                    // TexStorage2D needs the COUNT of levels, which is index + 1.
+                    uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
+                    Api.TexStorage2D(GLEnum.TextureCubeMap, levels, ToGLEnum(Data.SizedInternalFormat), Data.Extent, Data.Extent);
                     internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
                     _storageSet = true;
                 }

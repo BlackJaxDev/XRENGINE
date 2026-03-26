@@ -30,13 +30,13 @@ namespace XREngine.Components.Capture.Lights.Types
         private readonly List<FrustumIntersectionAabb> _cameraIntersections = new(6);
         private bool _previewBoundingVolume = false;
         private XRWorldInstance? _registeredDynamicWorld;
-        private int _samples = 1;
+        private int _samples = 4;
         private float _filterRadius = 0.0012f;
         private bool _enablePcss = true;
         private bool _enableCascadedShadows = true;
         private bool _enableContactShadows = true;
         private float _contactShadowDistance = 0.1f;
-        private int _contactShadowSamples = 8;
+        private int _contactShadowSamples = 4;
 
         private long _lastMovedTicks;
         private uint _movementVersion = 0;

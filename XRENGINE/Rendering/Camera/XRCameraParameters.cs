@@ -18,14 +18,18 @@ namespace XREngine.Rendering
     {
         public XREvent<XRCameraParameters>? ProjectionMatrixChanged { get; }
 
+        public uint ProjectionVersion => _projectionVersion;
+
         public void ForceInvalidateProjection()
-            => _projectionMatrix = null;
+            => InvalidateProjection();
 
         protected bool ProjectionInvalidated
             => _projectionMatrix is null;
 
         protected Matrix4x4? _projectionMatrix;
+        protected Matrix4x4? _inverseProjectionMatrix;
         protected Frustum? _untransformedFrustum;
+        private uint _projectionVersion;
 
         /// <summary>
         /// The distance to the near clipping plane (closest to the eye).
@@ -53,7 +57,18 @@ namespace XREngine.Rendering
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            InvalidateProjection();
+        }
+
+        private void InvalidateProjection()
+        {
             _projectionMatrix = null;
+            _inverseProjectionMatrix = null;
+            _untransformedFrustum = null;
+            unchecked
+            {
+                _projectionVersion++;
+            }
         }
 
         private void VerifyProjection()
@@ -63,6 +78,13 @@ namespace XREngine.Rendering
             if (_projectionMatrix is null)
             {
                 _projectionMatrix = CalculateProjectionMatrix();
+                if (!Matrix4x4.Invert(_projectionMatrix.Value, out Matrix4x4 inverseProjectionMatrix))
+                {
+                    Debug.LogWarning($"Failed to invert {nameof(XRCameraParameters)} projection. Parameters: {this}");
+                    inverseProjectionMatrix = Matrix4x4.Identity;
+                }
+
+                _inverseProjectionMatrix = inverseProjectionMatrix;
                 changed = true;
             }
 
@@ -81,8 +103,13 @@ namespace XREngine.Rendering
         public Matrix4x4 GetProjectionMatrix()
         {
             VerifyProjection();
-            var matrix = _projectionMatrix;
-            return matrix ?? CalculateProjectionMatrix();
+            return _projectionMatrix ?? Matrix4x4.Identity;
+        }
+
+        public Matrix4x4 GetInverseProjectionMatrix()
+        {
+            VerifyProjection();
+            return _inverseProjectionMatrix ?? Matrix4x4.Identity;
         }
 
         /// <summary>

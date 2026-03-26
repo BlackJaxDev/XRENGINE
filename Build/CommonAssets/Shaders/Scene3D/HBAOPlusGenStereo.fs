@@ -21,22 +21,26 @@ uniform float MetersToViewSpaceUnits = 1.0f;
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
+uniform mat4 LeftEyeViewMatrix;
+uniform mat4 RightEyeViewMatrix;
+uniform mat4 LeftEyeInverseProjMatrix;
+uniform mat4 RightEyeInverseProjMatrix;
 uniform mat4 LeftEyeProjMatrix;
 uniform mat4 RightEyeProjMatrix;
 
-vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 inverseViewMatrix, mat4 projMatrix)
+vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, mat4 inverseProjMatrix)
 {
     if (UseInputNormals)
     {
         vec3 worldNormal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
-        return normalize((inverse(inverseViewMatrix) * vec4(worldNormal, 0.0f)).rgb);
+        return normalize((viewMatrix * vec4(worldNormal, 0.0f)).rgb);
     }
 
     vec2 texelSize = 1.0f / textureSize(DepthView, 0).xy;
     vec2 uvX = clamp(uv + vec2(texelSize.x, 0.0f), vec2(0.0f), vec2(1.0f));
     vec2 uvY = clamp(uv + vec2(0.0f, texelSize.y), vec2(0.0f), vec2(1.0f));
-    vec3 posX = AOViewPosFromDepth(texture(DepthView, vec3(uvX, gl_ViewID_OVR)).r, uvX, projMatrix);
-    vec3 posY = AOViewPosFromDepth(texture(DepthView, vec3(uvY, gl_ViewID_OVR)).r, uvY, projMatrix);
+    vec3 posX = AOViewPosFromDepth(texture(DepthView, vec3(uvX, gl_ViewID_OVR)).r, uvX, inverseProjMatrix);
+    vec3 posY = AOViewPosFromDepth(texture(DepthView, vec3(uvY, gl_ViewID_OVR)).r, uvY, inverseProjMatrix);
     return normalize(cross(posX - centerPos, posY - centerPos));
 }
 
@@ -46,12 +50,12 @@ float ComputeRadiusPixels(float radiusVS, float viewDepth, mat4 projMatrix)
     return clamp(radiusVS * projScale / max(abs(viewDepth), 1e-3f), 1.0f, 160.0f);
 }
 
-float SampleOcclusion(vec3 centerPos, vec3 centerNormal, vec2 sampleUV, float radiusVS, mat4 projMatrix)
+float SampleOcclusion(vec3 centerPos, vec3 centerNormal, vec2 sampleUV, float radiusVS, mat4 inverseProjMatrix)
 {
     if (sampleUV.x <= 0.0f || sampleUV.x >= 1.0f || sampleUV.y <= 0.0f || sampleUV.y >= 1.0f)
         return 0.0f;
 
-    vec3 samplePos = AOViewPosFromDepth(texture(DepthView, vec3(sampleUV, gl_ViewID_OVR)).r, sampleUV, projMatrix);
+    vec3 samplePos = AOViewPosFromDepth(texture(DepthView, vec3(sampleUV, gl_ViewID_OVR)).r, sampleUV, inverseProjMatrix);
     vec3 toSample = samplePos - centerPos;
     float distanceSq = dot(toSample, toSample);
     if (distanceSq <= 1e-6f)
@@ -75,12 +79,13 @@ void main()
     uv = uv * 0.5f + 0.5f;
 
     bool leftEye = gl_ViewID_OVR == 0;
-    mat4 inverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+    mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
+    mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
     mat4 projMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
     float depth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
-    vec3 centerPos = AOViewPosFromDepth(depth, uv, projMatrix);
-    vec3 centerNormal = GetViewNormal(uv, centerPos, inverseViewMatrix, projMatrix);
+    vec3 centerPos = AOViewPosFromDepth(depth, uv, inverseProjMatrix);
+    vec3 centerNormal = GetViewNormal(uv, centerPos, viewMatrix, inverseProjMatrix);
 
     float radiusVS = max(Radius * max(MetersToViewSpaceUnits, 0.001f), 0.001f);
     float radiusPixels = ComputeRadiusPixels(radiusVS, centerPos.z, projMatrix);
@@ -104,7 +109,7 @@ void main()
         {
             float sampleT = (float(stepIndex) + phase + 0.5f) / float(StepCount);
             vec2 sampleUV = uv + sampleDirection * texelSize * radiusPixels * sampleT;
-            directionHorizon = max(directionHorizon, SampleOcclusion(centerPos, centerNormal, sampleUV, radiusVS, projMatrix));
+            directionHorizon = max(directionHorizon, SampleOcclusion(centerPos, centerNormal, sampleUV, radiusVS, inverseProjMatrix));
         }
 
         coarseOcclusion += directionHorizon;

@@ -6,10 +6,10 @@ bool AOIsFarDepth(float depth)
     return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
 }
 
-vec3 AOViewPosFromDepth(float depth, vec2 uv, mat4 projMatrix)
+vec3 AOViewPosFromDepth(float depth, vec2 uv, mat4 inverseProjMatrix)
 {
     vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(projMatrix) * clipSpacePosition;
+    vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
     return viewSpacePosition.xyz / max(viewSpacePosition.w, 1e-5f);
 }
 

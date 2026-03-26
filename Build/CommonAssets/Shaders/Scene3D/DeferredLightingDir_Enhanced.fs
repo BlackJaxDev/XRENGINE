@@ -20,6 +20,7 @@ uniform sampler2DArray ShadowMapArray; //Cascaded Shadow Maps
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 uniform float MinFade = 500.0f;
@@ -30,13 +31,13 @@ uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 
 // Enhanced shadow quality settings
-uniform int ShadowSamples = 16; // 16 for PCSS, 9 for PCF, 1 for hard shadows
+uniform int ShadowSamples = 4; // 4-tap soft by default; raise explicitly for higher quality
 uniform float ShadowFilterRadius = 0.01f;
 uniform bool EnablePCSS = true;
 uniform bool EnableCascadedShadows = true;
 uniform bool EnableContactShadows = true;
 uniform float ContactShadowDistance = 0.1f;
-uniform int ContactShadowSamples = 8;
+uniform int ContactShadowSamples = 4;
 
 struct DirLight
 {
@@ -365,7 +366,7 @@ vec3 CalcTotalLight(
 vec3 WorldPosFromDepth(in float depth, in vec2 uv)
 {
     vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(ProjMatrix) * clipSpacePosition;
+    vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
     viewSpacePosition /= viewSpacePosition.w;
     return (InverseViewMatrix * viewSpacePosition).xyz;
 }

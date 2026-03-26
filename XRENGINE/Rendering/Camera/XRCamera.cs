@@ -226,6 +226,16 @@ namespace XREngine.Rendering
         /// Recalculated when transform changes or oblique plane is set.
         /// </summary>
         private Matrix4x4 _obliqueProjectionMatrix = Matrix4x4.Identity;
+        private Matrix4x4 _projectionMatrix = Matrix4x4.Identity;
+        private Matrix4x4 _inverseProjectionMatrix = Matrix4x4.Identity;
+        private Matrix4x4 _projectionMatrixUnjittered = Matrix4x4.Identity;
+        private Matrix4x4 _inverseProjectionMatrixUnjittered = Matrix4x4.Identity;
+        private Matrix4x4 _viewProjectionMatrix = Matrix4x4.Identity;
+        private Matrix4x4 _viewProjectionMatrixUnjittered = Matrix4x4.Identity;
+        private bool _projectionMatricesDirty = true;
+        private bool _viewProjectionMatricesDirty = true;
+        private XRCameraParameters? _cachedProjectionParameters;
+        private uint _cachedProjectionVersion;
 
         /// <summary>
         /// Optional oblique near clipping plane in world space.
@@ -506,9 +516,15 @@ namespace XREngine.Rendering
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(Parameters):
+                case nameof(DepthMode):
+                    RefreshObliqueProjectionMatrix();
+                    InvalidateProjectionMatrices();
+                    break;
                 case nameof(Transform):
                     _transform?.RenderMatrixChanged += RenderMatrixChanged;
-                    CalculateObliqueProjectionMatrix();
+                    RefreshObliqueProjectionMatrix();
+                    InvalidateProjectionMatrices();
                     break;
             }
         }
@@ -520,7 +536,10 @@ namespace XREngine.Rendering
         /// <param name="base">The transform that changed.</param>
         /// <param name="renderMatrix">The new render matrix value.</param>
         private void RenderMatrixChanged(TransformBase @base, Matrix4x4 renderMatrix)
-            => CalculateObliqueProjectionMatrix();
+        {
+            RefreshObliqueProjectionMatrix();
+            InvalidateProjectionMatrices();
+        }
 
         #endregion
 
@@ -542,14 +561,26 @@ namespace XREngine.Rendering
         /// Gets the projection matrix with any active jitter applied.
         /// </summary>
         public Matrix4x4 ProjectionMatrix
-            => ApplyProjectionJitter(GetBaseProjectionMatrix());
+        {
+            get
+            {
+                EnsureProjectionMatrices();
+                return _projectionMatrix;
+            }
+        }
 
         /// <summary>
         /// Gets the projection matrix without any jitter applied.
         /// Useful for motion vectors and other passes that need consistent projections.
         /// </summary>
         public Matrix4x4 ProjectionMatrixUnjittered
-            => GetBaseProjectionMatrix();
+        {
+            get
+            {
+                EnsureProjectionMatrices();
+                return _projectionMatrixUnjittered;
+            }
+        }
 
         /// <summary>
         /// Pushes a jitter request onto the jitter stack.
@@ -561,6 +592,8 @@ namespace XREngine.Rendering
 
             using (_projectionJitterLock.EnterScope())
                 _projectionJitterStack.Push(clipSpaceOffset);
+
+            InvalidateProjectionMatrices();
 
             return StateObject.New(PopProjectionJitter);
         }
@@ -579,6 +612,8 @@ namespace XREngine.Rendering
 
                 _projectionJitterStack.Pop();
             }
+
+            InvalidateProjectionMatrices();
         }
 
         /// <summary>
@@ -589,21 +624,69 @@ namespace XREngine.Rendering
         {
             using (_projectionJitterLock.EnterScope())
                 _projectionJitterStack.Clear();
+
+            InvalidateProjectionMatrices();
         }
 
-        /// <summary>
-        /// Gets the base projection matrix without jitter applied.
-        /// Returns the oblique projection matrix if an oblique clipping plane is set,
-        /// otherwise returns the standard projection from Parameters.
-        /// </summary>
-        /// <returns>The base projection matrix.</returns>
-        private Matrix4x4 GetBaseProjectionMatrix()
+        private void InvalidateProjectionMatrices()
         {
-            Matrix4x4 projection = _obliqueNearClippingPlane != null
-                ? _obliqueProjectionMatrix
-                : Parameters.GetProjectionMatrix();
+            _projectionMatricesDirty = true;
+            _viewProjectionMatricesDirty = true;
+        }
 
-            return ApplyDepthModeToProjection(projection, DepthMode);
+        private void EnsureProjectionMatrices()
+        {
+            XRCameraParameters parameters = Parameters;
+            uint projectionVersion = parameters.ProjectionVersion;
+            bool parametersChanged = !ReferenceEquals(_cachedProjectionParameters, parameters) || _cachedProjectionVersion != projectionVersion;
+            if (!_projectionMatricesDirty && !parametersChanged)
+                return;
+
+            if (_obliqueNearClippingPlane != null && parametersChanged)
+                RefreshObliqueProjectionMatrix();
+
+            Matrix4x4 baseProjection = _obliqueNearClippingPlane != null
+                ? _obliqueProjectionMatrix
+                : parameters.GetProjectionMatrix();
+
+            _projectionMatrixUnjittered = ApplyDepthModeToProjection(baseProjection, DepthMode);
+            if (!Matrix4x4.Invert(_projectionMatrixUnjittered, out _inverseProjectionMatrixUnjittered))
+            {
+                Debug.LogWarning($"Failed to invert {nameof(ProjectionMatrixUnjittered)}. Parameters: {parameters}");
+                _inverseProjectionMatrixUnjittered = Matrix4x4.Identity;
+            }
+
+            if (!TryGetCurrentProjectionJitter(out Vector2 jitter) || IsZeroVector(jitter))
+            {
+                _projectionMatrix = _projectionMatrixUnjittered;
+                _inverseProjectionMatrix = _inverseProjectionMatrixUnjittered;
+            }
+            else
+            {
+                _projectionMatrix = ApplyProjectionJitter(_projectionMatrixUnjittered, jitter, parameters is XROrthographicCameraParameters);
+                if (!Matrix4x4.Invert(_projectionMatrix, out _inverseProjectionMatrix))
+                {
+                    Debug.LogWarning($"Failed to invert {nameof(ProjectionMatrix)}. Parameters: {parameters}");
+                    _inverseProjectionMatrix = Matrix4x4.Identity;
+                }
+            }
+
+            _cachedProjectionParameters = parameters;
+            _cachedProjectionVersion = projectionVersion;
+            _projectionMatricesDirty = false;
+            _viewProjectionMatricesDirty = true;
+        }
+
+        private void EnsureViewProjectionMatrices()
+        {
+            EnsureProjectionMatrices();
+            if (!_viewProjectionMatricesDirty)
+                return;
+
+            Matrix4x4 viewMatrix = _transform?.InverseRenderMatrix ?? Matrix4x4.Identity;
+            _viewProjectionMatrix = viewMatrix * _projectionMatrix;
+            _viewProjectionMatrixUnjittered = viewMatrix * _projectionMatrixUnjittered;
+            _viewProjectionMatricesDirty = false;
         }
 
         private static Matrix4x4 ApplyDepthModeToProjection(Matrix4x4 projection, EDepthMode depthMode)
@@ -627,15 +710,9 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="projection">The projection matrix to modify.</param>
         /// <returns>The jittered projection matrix.</returns>
-        private Matrix4x4 ApplyProjectionJitter(Matrix4x4 projection)
+        private static Matrix4x4 ApplyProjectionJitter(Matrix4x4 projection, Vector2 jitter, bool orthographic)
         {
-            if (!TryGetCurrentProjectionJitter(out Vector2 jitter))
-                return projection;
-
-            if (IsZeroVector(jitter))
-                return projection;
-
-            if (Parameters is XROrthographicCameraParameters)
+            if (orthographic)
             {
                 projection.M41 += jitter.X;
                 projection.M42 += jitter.Y;
@@ -675,7 +752,7 @@ namespace XREngine.Rendering
         /// Transforms the oblique plane from world space to view space and applies it to the projection.
         /// Only has effect when an oblique near clipping plane is set.
         /// </summary>
-        private void CalculateObliqueProjectionMatrix()
+        private void RefreshObliqueProjectionMatrix()
         {
             var nearPlane = _obliqueNearClippingPlane;
             if (nearPlane is null)
@@ -701,12 +778,35 @@ namespace XREngine.Rendering
         {
             get
             {
-                if (!Matrix4x4.Invert(ProjectionMatrix, out Matrix4x4 inverted))
-                {
-                    Debug.LogWarning($"Failed to invert {nameof(ProjectionMatrix)}. Parameters: {Parameters}");
-                    inverted = Matrix4x4.Identity;
-                }
-                return inverted;
+                EnsureProjectionMatrices();
+                return _inverseProjectionMatrix;
+            }
+        }
+
+        public Matrix4x4 InverseProjectionMatrixUnjittered
+        {
+            get
+            {
+                EnsureProjectionMatrices();
+                return _inverseProjectionMatrixUnjittered;
+            }
+        }
+
+        public Matrix4x4 ViewProjectionMatrix
+        {
+            get
+            {
+                EnsureViewProjectionMatrices();
+                return _viewProjectionMatrix;
+            }
+        }
+
+        public Matrix4x4 ViewProjectionMatrixUnjittered
+        {
+            get
+            {
+                EnsureViewProjectionMatrices();
+                return _viewProjectionMatrixUnjittered;
             }
         }
 
@@ -1395,6 +1495,8 @@ namespace XREngine.Rendering
             Matrix4x4 viewMtx = tfm.InverseRenderMatrix;
             Matrix4x4 renderMtx = tfm.RenderMatrix;
             Matrix4x4 projMtx = ProjectionMatrix;
+            Matrix4x4 inverseProjMtx = InverseProjectionMatrix;
+            Matrix4x4 viewProjMtx = ViewProjectionMatrix;
 
             bool stereoPass = RuntimeRenderingHostServices.Current.IsStereoPass;
             if (stereoPass)
@@ -1402,21 +1504,31 @@ namespace XREngine.Rendering
                 if (stereoLeftEye)
                 {
                     program.Uniform(EEngineUniform.ViewMatrix.ToString(), viewMtx);
+                    program.Uniform(EEngineUniform.ViewProjectionMatrix.ToString(), viewProjMtx);
+                    program.Uniform(EEngineUniform.LeftEyeViewMatrix.ToString(), viewMtx);
                     program.Uniform(EEngineUniform.LeftEyeInverseViewMatrix.ToString(), renderMtx);
+                    program.Uniform(EEngineUniform.LeftEyeInverseProjMatrix.ToString(), inverseProjMtx);
                     program.Uniform(EEngineUniform.LeftEyeProjMatrix.ToString(), projMtx);
+                    program.Uniform(EEngineUniform.LeftEyeViewProjectionMatrix.ToString(), viewProjMtx);
                 }
                 else
                 {
                     program.Uniform(EEngineUniform.ViewMatrix.ToString(), viewMtx);
+                    program.Uniform(EEngineUniform.ViewProjectionMatrix.ToString(), viewProjMtx);
+                    program.Uniform(EEngineUniform.RightEyeViewMatrix.ToString(), viewMtx);
                     program.Uniform(EEngineUniform.RightEyeInverseViewMatrix.ToString(), renderMtx);
+                    program.Uniform(EEngineUniform.RightEyeInverseProjMatrix.ToString(), inverseProjMtx);
                     program.Uniform(EEngineUniform.RightEyeProjMatrix.ToString(), projMtx);
+                    program.Uniform(EEngineUniform.RightEyeViewProjectionMatrix.ToString(), viewProjMtx);
                 }
             }
             else
             {
                 program.Uniform(EEngineUniform.ViewMatrix.ToString(), viewMtx);
                 program.Uniform(EEngineUniform.InverseViewMatrix.ToString(), renderMtx);
+                program.Uniform(EEngineUniform.InverseProjMatrix.ToString(), inverseProjMtx);
                 program.Uniform(EEngineUniform.ProjMatrix.ToString(), projMtx);
+                program.Uniform(EEngineUniform.ViewProjectionMatrix.ToString(), viewProjMtx);
             }
 
             program.Uniform(EEngineUniform.CameraPosition.ToString(), tfm.RenderTranslation);
@@ -1480,25 +1592,40 @@ namespace XREngine.Rendering
         /// Sets an oblique clipping plane from a world-space position and normal.
         /// </summary>
         public void SetObliqueClippingPlane(Vector3 planePosWorld, Vector3 planeNormalWorld)
-            => _obliqueNearClippingPlane = XRMath.CreatePlaneFromPointAndNormal(planePosWorld, planeNormalWorld);
+        {
+            _obliqueNearClippingPlane = XRMath.CreatePlaneFromPointAndNormal(planePosWorld, planeNormalWorld);
+            RefreshObliqueProjectionMatrix();
+            InvalidateProjectionMatrices();
+        }
 
         /// <summary>
         /// Sets an oblique clipping plane from a normal and distance.
         /// </summary>
         public void SetObliqueClippingPlane(Vector3 planeNormalWorld, float planeDistance)
-            => _obliqueNearClippingPlane = new Plane(planeNormalWorld, planeDistance);
+        {
+            _obliqueNearClippingPlane = new Plane(planeNormalWorld, planeDistance);
+            RefreshObliqueProjectionMatrix();
+            InvalidateProjectionMatrices();
+        }
 
         /// <summary>
         /// Sets an oblique clipping plane directly.
         /// </summary>
         public void SetObliqueClippingPlane(Plane plane)
-            => _obliqueNearClippingPlane = plane;
+        {
+            _obliqueNearClippingPlane = plane;
+            RefreshObliqueProjectionMatrix();
+            InvalidateProjectionMatrices();
+        }
 
         /// <summary>
         /// Clears any oblique clipping plane.
         /// </summary>
         public void ClearObliqueClippingPlane()
-            => _obliqueNearClippingPlane = null;
+        {
+            _obliqueNearClippingPlane = null;
+            InvalidateProjectionMatrices();
+        }
 
         #endregion
 

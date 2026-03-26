@@ -472,7 +472,7 @@ public partial class DefaultRenderPipeline2
                         EReadBufferMode.ColorAttachment0,
                         blitColor: false,
                         blitDepth: true,
-                        blitStencil: false,
+                        blitStencil: true,
                         linearFilter: false);
                     deferredChoice.TrueCommands = blitCmds;
                 }

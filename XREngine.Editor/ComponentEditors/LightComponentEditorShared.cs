@@ -282,7 +282,7 @@ internal static class LightComponentEditorShared
             var (face, faceLabel) = CubemapFaces[i];
             var view = previewCache.GetFaceView(face);
 
-            if (!TryGetTexturePreviewData(view, out nint handle, out _, out _, out string? failureReason))
+            if (!previewCache.TryGetFacePreviewData(face, out nint handle, out _, out _, out string? failureReason))
             {
                 ImGui.TextDisabled(failureReason ?? "Preview unavailable.");
                 return;
@@ -451,6 +451,8 @@ internal static class LightComponentEditorShared
     private sealed class CubemapPreviewCache
     {
         private readonly XRTextureCubeView[] _faceViews = new XRTextureCubeView[6];
+        private readonly bool[] _facePreviewFailed = new bool[6];
+        private readonly string?[] _faceFailureReasons = new string?[6];
 
         public CubemapPreviewCache(XRTextureCube source)
         {
@@ -460,6 +462,31 @@ internal static class LightComponentEditorShared
 
         public XRTextureCubeView GetFaceView(ECubemapFace face)
             => _faceViews[(int)face];
+
+        public bool TryGetFacePreviewData(
+            ECubemapFace face,
+            out nint handle,
+            out Vector2 displaySize,
+            out Vector2 pixelSize,
+            out string? failureReason)
+        {
+            int faceIndex = (int)face;
+            if (_facePreviewFailed[faceIndex])
+            {
+                handle = nint.Zero;
+                pixelSize = new Vector2(MathF.Max(1.0f, _faceViews[faceIndex].ViewedTexture.Extent));
+                displaySize = GetPreviewSize(pixelSize);
+                failureReason = _faceFailureReasons[faceIndex] ?? "Preview unavailable.";
+                return false;
+            }
+
+            if (TryGetTexturePreviewData(_faceViews[faceIndex], out handle, out displaySize, out pixelSize, out failureReason))
+                return true;
+
+            _facePreviewFailed[faceIndex] = true;
+            _faceFailureReasons[faceIndex] = failureReason ?? "Preview unavailable.";
+            return false;
+        }
 
         private static XRTextureCubeView CreateFaceView(XRTextureCube source, ECubemapFace face)
         {

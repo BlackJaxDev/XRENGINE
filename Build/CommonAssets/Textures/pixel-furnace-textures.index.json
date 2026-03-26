@@ -1,0 +1,1200 @@
+﻿{
+    "generatedUtc":  "2026-03-25T18:32:04.9552285Z",
+    "sourceUrl":  "https://textures.pixel-furnace.com/",
+    "listingEndpoint":  "https://textures.pixel-furnace.com/fetchArticles.php",
+    "termsUrl":  "https://textures.pixel-furnace.com/terms",
+    "redistributionNotice":  "Pixel-Furnace allows use in commercial and non-commercial projects, but does not allow redistribution of the textures by themselves or as a collection.",
+    "totalDiscovered":  66,
+    "selectedCount":  66,
+    "namePattern":  "*",
+    "textures":  [
+                     {
+                         "name":  "Animated Water",
+                         "fileName":  "Animated Water Normal Map.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Animated Water",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Animated Water Normal Map.zip",
+                         "articleId":  "44",
+                         "resolution":  "1024px",
+                         "fileSize":  "123MB",
+                         "maps":  {
+                                      "Bump":  false,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  false,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Animated Water 2",
+                         "fileName":  "Animated_Water_Normal_Map_2.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Animated Water 2",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Animated_Water_Normal_Map_2.zip",
+                         "articleId":  "45",
+                         "resolution":  "1024px",
+                         "fileSize":  "135MB",
+                         "maps":  {
+                                      "Bump":  false,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  false,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Asphalt Stripes",
+                         "fileName":  "Asphalt_Stripes.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Asphalt Stripes",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Asphalt_Stripes.zip",
+                         "articleId":  "29",
+                         "resolution":  "2048px",
+                         "fileSize":  "40MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Basic Wood Grain",
+                         "fileName":  "Basic_Wood_Grain.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Basic Wood Grain",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Basic_Wood_Grain.zip",
+                         "articleId":  "65",
+                         "resolution":  "2048px",
+                         "fileSize":  "36MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Bolted Wooden Planks",
+                         "fileName":  "Bolted_Wooden_Planks.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Bolted Wooden Planks",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Bolted_Wooden_Planks.zip",
+                         "articleId":  "47",
+                         "resolution":  "8192px",
+                         "fileSize":  "31MB",
+                         "maps":  {
+                                      "Bump":  false,
+                                      "Specular":  true,
+                                      "Metal":  true,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Brick Wall",
+                         "fileName":  "Brick_Wall.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Brick Wall",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Brick_Wall.zip",
+                         "articleId":  "12",
+                         "resolution":  "1024px",
+                         "fileSize":  "10MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Cardboard",
+                         "fileName":  "Cardboard.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Cardboard",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Cardboard.zip",
+                         "articleId":  "57",
+                         "resolution":  "2048px",
+                         "fileSize":  "41MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Carpet",
+                         "fileName":  "Carpet.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Carpet",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Carpet.zip",
+                         "articleId":  "18",
+                         "resolution":  "2048px",
+                         "fileSize":  "21MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Checker Tiles 01",
+                         "fileName":  "Checker_Tiles.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Checker Tiles 01",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Checker_Tiles.zip",
+                         "articleId":  "21",
+                         "resolution":  "2048px",
+                         "fileSize":  "30MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Checker Tiles 02",
+                         "fileName":  "Generated_Checker_Tiles.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Checker Tiles 02",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Generated_Checker_Tiles.zip",
+                         "articleId":  "22",
+                         "resolution":  "512px",
+                         "fileSize":  "1MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Concrete 01",
+                         "fileName":  "Concrete_01.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Concrete 01",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Concrete_01.zip",
+                         "articleId":  "58",
+                         "resolution":  "2048px",
+                         "fileSize":  "45MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Concrete 02",
+                         "fileName":  "Concrete_02.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Concrete 02",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Concrete_02.zip",
+                         "articleId":  "59",
+                         "resolution":  "4096px",
+                         "fileSize":  "169MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Cracked Asphalt",
+                         "fileName":  "Cracked_Asphalt.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Cracked Asphalt",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Cracked_Asphalt.zip",
+                         "articleId":  "31",
+                         "resolution":  "2048px",
+                         "fileSize":  "30MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Damaged Wood Grain",
+                         "fileName":  "Damaged_Wood_Grain.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Damaged Wood Grain",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Damaged_Wood_Grain.zip",
+                         "articleId":  "66",
+                         "resolution":  "2048px",
+                         "fileSize":  "38MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Diamond Grass Paver",
+                         "fileName":  "Grass_Paver_Diamond.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Diamond Grass Paver",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Grass_Paver_Diamond.zip",
+                         "articleId":  "32",
+                         "resolution":  "1024px",
+                         "fileSize":  "4MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Diamond Metal Plate",
+                         "fileName":  "Diamond_Plate.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Diamond Metal Plate",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Diamond_Plate.zip",
+                         "articleId":  "27",
+                         "resolution":  "2048px",
+                         "fileSize":  "11MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  true,
+                                      "Normal":  false,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Dirt",
+                         "fileName":  "Dirt.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Dirt",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Dirt.zip",
+                         "articleId":  "25",
+                         "resolution":  "2048px",
+                         "fileSize":  "58MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Dirty Concrete",
+                         "fileName":  "Dirty_Concrete.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Dirty Concrete",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Dirty_Concrete.zip",
+                         "articleId":  "41",
+                         "resolution":  "2048px",
+                         "fileSize":  "43MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Flat Brick",
+                         "fileName":  "Flat Brick.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Flat Brick",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Flat Brick.zip",
+                         "articleId":  "13",
+                         "resolution":  "1024px",
+                         "fileSize":  "7MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Galvanized Metal",
+                         "fileName":  "Galvanized Metal.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Galvanized Metal",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Galvanized Metal.zip",
+                         "articleId":  "28",
+                         "resolution":  "1024px",
+                         "fileSize":  "1MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  false,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Granite Pavement 01",
+                         "fileName":  "Granite_Pavement_01.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Granite Pavement 01",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Granite_Pavement_01.zip",
+                         "articleId":  "60",
+                         "resolution":  "2048px",
+                         "fileSize":  "69MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Grass",
+                         "fileName":  "Dirty_Grass.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Grass",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Dirty_Grass.zip",
+                         "articleId":  "26",
+                         "resolution":  "1024px",
+                         "fileSize":  "3MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  false,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Grass Paver",
+                         "fileName":  "Grass_Paver.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Grass Paver",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Grass_Paver.zip",
+                         "articleId":  "33",
+                         "resolution":  "1024px",
+                         "fileSize":  "9MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Herringbone Brick",
+                         "fileName":  "Herringbone_Brick.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Herringbone Brick",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Herringbone_Brick.zip",
+                         "articleId":  "35",
+                         "resolution":  "512px",
+                         "fileSize":  "2MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Marble Tiles",
+                         "fileName":  "Marble_Tiles.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Marble Tiles",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Marble_Tiles.zip",
+                         "articleId":  "1",
+                         "resolution":  "2048px",
+                         "fileSize":  "2MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Milano Pavement",
+                         "fileName":  "Milano_Pavement.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Milano Pavement",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Milano_Pavement.zip",
+                         "articleId":  "34",
+                         "resolution":  "1024px",
+                         "fileSize":  "8MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Mossy Cobblestone",
+                         "fileName":  "Mossy_Cobblestone.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Mossy Cobblestone",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Mossy_Cobblestone.zip",
+                         "articleId":  "36",
+                         "resolution":  "2048px",
+                         "fileSize":  "48MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Mossy Rock",
+                         "fileName":  "Mossy_Rock.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Mossy Rock",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Mossy_Rock.zip",
+                         "articleId":  "10",
+                         "resolution":  "2048px",
+                         "fileSize":  "28MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "New Concrete",
+                         "fileName":  "New_Concrete.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=New Concrete",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/New_Concrete.zip",
+                         "articleId":  "40",
+                         "resolution":  "1700px",
+                         "fileSize":  "1MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Offset Pavement",
+                         "fileName":  "Offset_Pavement.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Offset Pavement",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Offset_Pavement.zip",
+                         "articleId":  "37",
+                         "resolution":  "2048px",
+                         "fileSize":  "7MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Old Brick",
+                         "fileName":  "Old_Brick.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Old Brick",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Old_Brick.zip",
+                         "articleId":  "14",
+                         "resolution":  "512px",
+                         "fileSize":  "2MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Old Red Brick",
+                         "fileName":  "Old_Red_Brick.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Old Red Brick",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Old_Red_Brick.zip",
+                         "articleId":  "15",
+                         "resolution":  "512px",
+                         "fileSize":  "2MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Old Rocks",
+                         "fileName":  "Old_Rocks.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Old Rocks",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Old_Rocks.zip",
+                         "articleId":  "11",
+                         "resolution":  "1024px",
+                         "fileSize":  "11MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Old Wood",
+                         "fileName":  "Old_Wood.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Old Wood",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Old_Wood.zip",
+                         "articleId":  "48",
+                         "resolution":  "1024px",
+                         "fileSize":  "7MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Olive Wood",
+                         "fileName":  "Olive_Wood.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Olive Wood",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Olive_Wood.zip",
+                         "articleId":  "68",
+                         "resolution":  "2048px",
+                         "fileSize":  "61MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Orange Brick",
+                         "fileName":  "Orange_Brick.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Orange Brick",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Orange_Brick.zip",
+                         "articleId":  "16",
+                         "resolution":  "512px",
+                         "fileSize":  "2MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Painted Ornament",
+                         "fileName":  "Painted_Ornament.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Painted Ornament",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Painted_Ornament.zip",
+                         "articleId":  "23",
+                         "resolution":  "1024px",
+                         "fileSize":  "5MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Palmtree Bark",
+                         "fileName":  "Palmtree_Bark.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Palmtree Bark",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Palmtree_Bark.zip",
+                         "articleId":  "46",
+                         "resolution":  "1600px",
+                         "fileSize":  "2MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  false,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Plain Fabric",
+                         "fileName":  "Plain_Fabric.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Plain Fabric",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Plain_Fabric.zip",
+                         "articleId":  "19",
+                         "resolution":  "512px",
+                         "fileSize":  "1MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Potato",
+                         "fileName":  "Potato.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Potato",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Potato.zip",
+                         "articleId":  "62",
+                         "resolution":  "2048px",
+                         "fileSize":  "41MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Red Asphalt",
+                         "fileName":  "Red_Asphalt.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Red Asphalt",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Red_Asphalt.zip",
+                         "articleId":  "30",
+                         "resolution":  "2048px",
+                         "fileSize":  "17MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Red Tiles",
+                         "fileName":  "Red_Tiles.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Red Tiles",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Red_Tiles.zip",
+                         "articleId":  "24",
+                         "resolution":  "2048px",
+                         "fileSize":  "5MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Regular Brick",
+                         "fileName":  "Regular_Brick.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Regular Brick",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Regular_Brick.zip",
+                         "articleId":  "17",
+                         "resolution":  "4096px",
+                         "fileSize":  "19MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Regular Pavement",
+                         "fileName":  "Regular_Pavement.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Regular Pavement",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Regular_Pavement.zip",
+                         "articleId":  "38",
+                         "resolution":  "2048px",
+                         "fileSize":  "16MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Rock 01",
+                         "fileName":  "Rock_01.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Rock 01",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Rock_01.zip",
+                         "articleId":  "4",
+                         "resolution":  "2048px",
+                         "fileSize":  "21MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Rock 02",
+                         "fileName":  "Rock_02.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Rock 02",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Rock_02.zip",
+                         "articleId":  "5",
+                         "resolution":  "2048px",
+                         "fileSize":  "23MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Rock 03",
+                         "fileName":  "Rock_03.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Rock 03",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Rock_03.zip",
+                         "articleId":  "6",
+                         "resolution":  "2048px",
+                         "fileSize":  "26MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Rock 04",
+                         "fileName":  "Rock_04.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Rock 04",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Rock_04.zip",
+                         "articleId":  "7",
+                         "resolution":  "2048px",
+                         "fileSize":  "23MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Rock 05",
+                         "fileName":  "Rock_05.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Rock 05",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Rock_05.zip",
+                         "articleId":  "8",
+                         "resolution":  "1024px",
+                         "fileSize":  "13MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Rock Wall",
+                         "fileName":  "Rock_Wall.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Rock Wall",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Rock_Wall.zip",
+                         "articleId":  "42",
+                         "resolution":  "1024px",
+                         "fileSize":  "6MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Sidewalk Tiles",
+                         "fileName":  "Sidewalk_Tiles.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Sidewalk Tiles",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Sidewalk_Tiles.zip",
+                         "articleId":  "61",
+                         "resolution":  "4096px",
+                         "fileSize":  "77MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Slim Wooden Planks",
+                         "fileName":  "Slim_Planks.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Slim Wooden Planks",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Slim_Planks.zip",
+                         "articleId":  "51",
+                         "resolution":  "1024x2048px",
+                         "fileSize":  "1MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Soil Shoeprints",
+                         "fileName":  "Soil_Shoeprints.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Soil Shoeprints",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Soil_Shoeprints.zip",
+                         "articleId":  "63",
+                         "resolution":  "2048px",
+                         "fileSize":  "71MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Stone 01",
+                         "fileName":  "Stone_01.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Stone 01",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Stone_01.zip",
+                         "articleId":  "9",
+                         "resolution":  "2048px",
+                         "fileSize":  "28MB",
+                         "maps":  {
+                                      "Bump":  false,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Stone Pavement",
+                         "fileName":  "Stone_Pavement.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Stone Pavement",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Stone_Pavement.zip",
+                         "articleId":  "39",
+                         "resolution":  "4096px",
+                         "fileSize":  "90MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Striped Italian Pavement",
+                         "fileName":  "Striped_Italian_Pavement.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Striped Italian Pavement",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Striped_Italian_Pavement.zip",
+                         "articleId":  "67",
+                         "resolution":  "4096px",
+                         "fileSize":  "24MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Wet Soil Shoeprints",
+                         "fileName":  "Wet_Soil_Shoeprints.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Wet Soil Shoeprints",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Wet_Soil_Shoeprints.zip",
+                         "articleId":  "64",
+                         "resolution":  "2048px",
+                         "fileSize":  "71MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "White Stones",
+                         "fileName":  "White_Stones.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=White Stones",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/White_Stones.zip",
+                         "articleId":  "20",
+                         "resolution":  "2048px",
+                         "fileSize":  "26MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Wood Grain",
+                         "fileName":  "Wood_Grain.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Wood Grain",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Wood_Grain.zip",
+                         "articleId":  "53",
+                         "resolution":  "2048px",
+                         "fileSize":  "24MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Wood Grain 02",
+                         "fileName":  "Wood_Grain_02.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Wood Grain 02",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Wood_Grain_02.zip",
+                         "articleId":  "56",
+                         "resolution":  "1024px",
+                         "fileSize":  "5MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Wood Tiles",
+                         "fileName":  "Wood_Tiles.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Wood Tiles",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Wood_Tiles.zip",
+                         "articleId":  "54",
+                         "resolution":  "2048px",
+                         "fileSize":  "22MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Wooden Panel 01",
+                         "fileName":  "Wood_Panel.zip",
+                         "page":  3,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Wooden Panel 01",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Wood_Panel.zip",
+                         "articleId":  "52",
+                         "resolution":  "2048px",
+                         "fileSize":  "43MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Wooden Panel 02",
+                         "fileName":  "Wood_Panel_02.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Wooden Panel 02",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Wood_Panel_02.zip",
+                         "articleId":  "55",
+                         "resolution":  "2048px",
+                         "fileSize":  "16MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  false,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Wooden Planks 01",
+                         "fileName":  "Wooden_Planks_01.zip",
+                         "page":  1,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Wooden Planks 01",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Wooden_Planks_01.zip",
+                         "articleId":  "49",
+                         "resolution":  "1024px",
+                         "fileSize":  "11MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  true,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  true
+                                  }
+                     },
+                     {
+                         "name":  "Wooden Planks 02",
+                         "fileName":  "Wooden_Planks_02.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Wooden Planks 02",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Wooden_Planks_02.zip",
+                         "articleId":  "50",
+                         "resolution":  "512px",
+                         "fileSize":  "2MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     },
+                     {
+                         "name":  "Wooden Shingles",
+                         "fileName":  "Wooden_Shingles.zip",
+                         "page":  2,
+                         "detailUrl":  "https://textures.pixel-furnace.com/texture?name=Wooden Shingles",
+                         "downloadUrl":  "https://textures.pixel-furnace.com/uploads/textures/Wooden_Shingles.zip",
+                         "articleId":  "43",
+                         "resolution":  "1024px",
+                         "fileSize":  "6MB",
+                         "maps":  {
+                                      "Bump":  true,
+                                      "Specular":  true,
+                                      "Metal":  false,
+                                      "Normal":  true,
+                                      "Albedo":  true,
+                                      "Roughness":  false
+                                  }
+                     }
+                 ]
+}

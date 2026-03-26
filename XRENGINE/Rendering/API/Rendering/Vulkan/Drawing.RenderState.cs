@@ -87,12 +87,12 @@ namespace XREngine.Rendering.Vulkan
             if (stereoPass)
             {
                 var rightCam = Engine.Rendering.State.RenderingStereoRightEyeCamera;
-                PassCameraUniforms(program, camera, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeProjMatrix);
-                PassCameraUniforms(program, rightCam, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeProjMatrix);
+                PassCameraUniforms(program, camera, EEngineUniform.LeftEyeViewMatrix, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeInverseProjMatrix, EEngineUniform.LeftEyeProjMatrix, EEngineUniform.LeftEyeViewProjectionMatrix);
+                PassCameraUniforms(program, rightCam, EEngineUniform.RightEyeViewMatrix, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeInverseProjMatrix, EEngineUniform.RightEyeProjMatrix, EEngineUniform.RightEyeViewProjectionMatrix);
             }
             else
             {
-                PassCameraUniforms(program, camera, EEngineUniform.InverseViewMatrix, EEngineUniform.ProjMatrix);
+                PassCameraUniforms(program, camera, EEngineUniform.ViewMatrix, EEngineUniform.InverseViewMatrix, EEngineUniform.InverseProjMatrix, EEngineUniform.ProjMatrix, EEngineUniform.ViewProjectionMatrix);
             }
         }
 
@@ -130,7 +130,11 @@ namespace XREngine.Rendering.Vulkan
                 Engine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program);
 
             if (reqs.HasFlag(EUniformRequirements.RenderTime))
-                program.Uniform(nameof(EUniformRequirements.RenderTime), _materialUniformSecondsLive);
+            {
+                program.Uniform(EEngineUniform.RenderTime.ToStringFast(), _materialUniformSecondsLive);
+                program.Uniform(EEngineUniform.EngineTime.ToStringFast(), Engine.ElapsedTime);
+                program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), Engine.Time.Timer.Render.Delta);
+            }
 
             if (reqs.HasFlag(EUniformRequirements.ViewportDimensions))
             {
@@ -143,32 +147,42 @@ namespace XREngine.Rendering.Vulkan
             Engine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
         }
 
-        private static void PassCameraUniforms(XRRenderProgram program, XRCamera? camera, EEngineUniform inverseViewName, EEngineUniform projectionName)
+        private static void PassCameraUniforms(XRRenderProgram program, XRCamera? camera, EEngineUniform viewName, EEngineUniform inverseViewName, EEngineUniform inverseProjectionName, EEngineUniform projectionName, EEngineUniform viewProjectionName)
         {
             Matrix4x4 viewMatrix;
             Matrix4x4 inverseViewMatrix;
+            Matrix4x4 inverseProjectionMatrix;
             Matrix4x4 projectionMatrix;
+            Matrix4x4 viewProjectionMatrix;
             if (camera is not null)
             {
                 viewMatrix = camera.Transform.InverseRenderMatrix;
                 inverseViewMatrix = camera.Transform.RenderMatrix;
                 bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
                 projectionMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
+                inverseProjectionMatrix = useUnjittered ? camera.InverseProjectionMatrixUnjittered : camera.InverseProjectionMatrix;
+                viewProjectionMatrix = useUnjittered ? camera.ViewProjectionMatrixUnjittered : camera.ViewProjectionMatrix;
             }
             else
             {
                 viewMatrix = Matrix4x4.Identity;
                 inverseViewMatrix = Matrix4x4.Identity;
+                inverseProjectionMatrix = Matrix4x4.Identity;
                 projectionMatrix = Matrix4x4.Identity;
+                viewProjectionMatrix = Matrix4x4.Identity;
             }
 
-            program.Uniform(EEngineUniform.ViewMatrix.ToStringFast(), viewMatrix);
+            program.Uniform(viewName.ToStringFast(), viewMatrix);
             program.Uniform(inverseViewName.ToStringFast(), inverseViewMatrix);
+            program.Uniform(inverseProjectionName.ToStringFast(), inverseProjectionMatrix);
             program.Uniform(projectionName.ToStringFast(), projectionMatrix);
+            program.Uniform(viewProjectionName.ToStringFast(), viewProjectionMatrix);
 
-            program.Uniform(EEngineUniform.ViewMatrix.ToVertexUniformName(), viewMatrix);
+            program.Uniform(viewName.ToVertexUniformName(), viewMatrix);
             program.Uniform(inverseViewName.ToVertexUniformName(), inverseViewMatrix);
+            program.Uniform(inverseProjectionName.ToVertexUniformName(), inverseProjectionMatrix);
             program.Uniform(projectionName.ToVertexUniformName(), projectionMatrix);
+            program.Uniform(viewProjectionName.ToVertexUniformName(), viewProjectionMatrix);
         }
 
         // =========== Vulkan State Conversion Helpers ===========

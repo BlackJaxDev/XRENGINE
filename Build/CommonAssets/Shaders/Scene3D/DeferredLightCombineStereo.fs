@@ -43,6 +43,8 @@ float GTSpecularOcclusion(float NoV, float ao, float roughness)
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
+uniform mat4 LeftEyeInverseProjMatrix;
+uniform mat4 RightEyeInverseProjMatrix;
 
 uniform mat4 LeftEyeProjMatrix;
 uniform mat4 RightEyeProjMatrix;
@@ -56,6 +58,7 @@ void main()
 	vec3 uvi = vec3(uv, gl_ViewID_OVR);
 	bool leftEye = gl_ViewID_OVR == 0;
 	mat4 InverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+	mat4 InverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
 	mat4 ProjMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
 	vec3 albedoColor = texture(AlbedoOpacity, uvi).rgb;
@@ -65,7 +68,7 @@ void main()
 	float depth = texture(DepthView, uvi).r;
 	vec3 InLo = texture(LightingTexture, uvi).rgb;
 	vec3 irradianceColor = XRENGINE_SampleOcta(Irradiance, normal);
-	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
+	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
 	//float fogDensity = noise3(fragPosWS);
 
 	float roughness = rms.x;

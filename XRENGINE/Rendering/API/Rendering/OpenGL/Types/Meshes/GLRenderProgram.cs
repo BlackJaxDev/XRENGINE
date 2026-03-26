@@ -453,6 +453,7 @@ namespace XREngine.Rendering.OpenGL
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
                 _asyncAttachedShaders = null;
                 _asyncBinaryUploadPending = false;
+                _asyncCompileLinkPending = false;
                 _hashComputed = false;
                 _linkDataPrepared = false;
                 _attribCache.Clear();
@@ -910,6 +911,10 @@ namespace XREngine.Rendering.OpenGL
             // dispatched to the shared context thread and we are waiting for completion.
             private volatile bool _asyncBinaryUploadPending;
 
+            // Async compile+link state: set when shader compilation and program linking
+            // have been dispatched to the shared context thread.
+            private volatile bool _asyncCompileLinkPending;
+
             /// <summary>
             /// Async link phases used when GL_ARB_parallel_shader_compile is active.
             /// </summary>
@@ -1167,6 +1172,38 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
+                // Check for completed async compile+link from the shared context thread.
+                if (_asyncCompileLinkPending)
+                {
+                    var compileQueue = Renderer.ProgramCompileLinkQueue;
+                    if (compileQueue is not null && TryGetBindingId(out uint pendingId2) && compileQueue.TryGetResult(pendingId2, out var compileResult))
+                    {
+                        _asyncCompileLinkPending = false;
+                        if (compileResult.Status == GLProgramCompileLinkQueue.CompileStatus.Success)
+                        {
+                            IsLinked = true;
+                            using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
+                            CacheActiveUniforms();
+                            CacheBinary(pendingId2);
+                            InFlightCompilations.TryRemove(Hash, out _);
+                            return true;
+                        }
+                        else
+                        {
+                            string errorKind = compileResult.Status == GLProgramCompileLinkQueue.CompileStatus.CompileFailed
+                                ? "compile" : "link";
+                            Debug.OpenGLWarning($"Async {errorKind} failed for hash {Hash}: {compileResult.ErrorLog}");
+                            Failed.TryAdd(Hash, 0);
+                            InFlightCompilations.TryRemove(Hash, out _);
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        return false; // Compile+link still in progress.
+                    }
+                }
+
                 // Resume an in-progress async compile/link if the extension is active.
                 if (_asyncLinkPhase != EAsyncLinkPhase.Idle)
                     return ContinueAsyncLink();
@@ -1271,6 +1308,43 @@ namespace XREngine.Rendering.OpenGL
                     {
                         _cachedProgram = null;
                         Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
+
+                        // When the shared context compile+link queue is available and the driver
+                        // does NOT have GL_ARB_parallel_shader_compile, offload the entire
+                        // compile → attach → link pipeline to the background thread.
+                        // This keeps the main render thread free while the driver's shader compiler runs.
+                        var compileQueue = Renderer.ProgramCompileLinkQueue;
+                        if (Engine.Rendering.Settings.AsyncProgramCompilation
+                            && !Engine.Rendering.State.HasParallelShaderCompile
+                            && compileQueue is not null
+                            && compileQueue.IsAvailable
+                            && compileQueue.CanEnqueue)
+                        {
+                            var shaderData = Data.Shaders;
+                            var inputs = new GLProgramCompileLinkQueue.ShaderInput[shaderData.Count];
+                            bool allResolved = true;
+                            for (int si = 0; si < shaderData.Count; si++)
+                            {
+                                XRShader s = shaderData[si];
+                                string resolved = s.GetResolvedSource();
+                                if (string.IsNullOrWhiteSpace(resolved))
+                                {
+                                    allResolved = false;
+                                    break;
+                                }
+                                inputs[si] = new GLProgramCompileLinkQueue.ShaderInput(
+                                    resolved,
+                                    GLProgramCompileLinkQueue.ToGLShaderType(s.Type));
+                            }
+
+                            if (allResolved)
+                            {
+                                compileQueue.EnqueueCompileAndLink(bindingId, inputs);
+                                _asyncCompileLinkPending = true;
+                                return false;
+                            }
+                            // If source resolution failed, fall through to the synchronous path.
+                        }
 
                         using (Engine.Profiler.Start("GLRenderProgram.Link.GenerateShaders"))
                         {

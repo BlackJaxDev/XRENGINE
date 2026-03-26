@@ -25,6 +25,9 @@ namespace XREngine.Rendering.OpenGL
 
             return (viewedTarget, viewTarget) switch
             {
+                (ETextureTarget.TextureCubeMap, ETextureTarget.Texture2D) when Data.NumLayers == 1 => true,
+                (ETextureTarget.TextureCubeMapArray, ETextureTarget.Texture2D) when Data.NumLayers == 1 => true,
+                (ETextureTarget.TextureCubeMapArray, ETextureTarget.Texture2DArray) => true,
                 (ETextureTarget.Texture2DArray, ETextureTarget.Texture2D) when Data.NumLayers == 1 => true,
                 (ETextureTarget.Texture2DMultisampleArray, ETextureTarget.Texture2DMultisample) when Data.NumLayers == 1 => true,
                 _ => false,

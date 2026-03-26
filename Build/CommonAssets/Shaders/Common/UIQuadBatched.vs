@@ -21,8 +21,7 @@ layout(std430, set = 0, binding = 2) buffer QuadBoundsBuffer
     vec4 QuadBounds[]; // (x, y, w, h) per instance
 };
 
-uniform mat4 InverseViewMatrix_VTX;
-uniform mat4 ProjMatrix_VTX;
+uniform mat4 ViewProjectionMatrix_VTX;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -49,11 +48,10 @@ void main()
     int id = gl_InstanceID;
 
     mat4 modelMatrix = getModelMatrix(id);
-    mat4 viewMatrix = inverse(InverseViewMatrix_VTX);
-    mat4 mvpMatrix = ProjMatrix_VTX * viewMatrix * modelMatrix;
+    mat4 mvpMatrix = ViewProjectionMatrix_VTX * modelMatrix;
 
     FragPos = (modelMatrix * vec4(Position, 1.0)).xyz;
-    FragNorm = mat3(transpose(inverse(modelMatrix))) * Normal;
+    FragNorm = Normal;
     FragUV0 = TexCoord0;
     InstanceColor = QuadColors[id];
     InstanceBounds = QuadBounds[id];

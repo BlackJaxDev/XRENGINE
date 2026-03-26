@@ -42,6 +42,8 @@ layout(location = 8) out vec3 v_ViewDir;
 // ============================================
 #include "uniforms.glsl"
 
+uniform mat4 LeftEyeViewMatrix_VTX;
+uniform mat4 RightEyeViewMatrix_VTX;
 uniform mat4 LeftEyeInverseViewMatrix_VTX;
 uniform mat4 RightEyeInverseViewMatrix_VTX;
 uniform mat4 LeftEyeProjMatrix_VTX;
@@ -52,10 +54,8 @@ void main() {
 	v_WorldPos = worldPosition.xyz;
 	v_LocalPos = Position;
 
-	mat4 leftView = inverse(LeftEyeInverseViewMatrix_VTX);
-	mat4 rightView = inverse(RightEyeInverseViewMatrix_VTX);
-	gl_Position = LeftEyeProjMatrix_VTX * leftView * worldPosition;
-	gl_SecondaryPositionNV = RightEyeProjMatrix_VTX * rightView * worldPosition;
+	gl_Position = LeftEyeProjMatrix_VTX * LeftEyeViewMatrix_VTX * worldPosition;
+	gl_SecondaryPositionNV = RightEyeProjMatrix_VTX * RightEyeViewMatrix_VTX * worldPosition;
 	gl_Layer = 0;
 
 	mat3 normalMatrix = mat3(transpose(inverse(u_ModelMatrix)));

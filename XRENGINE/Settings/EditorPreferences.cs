@@ -1116,7 +1116,7 @@ namespace XREngine
         private bool _visualizeDepthPeelingLayer;
         private int _depthPeelingPreviewLayer;
         private int _depthPeelingMaxLayers = 4;
-        private bool _renderLightProbeTetrahedra = true;
+        private bool _renderLightProbeTetrahedra = false;
         private float _debugTextMaxLifespan;
         private bool _enableThreadAllocationTracking;
         private bool _useDebugOpaquePipeline;

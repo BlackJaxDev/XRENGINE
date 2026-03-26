@@ -24,7 +24,9 @@ uniform float Power = 1.4f;
 uniform float MultiViewBlend = 0.6f;
 uniform float MultiViewSpread = 0.5f;
 
+uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 float SampleAO(vec3 fragPosVS, vec3 samplePosVS)
@@ -38,7 +40,7 @@ float SampleAO(vec3 fragPosVS, vec3 samplePosVS)
     float sampleDepth = texture(DepthView, sampleUV).r;
     if (AOIsFarDepth(sampleDepth))
         return 0.0f;
-    vec3 sampleView = AOViewPosFromDepth(sampleDepth, sampleUV, ProjMatrix);
+    vec3 sampleView = AOViewPosFromDepth(sampleDepth, sampleUV, InverseProjMatrix);
 
     float delta = sampleView.z - samplePosVS.z;
     float range = abs(fragPosVS.z - sampleView.z);
@@ -63,10 +65,10 @@ void main()
         return;
     }
 
-    vec3 fragPosVS = AOViewPosFromDepth(depth, uv, ProjMatrix);
+    vec3 fragPosVS = AOViewPosFromDepth(depth, uv, InverseProjMatrix);
 
     vec3 randomVec = vec3(texture(AONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
-    vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(normal, 0.0f)).rgb);
+    vec3 viewNormal = normalize((ViewMatrix * vec4(normal, 0.0f)).rgb);
     vec3 viewTangent = normalize(randomVec - viewNormal * dot(randomVec, viewNormal));
     vec3 viewBitangent = cross(viewNormal, viewTangent);
     mat3 TBN = mat3(viewTangent, viewBitangent, viewNormal);

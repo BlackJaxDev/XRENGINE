@@ -247,17 +247,28 @@ namespace XREngine.Rendering.Pipelines.Commands
             // Bind shadow map for deferred rendering at unit 4 (deferred shaders expect it there).
             // This is done here rather than in SetUniforms to avoid overwriting material texture units
             // during forward rendering.
-            if (_currentLightComponent.CastsShadows && _currentLightComponent.ShadowMap?.Material?.Textures.Count > 0)
+            XRTexture? selectedShadowMap = null;
+            if (_currentLightComponent.CastsShadows && _currentLightComponent.ShadowMap?.Material?.Textures is { Count: > 0 } shadowTextures)
             {
-                var shadowTex = _currentLightComponent.ShadowMap.Material.Textures[0];
-                if (shadowTex != null)
-                    materialProgram.Sampler("ShadowMap", shadowTex, 4);
+                // Prefer the texture with SamplerName="ShadowMap" (the R16f distance cubemap);
+                // fall back to the first non-null texture otherwise.
+                foreach (var t in shadowTextures)
+                {
+                    if (t is not null && t.SamplerName == "ShadowMap")
+                    {
+                        selectedShadowMap = t;
+                        break;
+                    }
+                }
+                selectedShadowMap ??= shadowTextures[0];
+                if (selectedShadowMap != null)
+                    materialProgram.Sampler("ShadowMap", selectedShadowMap, 4);
             }
 
             // Point lights need the LightHasShadowMap uniform
             if (_currentLightComponent is PointLightComponent)
             {
-                bool hasShadowMap = _currentLightComponent.CastsShadows && _currentLightComponent.ShadowMap?.Material?.Textures.Count > 0;
+                bool hasShadowMap = _currentLightComponent.CastsShadows && selectedShadowMap is not null;
                 materialProgram.Uniform("LightHasShadowMap", hasShadowMap);
             }
         }

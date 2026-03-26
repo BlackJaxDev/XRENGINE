@@ -25,16 +25,17 @@ uniform samplerCube ShadowMap; //Point Shadow Map
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 uniform float MinFade = 500.0f;
 uniform float MaxFade = 10000.0f;
 uniform float ShadowBase = 1.0f;
 uniform float ShadowMult = 2.5f;
-uniform float ShadowBiasMin = 0.05f;
-uniform float ShadowBiasMax = 10.0f;
+uniform float ShadowBiasMin = 0.00001f;
+uniform float ShadowBiasMax = 0.004f;
 uniform bool LightHasShadowMap = true; // Added
-uniform int ShadowSamples = 16;
+uniform int ShadowSamples = 4;
 uniform float ShadowFilterRadius = 0.001f;
 uniform bool EnablePCSS = true;
 
@@ -81,31 +82,49 @@ float GetShadowBias(in float NoL)
     return mix(ShadowBiasMin, ShadowBiasMax, mapped);
 }
 
+float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir, in float compareDepth, in float bias, in float farPlaneDist, in float sampleRadius, in int requestedSamples, in bool enableSoft)
+{
+	int sampleCount = clamp(requestedSamples, 1, 20);
+	if (sampleCount <= 1)
+	{
+		float sampleDepth = texture(shadowMap, normalize(shadowDir)).r * farPlaneDist;
+		return (compareDepth - bias) <= sampleDepth ? 1.0f : 0.0f;
+	}
+
+	if (enableSoft || sampleCount <= 4)
+	{
+		float lit = 0.0f;
+		for (int i = 0; i < 20; ++i)
+		{
+			if (i >= sampleCount)
+				break;
+
+			vec3 sampleDir = normalize(shadowDir + LocalShadowCubeKernel[i] * sampleRadius);
+			float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
+			lit += (compareDepth - bias) <= sampleDepth ? 1.0f : 0.0f;
+		}
+
+		return lit / float(sampleCount);
+	}
+
+	return SampleShadowCubePCFLocal(shadowMap, shadowDir, compareDepth, bias, farPlaneDist, sampleRadius);
+}
+
 // returns1 lit,0 shadow
 float ReadPointShadowMap(in float farPlaneDist, in vec3 fragToLightWS, in float lightDist, in float NoL)
 {
     if (!LightHasShadowMap) return 1.0f;
     float bias = GetShadowBias(NoL);
-	if (EnablePCSS)
-	{
-		int sampleCount = ShadowSamples > 1 ? ShadowSamples : 20;
-		float sampleRadius = max(0.035f, ShadowFilterRadius * 24.0f);
-		int clampedSamples = clamp(sampleCount, 1, 20);
-		float lit = 0.0f;
-		for (int i = 0; i < 20; ++i)
-		{
-			if (i >= clampedSamples)
-				break;
-
-			vec3 sampleDir = normalize(fragToLightWS + LocalShadowCubeKernel[i] * sampleRadius);
-			float sampleDepth = texture(ShadowMap, sampleDir).r * farPlaneDist;
-			lit += (lightDist - bias) <= sampleDepth ? 1.0f : 0.0f;
-		}
-
-		return lit / float(clampedSamples);
-	}
-
-	return SampleShadowCubePCFLocal(ShadowMap, fragToLightWS, lightDist, bias, farPlaneDist, 0.035f);
+	float sampleRadius = max(0.035f, ShadowFilterRadius * 24.0f);
+	return SampleShadowCubeFilteredLocal(
+		ShadowMap,
+		fragToLightWS,
+		lightDist,
+		bias,
+		farPlaneDist,
+		sampleRadius,
+		ShadowSamples,
+		EnablePCSS);
 }
 vec3 CalcColor(
 in float NoL,
@@ -141,9 +160,8 @@ in vec3 rms,
 in vec3 F0)
 {
 	vec3 L = LightData.Position - fragPosWS;
-	float lightDist = length(L) / LightData.Brightness;
-	float radius = LightData.Radius / LightData.Brightness;
-	float attn = XRENGINE_Attenuate(lightDist, radius);
+	float lightDist = length(L);
+	float attn = XRENGINE_Attenuate(lightDist, LightData.Radius) * LightData.Brightness;
 	L = normalize(L);
 	vec3 H = normalize(V + L);
 
@@ -157,7 +175,7 @@ in vec3 F0)
 		NoL, NoH, NoV, HoV,
 		attn, albedo, rms, F0);
 
-	float lit = ReadPointShadowMap(radius, -L, lightDist, NoL);
+	float lit = ReadPointShadowMap(LightData.Radius, -L, lightDist, NoL);
 
 	return color * lit;
 }
@@ -191,14 +209,14 @@ void main()
 	float depth = texture(DepthView, uv).r;
 #endif
 
-	if (depth >= 1.0f)
+	if (XRENGINE_ResolveDepth(depth) >= 1.0f)
 	{
 		OutColor = vec3(0.0f);
 		return;
 	}
 
 	//Resolve world fragment position using depth and screen UV
-	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
+	vec3 fragPosWS = XRENGINE_WorldPosFromDepth(depth, uv, InverseProjMatrix, InverseViewMatrix);
 
 	//float fadeRange = MaxFade - MinFade;
 	//float dist = length(CameraPosition - fragPosWS);

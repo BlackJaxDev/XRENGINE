@@ -19,6 +19,30 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     private const float TexturePreviewMaxEdge = 96.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
 
+    private static readonly Vector4 EngineTagColor = new(0.40f, 0.75f, 0.95f, 1.0f);
+    private static readonly Vector4 EngineActiveColor = new(0.30f, 0.85f, 0.55f, 1.0f);
+    private static readonly Vector4 EngineMissingFlagColor = new(0.95f, 0.75f, 0.25f, 1.0f);
+
+    private static bool IsEngineUniform(string name, out EUniformRequirements requiredFlags)
+    {
+        requiredFlags = UniformRequirementsDetection.GetAllProviders(name);
+        return requiredFlags != EUniformRequirements.None;
+    }
+
+    private static bool HasAnyRequiredFlag(XRMaterial material, EUniformRequirements required)
+        => (material.RenderOptions.RequiredEngineUniforms & required) != 0;
+
+    private static string FormatFlagNames(EUniformRequirements flags)
+    {
+        var parts = new List<string>(4);
+        foreach (EUniformRequirements value in Enum.GetValues<EUniformRequirements>())
+        {
+            if (value != EUniformRequirements.None && flags.HasFlag(value))
+                parts.Add(value.ToString());
+        }
+        return string.Join(" or ", parts);
+    }
+
     public void DrawInspector(EditorImGuiUI.InspectorTargetSet targets, HashSet<object> visitedObjects)
     {
         if (targets.Targets.Count != 1 || targets.PrimaryTarget is not XRMaterial material)
@@ -324,16 +348,42 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
         foreach (var uniform in uniforms)
         {
+            bool isEngine = IsEngineUniform(uniform.Name, out var requiredFlags);
+            bool flagsActive = isEngine && HasAnyRequiredFlag(material, requiredFlags);
+
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
             ImGui.TextUnformatted(uniform.Name);
+            if (isEngine)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(EngineTagColor, "(engine)");
+                if (ImGui.IsItemHovered())
+                {
+                    string provider = FormatFlagNames(requiredFlags);
+                    ImGui.SetTooltip(flagsActive
+                        ? $"Driven by engine via RequiredEngineUniforms: {provider}"
+                        : $"Enable {provider} in Render Options > RequiredEngineUniforms to drive this uniform");
+                }
+            }
 
             ImGui.TableSetColumnIndex(1);
             ImGui.TextUnformatted(uniform.TypeLabel);
 
             ImGui.TableSetColumnIndex(2);
             ShaderVar? param = FindParameter(parameters, uniform.Name);
-            if (param is null)
+            if (isEngine && flagsActive && param is null)
+            {
+                ImGui.TextColored(EngineActiveColor, "Driven by engine");
+            }
+            else if (isEngine && !flagsActive && param is null)
+            {
+                string provider = FormatFlagNames(requiredFlags);
+                ImGui.TextColored(EngineMissingFlagColor, $"Enable {provider}");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Set RequiredEngineUniforms |= {provider} in Render Options for the engine to provide this value.");
+            }
+            else if (param is null)
             {
                 ImGui.TextDisabled("<missing parameter>");
             }
@@ -341,6 +391,8 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             {
                 ImGui.PushID(param.GetHashCode());
                 DrawShaderParameterControl(material, param);
+                if (isEngine && flagsActive && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("This value is overwritten at render time by the engine.");
                 ImGui.PopID();
             }
         }
@@ -360,16 +412,42 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
         foreach (var member in block.Members)
         {
+            bool isEngine = IsEngineUniform(member.Name, out var requiredFlags);
+            bool flagsActive = isEngine && HasAnyRequiredFlag(material, requiredFlags);
+
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
             ImGui.TextUnformatted(member.Name);
+            if (isEngine)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(EngineTagColor, "(engine)");
+                if (ImGui.IsItemHovered())
+                {
+                    string provider = FormatFlagNames(requiredFlags);
+                    ImGui.SetTooltip(flagsActive
+                        ? $"Driven by engine via RequiredEngineUniforms: {provider}"
+                        : $"Enable {provider} in Render Options > RequiredEngineUniforms to drive this uniform");
+                }
+            }
 
             ImGui.TableSetColumnIndex(1);
             ImGui.TextUnformatted(member.TypeLabel);
 
             ImGui.TableSetColumnIndex(2);
             ShaderVar? param = FindParameter(parameters, member.Name, block.BlockName, block.InstanceName);
-            if (param is null)
+            if (isEngine && flagsActive && param is null)
+            {
+                ImGui.TextColored(EngineActiveColor, "Driven by engine");
+            }
+            else if (isEngine && !flagsActive && param is null)
+            {
+                string provider = FormatFlagNames(requiredFlags);
+                ImGui.TextColored(EngineMissingFlagColor, $"Enable {provider}");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Set RequiredEngineUniforms |= {provider} in Render Options for the engine to provide this value.");
+            }
+            else if (param is null)
             {
                 ImGui.TextDisabled("<missing parameter>");
             }
@@ -377,6 +455,8 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             {
                 ImGui.PushID(param.GetHashCode());
                 DrawShaderParameterControl(material, param);
+                if (isEngine && flagsActive && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("This value is overwritten at render time by the engine.");
                 ImGui.PopID();
             }
         }

@@ -27,11 +27,15 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform bool UseCascadedDirectionalShadows;");
         source.ShouldContain("uniform bool EnableContactShadows = true;");
         source.ShouldContain("uniform float ContactShadowDistance = 0.1;");
-        source.ShouldContain("uniform int ContactShadowSamples = 8;");
+        source.ShouldContain("uniform int ShadowSamples = 4;");
+        source.ShouldContain("uniform int ContactShadowSamples = 4;");
         source.ShouldContain("int XRENGINE_GetPrimaryDirLightCascadeIndex(vec3 fragPosWS)");
         source.ShouldContain("DirectionalLights[0].CascadeMatrices[cascadeIndex]");
         source.ShouldContain("XRENGINE_SampleContactShadowArray(");
         source.ShouldContain("XRENGINE_SampleContactShadow2D(");
+        source.ShouldContain("XRENGINE_SampleShadowMapFiltered(");
+        source.ShouldContain("XRENGINE_SampleShadowMapArrayFiltered(");
+        source.ShouldContain("XRENGINE_ResolveContactShadowSampleCount(");
         source.ShouldContain("vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;");
     }
 
@@ -57,8 +61,12 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;");
         source.ShouldContain("uniform bool EnableContactShadows = true;");
         source.ShouldContain("uniform float ContactShadowDistance = 0.1f;");
-        source.ShouldContain("uniform int ContactShadowSamples = 8;");
+        source.ShouldContain("uniform int ShadowSamples = 4;");
+        source.ShouldContain("uniform int ContactShadowSamples = 4;");
         source.ShouldContain("SampleContactShadowScreenSpaceLocal(");
+        source.ShouldContain("SampleShadowMapFilteredLocal(");
+        source.ShouldContain("SampleShadowMapArrayFilteredLocal(");
+        source.ShouldContain("ResolveContactShadowSampleCountLocal(");
     }
 
     [Test]
@@ -69,11 +77,11 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         lightComponentSource.ShouldContain("private float _shadowMinBias = 0.00001f;");
         lightComponentSource.ShouldContain("private float _shadowExponent = 1.221f;");
         lightComponentSource.ShouldContain("private float _shadowExponentBase = 0.035f;");
-        lightComponentSource.ShouldContain("private int _samples = 1;");
+        lightComponentSource.ShouldContain("private int _samples = 4;");
         lightComponentSource.ShouldContain("private float _filterRadius = 0.0012f;");
         lightComponentSource.ShouldContain("private bool _enableContactShadows = true;");
         lightComponentSource.ShouldContain("private float _contactShadowDistance = 0.1f;");
-        lightComponentSource.ShouldContain("private int _contactShadowSamples = 8;");
+        lightComponentSource.ShouldContain("private int _contactShadowSamples = 4;");
 
         string directionalSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
         directionalSource.ShouldContain("ShadowExponentBase = 0.035f;");

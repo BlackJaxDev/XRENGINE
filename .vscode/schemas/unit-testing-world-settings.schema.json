@@ -18,96 +18,96 @@
     "WorldKind": {
       "$ref": "#/definitions/UnitTestWorldKind",
       "markdownDescription": "Supported values: `Default`, `AudioTesting`, `MathIntersections`, `MeshEditing`, `UberShader`, `PhysxTesting`, `NetworkingPose`.",
-      "description": "Selects which unit-test world factory the editor or server boots into."
+      "description": "Selects the WorldKind enum value."
     },
     "VisualizeOctree": {
       "type": "boolean",
-      "description": "Draws octree structure overlays for visibility and partitioning diagnostics."
+      "description": "Enables or disables VisualizeOctree."
     },
     "VisualizeQuadtree": {
       "type": "boolean",
-      "description": "Draws quadtree structure overlays for visibility and partitioning diagnostics."
+      "description": "Enables or disables VisualizeQuadtree."
     },
     "EditorType": {
       "$ref": "#/definitions/UnitTestEditorType",
-      "description": "Selects which editor UI pipeline is created for the unit-testing world.",
+      "description": "Selects which editor UI pipeline to create for unit testing.",
       "markdownDescription": "Supported values: `None`, `Native`, `IMGUI`."
     },
     "CameraUIDrawSpaceOnInit": {
       "$ref": "#/definitions/CameraUIDrawMode",
-      "description": "Initial draw-space mode for camera UI surfaces.",
+      "description": "Controls draw space and offscreen mode for unit testing camera UI.",
       "markdownDescription": "Supported values: `Screen`, `World`, `Camera`, `WorldOffscreen`, `CameraOffscreen`."
     },
     "TransformTool": {
       "type": "boolean",
-      "description": "Enables the transform gizmo tool in the unit-testing world."
+      "description": "Adds the transform tool to the scene for testing dragging and rotating etc."
     },
     "AllowEditingInVR": {
       "type": "boolean",
-      "description": "Allows scene editing interactions while VR is active. Leave this off when you want a pure runtime test without editor manipulation."
+      "description": "Allows the user to edit the scene from desktop in VR."
     },
     "PreviewVRStereoViews": {
       "type": "boolean",
-      "description": "Shows stereo eye previews in non-VR windows while VR is active."
+      "description": "Shows the VR left/right eye render targets side-by-side in a screenspace UI (requires VRPawn)."
     },
     "VideoStreaming": {
       "type": "boolean",
-      "description": "Enables the video-streaming test path."
+      "description": "Adds a video streaming component to the scene for testing video streaming."
     },
     "VideoStreamingAudio": {
       "type": "boolean",
-      "description": "When video streaming is enabled, also route audio from the stream."
+      "description": "Adds a video streaming audio component to the scene for testing video streaming audio."
     },
     "VideoStreamingUrl": {
       "type": [
         "string",
         "null"
       ],
-      "description": "Source URL used by the video-streaming test content."
+      "description": "Stream URL used by the video streaming test component."
     },
     "UltralightWebView": {
       "type": "boolean",
-      "description": "Enables the Ultralight web-view test content."
+      "description": "Adds an Ultralight web view component to the scene for testing web page rendering."
     },
     "UltralightWebViewUrl": {
       "type": "string",
-      "description": "Initial URL for the Ultralight web-view test content."
+      "description": "Page URL used by the Ultralight web view test component."
     },
     "EnableProfilerLogging": {
       "type": "boolean",
-      "description": "Enables profiler logging output for startup and runtime diagnostics."
+      "description": "Enables Engine.Profiler frame logging even without Dear ImGui."
     },
     "RiveUI": {
       "type": "boolean",
-      "description": "Adds the Rive UI test content."
+      "description": "Adds a Rive UI component to the scene for testing Rive animations."
     },
     "GPURenderDispatch": {
       "type": "boolean",
-      "description": "Enables GPU-driven render dispatch paths instead of the more conventional CPU-driven cull-and-submit path. This is experimental rendering work rather than the conservative default."
+      "description": "Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls."
     },
     "StartInPlayModeWithoutTransitions": {
       "type": "boolean",
-      "description": "Starts directly in play mode and skips editor transition flows."
+      "description": "Starts in play mode immediately without the edit->play transition."
     },
     "Skybox": {
       "type": "boolean",
-      "description": "Adds the default skybox to the scene."
+      "description": "Adds a skybox to the scene"
     },
     "Spline": {
       "type": "boolean",
-      "description": "Adds the spline test content."
+      "description": "Adds a 3D spline to the scene."
     },
     "DeferredDecal": {
       "type": "boolean",
-      "description": "Adds the deferred decal test content."
+      "description": "Adds a deferred decal to the scene."
     },
     "AddCameraVRPickup": {
       "type": "boolean",
-      "description": "Adds the camera pickup VR interaction test content."
+      "description": "Adds a camera pickup to the scene for testing VR camera pickup."
     },
     "Mirror": {
       "type": "boolean",
-      "description": "Adds the mirror test content."
+      "description": "Adds a mirror to the scene for testing mirror reflection."
     },
     "DynamicWaterQuad": {
       "type": "boolean",
@@ -115,31 +115,37 @@
     },
     "ForceDebugOpaquePipeline": {
       "type": "boolean",
-      "description": "Forces the debug opaque pipeline instead of the normal material-driven opaque path."
+      "description": "Forces the debug opaque render pipeline instead of the default pipeline."
     },
     "DirLight": {
       "type": "boolean",
-      "description": "Adds the primary directional light."
+      "description": "Enables or disables DirLight."
     },
     "SpotLight": {
       "type": "boolean",
-      "description": "Adds a spotlight to the scene."
+      "description": "Enables or disables SpotLight."
     },
     "DirLight2": {
       "type": "boolean",
-      "description": "Adds a secondary directional light for lighting stress tests."
+      "description": "Enables or disables DirLight2."
     },
     "PointLight": {
       "type": "boolean",
-      "description": "Adds a point light to the scene."
+      "description": "Enables or disables PointLight."
     },
     "LightProbe": {
-      "type": "boolean",
-      "description": "Adds the realtime light-probe test content used for image-based lighting and probe capture validation."
+      "$ref": "#/definitions/LightProbeMode",
+      "description": "Selects which light-probe layout gets added to the scene.",
+      "markdownDescription": "Supported values: `Off`, `Single`, `Grid`, `ModelGrid`."
+    },
+    "LightProbeCapture": {
+      "$ref": "#/definitions/LightProbeCaptureMode",
+      "description": "Controls whether light probes capture never, once on startup, or continuously.",
+      "markdownDescription": "Supported values: `None`, `Startup`, `Realtime`."
     },
     "LightProbeCaptureMs": {
       "type": "number",
-      "description": "Target light-probe capture interval in milliseconds.",
+      "description": "Interval between realtime captures, in milliseconds.",
       "minimum": 0
     },
     "StopRealtimeCaptureSec": {
@@ -147,47 +153,67 @@
         "number",
         "null"
       ],
-      "description": "Optional timeout, in seconds, after which realtime capture stops. Use null to keep capturing indefinitely.",
+      "description": "Optional realtime capture timeout, in seconds. Use null to keep realtime capture running.",
       "minimum": 0
+    },
+    "LightProbeResolution": {
+      "type": "integer",
+      "description": "Capture cubemap resolution used for individually spawned light probes."
+    },
+    "LightProbeGridCounts": {
+      "$ref": "#/definitions/ProbeGridCounts",
+      "description": "Probe counts used by Grid and ModelGrid layouts."
+    },
+    "LightProbeGridSpacing": {
+      "$ref": "#/definitions/TranslationXYZ",
+      "description": "Spacing between probes for Grid and ModelGrid layouts."
+    },
+    "LightProbeGridCenter": {
+      "$ref": "#/definitions/TranslationXYZ",
+      "description": "Center/offset for Grid and ModelGrid layouts."
+    },
+    "LightProbeSinglePosition": {
+      "$ref": "#/definitions/TranslationXYZ",
+      "description": "World position for Single light-probe mode."
     },
     "VRPawn": {
       "type": "boolean",
-      "description": "Spawns the VR pawn and enables the VR-side test setup. Pair this with UseOpenXR or EmulatedVRPawn depending on the runtime path you want."
+      "description": "Enables VR input and pawn."
     },
     "UseOpenXR": {
       "type": "boolean",
-      "description": "Selects OpenXR instead of the default tested OpenVR path for VR."
+      "description": "If true and VRPawn is enabled (and not emulated), initializes VR via OpenXR instead of OpenVR."
     },
     "EmulatedVRPawn": {
       "type": "boolean",
-      "description": "Uses the emulated VR pawn for desktop-driven VR testing."
+      "description": "Enables an emulated VR pawn for testing without a VR headset. All this does is disallow OpenVR from starting, VRPawn must still be enabled."
     },
     "Locomotion": {
       "type": "boolean",
-      "description": "Enables locomotion logic on the spawned pawn. This matters primarily when a VR or character pawn is active."
+      "description": "Enables the player to physically locomote in the world. Requires a physical floor."
     },
     "ThirdPersonPawn": {
       "type": "boolean",
-      "description": "Spawns the third-person pawn instead of a VR-only setup."
+      "description": "If on desktop and character pawn is enabled, this will add a third person camera instead of first person."
     },
     "CharacterControllerCapsuleTranslationY": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Optional Y offset applied to the character-controller capsule. Use null to leave the engine default."
+      "description": "World-space Y translation to apply to the character controller capsule/root on spawn. If null, UnitTestingWorld will pick a safe default that places the capsule just above the floor."
     },
     "PhysicsChain": {
       "type": "boolean",
-      "description": "Adds the chain physics test content."
+      "description": "Adds a jiggle physics chain to the character pawn."
     },
     "AddPhysics": {
       "type": "boolean",
-      "description": "Initializes the selected physics backend and enables physics-driven test content. This should be on for PhysX/Jolt/Jitter behavior checks."
+      "description": "Enables or disables AddPhysics."
     },
     "PhysicsBallCount": {
       "type": "integer",
-      "description": "Number of test physics balls to spawn in the physics test content.",
+      "description": "The number of physics balls to add to the scene.",
       "minimum": 0
     },
     "ModelsToImport": {
@@ -195,184 +221,184 @@
       "items": {
         "$ref": "#/definitions/ModelImportSettings"
       },
-      "description": "Models imported during startup. Each entry can target different import and material settings."
+      "description": "Generated from ModelsToImport on Settings."
     },
     "SoundNode": {
       "type": "boolean",
-      "description": "Adds the sound-node audio test content."
+      "description": "Enables or disables SoundNode."
     },
     "Microphone": {
       "type": "boolean",
-      "description": "Enables microphone capture in the unit-testing world."
+      "description": "Adds a microphone to the scene for testing audio capture."
     },
     "AttachMicToAnimatedModel": {
       "type": "boolean",
-      "description": "Attaches the microphone source to the animated model when both features are active."
+      "description": "If true, the microphone output will be attached to the animated model instead of the flying camera."
     },
     "AudioArchitectureV2": {
       "type": "boolean",
-      "description": "Toggles the second-generation audio architecture path before startup applies audio overrides into the engine singleton."
+      "description": "Enables or disables AudioArchitectureV2."
     },
     "AudioTransport": {
       "$ref": "#/definitions/EAudioTransport",
       "markdownDescription": "Supported values: `OpenAL`, `NAudio`.",
-      "description": "Audio transport backend used by the runtime audio layer."
+      "description": "Selects the AudioTransport enum value."
     },
     "AudioEffects": {
       "$ref": "#/definitions/EAudioEffects",
       "markdownDescription": "Supported values: `OpenAL_EFX`, `SteamAudio`, `Passthrough`.",
-      "description": "Audio effects processor used by the runtime audio layer."
+      "description": "Selects the AudioEffects enum value."
     },
     "VMC": {
       "type": "boolean",
-      "description": "Enables the VMC avatar-streaming test path for external motion data ingest."
+      "description": "Adds a VMC capture component to the avatar for testing."
     },
     "LipSync": {
       "type": "boolean",
-      "description": "Enables lip-sync test content on applicable avatar setups."
+      "description": "Adds a lip sync component to the avatar for testing."
     },
     "FaceMotion3D": {
       "type": "boolean",
-      "description": "Enables FaceMotion3D integration test content."
+      "description": "Adds a face motion 3D capture component to the avatar for testing."
     },
     "FaceTracking": {
       "type": "boolean",
-      "description": "Enables face-tracking test content."
+      "description": "Adds a face tracking component to the avatar for testing."
     },
     "AnimationClipVMD": {
       "type": "boolean",
-      "description": "Loads a VMD animation clip path instead of or in addition to other clip tests, depending on the world setup."
+      "description": "Imports a VMD animation clip for testing."
     },
     "AnimationClipAnim": {
       "type": "boolean",
-      "description": "Loads an .anim animation clip during startup."
+      "description": "Imports a .anim clip for testing."
     },
     "AnimClipPath": {
       "type": "string",
-      "description": "Path to the animation clip asset loaded by the clip test path."
+      "description": "Generated from AnimClipPath on Settings."
     },
     "AnimLooped": {
       "type": "boolean",
-      "description": "Loops the test animation clip when true."
+      "description": "Enables or disables AnimLooped."
     },
     "HumanoidPoseAuditEnabled": {
       "type": "boolean",
-      "description": "Enables humanoid pose-audit capture during animation playback."
+      "description": "Exports raw humanoid playback samples for Unity/XREngine comparison."
     },
     "HumanoidPoseAuditOutputPath": {
       "type": "string",
-      "description": "Output file path for pose-audit capture data."
+      "description": "Generated from HumanoidPoseAuditOutputPath on Settings."
     },
     "HumanoidPoseAuditReferencePath": {
       "type": [
         "string",
         "null"
       ],
-      "description": "Optional reference pose-audit file used for comparisons."
+      "description": "Generated from HumanoidPoseAuditReferencePath on Settings."
     },
     "HumanoidPoseAuditComparisonOutputPath": {
       "type": [
         "string",
         "null"
       ],
-      "description": "Optional output path for comparison results against the reference audit file."
+      "description": "Generated from HumanoidPoseAuditComparisonOutputPath on Settings."
     },
     "HumanoidPoseAuditSampleRateOverride": {
       "type": [
         "integer",
         "null"
       ],
-      "description": "Optional sample-rate override for pose auditing, in samples per second.",
+      "description": "Generated from HumanoidPoseAuditSampleRateOverride on Settings.",
       "minimum": 1
     },
     "IKTest": {
       "type": "boolean",
-      "description": "Enables the inverse-kinematics test path."
+      "description": "Adds an simple IK test tree to the scene."
     },
     "TestAnimation": {
       "type": "boolean",
-      "description": "Enables the broader animation test setup beyond loading an individual clip file."
+      "description": "Adds test animations to the character pawn."
     },
     "AllowShaderPipelines": {
       "type": "boolean",
-      "description": "Enables separable shader-program pipelines where supported by the selected renderer. Useful for pipeline experiments, but the editor notes this can break some debug-shape rendering and may be slower than linked programs."
+      "description": "Indicates if the engine should use shader pipelines to mix and match shader stages. This will break debug shape rendering, and seems to render slower than making combined programs."
     },
     "RenderMeshBounds": {
       "type": "boolean",
-      "description": "Draws imported mesh bounds for debugging."
+      "description": "Enables or disables RenderMeshBounds."
     },
     "RenderAPI": {
       "$ref": "#/definitions/ERenderLibrary",
       "markdownDescription": "Supported values: `OpenGL`, `Vulkan`.",
-      "description": "Rendering backend to initialize for the unit-testing world."
+      "description": "Selects the RenderAPI enum value."
     },
     "PhysicsAPI": {
       "$ref": "#/definitions/EPhysicsLibrary",
       "markdownDescription": "Supported values: `PhysX`, `Jolt`, `Jitter`.",
-      "description": "Physics backend to initialize for the unit-testing world."
+      "description": "Selects the PhysicsAPI enum value."
     },
     "RecalcChildMatricesType": {
       "$ref": "#/definitions/ELoopType",
       "markdownDescription": "Supported values: `Sequential`, `Asynchronous`, `Parallel`.",
-      "description": "Controls how child transform matrix recalculation is scheduled."
+      "description": "Selects the RecalcChildMatricesType enum value."
     },
     "TickGroupedItemsInParallel": {
       "type": "boolean",
-      "description": "When true, grouped tick items are executed in parallel where the engine supports it."
+      "description": "Enables or disables TickGroupedItemsInParallel."
     },
     "SinglePassStereoVR": {
       "type": "boolean",
-      "description": "Enables single-pass stereo rendering for VR where supported."
+      "description": "Enables or disables SinglePassStereoVR."
     },
     "RenderPhysicsDebug": {
       "type": "boolean",
-      "description": "Draws physics debug visualization for the selected physics backend."
+      "description": "Enables or disables RenderPhysicsDebug."
     },
     "RenderWindowsWhileInVR": {
       "type": "boolean",
-      "description": "Keeps desktop render windows active while VR is running so you can monitor output or debug from the desktop at the same time."
+      "description": "Enables or disables RenderWindowsWhileInVR."
     },
     "RenderTransformDebugInfo": {
       "type": "boolean",
-      "description": "Enables transform debug rendering. Individual shape toggles below further refine what is drawn."
+      "description": "Enables or disables RenderTransformDebugInfo."
     },
     "RenderTransformPoints": {
       "type": "boolean",
-      "description": "Draw transform debug points when transform debug rendering is enabled."
+      "description": "Enables or disables RenderTransformPoints."
     },
     "RenderTransformCapsules": {
       "type": "boolean",
-      "description": "Draw transform debug capsules when transform debug rendering is enabled."
+      "description": "Enables or disables RenderTransformCapsules."
     },
     "RenderTransformLines": {
       "type": "boolean",
-      "description": "Draw transform debug lines when transform debug rendering is enabled."
+      "description": "Enables or disables RenderTransformLines."
     },
     "BackgroundShader": {
       "type": "boolean",
-      "description": "Enables the background shader test path."
+      "description": "Enables or disables BackgroundShader."
     },
     "AddCharacterIK": {
       "type": "boolean",
-      "description": "Adds character IK components to applicable animated characters so imported humanoids can run extra IK-specific tests."
+      "description": "Enables or disables AddCharacterIK."
     },
     "CreateUnitBox": {
       "type": "boolean",
-      "description": "Creates the default unit box test object."
+      "description": "If true, creates a 1x1x1 box at the origin."
     },
     "RenderFPS": {
       "type": "number",
-      "description": "Target rate for the render loop. Set to 0 for uncapped rendering.",
+      "description": "Generated from RenderFPS on Settings.",
       "minimum": 0
     },
     "UpdateFPS": {
       "type": "number",
-      "description": "Target rate for the main update loop. Set to 0 to leave the loop uncapped if supported by the runtime.",
+      "description": "Generated from UpdateFPS on Settings.",
       "minimum": 0
     },
     "FixedFPS": {
       "type": "number",
-      "description": "Target rate for the fixed-timestep simulation loop, typically physics and deterministic ticks.",
+      "description": "Generated from FixedFPS on Settings.",
       "minimum": 0
     }
   },
@@ -398,7 +424,7 @@
         "Native",
         "IMGUI"
       ],
-      "markdownDescription": "Supported values: `None`, `Native`, `IMGUI`. The repo currently recommends `IMGUI` for day-to-day editor work."
+      "markdownDescription": "Supported values: `None`, `Native`, `IMGUI`."
     },
     "CameraUIDrawMode": {
       "type": "string",
@@ -411,35 +437,90 @@
       ],
       "markdownDescription": "Supported values: `Screen`, `World`, `Camera`, `WorldOffscreen`, `CameraOffscreen`."
     },
+    "LightProbeMode": {
+      "type": "string",
+      "enum": [
+        "Off",
+        "Single",
+        "Grid",
+        "ModelGrid"
+      ],
+      "markdownDescription": "Supported values: `Off`, `Single`, `Grid`, `ModelGrid`."
+    },
+    "LightProbeCaptureMode": {
+      "type": "string",
+      "enum": [
+        "None",
+        "Startup",
+        "Realtime"
+      ],
+      "markdownDescription": "Supported values: `None`, `Startup`, `Realtime`."
+    },
+    "ProbeGridCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "X": {
+          "type": "integer",
+          "description": "Generated from X on ProbeGridCounts."
+        },
+        "Y": {
+          "type": "integer",
+          "description": "Generated from Y on ProbeGridCounts."
+        },
+        "Z": {
+          "type": "integer",
+          "description": "Generated from Z on ProbeGridCounts."
+        }
+      }
+    },
+    "TranslationXYZ": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "X": {
+          "type": "number",
+          "description": "Generated from X on TranslationXYZ."
+        },
+        "Y": {
+          "type": "number",
+          "description": "Generated from Y on TranslationXYZ."
+        },
+        "Z": {
+          "type": "number",
+          "description": "Generated from Z on TranslationXYZ."
+        }
+      }
+    },
     "ModelImportSettings": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "Enabled": {
           "type": "boolean",
-          "description": "When false, this model import entry is ignored."
+          "description": "Enables or disables Enabled."
         },
         "Kind": {
           "$ref": "#/definitions/UnitTestModelImportKind",
           "markdownDescription": "Supported values: `Static`, `Animated`.",
-          "description": "Whether this import should be treated as a static or animated model."
+          "description": "Selects the Kind enum value."
         },
         "MaterialMode": {
           "$ref": "#/definitions/ModelImportMaterialMode",
           "markdownDescription": "Supported values: `Deferred`, `Forward`, `Uber`.",
-          "description": "Material/shader pipeline family used for this imported model."
+          "description": "Selects the MaterialMode enum value."
         },
         "UseForwardForTransparent": {
           "type": "boolean",
-          "description": "When true and MaterialMode is Deferred, alpha-textured materials are routed through the forward lit path for proper transparency."
+          "description": "When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline."
         },
         "Path": {
           "type": "string",
-          "description": "Asset-relative path to the model file to import."
+          "description": "Generated from Path on ModelImportSettings."
         },
         "ImportFlags": {
           "type": "string",
-          "description": "Comma-separated Assimp PostProcessSteps flags. These are parsed as enum flag names, so keep the exact symbolic names separated by commas.",
+          "description": "Comma-separated PostProcessSteps flag names.",
           "markdownDescription": "Comma-separated Assimp `PostProcessSteps` flags. Keep the exact symbolic names separated by commas. Common presets:\n\n- Static environment mesh: `CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs`\n- Animated character import: `Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes`\n- Preserve authored normals/tangents where possible: `Triangulate, FlipUVs, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes`\n\nFrequently used individual flags include `Triangulate`, `FlipUVs`, `GenerateNormals`, `CalculateTangentSpace`, `JoinIdenticalVertices`, `SplitLargeMeshes`, `ImproveCacheLocality`, `OptimizeGraph`, `OptimizeMeshes`, and `SortByPrimitiveType`.",
           "examples": [
             "Triangulate, FlipUVs, GenerateNormals",
@@ -465,19 +546,19 @@
         },
         "Scale": {
           "type": "number",
-          "description": "Uniform import scale multiplier."
+          "description": "Generated from Scale on ModelImportSettings."
         },
         "ZUp": {
           "type": "boolean",
-          "description": "Treats the source model as Z-up when true."
+          "description": "Enables or disables ZUp."
         },
         "GenerateCoacdCollidersPerSubmesh": {
           "type": "boolean",
-          "description": "For static models, splits submeshes and auto-attaches CoACD-generated PhysX convex colliders per submesh."
+          "description": "Enables or disables GenerateCoacdCollidersPerSubmesh."
         },
         "SplitSubmeshesIntoSeparateModelComponents": {
           "type": "boolean",
-          "description": "Creates one ModelComponent per imported submesh instead of grouping by source node."
+          "description": "When true, each imported submesh gets its own ModelComponent instead of grouping all submeshes from the same source node into one ModelComponent. Increases GPU resource usage; leave false unless per-submesh scene nodes are needed."
         },
         "YawPitchRoll": {
           "oneOf": [
@@ -488,7 +569,7 @@
               "type": "null"
             }
           ],
-          "description": "Optional Euler rotation offset, in degrees, applied after import."
+          "description": "Optional additional local-space rotation to apply after import. Values are degrees."
         },
         "Translation": {
           "oneOf": [
@@ -526,33 +607,15 @@
       "properties": {
         "Yaw": {
           "type": "number",
-          "description": "Yaw rotation in degrees."
+          "description": "Generated from Yaw on YawPitchRollDegrees."
         },
         "Pitch": {
           "type": "number",
-          "description": "Pitch rotation in degrees."
+          "description": "Generated from Pitch on YawPitchRollDegrees."
         },
         "Roll": {
           "type": "number",
-          "description": "Roll rotation in degrees."
-        }
-      }
-    },
-    "TranslationXYZ": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "X": {
-          "type": "number",
-          "description": "Generated from X on TranslationXYZ."
-        },
-        "Y": {
-          "type": "number",
-          "description": "Generated from Y on TranslationXYZ."
-        },
-        "Z": {
-          "type": "number",
-          "description": "Generated from Z on TranslationXYZ."
+          "description": "Generated from Roll on YawPitchRollDegrees."
         }
       }
     },
@@ -588,7 +651,7 @@
         "Jolt",
         "Jitter"
       ],
-      "markdownDescription": "Supported values: `PhysX`, `Jolt`, `Jitter`. `Physx` is accepted here because existing settings files already use that casing."
+      "markdownDescription": "Supported values: `PhysX`, `Jolt`, `Jitter`."
     },
     "ELoopType": {
       "type": "string",

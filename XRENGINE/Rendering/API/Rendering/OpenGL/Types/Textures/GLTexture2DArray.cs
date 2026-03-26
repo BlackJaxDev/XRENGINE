@@ -317,6 +317,15 @@ namespace XREngine.Rendering.OpenGL
                     int vWrapRt = (int)ToGLEnum(Data.VWrap);
                     Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrapRt);
 
+                    // Depth-comparison mode for hardware PCF (sampler2DArrayShadow).
+                    int compareModeRt = (int)(Data.EnableComparison ? GLEnum.CompareRefToTexture : GLEnum.None);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureCompareMode, in compareModeRt);
+                    if (Data.EnableComparison)
+                    {
+                        int compareFuncRt = (int)ToGLEnum(Data.CompareFunc);
+                        Api.TextureParameterI(BindingId, GLEnum.TextureCompareFunc, in compareFuncRt);
+                    }
+
                     int baseLevelRt = 0;
                     int maxLevelRt = 0;
                     Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevelRt);
@@ -453,6 +462,15 @@ namespace XREngine.Rendering.OpenGL
 
                 int vWrap = (int)ToGLEnum(Data.VWrap);
                 Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrap);
+
+                // Depth-comparison mode for hardware PCF (sampler2DArrayShadow).
+                int compareMode = (int)(Data.EnableComparison ? GLEnum.CompareRefToTexture : GLEnum.None);
+                Api.TextureParameterI(BindingId, GLEnum.TextureCompareMode, in compareMode);
+                if (Data.EnableComparison)
+                {
+                    int compareFunc = (int)ToGLEnum(Data.CompareFunc);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureCompareFunc, in compareFunc);
+                }
 
                 if (Data.AutoGenerateMipmaps)
                     GenerateMipmaps();

@@ -28,7 +28,7 @@ public static class BootstrapNetworkingWorldProfiles
         settings.DirLight2 = false;
         settings.PointLight = false;
         settings.SpotLight = false;
-        settings.LightProbe = false;
+        settings.LightProbe = LightProbeMode.Off;
         settings.Mirror = false;
         settings.Spline = false;
         settings.DeferredDecal = false;

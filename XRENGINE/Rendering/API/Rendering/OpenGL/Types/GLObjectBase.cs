@@ -178,7 +178,19 @@ namespace XREngine.Rendering.OpenGL
                     _ => throw new ArgumentOutOfRangeException(nameof(magFilter), magFilter, null),
                 };
 
-
+            public static GLEnum ToGLEnum(ETextureCompareFunc compareFunc)
+                => compareFunc switch
+                {
+                    ETextureCompareFunc.Never => GLEnum.Never,
+                    ETextureCompareFunc.Less => GLEnum.Less,
+                    ETextureCompareFunc.Equal => GLEnum.Equal,
+                    ETextureCompareFunc.LessOrEqual => GLEnum.Lequal,
+                    ETextureCompareFunc.Greater => GLEnum.Greater,
+                    ETextureCompareFunc.NotEqual => GLEnum.Notequal,
+                    ETextureCompareFunc.GreaterOrEqual => GLEnum.Gequal,
+                    ETextureCompareFunc.Always => GLEnum.Always,
+                    _ => GLEnum.Lequal,
+                };
 
             public static GLEnum ToGLEnum(EPixelType pixelType)
                 => pixelType switch

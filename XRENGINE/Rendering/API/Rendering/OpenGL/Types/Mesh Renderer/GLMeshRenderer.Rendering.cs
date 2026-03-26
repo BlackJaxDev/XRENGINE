@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -20,6 +21,16 @@ namespace XREngine.Rendering.OpenGL
 
                 if (renderState?.ShadowPass ?? false)
                 {
+                    // When the global override includes a geometry shader (e.g. point light
+                    // cubemap shadow map), the GS must participate in rendering every mesh.
+                    // Per-mesh shadow variants wouldn't include the required GS, so the
+                    // override takes priority.
+                    if (globalMaterialOverride is not null &&
+                        (globalMaterialOverride.GeometryShaders.Count > 0 || UsesPointLightShadowCubemap(globalMaterialOverride)))
+                    {
+                        return (Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial)!;
+                    }
+
                     XRMaterial? shadowSourceMaterial = localMaterialOverride ?? MeshRenderer.Material;
                     XRMaterial? shadowVariant = shadowSourceMaterial?.ShadowCasterVariant;
                     if (shadowVariant is not null)
@@ -58,6 +69,9 @@ namespace XREngine.Rendering.OpenGL
                 Debug.OpenGLWarning("No material found for mesh renderer, using invalid material.");
                 return Renderer.GenericToAPI<GLMaterial>(Engine.Rendering.State.CurrentRenderingPipeline!.InvalidMaterial)!;
             }
+
+            private static bool UsesPointLightShadowCubemap(XRMaterial material)
+                => material.Textures.Any(texture => texture is XRTextureCube { SamplerName: "ShadowMap" });
 
             /// <summary>
             /// Primary render entry point, handling shader selection, buffer binding, and uniforms.
@@ -220,12 +234,12 @@ namespace XREngine.Rendering.OpenGL
                 if (stereoPass)
                 {
                     var rightCam = Engine.Rendering.State.RenderingStereoRightEyeCamera;
-                    PassCameraUniforms(vertexProgram, cam, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeProjMatrix);
-                    PassCameraUniforms(vertexProgram, rightCam, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeProjMatrix);
+                    PassCameraUniforms(vertexProgram, cam, EEngineUniform.LeftEyeViewMatrix, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeInverseProjMatrix, EEngineUniform.LeftEyeProjMatrix, EEngineUniform.LeftEyeViewProjectionMatrix);
+                    PassCameraUniforms(vertexProgram, rightCam, EEngineUniform.RightEyeViewMatrix, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeInverseProjMatrix, EEngineUniform.RightEyeProjMatrix, EEngineUniform.RightEyeViewProjectionMatrix);
                 }
                 else
                 {
-                    PassCameraUniforms(vertexProgram, cam, EEngineUniform.InverseViewMatrix, EEngineUniform.ProjMatrix);
+                    PassCameraUniforms(vertexProgram, cam, EEngineUniform.ViewMatrix, EEngineUniform.InverseViewMatrix, EEngineUniform.InverseProjMatrix, EEngineUniform.ProjMatrix, EEngineUniform.ViewProjectionMatrix);
                 }
 
                 void SetUniformBoth(EEngineUniform uniform, Matrix4x4 value)
@@ -241,6 +255,12 @@ namespace XREngine.Rendering.OpenGL
                 SetUniformBoth(EEngineUniform.ModelMatrix, modelMatrix);
                 SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModelMatrix);
 
+                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                bool pointLightShadowGeometryPass = renderState?.ShadowPass == true
+                    && renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
+                    && globalMaterialOverride.GeometryShaders.Count > 0
+                    && UsesPointLightShadowCubemap(globalMaterialOverride);
+
                 // CPU draw path has gl_BaseInstance==0; provide a per-draw TransformId uniform so
                 // deferred shaders can write stable per-transform IDs into the GBuffer.
                 uint transformId = Engine.Rendering.State.CurrentTransformId;
@@ -249,7 +269,7 @@ namespace XREngine.Rendering.OpenGL
                 vertexProgram.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
                 materialProgram?.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
 
-                vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass);
+                vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass || pointLightShadowGeometryPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);
             }
 
@@ -269,11 +289,13 @@ namespace XREngine.Rendering.OpenGL
             /// <summary>
             /// Pushes camera transforms to the vertex program, avoiding inverse in shader for precision.
             /// </summary>
-            private static void PassCameraUniforms(GLRenderProgram vertexProgram, XRCamera? camera, EEngineUniform invView, EEngineUniform proj)
+            private static void PassCameraUniforms(GLRenderProgram vertexProgram, XRCamera? camera, EEngineUniform view, EEngineUniform invView, EEngineUniform invProj, EEngineUniform proj, EEngineUniform viewProj)
             {
                 Matrix4x4 viewMatrix;
                 Matrix4x4 inverseViewMatrix;
+                Matrix4x4 inverseProjMatrix;
                 Matrix4x4 projMatrix;
+                Matrix4x4 viewProjectionMatrix;
 
                 if (camera != null)
                 {
@@ -281,18 +303,30 @@ namespace XREngine.Rendering.OpenGL
                     inverseViewMatrix = camera.Transform.RenderMatrix;
                     bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
                     projMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
+                    inverseProjMatrix = useUnjittered ? camera.InverseProjectionMatrixUnjittered : camera.InverseProjectionMatrix;
+                    viewProjectionMatrix = useUnjittered ? camera.ViewProjectionMatrixUnjittered : camera.ViewProjectionMatrix;
                 }
                 else
                 {
                     viewMatrix = Matrix4x4.Identity;
                     inverseViewMatrix = Matrix4x4.Identity;
+                    inverseProjMatrix = Matrix4x4.Identity;
                     projMatrix = Matrix4x4.Identity;
+                    viewProjectionMatrix = Matrix4x4.Identity;
                 }
 
+                vertexProgram.Uniform(view.ToStringFast(), viewMatrix);
+                vertexProgram.Uniform(invView.ToStringFast(), inverseViewMatrix);
+                vertexProgram.Uniform(invProj.ToStringFast(), inverseProjMatrix);
+                vertexProgram.Uniform(proj.ToStringFast(), projMatrix);
+                vertexProgram.Uniform(viewProj.ToStringFast(), viewProjectionMatrix);
+
                 // Use cached uniform names to avoid string allocations per call
-                vertexProgram.Uniform(EEngineUniform.ViewMatrix.ToVertexUniformName(), viewMatrix);
+                vertexProgram.Uniform(view.ToVertexUniformName(), viewMatrix);
                 vertexProgram.Uniform(invView.ToVertexUniformName(), inverseViewMatrix);
+                vertexProgram.Uniform(invProj.ToVertexUniformName(), inverseProjMatrix);
                 vertexProgram.Uniform(proj.ToVertexUniformName(), projMatrix);
+                vertexProgram.Uniform(viewProj.ToVertexUniformName(), viewProjectionMatrix);
             }
 
             /// <summary>

@@ -12,10 +12,9 @@ uniform sampler2D Texture1; // Scene depth grab.
 uniform vec3 CameraPosition;
 uniform float CameraNearZ;
 uniform float CameraFarZ;
-uniform int DepthMode;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
-uniform float Time;
+uniform float RenderTime;
 
 uniform vec4 WaterShallowColor;
 uniform vec4 WaterDeepColor;
@@ -113,9 +112,9 @@ float ComputeInteractorEddyMask(vec3 worldPos)
 float CausticPattern(vec2 p)
 {
     p *= CausticScale;
-    float w0 = sin(p.x + Time * 1.8);
-    float w1 = sin(p.y * 1.31 - Time * 1.3);
-    float w2 = sin((p.x + p.y) * 0.7 + Time * 2.1);
+    float w0 = sin(p.x + RenderTime * 1.8);
+    float w1 = sin(p.y * 1.31 - RenderTime * 1.3);
+    float w2 = sin((p.x + p.y) * 0.7 + RenderTime * 2.1);
     float h = Hash12(floor(p));
     return clamp((w0 + w1 + w2) * 0.166 + h * 0.45 + 0.45, 0.0, 1.0);
 }
@@ -156,7 +155,7 @@ void main()
 
     float caustics = CausticPattern(FragPos.xz + normal.xz * 0.45) * CausticIntensity * depthLerp;
     float eddyMask = ComputeInteractorEddyMask(FragPos);
-    float eddyFoam = 0.5 + 0.5 * sin(Time * 8.0 + dot(FragPos.xz, vec2(2.7, -3.1)));
+    float eddyFoam = 0.5 + 0.5 * sin(RenderTime * 8.0 + dot(FragPos.xz, vec2(2.7, -3.1)));
     float foamEdge = smoothstep(FoamThreshold - FoamSoftness, FoamThreshold + FoamSoftness, 1.0 - abs(normal.y));
     float foam = clamp((foamEdge + eddyMask * eddyFoam) * FoamIntensity, 0.0, 1.0);
 

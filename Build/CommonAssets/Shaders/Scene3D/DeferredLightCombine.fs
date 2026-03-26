@@ -64,9 +64,15 @@ layout(std430, binding = 2) buffer LightProbeParameters
 };
 
 // Sparse grid accelerator: flattened cells with offsets into a compact probe list
+struct ProbeGridCell
+{
+        ivec4 OffsetCount;      // x=offset, y=count
+        ivec4 FallbackIndices;  // up to four nearest probes for empty/stale cells
+};
+
 layout(std430, binding = 3) buffer LightProbeGridCells
 {
-        ivec2 CellOffsetCount[]; // x=offset, y=count
+        ProbeGridCell GridCells[];
 };
 
 layout(std430, binding = 4) buffer LightProbeGridIndices
@@ -169,8 +175,10 @@ vec3 ApplyParallax(int probeIndex, vec3 dirWS, vec3 worldPos)
 
 
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
+#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
 bool ComputeBarycentric(vec3 p, vec3 a, vec3 b, vec3 c, vec3 d, out vec4 bary)
 {
         mat3 m = mat3(b - a, c - a, d - a);
@@ -247,6 +255,7 @@ void ResolveProbeWeights(vec3 worldPos, out vec4 weights, out ivec4 indices)
         if (sum > 0.0f)
                 weights /= sum;
 }
+#endif // XRENGINE_PROBE_DEBUG_FALLBACK
 
 void ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices)
 {
@@ -260,11 +269,30 @@ void ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices)
         ivec3 cell = clamp(ivec3(floor(rel)), ivec3(0), ProbeGridDims - ivec3(1));
         int flatIndex = cell.x + cell.y * ProbeGridDims.x + cell.z * ProbeGridDims.x * ProbeGridDims.y;
 
-        ivec2 oc = CellOffsetCount[flatIndex];
+        ProbeGridCell cellData = GridCells[flatIndex];
+        ivec2 oc = cellData.OffsetCount.xy;
         int offset = oc.x;
         int count = oc.y;
         if (count <= 0)
+        {
+                float sum = 0.0f;
+                for (int k = 0; k < 4; ++k)
+                {
+                        int probeIndex = cellData.FallbackIndices[k];
+                        if (probeIndex < 0 || probeIndex >= ProbeCount)
+                                continue;
+
+                        float d = length(worldPos - ProbePositions[probeIndex].xyz);
+                        float w = 1.0f / max(d, 0.0001f);
+                        weights[k] = w;
+                        indices[k] = probeIndex;
+                        sum += w;
+                }
+
+                if (sum > 0.0f)
+                        weights /= sum;
                 return;
+        }
 
         float bestDistances[4];
         int bestIndices[4];
@@ -308,6 +336,26 @@ void ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices)
                 }
         }
         if (sum > 0.0f)
+        {
+                weights /= sum;
+                return;
+        }
+
+        sum = 0.0f;
+        for (int k = 0; k < 4; ++k)
+        {
+                int probeIndex = cellData.FallbackIndices[k];
+                if (probeIndex < 0 || probeIndex >= ProbeCount)
+                        continue;
+
+                float d = length(worldPos - ProbePositions[probeIndex].xyz);
+                float w = 1.0f / max(d, 0.0001f);
+                weights[k] = w;
+                indices[k] = probeIndex;
+                sum += w;
+        }
+
+        if (sum > 0.0f)
                 weights /= sum;
 }
 void main()
@@ -341,7 +389,7 @@ void main()
                 OutLo = vec4(0.0f);
                 return;
         }
-        vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
+        vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
         //float fogDensity = noise3(fragPosWS);
 
         float roughness = rmse.x; 
@@ -364,15 +412,11 @@ void main()
         vec4 probeWeights; 
         ivec4 probeIndices; 
         if (UseProbeGrid)
-        {
                 ResolveProbeWeightsGrid(fragPosWS, probeWeights, probeIndices);
-                if (probeIndices.x < 0 && probeIndices.y < 0 && probeIndices.z < 0 && probeIndices.w < 0)
-                        ResolveProbeWeights(fragPosWS, probeWeights, probeIndices);
-        }
+#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
         else
-        {
                 ResolveProbeWeights(fragPosWS, probeWeights, probeIndices);
-        }
+#endif
 
         vec3 irradianceColor = vec3(0.0f); 
         vec3 prefilteredColor = vec3(0.0f); 

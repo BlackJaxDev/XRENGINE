@@ -62,9 +62,9 @@ public static class BootstrapWorldFactory
         if (settings.IKTest)
             BootstrapAnimationWorldBuilder.AddIKTest(rootNode, targetNode => BootstrapEditorBridge.Current?.EnableTransformToolForNode(targetNode));
 
-        if (settings.LightProbe || settings.Skybox)
+        if (settings.LightProbe != LightProbeMode.Off || settings.Skybox)
         {
-            bool addLightProbe = settings.LightProbe;
+            bool addLightProbe = settings.LightProbe != LightProbeMode.Off;
             bool addSkybox = settings.Skybox;
             string[] names = ["warm_restaurant_4k"];
             Random random = new();
@@ -77,7 +77,7 @@ public static class BootstrapWorldFactory
                     : null;
 
                 if (addLightProbe)
-                    BootstrapLightingBuilder.AddInteractiveLightProbeGrid(rootNode, 8, 3, 8, new Vector3(10.0f, 10.0f, 10.0f), Vector3.Zero);
+                    BootstrapLightingBuilder.AddConfiguredLightProbes(rootNode);
                 if (addSkybox)
                     BootstrapModelBuilder.AddSkybox(rootNode, skyEquirect);
             };
@@ -107,7 +107,7 @@ public static class BootstrapWorldFactory
 
         BootstrapModelBuilder.ImportModels(desktopDir, rootNode, characterPawnModelParentNode ?? rootNode);
 
-    return new XRWorld("Default World", scene);
+        return new XRWorld("Default World", scene);
     }
 
     public static XRWorld CreateDefaultEmptyWorld(bool setUI, bool isServer)

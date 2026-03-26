@@ -3,162 +3,204 @@
   // Re-run Tools/Generate-UnitTestingWorldSettings.ps1 after changing the settings type.
   "$schema": "../.vscode/schemas/unit-testing-world-settings.schema.json",
   "$id": "1",
-  // Selects which unit-test world factory the editor or server boots into.
+  // Selects the WorldKind enum value.
   // WorldKind: Default, AudioTesting, MathIntersections, MeshEditing, UberShader, PhysxTesting, NetworkingPose
   "WorldKind": "Default",
 
   // Debug visualize.
-  // Draws octree structure overlays for visibility and partitioning diagnostics.
+  // Enables or disables VisualizeOctree.
   "VisualizeOctree": false,
-  // Draws quadtree structure overlays for visibility and partitioning diagnostics.
+  // Enables or disables VisualizeQuadtree.
   "VisualizeQuadtree": false,
 
   // Editor UI.
-  // Selects which editor UI pipeline is created for the unit-testing world.
+  // Selects which editor UI pipeline to create for unit testing.
   // EditorType: None, Native, IMGUI
   "EditorType": "IMGUI",
-  // Initial draw-space mode for camera UI surfaces.
+  // Controls draw space and offscreen mode for unit testing camera UI.
   // CameraUIDrawSpaceOnInit: Screen, World, Camera, WorldOffscreen, CameraOffscreen
   "CameraUIDrawSpaceOnInit": "Screen",
-  // Enables the transform gizmo tool in the unit-testing world.
+  // Adds the transform tool to the scene for testing dragging and rotating etc.
   "TransformTool": false,
-  // Allows scene editing interactions while VR is active. Leave this off when you want a pure runtime test without editor manipulation.
+  // Allows the user to edit the scene from desktop in VR.
   "AllowEditingInVR": false,
-  // Shows stereo eye previews in non-VR windows while VR is active.
+  // Shows the VR left/right eye render targets side-by-side in a screenspace UI (requires VRPawn).
   "PreviewVRStereoViews": false,
-  // Enables the video-streaming test path.
+  // Adds a video streaming component to the scene for testing video streaming.
   "VideoStreaming": false,
-  // When video streaming is enabled, also route audio from the stream.
+  // Adds a video streaming audio component to the scene for testing video streaming audio.
   "VideoStreamingAudio": true,
-  // Source URL used by the video-streaming test content.
+  // Stream URL used by the video streaming test component.
   "VideoStreamingUrl": "https://www.twitch.tv/videos/2721883712",
-  // Enables the Ultralight web-view test content.
+  // Adds an Ultralight web view component to the scene for testing web page rendering.
   "UltralightWebView": false,
-  // Initial URL for the Ultralight web-view test content.
+  // Page URL used by the Ultralight web view test component.
   "UltralightWebViewUrl": "https://blackjaxvr.com",
-  // Enables profiler logging output for startup and runtime diagnostics.
+  // Enables Engine.Profiler frame logging even without Dear ImGui.
   "EnableProfilerLogging": true,
-  // Adds the Rive UI test content.
+  // Adds a Rive UI component to the scene for testing Rive animations.
   "RiveUI": false,
-  // Enables GPU-driven render dispatch paths instead of the more conventional CPU-driven cull-and-submit path. This is experimental rendering work rather than the conservative default.
+  // Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
   "GPURenderDispatch": false,
-  // Starts directly in play mode and skips editor transition flows.
+  // Starts in play mode immediately without the edit->play transition.
   "StartInPlayModeWithoutTransitions": false,
 
   // Misc.
-  // Adds the default skybox to the scene.
+  // Adds a skybox to the scene
   "Skybox": true,
-  // Adds the spline test content.
+  // Adds a 3D spline to the scene.
   "Spline": false,
-  // Adds the deferred decal test content.
+  // Adds a deferred decal to the scene.
   "DeferredDecal": false,
-  // Adds the camera pickup VR interaction test content.
+  // Adds a camera pickup to the scene for testing VR camera pickup.
   "AddCameraVRPickup": false,
-  // Adds the mirror test content.
+  // Adds a mirror to the scene for testing mirror reflection.
   "Mirror": false,
   // Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path.
-  "DynamicWaterQuad": false,
-  // Forces the debug opaque pipeline instead of the normal material-driven opaque path.
+  "DynamicWaterQuad": true,
+  // Forces the debug opaque render pipeline instead of the default pipeline.
   "ForceDebugOpaquePipeline": false,
 
   // Light.
-  // Adds the primary directional light.
+  // Enables or disables DirLight.
   "DirLight": true,
-  // Adds a spotlight to the scene.
-  "SpotLight": false,
-  // Adds a secondary directional light for lighting stress tests.
+  // Enables or disables SpotLight.
+  "SpotLight": true,
+  // Enables or disables DirLight2.
   "DirLight2": false,
-  // Adds a point light to the scene.
-  "PointLight": false,
-  // Adds the realtime light-probe test content used for image-based lighting and probe capture validation.
-  "LightProbe": true,
-  // Target light-probe capture interval in milliseconds.
+  // Enables or disables PointLight.
+  "PointLight": true,
+  // Selects which light-probe layout gets added to the scene.
+  // LightProbe: Off, Single, Grid, ModelGrid
+  "LightProbe": "Single",
+  // Controls whether light probes capture never, once on startup, or continuously.
+  // LightProbeCapture: None, Startup, Realtime
+  "LightProbeCapture": "Startup",
+  // Interval between realtime captures, in milliseconds.
   "LightProbeCaptureMs": 1000.0,
-  // Optional timeout, in seconds, after which realtime capture stops. Use null to keep capturing indefinitely.
+  // Optional realtime capture timeout, in seconds. Use null to keep realtime capture running.
   "StopRealtimeCaptureSec": 5.0,
+  // Capture cubemap resolution used for individually spawned light probes.
+  "LightProbeResolution": 128,
+  // Probe counts used by Grid and ModelGrid layouts.
+  "LightProbeGridCounts": {
+    // Generated from X on ProbeGridCounts.
+    "X": 10,
+    // Generated from Y on ProbeGridCounts.
+    "Y": 1,
+    // Generated from Z on ProbeGridCounts.
+    "Z": 10
+  },
+  // Spacing between probes for Grid and ModelGrid layouts.
+  "LightProbeGridSpacing": {
+    // Generated from X on TranslationXYZ.
+    "X": 10.0,
+    // Generated from Y on TranslationXYZ.
+    "Y": 10.0,
+    // Generated from Z on TranslationXYZ.
+    "Z": 10.0
+  },
+  // Center/offset for Grid and ModelGrid layouts.
+  "LightProbeGridCenter": {
+    // Generated from X on TranslationXYZ.
+    "X": 0.0,
+    // Generated from Y on TranslationXYZ.
+    "Y": 50.0,
+    // Generated from Z on TranslationXYZ.
+    "Z": 0.0
+  },
+  // World position for Single light-probe mode.
+  "LightProbeSinglePosition": {
+    // Generated from X on TranslationXYZ.
+    "X": 0.0,
+    // Generated from Y on TranslationXYZ.
+    "Y": 1.25,
+    // Generated from Z on TranslationXYZ.
+    "Z": -7.5
+  },
 
   // Pawns.
-  // Spawns the VR pawn and enables the VR-side test setup. Pair this with UseOpenXR or EmulatedVRPawn depending on the runtime path you want.
+  // Enables VR input and pawn.
   "VRPawn": false,
-  // Selects OpenXR instead of the default tested OpenVR path for VR.
+  // If true and VRPawn is enabled (and not emulated), initializes VR via OpenXR instead of OpenVR.
   "UseOpenXR": true,
-  // Uses the emulated VR pawn for desktop-driven VR testing.
+  // Enables an emulated VR pawn for testing without a VR headset. All this does is disallow OpenVR from starting, VRPawn must still be enabled.
   "EmulatedVRPawn": false,
-  // Enables locomotion logic on the spawned pawn. This matters primarily when a VR or character pawn is active.
+  // Enables the player to physically locomote in the world. Requires a physical floor.
   "Locomotion": false,
-  // Spawns the third-person pawn instead of a VR-only setup.
+  // If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
   "ThirdPersonPawn": false,
-  // Optional Y offset applied to the character-controller capsule. Use null to leave the engine default.
+  // World-space Y translation to apply to the character controller capsule/root on spawn. If null, UnitTestingWorld will pick a safe default that places the capsule just above the floor.
   "CharacterControllerCapsuleTranslationY": 1.6,
 
   // Physics.
-  // Adds the chain physics test content.
+  // Adds a jiggle physics chain to the character pawn.
   "PhysicsChain": false,
-  // Initializes the selected physics backend and enables physics-driven test content. This should be on for PhysX/Jolt/Jitter behavior checks.
+  // Enables or disables AddPhysics.
   "AddPhysics": false,
-  // Number of test physics balls to spawn in the physics test content.
+  // The number of physics balls to add to the scene.
   "PhysicsBallCount": 0,
-  // Models imported during startup. Each entry can target different import and material settings.
+  // Generated from ModelsToImport on Settings.
   "ModelsToImport": [
     {
-      // When false, this model import entry is ignored.
+      // Enables or disables Enabled.
       "Enabled": false,
-      // Whether this import should be treated as a static or animated model.
+      // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Animated",
-      // Material/shader pipeline family used for this imported model.
+      // Selects the MaterialMode enum value.
       // MaterialMode: Deferred, Forward, Uber
       "MaterialMode": "Forward",
-      // When true and MaterialMode is Deferred, alpha-textured materials are routed through the forward lit path for proper transparency.
+      // When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline.
       "UseForwardForTransparent": false,
-      // Asset-relative path to the model file to import.
+      // Generated from Path on ModelImportSettings.
       "Path": "misc\\jax2026.fbx",
-      // Comma-separated Assimp PostProcessSteps flags. These are parsed as enum flag names, so keep the exact symbolic names separated by commas.
+      // Comma-separated PostProcessSteps flag names.
       "ImportFlags": "Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
-      // Uniform import scale multiplier.
+      // Generated from Scale on ModelImportSettings.
       "Scale": 1.0,
-      // Treats the source model as Z-up when true.
+      // Enables or disables ZUp.
       "ZUp": false,
-      // For static models, splits submeshes and auto-attaches CoACD-generated PhysX convex colliders per submesh.
+      // Enables or disables GenerateCoacdCollidersPerSubmesh.
       "GenerateCoacdCollidersPerSubmesh": false,
-      // Creates one ModelComponent per imported submesh instead of grouping by source node.
+      // When true, each imported submesh gets its own ModelComponent instead of grouping all submeshes from the same source node into one ModelComponent. Increases GPU resource usage; leave false unless per-submesh scene nodes are needed.
       "SplitSubmeshesIntoSeparateModelComponents": false,
-      // Optional Euler rotation offset, in degrees, applied after import.
+      // Optional additional local-space rotation to apply after import. Values are degrees.
       "YawPitchRoll": {
-        // Yaw rotation in degrees.
+        // Generated from Yaw on YawPitchRollDegrees.
         "Yaw": 0.0,
-        // Pitch rotation in degrees.
+        // Generated from Pitch on YawPitchRollDegrees.
         "Pitch": 0.0,
-        // Roll rotation in degrees.
+        // Generated from Roll on YawPitchRollDegrees.
         "Roll": 0.0
       },
       // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
       "Translation": null
     },
     {
-      // When false, this model import entry is ignored.
-      "Enabled": true,
-      // Whether this import should be treated as a static or animated model.
+      // Enables or disables Enabled.
+      "Enabled": false,
+      // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Static",
-      // Material/shader pipeline family used for this imported model.
+      // Selects the MaterialMode enum value.
       // MaterialMode: Deferred, Forward, Uber
       "MaterialMode": "Forward",
-      // When true and MaterialMode is Deferred, alpha-textured materials are routed through the forward lit path for proper transparency.
+      // When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline.
       "UseForwardForTransparent": true,
-      // Asset-relative path to the model file to import.
+      // Generated from Path on ModelImportSettings.
       "Path": "Models\\Sponza2\\Sponza.obj",
-      // Comma-separated Assimp PostProcessSteps flags. These are parsed as enum flag names, so keep the exact symbolic names separated by commas.
+      // Comma-separated PostProcessSteps flag names.
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
-      // Uniform import scale multiplier.
+      // Generated from Scale on ModelImportSettings.
       "Scale": 0.01,
-      // Treats the source model as Z-up when true.
+      // Enables or disables ZUp.
       "ZUp": false,
-      // For static models, splits submeshes and auto-attaches CoACD-generated PhysX convex colliders per submesh.
+      // Enables or disables GenerateCoacdCollidersPerSubmesh.
       "GenerateCoacdCollidersPerSubmesh": false,
-      // Creates one ModelComponent per imported submesh instead of grouping by source node.
+      // When true, each imported submesh gets its own ModelComponent instead of grouping all submeshes from the same source node into one ModelComponent. Increases GPU resource usage; leave false unless per-submesh scene nodes are needed.
       "SplitSubmeshesIntoSeparateModelComponents": false,
-      // Optional Euler rotation offset, in degrees, applied after import.
+      // Optional additional local-space rotation to apply after import. Values are degrees.
       "YawPitchRoll": null,
       // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
       "Translation": {
@@ -171,29 +213,29 @@
       }
     },
     {
-      // When false, this model import entry is ignored.
-      "Enabled": true,
-      // Whether this import should be treated as a static or animated model.
+      // Enables or disables Enabled.
+      "Enabled": false,
+      // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Static",
-      // Material/shader pipeline family used for this imported model.
+      // Selects the MaterialMode enum value.
       // MaterialMode: Deferred, Forward, Uber
       "MaterialMode": "Deferred",
-      // When true and MaterialMode is Deferred, alpha-textured materials are routed through the forward lit path for proper transparency.
+      // When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline.
       "UseForwardForTransparent": false,
-      // Asset-relative path to the model file to import.
+      // Generated from Path on ModelImportSettings.
       "Path": "Models\\Sponza2\\Sponza.obj",
-      // Comma-separated Assimp PostProcessSteps flags. These are parsed as enum flag names, so keep the exact symbolic names separated by commas.
+      // Comma-separated PostProcessSteps flag names.
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
-      // Uniform import scale multiplier.
+      // Generated from Scale on ModelImportSettings.
       "Scale": 0.01,
-      // Treats the source model as Z-up when true.
+      // Enables or disables ZUp.
       "ZUp": false,
-      // For static models, splits submeshes and auto-attaches CoACD-generated PhysX convex colliders per submesh.
+      // Enables or disables GenerateCoacdCollidersPerSubmesh.
       "GenerateCoacdCollidersPerSubmesh": false,
-      // Creates one ModelComponent per imported submesh instead of grouping by source node.
+      // When true, each imported submesh gets its own ModelComponent instead of grouping all submeshes from the same source node into one ModelComponent. Increases GPU resource usage; leave false unless per-submesh scene nodes are needed.
       "SplitSubmeshesIntoSeparateModelComponents": false,
-      // Optional Euler rotation offset, in degrees, applied after import.
+      // Optional additional local-space rotation to apply after import. Values are degrees.
       "YawPitchRoll": null,
       // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
       "Translation": {
@@ -206,29 +248,29 @@
       }
     },
     {
-      // When false, this model import entry is ignored.
+      // Enables or disables Enabled.
       "Enabled": false,
-      // Whether this import should be treated as a static or animated model.
+      // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Static",
-      // Material/shader pipeline family used for this imported model.
+      // Selects the MaterialMode enum value.
       // MaterialMode: Deferred, Forward, Uber
       "MaterialMode": "Deferred",
-      // When true and MaterialMode is Deferred, alpha-textured materials are routed through the forward lit path for proper transparency.
+      // When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline.
       "UseForwardForTransparent": false,
-      // Asset-relative path to the model file to import.
+      // Generated from Path on ModelImportSettings.
       "Path": "Models\\main1_sponza\\NewSponza_Main_Yup_003.fbx",
-      // Comma-separated Assimp PostProcessSteps flags. These are parsed as enum flag names, so keep the exact symbolic names separated by commas.
+      // Comma-separated PostProcessSteps flag names.
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
-      // Uniform import scale multiplier.
+      // Generated from Scale on ModelImportSettings.
       "Scale": 0.01,
-      // Treats the source model as Z-up when true.
+      // Enables or disables ZUp.
       "ZUp": false,
-      // For static models, splits submeshes and auto-attaches CoACD-generated PhysX convex colliders per submesh.
+      // Enables or disables GenerateCoacdCollidersPerSubmesh.
       "GenerateCoacdCollidersPerSubmesh": false,
-      // Creates one ModelComponent per imported submesh instead of grouping by source node.
+      // When true, each imported submesh gets its own ModelComponent instead of grouping all submeshes from the same source node into one ModelComponent. Increases GPU resource usage; leave false unless per-submesh scene nodes are needed.
       "SplitSubmeshesIntoSeparateModelComponents": false,
-      // Optional Euler rotation offset, in degrees, applied after import.
+      // Optional additional local-space rotation to apply after import. Values are degrees.
       "YawPitchRoll": null,
       // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
       "Translation": {
@@ -243,93 +285,93 @@
   ],
 
   // Audio.
-  // Adds the sound-node audio test content.
+  // Enables or disables SoundNode.
   "SoundNode": false,
-  // Enables microphone capture in the unit-testing world.
+  // Adds a microphone to the scene for testing audio capture.
   "Microphone": false,
-  // Attaches the microphone source to the animated model when both features are active.
+  // If true, the microphone output will be attached to the animated model instead of the flying camera.
   "AttachMicToAnimatedModel": true,
-  // Toggles the second-generation audio architecture path before startup applies audio overrides into the engine singleton.
+  // Enables or disables AudioArchitectureV2.
   "AudioArchitectureV2": true,
-  // Audio transport backend used by the runtime audio layer.
+  // Selects the AudioTransport enum value.
   // AudioTransport: OpenAL, NAudio
   "AudioTransport": "OpenAL",
-  // Audio effects processor used by the runtime audio layer.
+  // Selects the AudioEffects enum value.
   // AudioEffects: OpenAL_EFX, SteamAudio, Passthrough
   "AudioEffects": "SteamAudio",
 
   // Face and lip sync.
-  // Enables the VMC avatar-streaming test path for external motion data ingest.
+  // Adds a VMC capture component to the avatar for testing.
   "VMC": false,
-  // Enables lip-sync test content on applicable avatar setups.
+  // Adds a lip sync component to the avatar for testing.
   "LipSync": false,
-  // Enables FaceMotion3D integration test content.
+  // Adds a face motion 3D capture component to the avatar for testing.
   "FaceMotion3D": false,
-  // Enables face-tracking test content.
+  // Adds a face tracking component to the avatar for testing.
   "FaceTracking": false,
 
   // Animation.
-  // Loads a VMD animation clip path instead of or in addition to other clip tests, depending on the world setup.
+  // Imports a VMD animation clip for testing.
   "AnimationClipVMD": false,
-  // Loads an .anim animation clip during startup.
+  // Imports a .anim clip for testing.
   "AnimationClipAnim": true,
-  // Path to the animation clip asset loaded by the clip test path.
+  // Generated from AnimClipPath on Settings.
   "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
-  // Loops the test animation clip when true.
+  // Enables or disables AnimLooped.
   "AnimLooped": true,
-  // Enables humanoid pose-audit capture during animation playback.
+  // Exports raw humanoid playback samples for Unity/XREngine comparison.
   "HumanoidPoseAuditEnabled": false,
-  // Output file path for pose-audit capture data.
+  // Generated from HumanoidPoseAuditOutputPath on Settings.
   "HumanoidPoseAuditOutputPath": "Build\\Logs\\pose_audit\\xrengine_sexy_walk_pose.json",
-  // Optional reference pose-audit file used for comparisons.
+  // Generated from HumanoidPoseAuditReferencePath on Settings.
   "HumanoidPoseAuditReferencePath": null,
-  // Optional output path for comparison results against the reference audit file.
+  // Generated from HumanoidPoseAuditComparisonOutputPath on Settings.
   "HumanoidPoseAuditComparisonOutputPath": null,
-  // Optional sample-rate override for pose auditing, in samples per second.
+  // Generated from HumanoidPoseAuditSampleRateOverride on Settings.
   "HumanoidPoseAuditSampleRateOverride": null,
-  // Enables the inverse-kinematics test path.
+  // Adds an simple IK test tree to the scene.
   "IKTest": false,
-  // Enables the broader animation test setup beyond loading an individual clip file.
+  // Adds test animations to the character pawn.
   "TestAnimation": false,
-  // Enables separable shader-program pipelines where supported by the selected renderer. Useful for pipeline experiments, but the editor notes this can break some debug-shape rendering and may be slower than linked programs.
+  // Indicates if the engine should use shader pipelines to mix and match shader stages. This will break debug shape rendering, and seems to render slower than making combined programs.
   "AllowShaderPipelines": false,
-  // Draws imported mesh bounds for debugging.
+  // Enables or disables RenderMeshBounds.
   "RenderMeshBounds": false,
-  // Rendering backend to initialize for the unit-testing world.
+  // Selects the RenderAPI enum value.
   // RenderAPI: OpenGL, Vulkan
   "RenderAPI": "OpenGL",
-  // Physics backend to initialize for the unit-testing world.
+  // Selects the PhysicsAPI enum value.
   // PhysicsAPI: PhysX, Jolt, Jitter
   "PhysicsAPI": "PhysX",
-  // Controls how child transform matrix recalculation is scheduled.
+  // Selects the RecalcChildMatricesType enum value.
   // RecalcChildMatricesType: Sequential, Asynchronous, Parallel
   "RecalcChildMatricesType": "Asynchronous",
-  // When true, grouped tick items are executed in parallel where the engine supports it.
+  // Enables or disables TickGroupedItemsInParallel.
   "TickGroupedItemsInParallel": true,
-  // Enables single-pass stereo rendering for VR where supported.
+  // Enables or disables SinglePassStereoVR.
   "SinglePassStereoVR": false,
-  // Draws physics debug visualization for the selected physics backend.
+  // Enables or disables RenderPhysicsDebug.
   "RenderPhysicsDebug": false,
-  // Keeps desktop render windows active while VR is running so you can monitor output or debug from the desktop at the same time.
+  // Enables or disables RenderWindowsWhileInVR.
   "RenderWindowsWhileInVR": true,
-  // Enables transform debug rendering. Individual shape toggles below further refine what is drawn.
+  // Enables or disables RenderTransformDebugInfo.
   "RenderTransformDebugInfo": false,
-  // Draw transform debug points when transform debug rendering is enabled.
+  // Enables or disables RenderTransformPoints.
   "RenderTransformPoints": false,
-  // Draw transform debug capsules when transform debug rendering is enabled.
+  // Enables or disables RenderTransformCapsules.
   "RenderTransformCapsules": false,
-  // Draw transform debug lines when transform debug rendering is enabled.
+  // Enables or disables RenderTransformLines.
   "RenderTransformLines": false,
-  // Enables the background shader test path.
+  // Enables or disables BackgroundShader.
   "BackgroundShader": false,
-  // Adds character IK components to applicable animated characters so imported humanoids can run extra IK-specific tests.
+  // Enables or disables AddCharacterIK.
   "AddCharacterIK": false,
-  // Creates the default unit box test object.
+  // If true, creates a 1x1x1 box at the origin.
   "CreateUnitBox": false,
-  // Target rate for the render loop. Set to 0 for uncapped rendering.
+  // Generated from RenderFPS on Settings.
   "RenderFPS": 0.0,
-  // Target rate for the main update loop. Set to 0 to leave the loop uncapped if supported by the runtime.
+  // Generated from UpdateFPS on Settings.
   "UpdateFPS": 60.0,
-  // Target rate for the fixed-timestep simulation loop, typically physics and deterministic ticks.
+  // Generated from FixedFPS on Settings.
   "FixedFPS": 30.0
 }

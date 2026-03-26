@@ -27,7 +27,9 @@ uniform float Thickness = 0.1f;
 uniform float DistanceFade = 1.0f;
 uniform vec2 NoiseScale;
 
+uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 // Hash of the cell coordinate to decorrelate rays across neighboring pixels
@@ -66,10 +68,10 @@ void main()
         OutIntensity = 1.0f;
         return;
     }
-    vec3 fragPosVS = AOViewPosFromDepth(depth, uv, ProjMatrix);
+    vec3 fragPosVS = AOViewPosFromDepth(depth, uv, InverseProjMatrix);
 
     vec3 randomVec = vec3(texture(AONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
-    vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(encodedNormal, 0.0f)).rgb);
+    vec3 viewNormal = normalize((ViewMatrix * vec4(encodedNormal, 0.0f)).rgb);
     vec3 viewTangent = normalize(randomVec - viewNormal * dot(randomVec, viewNormal));
     vec3 viewBitangent = cross(viewNormal, viewTangent);
     mat3 TBN = mat3(viewTangent, viewBitangent, viewNormal);
@@ -103,7 +105,7 @@ void main()
                     break;
                 continue;
             }
-            float sceneDepthVS = AOViewPosFromDepth(sceneDepth, sampleUV, ProjMatrix).z;
+            float sceneDepthVS = AOViewPosFromDepth(sceneDepth, sampleUV, InverseProjMatrix).z;
             float expectedDepth = samplePos.z;
 
             if (sceneDepthVS < expectedDepth + Thickness)

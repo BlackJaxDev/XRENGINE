@@ -24,21 +24,71 @@ namespace XREngine.Components.Capture.Lights.Types
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
         });
+
+        private bool _useGeometryShader = true;
+        private XRFrameBuffer? _perFaceFbo;
+
+        /// <summary>
+        /// When enabled, renders all 6 cubemap shadow faces in a single draw call
+        /// using a geometry shader. When disabled, renders each face separately in
+        /// 6 passes (compatible with GPUs/drivers that lack geometry shader support).
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Use Geometry Shader")]
+        [Description("Render all 6 cubemap faces in one draw call via geometry shader. Disable for 6-pass fallback.")]
+        public bool UseGeometryShader
+        {
+            get => _useGeometryShader;
+            set
+            {
+                if (SetField(ref _useGeometryShader, value))
+                    RecreateShadowMapMaterial();
+            }
+        }
+
+        private void RecreateShadowMapMaterial()
+        {
+            if (ShadowMap is null)
+                return;
+
+            uint res = (uint)_viewports[0].Width;
+            ShadowMap = new XRMaterialFrameBuffer(GetShadowMapMaterial(res, res));
+        }
+
         public override void CollectVisibleItems()
         {
             if (!CastsShadows || ShadowMap is null)
                 return;
 
-            foreach (var vp in _viewports)
-                vp.CollectVisible(false);
+            if (_useGeometryShader)
+            {
+                // GS renders all 6 cubemap faces per draw call — one viewport
+                // with the influence sphere captures objects visible from any face.
+                _viewports[0].CollectVisible(
+                    collectMirrors: false,
+                    collectionVolumeOverride: _influenceVolume);
+            }
+            else
+            {
+                // Without GS each viewport renders one face with its own camera frustum.
+                for (int i = 0; i < 6; i++)
+                    _viewports[i].CollectVisible(collectMirrors: false);
+            }
         }
         public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
         {
             if (!CastsShadows || ShadowMap is null)
                 return;
 
-            foreach (var vp in _viewports)
-                vp.SwapBuffers();
+            if (_useGeometryShader)
+            {
+                _viewports[0].SwapBuffers();
+            }
+            else
+            {
+                for (int i = 0; i < 6; i++)
+                    _viewports[i].SwapBuffers();
+            }
             lightmapBaker?.ProcessDynamicCachedAutoBake(this);
         }
         public override void RenderShadowMap(bool collectVisibleNow = false)
@@ -52,8 +102,26 @@ namespace XREngine.Components.Capture.Lights.Types
                 SwapBuffers();
             }
 
-            foreach (var vp in _viewports)
-                vp.Render(ShadowMap, null, null, true, ShadowMap.Material);
+            if (_useGeometryShader)
+            {
+                // Single draw: the GS writes to all 6 cubemap layers via gl_Layer.
+                _viewports[0].Render(ShadowMap, null, null, true, ShadowMap.Material);
+            }
+            else
+            {
+                // 6-pass fallback: render each face individually.
+                _perFaceFbo ??= new XRFrameBuffer();
+                var mat = ShadowMap.Material!;
+                var depthCube = (IFrameBufferAttachement)mat.Textures[0]!;
+                var shadowCube = (IFrameBufferAttachement)mat.Textures[1]!;
+                for (int i = 0; i < 6; i++)
+                {
+                    _perFaceFbo.SetRenderTargets(
+                        (depthCube, EFrameBufferAttachment.DepthAttachment, 0, i),
+                        (shadowCube, EFrameBufferAttachment.ColorAttachment0, 0, i));
+                    _viewports[i].Render(_perFaceFbo, null, null, true, mat);
+                }
+            }
         }
 
         /// <summary>
@@ -77,7 +145,15 @@ namespace XREngine.Components.Capture.Lights.Types
         public override void SetShadowMapResolution(uint width, uint height)
         {
             uint max = Math.Max(width, height);
+
+            // Cubemap textures use immutable storage (Resizable=false) and cannot
+            // be resized in place. Destroy the old FBO so the base recreates it
+            // with fresh textures of the new size.
+            ShadowMap?.Destroy();
+            ShadowMap = null;
+
             base.SetShadowMapResolution(max, max);
+
             foreach (var vp in _viewports)
                 vp.Resize(max, max);
         }
@@ -130,11 +206,6 @@ namespace XREngine.Components.Capture.Lights.Types
                     colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
                 }
             }
-
-            ShadowExponentBase = 1.0f;
-            ShadowExponent = 2.5f;
-            ShadowMinBias = 0.05f;
-            ShadowMaxBias = 10.0f;
 
             MeshCenterAdjustMatrix = Matrix4x4.CreateScale(radius);
         }
@@ -212,11 +283,16 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             program.Uniform("FarPlaneDist", _influenceVolume.Radius);
             program.Uniform("LightPos", _influenceVolume.Center);
-            for (int i = 0; i < ShadowCameras.Length; ++i)
+            if (_useGeometryShader)
             {
-                var cam = ShadowCameras[i];
-                program.Uniform($"InverseViewMatrices[{i}]", cam.Transform.RenderMatrix);
-                program.Uniform($"ProjectionMatrices[{i}]", cam.ProjectionMatrix);
+                for (int i = 0; i < ShadowCameras.Length; ++i)
+                {
+                    var cam = ShadowCameras[i];
+                    // Precompute VP on CPU — avoids per-vertex inverse() in the geometry shader.
+                    Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
+                    Matrix4x4 vp = viewMatrix * cam.ProjectionMatrix;
+                    program.Uniform($"ViewProjectionMatrices[{i}]", vp);
+                }
             }
         }
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
@@ -232,6 +308,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     VWrap = ETexWrapMode.ClampToEdge,
                     WWrap = ETexWrapMode.ClampToEdge,
                     FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
+                    Resizable = false,
                 },
                 new XRTextureCube(cubeExtent, EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, false)
                 {
@@ -241,14 +318,26 @@ namespace XREngine.Components.Capture.Lights.Types
                     VWrap = ETexWrapMode.ClampToEdge,
                     WWrap = ETexWrapMode.ClampToEdge,
                     FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
-                    SamplerName = "ShadowMap"
+                    SamplerName = "ShadowMap",
+                    Resizable = false,
                 },
             ];
 
             //This material is used for rendering to the framebuffer.
+            // No custom vertex shader — the engine auto-generates one that outputs
+            // FragPos (location 0) in world-space and sets gl_Position to clip-space,
+            // which is what both the GS and FS paths expect.
             XRShader fragShader = XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment);
-            XRShader geomShader = XRShader.EngineShader("PointLightShadowDepth.gs", EShaderType.Geometry);
-            XRMaterial mat = new(refs, fragShader, geomShader);
+            XRMaterial mat;
+            if (_useGeometryShader)
+            {
+                XRShader geomShader = XRShader.EngineShader("PointLightShadowDepth.gs", EShaderType.Geometry);
+                mat = new(refs, fragShader, geomShader);
+            }
+            else
+            {
+                mat = new(refs, fragShader);
+            }
 
             //No culling so if a light exists inside of a mesh it will shadow everything.
             mat.RenderOptions.CullMode = ECullMode.None;

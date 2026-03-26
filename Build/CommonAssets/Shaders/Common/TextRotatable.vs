@@ -18,8 +18,7 @@ layout(std430, binding = 2) buffer GlyphRotationsBuffer
 };
 
 uniform mat4 ModelMatrix;
-uniform mat4 InverseViewMatrix_VTX;
-uniform mat4 ProjMatrix_VTX;
+uniform mat4 ViewProjectionMatrix_VTX;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -33,15 +32,6 @@ out gl_PerVertex
 	float gl_PointSize;
 	float gl_ClipDistance[];
 };
-
-mat3 adjoint(mat4 m)
-{
-	return mat3(
-		cross(m[1].xyz, m[2].xyz),
-		cross(m[2].xyz, m[0].xyz),
-		cross(m[0].xyz, m[1].xyz)
-	);
-}
 
 const float PI = 3.14f;
 
@@ -59,20 +49,14 @@ void main()
     vec4 uv = GlyphTexCoords[gl_InstanceID];
 	float rot = GlyphRotations[gl_InstanceID];
 
-	mat4 ViewMatrix = inverse(InverseViewMatrix_VTX);
-	mat4 mvMatrix = ViewMatrix * ModelMatrix;
-	mat4 mvpMatrix = ProjMatrix_VTX * mvMatrix;
-	mat4 vpMatrix = ProjMatrix_VTX * ViewMatrix;
-	mat3 normalMatrix = adjoint(ModelMatrix);
+	mat4 mvpMatrix = ViewProjectionMatrix_VTX * ModelMatrix;
 	
 	vec4 position = vec4((tfm.xy + (TexCoord0.xy * tfm.zw)) * rotationMatrix(rot), 0.0f, 1.0f);
-
-	vec3 normal = Normal;
 	
 	FragPosLocal = position.xyz;
 	FragPos = (mvpMatrix * position).xyz;
 	gl_Position = mvpMatrix * position;
-	FragNorm = normalize(normalMatrix * normal);
+	FragNorm = Normal;
 	FragUV0 = mix(uv.xy, uv.zw, Position.xy);
 	GlyphUVBounds = uv;
 }

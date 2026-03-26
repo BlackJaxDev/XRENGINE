@@ -418,6 +418,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string MsaaDeferredResolveNormalFBOName = "MsaaDeferredResolveNormalFBO";
     public const string MsaaDeferredResolveRmseFBOName = "MsaaDeferredResolveRmseFBO";
     private const string MsaaDeferredDefine = "XRENGINE_MSAA_DEFERRED";
+    internal const string ProbeDebugFallbackDefine = "XRENGINE_PROBE_DEBUG_FALLBACK";
 
     /// <summary>
     /// True when the current camera uses MSAA and the deferred pipeline should run in MSAA mode.
@@ -2266,7 +2267,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         set => SetField(ref _useProbeGridAcceleration, value);
     }
 
-    private struct ProbePositionData
+    internal struct ProbePositionData
     {
         public Vector4 Position;
     }
@@ -2283,7 +2284,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private struct ProbeGridCell
     {
-        public IVector2 OffsetCount;
+        public IVector4 OffsetCount;
+        public IVector4 FallbackIndices;
     }
 
     private struct ProbeTetraData
@@ -2535,7 +2537,18 @@ public partial class DefaultRenderPipeline : RenderPipeline
             var list = cellLists[c];
             int offset = indices.Count;
             indices.AddRange(list);
-            offsets.Add(new ProbeGridCell { OffsetCount = new IVector2(offset, list.Count) });
+
+            int cellX = c % dimsI.X;
+            int cellY = (c / dimsI.X) % dimsI.Y;
+            int cellZ = c / (dimsI.X * dimsI.Y);
+            Vector3 cellCenter = _probeGridOrigin + new Vector3(cellX + 0.5f, cellY + 0.5f, cellZ + 0.5f) * _probeGridCellSize;
+            IVector4 fallbackIndices = ComputeProbeGridFallbackIndices(cellCenter, positions, list.Count > 0 ? list : null);
+
+            offsets.Add(new ProbeGridCell
+            {
+                OffsetCount = new IVector4(offset, list.Count, 0, 0),
+                FallbackIndices = fallbackIndices,
+            });
         }
 
         _probeGridCellBuffer = new XRDataBuffer("LightProbeGridCells", EBufferTarget.ShaderStorageBuffer, (uint)offsets.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeGridCell>(), false, false)
@@ -2551,6 +2564,55 @@ public partial class DefaultRenderPipeline : RenderPipeline
         };
         _probeGridIndexBuffer.SetDataRaw(indices);
         _probeGridIndexBuffer.PushData();
+    }
+
+    internal static IVector4 ComputeProbeGridFallbackIndices(Vector3 cellCenter, IReadOnlyList<ProbePositionData> positions, List<int>? preferredIndices)
+    {
+        Span<float> bestDistances = stackalloc float[4] { float.MaxValue, float.MaxValue, float.MaxValue, float.MaxValue };
+        Span<int> bestIndices = stackalloc int[4] { -1, -1, -1, -1 };
+
+        if (preferredIndices is not null && preferredIndices.Count > 0)
+        {
+            foreach (int probeIndex in preferredIndices)
+                ConsiderProbe(probeIndex, cellCenter, positions, bestDistances, bestIndices);
+        }
+        else
+        {
+            for (int probeIndex = 0; probeIndex < positions.Count; ++probeIndex)
+                ConsiderProbe(probeIndex, cellCenter, positions, bestDistances, bestIndices);
+        }
+
+        return new IVector4(bestIndices[0], bestIndices[1], bestIndices[2], bestIndices[3]);
+    }
+
+    private static void ConsiderProbe(int probeIndex, Vector3 cellCenter, IReadOnlyList<ProbePositionData> positions, Span<float> bestDistances, Span<int> bestIndices)
+    {
+        if ((uint)probeIndex >= positions.Count)
+            return;
+
+        for (int existing = 0; existing < 4; ++existing)
+        {
+            if (bestIndices[existing] == probeIndex)
+                return;
+        }
+
+        Vector4 pos4 = positions[probeIndex].Position;
+        float distance = Vector3.Distance(cellCenter, new Vector3(pos4.X, pos4.Y, pos4.Z));
+        for (int slot = 0; slot < 4; ++slot)
+        {
+            if (distance >= bestDistances[slot])
+                continue;
+
+            for (int shift = 3; shift > slot; --shift)
+            {
+                bestDistances[shift] = bestDistances[shift - 1];
+                bestIndices[shift] = bestIndices[shift - 1];
+            }
+
+            bestDistances[slot] = distance;
+            bestIndices[slot] = probeIndex;
+            break;
+        }
     }
 
     private static List<LightProbeComponent> GetReadyProbes(IReadOnlyList<LightProbeComponent> probes)

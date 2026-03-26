@@ -22,6 +22,10 @@ uniform vec2 NoiseScale;
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
+uniform mat4 LeftEyeViewMatrix;
+uniform mat4 RightEyeViewMatrix;
+uniform mat4 LeftEyeInverseProjMatrix;
+uniform mat4 RightEyeInverseProjMatrix;
 
 uniform mat4 LeftEyeProjMatrix;
 uniform mat4 RightEyeProjMatrix;
@@ -35,16 +39,17 @@ void main()
     uv = uv * 0.5f + 0.5f;
     vec3 uvi = vec3(uv, gl_ViewID_OVR);
     bool leftEye = gl_ViewID_OVR == 0;
-    mat4 InverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+    mat4 ViewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
+    mat4 InverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
     mat4 ProjMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
     
     vec3 Normal = XRENGINE_ReadNormal(Normal, uvi);
     float Depth = texture(DepthView, uvi).r;
 
-    vec3 FragPosVS = AOViewPosFromDepth(Depth, uv, ProjMatrix);
+    vec3 FragPosVS = AOViewPosFromDepth(Depth, uv, InverseProjMatrix);
 
     vec3 randomVec = vec3(texture(AONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
-    vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(Normal, 0.0f)).rgb);
+    vec3 viewNormal = normalize((ViewMatrix * vec4(Normal, 0.0f)).rgb);
     vec3 viewTangent = normalize(randomVec - viewNormal * dot(randomVec, viewNormal));
     vec3 viewBitangent = cross(viewNormal, viewTangent);
     mat3 TBN = mat3(viewTangent, viewBitangent, viewNormal);
@@ -66,7 +71,7 @@ void main()
         offset.xyz /= offset.w;
         offset.xyz = offset.xyz * 0.5f + 0.5f;
 
-        sampleDepth = AOViewPosFromDepth(texture(DepthView, vec3(offset.xy, gl_ViewID_OVR)).r, offset.xy, ProjMatrix).z;
+        sampleDepth = AOViewPosFromDepth(texture(DepthView, vec3(offset.xy, gl_ViewID_OVR)).r, offset.xy, InverseProjMatrix).z;
 
         occlusion += (sampleDepth >= noiseSample.z + bias ? smoothstep(0.0f, 1.0f, Radius / abs(FragPosVS.z - sampleDepth)) : 0.0f);
     }

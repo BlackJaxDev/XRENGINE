@@ -20,6 +20,10 @@ uniform int DepthMode;
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
+uniform mat4 LeftEyeViewMatrix;
+uniform mat4 RightEyeViewMatrix;
+uniform mat4 LeftEyeInverseProjMatrix;
+uniform mat4 RightEyeInverseProjMatrix;
 uniform mat4 LeftEyeProjMatrix;
 uniform mat4 RightEyeProjMatrix;
 
@@ -29,10 +33,10 @@ bool AOIsFarDepth(float depth)
     return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
 }
 
-vec3 ViewPosFromDepth(float depth, vec2 uv, mat4 projMatrix)
+vec3 ViewPosFromDepth(float depth, vec2 uv, mat4 inverseProjMatrix)
 {
     vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(projMatrix) * clipSpacePosition;
+    vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
     return viewSpacePosition.xyz / viewSpacePosition.w;
 }
 
@@ -70,18 +74,19 @@ void main()
     uv = uv * 0.5f + 0.5f;
 
     bool leftEye = gl_ViewID_OVR == 0;
-    mat4 inverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+    mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
+    mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
     mat4 projMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
     vec3 normal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
-    vec3 viewNormal = normalize((inverse(inverseViewMatrix) * vec4(normal, 0.0f)).rgb);
+    vec3 viewNormal = normalize((viewMatrix * vec4(normal, 0.0f)).rgb);
     float depth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
     if (AOIsFarDepth(depth))
     {
         OutIntensity = 1.0f;
         return;
     }
-    vec3 position = ViewPosFromDepth(depth, uv, projMatrix);
+    vec3 position = ViewPosFromDepth(depth, uv, inverseProjMatrix);
 
     float totalOcclusion = 0.0f;
     totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.x, uv, projMatrix);

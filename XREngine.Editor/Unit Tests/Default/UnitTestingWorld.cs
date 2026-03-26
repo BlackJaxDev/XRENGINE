@@ -105,14 +105,14 @@ public static partial class EditorUnitTests
         if (Toggles.IKTest)
             AddIKTest(rootNode);
 
-        if (Toggles.LightProbe || Toggles.Skybox)
+        if (Toggles.LightProbe != LightProbeMode.Off || Toggles.Skybox)
         {
             string[] names = ["warm_restaurant_4k"/*, "overcast_soil_puresky_4k", "studio_small_09_4k", "klippad_sunrise_2_4k", "satara_night_4k"*/];
             Random r = new();
             XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[r.Next(0, names.Length - 1)]}.exr");
 
-            if (Toggles.LightProbe)
-                Lighting.AddInteractiveLightProbeGrid(rootNode, 10, 1, 10, new Vector3(10.0f, 10.0f, 10.0f), new Vector3(0.0f, 50.0f, 0.0f));
+            if (Toggles.LightProbe != LightProbeMode.Off)
+                Lighting.AddConfiguredLightProbes(rootNode);
             if (Toggles.Skybox)
                 Models.AddSkybox(rootNode, skyEquirect);
         }
@@ -163,13 +163,13 @@ public static partial class EditorUnitTests
         // IBL environment: without a light probe the Uber PBR shader renders near-black.
         // Use realtime progressive capture so the probe converges over several frames,
         // then auto-disables after 5 seconds once the scene is stable.
-        if (Toggles.LightProbe || Toggles.Skybox)
+        if (Toggles.LightProbe != LightProbeMode.Off || Toggles.Skybox)
         {
             string[] names = ["warm_restaurant_4k"];
             XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[0]}.exr");
 
-            if (Toggles.LightProbe)
-                    Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 1.25f, -7.5f));
+            if (Toggles.LightProbe != LightProbeMode.Off)
+            Lighting.AddConfiguredLightProbes(rootNode);
 
             if (Toggles.Skybox)
                 Models.AddSkybox(rootNode, skyEquirect);

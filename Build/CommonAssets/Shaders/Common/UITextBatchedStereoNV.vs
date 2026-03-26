@@ -28,10 +28,8 @@ layout(std430, set = 0, binding = 3) buffer GlyphTextIndexBuffer
     uint GlyphTextIndex[];
 };
 
-uniform mat4 LeftEyeInverseViewMatrix_VTX;
-uniform mat4 RigthEyeInverseViewMatrix_VTX;
-uniform mat4 LeftEyeProjMatrix_VTX;
-uniform mat4 RightEyeProjMatrix_VTX;
+uniform mat4 LeftEyeViewProjectionMatrix_VTX;
+uniform mat4 RightEyeViewProjectionMatrix_VTX;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -66,13 +64,10 @@ void main()
     vec4 tfm = GlyphTransforms[gl_InstanceID];
     vec4 uv = GlyphTexCoords[gl_InstanceID];
 
-    mat4 leftViewMatrix = inverse(LeftEyeInverseViewMatrix_VTX);
-    mat4 rightViewMatrix = inverse(RigthEyeInverseViewMatrix_VTX);
-
     vec4 position = vec4(tfm.xy + (TexCoord0.xy * tfm.zw), 0.0, 1.0);
 
-    mat4 leftMvpMatrix = LeftEyeProjMatrix_VTX * leftViewMatrix * modelMatrix;
-    mat4 rightMvpMatrix = RightEyeProjMatrix_VTX * rightViewMatrix * modelMatrix;
+    mat4 leftMvpMatrix = LeftEyeViewProjectionMatrix_VTX * modelMatrix;
+    mat4 rightMvpMatrix = RightEyeViewProjectionMatrix_VTX * modelMatrix;
 
     FragPos = (leftMvpMatrix * position).xyz;
     gl_Position = leftMvpMatrix * position;

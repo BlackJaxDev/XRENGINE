@@ -21,17 +21,14 @@ layout(std430, binding = 0) buffer TrianglesBuffer
 
 #include "Common/Debug/helper/DebugPerVertex.glsl"
 
-uniform mat4 InverseViewMatrix;
-uniform mat4 ProjMatrix;
+uniform mat4 ViewProjectionMatrix;
 
 #include "Common/Debug/helper/DebugTriangle.glsl"
 
 void main()
 {
-    mat4 viewProj = ProjMatrix * inverse(InverseViewMatrix);
-
     int index = instanceID[0];
     Triangle tri = Triangles[index];
 
-    EmitTriangle(viewProj, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz, tri.color);
+    EmitTriangle(ViewProjectionMatrix, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz, tri.color);
 }

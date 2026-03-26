@@ -74,10 +74,7 @@ namespace XREngine.Rendering
 
         protected override Frustum CalculateUntransformedFrustum()
         {
-            Matrix4x4 proj = _projectionMatrix ?? CalculateProjectionMatrix();
-            if (!Matrix4x4.Invert(proj, out Matrix4x4 invProj))
-                invProj = Matrix4x4.Identity;
-            return new Frustum(invProj);
+            return new Frustum(GetInverseProjectionMatrix());
         }
 
         public override Vector2 GetFrustumSizeAtDistance(float distance)

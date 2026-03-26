@@ -945,6 +945,8 @@ namespace XREngine.Rendering
         private bool _resizable = true;
         private bool _exclusiveSharing = true;
         private GrabPassInfo? _grabPass;
+        private bool _enableComparison = false;
+        private ETextureCompareFunc _compareFunc = ETextureCompareFunc.LessOrEqual;
 
         public override bool IsResizeable => Resizable;
 
@@ -1126,6 +1128,23 @@ namespace XREngine.Rendering
         {
             get => _lodBias;
             set => SetField(ref _lodBias, value);
+        }
+        /// <summary>
+        /// When true, sampling this texture performs a depth comparison against a reference value
+        /// (hardware PCF). Requires the texture to use a depth internal format.
+        /// </summary>
+        public bool EnableComparison
+        {
+            get => _enableComparison;
+            set => SetField(ref _enableComparison, value);
+        }
+        /// <summary>
+        /// The comparison function used when <see cref="EnableComparison"/> is true.
+        /// </summary>
+        public ETextureCompareFunc CompareFunc
+        {
+            get => _compareFunc;
+            set => SetField(ref _compareFunc, value);
         }
         public ESizedInternalFormat SizedInternalFormat
         {
@@ -1384,7 +1403,23 @@ namespace XREngine.Rendering
             bool stencilBit = false,
             bool linearFilter = true)
         {
-            XRTexture2D t = CreateFrameBufferTexture(1, 1, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
+            XRTexture2D t;
+            if (depthBit && !colorBit)
+            {
+                // Depth-only grab: use a depth-format texture so glBlitFramebuffer
+                // can copy the depth buffer into the result FBO's depth attachment.
+                t = CreateFrameBufferTexture(1, 1,
+                    EPixelInternalFormat.DepthComponent32f,
+                    EPixelFormat.DepthComponent,
+                    EPixelType.Float);
+            }
+            else
+            {
+                t = CreateFrameBufferTexture(1, 1,
+                    EPixelInternalFormat.Rgba8,
+                    EPixelFormat.Rgba,
+                    EPixelType.UnsignedByte);
+            }
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.UWrap = ETexWrapMode.ClampToEdge;
@@ -1414,7 +1449,21 @@ namespace XREngine.Rendering
             bool stencilBit = false,
             bool linearFilter = true)
         {
-            XRTexture2D t = CreateFrameBufferTexture(w, h, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
+            XRTexture2D t;
+            if (depthBit && !colorBit)
+            {
+                t = CreateFrameBufferTexture(w, h,
+                    EPixelInternalFormat.DepthComponent32f,
+                    EPixelFormat.DepthComponent,
+                    EPixelType.Float);
+            }
+            else
+            {
+                t = CreateFrameBufferTexture(w, h,
+                    EPixelInternalFormat.Rgba8,
+                    EPixelFormat.Rgba,
+                    EPixelType.UnsignedByte);
+            }
             t.MinFilter = ETexMinFilter.Linear;
             t.MagFilter = ETexMagFilter.Linear;
             t.UWrap = ETexWrapMode.ClampToEdge;

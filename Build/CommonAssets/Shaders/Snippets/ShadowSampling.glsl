@@ -14,6 +14,17 @@ bool XRENGINE_ShadowCoordInBounds(vec3 shadowCoord)
            shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0;
 }
 
+int XRENGINE_ResolveContactShadowSampleCount(int requestedSamples, float viewDepth, float contactDistance)
+{
+    if (requestedSamples <= 0 || contactDistance <= 0.0)
+        return 0;
+
+    int clampedSamples = clamp(requestedSamples, 1, 32);
+    float normalizedDepth = max(viewDepth, contactDistance);
+    float depthScale = clamp((contactDistance * 24.0) / normalizedDepth, 0.35, 1.0);
+    return max(1, int(ceil(float(clampedSamples) * depthScale)));
+}
+
 float XRENGINE_SampleShadowMapPCF(sampler2D shadowMap, vec3 shadowCoord, float bias, int kernelSize)
 {
     float shadow = 0.0;
@@ -71,6 +82,12 @@ float XRENGINE_SampleShadowMapArrayPCF(sampler2DArray shadowMap, vec3 shadowCoor
     return shadow / sampleCount;
 }
 
+float XRENGINE_SampleShadowMapArraySimple(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias)
+{
+    float depth = texture(shadowMap, vec3(shadowCoord.xy, layer)).r;
+    return (shadowCoord.z - bias) > depth ? 0.0 : 1.0;
+}
+
 const vec2 XRENGINE_ShadowPoissonDisk[16] = vec2[](
     vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
     vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
@@ -100,6 +117,34 @@ float XRENGINE_SampleShadowMapSoft(sampler2D shadowMap, vec3 shadowCoord, float 
     }
 
     return lit / float(clampedSamples);
+}
+
+float XRENGINE_SampleShadowMapTent4(sampler2D shadowMap, vec3 shadowCoord, float bias, float filterRadius)
+{
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    vec2 radius = max(vec2(max(filterRadius, 0.0)), texelSize);
+    float lit = 0.0;
+
+    lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(-0.5, -0.5) * radius).r ? 1.0 : 0.0;
+    lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(0.5, -0.5) * radius).r ? 1.0 : 0.0;
+    lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(-0.5, 0.5) * radius).r ? 1.0 : 0.0;
+    lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(0.5, 0.5) * radius).r ? 1.0 : 0.0;
+
+    return lit * 0.25;
+}
+
+float XRENGINE_SampleShadowMapArrayTent4(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias, float filterRadius)
+{
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0).xy);
+    vec2 radius = max(vec2(max(filterRadius, 0.0)), texelSize);
+    float lit = 0.0;
+
+    lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5, -0.5) * radius, layer)).r ? 1.0 : 0.0;
+    lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5, -0.5) * radius, layer)).r ? 1.0 : 0.0;
+    lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5, 0.5) * radius, layer)).r ? 1.0 : 0.0;
+    lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5, 0.5) * radius, layer)).r ? 1.0 : 0.0;
+
+    return lit * 0.25;
 }
 
 float XRENGINE_SampleShadowMapArraySoft(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias, int sampleCount, float filterRadius)
@@ -239,6 +284,36 @@ float XRENGINE_SampleShadowMapSimpleAddBias(sampler2D shadowMap, vec3 shadowCoor
     return (shadowCoord.z + bias) <= depth ? 1.0 : 0.0;
 }
 
+float XRENGINE_SampleShadowMapFiltered(sampler2D shadowMap, vec3 shadowCoord, float bias, int requestedSamples, float filterRadius, bool enableSoft)
+{
+    int sampleCount = clamp(requestedSamples, 1, 16);
+    if (sampleCount <= 1)
+        return XRENGINE_SampleShadowMapSimple(shadowMap, shadowCoord, bias);
+
+    if (enableSoft)
+        return XRENGINE_SampleShadowMapSoft(shadowMap, shadowCoord, bias, sampleCount, filterRadius);
+
+    if (sampleCount <= 4)
+        return XRENGINE_SampleShadowMapTent4(shadowMap, shadowCoord, bias, filterRadius);
+
+    return XRENGINE_SampleShadowMapPCF(shadowMap, shadowCoord, bias, 3);
+}
+
+float XRENGINE_SampleShadowMapArrayFiltered(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias, int requestedSamples, float filterRadius, bool enableSoft)
+{
+    int sampleCount = clamp(requestedSamples, 1, 16);
+    if (sampleCount <= 1)
+        return XRENGINE_SampleShadowMapArraySimple(shadowMap, shadowCoord, layer, bias);
+
+    if (enableSoft)
+        return XRENGINE_SampleShadowMapArraySoft(shadowMap, shadowCoord, layer, bias, sampleCount, filterRadius);
+
+    if (sampleCount <= 4)
+        return XRENGINE_SampleShadowMapArrayTent4(shadowMap, shadowCoord, layer, bias, filterRadius);
+
+    return XRENGINE_SampleShadowMapArrayPCF(shadowMap, shadowCoord, layer, bias, 3);
+}
+
 const vec3 XRENGINE_ShadowCubeKernel[20] = vec3[](
     vec3( 1.0,  1.0,  1.0), vec3( 1.0, -1.0,  1.0),
     vec3(-1.0,  1.0,  1.0), vec3(-1.0, -1.0,  1.0),
@@ -251,6 +326,12 @@ const vec3 XRENGINE_ShadowCubeKernel[20] = vec3[](
     vec3(-1.0,  1.0,  0.0), vec3(-1.0, -1.0,  0.0),
     vec3( 0.0,  1.0,  1.0), vec3( 0.0, -1.0, -1.0)
 );
+
+float XRENGINE_SampleShadowCubeSimple(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist)
+{
+    float sampleDepth = texture(shadowMap, normalize(shadowDir)).r * farPlaneDist;
+    return (compareDepth - bias) <= sampleDepth ? 1.0 : 0.0;
+}
 
 float XRENGINE_SampleShadowCubePCF(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist, float sampleRadius)
 {
@@ -282,6 +363,18 @@ float XRENGINE_SampleShadowCubeSoft(samplerCube shadowMap, vec3 shadowDir, float
     }
 
     return lit / float(clampedSamples);
+}
+
+float XRENGINE_SampleShadowCubeFiltered(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist, float sampleRadius, int requestedSamples, bool enableSoft)
+{
+    int sampleCount = clamp(requestedSamples, 1, 20);
+    if (sampleCount <= 1)
+        return XRENGINE_SampleShadowCubeSimple(shadowMap, shadowDir, compareDepth, bias, farPlaneDist);
+
+    if (enableSoft || sampleCount <= 4)
+        return XRENGINE_SampleShadowCubeSoft(shadowMap, shadowDir, compareDepth, bias, farPlaneDist, sampleRadius, sampleCount);
+
+    return XRENGINE_SampleShadowCubePCF(shadowMap, shadowDir, compareDepth, bias, farPlaneDist, sampleRadius);
 }
 
 float XRENGINE_BlendShadowFilter(float hardShadow, float filteredShadow, float depthDelta, float maxBlurDist)

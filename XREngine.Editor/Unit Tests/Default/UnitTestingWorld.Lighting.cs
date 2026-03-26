@@ -20,6 +20,33 @@ public static partial class EditorUnitTests
 
     public static class Lighting
     {
+        public static void AddConfiguredLightProbes(SceneNode rootNode)
+        {
+            switch (Toggles.LightProbe)
+            {
+                case LightProbeMode.Off:
+                    return;
+                case LightProbeMode.Single:
+                    Vector3 singlePosition = ToVector3(Toggles.LightProbeSinglePosition);
+                    AddLightProbes(rootNode, 1, 1, 1, 1.0f, 1.0f, 1.0f, singlePosition);
+                    return;
+                case LightProbeMode.Grid:
+                case LightProbeMode.ModelGrid:
+                    var counts = ClampProbeCounts(Toggles.LightProbeGridCounts);
+                    AddInteractiveLightProbeGrid(
+                        rootNode,
+                        counts.X,
+                        counts.Y,
+                        counts.Z,
+                        ToVector3(Toggles.LightProbeGridSpacing),
+                        ToVector3(Toggles.LightProbeGridCenter),
+                        Toggles.LightProbe == LightProbeMode.ModelGrid);
+                    return;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
         public static void AddLightProbes(SceneNode rootNode, int heightCount, int widthCount, int depthCount, float height, float width, float depth, Vector3 center)
         {
             var probeRoot = new SceneNode(rootNode) { Name = "LightProbeRoot" };
@@ -43,18 +70,15 @@ public static partial class EditorUnitTests
                         var probeComp = probe.AddComponent<LightProbeComponent>();
 
                         probeComp!.Name = "TestLightProbe";
-                        probeComp.SetCaptureResolution(128, false);
-                        probeComp.RealtimeCapture = true;
+                        probeComp.SetCaptureResolution(Toggles.LightProbeResolution, false);
                         probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
-                        probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(Toggles.LightProbeCaptureMs);
-                        if (Toggles.StopRealtimeCaptureSec is not null)
-                            probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(Toggles.StopRealtimeCaptureSec.Value);
+                        ApplyCaptureSettings(probeComp);
                     }
                 }
             }
         }
 
-        public static void AddInteractiveLightProbeGrid(SceneNode rootNode, int widthCount, int heightCount, int depthCount, Vector3 spacing, Vector3 center)
+        public static void AddInteractiveLightProbeGrid(SceneNode rootNode, int widthCount, int heightCount, int depthCount, Vector3 spacing, Vector3 center, bool usePlacementBoundsModels)
         {
             var probeRoot = new SceneNode(rootNode) { Name = "LightProbeGridRoot" };
             var spawner = probeRoot.AddComponent<LightProbeGridSpawnerComponent>()!;
@@ -62,8 +86,7 @@ public static partial class EditorUnitTests
             spawner.ProbeCounts = new IVector3(widthCount, heightCount, depthCount);
             spawner.Spacing = spacing;
             spawner.Offset = center;
-            spawner.RealtimeCapture = false;
-            spawner.AutoCaptureOnActivate = false;
+            spawner.ConfigurePlacementBoundsModels(null, enabled: usePlacementBoundsModels);
             spawner.IrradianceResolution = 32;
             spawner.PreviewProbes = false;
             spawner.PreviewDisplay = LightProbeComponent.ERenderPreview.Environment;
@@ -72,6 +95,7 @@ public static partial class EditorUnitTests
             spawner.PushOutPadding = 0.1f;
             spawner.MaxPushOutDistance = 8.0f;
             spawner.MaxPushOutSteps = 24;
+            ApplyCaptureSettings(spawner);
 
             var customUi = probeRoot.AddComponent<CustomUIComponent>()!;
             customUi.Name = "Light Probe Grid Controls";
@@ -105,6 +129,72 @@ public static partial class EditorUnitTests
                 () => spawner.CaptureStatus,
                 "Reports sequential capture progress for the light probe grid.");
         }
+
+        private static void ApplyCaptureSettings(LightProbeComponent probe)
+        {
+            probe.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(Toggles.LightProbeCaptureMs);
+            probe.StopRealtimeCaptureAfter = Toggles.LightProbeCapture == LightProbeCaptureMode.Realtime && Toggles.StopRealtimeCaptureSec is not null
+                ? TimeSpan.FromSeconds(Toggles.StopRealtimeCaptureSec.Value)
+                : null;
+
+            switch (Toggles.LightProbeCapture)
+            {
+                case LightProbeCaptureMode.None:
+                    probe.RealtimeCapture = false;
+                    probe.AutoCaptureOnActivate = false;
+                    break;
+                case LightProbeCaptureMode.Startup:
+                    probe.RealtimeCapture = false;
+                    probe.AutoCaptureOnActivate = true;
+                    break;
+                case LightProbeCaptureMode.Realtime:
+                    probe.AutoCaptureOnActivate = false;
+                    probe.RealtimeCapture = true;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private static void ApplyCaptureSettings(LightProbeGridSpawnerComponent spawner)
+        {
+            spawner.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(Toggles.LightProbeCaptureMs);
+            spawner.StopRealtimeCaptureAfter = Toggles.LightProbeCapture == LightProbeCaptureMode.Realtime && Toggles.StopRealtimeCaptureSec is not null
+                ? TimeSpan.FromSeconds(Toggles.StopRealtimeCaptureSec.Value)
+                : null;
+
+            switch (Toggles.LightProbeCapture)
+            {
+                case LightProbeCaptureMode.None:
+                    spawner.RealtimeCapture = false;
+                    spawner.AutoCaptureOnActivate = false;
+                    spawner.AutoSequentialCaptureOnBeginPlay = false;
+                    break;
+                case LightProbeCaptureMode.Startup:
+                    spawner.RealtimeCapture = false;
+                    spawner.AutoCaptureOnActivate = false;
+                    spawner.AutoSequentialCaptureOnBeginPlay = true;
+                    break;
+                case LightProbeCaptureMode.Realtime:
+                    spawner.AutoSequentialCaptureOnBeginPlay = false;
+                    spawner.AutoCaptureOnActivate = false;
+                    spawner.RealtimeCapture = true;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private static Settings.ProbeGridCounts ClampProbeCounts(Settings.ProbeGridCounts counts)
+            => new()
+            {
+                X = Math.Max(1, counts.X),
+                Y = Math.Max(1, counts.Y),
+                Z = Math.Max(1, counts.Z),
+            };
+
+        private static Vector3 ToVector3(Settings.TranslationXYZ value)
+            => new(value.X, value.Y, value.Z);
 
         public static void AddDirLight(SceneNode rootNode)
         {
