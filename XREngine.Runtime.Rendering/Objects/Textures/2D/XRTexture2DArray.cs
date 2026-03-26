@@ -130,6 +130,32 @@ namespace XREngine.Rendering
                     texture.VWrap = value;
             }
         }
+        /// <summary>
+        /// When true, sampling this texture performs a depth comparison (hardware PCF).
+        /// Delegates to the underlying <see cref="XRTexture2D"/> slices.
+        /// </summary>
+        public bool EnableComparison
+        {
+            get => Textures.Length > 0 && Textures[0].EnableComparison;
+            set
+            {
+                foreach (XRTexture2D texture in Textures)
+                    texture.EnableComparison = value;
+            }
+        }
+        /// <summary>
+        /// The comparison function used when <see cref="EnableComparison"/> is true.
+        /// Delegates to the underlying <see cref="XRTexture2D"/> slices.
+        /// </summary>
+        public ETextureCompareFunc CompareFunc
+        {
+            get => Textures.Length > 0 ? Textures[0].CompareFunc : ETextureCompareFunc.LessOrEqual;
+            set
+            {
+                foreach (XRTexture2D texture in Textures)
+                    texture.CompareFunc = value;
+            }
+        }
 
         public event Action? Resized = null;
 

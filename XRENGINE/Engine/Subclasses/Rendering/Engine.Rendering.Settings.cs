@@ -325,6 +325,7 @@ namespace XREngine
                 private bool _lightProbesCaptureDepth = false;
                 private bool _allowBinaryProgramCaching = true;
                 private bool _asyncProgramBinaryUpload = true;
+                private bool _asyncProgramCompilation = true;
                 private bool _calculateBlendshapesInComputeShader = false;
                 private bool _calculateSkinningInComputeShader = false;
                 private bool _useGlobalBoneMatricesBufferForComputeSkinning = false;
@@ -758,6 +759,20 @@ namespace XREngine
                 {
                     get => _asyncProgramBinaryUpload;
                     set => SetField(ref _asyncProgramBinaryUpload, value);
+                }
+
+                /// <summary>
+                /// If true, new (uncached) shader programs are compiled and linked on a
+                /// shared background GL context thread instead of the main render thread.
+                /// This avoids main-thread stalls on drivers that lack
+                /// <c>GL_ARB_parallel_shader_compile</c>.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true, uncached shader programs are compiled and linked on a shared GL context thread to avoid main-thread stalls on drivers without GL_ARB_parallel_shader_compile.")]
+                public bool AsyncProgramCompilation
+                {
+                    get => _asyncProgramCompilation;
+                    set => SetField(ref _asyncProgramCompilation, value);
                 }
 
                 /// <summary>

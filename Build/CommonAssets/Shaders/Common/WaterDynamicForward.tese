@@ -10,9 +10,8 @@ layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
 layout (location = 4) out vec2 FragUV0;
 
-uniform mat4 ProjMatrix;
-uniform mat4 ViewMatrix;
-uniform float Time;
+uniform mat4 ViewProjectionMatrix;
+uniform float RenderTime;
 uniform float OceanWaveIntensity;
 uniform float WaveScale;
 uniform float WaveSpeed;
@@ -64,10 +63,10 @@ void main()
         TcFragUV0[1] * bary.y +
         TcFragUV0[2] * bary.z;
 
-    vec3 displaced = Displace(worldPos, Time);
+    vec3 displaced = Displace(worldPos, RenderTime);
 
     FragPos = displaced;
-    FragNorm = EstimateNormal(worldPos, Time);
+    FragNorm = EstimateNormal(worldPos, RenderTime);
     FragUV0 = uv;
-    gl_Position = ProjMatrix * ViewMatrix * vec4(displaced, 1.0);
+    gl_Position = ViewProjectionMatrix * vec4(displaced, 1.0);
 }

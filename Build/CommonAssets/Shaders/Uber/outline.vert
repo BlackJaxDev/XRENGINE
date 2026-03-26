@@ -25,12 +25,13 @@ layout(location = 5) in vec4 Color0;
 uniform mat4 ModelMatrix;
 uniform mat4 ViewMatrix_VTX;
 uniform mat4 ProjMatrix_VTX;
+uniform mat4 ViewProjectionMatrix_VTX;
 
 // Convenience macros for compatibility
 #define u_ModelMatrix ModelMatrix
 #define u_ViewMatrix ViewMatrix_VTX
 #define u_ProjectionMatrix ProjMatrix_VTX
-#define u_MVPMatrix (ProjMatrix_VTX * ViewMatrix_VTX * ModelMatrix)
+#define u_MVPMatrix (ViewProjectionMatrix_VTX * ModelMatrix)
 #define u_NormalMatrix mat3(transpose(inverse(ModelMatrix)))
 
 // Camera data

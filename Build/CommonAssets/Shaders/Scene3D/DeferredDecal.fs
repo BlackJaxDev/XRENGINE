@@ -17,6 +17,7 @@ uniform sampler2D Texture4; //Decal AlbedoOpacity
 
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 uniform mat4 InverseViewMatrix;
 uniform mat4 BoxWorldMatrix;
@@ -33,7 +34,7 @@ void main()
 	float depth = texture(DepthView, uv).r;
 
 	//Resolve world fragment position using depth and screen UV
-	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
+	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
 	vec4 fragPosOS = (inverse(BoxWorldMatrix) * vec4(fragPosWS, 1.0f));
 	fragPosOS.xyz /= BoxHalfScale;
 

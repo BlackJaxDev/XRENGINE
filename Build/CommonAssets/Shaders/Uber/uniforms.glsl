@@ -11,6 +11,7 @@
 uniform mat4 ModelMatrix;
 uniform mat4 ViewMatrix_VTX;
 uniform mat4 ProjMatrix_VTX;
+uniform mat4 ViewProjectionMatrix_VTX;
 
 // Camera (matches EEngineUniform.CameraPosition)
 uniform vec3 CameraPosition;
@@ -25,7 +26,7 @@ uniform float RenderTime;
 #define u_ViewMatrix ViewMatrix_VTX
 #define u_ProjectionMatrix ProjMatrix_VTX
 #define u_ModelViewMatrix (ViewMatrix_VTX * ModelMatrix)
-#define u_ModelViewProjectionMatrix (ProjMatrix_VTX * ViewMatrix_VTX * ModelMatrix)
+#define u_ModelViewProjectionMatrix (ViewProjectionMatrix_VTX * ModelMatrix)
 #define u_CameraPosition CameraPosition
 #define u_Time RenderTime
 #define u_ScreenParams vec4(ScreenWidth, ScreenHeight, 1.0 + 1.0/ScreenWidth, 1.0 + 1.0/ScreenHeight)

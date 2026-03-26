@@ -35,7 +35,7 @@ namespace XREngine.Rendering
 
         public override Vector2 GetFrustumSizeAtDistance(float drawDistance)
         {
-            var invProj = GetProjectionMatrix().Inverted();
+            var invProj = GetInverseProjectionMatrix();
             float normDist = (drawDistance - NearZ) / (FarZ - NearZ);
             //unproject the the points on the clip space box at normalized distance
             Vector3 bottomLeft = Vector3.Transform(new Vector3(-1, -1, normDist), invProj);
@@ -91,7 +91,7 @@ namespace XREngine.Rendering
         }
 
         protected override Frustum CalculateUntransformedFrustum()
-            => new((_projectionMatrix ?? CalculateProjectionMatrix()).Inverted());
+            => new(GetInverseProjectionMatrix());
 
         /// <summary>
         /// Creates a new OpenVR camera from previous parameters.

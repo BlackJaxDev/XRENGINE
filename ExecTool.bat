@@ -23,6 +23,7 @@ call :AddSep
 call :AddTool "Build" "Tools\Build-DocFx.bat" "Build the DocFX API documentation site"
 call :AddTool "Build" "Tools\Build-Submodules.bat" "Compile third-party submodules (Debug by default)"
 call :AddTool "Build" "Tools\Test-CookCommonAssets.ps1" "Cook CommonAssets into a .pak archive (builds editor first)"
+call :AddTool "Build" "Tools\Get-PixelFurnaceTextures.ps1" "Download free Pixel-Furnace texture ZIPs into Build\CommonAssets\Textures\Samples"
 call :AddSep
 call :AddTool "Editor" "Tools\Start-Editor.bat" "Launch the XREngine Editor via dotnet run"
 call :AddTool "Editor" "Tools\Start-NetworkTest.bat" "Launch a network test (server+client or pose sync)"

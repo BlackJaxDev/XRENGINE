@@ -91,6 +91,39 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
+            /// Initializes the shared context using a pre-created shared window.
+            /// The caller is responsible for creating the window with
+            /// <see cref="WindowOptions.SharedContext"/> pointing at the primary context
+            /// and for restoring the primary context as current afterwards.
+            /// </summary>
+            public bool Initialize(IWindow preCreatedSharedWindow)
+            {
+                if (_running)
+                    return true;
+
+                _window = preCreatedSharedWindow;
+                _cts = new CancellationTokenSource();
+                var token = _cts.Token;
+
+                _thread = new Thread(() => Run(preCreatedSharedWindow, token))
+                {
+                    IsBackground = true,
+                    Name = "XR Program Binary Loader",
+                };
+                _thread.Start();
+
+                SpinWait.SpinUntil(() => _running || token.IsCancellationRequested, TimeSpan.FromSeconds(3));
+                if (!_running)
+                {
+                    Debug.RenderingWarning("[SharedContext] Background thread failed to start.");
+                    Dispose();
+                    return false;
+                }
+
+                return true;
+            }
+
+            /// <summary>
             /// Queues a GL job to execute on the shared context thread.
             /// The action receives the shared context's GL API instance.
             /// </summary>

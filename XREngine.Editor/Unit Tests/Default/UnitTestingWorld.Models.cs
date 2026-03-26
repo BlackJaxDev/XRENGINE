@@ -282,6 +282,9 @@ public static partial class EditorUnitTests
             ModelComponent[] modelsArray = [.. models];
             foreach (var spawner in spawners)
             {
+                if (!spawner.UsePlacementBoundsModels)
+                    continue;
+
                 spawner.ConfigurePlacementBoundsModels(modelsArray, enabled: true);
                 Debug.Out($"[LightProbeGrid] Wired {modelsArray.Length} imported ModelComponents as placement bounds for '{spawner.Name}'.");
             }

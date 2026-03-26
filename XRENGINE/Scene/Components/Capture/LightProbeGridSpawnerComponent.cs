@@ -89,6 +89,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
     private bool _autoCaptureOnActivate = true;
     private bool _autoSequentialCaptureOnBeginPlay;
     private TimeSpan? _realTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(100.0);
+    private TimeSpan? _stopRealtimeCaptureAfter;
     private uint _irradianceResolution = 32;
     private LightProbeComponent.EInfluenceShape _influenceShape = LightProbeComponent.EInfluenceShape.Sphere;
     private Vector3 _influenceOffset = Vector3.Zero;
@@ -161,6 +162,17 @@ public class LightProbeGridSpawnerComponent : XRComponent
         set
         {
             if (SetField(ref _realTimeCaptureUpdateInterval, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public TimeSpan? StopRealtimeCaptureAfter
+    {
+        get => _stopRealtimeCaptureAfter;
+        set
+        {
+            if (SetField(ref _stopRealtimeCaptureAfter, value))
                 ApplyDefaultsToExistingProbes();
         }
     }
@@ -527,6 +539,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
         probe.RealtimeCapture = RealtimeCapture;
         probe.AutoCaptureOnActivate = AutoCaptureOnActivate;
         probe.RealTimeCaptureUpdateInterval = RealTimeCaptureUpdateInterval;
+        probe.StopRealtimeCaptureAfter = StopRealtimeCaptureAfter;
         probe.IrradianceResolution = IrradianceResolution;
         probe.InfluenceShape = InfluenceShape;
         probe.InfluenceOffset = InfluenceOffset;

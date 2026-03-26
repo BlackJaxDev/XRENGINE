@@ -410,6 +410,7 @@ Build/Dependencies/NvComp/
 Samples/Build/Engine/
 Samples/MonkeyBallVR/Build/
 Samples/MonkeyBallVR/Intermediate/
+Build/CommonAssets/Textures/Samples/
 XREngine.Audio/runtimes/win-x64/native/phonon.dll
 *.zip
 Screenshots/

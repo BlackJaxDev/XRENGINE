@@ -331,6 +331,7 @@ namespace XREngine.Rendering
                 : null;
 
             SyncParametersToShaderUniforms();
+            SyncRequiredEngineUniforms();
             SyncAlphaCutoffParameter();
         }
 
@@ -677,6 +678,35 @@ namespace XREngine.Rendering
             ShaderVar[]? current = Parameters;
             if (current is null || current.Length != mergedArray.Length || !current.SequenceEqual(mergedArray))
                 Parameters = mergedArray;
+        }
+
+        /// <summary>
+        /// Scans all shader sources for engine-managed uniform names and automatically
+        /// sets <see cref="XRMaterialBase.RenderOptions"/>.<see cref="RenderingParameters.RequiredEngineUniforms"/>
+        /// to match. Called from <see cref="ShadersChanged"/> after <see cref="SyncParametersToShaderUniforms"/>.
+        /// </summary>
+        private void SyncRequiredEngineUniforms()
+        {
+            if (Shaders.Count == 0)
+                return;
+
+            var flags = EUniformRequirements.None;
+            bool anySourceParsed = false;
+
+            foreach (var shader in Shaders)
+            {
+                if (shader?.Source?.Text is not { Length: > 0 } source)
+                    continue;
+
+                anySourceParsed = true;
+                flags |= UniformRequirementsDetection.DetectFromSource(source);
+            }
+
+            if (!anySourceParsed)
+                return;
+
+            if (RenderOptions.RequiredEngineUniforms != flags)
+                RenderOptions.RequiredEngineUniforms = flags;
         }
 
         public static XRMaterial CreateUnlitAlphaTextureMaterialForward(XRTexture2D texture)

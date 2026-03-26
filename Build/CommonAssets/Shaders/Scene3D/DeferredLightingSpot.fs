@@ -24,8 +24,11 @@ uniform sampler2D ShadowMap; //Spot Shadow Map
 
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
+uniform mat4 ViewProjectionMatrix;
 
 uniform float MinFade = 500.0f;
 uniform float MaxFade = 10000.0f;
@@ -34,12 +37,12 @@ uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 uniform bool LightHasShadowMap = true; // Added
-uniform int ShadowSamples = 1;
+uniform int ShadowSamples = 4;
 uniform float ShadowFilterRadius = 0.0012f;
 uniform bool EnablePCSS = true;
 uniform bool EnableContactShadows = true;
 uniform float ContactShadowDistance = 0.1f;
-uniform int ContactShadowSamples = 8;
+uniform int ContactShadowSamples = 4;
 
 struct SpotLight
 {
@@ -110,6 +113,38 @@ float SampleShadowMapPCFLocal(in sampler2D shadowMap, in vec3 shadowCoord, in fl
 	return lit / sampleCount;
 }
 
+float SampleShadowMapSimpleLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias)
+{
+	float depth = texture(shadowMap, shadowCoord.xy).r;
+	return (shadowCoord.z - bias) <= depth ? 1.0f : 0.0f;
+}
+
+float SampleShadowMapTent4Local(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in float filterRadius)
+{
+	vec2 texelSize = 1.0f / vec2(textureSize(shadowMap, 0));
+	vec2 radius = max(vec2(max(filterRadius, 0.0f)), texelSize);
+	float lit = 0.0f;
+
+	lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(-0.5f, -0.5f) * radius).r ? 1.0f : 0.0f;
+	lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(0.5f, -0.5f) * radius).r ? 1.0f : 0.0f;
+	lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(-0.5f, 0.5f) * radius).r ? 1.0f : 0.0f;
+	lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(0.5f, 0.5f) * radius).r ? 1.0f : 0.0f;
+
+	return lit * 0.25f;
+}
+
+float SampleShadowMapFilteredLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int requestedSamples, in float filterRadius, in bool enableSoft)
+{
+	int sampleCount = clamp(requestedSamples, 1, 16);
+	if (sampleCount <= 1)
+		return SampleShadowMapSimpleLocal(shadowMap, shadowCoord, bias);
+	if (enableSoft)
+		return SampleShadowMapSoftLocal(shadowMap, shadowCoord, bias, sampleCount, filterRadius);
+	if (sampleCount <= 4)
+		return SampleShadowMapTent4Local(shadowMap, shadowCoord, bias, filterRadius);
+	return SampleShadowMapPCFLocal(shadowMap, shadowCoord, bias, 3);
+}
+
 float GetShadowBias(in float NoL)
 {
     float mapped = pow(ShadowBase * (1.0f - NoL), ShadowMult);
@@ -123,13 +158,13 @@ float SampleContactShadowScreenSpaceLocal(vec3 fragPosWS, vec3 lightDirWS, float
 	if (maxDistance <= 0.0f || numSteps <= 0) return 1.0f;
 	int steps = clamp(numSteps, 1, 32);
 
-	mat4 viewMatrix = inverse(InverseViewMatrix);
-	vec3 fragPosVS = (viewMatrix * vec4(fragPosWS, 1.0f)).xyz;
-	vec3 lightDirVS = normalize(mat3(viewMatrix) * lightDirWS);
+	vec3 fragPosVS = (ViewMatrix * vec4(fragPosWS, 1.0f)).xyz;
+	vec3 lightDirVS = normalize(mat3(ViewMatrix) * lightDirWS);
 	vec3 rayEndVS = fragPosVS + lightDirVS * maxDistance;
+	vec3 rayEndWS = fragPosWS + lightDirWS * maxDistance;
 
-	vec4 startClip = ProjMatrix * vec4(fragPosVS, 1.0f);
-	vec4 endClip = ProjMatrix * vec4(rayEndVS, 1.0f);
+	vec4 startClip = ViewProjectionMatrix * vec4(fragPosWS, 1.0f);
+	vec4 endClip = ViewProjectionMatrix * vec4(rayEndWS, 1.0f);
 	vec3 startSS = startClip.xyz / startClip.w * 0.5f + 0.5f;
 	vec3 endSS = endClip.xyz / endClip.w * 0.5f + 0.5f;
 	vec3 rayDelta = endSS - startSS;
@@ -177,6 +212,15 @@ float SampleContactShadowScreenSpaceLocal(vec3 fragPosWS, vec3 lightDirWS, float
 	return 1.0f - occlusion;
 }
 
+int ResolveContactShadowSampleCountLocal(int requestedSamples, float viewDepth, float contactDistance)
+{
+	if (requestedSamples <= 0 || contactDistance <= 0.0f) return 0;
+	int clampedSamples = clamp(requestedSamples, 1, 32);
+	float normalizedDepth = max(viewDepth, contactDistance);
+	float depthScale = clamp((contactDistance * 24.0f) / normalizedDepth, 0.35f, 1.0f);
+	return max(1, int(ceil(float(clampedSamples) * depthScale)));
+}
+
 // returns1 lit,0 shadow
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
 {
@@ -192,21 +236,26 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
  return 1.0f;
 	//Create bias depending on angle of normal to the light
 	float bias = GetShadowBias(NoL);
+	float viewDepth = abs((ViewMatrix * vec4(fragPosWS, 1.0f)).z);
+	int contactSampleCount = ResolveContactShadowSampleCountLocal(
+		ContactShadowSamples,
+		viewDepth,
+		ContactShadowDistance);
 	float contact = EnableContactShadows
 		? SampleContactShadowScreenSpaceLocal(
 			fragPosWS,
 			normalize(LightData.Position - fragPosWS),
 			ContactShadowDistance,
-			ContactShadowSamples)
+			contactSampleCount)
 		: 1.0f;
 
-	if (EnablePCSS)
-	{
-		int sampleCount = ShadowSamples > 1 ? ShadowSamples : 16;
-		return SampleShadowMapSoftLocal(ShadowMap, fragCoord, bias, sampleCount, ShadowFilterRadius) * contact;
-	}
-
-	return SampleShadowMapPCFLocal(ShadowMap, fragCoord, bias, 3) * contact;
+	return SampleShadowMapFilteredLocal(
+		ShadowMap,
+		fragCoord,
+		bias,
+		ShadowSamples,
+		ShadowFilterRadius,
+		EnablePCSS) * contact;
 }
 vec3 CalcColor(
 in float NoL,
@@ -259,7 +308,7 @@ in vec3 F0)
 
 	//Make transition smooth rather than linear
 	float spotAmt = smoothstep(0.0f, 1.0f, time);
-	float distAttn = XRENGINE_Attenuate(lightDist / LightData.Brightness, LightData.Radius / LightData.Brightness);
+	float distAttn = XRENGINE_Attenuate(lightDist, LightData.Radius) * LightData.Brightness;
 	float attn = spotAmt * distAttn * pow(clampedCosine, LightData.Exponent);
 
 	vec3 H = normalize(V + L);
@@ -315,7 +364,7 @@ void main()
 	}
 
 	//Resolve world fragment position using depth and screen UV
-	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
+	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
 
   	float fadeRange = MaxFade - MinFade;
 	vec3 CameraPosition = vec3(InverseViewMatrix[3]);

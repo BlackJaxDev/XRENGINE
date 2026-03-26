@@ -671,8 +671,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
         var camera = State.SceneCamera;
         if (camera is not null)
         {
-            Matrix4x4.Invert(camera.ProjectionMatrix, out var invProj);
-            program.Uniform("InvProjectionMatrix", invProj);
+            program.Uniform("InvProjectionMatrix", camera.InverseProjectionMatrix);
             program.Uniform("CameraToWorldMatrix", camera.Transform.RenderMatrix);
         }
     }

@@ -101,6 +101,7 @@ The Unit Testing World is configured by a settings file and loaded on startup.
 - **How to inspect properties and enum choices while editing**: the workspace maps the settings file to `.vscode/schemas/unit-testing-world-settings.schema.json`. In VS Code, hover a property to see its description, use completion inside enum-backed string values to see supported choices, and use the `ImportFlags` snippets for common Assimp flag combinations.
 - **What happens on load**: the JSON is deserialized into `UnitTestingWorld.Toggles` (type `UnitTestingWorld.Settings`). If the file doesn’t exist yet, a default one is written out.
 - **How it affects the world**: `UnitTestingWorld.CreateSelectedWorld(...)` switches on `Toggles.WorldKind` to choose which unit-test world factory to run, and the other toggle values control what gets added (models to import, lighting, physics, UI overlays, etc.).
+- **Light-probe layout and capture**: `LightProbe` is enum-backed now (`Off`, `Single`, `Grid`, `ModelGrid`) and `LightProbeCapture` separately controls probe capture policy (`None`, `Startup`, `Realtime`). `ModelGrid` uses imported model bounds when available, while `Grid` keeps the configured rectangular layout.
 - **Quick water-shader preview**: set `DynamicWaterQuad` to `true` in `Assets/UnitTestingWorldSettings.jsonc` to spawn a ready-made tessellated water quad preview with refraction grabs, foam, and animated sphere/capsule eddy interactors. The OpenGL unit-test path is the reliable way to validate it today.
 - **Per-model material selection**: each entry in `ModelsToImport` now owns its own `MaterialMode` value. Supported values are `Deferred`, `Forward`, and `Uber`, and they apply to both `Static` and `Animated` model imports.
 - **Per-model static collider generation**: static `ModelsToImport` entries can set `GenerateCoacdCollidersPerSubmesh` to `true` to split imported submeshes into separate model components and auto-attach CoACD-generated PhysX convex colliders for each one.
@@ -200,6 +201,14 @@ For a quick networking test:
 ./Tools/Start-NetworkTest.bat
 ./Tools/Start-NetworkTest.bat pose
 ```
+
+## Texture download helper
+
+- `Tools/Get-PixelFurnaceTextures.ps1` discovers Pixel-Furnace's free texture ZIPs through the site's listing endpoint and downloads them into `Build/Dependencies/PixelFurnaceTextures` by default.
+- Also available through `ExecTool` from the `Build` section for one-click interactive use.
+- Example: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Get-PixelFurnaceTextures.ps1`
+- Filter without downloading: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Get-PixelFurnaceTextures.ps1 -NamePattern '*Brick*' -ListOnly`
+- Pixel-Furnace allows commercial and non-commercial project use, but their terms do not allow redistributing the textures by themselves or as a collection.
 
 ## Native Dependencies
 - `CoACD` – `dotnet build` invokes `Tools/Dependencies/Build-CoACD.ps1` (when needed) to fetch/build CoACD and produce `lib_coacd.*` under `XRENGINE/runtimes/<rid>/native`. Use `/p:ForceCoACDBuild=true` to force a rebuild, or run the script manually. (Requires `git` + `cmake`; on Windows it uses the VS 2022 generator.) The legacy wheel extractor (`Tools/Dependencies/Get-CoACD.ps1`) remains available if you prefer vendor-provided binaries.

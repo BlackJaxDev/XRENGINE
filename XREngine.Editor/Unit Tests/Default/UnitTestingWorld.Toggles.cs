@@ -55,6 +55,21 @@ public static partial class EditorUnitTests
         IMGUI,
     }
 
+    public enum LightProbeMode
+    {
+        Off,
+        Single,
+        Grid,
+        ModelGrid,
+    }
+
+    public enum LightProbeCaptureMode
+    {
+        None,
+        Startup,
+        Realtime,
+    }
+
     public class Settings
     {
         public UnitTestWorldKind WorldKind { get; set; } = UnitTestWorldKind.Default;
@@ -93,9 +108,15 @@ public static partial class EditorUnitTests
         public bool SpotLight = false;
         public bool DirLight2 = false;
         public bool PointLight = false;
-        public bool LightProbe = true; //Adds a test light probe to the scene for PBR lighting.
-        public float LightProbeCaptureMs = 100;
-        public float? StopRealtimeCaptureSec = 5; //5
+        public LightProbeMode LightProbe { get; set; } = LightProbeMode.ModelGrid; //Selects which light-probe layout gets added to the scene.
+        public LightProbeCaptureMode LightProbeCapture { get; set; } = LightProbeCaptureMode.None; //Controls whether light probes capture never, once on startup, or continuously.
+        public float LightProbeCaptureMs = 100; //Interval between realtime captures, in milliseconds.
+        public float? StopRealtimeCaptureSec = 5; //Optional realtime capture timeout, in seconds. Use null to keep realtime capture running.
+        public uint LightProbeResolution { get; set; } = 128; //Capture cubemap resolution used for individually spawned light probes.
+        public ProbeGridCounts LightProbeGridCounts { get; set; } = new(); //Probe counts used by Grid and ModelGrid layouts.
+        public TranslationXYZ LightProbeGridSpacing { get; set; } = new() { X = 10.0f, Y = 10.0f, Z = 10.0f }; //Spacing between probes for Grid and ModelGrid layouts.
+        public TranslationXYZ LightProbeGridCenter { get; set; } = new() { X = 0.0f, Y = 50.0f, Z = 0.0f }; //Center/offset for Grid and ModelGrid layouts.
+        public TranslationXYZ LightProbeSinglePosition { get; set; } = new() { X = 0.0f, Y = 1.25f, Z = -7.5f }; //World position for Single light-probe mode.
 
         //Pawns
         public bool VRPawn = true; //Enables VR input and pawn.
@@ -165,6 +186,13 @@ public static partial class EditorUnitTests
             public float X { get; set; } = 0.0f;
             public float Y { get; set; } = 0.0f;
             public float Z { get; set; } = 0.0f;
+        }
+
+        public class ProbeGridCounts
+        {
+            public int X { get; set; } = 10;
+            public int Y { get; set; } = 1;
+            public int Z { get; set; } = 10;
         }
 
         public List<ModelImportSettings> ModelsToImport { get; set; } =

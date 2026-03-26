@@ -15,8 +15,7 @@ layout(std430, binding = 0) buffer LinesBuffer
 
 #include "Common/Debug/helper/DebugPerVertex.glsl"
 
-uniform mat4 InverseViewMatrix;
-uniform mat4 ProjMatrix;
+uniform mat4 ViewProjectionMatrix;
 uniform float LineWidth;
 uniform int TotalLines;
 
@@ -27,15 +26,13 @@ uniform float ScreenHeight;
 
 void main()
 {
-    mat4 viewProj = ProjMatrix * inverse(InverseViewMatrix);
-
     // Touch vPos to ensure Position attribute is kept alive across stages
     vec3 anchor = vPos[0];
     anchor *= 0.0f;
 
     int idx = instanceID[0] * 7;
-    vec4 start = viewProj * vec4(vec3(LineData[idx], LineData[idx + 1], LineData[idx + 2]) + anchor, 1.0);
-    vec4 end = viewProj * vec4(vec3(LineData[idx + 3], LineData[idx + 4], LineData[idx + 5]) + anchor, 1.0);
+    vec4 start = ViewProjectionMatrix * vec4(vec3(LineData[idx], LineData[idx + 1], LineData[idx + 2]) + anchor, 1.0);
+    vec4 end = ViewProjectionMatrix * vec4(vec3(LineData[idx + 3], LineData[idx + 4], LineData[idx + 5]) + anchor, 1.0);
     vec4 color = unpackUnorm4x8(floatBitsToUint(LineData[idx + 6]));
 
     EmitLineQuad(start, end, color);

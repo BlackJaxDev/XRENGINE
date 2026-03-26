@@ -497,6 +497,15 @@ namespace XREngine.Rendering.OpenGL
             int vWrap = (int)ToGLEnum(Data.VWrap);
             Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrap);
 
+            // Depth-comparison mode for hardware PCF (sampler2DShadow).
+            int compareMode = (int)(Data.EnableComparison ? GLEnum.CompareRefToTexture : GLEnum.None);
+            Api.TextureParameterI(BindingId, GLEnum.TextureCompareMode, in compareMode);
+            if (Data.EnableComparison)
+            {
+                int compareFunc = (int)ToGLEnum(Data.CompareFunc);
+                Api.TextureParameterI(BindingId, GLEnum.TextureCompareFunc, in compareFunc);
+            }
+
             // Clamp base/max mip level to what we actually have.
             // This is critical for render-target textures (e.g., shadow maps) that only define mip 0.
             // Leaving maxLevel at a large default (e.g., 1000) can make the driver treat the attachment as incomplete.
@@ -505,7 +514,9 @@ namespace XREngine.Rendering.OpenGL
         }
 
         public override void PreSampling()
-            => Data.GrabPass?.Grab(XRFrameBuffer.BoundForWriting, Engine.Rendering.State.RenderingPipelineState?.WindowViewport);
+            => Data.GrabPass?.Grab(
+                Data.GrabPass.ReadFBO ?? XRFrameBuffer.BoundForWriting,
+                Engine.Rendering.State.RenderingPipelineState?.WindowViewport);
 
         protected internal override void PostGenerated()
         {

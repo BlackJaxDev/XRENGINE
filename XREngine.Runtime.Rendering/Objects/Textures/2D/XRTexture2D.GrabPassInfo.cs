@@ -19,6 +19,15 @@ namespace XREngine.Rendering
             [MemoryPackIgnore]
             private XRTexture2D? _resultTexture;
 
+            private XRFrameBuffer? _readFBO = null;
+            //TODO: should this be serialized?
+            [MemoryPackIgnore]
+            public XRFrameBuffer? ReadFBO
+            {
+                get => _readFBO;
+                set => SetField(ref _readFBO, value);
+            }
+
             public EReadBufferMode ReadBuffer
             {
                 get => _readBuffer;
@@ -64,7 +73,20 @@ namespace XREngine.Rendering
             [MemoryPackIgnore]
             private XRFrameBuffer? _resultFBO = null;
             [MemoryPackIgnore]
-            public XRFrameBuffer? ResultFBO => _resultFBO ??= (ResultTexture is null ? null : new((ResultTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1)));
+            public XRFrameBuffer? ResultFBO => _resultFBO ??= CreateResultFBO();
+
+            private XRFrameBuffer? CreateResultFBO()
+            {
+                if (ResultTexture is null)
+                    return null;
+
+                // Depth-only grabs need a depth attachment so glBlitFramebuffer
+                // can copy the depth buffer. Color grabs use ColorAttachment0.
+                var attachment = (_depthBit && !_colorBit)
+                    ? EFrameBufferAttachment.DepthAttachment
+                    : EFrameBufferAttachment.ColorAttachment0;
+                return new((ResultTexture, attachment, 0, -1));
+            }
 
             public GrabPassInfo(XRTexture2D? resultTexture, EReadBufferMode readBuffer, bool colorBit, bool depthBit, bool stencilBit, bool linearFilter, bool resizeToFit, float resizeScale)
             {

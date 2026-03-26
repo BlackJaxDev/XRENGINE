@@ -60,6 +60,7 @@ namespace XREngine.Rendering
         {
             mat.RenderOptions.CullMode = ECullMode.None;
             FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
+            FullScreenMesh.GenerateAsync = false;
             FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
             FullScreenMesh.SettingUniforms += SetUniforms;
 
@@ -94,6 +95,7 @@ namespace XREngine.Rendering
         public void Render(XRFrameBuffer? target = null, bool forceNoStereo = false)
         {
             target?.BindForWriting();
+
             var state = Engine.Rendering.State.RenderingPipelineState;
             if (state != null)
             {

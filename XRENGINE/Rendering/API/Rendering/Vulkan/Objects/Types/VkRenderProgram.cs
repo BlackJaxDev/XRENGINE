@@ -1355,6 +1355,8 @@ public unsafe partial class VulkanRenderer
                     value = new ProgramUniformValue(EShaderVarType._float, Engine.Time.Timer.Update.Delta, false);
                     return true;
                 case EEngineUniform.ViewMatrix:
+                case EEngineUniform.LeftEyeViewMatrix:
+                case EEngineUniform.RightEyeViewMatrix:
                 case EEngineUniform.PrevViewMatrix:
                 case EEngineUniform.PrevLeftEyeViewMatrix:
                 case EEngineUniform.PrevRightEyeViewMatrix:
@@ -1364,6 +1366,19 @@ public unsafe partial class VulkanRenderer
                 case EEngineUniform.LeftEyeInverseViewMatrix:
                 case EEngineUniform.RightEyeInverseViewMatrix:
                     value = new ProgramUniformValue(EShaderVarType._mat4, camera?.Transform.RenderMatrix ?? Matrix4x4.Identity, false);
+                    return true;
+                case EEngineUniform.InverseProjMatrix:
+                case EEngineUniform.LeftEyeInverseProjMatrix:
+                case EEngineUniform.RightEyeInverseProjMatrix:
+                    value = new ProgramUniformValue(
+                        EShaderVarType._mat4,
+                        camera?.InverseProjectionMatrix ?? Matrix4x4.Identity,
+                        false);
+                    return true;
+                case EEngineUniform.ViewProjectionMatrix:
+                case EEngineUniform.LeftEyeViewProjectionMatrix:
+                case EEngineUniform.RightEyeViewProjectionMatrix:
+                    value = new ProgramUniformValue(EShaderVarType._mat4, camera?.ViewProjectionMatrix ?? Matrix4x4.Identity, false);
                     return true;
                 case EEngineUniform.ProjMatrix:
                 case EEngineUniform.PrevProjMatrix:

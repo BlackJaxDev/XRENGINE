@@ -221,10 +221,7 @@ namespace XREngine.Rendering
         {
             // The engine's frustum helpers support reconstruction from inverse projection.
             // This also correctly handles asymmetric (off-axis) projections.
-            Matrix4x4 proj = _projectionMatrix ?? CalculateProjectionMatrix();
-            if (!Matrix4x4.Invert(proj, out Matrix4x4 invProj))
-                invProj = Matrix4x4.Identity;
-            return new Frustum(invProj);
+            return new Frustum(GetInverseProjectionMatrix());
         }
 
         public override void SetUniforms(XRRenderProgram program)

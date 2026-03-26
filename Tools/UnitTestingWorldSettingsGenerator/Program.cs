@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Linq;
 using XREngine.Editor;
 
@@ -161,6 +162,7 @@ static class SourceMetadataParser
         ParseClass(source, "ModelImportSettings", metadata);
         ParseClass(source, "YawPitchRollDegrees", metadata);
         ParseClass(source, "TranslationXYZ", metadata);
+        ParseClass(source, "ProbeGridCounts", metadata);
         return metadata;
     }
 
@@ -684,7 +686,7 @@ static class SchemaGenerator
 
         foreach (string key in copyKeys)
         {
-            if (existing[key] is not null)
+            if (generated[key] is null && existing[key] is not null)
                 generated[key] = existing[key]!.DeepClone();
         }
 
@@ -711,7 +713,8 @@ static class SchemaGenerator
             return "string";
         if (nonNullable == typeof(bool))
             return "boolean";
-        if (nonNullable == typeof(int) || nonNullable == typeof(long) || nonNullable == typeof(short) || nonNullable == typeof(byte))
+        if (nonNullable == typeof(int) || nonNullable == typeof(long) || nonNullable == typeof(short) || nonNullable == typeof(byte) ||
+            nonNullable == typeof(uint) || nonNullable == typeof(ulong) || nonNullable == typeof(ushort) || nonNullable == typeof(sbyte))
             return "integer";
         if (nonNullable == typeof(float) || nonNullable == typeof(double) || nonNullable == typeof(decimal))
             return "number";
@@ -722,7 +725,10 @@ static class SchemaGenerator
 
 static class SettingsDocumentGenerator
 {
-    private static readonly JsonSerializer Serializer = JsonSerializer.CreateDefault();
+    private static readonly JsonSerializer Serializer = JsonSerializer.CreateDefault(new JsonSerializerSettings
+    {
+        Converters = [new StringEnumConverter()]
+    });
 
     public static JObject Build(TypeMetadata rootMetadata, JObject? existingSettings)
     {
@@ -759,15 +765,15 @@ static class SettingsDocumentGenerator
 
     private static JToken MergeValue(MemberMetadata member, JToken? generatedValue, JToken existingValue)
     {
-        if (member.IsEnum && !member.IsFlagsEnum && existingValue.Type == JTokenType.String)
+        if (member.IsEnum && !member.IsFlagsEnum)
         {
-            string? existingText = existingValue.Value<string>();
-            if (!string.IsNullOrWhiteSpace(existingText))
-            {
-                string? canonical = member.EnumNames.FirstOrDefault(name => string.Equals(name, existingText, StringComparison.OrdinalIgnoreCase));
-                if (!string.IsNullOrWhiteSpace(canonical))
-                    return canonical;
-            }
+            string? canonicalExisting = NormalizeEnumValue(member, existingValue);
+            if (!string.IsNullOrWhiteSpace(canonicalExisting))
+                return canonicalExisting;
+
+            string? canonicalGenerated = NormalizeEnumValue(member, generatedValue);
+            if (!string.IsNullOrWhiteSpace(canonicalGenerated))
+                return canonicalGenerated;
         }
 
         if (member.IsCollection && member.ElementType is not null && existingValue is JArray existingArray)
@@ -793,6 +799,33 @@ static class SettingsDocumentGenerator
             return MergeObject(member.ObjectMetadata, generatedObject, existingObjectValue);
 
         return existingValue.DeepClone();
+    }
+
+    public static string NormalizeEnumForWrite(MemberMetadata member, JToken? value)
+        => NormalizeEnumValue(member, value) ?? member.EnumNames.First();
+
+    private static string? NormalizeEnumValue(MemberMetadata member, JToken? value)
+    {
+        if (value is null)
+            return null;
+
+        if (value.Type == JTokenType.String)
+        {
+            string? text = value.Value<string>();
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            return member.EnumNames.FirstOrDefault(name => string.Equals(name, text, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (value.Type == JTokenType.Integer)
+        {
+            int rawValue = value.Value<int>();
+            if (Enum.IsDefined(member.NonNullableType, rawValue))
+                return Enum.GetName(member.NonNullableType, rawValue);
+        }
+
+        return null;
     }
 }
 
@@ -863,8 +896,11 @@ static class JsoncWriter
         if (member.ObjectMetadata is not null && value is JObject obj)
             return WriteObject(member.ObjectMetadata, obj, schemaProperty, indentLevel);
 
-        if (member.IsEnum && !member.IsFlagsEnum && value.Type == JTokenType.String)
-            return JsonConvert.ToString(value.Value<string>());
+        if (member.IsEnum && !member.IsFlagsEnum)
+        {
+            string enumValue = SettingsDocumentGenerator.NormalizeEnumForWrite(member, value);
+            return JsonConvert.ToString(enumValue);
+        }
 
         return value.ToString(Formatting.None);
     }

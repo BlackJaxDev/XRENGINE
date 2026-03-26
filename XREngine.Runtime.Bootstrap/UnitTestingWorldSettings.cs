@@ -45,6 +45,21 @@ public enum UnitTestEditorType
     IMGUI,
 }
 
+public enum LightProbeMode
+{
+    Off,
+    Single,
+    Grid,
+    ModelGrid,
+}
+
+public enum LightProbeCaptureMode
+{
+    None,
+    Startup,
+    Realtime,
+}
+
 public class UnitTestingWorldSettings
 {
     public UnitTestWorldKind WorldKind { get; set; } = UnitTestWorldKind.Default;
@@ -79,9 +94,15 @@ public class UnitTestingWorldSettings
     public bool SpotLight = false;
     public bool DirLight2 = false;
     public bool PointLight = false;
-    public bool LightProbe = true;
+    public LightProbeMode LightProbe { get; set; } = LightProbeMode.ModelGrid;
+    public LightProbeCaptureMode LightProbeCapture { get; set; } = LightProbeCaptureMode.None;
     public float LightProbeCaptureMs = 100;
     public float? StopRealtimeCaptureSec = 5;
+    public uint LightProbeResolution { get; set; } = 128;
+    public ProbeGridCounts LightProbeGridCounts { get; set; } = new();
+    public TranslationXYZ LightProbeGridSpacing { get; set; } = new() { X = 10.0f, Y = 10.0f, Z = 10.0f };
+    public TranslationXYZ LightProbeGridCenter { get; set; } = new() { X = 0.0f, Y = 50.0f, Z = 0.0f };
+    public TranslationXYZ LightProbeSinglePosition { get; set; } = new() { X = 0.0f, Y = 1.25f, Z = -7.5f };
 
     public bool VRPawn = true;
     public bool UseOpenXR = false;
@@ -134,6 +155,13 @@ public class UnitTestingWorldSettings
         public float X { get; set; } = 0.0f;
         public float Y { get; set; } = 0.0f;
         public float Z { get; set; } = 0.0f;
+    }
+
+    public class ProbeGridCounts
+    {
+        public int X { get; set; } = 10;
+        public int Y { get; set; } = 1;
+        public int Z { get; set; } = 10;
     }
 
     public List<ModelImportSettings> ModelsToImport { get; set; } = [];

@@ -6,7 +6,8 @@ layout(location = 13) in vec4 Color1;           // Scale.xyz and precomputed rad
 layout(location = 14) in vec4 Color2;           // Rotation quaternion (x, y, z, w)
 
 uniform mat4 ModelMatrix;
-uniform mat4 InverseViewMatrix_VTX;
+uniform mat4 ViewMatrix_VTX;
+uniform mat4 ViewProjectionMatrix_VTX;
 uniform mat4 ProjMatrix_VTX;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
@@ -48,8 +49,7 @@ vec2 ProjectAxisToScreen(vec3 viewCenter, vec3 axisView, vec2 ndcCenter)
 void main()
 {
     vec4 worldPos = ModelMatrix * vec4(Position, 1.0);
-    mat4 viewMatrix = inverse(InverseViewMatrix_VTX);
-    vec4 viewPos4 = viewMatrix * worldPos;
+    vec4 viewPos4 = ViewMatrix_VTX * worldPos;
     vec3 viewPos = viewPos4.xyz;
 
     vec4 packedColor = Color0;
@@ -59,7 +59,7 @@ void main()
     vsOut.color = packedColor;
     mat3 rotation = QuaternionToMatrix(rotationQuat);
     mat3 modelMat = mat3(ModelMatrix);
-    mat3 viewMat = mat3(viewMatrix);
+    mat3 viewMat = mat3(ViewMatrix_VTX);
 
     vec3 axisModelX = rotation * vec3(scale.x, 0.0, 0.0);
     vec3 axisModelY = rotation * vec3(0.0, scale.y, 0.0);
@@ -67,7 +67,7 @@ void main()
     vec3 axisViewX = viewMat * (modelMat * axisModelX);
     vec3 axisViewY = viewMat * (modelMat * axisModelY);
 
-    vec4 clipCenter = ProjMatrix_VTX * viewPos4;
+    vec4 clipCenter = ViewProjectionMatrix_VTX * worldPos;
     float invCenterW = 1.0 / max(kEpsilon, clipCenter.w);
     vec2 ndcCenter = clipCenter.xy * invCenterW;
 

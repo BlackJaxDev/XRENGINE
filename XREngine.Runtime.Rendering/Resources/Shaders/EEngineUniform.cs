@@ -6,6 +6,19 @@ namespace XREngine.Rendering
     {
         UpdateDelta,
 
+        /// <summary>
+        /// Seconds since this material's shader program was first used. Per-material accumulator.
+        /// </summary>
+        RenderTime,
+        /// <summary>
+        /// Seconds since the engine started running (global wall-clock time).
+        /// </summary>
+        EngineTime,
+        /// <summary>
+        /// Render-frame delta time in seconds (time between the previous frame and the current one).
+        /// </summary>
+        DeltaTime,
+
         //Multiply together in the shader
         ModelMatrix,
 
@@ -13,6 +26,8 @@ namespace XREngine.Rendering
         /// The inverse of the camera's world space transformation.
         /// </summary>
         ViewMatrix, //Desktop
+        LeftEyeViewMatrix, //Stereo
+        RightEyeViewMatrix, //Stereo
         /// <summary>
         /// The camera's normal world space transformation (called 'inverse view' because the non-inversed view matrix transforms the entire scene inversely to the camera).
         /// </summary>
@@ -20,9 +35,15 @@ namespace XREngine.Rendering
         LeftEyeInverseViewMatrix, //Stereo
         RightEyeInverseViewMatrix, //Stereo
         
+        InverseProjMatrix, //Desktop
+        LeftEyeInverseProjMatrix, //Stereo
+        RightEyeInverseProjMatrix, //Stereo
         ProjMatrix, //Desktop
         LeftEyeProjMatrix, //VR
         RightEyeProjMatrix, //VR
+        ViewProjectionMatrix, //Desktop
+        LeftEyeViewProjectionMatrix, //Stereo
+        RightEyeViewProjectionMatrix, //Stereo
 
         //Multiply together in the shader
         PrevModelMatrix,

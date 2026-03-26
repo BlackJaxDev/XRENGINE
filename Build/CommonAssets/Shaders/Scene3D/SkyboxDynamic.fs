@@ -16,14 +16,14 @@ uniform float SkySunDiscSize = 0.9994;
 uniform float SkyMoonDiscSize = 0.99965;
 
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 const float PI = 3.14159265359;
 
 vec3 GetWorldDirection(vec3 clipPos)
 {
-    mat4 invProj = inverse(ProjMatrix);
-    vec4 viewPos = invProj * vec4(clipPos.xy, 1.0, 1.0);
+    vec4 viewPos = InverseProjMatrix * vec4(clipPos.xy, 1.0, 1.0);
     vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
     mat3 camRotation = mat3(InverseViewMatrix);
     return normalize(camRotation * viewDir);

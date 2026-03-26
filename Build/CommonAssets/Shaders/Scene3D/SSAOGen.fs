@@ -19,7 +19,9 @@ uniform float Radius = 0.75f;
 uniform float Power = 4.0f;
 uniform vec2 NoiseScale;
 
+uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 void main()
@@ -38,10 +40,10 @@ void main()
         return;
     }
 
-    vec3 FragPosVS = AOViewPosFromDepth(Depth, uv, ProjMatrix);
+    vec3 FragPosVS = AOViewPosFromDepth(Depth, uv, InverseProjMatrix);
 
     vec3 randomVec = vec3(texture(AONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
-    vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(Normal, 0.0f)).rgb);
+    vec3 viewNormal = normalize((ViewMatrix * vec4(Normal, 0.0f)).rgb);
     vec3 viewTangent = normalize(randomVec - viewNormal * dot(randomVec, viewNormal));
     vec3 viewBitangent = cross(viewNormal, viewTangent);
     mat3 TBN = mat3(viewTangent, viewBitangent, viewNormal);
@@ -67,7 +69,7 @@ void main()
         if (AOIsFarDepth(rawSampleDepth))
             continue;
 
-        sampleDepth = AOViewPosFromDepth(rawSampleDepth, offset.xy, ProjMatrix).z;
+        sampleDepth = AOViewPosFromDepth(rawSampleDepth, offset.xy, InverseProjMatrix).z;
 
         occlusion += (sampleDepth >= noiseSample.z + bias ? smoothstep(0.0f, 1.0f, Radius / abs(FragPosVS.z - sampleDepth)) : 0.0f);
     }

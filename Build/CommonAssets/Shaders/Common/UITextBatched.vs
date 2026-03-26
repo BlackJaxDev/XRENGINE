@@ -30,8 +30,7 @@ layout(std430, set = 0, binding = 3) buffer GlyphTextIndexBuffer
     uint GlyphTextIndex[];
 };
 
-uniform mat4 InverseViewMatrix_VTX;
-uniform mat4 ProjMatrix_VTX;
+uniform mat4 ViewProjectionMatrix_VTX;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -63,8 +62,7 @@ void main()
     vec4 tfm = GlyphTransforms[gl_InstanceID];
     vec4 uv = GlyphTexCoords[gl_InstanceID];
 
-    mat4 ViewMatrix = inverse(InverseViewMatrix_VTX);
-    mat4 mvpMatrix = ProjMatrix_VTX * ViewMatrix * modelMatrix;
+    mat4 mvpMatrix = ViewProjectionMatrix_VTX * modelMatrix;
 
     // Position the glyph quad: tfm.xy = offset, tfm.zw = size
     vec4 position = vec4(tfm.xy + (TexCoord0.xy * tfm.zw), 0.0, 1.0);
