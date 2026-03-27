@@ -128,7 +128,7 @@ public sealed class RenderPipelineScript
         private readonly List<IScriptStep> _steps = [];
 
         internal IReadOnlyList<IScriptStep> BuildSteps()
-            => _steps.ToArray();
+            => [.. _steps];
 
         public Builder Command<T>(Action<T>? configure = null) where T : ViewportRenderCommand, new()
         {

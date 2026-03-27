@@ -173,6 +173,8 @@ namespace XREngine.Rendering.Shaders.Generator
 
             if (EmitTransformId)
                 OutputVars.Add(FragTransformIdName, (21, EShaderVarType._float));
+
+            OutputVars.Add(FragViewIndexName, (22, EShaderVarType._float));
         }
 
         private void AddUniforms()
@@ -208,6 +210,7 @@ namespace XREngine.Rendering.Shaders.Generator
         // Output variable names
         public const string FragPosLocalName = "FragPosLocal";
         public const string FragTransformIdName = "FragTransformId";
+        public const string FragViewIndexName = "FragViewIndex";
         public const string FragPosName = "FragPos";
         public const string FragNormName = "FragNorm";
         public const string FragTanName = "FragTan";
@@ -628,6 +631,10 @@ namespace XREngine.Rendering.Shaders.Generator
         private void AssignFragPosOut(string localInputPositionName)
         {
             Line($"{FragPosName} = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
+            if (UseOVRMultiView)
+                Line($"{FragViewIndexName} = float(gl_ViewID_OVR);");
+            else
+                Line($"{FragViewIndexName} = 0.0f;");
         }
 
         private void Assign_GL_Position(string finalPositionName)

@@ -18,6 +18,9 @@ uniform bool ForwardPbrResourcesEnabled;
 uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
 uniform mat4 ViewProjectionMatrix;
+uniform mat4 LeftEyeInverseViewMatrix;
+uniform mat4 RightEyeInverseViewMatrix;
+layout(location = 22) in float FragViewIndex;
 
 layout(binding = 6) uniform sampler2D BRDF;
 layout(binding = 7) uniform sampler2DArray IrradianceArray;
@@ -101,11 +104,38 @@ uniform SpotLight SpotLights[16];
 uniform int PointLightCount;
 uniform PointLight PointLights[16];
 
+const int XRENGINE_MAX_FORWARD_LOCAL_LIGHTS = 16;
+const int XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS = 4;
+const int XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS = 4;
+
+layout(binding = 17) uniform samplerCube PointLightShadowMaps[XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS];
+layout(binding = 21) uniform sampler2D SpotLightShadowMaps[XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS];
+
+uniform int PointLightShadowSlots[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float PointLightShadowFarPlanes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float PointLightShadowBase[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float PointLightShadowExponent[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float PointLightShadowBiasMin[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float PointLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform int PointLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float PointLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform bool PointLightShadowEnablePCSS[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+
+uniform int SpotLightShadowSlots[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float SpotLightShadowBase[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float SpotLightShadowExponent[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float SpotLightShadowBiasMin[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float SpotLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform int SpotLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float SpotLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform bool SpotLightShadowEnablePCSS[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+
 // Forward+ tiled light culling uniforms
 uniform bool ForwardPlusEnabled;
 uniform vec2 ForwardPlusScreenSize;
 uniform int ForwardPlusTileSize;
 uniform int ForwardPlusMaxLightsPerTile;
+uniform int ForwardPlusEyeCount;
 
 struct ForwardPlusLocalLight
 {
@@ -191,6 +221,38 @@ vec3 XRENGINE_SampleOctaArray(sampler2DArray tex, vec3 dir, float layer)
 vec3 XRENGINE_SampleOctaArrayLod(sampler2DArray tex, vec3 dir, float layer, float lod)
 {
     return textureLod(tex, vec3(XRENGINE_EncodeOcta(dir), layer), lod).rgb;
+}
+
+int XRENGINE_GetForwardViewIndex()
+{
+    if (ForwardPlusEyeCount <= 1)
+        return 0;
+
+    return int(clamp(round(FragViewIndex), 0.0, float(ForwardPlusEyeCount - 1)));
+}
+
+vec3 XRENGINE_GetForwardCameraPosition()
+{
+    if (ForwardPlusEyeCount <= 1)
+        return CameraPosition;
+
+    return XRENGINE_GetForwardViewIndex() == 0
+        ? LeftEyeInverseViewMatrix[3].xyz
+        : RightEyeInverseViewMatrix[3].xyz;
+}
+
+float XRENGINE_GetLocalShadowBias(float NoL, float shadowBase, float shadowExponent, float minBias, float maxBias)
+{
+    float mapped = pow(max(shadowBase, 0.0) * (1.0 - NoL), max(shadowExponent, 0.0001));
+    return mix(minBias, maxBias, clamp(mapped, 0.0, 1.0));
+}
+
+float XRENGINE_GetPointShadowSampleRadius(samplerCube shadowMap, float filterRadius)
+{
+    float faceSize = max(float(textureSize(shadowMap, 0).x), 1.0);
+    float texelDirectionSpan = 2.0 / faceSize;
+    float requestedScale = clamp(filterRadius * 256.0, 0.0, 4.0);
+    return texelDirectionSpan * max(1.0, requestedScale);
 }
 
 mat3 XRENGINE_QuaternionToMat3(vec4 q)
@@ -621,7 +683,7 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
 
 vec3 XRENGINE_CalculateDirectPbrLight(vec3 lightColor, float diffuseIntensity, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0, float attenuation)
 {
-    vec3 viewDir = normalize(CameraPosition - fragPos);
+    vec3 viewDir = normalize(XRENGINE_GetForwardCameraPosition() - fragPos);
     vec3 halfVector = normalize(viewDir + lightDirection);
     float NoL = max(dot(normal, lightDirection), 0.0);
     if (NoL <= 0.0)
@@ -653,14 +715,96 @@ vec3 XRENGINE_CalcDirLight(DirLight light, vec3 normal, vec3 fragPos, vec3 albed
     return XRENGINE_CalculateDirectPbrLight(light.Base.Color, light.Base.DiffuseIntensity, lightDir, normal, fragPos, albedo, rms, F0, 1.0) * shadow;
 }
 
-vec3 XRENGINE_CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0)
+float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal, vec3 fragPos)
+{
+    if (lightIndex < 0 || lightIndex >= PointLightCount)
+        return 1.0;
+
+    int shadowSlot = PointLightShadowSlots[lightIndex];
+    if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS)
+        return 1.0;
+
+    vec3 fragToLight = fragPos - light.Position;
+    float lightDist = length(fragToLight);
+    float farPlaneDist = PointLightShadowFarPlanes[lightIndex];
+    if (lightDist >= farPlaneDist)
+        return 1.0;
+
+    float NoL = max(dot(normal, normalize(light.Position - fragPos)), 0.0);
+    float bias = XRENGINE_GetLocalShadowBias(
+        NoL,
+        PointLightShadowBase[lightIndex],
+        PointLightShadowExponent[lightIndex],
+        PointLightShadowBiasMin[lightIndex],
+        PointLightShadowBiasMax[lightIndex]);
+    float sampleRadius = XRENGINE_GetPointShadowSampleRadius(PointLightShadowMaps[shadowSlot], PointLightShadowFilterRadius[lightIndex]);
+    return XRENGINE_SampleShadowCubeFiltered(
+        PointLightShadowMaps[shadowSlot],
+        fragToLight,
+        lightDist,
+        bias,
+        farPlaneDist,
+        sampleRadius,
+        PointLightShadowSamples[lightIndex],
+        PointLightShadowEnablePCSS[lightIndex]);
+}
+
+float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, vec3 fragPos, vec3 lightDir)
+{
+    if (lightIndex < 0 || lightIndex >= SpotLightCount)
+        return 1.0;
+
+    int shadowSlot = SpotLightShadowSlots[lightIndex];
+    if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS)
+        return 1.0;
+
+    float NoL = max(dot(normal, lightDir), 0.0);
+    float bias = XRENGINE_GetLocalShadowBias(
+        NoL,
+        SpotLightShadowBase[lightIndex],
+        SpotLightShadowExponent[lightIndex],
+        SpotLightShadowBiasMin[lightIndex],
+        SpotLightShadowBiasMax[lightIndex]);
+    vec3 offsetPosWS = fragPos + normal * SpotLightShadowBiasMax[lightIndex];
+    vec3 fragCoord = XRENGINE_ProjectShadowCoord(light.Base.Base.WorldToLightSpaceProjMatrix, offsetPosWS);
+    if (!XRENGINE_ShadowCoordInBounds(fragCoord))
+        return 1.0;
+
+    int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
+        ContactShadowSamples,
+        XRENGINE_ViewDepthFromWorldPos(fragPos),
+        ContactShadowDistance);
+    float contact = EnableContactShadows
+        ? XRENGINE_SampleContactShadow2D(
+            SpotLightShadowMaps[shadowSlot],
+            light.Base.Base.WorldToLightSpaceProjMatrix,
+            fragPos,
+            normal,
+            lightDir,
+            SpotLightShadowBiasMax[lightIndex],
+            bias,
+            ContactShadowDistance,
+            contactSampleCount)
+        : 1.0;
+
+    return XRENGINE_SampleShadowMapFiltered(
+        SpotLightShadowMaps[shadowSlot],
+        fragCoord,
+        bias,
+        SpotLightShadowSamples[lightIndex],
+        SpotLightShadowFilterRadius[lightIndex],
+        SpotLightShadowEnablePCSS[lightIndex]) * contact;
+}
+
+vec3 XRENGINE_CalcPointLight(int lightIndex, PointLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0)
 {
     vec3 lightVector = light.Position - fragPos;
     float attenuation = XRENGINE_Attenuate(length(lightVector), light.Radius) * light.Brightness;
-    return XRENGINE_CalculateDirectPbrLight(light.Base.Color, light.Base.DiffuseIntensity, normalize(lightVector), normal, fragPos, albedo, rms, F0, attenuation);
+    float shadow = XRENGINE_ReadShadowMapPoint(lightIndex, light, normal, fragPos);
+    return XRENGINE_CalculateDirectPbrLight(light.Base.Color, light.Base.DiffuseIntensity, normalize(lightVector), normal, fragPos, albedo, rms, F0, attenuation) * shadow;
 }
 
-vec3 XRENGINE_CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0)
+vec3 XRENGINE_CalcSpotLight(int lightIndex, SpotLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0)
 {
     vec3 lightVector = light.Base.Position - fragPos;
     vec3 lightDir = normalize(lightVector);
@@ -668,7 +812,8 @@ vec3 XRENGINE_CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 alb
     float spotEffect = smoothstep(light.OuterCutoff, light.InnerCutoff, clampedCosine);
     float spotAttn = pow(clampedCosine, light.Exponent);
     float distAttn = XRENGINE_Attenuate(length(lightVector), light.Base.Radius) * light.Base.Brightness;
-    return spotEffect * spotAttn * XRENGINE_CalculateDirectPbrLight(light.Base.Base.Color, light.Base.Base.DiffuseIntensity, lightDir, normal, fragPos, albedo, rms, F0, distAttn);
+    float shadow = XRENGINE_ReadShadowMapSpot(lightIndex, light, normal, fragPos, lightDir);
+    return spotEffect * spotAttn * XRENGINE_CalculateDirectPbrLight(light.Base.Base.Color, light.Base.Base.DiffuseIntensity, lightDir, normal, fragPos, albedo, rms, F0, distAttn) * shadow;
 }
 
 vec3 XRENGINE_CalcForwardPlusColor(vec3 lightColor, float diffuseIntensity, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0, float attenuation)
@@ -680,7 +825,11 @@ vec3 XRENGINE_CalcForwardPlusPointLight(ForwardPlusLocalLight light, vec3 normal
 {
     vec3 lightVector = light.PositionWS.xyz - fragPos;
     float attenuation = XRENGINE_Attenuate(length(lightVector), light.Params.x) * max(light.Params.y, 0.0001);
-    return XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, normalize(lightVector), normal, fragPos, albedo, rms, F0, attenuation);
+    int sourceIndex = int(light.Params.w + 0.5);
+    float shadow = (sourceIndex >= 0 && sourceIndex < PointLightCount)
+        ? XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], normal, fragPos)
+        : 1.0;
+    return XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, normalize(lightVector), normal, fragPos, albedo, rms, F0, attenuation) * shadow;
 }
 
 vec3 XRENGINE_CalcForwardPlusSpotLight(ForwardPlusLocalLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0)
@@ -693,8 +842,12 @@ vec3 XRENGINE_CalcForwardPlusSpotLight(ForwardPlusLocalLight light, vec3 normal,
 
     float spotAttn = pow(clampedCosine, light.DirectionWS_Exponent.w);
     float distAttn = XRENGINE_Attenuate(length(lightVector), light.Params.x) * max(light.Params.y, 0.0001);
+    int sourceIndex = int(light.Params.w + 0.5);
+    float shadow = (sourceIndex >= 0 && sourceIndex < SpotLightCount)
+        ? XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], normal, fragPos, lightToPosN)
+        : 1.0;
 
-    return spotEffect * spotAttn * XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, lightToPosN, normal, fragPos, albedo, rms, F0, distAttn);
+    return spotEffect * spotAttn * XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, lightToPosN, normal, fragPos, albedo, rms, F0, distAttn) * shadow;
 }
 
 // Main lighting calculation function
@@ -702,7 +855,7 @@ vec3 XRENGINE_CalcForwardPlusSpotLight(ForwardPlusLocalLight light, vec3 normal,
 vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, float specularIntensity, float ambientOcclusion)
 {
     normal = normalize(normal);
-    vec3 viewDir = normalize(CameraPosition - fragPos);
+    vec3 viewDir = normalize(XRENGINE_GetForwardCameraPosition() - fragPos);
     vec3 rms = vec3(clamp(Roughness, 0.0, 1.0), clamp(Metallic, 0.0, 1.0), max(specularIntensity, 0.0));
     vec3 F0 = mix(vec3(0.04), albedo, rms.y);
     vec3 totalLight = vec3(0.0);
@@ -720,7 +873,8 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
     {
         ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;
         int tileCountX = (int(ForwardPlusScreenSize.x) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
-        int tileIndex = tileCoord.y * tileCountX + tileCoord.x;
+        int tileCountY = (int(ForwardPlusScreenSize.y) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
+        int tileIndex = XRENGINE_GetForwardViewIndex() * (tileCountX * tileCountY) + tileCoord.y * tileCountX + tileCoord.x;
         int baseIndex = tileIndex * ForwardPlusMaxLightsPerTile;
 
         for (int o = 0; o < ForwardPlusMaxLightsPerTile; ++o)
@@ -738,10 +892,10 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
     else
     {
         for (int i = 0; i < PointLightCount; ++i)
-            totalLight += XRENGINE_CalcPointLight(PointLights[i], normal, fragPos, albedo, rms, F0);
+            totalLight += XRENGINE_CalcPointLight(i, PointLights[i], normal, fragPos, albedo, rms, F0);
 
         for (int i = 0; i < SpotLightCount; ++i)
-            totalLight += XRENGINE_CalcSpotLight(SpotLights[i], normal, fragPos, albedo, rms, F0);
+            totalLight += XRENGINE_CalcSpotLight(i, SpotLights[i], normal, fragPos, albedo, rms, F0);
     }
 
     return totalLight + XRENGINE_CalculateAmbientPbr(normal, fragPos, albedo, viewDir, rms, ambientOcclusion) + albedo * Emission;

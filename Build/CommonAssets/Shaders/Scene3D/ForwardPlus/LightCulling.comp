@@ -59,7 +59,7 @@ void main()
 	float depthLinear = 1e20;
 	if (location.x < screenSize.x && location.y < screenSize.y)
 	{
-		vec2 uv = vec2(location) / vec2(screenSize);
+		vec2 uv = (vec2(location) + vec2(0.5)) / vec2(screenSize);
 		float depth = texture(depthMap, uv).r;
 		if (DepthMode == 1)
 			depth = 1.0 - depth;

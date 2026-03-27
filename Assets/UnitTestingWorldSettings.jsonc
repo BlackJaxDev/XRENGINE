@@ -57,7 +57,7 @@
   // Adds a mirror to the scene for testing mirror reflection.
   "Mirror": false,
   // Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path.
-  "DynamicWaterQuad": true,
+  "DynamicWaterQuad": false,
   // Forces the debug opaque render pipeline instead of the default pipeline.
   "ForceDebugOpaquePipeline": false,
 
@@ -205,7 +205,7 @@
       // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
       "Translation": {
         // Generated from X on TranslationXYZ.
-        "X": -18.0,
+        "X": 0.0,
         // Generated from Y on TranslationXYZ.
         "Y": 0.0,
         // Generated from Z on TranslationXYZ.
@@ -214,7 +214,7 @@
     },
     {
       // Enables or disables Enabled.
-      "Enabled": true,
+      "Enabled": false,
       // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Static",
@@ -240,7 +240,7 @@
       // Optional world-space translation offset to apply to the imported root. Values are engine world units after import scaling.
       "Translation": {
         // Generated from X on TranslationXYZ.
-        "X": 18.0,
+        "X": 0.0,
         // Generated from Y on TranslationXYZ.
         "Y": 0.0,
         // Generated from Z on TranslationXYZ.
@@ -369,7 +369,7 @@
   // If true, creates a 1x1x1 box at the origin.
   "CreateUnitBox": false,
   // Generated from RenderFPS on Settings.
-  "RenderFPS": 0.0,
+  "RenderFPS": 60.0,
   // Generated from UpdateFPS on Settings.
   "UpdateFPS": 60.0,
   // Generated from FixedFPS on Settings.

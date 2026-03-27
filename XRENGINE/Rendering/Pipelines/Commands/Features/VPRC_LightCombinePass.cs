@@ -1,5 +1,7 @@
 using XREngine.Data.Rendering;
 using XREngine.Data.Geometry;
+using XREngine.Data.Colors;
+using System.Numerics;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
@@ -24,6 +26,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             EPixelInternalFormat.DepthComponent16,
             EPixelFormat.DepthComponent,
             EPixelType.Float);
+
+        private static XRTexture2D? _dummyShadowMap;
+        private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
 
         public string AlbedoOpacityTexture { get; set; } = "AlbedoOpacityTexture";
         public string NormalTexture { get; set; } = "NormalTexture";
@@ -210,9 +215,28 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void RenderLight(XRMeshRenderer renderer, LightComponent comp)
         {
             _currentLightComponent = comp;
+            ConfigureLightVolumeCullMode(renderer, comp);
             renderer.Render(comp.LightMeshMatrix, comp.LightMeshMatrix, null);
             _currentLightComponent = null;
         }
+
+        private void ConfigureLightVolumeCullMode(XRMeshRenderer renderer, LightComponent comp)
+        {
+            if (renderer.Material?.RenderOptions is not { } renderOptions)
+                return;
+
+            if (comp is not SpotLightComponent spotLight)
+            {
+                renderOptions.CullMode = ECullMode.Front;
+                return;
+            }
+
+            Vector3? cameraPosition = ActivePipelineInstance.RenderState.SceneCamera?.Transform?.RenderTranslation;
+            renderOptions.CullMode = cameraPosition is Vector3 position && !spotLight.OuterCone.ContainsPoint(position)
+                ? ECullMode.Back
+                : ECullMode.Front;
+        }
+
         private void LightManager_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
             => BindCurrentLightUniforms(materialProgram);
 
@@ -265,11 +289,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                     materialProgram.Sampler("ShadowMap", selectedShadowMap, 4);
             }
 
-            // Point lights need the LightHasShadowMap uniform
+            bool hasShadowMap = _currentLightComponent.CastsShadows && selectedShadowMap is not null;
             if (_currentLightComponent is PointLightComponent)
             {
-                bool hasShadowMap = _currentLightComponent.CastsShadows && selectedShadowMap is not null;
                 materialProgram.Uniform("LightHasShadowMap", hasShadowMap);
+                // Point lights use a cubemap shadow map — don't overwrite the binding from above.
+            }
+            else if (_currentLightComponent is SpotLightComponent)
+            {
+                materialProgram.Uniform("LightHasShadowMap", hasShadowMap);
+                // Spot lights use a 2D shadow map; rebind with explicit dummy fallback
+                // to guarantee a valid sampler2D is always bound at unit 4.
+                materialProgram.Sampler("ShadowMap", selectedShadowMap as XRTexture2D ?? DummyShadowMap, 4);
             }
         }
 

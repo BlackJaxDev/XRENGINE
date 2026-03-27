@@ -35,6 +35,7 @@ layout(location = 5) out float v_TangentSign;
 layout(location = 6) out vec4 v_VertexColor;
 layout(location = 7) out vec3 v_LocalPos;
 layout(location = 8) out vec3 v_ViewDir;
+layout(location = 22) out float FragViewIndex;
 
 // ============================================
 // Uniforms
@@ -66,4 +67,5 @@ void main() {
 	v_Uv23 = vec4(TexCoord2, TexCoord3);
 	v_VertexColor = Color0;
 	v_ViewDir = normalize(inverseView[3].xyz - worldPosition.xyz);
+	FragViewIndex = float(gl_ViewID_OVR);
 }

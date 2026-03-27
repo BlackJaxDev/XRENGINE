@@ -44,6 +44,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Audio2Face-3D Component](features/audio2face-3d.md)
 - [Audio2Face-3D Engine Setup](features/audio2face-3d-engine-setup.md)
 - [Bootstrap And First-Time Setup](features/bootstrap.md)
+- [Default Render Pipeline Script Export](features/default-render-pipeline.xrs)
 - [Model Import](features/model-import.md)
 - [Native Dependencies](features/native-dependencies.md)
 - [Steam Audio Integration](features/steam-audio.md)

@@ -27,9 +27,6 @@ uniform float ScreenHeight;
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
-
-uniform float MinFade = 500.0f;
-uniform float MaxFade = 10000.0f;
 uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
@@ -281,9 +278,6 @@ void main()
 	//Resolve world fragment position using depth and screen UV
 	vec3 fragPosWS = XRENGINE_WorldPosFromDepth(depth, uv, InverseProjMatrix, InverseViewMatrix);
 
-	//float fadeRange = MaxFade - MinFade;
-	//float dist = length(CameraPosition - fragPosWS);
-	//float strength = smoothstep(1.0f, 0.0f, clamp((dist - MinFade) / fadeRange, 0.0f, 1.0f));
 	OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms);
 
 	// Debug visualisation (additive blending still applies; works best with a single point light)

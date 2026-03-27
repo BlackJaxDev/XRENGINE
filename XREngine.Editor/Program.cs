@@ -78,6 +78,9 @@ internal class Program
         if (TryRunProjectBuildCommand(args))
             return;
 
+        if (TryRunDefaultRenderPipelineScriptExportCommand(args))
+            return;
+
         //Begin tracking how long editor startup takes, and log the time when the first non-black frame is rendered.
         StartEditorStartupTimer();
         WriteBootstrapTrace("Startup timer initialized.");
@@ -1422,6 +1425,98 @@ internal class Program
         }
 
         return true;
+    }
+
+    private static bool TryRunDefaultRenderPipelineScriptExportCommand(string[] args)
+    {
+        if (!TryParseDefaultRenderPipelineScriptExportArgs(args, out bool exportFlagSeen, out string? outputPath, out bool stereo, out string? error))
+        {
+            if (exportFlagSeen)
+            {
+                Console.Error.WriteLine(error ?? "Invalid arguments for --export-default-render-pipeline-script.");
+                Environment.ExitCode = 1;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (!exportFlagSeen)
+            return false;
+
+        try
+        {
+            RunDefaultRenderPipelineScriptExportCommand(outputPath, stereo);
+            Environment.ExitCode = 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Default render pipeline script export failed: {ex.Message}");
+            Environment.ExitCode = 1;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseDefaultRenderPipelineScriptExportArgs(
+        string[] args,
+        out bool exportFlagSeen,
+        out string? outputPath,
+        out bool stereo,
+        out string? error)
+    {
+        exportFlagSeen = false;
+        outputPath = null;
+        stereo = false;
+        error = null;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            switch (arg.ToLowerInvariant())
+            {
+                case "--export-default-render-pipeline-script":
+                case "--export-default-pipeline-script":
+                    exportFlagSeen = true;
+                    break;
+                case "--render-pipeline-script-output":
+                case "--output":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing output path after --render-pipeline-script-output.";
+                        return false;
+                    }
+                    outputPath = args[++i];
+                    break;
+                case "--stereo":
+                    stereo = true;
+                    break;
+            }
+        }
+
+        return exportFlagSeen;
+    }
+
+    private static void RunDefaultRenderPipelineScriptExportCommand(string? outputPathArg, bool stereo)
+    {
+        string repoRoot = FindRepositoryRootForCookCommand();
+        string outputPath = ResolvePathAgainstRepoRoot(
+            outputPathArg,
+            repoRoot,
+            Path.Combine("docs", "features", stereo ? "default-render-pipeline-stereo.xrs" : "default-render-pipeline.xrs"));
+
+        if (!outputPath.EndsWith(".xrs", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Output path must end with .xrs.", nameof(outputPathArg));
+
+        string? outputDirectory = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+            Directory.CreateDirectory(outputDirectory);
+
+        DefaultRenderPipeline pipeline = new(stereo);
+        string script = RenderPipelineScript.Export(pipeline.CommandChain);
+        File.WriteAllText(outputPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        Console.WriteLine($"Exported default render pipeline script ({(stereo ? "stereo" : "mono")}) -> {outputPath}");
     }
 
     private static bool TryParseCookCommonAssetsArgs(

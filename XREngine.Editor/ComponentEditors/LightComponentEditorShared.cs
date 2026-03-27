@@ -1,9 +1,11 @@
 using ImGuiNET;
 using Silk.NET.OpenGL;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
+using XREngine.Components.Lights;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -17,6 +19,9 @@ internal static class LightComponentEditorShared
 {
     private const float PreviewMaxEdge = 196.0f;
     private const float PreviewFallbackEdge = 96.0f;
+    private const int ArrayPreviewsPerRow = 3;
+    private static readonly ConditionalWeakTable<XRTexture2D, XRTexture2DView> Texture2DPreviewViews = new();
+    private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> Texture2DArrayPreviewViews = new();
     private static readonly ConditionalWeakTable<XRTextureCube, CubemapPreviewCache> CubemapPreviewCaches = new();
 
     private static readonly (ECubemapFace Face, string Label)[] CubemapFaces =
@@ -123,22 +128,27 @@ internal static class LightComponentEditorShared
             light.ShadowExponentBase = MathF.Max(0.0f, expBase);
 
         float exp = light.ShadowExponent;
-        if (ImGui.DragFloat("Exponent", ref exp, 0.001f, 0.0f, 100.0f, "%.4f"))
+        if (ImGui.DragFloat("Shadow Exponent", ref exp, 0.001f, 0.0f, 100.0f, "%.4f"))
             light.ShadowExponent = MathF.Max(0.0f, exp);
-
-        ImGui.Separator();
-
-        int samples = light.Samples;
-        if (ImGui.InputInt("Samples", ref samples))
-            light.Samples = Math.Max(1, samples);
-
-        float filter = light.FilterRadius;
-        if (ImGui.DragFloat("Filter Radius", ref filter, 0.0001f, 0.0f, 1.0f, "%.6f"))
-            light.FilterRadius = MathF.Max(0.0f, filter);
 
         bool pcss = light.EnablePCSS;
         if (ImGui.Checkbox("Enable PCSS", ref pcss))
             light.EnablePCSS = pcss;
+
+        if (light is not PointLightComponent || pcss)
+        {
+            ImGui.Indent();
+
+            int samples = light.Samples;
+            if (ImGui.InputInt("Samples", ref samples))
+                light.Samples = Math.Max(1, samples);
+
+            float filter = light.FilterRadius;
+            if (ImGui.DragFloat("Filter Radius", ref filter, 0.0001f, 0.0f, 1.0f, "%.6f"))
+                light.FilterRadius = MathF.Max(0.0f, filter);
+
+            ImGui.Unindent();
+        }
 
         if (showCascadedOptions)
         {
@@ -187,6 +197,15 @@ internal static class LightComponentEditorShared
             return;
         }
 
+        if (light is global::XREngine.Components.Lights.DirectionalLightComponent dirLight &&
+            dirLight.EnableCascadedShadows &&
+            dirLight.CascadedShadowMapTexture is XRTexture2DArray cascadeTexture &&
+            dirLight.ActiveCascadeCount > 0)
+        {
+            DrawDirectionalCascadePreview(dirLight, cascadeTexture, dirLight.ActiveCascadeCount);
+            return;
+        }
+
         var shadowFbo = light.ShadowMap;
         var mat = shadowFbo?.Material;
         if (mat is null || mat.Textures is null || mat.Textures.Count == 0)
@@ -207,12 +226,60 @@ internal static class LightComponentEditorShared
             case XRTexture2D tex2D:
                 Draw2DTexturePreview("ShadowMap", tex2D);
                 break;
+            case XRTexture2DArray tex2DArray:
+                Draw2DArrayTexturePreview("ShadowMap", tex2DArray, (int)Math.Max(1u, tex2DArray.Depth));
+                break;
             case XRTextureCube cube:
                 DrawCubemapPreview("ShadowMap", cube);
                 break;
             default:
                 ImGui.TextDisabled($"{texture.GetType().Name} preview not supported.");
                 break;
+        }
+    }
+
+    private static void DrawDirectionalCascadePreview(global::XREngine.Components.Lights.DirectionalLightComponent light, XRTexture2DArray cascadeTexture, int activeCascades)
+    {
+        string lightLabel = light.SceneNode?.Name ?? light.Name ?? light.GetType().Name;
+        ImGui.TextDisabled($"{lightLabel}: {activeCascades} active cascade(s)");
+
+        for (int cascadeIndex = 0; cascadeIndex < activeCascades; cascadeIndex++)
+        {
+            XRTexture2DArrayView cascadeView = GetOrCreate2DArrayPreviewView(cascadeTexture, cascadeIndex);
+            if (!TryGetTexturePreviewData(cascadeView, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason))
+            {
+                ImGui.TextDisabled(failureReason ?? $"Cascade {cascadeIndex} preview unavailable.");
+                continue;
+            }
+
+            if (cascadeIndex > 0 && cascadeIndex % ArrayPreviewsPerRow != 0)
+                ImGui.SameLine();
+
+            Vector2 uv0 = new(0.0f, 1.0f);
+            Vector2 uv1 = new(1.0f, 0.0f);
+            bool openLargeView = false;
+
+            ImGui.BeginGroup();
+            ImGui.Image(handle, displaySize, uv0, uv1);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(
+                    $"{lightLabel} | Cascade {cascadeIndex}\n" +
+                    $"{(int)pixelSize.X} x {(int)pixelSize.Y} | {cascadeTexture.SizedInternalFormat}\n" +
+                    $"Split Far: {light.GetCascadeSplit(cascadeIndex):F1}");
+                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                    openLargeView = true;
+            }
+
+            if (ImGui.SmallButton($"View Larger##Cascade{cascadeIndex}"))
+                openLargeView = true;
+
+            if (openLargeView)
+                ComponentEditorLayout.RequestPreviewDialog($"{lightLabel} Cascade {cascadeIndex}", handle, pixelSize, flipVertically: true);
+
+            ImGui.TextDisabled($"Cascade {cascadeIndex}");
+            ImGui.TextDisabled($"Split {light.GetCascadeSplit(cascadeIndex):F1}");
+            ImGui.EndGroup();
         }
     }
 
@@ -264,6 +331,45 @@ internal static class LightComponentEditorShared
             ComponentEditorLayout.RequestPreviewDialog($"{label} Preview", handle, pixelSize, flipVertically: true);
 
         ImGui.TextDisabled(info);
+    }
+
+    private static void Draw2DArrayTexturePreview(string label, XRTexture2DArray texture, int layerCount)
+    {
+        int previewCount = Math.Max(1, layerCount);
+        for (int layerIndex = 0; layerIndex < previewCount; ++layerIndex)
+        {
+            XRTexture2DArrayView previewView = GetOrCreate2DArrayPreviewView(texture, layerIndex);
+            if (!TryGetTexturePreviewData(previewView, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason))
+            {
+                ImGui.TextDisabled(failureReason ?? $"Layer {layerIndex} preview unavailable.");
+                continue;
+            }
+
+            if (layerIndex > 0 && layerIndex % ArrayPreviewsPerRow != 0)
+                ImGui.SameLine();
+
+            Vector2 uv0 = new(0.0f, 1.0f);
+            Vector2 uv1 = new(1.0f, 0.0f);
+            bool openLargeView = false;
+
+            ImGui.BeginGroup();
+            ImGui.Image(handle, displaySize, uv0, uv1);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip($"{label} Layer {layerIndex}\n{FormatTextureInfo(texture, pixelSize)}");
+                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                    openLargeView = true;
+            }
+
+            if (ImGui.SmallButton($"View Larger##{label}Layer{layerIndex}"))
+                openLargeView = true;
+
+            if (openLargeView)
+                ComponentEditorLayout.RequestPreviewDialog($"{label} Layer {layerIndex}", handle, pixelSize, flipVertically: true);
+
+            ImGui.TextDisabled($"Layer {layerIndex}");
+            ImGui.EndGroup();
+        }
     }
 
     private static void DrawCubemapPreview(string label, XRTextureCube cubemap)
@@ -320,6 +426,7 @@ internal static class LightComponentEditorShared
         out Vector2 pixelSize,
         out string? failureReason)
     {
+        texture = ResolvePreviewTexture(texture);
         pixelSize = GetTexturePixelSize(texture);
         displaySize = GetPreviewSize(pixelSize);
         handle = nint.Zero;
@@ -355,12 +462,22 @@ internal static class LightComponentEditorShared
         {
             case XRTexture2D tex2D:
                 return TryGetTextureHandle(renderer.GenericToAPI<GLTexture2D>(tex2D), out handle, out failureReason);
+            case XRTexture2DView tex2DView:
+                var glTexture2DView = renderer.GenericToAPI<GLTextureView>(tex2DView);
+                ApplySingleChannelPreviewSwizzle(renderer, tex2DView.ViewedTexture.SizedInternalFormat, glTexture2DView);
+                return TryGetTextureHandle(glTexture2DView, out handle, out failureReason);
+            case XRTexture2DArrayView tex2DArrayView:
+                pixelSize = new Vector2(MathF.Max(1.0f, tex2DArrayView.Width), MathF.Max(1.0f, tex2DArrayView.Height));
+                displaySize = GetPreviewSize(pixelSize);
+                var glTexture2DArrayView = renderer.GenericToAPI<GLTextureView>(tex2DArrayView);
+                ApplySingleChannelPreviewSwizzle(renderer, tex2DArrayView.ViewedTexture.SizedInternalFormat, glTexture2DArrayView);
+                return TryGetTextureHandle(glTexture2DArrayView, out handle, out failureReason);
             case XRTextureCubeView cubeView when cubeView.View2D:
                 float extent = MathF.Max(1.0f, cubeView.ViewedTexture.Extent);
                 pixelSize = new Vector2(extent, extent);
                 displaySize = GetPreviewSize(pixelSize);
                 var glTextureView = renderer.GenericToAPI<GLTextureView>(cubeView);
-                ApplyCubeFacePreviewSwizzle(renderer, cubeView, glTextureView);
+                ApplySingleChannelPreviewSwizzle(renderer, cubeView.ViewedTexture.SizedInternalFormat, glTextureView);
                 return TryGetTextureHandle(glTextureView, out handle, out failureReason);
             default:
                 failureReason = $"{texture.GetType().Name} preview not supported.";
@@ -368,9 +485,14 @@ internal static class LightComponentEditorShared
         }
     }
 
-    private static void ApplyCubeFacePreviewSwizzle(OpenGLRenderer renderer, XRTextureCubeView cubeView, GLTextureView? glTextureView)
+    private static XRTexture ResolvePreviewTexture(XRTexture texture)
+        => texture is XRTexture2D tex2D && IsSingleChannelFormat(tex2D.SizedInternalFormat)
+            ? Texture2DPreviewViews.GetValue(tex2D, CreateTexture2DPreviewView)
+            : texture;
+
+    private static void ApplySingleChannelPreviewSwizzle(OpenGLRenderer renderer, ESizedInternalFormat format, GLTextureView? glTextureView)
     {
-        if (glTextureView is null || !IsSingleChannelFormat(cubeView.ViewedTexture.SizedInternalFormat))
+        if (glTextureView is null || !IsSingleChannelFormat(format))
             return;
 
         uint binding = glTextureView.BindingId;
@@ -384,6 +506,41 @@ internal static class LightComponentEditorShared
         gl.TextureParameterI(binding, GLEnum.TextureSwizzleG, in red);
         gl.TextureParameterI(binding, GLEnum.TextureSwizzleB, in red);
         gl.TextureParameterI(binding, GLEnum.TextureSwizzleA, in one);
+    }
+
+    private static XRTexture2DView CreateTexture2DPreviewView(XRTexture2D source)
+        => new(source, 0u, 1u, source.SizedInternalFormat, false, source.MultiSample)
+        {
+            Name = $"{source.Name ?? "ShadowMap"}_Preview",
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
+        };
+
+    private static XRTexture2DArrayView GetOrCreate2DArrayPreviewView(XRTexture2DArray texture, int layerIndex)
+    {
+        var views = Texture2DArrayPreviewViews.GetOrCreateValue(texture);
+        if (views.TryGetValue(layerIndex, out XRTexture2DArrayView? existing))
+        {
+            existing.MinLevel = 0u;
+            existing.NumLevels = 1u;
+            existing.MinLayer = (uint)layerIndex;
+            existing.NumLayers = 1u;
+            return existing;
+        }
+
+        var view = new XRTexture2DArrayView(texture, 0u, 1u, (uint)layerIndex, 1u, texture.SizedInternalFormat, false, texture.MultiSample)
+        {
+            Name = $"{texture.Name ?? "ShadowMap"}_Layer{layerIndex}_Preview",
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
+        };
+
+        views[layerIndex] = view;
+        return view;
     }
 
     private static bool IsSingleChannelFormat(ESizedInternalFormat format)
@@ -469,6 +626,8 @@ internal static class LightComponentEditorShared
         => texture switch
         {
             XRTexture2D tex2D => new Vector2(MathF.Max(1.0f, tex2D.Width), MathF.Max(1.0f, tex2D.Height)),
+            XRTexture2DView tex2DView => new Vector2(MathF.Max(1.0f, tex2DView.Width), MathF.Max(1.0f, tex2DView.Height)),
+            XRTexture2DArrayView tex2DArrayView => new Vector2(MathF.Max(1.0f, tex2DArrayView.Width), MathF.Max(1.0f, tex2DArrayView.Height)),
             XRTextureCubeView cubeView when cubeView.View2D =>
                 new Vector2(MathF.Max(1.0f, cubeView.ViewedTexture.Extent), MathF.Max(1.0f, cubeView.ViewedTexture.Extent)),
             _ => new Vector2(MathF.Max(1.0f, texture.WidthHeightDepth.X), MathF.Max(1.0f, texture.WidthHeightDepth.Y)),
@@ -480,6 +639,9 @@ internal static class LightComponentEditorShared
         string? format = texture switch
         {
             XRTexture2D tex2D => tex2D.SizedInternalFormat.ToString(),
+            XRTexture2DView tex2DView => tex2DView.ViewedTexture.SizedInternalFormat.ToString(),
+            XRTexture2DArray tex2DArray => tex2DArray.SizedInternalFormat.ToString(),
+            XRTexture2DArrayView tex2DArrayView => tex2DArrayView.ViewedTexture.SizedInternalFormat.ToString(),
             XRTextureCubeView cubeView when cubeView.View2D => cubeView.ViewedTexture.SizedInternalFormat.ToString(),
             _ => null,
         };

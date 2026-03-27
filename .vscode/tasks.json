@@ -66,6 +66,21 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Export-DefaultRenderPipelineScript",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"\"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" --export-default-render-pipeline-script --render-pipeline-script-output \"${workspaceFolder}\\docs\\features\\default-render-pipeline.xrs\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Start-Editor-NoDebug",
 			"type": "shell",
 			"command": "cmd",

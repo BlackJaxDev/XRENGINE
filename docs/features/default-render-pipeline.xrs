@@ -1,0 +1,322 @@
+if (false) {
+    temporalAccumulationPass(Phase=Begin);
+    cacheOrCreateTexture(Name="BRDF");
+    cacheOrCreateTexture(Name="DepthStencil");
+    cacheOrCreateTexture(Name="ForwardPrePassDepthStencil");
+    cacheOrCreateTexture(Name="ForwardPassMsaaDepthStencil");
+    cacheOrCreateTexture(Name="ForwardPassMsaaDepthView");
+    cacheOrCreateTexture(Name="DepthView");
+    cacheOrCreateTexture(Name="StencilView");
+    cacheOrCreateTexture(Name="HistoryDepthStencil");
+    cacheOrCreateTexture(Name="HistoryDepth");
+    cacheOrCreateTexture(Name="AlbedoOpacity");
+    cacheOrCreateTexture(Name="Normal");
+    cacheOrCreateTexture(Name="ForwardPrePassNormal");
+    cacheOrCreateTexture(Name="RMSE");
+    cacheOrCreateTexture(Name="TransformId");
+    cacheOrCreateTexture(Name="MsaaAlbedoOpacity");
+    cacheOrCreateTexture(Name="MsaaNormal");
+    cacheOrCreateTexture(Name="MsaaRMSE");
+    cacheOrCreateTexture(Name="MsaaDepthStencil");
+    cacheOrCreateTexture(Name="MsaaDepthView");
+    cacheOrCreateTexture(Name="MsaaTransformId");
+    cacheOrCreateTexture(Name="MsaaLightingTexture");
+    cacheOrCreateTexture(Name="LightingTexture");
+    cacheOrCreateTexture(Name="Velocity");
+    cacheOrCreateTexture(Name="HistoryColor");
+    cacheOrCreateTexture(Name="TemporalColorInput");
+    cacheOrCreateTexture(Name="TemporalExposureVariance");
+    cacheOrCreateTexture(Name="HistoryExposureVariance");
+    cacheOrCreateTexture(Name="MotionBlur");
+    cacheOrCreateTexture(Name="DepthOfField");
+    cacheOrCreateTexture(Name="PostProcessOutputTexture");
+    cacheOrCreateTexture(Name="FxaaOutputTexture");
+    cacheOrCreateTexture(Name="HDRSceneTex");
+    cacheOrCreateTexture(Name="TransparentSceneCopyTex");
+    cacheOrCreateTexture(Name="TransparentAccumTex");
+    cacheOrCreateTexture(Name="TransparentRevealageTex");
+    cacheOrCreateTexture(Name="PpllHeadPointerTex");
+    cacheOrCreateTexture(Name="PpllFragmentCountTex");
+    cacheOrCreateTexture(Name="DepthPeelColorTex_0");
+    cacheOrCreateTexture(Name="DepthPeelDepthTex_0");
+    cacheOrCreateTexture(Name="DepthPeelColorTex_1");
+    cacheOrCreateTexture(Name="DepthPeelDepthTex_1");
+    cacheOrCreateTexture(Name="DepthPeelColorTex_2");
+    cacheOrCreateTexture(Name="DepthPeelDepthTex_2");
+    cacheOrCreateTexture(Name="DepthPeelColorTex_3");
+    cacheOrCreateTexture(Name="DepthPeelDepthTex_3");
+    cacheOrCreateTexture(Name="AutoExposureTex");
+    cacheOrCreateTexture(Name="RestirGITexture");
+    cacheOrCreateTexture(Name="LightVolumeGITexture");
+    cacheOrCreateTexture(Name="RadianceCascadeGI");
+    cacheOrCreateTexture(Name="SurfelGITexture");
+    cacheOrCreateTexture(Name="VoxelConeTracingVolume");
+    voxelConeTracingPass(GpuDispatch=false, ClearVolumeEachFrame=true);
+    setClears(DefaultDepth=1, DefaultStencil=0);
+    renderMeshesPass(RenderPass=-1);
+    pushViewportRenderArea();
+    switch (0) {
+        case 0: {
+            ssaoPass(DependentFboNames=["LightCombineFBO"]);
+        }
+        case 1: {
+            mvaoPass(DependentFboNames=["LightCombineFBO"]);
+        }
+        case 3: {
+            msvo(DependentFboNames=["LightCombineFBO"]);
+        }
+        case 4: {
+            aoDisabledPass(DependentFboNames=["LightCombineFBO"], StubLogKey="HorizonBased", StubLogMessage="HorizonBased AO is intentionally deferred in favor of HBAO+. Rendering neutral AO instead of implying that classic HBAO is implemented.");
+        }
+        case 5: {
+            hbaoPlusPass(DependentFboNames=["LightCombineFBO"]);
+        }
+        case 6: {
+            spatialHashAOPass(DependentFboNames=["LightCombineFBO"]);
+        }
+        case 7: {
+            gtaoPass(DependentFboNames=["LightCombineFBO"]);
+        }
+        case 8: {
+            aoDisabledPass(DependentFboNames=["LightCombineFBO"], StubLogKey="VoxelAmbientOcclusion", StubLogMessage="VXAO is not implemented yet. This mode is reserved for a future voxelization plus cone-tracing path that will integrate with the existing voxel cone tracing infrastructure.");
+        }
+        default: {
+            aoDisabledPass(DependentFboNames=["LightCombineFBO"]);
+        }
+    }
+    cacheOrCreateFBO(Name="MsaaGBufferFBO");
+    cacheOrCreateFBO(Name="MsaaLightingFBO");
+    bindFBOByName();
+    stencilMask(Mask=4294967295);
+    depthTest();
+    renderMeshesPass(RenderPass=1);
+    renderMeshesPass(RenderPass=2);
+    unbindFBO();
+    if (false) {
+        resolveMsaaGBuffer(SourceMsaaFBOName="MsaaGBufferFBO", DestinationFBOName="AmbientOcclusionFBO");
+    }
+    if (false) {
+        if (false) {
+            cacheOrCreateFBO(Name="ForwardDepthPrePassMergeFBO");
+            bindFBOByName(FrameBufferName="ForwardDepthPrePassMergeFBO", ClearColor=false, ClearDepth=false, ClearStencil=false);
+            depthTest();
+            depthWrite();
+            forwardDepthNormalPrePass();
+            unbindFBO();
+        } else {
+            cacheOrCreateFBO(Name="ForwardDepthPrePassFBO");
+            cacheOrCreateFBO(Name="ForwardDepthPrePassMergeFBO");
+            bindFBOByName(FrameBufferName="ForwardDepthPrePassFBO");
+            depthTest();
+            depthWrite();
+            forwardDepthNormalPrePass();
+            unbindFBO();
+            bindFBOByName(FrameBufferName="ForwardDepthPrePassMergeFBO", ClearColor=false, ClearDepth=false, ClearStencil=false);
+            depthTest();
+            depthWrite();
+            forwardDepthNormalPrePass();
+            unbindFBO();
+        }
+    }
+    depthTest(Enable=false);
+    switch (0) {
+        case 5: {
+            renderQuadToFBO(SourceQuadFBOName="AmbientOcclusionFBO", DestinationFBOName="AmbientOcclusionBlurFBO");
+            renderQuadToFBO(SourceQuadFBOName="AmbientOcclusionBlurFBO", DestinationFBOName="HBAOPlusBlurIntermediateFBO");
+            renderQuadToFBO(SourceQuadFBOName="HBAOPlusBlurIntermediateFBO", DestinationFBOName="GBufferFBO");
+        }
+        case 7: {
+            renderQuadToFBO(SourceQuadFBOName="AmbientOcclusionFBO", DestinationFBOName="AmbientOcclusionBlurFBO");
+            renderQuadToFBO(SourceQuadFBOName="AmbientOcclusionBlurFBO", DestinationFBOName="GTAOBlurIntermediateFBO");
+            renderQuadToFBO(SourceQuadFBOName="GTAOBlurIntermediateFBO", DestinationFBOName="GBufferFBO");
+        }
+        default: {
+            renderQuadToFBO(SourceQuadFBOName="AmbientOcclusionFBO", DestinationFBOName="AmbientOcclusionBlurFBO");
+            renderQuadToFBO(SourceQuadFBOName="AmbientOcclusionBlurFBO", DestinationFBOName="GBufferFBO");
+        }
+    }
+    cacheOrCreateFBO(Name="LightCombineFBO");
+    if (false) {
+        bindFBOByName(FrameBufferName="MsaaLightingFBO", ClearDepth=false);
+        stencilMask(Mask=4294967295);
+        markComplexMsaaPixels();
+        unbindFBO();
+    }
+    if (false) {
+        bindFBOByName(FrameBufferName="MsaaLightingFBO", ClearColor=false, ClearDepth=false, ClearStencil=false);
+        stencilMask(Mask=4294967295);
+        lightCombinePass(AlbedoOpacityTexture="AlbedoOpacity", NormalTexture="Normal", RMSETexture="RMSE", DepthViewTexture="DepthView", MsaaDeferred=true);
+        unbindFBO();
+        blitFrameBuffer(SourceFBOName="MsaaLightingFBO", DestinationFBOName="LightCombineFBO");
+    } else {
+        bindFBOByName(FrameBufferName="LightCombineFBO");
+        stencilMask(Mask=4294967295);
+        lightCombinePass(AlbedoOpacityTexture="AlbedoOpacity", NormalTexture="Normal", RMSETexture="RMSE", DepthViewTexture="DepthView");
+        unbindFBO();
+    }
+    cacheOrCreateFBO(Name="ForwardPassMSAAFBO");
+    cacheOrCreateFBO(Name="MsaaLightCombineFBO");
+    cacheOrCreateFBO(Name="DepthPreloadFBO");
+    cacheOrCreateFBO(Name="ForwardPassFBO");
+    cacheOrCreateFBO(Name="TransparentSceneCopyFBO");
+    cacheOrCreateFBO(Name="TransparentAccumulationFBO");
+    cacheOrCreateFBO(Name="TransparentResolveFBO");
+    cacheOrCreateFBO(Name="RestirCompositeFBO");
+    cacheOrCreateFBO(Name="LightVolumeCompositeFBO");
+    cacheOrCreateFBO(Name="RadianceCascadeCompositeFBO");
+    cacheOrCreateFBO(Name="SurfelGICompositeFBO");
+    cacheOrCreateFBO(Name="HistoryCaptureFBO");
+    cacheOrCreateFBO(Name="TemporalInputFBO");
+    cacheOrCreateFBO(Name="TemporalAccumulationFBO");
+    cacheOrCreateFBO(Name="HistoryExposureFBO");
+    bindFBOByName();
+    if (false) {
+        if (false) {
+            blitFrameBuffer(SourceFBOName="MsaaGBufferFBO", DestinationFBOName="ForwardPassMSAAFBO", BlitColor=false, BlitDepth=true);
+        } else {
+            renderQuadToFBO(SourceQuadFBOName="DepthPreloadFBO", DestinationFBOName="ForwardPassMSAAFBO");
+        }
+    }
+    depthTest(Enable=false);
+    if (false) {
+        sampleShading(Enable=true);
+        renderQuadToFBO(SourceQuadFBOName="MsaaLightCombineFBO");
+        sampleShading();
+    } else {
+        renderQuadToFBO(SourceQuadFBOName="LightCombineFBO");
+    }
+    depthTest();
+    depthWrite(Allow=false);
+    renderMeshesPass();
+    depthTest();
+    depthWrite();
+    forwardPlusLightCullingPass();
+    renderMeshesPass(RenderPass=3);
+    renderMeshesPass(RenderPass=4);
+    reSTIRPass();
+    lightVolumesPass();
+    radianceCascadesPass();
+    surfelGIPass();
+    renderDebugShapes();
+    renderDebugPhysics();
+    unbindFBO();
+    if (false) {
+        resolveMsaaGBuffer(SourceMsaaFBOName="ForwardPassMSAAFBO", DestinationFBOName="ForwardPassFBO", DepthViewTextureName="ForwardPassMsaaDepthView", ColorAttachmentCount=1);
+    }
+    renderQuadToFBO(SourceQuadFBOName="ForwardPassFBO", DestinationFBOName="TransparentSceneCopyFBO");
+    clearTextureByName(TextureName="TransparentAccumTex");
+    clearTextureByName(TextureName="TransparentRevealageTex");
+    bindFBOByName(FrameBufferName="TransparentAccumulationFBO", ClearColor=false, ClearDepth=false, ClearStencil=false);
+    depthTest();
+    depthWrite(Allow=false);
+    renderMeshesPass(RenderPass=6);
+    unbindFBO();
+    renderQuadFBO(FrameBufferName="TransparentResolveFBO");
+    depthTest(Enable=false);
+    cacheOrCreateFBO(Name="VelocityFBO");
+    setClears();
+    bindFBOByName(FrameBufferName="VelocityFBO", ClearDepth=false, ClearStencil=false);
+    depthTest();
+    depthWrite(Allow=false);
+    renderMotionVectorsPass(RenderPasses=[1, 2, 3, 4, 6, 7, 8]);
+    depthWrite();
+    unbindFBO();
+    setClears(DefaultDepth=1, DefaultStencil=0);
+    depthTest(Enable=false);
+    bloomPass(InputFBOName="ForwardPassFBO", BloomOutputTextureName="BloomBlurTexture");
+    if (false) {
+        cacheOrCreateFBO(Name="MotionBlurCopyFBO");
+        cacheOrCreateFBO(Name="MotionBlurFBO");
+        blitFrameBuffer(SourceFBOName="ForwardPassFBO", DestinationFBOName="MotionBlurCopyFBO");
+        renderQuadToFBO(SourceQuadFBOName="MotionBlurFBO", DestinationFBOName="ForwardPassFBO");
+    }
+    if (false) {
+        cacheOrCreateFBO(Name="DepthOfFieldCopyFBO");
+        cacheOrCreateFBO(Name="DepthOfFieldFBO");
+        blitFrameBuffer(SourceFBOName="ForwardPassFBO", DestinationFBOName="DepthOfFieldCopyFBO");
+        renderQuadToFBO(SourceQuadFBOName="DepthOfFieldFBO", DestinationFBOName="ForwardPassFBO");
+    }
+    temporalAccumulationPass();
+    temporalAccumulationPass(Phase=PopJitter);
+    bindFBOByName(FrameBufferName="ForwardPassFBO", ClearColor=false, ClearDepth=false, ClearStencil=false);
+    depthTest();
+    depthWrite(Allow=false);
+    renderMeshesPass(RenderPass=5);
+    depthFunc(Comp=Always);
+    renderMeshesPass(RenderPass=9);
+    unbindFBO();
+    depthTest(Enable=false);
+    cacheOrCreateFBO(Name="PostProcessFBO");
+    cacheOrCreateTexture(Name="FxaaOutputTexture");
+    cacheOrCreateFBO(Name="PostProcessOutputFBO");
+    cacheOrCreateFBO(Name="FxaaFBO");
+    cacheOrCreateTexture(Name="TsrHistoryColor");
+    cacheOrCreateFBO(Name="TsrHistoryColorFBO");
+    cacheOrCreateFBO(Name="TsrUpscaleFBO");
+    popRenderArea();
+    if (false) {
+        pushViewportRenderArea();
+        renderQuadToFBO(SourceQuadFBOName="PostProcessFBO", DestinationFBOName="PostProcessOutputFBO");
+        popRenderArea();
+        pushViewportRenderArea(UseInternalResolution=false);
+        if (false) {
+            renderQuadToFBO(SourceQuadFBOName="TsrUpscaleFBO", DestinationFBOName="TsrUpscaleFBO");
+            blitFrameBuffer(SourceFBOName="TsrUpscaleFBO", DestinationFBOName="TsrHistoryColorFBO");
+        } else {
+            if (false) {
+                renderQuadToFBO(SourceQuadFBOName="FxaaFBO", DestinationFBOName="FxaaFBO");
+            } else {
+                smaa(SourceTextureName="PostProcessOutputTexture", OutputFBOName="SmaaFBO");
+            }
+        }
+        popRenderArea();
+    }
+    exposureUpdate();
+    temporalAccumulationPass(Phase=Commit);
+    pushViewportRenderArea(UseInternalResolution=false);
+    bindOutputFBO();
+    if (false) {
+        if (false) {
+            vendorUpscale(DepthTextureName="DepthView", MotionTextureName="Velocity", FrameBufferName="TsrUpscaleFBO");
+        } else {
+            if (false) {
+                vendorUpscale(DepthTextureName="DepthView", MotionTextureName="Velocity", FrameBufferName="FxaaFBO");
+            } else {
+                vendorUpscale(DepthTextureName="DepthView", MotionTextureName="Velocity", FrameBufferName="SmaaFBO");
+            }
+        }
+    } else {
+        vendorUpscale(DepthTextureName="DepthView", MotionTextureName="Velocity", FrameBufferName="PostProcessFBO");
+    }
+    unbindFBO();
+    popRenderArea();
+    renderMeshesPass(RenderPass=10);
+    renderScreenSpaceUI();
+} else {
+    setClears(DefaultDepth=1, DefaultStencil=0);
+    renderMeshesPass(RenderPass=-1);
+    pushOutputFBORenderArea();
+    bindOutputFBO();
+    stencilMask(Mask=4294967295);
+    clearByBoundFBO();
+    depthTest();
+    depthWrite(Allow=false);
+    renderMeshesPass();
+    depthWrite();
+    renderMeshesPass(RenderPass=1);
+    forwardPlusLightCullingPass();
+    renderMeshesPass(RenderPass=3);
+    renderMeshesPass(RenderPass=4);
+    depthWrite(Allow=false);
+    renderMeshesPass(RenderPass=6);
+    renderMeshesPass(RenderPass=7);
+    renderMeshesPass(RenderPass=8);
+    depthWrite(Allow=false);
+    renderMeshesPass(RenderPass=5);
+    depthFunc(Comp=Always);
+    renderMeshesPass(RenderPass=9);
+    unbindFBO();
+    popRenderArea();
+    renderMeshesPass(RenderPass=10);
+    renderScreenSpaceUI();
+}

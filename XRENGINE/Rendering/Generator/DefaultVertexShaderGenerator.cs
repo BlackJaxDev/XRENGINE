@@ -171,6 +171,8 @@ namespace XREngine.Rendering.Shaders.Generator
             // Only emitted when the paired fragment shader actually consumes the varying.
             if (EmitTransformId)
                 OutputVars.Add(FragTransformIdName, (21, EShaderVarType._float));
+
+            OutputVars.Add(FragViewIndexName, (22, EShaderVarType._float));
         }
 
         private void AddUniforms()
@@ -212,6 +214,7 @@ namespace XREngine.Rendering.Shaders.Generator
         //Buffers leaving the vertex shader for each vertex
         public const string FragPosLocalName = "FragPosLocal";
         public const string FragTransformIdName = "FragTransformId";
+        public const string FragViewIndexName = "FragViewIndex";
         public const string FragPosName = "FragPos";
         public const string FragNormName = "FragNorm";
         public const string FragTanName = "FragTan";
@@ -826,6 +829,10 @@ namespace XREngine.Rendering.Shaders.Generator
             // Always output world-space position for FragPos - required by forward lighting shaders.
             // gl_Position still gets clip-space position for rasterization.
             Line($"{FragPosName} = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
+            if (UseOVRMultiView)
+                Line($"{FragViewIndexName} = float(gl_ViewID_OVR);");
+            else
+                Line($"{FragViewIndexName} = 0.0f;");
         }
 
         /// <summary>

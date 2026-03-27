@@ -149,7 +149,7 @@ namespace XREngine.Components.Capture.Lights.Types
             get => _influenceVolume.Radius;
             set
             {
-                _influenceVolume.Radius = value;
+                SetField(ref _influenceVolume, new Sphere(_influenceVolume.Center, value));
                 foreach (var cam in ShadowCameras)
                     cam.FarZ = value;
                 MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Radius);
@@ -199,7 +199,7 @@ namespace XREngine.Components.Capture.Lights.Types
         public PointLightComponent(float radius, float brightness)
             : base()
         {
-            _influenceVolume = new Sphere(Vector3.Zero, radius);
+            _influenceVolume = new Sphere(Transform.RenderTranslation, radius);
             Brightness = brightness;
 
             PositionOnlyTransform positionTransform = new(Transform);
@@ -235,7 +235,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            _influenceVolume.Center = renderMatrix.Translation;
+            SetField(ref _influenceVolume, new Sphere(renderMatrix.Translation, _influenceVolume.Radius));
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 
@@ -271,11 +271,12 @@ namespace XREngine.Components.Capture.Lights.Types
             string prefix = targetStructName ?? Engine.Rendering.Constants.LightsStructName;
             string flatPrefix = $"{prefix}.";
             string basePrefix = $"{prefix}.Base.";
+            Vector3 lightPosition = Transform.RenderTranslation;
 
             // Legacy flat uniforms.
             program.Uniform($"{flatPrefix}Color", _color);
             program.Uniform($"{flatPrefix}DiffuseIntensity", _diffuseIntensity);
-            program.Uniform($"{flatPrefix}Position", _influenceVolume.Center);
+            program.Uniform($"{flatPrefix}Position", lightPosition);
             program.Uniform($"{flatPrefix}Radius", _influenceVolume.Radius);
             program.Uniform($"{flatPrefix}Brightness", _brightness);
 
@@ -283,7 +284,8 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform($"{basePrefix}Color", _color);
             program.Uniform($"{basePrefix}DiffuseIntensity", _diffuseIntensity);
             program.Uniform($"{basePrefix}AmbientIntensity", 0.0f);
-            program.Uniform($"{prefix}.Position", _influenceVolume.Center);
+            program.Uniform($"{basePrefix}WorldToLightSpaceProjMatrix", Matrix4x4.Identity);
+            program.Uniform($"{prefix}.Position", lightPosition);
             program.Uniform($"{prefix}.Radius", _influenceVolume.Radius);
             program.Uniform($"{prefix}.Brightness", _brightness);
             // Note: Shadow map sampler and LightHasShadowMap are bound by the caller (deferred pass)
@@ -297,7 +299,7 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override void SetShadowMapUniforms(XRMaterialBase material, XRRenderProgram program)
         {
             program.Uniform("FarPlaneDist", _influenceVolume.Radius);
-            program.Uniform("LightPos", _influenceVolume.Center);
+            program.Uniform("LightPos", Transform.RenderTranslation);
             if (_useGeometryShader)
             {
                 for (int i = 0; i < ShadowCameras.Length; ++i)
@@ -373,6 +375,5 @@ namespace XREngine.Components.Capture.Lights.Types
                 output.Add(cam.WorldFrustum().Prepare());
             }
         }
-
     }
 }

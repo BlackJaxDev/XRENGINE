@@ -1,7 +1,9 @@
 // Ambient occlusion sampling helpers for lit forward shaders.
 
 layout(binding = 14) uniform sampler2D AmbientOcclusionTexture;
+layout(binding = 25) uniform sampler2DArray AmbientOcclusionTextureArray;
 uniform bool AmbientOcclusionEnabled;
+uniform bool AmbientOcclusionArrayEnabled;
 uniform float AmbientOcclusionPower;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
@@ -17,13 +19,17 @@ float XRENGINE_SampleAmbientOcclusion()
     if (!AmbientOcclusionEnabled)
         return 1.0;
 
-    ivec2 aoSize = textureSize(AmbientOcclusionTexture, 0);
+    ivec2 aoSize = AmbientOcclusionArrayEnabled
+        ? textureSize(AmbientOcclusionTextureArray, 0).xy
+        : textureSize(AmbientOcclusionTexture, 0);
     if (aoSize.x <= 0 || aoSize.y <= 0)
         return 1.0;
 
     ivec2 pixel = ivec2(floor(gl_FragCoord.xy - ScreenOrigin));
     pixel = clamp(pixel, ivec2(0), aoSize - ivec2(1));
-    float ao = texelFetch(AmbientOcclusionTexture, pixel, 0).r;
+    float ao = AmbientOcclusionArrayEnabled
+        ? texelFetch(AmbientOcclusionTextureArray, ivec3(pixel, XRENGINE_GetForwardViewIndex()), 0).r
+        : texelFetch(AmbientOcclusionTexture, pixel, 0).r;
     ao = pow(clamp(ao, 0.0, 1.0), max(AmbientOcclusionPower, 0.001));
 
     // When the debug power is active, exaggerate the AO so even subtle

@@ -51,6 +51,19 @@ namespace XREngine.Scene
             EPixelFormat.DepthComponent,
             EPixelType.Float);
 
+        private static XRTextureCube? _dummyPointShadowMap;
+        internal static XRTextureCube DummyPointShadowMap => _dummyPointShadowMap ??= new XRTextureCube(1u, EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.Float, true, 1)
+        {
+            Resizable = false,
+        };
+
+        private static XRTexture2DArray? _dummyAmbientOcclusionArray;
+        private static XRTexture2DArray DummyAmbientOcclusionArray => _dummyAmbientOcclusionArray ??= new XRTexture2DArray(
+            1, 1, 2,
+            EPixelInternalFormat.R16f,
+            EPixelFormat.Red,
+            EPixelType.Float);
+
         /// <summary>
         /// A 1x1 black cubemap used as a fallback environment/reflection map when no light probe is available.
         /// Prevents "program texture usage" GL errors from unbound samplerCube uniforms.
@@ -163,6 +176,12 @@ namespace XREngine.Scene
 
         internal void SetForwardLightingUniforms(XRRenderProgram program)
         {
+            const int maxForwardShadowedPointLights = 4;
+            const int maxForwardShadowedSpotLights = 4;
+            const int pointShadowStartUnit = 17;
+            const int spotShadowStartUnit = 21;
+            const int forwardAmbientOcclusionArrayUnit = 25;
+
             // Debug: log that we're being called
             if (!_loggedForwardLightingOnce)
             {
@@ -197,6 +216,7 @@ namespace XREngine.Scene
                 program.BindBuffer(Engine.Rendering.State.ForwardPlusLocalLightsBuffer!, 20u);
                 program.BindBuffer(Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer!, 21u);
             }
+            program.Uniform("ForwardPlusEyeCount", Engine.Rendering.State.IsStereoPass ? 2 : 1);
 
             // Support both legacy uniform names (DirLightData/PointLightData/SpotLightData)
             // and dynamically generated forward shader names (DirectionalLights/PointLights/SpotLights).
@@ -226,7 +246,9 @@ namespace XREngine.Scene
                 currentPipeline.TryGetTexture(
                     DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
                     out ambientOcclusionTexture) && ambientOcclusionTexture is not null;
+            bool ambientOcclusionArrayEnabled = ambientOcclusionTexture is XRTexture2DArray;
             program.Uniform("AmbientOcclusionEnabled", ambientOcclusionEnabled);
+            program.Uniform("AmbientOcclusionArrayEnabled", ambientOcclusionArrayEnabled);
             program.Uniform("AmbientOcclusionPower", aoSettings?.Power ?? 1.0f);
             program.Uniform(
                 "AmbientOcclusionMultiBounce",
@@ -241,8 +263,12 @@ namespace XREngine.Scene
             // 0 = normal behaviour.  Try 8.0 to make subtle AO extremely visible.
             program.Uniform("DebugForwardAOPower", 0.0f);
             program.Uniform(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, forwardAmbientOcclusionUnit);
-            if (ambientOcclusionEnabled)
+            program.Uniform("AmbientOcclusionTextureArray", forwardAmbientOcclusionArrayUnit);
+            if (ambientOcclusionEnabled && ambientOcclusionTexture is not XRTexture2DArray)
                 program.Sampler(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, ambientOcclusionTexture!, forwardAmbientOcclusionUnit);
+            else
+                program.Sampler(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, DummyShadowMap, forwardAmbientOcclusionUnit);
+            program.Sampler("AmbientOcclusionTextureArray", ambientOcclusionTexture as XRTexture2DArray ?? DummyAmbientOcclusionArray, forwardAmbientOcclusionArrayUnit);
 
             switch (currentPipeline?.Pipeline)
             {
@@ -398,6 +424,93 @@ namespace XREngine.Scene
                 DynamicPointLights[i].SetUniforms(program, $"{pointArrayGenerated}[{i}]");
                 DynamicPointLights[i].SetUniforms(program, $"{pointArrayLegacy}[{i}]");
             }
+
+            int[] pointShadowSlots = Enumerable.Repeat(-1, 16).ToArray();
+            float[] pointShadowFarPlanes = new float[16];
+            float[] pointShadowBase = new float[16];
+            float[] pointShadowExponent = new float[16];
+            float[] pointShadowBiasMin = new float[16];
+            float[] pointShadowBiasMax = new float[16];
+            int[] pointShadowSamples = new int[16];
+            float[] pointShadowFilterRadius = new float[16];
+            bool[] pointShadowEnablePCSS = new bool[16];
+            int pointShadowSlot = 0;
+            for (int i = 0; i < DynamicPointLights.Count && i < pointShadowSlots.Length; ++i)
+            {
+                PointLightComponent light = DynamicPointLights[i];
+                pointShadowFarPlanes[i] = light.Radius;
+                pointShadowBase[i] = light.ShadowExponentBase;
+                pointShadowExponent[i] = light.ShadowExponent;
+                pointShadowBiasMin[i] = light.ShadowMinBias;
+                pointShadowBiasMax[i] = light.ShadowMaxBias;
+                pointShadowSamples[i] = light.Samples;
+                pointShadowFilterRadius[i] = light.FilterRadius;
+                pointShadowEnablePCSS[i] = light.EnablePCSS;
+
+                XRTexture? shadowTexture = light.CastsShadows
+                    ? light.ShadowMap?.Material?.Textures.FirstOrDefault(x => x?.SamplerName == "ShadowMap")
+                    : null;
+                if (shadowTexture is XRTextureCube shadowCube && pointShadowSlot < maxForwardShadowedPointLights)
+                {
+                    pointShadowSlots[i] = pointShadowSlot;
+                    program.Sampler($"PointLightShadowMaps[{pointShadowSlot}]", shadowCube, pointShadowStartUnit + pointShadowSlot);
+                    pointShadowSlot++;
+                }
+            }
+            for (; pointShadowSlot < maxForwardShadowedPointLights; ++pointShadowSlot)
+                program.Sampler($"PointLightShadowMaps[{pointShadowSlot}]", DummyPointShadowMap, pointShadowStartUnit + pointShadowSlot);
+
+            int[] spotShadowSlots = Enumerable.Repeat(-1, 16).ToArray();
+            float[] spotShadowBase = new float[16];
+            float[] spotShadowExponent = new float[16];
+            float[] spotShadowBiasMin = new float[16];
+            float[] spotShadowBiasMax = new float[16];
+            int[] spotShadowSamples = new int[16];
+            float[] spotShadowFilterRadius = new float[16];
+            bool[] spotShadowEnablePCSS = new bool[16];
+            int spotShadowSlot = 0;
+            for (int i = 0; i < DynamicSpotLights.Count && i < spotShadowSlots.Length; ++i)
+            {
+                SpotLightComponent light = DynamicSpotLights[i];
+                spotShadowBase[i] = light.ShadowExponentBase;
+                spotShadowExponent[i] = light.ShadowExponent;
+                spotShadowBiasMin[i] = light.ShadowMinBias;
+                spotShadowBiasMax[i] = light.ShadowMaxBias;
+                spotShadowSamples[i] = light.Samples;
+                spotShadowFilterRadius[i] = light.FilterRadius;
+                spotShadowEnablePCSS[i] = light.EnablePCSS;
+
+                XRTexture? shadowTexture = light.CastsShadows
+                    ? light.ShadowMap?.Material?.Textures.FirstOrDefault(x => x?.SamplerName == "ShadowMap")
+                    : null;
+                if (shadowTexture is XRTexture2D shadowMap && spotShadowSlot < maxForwardShadowedSpotLights)
+                {
+                    spotShadowSlots[i] = spotShadowSlot;
+                    program.Sampler($"SpotLightShadowMaps[{spotShadowSlot}]", shadowMap, spotShadowStartUnit + spotShadowSlot);
+                    spotShadowSlot++;
+                }
+            }
+            for (; spotShadowSlot < maxForwardShadowedSpotLights; ++spotShadowSlot)
+                program.Sampler($"SpotLightShadowMaps[{spotShadowSlot}]", DummyShadowMap, spotShadowStartUnit + spotShadowSlot);
+
+            program.Uniform("PointLightShadowSlots", pointShadowSlots);
+            program.Uniform("PointLightShadowFarPlanes", pointShadowFarPlanes);
+            program.Uniform("PointLightShadowBase", pointShadowBase);
+            program.Uniform("PointLightShadowExponent", pointShadowExponent);
+            program.Uniform("PointLightShadowBiasMin", pointShadowBiasMin);
+            program.Uniform("PointLightShadowBiasMax", pointShadowBiasMax);
+            program.Uniform("PointLightShadowSamples", pointShadowSamples);
+            program.Uniform("PointLightShadowFilterRadius", pointShadowFilterRadius);
+            program.Uniform("PointLightShadowEnablePCSS", pointShadowEnablePCSS);
+
+            program.Uniform("SpotLightShadowSlots", spotShadowSlots);
+            program.Uniform("SpotLightShadowBase", spotShadowBase);
+            program.Uniform("SpotLightShadowExponent", spotShadowExponent);
+            program.Uniform("SpotLightShadowBiasMin", spotShadowBiasMin);
+            program.Uniform("SpotLightShadowBiasMax", spotShadowBiasMax);
+            program.Uniform("SpotLightShadowSamples", spotShadowSamples);
+            program.Uniform("SpotLightShadowFilterRadius", spotShadowFilterRadius);
+            program.Uniform("SpotLightShadowEnablePCSS", spotShadowEnablePCSS);
 
             // Bind the actual shadow texture after per-light SetUniforms.
             // ALWAYS bind a texture to unit 15 - if no shadow map, use a 1x1 white dummy.
@@ -866,6 +979,17 @@ namespace XREngine.Scene
             // Only render debug when explicitly enabled
             if (!light.PreviewBoundingVolume)
                 return;
+
+            switch (light)
+            {
+                case PointLightComponent pointLight:
+                    Engine.Rendering.Debug.RenderSphere(pointLight.Transform.RenderTranslation, pointLight.Radius, false, color);
+                    return;
+                case SpotLightComponent spotLight:
+                    Cone cone = spotLight.OuterCone;
+                    Engine.Rendering.Debug.RenderCone(cone.Center, cone.Up, cone.Radius, cone.Height, false, color);
+                    return;
+            }
 
             var intersections = light.CameraIntersections;
             if (intersections.Count == 0)
