@@ -348,6 +348,10 @@ namespace XREngine
             h[nameof(EditorPreferencesOverrides.AudioArchitectureV2Override)] = applyAudio;
             h[nameof(EditorPreferencesOverrides.AudioSampleRateOverride)] = applyAudio;
 
+            // ── Camera depth mode ──
+            Action applyDepthMode = Rendering.ApplySceneCameraDepthModePreference;
+            h[nameof(GameStartupSettings.DepthModeOverride)] = applyDepthMode;
+
             // ── Parallel tick ──
             h[nameof(UserSettings.TickGroupedItemsInParallelOverride)] = Rendering.ApplyTickGroupedItemsInParallelPreference;
             // GameStartup's identically-named property matches the same key

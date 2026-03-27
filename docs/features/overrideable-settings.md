@@ -107,8 +107,13 @@ These walk the cascade in correct priority order and return the effective value.
 
 **Project overrides** – Stored in the project's assets. A game project can:
 - Override startup settings via `GameStartupSettings`
-- Override editor preferences via `EditorPreferencesOverrides` (theme, debug options, etc.)
+- Override editor preferences via `EditorPreferencesOverrides` (theme, debug options, scene depth mode, etc.)
 - Define project-specific defaults that all team members share
+
+Example camera-depth cascade:
+- `GameStartupSettings.DepthModeOverride` sets the project default for scene cameras.
+- `EditorPreferences.SceneDepthMode` can force `Normal` or `Reversed`, or defer with `UseProjectDefault`.
+- `EditorPreferencesOverrides.SceneDepthModeOverride` can sandbox that editor preference per project.
 
 **User overrides** – Personal preferences stored outside the project. Not checked into source control. Examples: preferred theme, ImGui panel visibility/layout preferences, window positions, recently opened files.
 

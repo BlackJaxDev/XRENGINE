@@ -302,6 +302,7 @@ namespace XREngine.Components
         private XRCamera CameraFactory()
         {
             var cam = new XRCamera(Transform);
+            cam.DepthMode = Engine.Rendering.ResolveSceneCameraDepthModePreference();
             cam.PropertyChanged += CameraPropertyChanged;
             cam.ViewportAdded += ViewportAdded;
             cam.ViewportRemoved += ViewportRemoved;

@@ -1,4 +1,5 @@
 using ImGuiNET;
+using Silk.NET.OpenGL;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Components.Capture.Lights;
@@ -358,12 +359,50 @@ internal static class LightComponentEditorShared
                 float extent = MathF.Max(1.0f, cubeView.ViewedTexture.Extent);
                 pixelSize = new Vector2(extent, extent);
                 displaySize = GetPreviewSize(pixelSize);
-                return TryGetTextureHandle(renderer.GenericToAPI<GLTextureView>(cubeView), out handle, out failureReason);
+                var glTextureView = renderer.GenericToAPI<GLTextureView>(cubeView);
+                ApplyCubeFacePreviewSwizzle(renderer, cubeView, glTextureView);
+                return TryGetTextureHandle(glTextureView, out handle, out failureReason);
             default:
                 failureReason = $"{texture.GetType().Name} preview not supported.";
                 return false;
         }
     }
+
+    private static void ApplyCubeFacePreviewSwizzle(OpenGLRenderer renderer, XRTextureCubeView cubeView, GLTextureView? glTextureView)
+    {
+        if (glTextureView is null || !IsSingleChannelFormat(cubeView.ViewedTexture.SizedInternalFormat))
+            return;
+
+        uint binding = glTextureView.BindingId;
+        if (binding == 0 || binding == OpenGLRenderer.GLObjectBase.InvalidBindingId)
+            return;
+
+        var gl = renderer.RawGL;
+        int red = (int)GLEnum.Red;
+        int one = (int)GLEnum.One;
+        gl.TextureParameterI(binding, GLEnum.TextureSwizzleR, in red);
+        gl.TextureParameterI(binding, GLEnum.TextureSwizzleG, in red);
+        gl.TextureParameterI(binding, GLEnum.TextureSwizzleB, in red);
+        gl.TextureParameterI(binding, GLEnum.TextureSwizzleA, in one);
+    }
+
+    private static bool IsSingleChannelFormat(ESizedInternalFormat format)
+        => format switch
+        {
+            ESizedInternalFormat.R8 or
+            ESizedInternalFormat.R8Snorm or
+            ESizedInternalFormat.R16 or
+            ESizedInternalFormat.R16Snorm or
+            ESizedInternalFormat.R16f or
+            ESizedInternalFormat.R32f or
+            ESizedInternalFormat.R8i or
+            ESizedInternalFormat.R8ui or
+            ESizedInternalFormat.R16i or
+            ESizedInternalFormat.R16ui or
+            ESizedInternalFormat.R32i or
+            ESizedInternalFormat.R32ui => true,
+            _ => false,
+        };
 
     private static bool TryGetTextureHandle(IGLTexture? glTexture, out nint handle, out string? failureReason)
     {
@@ -451,7 +490,6 @@ internal static class LightComponentEditorShared
     private sealed class CubemapPreviewCache
     {
         private readonly XRTextureCubeView[] _faceViews = new XRTextureCubeView[6];
-        private readonly bool[] _facePreviewFailed = new bool[6];
         private readonly string?[] _faceFailureReasons = new string?[6];
 
         public CubemapPreviewCache(XRTextureCube source)
@@ -471,20 +509,18 @@ internal static class LightComponentEditorShared
             out string? failureReason)
         {
             int faceIndex = (int)face;
-            if (_facePreviewFailed[faceIndex])
-            {
-                handle = nint.Zero;
-                pixelSize = new Vector2(MathF.Max(1.0f, _faceViews[faceIndex].ViewedTexture.Extent));
-                displaySize = GetPreviewSize(pixelSize);
-                failureReason = _faceFailureReasons[faceIndex] ?? "Preview unavailable.";
-                return false;
-            }
 
             if (TryGetTexturePreviewData(_faceViews[faceIndex], out handle, out displaySize, out pixelSize, out failureReason))
                 return true;
 
-            _facePreviewFailed[faceIndex] = true;
             _faceFailureReasons[faceIndex] = failureReason ?? "Preview unavailable.";
+
+            // Return the last failure reason but do NOT permanently cache the failure.
+            // The texture view may not be ready yet (e.g. cubemap not populated on first frame).
+            handle = nint.Zero;
+            pixelSize = new Vector2(MathF.Max(1.0f, _faceViews[faceIndex].ViewedTexture.Extent));
+            displaySize = GetPreviewSize(pixelSize);
+            failureReason = _faceFailureReasons[faceIndex];
             return false;
         }
 

@@ -81,9 +81,13 @@ namespace XREngine.Rendering
                     return null;
 
                 // Depth-only grabs need a depth attachment so glBlitFramebuffer
-                // can copy the depth buffer. Color grabs use ColorAttachment0.
+                // can copy the depth buffer. If the grab texture is depth-stencil,
+                // it must be attached as depth-stencil or the blit will be invalid.
+                // Color grabs use ColorAttachment0.
                 var attachment = (_depthBit && !_colorBit)
-                    ? EFrameBufferAttachment.DepthAttachment
+                    ? ResultTexture.FrameBufferAttachment == EFrameBufferAttachment.DepthStencilAttachment
+                        ? EFrameBufferAttachment.DepthStencilAttachment
+                        : EFrameBufferAttachment.DepthAttachment
                     : EFrameBufferAttachment.ColorAttachment0;
                 return new((ResultTexture, attachment, 0, -1));
             }

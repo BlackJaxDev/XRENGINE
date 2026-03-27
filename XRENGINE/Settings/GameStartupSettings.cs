@@ -4,6 +4,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine
@@ -320,6 +321,7 @@ namespace XREngine
         private OverrideableSetting<EDlssQualityMode> _dlssQualityOverride = new();
         private OverrideableSetting<bool> _enableIntelXessOverride = new();
         private OverrideableSetting<EXessQualityMode> _xessQualityOverride = new();
+        private OverrideableSetting<XRCamera.EDepthMode> _depthModeOverride = new();
 
         // Project > Engine only (technical, not user-facing)
         private OverrideableSetting<bool> _allowShaderPipelinesOverride = new();
@@ -677,6 +679,19 @@ namespace XREngine
         {
             get => _xessQualityOverride;
             set => SetField(ref _xessQualityOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for scene camera depth buffer mode.
+        /// When enabled, cameras default to the selected normal or reversed depth mode.
+        /// The editor preference can still override this for development workflows.
+        /// </summary>
+        [Category("Rendering Overrides")]
+        [Description("Project override for scene camera depth buffer mode.")]
+        public OverrideableSetting<XRCamera.EDepthMode> DepthModeOverride
+        {
+            get => _depthModeOverride;
+            set => SetField(ref _depthModeOverride, value ?? new());
         }
 
         /// <summary>

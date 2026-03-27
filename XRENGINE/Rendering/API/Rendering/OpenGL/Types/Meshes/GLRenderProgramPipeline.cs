@@ -59,18 +59,29 @@ namespace XREngine.Rendering.OpenGL
             }
 
             public static UseProgramStageMask ToUseProgramStageMask(EProgramStageMask mask)
-                => mask switch
-                {
-                    EProgramStageMask.VertexShaderBit => UseProgramStageMask.VertexShaderBit,
-                    EProgramStageMask.TessControlShaderBit => UseProgramStageMask.TessControlShaderBit,
-                    EProgramStageMask.TessEvaluationShaderBit => UseProgramStageMask.TessEvaluationShaderBit,
-                    EProgramStageMask.GeometryShaderBit => UseProgramStageMask.GeometryShaderBit,
-                    EProgramStageMask.FragmentShaderBit => UseProgramStageMask.FragmentShaderBit,
-                    EProgramStageMask.ComputeShaderBit => UseProgramStageMask.ComputeShaderBit,
-                    EProgramStageMask.MeshShaderBit => (UseProgramStageMask)64,
-                    EProgramStageMask.TaskShaderBit => (UseProgramStageMask)128,
-                    _ => 0,
-                };
+            {
+                if (mask == EProgramStageMask.AllShaderBits)
+                    return UseProgramStageMask.AllShaderBits;
+
+                UseProgramStageMask result = 0;
+                if (mask.HasFlag(EProgramStageMask.VertexShaderBit))
+                    result |= UseProgramStageMask.VertexShaderBit;
+                if (mask.HasFlag(EProgramStageMask.FragmentShaderBit))
+                    result |= UseProgramStageMask.FragmentShaderBit;
+                if (mask.HasFlag(EProgramStageMask.GeometryShaderBit))
+                    result |= UseProgramStageMask.GeometryShaderBit;
+                if (mask.HasFlag(EProgramStageMask.TessControlShaderBit))
+                    result |= UseProgramStageMask.TessControlShaderBit;
+                if (mask.HasFlag(EProgramStageMask.TessEvaluationShaderBit))
+                    result |= UseProgramStageMask.TessEvaluationShaderBit;
+                if (mask.HasFlag(EProgramStageMask.ComputeShaderBit))
+                    result |= UseProgramStageMask.ComputeShaderBit;
+                if (mask.HasFlag(EProgramStageMask.MeshShaderBit))
+                    result |= (UseProgramStageMask)64;
+                if (mask.HasFlag(EProgramStageMask.TaskShaderBit))
+                    result |= (UseProgramStageMask)128;
+                return result;
+            }
 
             protected override void LinkData()
             {

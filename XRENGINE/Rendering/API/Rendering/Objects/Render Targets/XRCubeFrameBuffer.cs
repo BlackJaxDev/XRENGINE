@@ -1,5 +1,6 @@
 using System.Drawing.Drawing2D;
 using System.Numerics;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Scene.Transforms;
@@ -60,14 +61,14 @@ namespace XREngine.Rendering
         public static XRCamera[] GetCamerasPerFace(float nearZ, float farZ, bool perspective, TransformBase? parent)
         {
             XRCamera[] cameras = new XRCamera[6];
-            Rotator[] rotations =
+            (Vector3 Forward, Vector3 Up)[] faces =
             [
-                new(0.0f, -90.0f, 180.0f), //+X
-                new(0.0f, 90.0f, 180.0f), //-X
-                new(90.0f, 0.0f, 0.0f), //+Y
-                new(-90.0f, 0.0f, 0.0f), //-Y
-                new(0.0f, 180.0f, 180.0f), //+Z
-                new(0.0f, 0.0f, 180.0f), //-Z
+                ( Vector3.UnitX, -Vector3.UnitY), // +X
+                (-Vector3.UnitX, -Vector3.UnitY), // -X
+                ( Vector3.UnitY,  Vector3.UnitZ), // +Y
+                (-Vector3.UnitY, -Vector3.UnitZ), // -Y
+                ( Vector3.UnitZ, -Vector3.UnitY), // +Z
+                (-Vector3.UnitZ, -Vector3.UnitY), // -Z
             ];
 
             XRCameraParameters p;
@@ -84,7 +85,10 @@ namespace XREngine.Rendering
             {
                 var tfm = new Transform()
                 {
-                    Rotation = rotations[i].ToQuaternion(),
+                    // XRMath.LookRotation aligns the local +Z axis, while Transform.Forward is -Z.
+                    // Negate the desired face forward so the resulting transform's WorldForward
+                    // matches the cubemap face direction used by OpenGL sampling.
+                    Rotation = XRMath.LookRotation(-faces[i].Forward, faces[i].Up),
                     Translation = Vector3.Zero,
                     Scale = Vector3.One
                 };

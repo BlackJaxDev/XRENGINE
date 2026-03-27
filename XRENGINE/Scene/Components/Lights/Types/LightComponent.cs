@@ -37,6 +37,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private bool _enableContactShadows = true;
         private float _contactShadowDistance = 0.1f;
         private int _contactShadowSamples = 4;
+        private int _shadowDebugMode = 0;
 
         private long _lastMovedTicks;
         private uint _movementVersion = 0;
@@ -340,6 +341,18 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _contactShadowSamples, Math.Max(1, value));
         }
 
+        /// <summary>
+        /// Shadow debug visualisation mode: 0 = off, 1 = shadow-only, 2 = margin heatmap.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Shadow Debug Mode")]
+        [Description("0 = normal, 1 = shadow-only (white=lit), 2 = margin heatmap (green=lit margin, red=shadow).")]
+        public int ShadowDebugMode
+        {
+            get => _shadowDebugMode;
+            set => SetField(ref _shadowDebugMode, Math.Clamp(value, 0, 2));
+        }
+
         public virtual void SetUniforms(XRRenderProgram program, string? targetStructName = null)
         {
             program.Uniform(Engine.Rendering.Constants.ShadowExponentBaseUniform, ShadowExponentBase);
@@ -355,6 +368,8 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform(Engine.Rendering.Constants.EnableContactShadows, EnableContactShadows);
             program.Uniform(Engine.Rendering.Constants.ContactShadowDistance, ContactShadowDistance);
             program.Uniform(Engine.Rendering.Constants.ContactShadowSamples, ContactShadowSamples);
+
+            program.Uniform("ShadowDebugMode", _shadowDebugMode);
         }
 
         public abstract XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Flt32);

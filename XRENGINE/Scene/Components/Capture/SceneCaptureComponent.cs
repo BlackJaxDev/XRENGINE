@@ -4,6 +4,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -42,12 +43,12 @@ namespace XREngine.Components.Lights
 
         private static readonly Quaternion[] FaceRotationOffsets =
         [
-            new Rotator(0.0f, -90.0f, 180.0f).ToQuaternion(), // +X
-            new Rotator(0.0f, 90.0f, 180.0f).ToQuaternion(),  // -X
-            new Rotator(90.0f, 0.0f, 0.0f).ToQuaternion(),    // +Y
-            new Rotator(-90.0f, 0.0f, 0.0f).ToQuaternion(),   // -Y
-            new Rotator(0.0f, 180.0f, 180.0f).ToQuaternion(), // +Z
-            new Rotator(0.0f, 0.0f, 180.0f).ToQuaternion(),   // -Z
+            XRMath.LookRotation(-Vector3.UnitX, -Vector3.UnitY), // +X
+            XRMath.LookRotation( Vector3.UnitX, -Vector3.UnitY), // -X
+            XRMath.LookRotation(-Vector3.UnitY,  Vector3.UnitZ), // +Y
+            XRMath.LookRotation( Vector3.UnitY, -Vector3.UnitZ), // -Y
+            XRMath.LookRotation(-Vector3.UnitZ, -Vector3.UnitY), // +Z
+            XRMath.LookRotation( Vector3.UnitZ, -Vector3.UnitY), // -Z
         ];
 
         [RuntimeOnly]
