@@ -3270,6 +3270,11 @@ void main()
             }
 
             Api.NamedFramebufferReadBuffer(inID, ToGLEnum(readBufferMode));
+
+            // Drain any pre-existing GL errors so they don't falsely trigger the
+            // post-blit check.
+            while (Api.GetError() != GLEnum.NoError) { }
+
             Api.BlitNamedFramebuffer(
                 inID,
                 outID,
@@ -3283,6 +3288,22 @@ void main()
                 outY + (int)outH,
                 mask,
                 linearFilter ? BlitFramebufferFilter.Linear : BlitFramebufferFilter.Nearest);
+
+            // Check for GL errors from the blit and log once per FBO pair to avoid
+            // per-frame spam (e.g. NVIDIA "Depth formats do not match").
+            var blitErr = Api.GetError();
+            if (blitErr != GLEnum.NoError)
+                LogBlitErrorOnce(inID, outID, blitErr);
+        }
+
+        private readonly HashSet<(uint, uint)> _blitErrorWarned = [];
+        private void LogBlitErrorOnce(uint srcId, uint dstId, GLEnum error)
+        {
+            if (!_blitErrorWarned.Add((srcId, dstId)))
+                return;
+            Debug.OpenGLWarning(
+                $"BlitNamedFramebuffer FBO {srcId}→{dstId} raised {error}. " +
+                $"Subsequent errors for this pair will be suppressed.");
         }
 
         private readonly HashSet<(uint, uint)> _blitSkipWarned = [];

@@ -1489,6 +1489,46 @@ namespace XREngine
                         window.RequestRenderStateRecheck(resetCircuitBreaker: true);
                     }
                 }
+
+                if (applyAll || propertyName == nameof(EditorPreferences.SceneDepthMode))
+                    ApplySceneCameraDepthModePreference();
+            }
+
+            public static global::XREngine.Rendering.XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
+            {
+                global::XREngine.Rendering.XRCamera.EDepthMode projectMode = Engine.GameSettings?.DepthModeOverride is { HasOverride: true } projectOverride
+                    ? projectOverride.Value
+                    : global::XREngine.Rendering.XRCamera.EDepthMode.Normal;
+
+                return Engine.EditorPreferences.SceneDepthMode switch
+                {
+                    EditorPreferences.ESceneDepthModePreference.Normal => global::XREngine.Rendering.XRCamera.EDepthMode.Normal,
+                    EditorPreferences.ESceneDepthModePreference.Reversed => global::XREngine.Rendering.XRCamera.EDepthMode.Reversed,
+                    _ => projectMode,
+                };
+            }
+
+            public static void ApplySceneCameraDepthModePreference()
+            {
+                global::XREngine.Rendering.XRCamera.EDepthMode depthMode = ResolveSceneCameraDepthModePreference();
+
+                foreach (var worldInstance in Engine.WorldInstances)
+                {
+                    foreach (SceneNode root in worldInstance.RootNodes)
+                    {
+                        foreach (SceneNode node in Scene.Prefabs.SceneNodePrefabUtility.EnumerateHierarchy(root))
+                        {
+                            foreach (var component in node.Components)
+                            {
+                                if (component is CameraComponent cameraComponent)
+                                    cameraComponent.Camera.DepthMode = depthMode;
+                            }
+                        }
+                    }
+                }
+
+                foreach (var window in Engine.Windows)
+                    window.RequestRenderStateRecheck(resetCircuitBreaker: true);
             }
 
             private static void ApplyRenderMeshBoundsSetting()

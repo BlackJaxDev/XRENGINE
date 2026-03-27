@@ -26,6 +26,7 @@ public sealed class PointLightComponentEditor : IXRComponentEditor
         LightComponentEditorShared.DrawCommonLightSection(light);
         DrawAttenuationSection(light);
         LightComponentEditorShared.DrawShadowSection(light, showCascadedOptions: false);
+        DrawPointLightShadowOptions(light);
         LightComponentEditorShared.DrawShadowMapPreview(light);
 
         ImGui.PopID();
@@ -44,5 +45,23 @@ public sealed class PointLightComponentEditor : IXRComponentEditor
         float brightness = light.Brightness;
         if (ImGui.DragFloat("Brightness", ref brightness, 0.01f, 0.0f, 100000.0f, "%.3f"))
             light.Brightness = MathF.Max(0.0f, brightness);
+    }
+
+    private static void DrawPointLightShadowOptions(PointLightComponent light)
+    {
+        if (!ImGui.CollapsingHeader("Point Light Shadow Options", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        bool gs = light.UseGeometryShader;
+        if (ImGui.Checkbox("Use Geometry Shader", ref gs))
+            light.UseGeometryShader = gs;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Render all 6 cubemap faces in one draw call via geometry shader.\nDisable for 6-pass fallback (useful for debugging or driver compat).");
+
+        int debugMode = light.ShadowDebugMode;
+        if (ImGui.Combo("Shadow Debug Mode", ref debugMode, "Off\0Shadow Only\0Margin Heatmap\0"))
+            light.ShadowDebugMode = debugMode;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Off: Normal lighting.\nShadow Only: White=lit, Black=shadow.\nMargin Heatmap: Green=lit margin, Red=false-shadow margin.");
     }
 }

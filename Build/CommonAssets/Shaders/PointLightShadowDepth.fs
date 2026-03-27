@@ -8,9 +8,10 @@ uniform float FarPlaneDist;
 
 void main()
 {
-	// write modified depth
-	// map to [0;1] range by dividing by far_plane
+	// Store linear light distance in the color target for manual shadow comparison.
+	// Do not override gl_FragDepth: the fixed-function depth test must use the
+	// cubemap face projection depth, not radial distance, or nearest-surface
+	// selection becomes incorrect and produces distorted point-light shadows.
 	float d = length(FragPos - LightPos) / FarPlaneDist;
-	gl_FragDepth = d;
 	Depth = d;
 }

@@ -19,6 +19,13 @@ namespace XREngine
             AttachSubSettings(_theme, _debug);
         }
 
+        public enum ESceneDepthModePreference
+        {
+            UseProjectDefault,
+            Normal,
+            Reversed,
+        }
+
         public enum EViewportPresentationMode
         {
             FullViewportBehindImGuiUI,
@@ -26,6 +33,7 @@ namespace XREngine
         }
 
         private EViewportPresentationMode _viewportPresentationMode = EViewportPresentationMode.FullViewportBehindImGuiUI;
+        private ESceneDepthModePreference _sceneDepthMode = ESceneDepthModePreference.UseProjectDefault;
         private int _scenePanelResizeDebounceMs = 0;
         private EditorThemeSettings _theme = new();
         private EditorDebugOptions _debug = new();
@@ -97,6 +105,19 @@ namespace XREngine
         {
             get => _viewportPresentationMode;
             set => SetField(ref _viewportPresentationMode, value);
+        }
+
+        /// <summary>
+        /// Controls the scene camera depth buffer mode used by the editor.
+        /// UseProjectDefault defers to GameStartupSettings.DepthModeOverride.
+        /// </summary>
+        [Category("Viewport")]
+        [DisplayName("Scene Depth Mode")]
+        [Description("Controls the editor scene camera depth buffer mode. Use Project Default defers to the project GameStartupSettings override.")]
+        public ESceneDepthModePreference SceneDepthMode
+        {
+            get => _sceneDepthMode;
+            set => SetField(ref _sceneDepthMode, value);
         }
 
         /// <summary>

@@ -1,306 +1,160 @@
-# XRENGINE
+﻿# XRENGINE
 
-XRENGINE is a Windows-first C# XR engine + editor.
+A Windows-first C# XR engine and editor, built on .NET 10. Ships a desktop editor, a dedicated server, and a separate legacy OpenVR companion app for VR/desktop switching without restarting the main game.
 
-It includes a desktop editor, a dedicated server, and a standalone VR client. This is a dev-focused codebase (expect refactors and occasional breaking changes).
+This is early-stage software — APIs change often and there's no backward-compatibility promise yet. The goal is to get the architecture right before v1.
 
-## Status at a Glance
-- **Maturity**: early-stage; APIs and workflows change.
-- **Platform**: Windows 10/11, .NET 10.
-- **Projects**: `XREngine.Editor`, `XREngine.Server`, `XREngine.VRClient`.
-- **Rendering**: OpenGL 4.6 is the main path; Vulkan/DX12 are WIP.
-- **XR**: OpenXR and SteamVR/OpenVR paths exist - only OpenVR is tested.
-- **Physics**: 
-PhysX is the current default and supports a character controller;
-Jolt is the planned default but only semi-implemented & untested;
-Jitter 2 work is planned for lightweight usage such as for VTubing.
+If you want the fastest way in: build the editor, launch the Unit Testing World, and use that as your main validation loop.
 
-## Solution Layout
-- `XREngine` – core runtime, scene graph, rendering backends, and XR subsystems.
-- `XREngine.Editor` – desktop editor that boots into the unit testing world used to validate features.
-- `XREngine.Animation`, `XREngine.Audio`, `XREngine.Extensions` – supporting modules for animation, audio, and common utilities.
-- `XREngine.Data`, `XREngine.Input`, `XREngine.Modeling` – data structures, input handling, and 3D modeling utilities.
-- `XREngine.Server`, `XREngine.VRClient` – networking server and standalone VR client.
-- `XREngine.UnitTests` – automated tests for engine subsystems.
-- `Build/Submodules` – third-party dependencies (OpenVR.NET, MagicPhysX, CoACD, OscCore, rive-sharp).
+## Main subsystems
+
+- **Rendering:** OpenGL 4.6 via Silk.NET is the primary path. Vulkan and DX12 backends exist but are still in progress.
+- **Physics:** PhysX (via MagicPhysX) is the current default with character controller support. Jolt is planned as the future default but isn't fully wired up yet. Jitter 2 is on the roadmap for lightweight use cases.
+- **Audio:** OpenAL (Soft) via Silk.NET, with NAudio and LAME for codec support. Video audio goes through FFmpeg.
+- **Scene graph:** Traditional scene node tree with an attached component model. Nodes form a parent-child transform hierarchy, and components derive from `XRBase` for change tracking.
+- **Animation:** Skeletal animation with blend support, humanoid IK (VRIK for VR), and Assimp-based clip import.
+- **Asset import:** Assimp (via AssimpNetter) handles model loading — FBX, glTF, OBJ, DAE, and others.
+- **Networking:** Client/server and P2P topologies with entity replication and pose sync for multiplayer testing.
+- **XR:** OpenXR and SteamVR/OpenVR paths. OpenVR is the one that's actually tested today.
+- **Editor UI:** ImGui is the day-to-day interface. A native UI pipeline is under development as the intended production UI.
+- **Input:** Silk.NET.Input for keyboard, mouse, and gamepad. GLFW for windowing.
+- **Video/media:** FFmpeg (via FFmpeg.AutoGen) for video textures, streaming, and audio extraction.
 
 ## Prerequisites
+
 - .NET 10 SDK
-- Windows 10/11 with a GPU capable of OpenGL 4.6
-- Optional: OpenXR-compatible headset or SteamVR setup for XR testing
-- Optional (required for YouTube URL playback): `yt-dlp` available on PATH or copied as `yt-dlp.exe` beside the app executable
+- Windows 10/11 with an OpenGL 4.6 capable GPU
+- Git (submodules are used for third-party deps)
+- Optional: SteamVR or an OpenXR headset for XR testing
 
-## Quick Start
-### 1) Clone (with submodules)
+## Quick start
 
-This repo relies on Git submodules under `Build/Submodules`.
-
-Recommended (one command):
+### Clone
 
 ```powershell
 git clone --recurse-submodules https://github.com/BlackJaxDev/XRENGINE.git
 cd XRENGINE
 ```
 
-If you already cloned without submodules:
+If you already cloned without `--recurse-submodules`:
 
 ```powershell
-cd XRENGINE
 git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
-Windows convenience script (does the same and prints status):
+Or use the convenience script: `./Tools/Initialize-Submodules.bat`
 
-```powershell
-./Tools/Initialize-Submodules.bat
-```
-
-### 2) Build
-
-Solution build:
+### Build
 
 ```powershell
 dotnet restore
 dotnet build XRENGINE.slnx
 ```
 
-Or build the Editor only:
+If you want the broadest one-command repo setup instead, run `ExecTool --bootstrap`.
 
-```powershell
-dotnet build .\XREngine.Editor\XREngine.Editor.csproj
-```
+For bootstrap scope, first-time setup, and what still needs manual installation afterward, see `docs/features/bootstrap.md`.
 
-### 3) Run the Editor (CLI)
+### Run the editor
 
 ```powershell
 dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj
 ```
 
-Shortcut script:
+Or: `./Tools/Start-Editor.bat`
+
+To boot into the Unit Testing World, use the `Editor (Unit Testing World)` launch profile in VS Code, or run the editor with `--unit-testing`.
+
+If you are contributing code, the best follow-up docs are `docs/features/unit-testing-world.md` and `docs/architecture/getting-started-in-codebase.md`.
+
+## Project layout
+
+| Project | What it is |
+|---------|-----------|
+| `XREngine/` | Core runtime — scene graph, rendering, XR subsystems |
+| `XREngine.Editor/` | Desktop editor |
+| `XREngine.Server/` | Dedicated server |
+| `XREngine.VRClient/` | Legacy OpenVR companion app. Keeps the SteamVR/OpenVR connection isolated from the main engine process, forwards player input to the main app through a pipe, and displays per-eye frames streamed back from the engine. |
+| `XREngine.Animation/`, `XREngine.Audio/`, etc. | Supporting modules |
+| `XREngine.UnitTests/` | Automated tests |
+| `Build/Submodules/` | Third-party dependencies (OpenVR.NET, MagicPhysX, CoACD, OscCore, rive-sharp) |
+
+## Running and debugging
+
+### VS Code (recommended)
+
+The repo includes ready-to-go `.vscode/` configs. Use **Run and Debug** (Ctrl+Shift+D) to pick a launch profile:
+
+- **Editor (Default World)** / **Editor (Unit Testing World)**
+- **Debug Client**, **Debug Server**, **Debug P2P Client**, **Debug VRClient**
+
+There are also no-debug tasks under **Terminal → Run Task** for the common editor, server, client, and networking scenarios.
+
+`Debug VRClient` is mainly for the legacy OpenVR path. OpenVR cannot be cleanly shut down and restarted inside the same running app, so `XREngine.VRClient` exists to hold that SteamVR connection in a separate process. The main engine app can then stay alive and switch between desktop and VR gameplay without forcing a full restart. OpenXR does not have that limitation, so this extra process is specifically for legacy OpenVR support.
+
+### Visual Studio
+
+Open `XRENGINE.slnx`, set your startup project (`XREngine.Editor`, `XREngine.Server`, etc.), and hit F5. Environment variables like `XRE_NET_MODE` and `XRE_WORLD_MODE` can be set in Project → Properties → Debug to switch between server/client/P2P modes.
+
+If you are working on the legacy OpenVR path, use `XREngine.VRClient` as the companion process rather than treating it like a second copy of the main game. It collects VR-side player input and sends it to the main engine app over a pipe, while the engine streams back the left/right eye renders for presentation through SteamVR/OpenVR.
+
+### Networking quick test
 
 ```powershell
-./Tools/Start-Editor.bat
+./Tools/Start-NetworkTest.bat          # server + client
+./Tools/Start-NetworkTest.bat pose     # server + pose source + pose receiver
 ```
 
-Running the editor launches the Unit Testing World, a collection of scenes that exercise rendering, animation, physics, audio, and XR workflows. Use this environment to verify changes and explore current functionality.
+### ExecTool
+
+The repo root has `ExecTool.bat`, an interactive menu for all the scripts under `Tools/` — build helpers, dependency installers, report generators, and more. Run it with no arguments for the menu, or `ExecTool --bootstrap` for full first-time setup.
+
+## Unit Testing World
+
+The editor's test world is configured through `Assets/UnitTestingWorldSettings.jsonc`. Launch with `--unit-testing` (or set `XRE_WORLD_MODE=UnitTesting`) to boot into it. The file has a JSON schema wired up in VS Code for autocompletion and hover docs.
+
+For the full workflow, including pose/network test setups and how the JSONC file is used, see `docs/features/unit-testing-world.md`.
+
+To regenerate the schema after changing the settings type:
+
+```powershell
+pwsh Tools/Generate-UnitTestingWorldSettings.ps1
+```
+
+## Native dependencies
+
+Most core native pieces are already wired into the build, but some optional tools and SDKs still need local setup.
+
+For the practical setup and rebuild guide, see `docs/features/native-dependencies.md`.
 
 ## Logs
 
-- Per-run engine logs are written under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/` when file logging is enabled.
-- Profiler diagnostics now emit dedicated files in that same run directory: `profiler-main-thread-invokes.log` for invoke request/execution traces and `profiler-fps-drops.log` for rich FPS-drop records.
-- Math Intersections world benchmarks now emit `math-intersections-benchmarks.log` into that same run directory, including frame timing and GPU physics-chain transfer-pressure counters.
-
-## Unit Testing World Settings (JSONC)
-
-The Unit Testing World is configured by a settings file and loaded on startup.
-
-- **How it’s selected**: launch the Editor with `--unit-testing` (or set `XRE_WORLD_MODE=UnitTesting`).
-- **Where the settings are loaded from**: the Editor loads `Assets/UnitTestingWorldSettings.jsonc` relative to the process **working directory** (`Environment.CurrentDirectory`). In the provided VS Code launch configs, the working directory is set to the workspace root.
-- **Preferred editing workflow**: edit `Assets/UnitTestingWorldSettings.jsonc` directly. The runtime and workspace tooling now treat JSONC as the canonical format for this file.
-- **How to inspect properties and enum choices while editing**: the workspace maps the settings file to `.vscode/schemas/unit-testing-world-settings.schema.json`. In VS Code, hover a property to see its description, use completion inside enum-backed string values to see supported choices, and use the `ImportFlags` snippets for common Assimp flag combinations.
-- **What happens on load**: the JSON is deserialized into `UnitTestingWorld.Toggles` (type `UnitTestingWorld.Settings`). If the file doesn’t exist yet, a default one is written out.
-- **How it affects the world**: `UnitTestingWorld.CreateSelectedWorld(...)` switches on `Toggles.WorldKind` to choose which unit-test world factory to run, and the other toggle values control what gets added (models to import, lighting, physics, UI overlays, etc.).
-- **Light-probe layout and capture**: `LightProbe` is enum-backed now (`Off`, `Single`, `Grid`, `ModelGrid`) and `LightProbeCapture` separately controls probe capture policy (`None`, `Startup`, `Realtime`). `ModelGrid` uses imported model bounds when available, while `Grid` keeps the configured rectangular layout.
-- **Quick water-shader preview**: set `DynamicWaterQuad` to `true` in `Assets/UnitTestingWorldSettings.jsonc` to spawn a ready-made tessellated water quad preview with refraction grabs, foam, and animated sphere/capsule eddy interactors. The OpenGL unit-test path is the reliable way to validate it today.
-- **Per-model material selection**: each entry in `ModelsToImport` now owns its own `MaterialMode` value. Supported values are `Deferred`, `Forward`, and `Uber`, and they apply to both `Static` and `Animated` model imports.
-- **Per-model static collider generation**: static `ModelsToImport` entries can set `GenerateCoacdCollidersPerSubmesh` to `true` to split imported submeshes into separate model components and auto-attach CoACD-generated PhysX convex colliders for each one.
-- **It also influences engine startup**: the Editor loads these toggles early so render/update settings (render API, tick rates, pipeline choices, etc.) can be applied consistently.
-- **Comments and rewrites**: inline `//` comments are part of the intended workflow. The schema still matters because it provides hover docs, enum completions, and `ImportFlags` presets that comments alone cannot provide.
-- **Regenerating schema and settings**: run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Generate-UnitTestingWorldSettings.ps1` to regenerate `.vscode/schemas/unit-testing-world-settings.schema.json` and refresh the JSONC settings files from `UnitTestingWorld.Toggles`. Existing JSONC files keep matching property values and pick up new defaults for newly added members.
-
-## Launch Options (VS Code)
-
-This repo includes a ready-to-go VS Code setup in `.vscode/`.
-
-### Debug (F5)
-
-Use **Run and Debug** (Ctrl+Shift+D), then pick one of these launch configurations:
-
-- **Editor (Default World)**
-- **Editor (Unit Testing World)** (passes `--unit-testing` and sets `XRE_WORLD_MODE=UnitTesting`)
-- **Debug Client (Server & other client run separately)** (sets `XRE_NET_MODE=Client`, `XRE_UDP_CLIENT_RECEIVE_PORT=5001`)
-- **Debug Server (Clients runs separately)** (dedicated server exe; also launches 2 editor clients separately before attach)
-- **Debug Server (Server only)**
-- **Debug P2P Client (Peer client separate, no server)** (sets `XRE_NET_MODE=P2PClient`)
-- **Debug VRClient (Editor runs separately)** (sets `XRE_VRCLIENT_GAMENAME=XREngine.Editor`)
-
-### No-Debug launchers (Tasks)
-
-Use **Terminal → Run Task…** and run any of these tasks (they build first where needed):
-
-- `Start-Editor-NoDebug`
-- `Start-Server-NoDebug` (Editor-as-server, `XRE_NET_MODE=Server`)
-- `Start-Client-NoDebug` (Editor-as-client, port 5001)
-- `Start-Client2-NoDebug` (Editor-as-client, port 5002)
-- `Start-2Clients-NoDebug`
-- `Start-PoseServer-NoDebug` (server in `UnitTesting + NetworkingPose` world)
-- `Start-PoseSourceClient-NoDebug` (client sender, `XRE_POSE_ENTITY_ID=4242`, broadcast on)
-- `Start-PoseReceiverClient-NoDebug` (client receiver, `XRE_POSE_ENTITY_ID=4242`, receive on)
-- `Start-LocalPoseSync-NoDebug` (server + pose source + pose receiver)
-- `Start-DedicatedServer-NoDebug` (runs `XREngine.Server.exe`)
-- `Start-P2PPeer-NoDebug` (P2P peer 1, port 5001)
-- `Start-P2PPeer2-NoDebug` (P2P peer 2, port 5002)
-
-There are also “prep” tasks used by the debug configurations:
-
-- `Prep-DebugServer-With2Clients`, `Prep-DebugServer-Only`
-- `Prep-DebugClient-WithServerAndClient`
-- `Prep-DebugP2PClient-WithPeer`
-- `Prep-DebugVRClient-WithEditor`
-
-Manual validation tasks:
-
-- `Cook-CommonAssets-Archive (Manual Slow)` packages `Build/CommonAssets` into a game-content archive. It is intentionally not part of the normal test loop and should be run only when validating content cooking or archive packaging changes.
-
-## Launch Options (Visual Studio)
-
-Open `XRENGINE.slnx` (or `XRENGINE.sln`).
-
-### Run / Debug the Editor
-
-- Set startup project to `XREngine.Editor`.
-- Use **Debug → Start Debugging** (F5) or **Start Without Debugging** (Ctrl+F5).
-
-To emulate the same modes as the VS Code profiles, set environment variables in:
-
-- Project → Properties → Debug → **Environment variables**
-
-Common environment variables:
-
-- `XRE_NET_MODE=Server|Client|P2PClient`
-- `XRE_UDP_CLIENT_RECEIVE_PORT=5001` (or `5002` for a second client)
-- `XRE_WINDOW_TITLE=...`
-- `XRE_WORLD_MODE=UnitTesting`
-- `XRE_UNIT_TEST_WORLD_KIND=NetworkingPose` (forces the dedicated networking+pose test world)
-- `XRE_NETWORKING_POSE_ROLE=server|sender|receiver` (role-specific initialization inside `NetworkingPose` world)
-- `XRE_POSE_ENTITY_ID=4242` (must match between sender/receiver for humanoid pose sync)
-- `XRE_POSE_BROADCAST_ENABLED=true|false`
-- `XRE_POSE_RECEIVE_ENABLED=true|false`
-
-If you want the “Unit Testing World” behavior, also pass `--unit-testing` under Project → Properties → Debug → **Command line arguments**.
-
-### Run / Debug the Dedicated Server
-
-- Set startup project to `XREngine.Server`.
-
-### Run multiple instances (Server + Clients)
-
-Two common approaches:
-
-- **Multiple startup projects**: Solution → Properties → Startup Project → **Multiple startup projects**, set `XREngine.Server` and one (or more) `XREngine.Editor` entries to **Start**.
-- **Start New Instance**: right-click `XREngine.Editor` (or `XREngine.Server`) and choose **Debug → Start new instance**, then vary env vars per instance (e.g., ports 5001/5002) via separate Debug Profiles (VS 2022+) or by editing the project Debug settings before launching each instance.
-
-## Network test helper
-
-For a quick networking test:
-- `Tools\\Start-NetworkTest.bat` launches server + client.
-- `Tools\\Start-NetworkTest.bat pose` launches server + pose source + pose receiver.
-
-```powershell
-./Tools/Start-NetworkTest.bat
-./Tools/Start-NetworkTest.bat pose
-```
-
-## Texture download helper
-
-- `Tools/Get-PixelFurnaceTextures.ps1` discovers Pixel-Furnace's free texture ZIPs through the site's listing endpoint and downloads them into `Build/Dependencies/PixelFurnaceTextures` by default.
-- Also available through `ExecTool` from the `Build` section for one-click interactive use.
-- Example: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Get-PixelFurnaceTextures.ps1`
-- Filter without downloading: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Get-PixelFurnaceTextures.ps1 -NamePattern '*Brick*' -ListOnly`
-- Pixel-Furnace allows commercial and non-commercial project use, but their terms do not allow redistributing the textures by themselves or as a collection.
-
-## Native Dependencies
-- `CoACD` – `dotnet build` invokes `Tools/Dependencies/Build-CoACD.ps1` (when needed) to fetch/build CoACD and produce `lib_coacd.*` under `XRENGINE/runtimes/<rid>/native`. Use `/p:ForceCoACDBuild=true` to force a rebuild, or run the script manually. (Requires `git` + `cmake`; on Windows it uses the VS 2022 generator.) The legacy wheel extractor (`Tools/Dependencies/Get-CoACD.ps1`) remains available if you prefer vendor-provided binaries.
-
-- `MagicPhysX` – physics interop uses `libmagicphysx.dll` under `XRENGINE/runtimes/win-x64/native` (copied to output on build). If you change/update the MagicPhysX submodule or native bits, rebuild the related submodule/native output.
-
-- `Rive` (UI) – the managed Rive wrapper is sourced from `Build/Submodules/rive-sharp`, and the engine loads `rive.dll` from `XRENGINE/runtimes/win-x64/native`. If you need to rebuild it (or other submodule binaries), use:
-
-	```powershell
-	./Tools/Build-Submodules.bat Debug x64
-	# or: ./Tools/Build-Submodules.bat Release x64
-	```
-
-	This requires Visual Studio (or Build Tools) with the **Desktop development with C++** workload. The script will fetch `premake5` automatically if missing.
-
-- Video/streaming codecs – the repo ships FFmpeg-family native DLLs (`avcodec`, `avformat`, etc.) under `XRENGINE/runtimes/win-x64/native` and copies them to output as needed. Optional HLS helper DLLs can be staged in `Build/Dependencies/FFmpeg/Seed/win-x64` and are copied into `Build/Dependencies/FFmpeg/HlsReference/win-x64` during build when missing.
-
-	To retrieve FFmpeg seed DLLs from Flyleaf's GitHub repository, run:
-
-	```powershell
-	./Tools/Dependencies/Get-FfmpegFromFlyleaf.ps1
-	```
-
-	Use `-CopyToRuntime` to also copy directly into `Build/Dependencies/FFmpeg/HlsReference/win-x64`.
-
-- YouTube URL extraction (`yt-dlp`) – YouTube links are resolved to a direct playable URL through `yt-dlp` before FFmpeg open. Install `yt-dlp` and keep it on PATH, or place `yt-dlp.exe` next to the Editor/Client/Server executable.
-
-	To install/update `yt-dlp` into the repo-standard dependency location, run:
-
-	```powershell
-	./Tools/Dependencies/Get-YtDlp.ps1
-	```
-
-	This downloads `yt-dlp.exe` to `Build/Dependencies/YoutubeDL/yt-dlp.exe` and the build copies it into app output folders automatically for executable projects.
-
-- MSDF font atlas generation (`msdf-atlas-gen`) – world-space and UI text can optionally import fonts through an MSDF atlas path for sharper scaling and outline rendering. The font importer looks for `msdf-atlas-gen.exe` under `Build/Dependencies/MsdfAtlasGen/`.
-
-	To install/update `msdf-atlas-gen` into the repo-standard dependency location, run:
-
-	```powershell
-	./Tools/Dependencies/Get-MsdfAtlasGen.ps1
-	```
-
-	A matching VS Code task is also available as `Install-MsdfAtlasGen`. Font import options now default to `Auto`, which prefers MSDF when the tool is available and falls back to the legacy bitmap atlas path otherwise.
-
-- NVIDIA features (DLSS / Reflex / Streamline) – **NVIDIA proprietary SDK binaries are not redistributed in this repo.** To enable these features locally, obtain the relevant NVIDIA SDK(s) from NVIDIA and drop the required DLLs into `ThirdParty/NVIDIA/SDK/win-x64/`. The build copies them into the output directory when present. See `ThirdParty/NVIDIA/SDK/README.md`.
-
-- `RestirGI.Native.dll` – the optional ReSTIR GI bridge is expected at `ThirdParty/NVIDIA/RTXGI/win-x64/RestirGI.Native.dll`. If you build `Build/RestirGI/RestirGINative.sln`, the managed build now stages the DLL into that folder and copies it to output when present. See `ThirdParty/NVIDIA/RTXGI/README.md`.
-
-- `OVRLipSync.dll` – optional Meta/Oculus LipSync runtime. Place it at `ThirdParty/Meta/OVRLipSync/win-x64/OVRLipSync.dll` to have it copied into app outputs. See `ThirdParty/Meta/OVRLipSync/README.md`.
+When file logging is enabled, per-session logs go to `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`, including profiler traces and benchmark output.
 
 ## Documentation
-Start with the docs index at `docs/README.md` for a structured map of architecture notes, API guides, and rendering deep dives. Highlights:
-- `docs/architecture/README.md` – runtime flow, threading, project layout.
-- `docs/api/*.md` – system-level API guides (scene, components, transforms, animation, physics, rendering, VR, engine API).
-- Rendering notes live alongside other docs (for example `docs/architecture/CoACD.md`, `docs/work/design/gpu-render-pass-pipeline.md`, and `docs/features/light-volumes.md`).
-- `docs/work/README.md` – working docs (TODOs, checklists, Vulkan and indirect rendering design workstreams).
+
+See `docs/README.md` for the full index — architecture overviews, API guides, rendering notes, and design docs. Key starting points:
+
+- `docs/architecture/README.md` — runtime flow, threading, project layout
+- `docs/architecture/getting-started-in-codebase.md` — contributor-oriented map of where to start
+- `docs/api/` — system-level API guides (scene, components, animation, physics, rendering, VR)
+- `docs/features/bootstrap.md` — first-time setup and bootstrap scope
+- `docs/features/native-dependencies.md` — native and external setup reference
+- `docs/work/README.md` — active TODOs and design workstreams
 
 ## Contributing
-There is no dedicated `CONTRIBUTING.md` in this repo yet. If you want to help out, open an issue or discussion first, then submit a PR. Active areas of contribution include rendering backends, XR tooling, editor UX, and automated testing.
 
-## License and Support
-- License: `LICENSE`
+No formal `CONTRIBUTING.md` yet. Open an issue or discussion first, then submit a PR. Active areas: rendering backends, XR tooling, editor UX, and automated testing.
 
-### Dependency inventory
+If you are getting oriented in the codebase, start with `docs/architecture/getting-started-in-codebase.md`.
 
-For a best-effort list of referenced NuGet packages, submodules, and native/managed DLLs (with best-effort owner attribution), see `docs/DEPENDENCIES.md`.
+## License
 
-The inventory generator supports manual resolution for unknown licenses. Run `Tools/Reports/Generate-Dependencies.ps1` and provide responses when prompted (or force behavior via `-PromptForUnknownLicenses` / `-NoPromptForUnknownLicenses`); responses are persisted in `docs/dependency-license-overrides.json` and reused on subsequent generations.
+Licensed under **AGPLv3**. See `LICENSE` for the full terms.
 
-### License summary (non-authoritative)
+The short version: you can use, modify, and redistribute the code, but any distribution (including network use) must stay under AGPLv3 and provide source. Third-party dependencies have their own licenses — see `docs/DEPENDENCIES.md` for the full inventory.
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)**. This is only a convenience summary; the full terms are in `LICENSE`.
-
-- You can use, modify, and redistribute the code, but **redistribution must remain under AGPLv3** (copyleft).
-- If you **distribute binaries/object code**, you must also provide the **Corresponding Source** under AGPLv3 (including the build/install/run scripts needed to produce and run the binaries).
-- If you **modify the program** and users **interact with it over a network**, your modified version must **prominently offer those users access to the Corresponding Source** of that modified version (AGPL network-use requirement).
-- When conveying copies, you must **keep license/copyright notices intact**, provide a copy of the license, and mark modified versions.
-- The software is provided **“as is” with no warranty**, and there is a **limitation of liability** to the extent permitted by law.
-
-Note: this repo includes third-party submodules/dependencies that may have their own license terms.
-
-### AGPL + LGPL compliance posture
-
-This project is AGPLv3, and it ships several LGPL-licensed dependencies. This is permitted as long as LGPL conditions remain intact for those components.
-
-- LGPL components are consumed as separate dynamic libraries (DLLs), not statically merged into engine binaries.
-- End users can replace LGPL-covered DLLs in the output directory with compatible builds.
-- License texts for LGPL dependencies and core LGPL license bodies are included under `docs/licenses/` and copied into build/publish output under `licenses/`.
-- Dependency/license inventory is generated in `docs/DEPENDENCIES.md` and should be refreshed when dependencies change.
-
-Current LGPL set includes (see `docs/DEPENDENCIES.md` for authoritative current list): FFmpeg.AutoGen, OpenAL Soft native runtime, FFmpeg runtime binaries, and LAME runtime binaries.
 - Issues: https://github.com/BlackJaxDev/XRENGINE/issues
 - Discussions: https://github.com/BlackJaxDev/XRENGINE/discussions
 

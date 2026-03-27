@@ -172,6 +172,10 @@ namespace XREngine
                     if (!Engine.Rendering.State.IsMainPass)
                         return;
 
+                    if (Engine.Rendering.State.RenderingCamera is { } camera &&
+                        !camera.CullingMask.Contains(XREngine.Components.Scene.Transforms.DefaultLayers.GizmosIndex))
+                        return;
+
                     //using (_debugShapeQueueLock.EnterScope())
                     //{
                     DequeueDebugItems();
@@ -189,11 +193,8 @@ namespace XREngine
 
                         float nowTime = Engine.Time.Timer.Time();
                         float lastTime = text.lastUpdatedTime;
-                        if (nowTime - lastTime > Engine.EditorPreferences.Debug.DebugTextMaxLifespan)
-                        {
-                            if (DebugTexts.TryRemove(hash, out (UIText text, float lastUpdatedTime) item))
-                                TextPool.Release(item.text);
-                        }
+                        if (nowTime - lastTime > Engine.EditorPreferences.Debug.DebugTextMaxLifespan && DebugTexts.TryRemove(hash, out (UIText text, float lastUpdatedTime) item))
+                            TextPool.Release(item.text);
                     }
 
                     //while (_debugPointsQueue.TryDequeue(out var point))

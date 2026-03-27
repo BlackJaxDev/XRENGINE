@@ -1406,12 +1406,14 @@ namespace XREngine.Rendering
             XRTexture2D t;
             if (depthBit && !colorBit)
             {
-                // Depth-only grab: use a depth-format texture so glBlitFramebuffer
-                // can copy the depth buffer into the result FBO's depth attachment.
+                // Depth-only grab: use a depth-stencil texture because most scene FBOs
+                // use Depth24Stencil8. Matching the source format avoids invalid depth
+                // blits in grab-pass materials such as the dynamic water preview.
                 t = CreateFrameBufferTexture(1, 1,
-                    EPixelInternalFormat.DepthComponent32f,
-                    EPixelFormat.DepthComponent,
-                    EPixelType.Float);
+                    EPixelInternalFormat.Depth24Stencil8,
+                    EPixelFormat.DepthStencil,
+                    EPixelType.UnsignedInt248,
+                    EFrameBufferAttachment.DepthStencilAttachment);
             }
             else
             {
@@ -1420,8 +1422,9 @@ namespace XREngine.Rendering
                     EPixelFormat.Rgba,
                     EPixelType.UnsignedByte);
             }
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
+            bool isDepthOnlyGrab = depthBit && !colorBit;
+            t.MinFilter = isDepthOnlyGrab ? ETexMinFilter.Nearest : ETexMinFilter.Linear;
+            t.MagFilter = isDepthOnlyGrab ? ETexMagFilter.Nearest : ETexMagFilter.Linear;
             t.UWrap = ETexWrapMode.ClampToEdge;
             t.VWrap = ETexWrapMode.ClampToEdge;
             t.GrabPass = new GrabPassInfo(t, readBuffer, colorBit, depthBit, stencilBit, linearFilter, true, resizeScale);

@@ -1,4 +1,5 @@
 ﻿using XREngine.Components.Lights;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 using XREngine.Data.Geometry;
@@ -38,6 +39,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             _viewport.WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
             XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters());
+            cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
             var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
             if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
             {

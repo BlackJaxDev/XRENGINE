@@ -4,6 +4,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 
 ## Architecture
 - [Architecture Overview](architecture/README.md)
+- [Getting Started In The Codebase](architecture/getting-started-in-codebase.md)
 - [Modeling XRMesh Editing Architecture](architecture/modeling-xrmesh-editing.md)
 - [Play Mode Architecture](architecture/play-mode-architecture.md)
 - [Load Balancer](architecture/load-balancer.md)
@@ -42,9 +43,12 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 ## Features
 - [Audio2Face-3D Component](features/audio2face-3d.md)
 - [Audio2Face-3D Engine Setup](features/audio2face-3d-engine-setup.md)
+- [Bootstrap And First-Time Setup](features/bootstrap.md)
 - [Model Import](features/model-import.md)
+- [Native Dependencies](features/native-dependencies.md)
 - [Steam Audio Integration](features/steam-audio.md)
 - [Tick-Based Animation Timing](features/tick-based-animation-timing.md)
+- [Unit Testing World](features/unit-testing-world.md)
 
 ## Work Docs (WIP / TODO / Design)
 - [Work Docs Index](work/README.md)

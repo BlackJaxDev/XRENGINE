@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Lights;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -105,7 +106,20 @@ namespace XREngine.Components.Capture.Lights.Types
             if (_useGeometryShader)
             {
                 // Single draw: the GS writes to all 6 cubemap layers via gl_Layer.
-                _viewports[0].Render(ShadowMap, null, null, true, ShadowMap.Material);
+                int cmdCount = _viewports[0].RenderPipelineInstance.MeshRenderCommands.GetRenderingCommandCount();
+
+                Debug.RenderingEvery(
+                    $"PointLight.GSShadow.{GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[ShadowDiag] GS shadow pass. RenderingCmds={0} VP0.Camera={1} VP0.World={2} ShadowMapNull={3} InfluenceRadius={4:F1} InfluenceCenter={5}",
+                    cmdCount,
+                    _viewports[0].ActiveCamera is not null,
+                    _viewports[0].World is not null,
+                    ShadowMap is null,
+                    _influenceVolume.Radius,
+                    _influenceVolume.Center);
+
+                _viewports[0].Render(ShadowMap, null, null, true, ShadowMap!.Material);
             }
             else
             {
@@ -193,6 +207,7 @@ namespace XREngine.Components.Capture.Lights.Types
             for (int i = 0; i < ShadowCameras.Length; i++)
             {
                 var cam = ShadowCameras[i];
+                cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
                 _viewports[i].Camera = cam;
                 var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
                 if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)

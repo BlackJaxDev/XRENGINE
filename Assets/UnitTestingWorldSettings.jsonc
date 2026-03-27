@@ -179,7 +179,7 @@
     },
     {
       // Enables or disables Enabled.
-      "Enabled": false,
+      "Enabled": true,
       // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Static",
@@ -214,7 +214,7 @@
     },
     {
       // Enables or disables Enabled.
-      "Enabled": false,
+      "Enabled": true,
       // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Static",

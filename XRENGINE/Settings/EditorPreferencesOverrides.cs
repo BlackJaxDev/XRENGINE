@@ -23,6 +23,7 @@ namespace XREngine
         private EditorThemeOverrides _theme = new();
         private EditorDebugOverrides _debug = new();
         private OverrideableSetting<EditorPreferences.EViewportPresentationMode> _viewportPresentationModeOverride = new();
+        private OverrideableSetting<EditorPreferences.ESceneDepthModePreference> _sceneDepthModeOverride = new();
         private OverrideableSetting<int> _scenePanelResizeDebounceMsOverride = new();
         private OverrideableSetting<bool> _mcpServerEnabledOverride = new();
         private OverrideableSetting<int> _mcpServerPortOverride = new();
@@ -67,6 +68,14 @@ namespace XREngine
         {
             get => _viewportPresentationModeOverride;
             set => SetField(ref _viewportPresentationModeOverride, value ?? new());
+        }
+
+        [Category("Viewport Overrides")]
+        [Description("Override for editor scene depth mode.")]
+        public OverrideableSetting<EditorPreferences.ESceneDepthModePreference> SceneDepthModeOverride
+        {
+            get => _sceneDepthModeOverride;
+            set => SetField(ref _sceneDepthModeOverride, value ?? new());
         }
 
         [Category("Viewport Overrides")]

@@ -30,14 +30,16 @@ uniform mat4 ProjMatrix;
 
 uniform float MinFade = 500.0f;
 uniform float MaxFade = 10000.0f;
-uniform float ShadowBase = 1.0f;
-uniform float ShadowMult = 2.5f;
+uniform float ShadowBase = 0.035f;
+uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 uniform bool LightHasShadowMap = true; // Added
 uniform int ShadowSamples = 4;
-uniform float ShadowFilterRadius = 0.001f;
+uniform float ShadowFilterRadius = 0.0012f;
 uniform bool EnablePCSS = true;
+// Debug: 0=normal, 1=shadow-only (white=lit), 2=margin heatmap (green=lit, red=shadow)
+uniform int ShadowDebugMode = 0;
 
 struct PointLight
 {
@@ -62,7 +64,7 @@ const vec3 LocalShadowCubeKernel[20] = vec3[](
 	vec3( 0.0,  1.0,  1.0), vec3( 0.0, -1.0, -1.0)
 );
 
-float SampleShadowCubePCFLocal(in samplerCube shadowMap, in vec3 shadowDir, in float compareDepth, in float bias, in float farPlaneDist, in float sampleRadius)
+float SampleShadowCubePCFLocal(in samplerCube shadowMap, in vec3 shadowDir, in float biasedLightDist, in float farPlaneDist, in float sampleRadius)
 {
 	float lit = 0.0f;
 
@@ -70,7 +72,7 @@ float SampleShadowCubePCFLocal(in samplerCube shadowMap, in vec3 shadowDir, in f
 	{
 		vec3 sampleDir = normalize(shadowDir + LocalShadowCubeKernel[i] * sampleRadius);
 		float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
-		lit += (compareDepth - bias) <= sampleDepth ? 1.0f : 0.0f;
+		lit += biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
 	}
 
 	return lit / 20.0f;
@@ -82,13 +84,21 @@ float GetShadowBias(in float NoL)
     return mix(ShadowBiasMin, ShadowBiasMax, mapped);
 }
 
-float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir, in float compareDepth, in float bias, in float farPlaneDist, in float sampleRadius, in int requestedSamples, in bool enableSoft)
+float GetShadowCubeSampleRadius(in samplerCube shadowMap, in float filterRadius)
+{
+	float faceSize = max(float(textureSize(shadowMap, 0).x), 1.0f);
+	float texelDirectionSpan = 2.0f / faceSize;
+	float requestedScale = clamp(filterRadius * 256.0f, 0.0f, 4.0f);
+	return texelDirectionSpan * max(1.0f, requestedScale);
+}
+
+float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir, in float biasedLightDist, in float farPlaneDist, in float sampleRadius, in int requestedSamples, in bool enableSoft)
 {
 	int sampleCount = clamp(requestedSamples, 1, 20);
 	if (sampleCount <= 1)
 	{
 		float sampleDepth = texture(shadowMap, normalize(shadowDir)).r * farPlaneDist;
-		return (compareDepth - bias) <= sampleDepth ? 1.0f : 0.0f;
+		return biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
 	}
 
 	if (enableSoft || sampleCount <= 4)
@@ -101,30 +111,83 @@ float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir,
 
 			vec3 sampleDir = normalize(shadowDir + LocalShadowCubeKernel[i] * sampleRadius);
 			float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
-			lit += (compareDepth - bias) <= sampleDepth ? 1.0f : 0.0f;
+			lit += biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
 		}
 
 		return lit / float(sampleCount);
 	}
 
-	return SampleShadowCubePCFLocal(shadowMap, shadowDir, compareDepth, bias, farPlaneDist, sampleRadius);
+	return SampleShadowCubePCFLocal(shadowMap, shadowDir, biasedLightDist, farPlaneDist, sampleRadius);
 }
 
-// returns1 lit,0 shadow
-float ReadPointShadowMap(in float farPlaneDist, in vec3 fragToLightWS, in float lightDist, in float NoL)
+// Global debug state written by ReadPointShadowMap for visualization
+float _dbgShadowLit = 1.0f;
+float _dbgShadowMargin = 1.0f;
+
+// returns 1 lit, 0 shadow
+float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in float NoL)
 {
-    if (!LightHasShadowMap) return 1.0f;
-    float bias = GetShadowBias(NoL);
-	float sampleRadius = max(0.035f, ShadowFilterRadius * 24.0f);
-	return SampleShadowCubeFilteredLocal(
+	if (!LightHasShadowMap) return 1.0f;
+
+	vec3 fragToLight = fragPosWS - LightData.Position;
+	float lightDist = length(fragToLight);
+
+	// Beyond the shadow far plane: treat as lit (attenuation handles falloff)
+	if (lightDist >= farPlaneDist) return 1.0f;
+
+	float faceSize = max(float(textureSize(ShadowMap, 0).x), 1.0f);
+
+	// ---- Cubemap texel bias (relative) ----
+	float slopeFactor = 1.0f - NoL;
+	float texelRel = (2.0f / faceSize) * (1.0f + 3.0f * slopeFactor * slopeFactor);
+
+	// ---- GBuffer depth-precision bias ----
+	// The deferred receiver position is reconstructed from a 24-bit depth buffer
+	// with near/far = 0.1/10000. World-space reconstruction error at camera
+	// distance d is approximately: d^2 * (far - near) / (near * far * 2^24).
+	// This quadratic growth makes the error dominant at moderate distances.
+	// Extract near/far from the projection matrix so the bias is always correct.
+	float projA = ProjMatrix[2][2]; // -(f+n)/(f-n)
+	float projB = ProjMatrix[3][2]; // -2fn/(f-n)
+	float cameraNear = abs(projB / (projA - 1.0f));
+	float cameraFar  = abs(projB / (projA + 1.0f));
+	vec3  cameraPos   = vec3(InverseViewMatrix[3]);
+	float cameraDist  = length(fragPosWS - cameraPos);
+	// Conservative depth-buffer world-space error (2x safety margin)
+	float depthError = 2.0f * cameraDist * cameraDist * abs(cameraFar - cameraNear)
+	                 / max(cameraNear * cameraFar * 16777216.0f, 1e-10f);
+	float depthRel = depthError / max(lightDist, 0.001f);
+
+	// ---- User bias (converted to relative) ----
+	float userBias = GetShadowBias(NoL);
+	float userRel  = userBias / max(lightDist, 0.001f);
+
+	// Take the largest of the three contributors
+	float relThreshold = max(texelRel, max(userRel, depthRel));
+
+	// Pre-multiply threshold into lightDist for a single comparison per sample
+	float biasedLightDist = lightDist * (1.0f - relThreshold);
+
+	float sampleRadius = GetShadowCubeSampleRadius(ShadowMap, ShadowFilterRadius);
+
+	float lit = SampleShadowCubeFilteredLocal(
 		ShadowMap,
-		fragToLightWS,
-		lightDist,
-		bias,
+		fragToLight,
+		biasedLightDist,
 		farPlaneDist,
 		sampleRadius,
 		ShadowSamples,
 		EnablePCSS);
+
+	// Write debug state for visualisation (single center sample)
+	if (ShadowDebugMode != 0)
+	{
+		float centerDepth = texture(ShadowMap, normalize(fragToLight)).r * farPlaneDist;
+		_dbgShadowMargin = (centerDepth - biasedLightDist) / max(farPlaneDist, 0.001f);
+	}
+	_dbgShadowLit = lit;
+
+	return lit;
 }
 vec3 CalcColor(
 in float NoL,
@@ -175,7 +238,7 @@ in vec3 F0)
 		NoL, NoH, NoV, HoV,
 		attn, albedo, rms, F0);
 
-	float lit = ReadPointShadowMap(LightData.Radius, -L, lightDist, NoL);
+	float lit = ReadPointShadowMap(LightData.Radius, fragPosWS, N, NoL);
 
 	return color * lit;
 }
@@ -222,4 +285,18 @@ void main()
 	//float dist = length(CameraPosition - fragPosWS);
 	//float strength = smoothstep(1.0f, 0.0f, clamp((dist - MinFade) / fadeRange, 0.0f, 1.0f));
 	OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms);
+
+	// Debug visualisation (additive blending still applies; works best with a single point light)
+	if (ShadowDebugMode == 1)
+	{
+		// Shadow-only: white = fully lit, black = fully shadowed
+		OutColor = vec3(_dbgShadowLit);
+	}
+	else if (ShadowDebugMode == 2)
+	{
+		// Margin heatmap: green = lit margin, red = shadow margin, brighter = more margin
+		float m = _dbgShadowMargin;
+		OutColor = m >= 0.0f ? vec3(0.0f, min(m * 20.0f, 1.0f), 0.0f)
+		                     : vec3(min(-m * 20.0f, 1.0f), 0.0f, 0.0f);
+	}
 }
