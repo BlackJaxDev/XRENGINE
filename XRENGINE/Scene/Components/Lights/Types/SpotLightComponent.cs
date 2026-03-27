@@ -11,31 +11,56 @@ using static XREngine.Data.Core.XRMath;
 namespace XREngine.Components.Capture.Lights.Types
 {
     [XRComponentEditor("XREngine.Editor.ComponentEditors.SpotLightComponentEditor")]
-    public class SpotLightComponent(float distance, float outerCutoffDeg, float innerCutoffDeg, float brightness, float exponent) : OneViewLightComponent()
+    public class SpotLightComponent : OneViewLightComponent
     {
+        public SpotLightComponent(float distance, float outerCutoffDeg, float innerCutoffDeg, float brightness, float exponent)
+        {
+            _outerCutoff = (float)Math.Cos(DegToRad(outerCutoffDeg));
+            _innerCutoff = (float)Math.Cos(DegToRad(innerCutoffDeg));
+            _distance = distance;
+            _exponent = exponent;
+            _brightness = brightness;
+
+            _outerCone = new(
+                Vector3.Zero,
+                Globals.Backward,
+                MathF.Tan(DegToRad(outerCutoffDeg)) * distance,
+                distance);
+
+            _innerCone = new(
+                Vector3.Zero,
+                Globals.Backward,
+                MathF.Tan(DegToRad(innerCutoffDeg)) * distance,
+                distance);
+
+            SetShadowMapResolution(2048u, 2048u);
+            ShadowMinBias = 0.0001f;
+            ShadowMaxBias = 0.07f;
+            ShadowExponentBase = 0.2f;
+            ShadowExponent = 1.0f;
+            Samples = 8;
+            FilterRadius = 0.0012f;
+            EnablePCSS = true;
+            EnableContactShadows = true;
+            ContactShadowDistance = 0.1f;
+            ContactShadowSamples = 4;
+        }
+
         protected override XRPerspectiveCameraParameters GetCameraParameters() => new(
             Math.Max(OuterCutoffAngleDegrees, InnerCutoffAngleDegrees) * 2.0f,
             1.0f, 1.0f,
             _distance);
 
         private float 
-            _outerCutoff = (float)Math.Cos(DegToRad(outerCutoffDeg)),
-            _innerCutoff = (float)Math.Cos(DegToRad(innerCutoffDeg)),
-            _distance = distance,
-            _exponent = exponent,
-            _brightness = brightness;
+            _outerCutoff,
+            _innerCutoff,
+            _distance,
+            _exponent,
+            _brightness;
 
-        private Cone _outerCone = new(
-            Vector3.Zero,
-            Globals.Backward,
-            MathF.Tan(DegToRad(outerCutoffDeg)) * distance,
-            distance);
+        private Cone _outerCone;
 
-        private Cone _innerCone = new(
-            Vector3.Zero,
-            Globals.Backward,
-            MathF.Tan(DegToRad(innerCutoffDeg)) * distance,
-            distance);
+        private Cone _innerCone;
 
 
         public float Distance

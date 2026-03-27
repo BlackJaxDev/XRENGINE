@@ -46,7 +46,7 @@ public sealed class SpotLightComponentEditor : IXRComponentEditor
             light.Brightness = MathF.Max(0.0f, brightness);
 
         float exponent = light.Exponent;
-        if (ImGui.DragFloat("Exponent", ref exponent, 0.01f, 0.0f, 1000.0f, "%.3f"))
+        if (ImGui.DragFloat("Light Exponent", ref exponent, 0.01f, 0.0f, 1000.0f, "%.3f"))
             light.Exponent = MathF.Max(0.0f, exponent);
 
         float inner = light.InnerCutoffAngleDegrees;

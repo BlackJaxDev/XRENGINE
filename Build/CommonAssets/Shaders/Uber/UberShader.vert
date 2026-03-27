@@ -32,6 +32,7 @@ layout(location = 5) out float v_TangentSign;
 layout(location = 6) out vec4 v_VertexColor;
 layout(location = 7) out vec3 v_LocalPos;
 layout(location = 8) out vec3 v_ViewDir;
+layout(location = 22) out float FragViewIndex;
 
 // ============================================
 // Uniforms
@@ -62,4 +63,5 @@ void main() {
     
     // View direction (world space, pointing from surface to camera)
     v_ViewDir = normalize(u_CameraPosition - worldPosition.xyz);
+    FragViewIndex = 0.0;
 }

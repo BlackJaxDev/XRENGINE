@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data;
@@ -42,6 +43,24 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_SurfelGIPass : ViewportRenderCommand
     {
+        private static void LogGuardFailure(string location, string reason)
+            => Debug.RenderingEvery(
+                $"SurfelGI.{location}",
+                TimeSpan.FromSeconds(1),
+                "[SurfelGI][RESILIENCE GUARD TRIGGERED] {0}: {1}",
+                location,
+                reason);
+
+        private static string DescribeTexture(XRTexture? texture)
+            => texture is null
+                ? "missing"
+                : $"{texture.Name ?? "<unnamed>"} ({texture.GetType().Name})";
+
+        private static string DescribeFbo(XRFrameBuffer? fbo)
+            => fbo is null
+                ? "missing"
+                : $"{fbo.Name ?? "<unnamed>"} ({fbo.GetType().Name})";
+
         private const uint GroupSize = 16u;
 
         private const uint CulledCommandFloats = 48u;
@@ -149,35 +168,61 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             var camera = ActivePipelineInstance.RenderState.SceneCamera;
             if (camera is null)
+            {
+                LogGuardFailure(nameof(Execute), "Scene camera unavailable; mono Surfel GI skipped.");
                 return;
+            }
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             if (region.Width <= 0 || region.Height <= 0)
+            {
+                LogGuardFailure(nameof(Execute), $"Invalid render region {region.Width}x{region.Height}; mono Surfel GI skipped.");
                 return;
+            }
 
             uint width = (uint)region.Width;
             uint height = (uint)region.Height;
 
             if (!EnsurePrograms())
+            {
+                LogGuardFailure(nameof(Execute), "Compute programs failed to initialize for mono Surfel GI.");
                 return;
+            }
 
             EnsureBuffers();
             if (_surfelBuffer is null || _counterBuffer is null)
-                return;
-
-            if (ActivePipelineInstance.GetTexture<XRTexture>(DepthTextureName) is not XRTexture2D depthTex ||
-                ActivePipelineInstance.GetTexture<XRTexture>(NormalTextureName) is not XRTexture2D normalTex ||
-                ActivePipelineInstance.GetTexture<XRTexture>(AlbedoTextureName) is not XRTexture2D albedoTex ||
-                ActivePipelineInstance.GetTexture<XRTexture>(TransformIdTextureName) is not XRTexture2D transformIdTex ||
-                ActivePipelineInstance.GetTexture<XRTexture>(OutputTextureName) is not XRTexture2D outputTex)
             {
+                LogGuardFailure(nameof(Execute), "Required Surfel GI buffers were not created after EnsureBuffers().");
+                return;
+            }
+
+            XRTexture? depthInput = ActivePipelineInstance.GetTexture<XRTexture>(DepthTextureName);
+            XRTexture? normalInput = ActivePipelineInstance.GetTexture<XRTexture>(NormalTextureName);
+            XRTexture? albedoInput = ActivePipelineInstance.GetTexture<XRTexture>(AlbedoTextureName);
+            XRTexture? transformIdInput = ActivePipelineInstance.GetTexture<XRTexture>(TransformIdTextureName);
+            XRTexture? outputInput = ActivePipelineInstance.GetTexture<XRTexture>(OutputTextureName);
+
+            if (depthInput is not XRTexture2D depthTex ||
+                normalInput is not XRTexture2D normalTex ||
+                albedoInput is not XRTexture2D albedoTex ||
+                transformIdInput is not XRTexture2D transformIdTex ||
+                outputInput is not XRTexture2D outputTex)
+            {
+                LogGuardFailure(
+                    nameof(Execute),
+                    $"Mono Surfel GI inputs unavailable. depth={DescribeTexture(depthInput)}, normal={DescribeTexture(normalInput)}, albedo={DescribeTexture(albedoInput)}, transformId={DescribeTexture(transformIdInput)}, output={DescribeTexture(outputInput)}, deferredMsaa={DefaultRenderPipeline.RuntimeEnableMsaaDeferred}, stereo={pipeline.Stereo}");
                 return;
             }
 
             XRQuadFrameBuffer? compositeFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(CompositeQuadFBOName);
             XRFrameBuffer? forwardFbo = ActivePipelineInstance.GetFBO<XRFrameBuffer>(ForwardFBOName);
             if (compositeFbo is null || forwardFbo is null)
+            {
+                LogGuardFailure(
+                    nameof(Execute),
+                    $"Mono Surfel GI composite targets unavailable. composite={DescribeFbo(compositeFbo)}, forward={DescribeFbo(forwardFbo)}, deferredMsaa={DefaultRenderPipeline.RuntimeEnableMsaaDeferred}");
                 return;
+            }
 
             Matrix4x4 proj = camera.ProjectionMatrix;
             Matrix4x4.Invert(proj, out Matrix4x4 invProj);

@@ -37,6 +37,8 @@ public sealed class UberShaderForwardContractTests
         source.ShouldContain("#pragma snippet \"AmbientOcclusionSampling\"");
         source.ShouldContain("XRENGINE_CalculateAmbientPbr");
         source.ShouldContain("XRENGINE_CalcForwardPlusPointLight");
+        source.ShouldContain("XRENGINE_CalcPointLight(i, PointLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0)");
+        source.ShouldContain("XRENGINE_CalcSpotLight(i, SpotLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0)");
         source.ShouldContain("XRENGINE_ReadShadowMapDir");
 
         uniforms.ShouldContain("uniform float RenderTime;");
@@ -69,6 +71,18 @@ public sealed class UberShaderForwardContractTests
         material.Parameter<ShaderVector4>("_EmissionMap_ST")?.Value.ShouldBe(new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
         material.Parameter<ShaderVector4>("_MatcapMask_ST")?.Value.ShouldBe(new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
         material.Parameter<ShaderVector4>("_PBRMetallicMaps_ST")?.Value.ShouldBe(new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
+    }
+
+    [Test]
+    public void UberShaderStereoVertexVariants_ExportForwardViewIndex()
+    {
+        string monoSource = LoadShaderSource(Path.Combine("Uber", "UberShader.vert"));
+        string ovrSource = LoadShaderSource(Path.Combine("Uber", "UberShader_OVR.vert"));
+
+        monoSource.ShouldContain("layout(location = 22) out float FragViewIndex;");
+        monoSource.ShouldContain("FragViewIndex = 0.0;");
+        ovrSource.ShouldContain("layout(location = 22) out float FragViewIndex;");
+        ovrSource.ShouldContain("FragViewIndex = float(gl_ViewID_OVR);");
     }
 
     private static string LoadShaderSource(string shaderRelativePath)

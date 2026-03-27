@@ -91,6 +91,8 @@ The repo includes ready-to-go `.vscode/` configs. Use **Run and Debug** (Ctrl+Sh
 
 There are also no-debug tasks under **Terminal → Run Task** for the common editor, server, client, and networking scenarios.
 
+To export the code-defined default render pipeline as an `.xrs` script, run the `Export-DefaultRenderPipelineScript` task. The editor executable also supports `--export-default-render-pipeline-script --render-pipeline-script-output <path>` as a one-shot CLI command.
+
 `Debug VRClient` is mainly for the legacy OpenVR path. OpenVR cannot be cleanly shut down and restarted inside the same running app, so `XREngine.VRClient` exists to hold that SteamVR connection in a separate process. The main engine app can then stay alive and switch between desktop and VR gameplay without forcing a full restart. OpenXR does not have that limitation, so this extra process is specifically for legacy OpenVR support.
 
 ### Visual Studio

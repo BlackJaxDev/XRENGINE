@@ -29,9 +29,6 @@ uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 uniform mat4 ViewProjectionMatrix;
-
-uniform float MinFade = 500.0f;
-uniform float MaxFade = 10000.0f;
 uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
@@ -43,6 +40,8 @@ uniform bool EnablePCSS = true;
 uniform bool EnableContactShadows = true;
 uniform float ContactShadowDistance = 0.1f;
 uniform int ContactShadowSamples = 4;
+// Debug: 0=normal, 1=shadow-only (white=lit), 2=margin heatmap (green=lit, red=shadow)
+uniform int ShadowDebugMode = 0;
 
 struct SpotLight
 {
@@ -193,7 +192,7 @@ float SampleContactShadowScreenSpaceLocal(vec3 fragPosWS, vec3 lightDirWS, float
 		float sceneDepth = texture(DepthView, sampleSS.xy).r;
 #endif
 
-		if (sceneDepth >= 1.0f) continue;
+		if (XRENGINE_ResolveDepth(sceneDepth) >= 1.0f) continue;
 
 		float rayDepth = sampleSS.z;
 		float depthDiff = rayDepth - sceneDepth;
@@ -220,6 +219,10 @@ int ResolveContactShadowSampleCountLocal(int requestedSamples, float viewDepth, 
 	float depthScale = clamp((contactDistance * 24.0f) / normalizedDepth, 0.35f, 1.0f);
 	return max(1, int(ceil(float(clampedSamples) * depthScale)));
 }
+
+// Global debug state written by ReadShadowMap2D for visualization
+float _dbgShadowLit = 1.0f;
+float _dbgShadowMargin = 1.0f;
 
 // returns1 lit,0 shadow
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
@@ -249,13 +252,23 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 			contactSampleCount)
 		: 1.0f;
 
-	return SampleShadowMapFilteredLocal(
+	float lit = SampleShadowMapFilteredLocal(
 		ShadowMap,
 		fragCoord,
 		bias,
 		ShadowSamples,
 		ShadowFilterRadius,
 		EnablePCSS) * contact;
+
+	// Write debug state for visualisation (single center sample)
+	if (ShadowDebugMode != 0)
+	{
+		float centerDepth = texture(ShadowMap, fragCoord.xy).r;
+		_dbgShadowMargin = (centerDepth - (fragCoord.z - bias)) / max(1.0f, 0.001f);
+	}
+	_dbgShadowLit = lit;
+
+	return lit;
 }
 vec3 CalcColor(
 in float NoL,
@@ -357,18 +370,28 @@ void main()
 	float depth = texture(DepthView, uv).r;
 #endif
 
-	if (depth >= 1.0f)
+	if (XRENGINE_ResolveDepth(depth) >= 1.0f)
 	{
 		OutColor = vec3(0.0f);
 		return;
 	}
 
 	//Resolve world fragment position using depth and screen UV
-	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
+	vec3 fragPosWS = XRENGINE_WorldPosFromDepth(depth, uv, InverseProjMatrix, InverseViewMatrix);
 
-  	float fadeRange = MaxFade - MinFade;
 	vec3 CameraPosition = vec3(InverseViewMatrix[3]);
-  	float dist = length(CameraPosition - fragPosWS);
-  	float strength = smoothstep(1.0f, 0.0f, clamp((dist - MinFade) / fadeRange, 0.0f, 1.0f));
-  	OutColor = strength * CalcTotalLight(CameraPosition, fragPosWS, normal, albedo, rms);
+	OutColor = CalcTotalLight(CameraPosition, fragPosWS, normal, albedo, rms);
+
+	// Debug overlays (ShadowDebugMode: 0=off, 1=raw shadow, 2=margin heatmap)
+	if (ShadowDebugMode == 1)
+	{
+		OutColor = vec3(_dbgShadowLit);
+	}
+	else if (ShadowDebugMode == 2)
+	{
+		float m = _dbgShadowMargin;
+		OutColor = m >= 0.0f
+			? vec3(0.0f, min(m * 20.0f, 1.0f), 0.0f)   // green = lit margin
+			: vec3(min(-m * 20.0f, 1.0f), 0.0f, 0.0f);  // red   = shadow margin
+	}
 }

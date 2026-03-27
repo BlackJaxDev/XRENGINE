@@ -309,11 +309,11 @@ vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, P
     }
 
     for (int i = 0; i < PointLightCount; ++i) {
-        totalLight += XRENGINE_CalcPointLight(PointLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0);
+        totalLight += XRENGINE_CalcPointLight(i, PointLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0);
     }
 
     for (int i = 0; i < SpotLightCount; ++i) {
-        totalLight += XRENGINE_CalcSpotLight(SpotLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0);
+        totalLight += XRENGINE_CalcSpotLight(i, SpotLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0);
     }
 
     return totalLight;

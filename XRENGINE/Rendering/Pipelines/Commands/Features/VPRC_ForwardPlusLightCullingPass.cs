@@ -19,6 +19,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_ForwardPlusLightCullingPass : ViewportRenderCommand
     {
+        private const string MonoShaderPath = "ForwardPlus/LightCulling.comp";
+        private const string StereoShaderPath = "ForwardPlus/LightCullingStereo.comp";
+
         public const int TileSize = 16;
         public const int MaxLightsPerTile = 1024;
 
@@ -29,6 +32,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string DepthViewTexture { get; set; } = "DepthView";
 
         private XRRenderProgram? _computeProgram;
+        private XRRenderProgram? _computeProgramStereo;
 
         private XRDataBuffer? _localLightsBuffer;
         private XRDataBuffer? _visibleIndicesBuffer;
@@ -51,8 +55,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_computeProgram is not null)
                 return;
 
-            XRShader compute = XRShader.EngineShader(Path.Combine(SceneShaderPath, "ForwardPlus", "LightCulling.comp"), EShaderType.Compute);
+            XRShader compute = XRShader.EngineShader(Path.Combine(SceneShaderPath, MonoShaderPath), EShaderType.Compute);
             _computeProgram = new XRRenderProgram(true, false, compute);
+        }
+
+        private void EnsureStereoComputeProgram()
+        {
+            if (_computeProgramStereo is not null)
+                return;
+
+            XRShader compute = XRShader.EngineShader(Path.Combine(SceneShaderPath, StereoShaderPath), EShaderType.Compute);
+            _computeProgramStereo = new XRRenderProgram(true, false, compute);
         }
 
         protected override void Execute()
@@ -60,15 +73,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Engine.Rendering.State.IsShadowPass)
             {
                 Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                return;
-            }
-
-            // DepthView is a 2DArray view in stereo; this compute shader uses sampler2D.
-            if (Engine.Rendering.State.IsStereoPass)
-            {
-                Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
                 return;
             }
 
@@ -90,7 +94,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            EnsureComputeProgram();
+            bool stereo = Engine.Rendering.State.IsStereoPass;
+            if (stereo)
+                EnsureStereoComputeProgram();
+            else
+                EnsureComputeProgram();
 
             // Build local light list (point + spot).
             List<ForwardPlusLocalLight> lights = BuildLocalLights(world.Lights);
@@ -105,29 +113,60 @@ namespace XREngine.Rendering.Pipelines.Commands
             int tileCountX = (width + TileSize - 1) / TileSize;
             int tileCountY = (height + TileSize - 1) / TileSize;
 
-            EnsureBuffers(lightCount, tileCountX, tileCountY);
+            EnsureBuffers(lightCount, tileCountX, tileCountY, stereo ? 2 : 1);
 
             // Upload local lights (CPU->GPU). Visible-indices buffer is written by compute.
             UploadLocalLights(lights);
 
             // Bind SSBOs + uniforms and dispatch.
-            _localLightsBuffer!.BindTo(_computeProgram!, LocalLightsBinding);
-            _visibleIndicesBuffer!.BindTo(_computeProgram!, VisibleIndicesBinding);
-
-            _computeProgram!.Sampler("depthMap", depthTex, 0);
-
             var cam = Engine.Rendering.State.RenderingCamera;
             Matrix4x4 view = cam?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 proj = cam?.ProjectionMatrix ?? Matrix4x4.Identity;
+            if (stereo)
+            {
+                if (depthTex is not XRTexture2DArray depthArray)
+                {
+                    Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
+                    Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
+                    Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                    return;
+                }
 
-            _computeProgram!.Uniform("view", view);
-            _computeProgram!.Uniform("projection", proj);
-            _computeProgram!.Uniform("screenSize", new IVector2(width, height));
-            _computeProgram!.Uniform("lightCount", lightCount);
+                var rightEyeCamera = ActivePipelineInstance.RenderState.StereoRightEyeCamera;
+                Matrix4x4 rightView = rightEyeCamera?.Transform.InverseRenderMatrix ?? view;
+                Matrix4x4 rightProj = rightEyeCamera?.ProjectionMatrix ?? proj;
 
-            // Dispatch per-tile.
-            // The forward pass reads these SSBOs immediately after, so we need a barrier.
-            _computeProgram!.DispatchCompute((uint)tileCountX, (uint)tileCountY, 1, EMemoryBarrierMask.ShaderStorage);
+                _localLightsBuffer!.BindTo(_computeProgramStereo!, LocalLightsBinding);
+                _visibleIndicesBuffer!.BindTo(_computeProgramStereo!, VisibleIndicesBinding);
+                _computeProgramStereo!.Sampler("depthMap", depthArray, 0);
+                _computeProgramStereo!.Uniform("screenSize", new IVector2(width, height));
+                _computeProgramStereo!.Uniform("lightCount", lightCount);
+                _computeProgramStereo!.Uniform("DepthMode", (int)(cam?.DepthMode ?? XRCamera.EDepthMode.Normal));
+
+                _computeProgramStereo!.Uniform("view", view);
+                _computeProgramStereo!.Uniform("projection", proj);
+                _computeProgramStereo!.Uniform("EyeIndex", 0);
+                _computeProgramStereo!.Uniform("EyeTileOffset", 0);
+                _computeProgramStereo!.DispatchCompute((uint)tileCountX, (uint)tileCountY, 1, EMemoryBarrierMask.ShaderStorage);
+
+                _computeProgramStereo!.Uniform("view", rightView);
+                _computeProgramStereo!.Uniform("projection", rightProj);
+                _computeProgramStereo!.Uniform("EyeIndex", 1);
+                _computeProgramStereo!.Uniform("EyeTileOffset", tileCountX * tileCountY);
+                _computeProgramStereo!.DispatchCompute((uint)tileCountX, (uint)tileCountY, 1, EMemoryBarrierMask.ShaderStorage);
+            }
+            else
+            {
+                _localLightsBuffer!.BindTo(_computeProgram!, LocalLightsBinding);
+                _visibleIndicesBuffer!.BindTo(_computeProgram!, VisibleIndicesBinding);
+                _computeProgram!.Sampler("depthMap", depthTex, 0);
+                _computeProgram!.Uniform("view", view);
+                _computeProgram!.Uniform("projection", proj);
+                _computeProgram!.Uniform("screenSize", new IVector2(width, height));
+                _computeProgram!.Uniform("lightCount", lightCount);
+                _computeProgram!.Uniform("DepthMode", (int)(cam?.DepthMode ?? XRCamera.EDepthMode.Normal));
+                _computeProgram!.DispatchCompute((uint)tileCountX, (uint)tileCountY, 1, EMemoryBarrierMask.ShaderStorage);
+            }
 
             // Publish state so forward materials can bind buffers for shading.
             Engine.Rendering.State.ForwardPlusLocalLightsBuffer = _localLightsBuffer;
@@ -146,8 +185,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             List<ForwardPlusLocalLight> result = new(lights.DynamicPointLights.Count + lights.DynamicSpotLights.Count);
 
-            foreach (PointLightComponent p in lights.DynamicPointLights)
+            for (int pointIndex = 0; pointIndex < lights.DynamicPointLights.Count; ++pointIndex)
             {
+                PointLightComponent p = lights.DynamicPointLights[pointIndex];
                 if (!p.IsActiveInHierarchy)
                     continue;
 
@@ -156,13 +196,14 @@ namespace XREngine.Rendering.Pipelines.Commands
                     PositionWS = new Vector4(p.Transform.RenderTranslation, 1.0f),
                     DirectionWS_Exponent = new Vector4(0, 0, 0, 0),
                     Color_Type = new Vector4(p.Color, 0.0f),
-                    Params = new Vector4(p.Radius, p.Brightness, p.DiffuseIntensity, 0.0f),
+                    Params = new Vector4(p.Radius, p.Brightness, p.DiffuseIntensity, pointIndex),
                     SpotAngles = Vector4.Zero,
                 });
             }
 
-            foreach (SpotLightComponent s in lights.DynamicSpotLights)
+            for (int spotIndex = 0; spotIndex < lights.DynamicSpotLights.Count; ++spotIndex)
             {
+                SpotLightComponent s = lights.DynamicSpotLights[spotIndex];
                 if (!s.IsActiveInHierarchy)
                     continue;
 
@@ -171,7 +212,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     PositionWS = new Vector4(s.Transform.RenderTranslation, 1.0f),
                     DirectionWS_Exponent = new Vector4(Vector3.Normalize(s.Transform.RenderForward), s.Exponent),
                     Color_Type = new Vector4(s.Color, 1.0f),
-                    Params = new Vector4(s.Distance, s.Brightness, s.DiffuseIntensity, 0.0f),
+                    Params = new Vector4(s.Distance, s.Brightness, s.DiffuseIntensity, spotIndex),
                     SpotAngles = new Vector4(s.InnerCutoff, s.OuterCutoff, 0.0f, 0.0f),
                 });
             }
@@ -179,7 +220,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             return result;
         }
 
-        private void EnsureBuffers(int lightCount, int tileCountX, int tileCountY)
+        private void EnsureBuffers(int lightCount, int tileCountX, int tileCountY, int eyeCount)
         {
             uint localLightStride = (uint)System.Runtime.InteropServices.Marshal.SizeOf<ForwardPlusLocalLight>();
 
@@ -200,7 +241,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 _localLightsBuffer.PushData();
             }
 
-            uint visibleCount = (uint)(tileCountX * tileCountY * MaxLightsPerTile);
+            uint visibleCount = (uint)(tileCountX * tileCountY * Math.Max(eyeCount, 1) * MaxLightsPerTile);
             if (_visibleIndicesBuffer is null ||
                 _visibleIndicesBuffer.ElementCount != visibleCount ||
                 tileCountX != _lastTileCountX ||

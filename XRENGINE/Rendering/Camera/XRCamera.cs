@@ -30,18 +30,11 @@ namespace XREngine.Rendering
     /// <summary>
     /// A request to apply a temporary sub-pixel offset to the projection matrix.
     /// </summary>
-    public readonly struct ProjectionJitterRequest
+    public readonly struct ProjectionJitterRequest(Vector2 offset, ProjectionJitterSpace space, Vector2 referenceResolution)
     {
-        public ProjectionJitterRequest(Vector2 offset, ProjectionJitterSpace space, Vector2 referenceResolution)
-        {
-            Offset = offset;
-            Space = space;
-            ReferenceResolution = referenceResolution;
-        }
-
-        public Vector2 Offset { get; }
-        public ProjectionJitterSpace Space { get; }
-        public Vector2 ReferenceResolution { get; }
+        public Vector2 Offset { get; } = offset;
+        public ProjectionJitterSpace Space { get; } = space;
+        public Vector2 ReferenceResolution { get; } = referenceResolution;
 
         /// <summary>
         /// Creates a jitter request where <paramref name="offset"/> is already in clip space.

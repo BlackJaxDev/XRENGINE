@@ -201,7 +201,9 @@ namespace XREngine.Rendering
             if (useMeshDeform)
             {
                 // Use mesh deform versions
-                if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
+                if (stereoPass && Engine.Rendering.State.ForwardPlusEnabled && hasMultiViewMaterialVertexShader)
+                    ver = GetMeshDeformOVRMultiViewVersion();
+                else if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
                     ver = GetMeshDeformNVStereoVersion();
                 else if (stereoPass && hasMultiViewMaterialVertexShader)
                     ver = GetMeshDeformOVRMultiViewVersion();
@@ -217,7 +219,9 @@ namespace XREngine.Rendering
             else
             {
                 // Use standard versions
-                if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
+                if (stereoPass && Engine.Rendering.State.ForwardPlusEnabled && hasMultiViewMaterialVertexShader)
+                    ver = GetOVRMultiViewVersion();
+                else if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
                     ver = GetNVStereoVersion();
                 else if (stereoPass && hasMultiViewMaterialVertexShader)
                     ver = GetOVRMultiViewVersion();

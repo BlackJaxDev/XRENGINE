@@ -22,9 +22,6 @@ uniform float ScreenHeight;
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
-
-uniform float MinFade = 500.0f;
-uniform float MaxFade = 1000.0f;
 uniform float ShadowBase = 1.0f;
 uniform float ShadowMult = 1.0f;
 uniform float ShadowBiasMin = 0.00001f;
@@ -391,16 +388,5 @@ void main()
     // Resolve world fragment position using depth and screen UV
     vec3 fragPosWS = WorldPosFromDepth(depth, uv);
     
-    // Apply distance fade if enabled
-    vec3 CameraPosition = InverseViewMatrix[3].xyz;
-    float dist = length(CameraPosition - fragPosWS);
-    float fadeStrength = 1.0f;
-    
-    if (MaxFade > MinFade)
-    {
-        float fadeRange = MaxFade - MinFade;
-        fadeStrength = smoothstep(1.0f, 0.0f, clamp((dist - MinFade) / fadeRange, 0.0f, 1.0f));
-    }
-    
-    OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms) * fadeStrength;
+    OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms);
 } 

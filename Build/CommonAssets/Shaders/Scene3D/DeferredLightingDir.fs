@@ -46,9 +46,6 @@ uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 uniform mat4 ViewProjectionMatrix;
-
-uniform float MinFade = 500.0f;
-uniform float MaxFade = 10000.0f;
 uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
@@ -494,13 +491,6 @@ void main()
 		//Resolve world fragment position using depth and screen UV
 		vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
 		vec3 cameraPosition = InverseViewMatrix[3].xyz;
-		float dist = length(cameraPosition - fragPosWS);
-		float fadeStrength = 1.0f;
-		if (MaxFade > MinFade)
-		{
-			float fadeRange = MaxFade - MinFade;
-			fadeStrength = smoothstep(1.0f, 0.0f, clamp((dist - MinFade) / fadeRange, 0.0f, 1.0f));
-		}
 
-		OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms, cameraPosition) * fadeStrength;
+		OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms, cameraPosition);
 }
