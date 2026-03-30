@@ -94,13 +94,21 @@ namespace XREngine.Rendering.OpenGL
 
         private void DataResized()
         {
+            bool wasImmutable = !Data.Resizable && StorageSet;
             StorageSet = false;
             Mipmaps.ForEach(m =>
             {
                 m.NeedsFullPush = true;
                 //m.HasPushedUpdateData = false;
             });
-            Invalidate();
+
+            // Immutable storage (glTextureStorage2D) cannot be re-allocated on the same
+            // GL name. Destroy the GL handle so it is regenerated with fresh storage at
+            // the new dimensions on the next bind.
+            if (wasImmutable)
+                Destroy();
+            else
+                Invalidate();
         }
 
         public override unsafe void PushData()

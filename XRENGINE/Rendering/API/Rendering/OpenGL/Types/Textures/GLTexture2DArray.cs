@@ -173,6 +173,7 @@ namespace XREngine.Rendering.OpenGL
 
         private void DataResized()
         {
+            bool wasAllocated = _storageSet;
             _storageSet = false;
             _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
             _allocatedWidth = 0;
@@ -184,7 +185,14 @@ namespace XREngine.Rendering.OpenGL
                 m.HasPushedResizedData = false;
                 //m.HasPushedUpdateData = false;
             });
-            Invalidate();
+
+            // Texture array storage (glTextureStorage3D) is always immutable and cannot
+            // be re-allocated on the same GL name. Destroy the GL handle so it is
+            // regenerated with fresh storage at the new dimensions on the next bind.
+            if (wasAllocated)
+                Destroy();
+            else
+                Invalidate();
         }
 
         protected internal override void PostGenerated()

@@ -269,16 +269,10 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         switch (t)
         {
             case XRTexture2D t2d:
-                if (t2d.Resizable)
-                    t2d.Resize(InternalWidth, InternalHeight);
-                else
-                    t2d.Destroy();
+                t2d.Resize(InternalWidth, InternalHeight);
                 break;
             case XRTexture2DArray t2da:
-                if (t2da.Resizable)
-                    t2da.Resize(InternalWidth, InternalHeight);
-                else
-                    t2da.Destroy();
+                t2da.Resize(InternalWidth, InternalHeight);
                 break;
             case XRTexture2DView:
             case XRTexture2DArrayView:
@@ -293,16 +287,10 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         switch (t)
         {
             case XRTexture2D t2d:
-                if (t2d.Resizable)
-                    t2d.Resize(FullWidth, FullHeight);
-                else
-                    t2d.Destroy();
+                t2d.Resize(FullWidth, FullHeight);
                 break;
             case XRTexture2DArray t2da:
-                if (t2da.Resizable)
-                    t2da.Resize(FullWidth, FullHeight);
-                else
-                    t2da.Destroy();
+                t2da.Resize(FullWidth, FullHeight);
                 break;
             case XRTexture2DView:
             case XRTexture2DArrayView:

@@ -30,20 +30,20 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    public override void UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
+    public override bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
     {
         EnsureAutoExposureComputeResources();
         if (!_autoExposureComputeInitialized)
         {
             _supportsGpuAutoExposure = false;
-            return;
+            return false;
         }
 
         if (sourceTex is null || exposureTex is null)
-            return;
+            return false;
 
         if (!EnsureExposureStorageUsage(exposureTex))
-            return;
+            return false;
 
         XRRenderProgram? program;
         int smallestMip;
@@ -102,11 +102,11 @@ public unsafe partial class VulkanRenderer
         }
         else
         {
-            return;
+            return false;
         }
 
         if (program is null)
-            return;
+            return false;
 
         int meteringMip = smallestMip;
         if (settings.AutoExposureMetering != ColorGradingSettings.AutoExposureMeteringMode.Average)
@@ -167,6 +167,8 @@ public unsafe partial class VulkanRenderer
             if (oldLayout != Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal)
                 vkExposurePost.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal);
         }
+
+        return true;
     }
 
     private bool ComputeSupportsGpuAutoExposure()

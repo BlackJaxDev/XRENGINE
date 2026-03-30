@@ -7,6 +7,41 @@ namespace XREngine.Components.Scene.Mesh
     [Serializable]
     public abstract class RenderableComponent : XRComponent, IRenderable, IPostCookedBinaryDeserialize
     {
+        private int _meshLayer = -1;
+        private bool? _meshCastsShadows = null;
+
+        /// <summary>
+        /// When >= 0, overrides the render layer for all meshes owned by this component.
+        /// Set before or after assigning a Model; the setter propagates to existing meshes.
+        /// </summary>
+        public int MeshLayer
+        {
+            get => _meshLayer;
+            set
+            {
+                _meshLayer = value;
+                if (value >= 0)
+                    foreach (var m in Meshes)
+                        m.RenderInfo.Layer = value;
+            }
+        }
+
+        /// <summary>
+        /// When non-null, overrides shadow-casting for all meshes owned by this component.
+        /// Set before or after assigning a Model; the setter propagates to existing meshes.
+        /// </summary>
+        public bool? MeshCastsShadows
+        {
+            get => _meshCastsShadows;
+            set
+            {
+                _meshCastsShadows = value;
+                if (value.HasValue)
+                    foreach (var m in Meshes)
+                        m.RenderInfo.CastsShadows = value.Value;
+            }
+        }
+
         public RenderableComponent()
         {
             Meshes.PostAnythingAdded += Meshes_PostAnythingAdded;
@@ -36,6 +71,11 @@ namespace XREngine.Components.Scene.Mesh
             int i = RenderedObjects.IndexOf(ri);
             if (i >= 0)
                 return;
+
+            if (_meshLayer >= 0)
+                ri.Layer = _meshLayer;
+            if (_meshCastsShadows.HasValue)
+                ri.CastsShadows = _meshCastsShadows.Value;
 
             RenderedObjects = [.. RenderedObjects, ri];
 

@@ -7,6 +7,7 @@ using XREngine.Data.Vectors;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine;
 using XREngine.Scene.Transforms;
@@ -100,19 +101,7 @@ namespace XREngine.Components.Lights
         protected virtual void InitializeForCapture()
         {
             _environmentTextureCubemap?.Destroy();
-            _environmentTextureCubemap = new XRTextureCube(Resolution, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, false)
-            {
-                MinFilter = ETexMinFilter.Linear,
-                MagFilter = ETexMagFilter.Linear,
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-                WWrap = ETexWrapMode.ClampToEdge,
-                Resizable = false,
-                SizedInternalFormat = ESizedInternalFormat.Rgba8,
-                Name = "SceneCaptureEnvColor",
-                AutoGenerateMipmaps = false,
-                //FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
-            };
+            _environmentTextureCubemap = CreateEnvironmentColorCubemap(Resolution);
             //_envTex.Generate();
 
             if (CaptureDepthCubeMap)
@@ -143,7 +132,10 @@ namespace XREngine.Components.Lights
             _renderFBO = new XRCubeFrameBuffer(null);
             //_renderFBO.Generate();
 
-            InitializeOctahedralEncodingResources();
+            if (ShouldEncodeEnvironmentToOctahedralMap())
+                InitializeOctahedralEncodingResources();
+            else
+                DisableOctahedralEncodingResources();
 
             var cameras = XRCubeFrameBuffer.GetCamerasPerFace(0.1f, 10000.0f, true, Transform);
             for (int i = 0; i < cameras.Length; i++)
@@ -178,6 +170,23 @@ namespace XREngine.Components.Lights
             SyncCaptureCameraTransforms();
         }
 
+        protected virtual XRTextureCube CreateEnvironmentColorCubemap(uint resolution)
+            => new(resolution, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, false)
+            {
+                MinFilter = ETexMinFilter.Linear,
+                MagFilter = ETexMagFilter.Linear,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                WWrap = ETexWrapMode.ClampToEdge,
+                Resizable = false,
+                SizedInternalFormat = ESizedInternalFormat.Rgba8,
+                Name = "SceneCaptureEnvColor",
+                AutoGenerateMipmaps = false,
+            };
+
+        protected virtual bool ShouldEncodeEnvironmentToOctahedralMap()
+            => true;
+
         private bool _progressiveRenderEnabled = true;
         /// <summary>
         /// If true, the SceneCaptureComponent will render one face of the cubemap each time a Render call is made.
@@ -190,19 +199,35 @@ namespace XREngine.Components.Lights
 
         private int _currentFace = 0;
 
+        private XRViewport? SharedCaptureViewport => XPosVP;
+
         public override void CollectVisible()
         {
-            int count = _progressiveRenderEnabled ? 1 : 6;
+            int count = _progressiveRenderEnabled ? 1 : 1;
             Debug.Out($"[SceneCapture] CollectVisible: progressive={_progressiveRenderEnabled}, faces={count}, Viewports[0]={Viewports[0] is not null}, World={Viewports[0]?.World is not null}");
             if (_progressiveRenderEnabled)
                 CollectVisibleFace(_currentFace);
             else
-                for (int i = 0; i < 6; ++i)
-                    CollectVisibleFace(i);
+                CollectVisibleShared();
         }
 
         private void CollectVisibleFace(int i)
             => Viewports[i]?.CollectVisible(false);
+
+        private void CollectVisibleShared()
+        {
+            XRViewport? viewport = SharedCaptureViewport;
+            if (viewport?.ActiveCamera is null || Transform is null)
+                return;
+
+            float radius = Math.Max(0.1f, viewport.ActiveCamera.FarZ);
+            Sphere collectionVolume = new(Transform.WorldTranslation, radius);
+            viewport.CollectVisible(
+                collectMirrors: false,
+                renderCommandsOverride: null,
+                allowScreenSpaceUICollectVisible: false,
+                collectionVolumeOverride: collectionVolume);
+        }
 
         public override void SwapBuffers()
         {
@@ -210,12 +235,14 @@ namespace XREngine.Components.Lights
             if (_progressiveRenderEnabled)
                 SwapBuffersFace(_currentFace);
             else
-                for (int i = 0; i < 6; ++i)
-                    SwapBuffersFace(i);
+                SwapBuffersShared();
         }
 
         private void SwapBuffersFace(int i)
             => Viewports[i]?.SwapBuffers();
+
+        private void SwapBuffersShared()
+            => SharedCaptureViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
 
         /// <summary>
         /// Renders the scene to the ResultTexture cubemap.
@@ -230,45 +257,51 @@ namespace XREngine.Components.Lights
 
             Engine.Rendering.State.IsSceneCapturePass = true;
 
-            SyncCaptureCameraTransforms();
-
-            GetDepthParams(out IFrameBufferAttachement depthAttachment, out int[] depthLayers);
-
-            if (_progressiveRenderEnabled)
+            try
             {
-                RenderFace(depthAttachment, depthLayers, _currentFace);
-                _currentFace = (_currentFace + 1) % 6;
-            }
-            else
-            {
-                Debug.Out($"[SceneCapture] Rendering all 6 faces. Cubemap={_environmentTextureCubemap is not null}, Extent={_environmentTextureCubemap?.Extent ?? 0}");
-                for (int i = 0; i < 6; ++i)
+                SyncCaptureCameraTransforms();
+
+                GetDepthParams(out IFrameBufferAttachement depthAttachment, out int[] depthLayers);
+
+                if (_progressiveRenderEnabled)
                 {
-                    RenderFace(depthAttachment, depthLayers, i);
-                    Debug.Out($"[SceneCapture] Face {i} rendered. FBO complete={RenderFBO.IsLastCheckComplete}");
+                    RenderFace(depthAttachment, depthLayers, _currentFace);
+                    _currentFace = (_currentFace + 1) % 6;
+                }
+                else
+                {
+                    RenderCommandCollection? sharedCommands = SharedCaptureViewport?.RenderPipelineInstance.MeshRenderCommands;
+                    Debug.Out($"[SceneCapture] Rendering all 6 faces. Cubemap={_environmentTextureCubemap is not null}, Extent={_environmentTextureCubemap?.Extent ?? 0}");
+                    for (int i = 0; i < 6; ++i)
+                    {
+                        RenderFace(depthAttachment, depthLayers, i, sharedCommands);
+                        Debug.Out($"[SceneCapture] Face {i} rendered. FBO complete={RenderFBO.IsLastCheckComplete}");
+                    }
+                }
+
+                bool completedCycle = !_progressiveRenderEnabled || _currentFace == 0;
+
+                if (!completedCycle)
+                    WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.QueueForCapture(this);
+
+                if (completedCycle && _environmentTextureCubemap is not null)
+                {
+                    _environmentTextureCubemap.Bind();
+                    _environmentTextureCubemap.GenerateMipmapsGPU();
+                    Debug.Out("[SceneCapture] Cubemap mipmaps generated.");
+                }
+
+                if (completedCycle && ShouldEncodeEnvironmentToOctahedralMap())
+                {
+                    Debug.Out($"[SceneCapture] Encoding to octahedral. OctaFBO={_octahedralFBO is not null}, OctaTex={_environmentTextureOctahedral is not null}");
+                    EncodeEnvironmentToOctahedralMap();
+                    Debug.Out("[SceneCapture] Octahedral encode done.");
                 }
             }
-
-            bool completedCycle = !_progressiveRenderEnabled || _currentFace == 0;
-
-            if (!completedCycle)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.QueueForCapture(this);
-
-            if (completedCycle && _environmentTextureCubemap is not null)
+            finally
             {
-                _environmentTextureCubemap.Bind();
-                _environmentTextureCubemap.GenerateMipmapsGPU();
-                Debug.Out("[SceneCapture] Cubemap mipmaps generated.");
+                Engine.Rendering.State.IsSceneCapturePass = false;
             }
-
-            if (completedCycle)
-            {
-                Debug.Out($"[SceneCapture] Encoding to octahedral. OctaFBO={_octahedralFBO is not null}, OctaTex={_environmentTextureOctahedral is not null}");
-                EncodeEnvironmentToOctahedralMap();
-                Debug.Out("[SceneCapture] Octahedral encode done.");
-            }
-
-            Engine.Rendering.State.IsSceneCapturePass = false;
         }
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
@@ -301,6 +334,15 @@ namespace XREngine.Components.Lights
                 faceTransform.Scale = Vector3.One;
                 faceTransform.RecalculateMatrices(true, true);
             }
+        }
+
+        private void DisableOctahedralEncodingResources()
+        {
+            if (_octahedralFBO is not null)
+                _octahedralFBO.SettingUniforms -= BindOctahedralSampler;
+
+            _environmentTextureOctahedral?.Destroy();
+            EnvironmentTextureOctahedral = null;
         }
 
         private void InitializeOctahedralEncodingResources()
@@ -454,7 +496,7 @@ namespace XREngine.Components.Lights
             }
         }
 
-        private void RenderFace(IFrameBufferAttachement depthAttachment, int[] depthLayers, int i)
+        private void RenderFace(IFrameBufferAttachement depthAttachment, int[] depthLayers, int i, RenderCommandCollection? renderCommandsOverride = null)
         {
             RenderFBO!.SetRenderTargets(
                 (_environmentTextureCubemap!, EFrameBufferAttachment.ColorAttachment0, 0, i),
@@ -465,7 +507,17 @@ namespace XREngine.Components.Lights
             if (!RenderFBO.IsLastCheckComplete)
                 return;
 
-            Viewports[i]!.Render(RenderFBO, null, null, false, null);
+            XRViewport viewport = Viewports[i]!;
+            RenderCommandCollection? previousOverride = viewport.MeshRenderCommandsOverride;
+            viewport.MeshRenderCommandsOverride = renderCommandsOverride;
+            try
+            {
+                viewport.Render(RenderFBO, null, null, false, null);
+            }
+            finally
+            {
+                viewport.MeshRenderCommandsOverride = previousOverride;
+            }
         }
 
         public void FullCapture(uint colorResolution, bool captureDepth)

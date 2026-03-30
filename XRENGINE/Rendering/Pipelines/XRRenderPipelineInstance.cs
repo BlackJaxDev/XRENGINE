@@ -34,6 +34,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     public XRCamera? LastSceneCamera { get; private set; }
     public XRCamera? LastRenderingCamera { get; private set; }
     public XRViewport? LastWindowViewport { get; private set; }
+    public bool? EffectiveOutputHDRThisFrame { get; private set; }
 
     public XRRenderPipelineInstance(RenderPipeline pipeline) : this()
     {
@@ -46,6 +47,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     public RenderCommandCollection MeshRenderCommands { get; } = new();
 
     public RenderResourceRegistry Resources { get; } = new();
+
+    /// <summary>
+    /// Monotonically increasing counter incremented each time physical GPU resources
+    /// are invalidated (e.g., after a viewport resize). Command containers compare
+    /// their last-allocated generation against this value to detect stale state and
+    /// force re-allocation of per-command resources such as fullscreen quads.
+    /// </summary>
+    public int ResourceGeneration { get; private set; }
 
     // Track the last applied internal resolution scale to avoid resetting the viewport every frame.
     private float? _appliedInternalResolutionScale;
@@ -282,6 +291,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         LastSceneCamera = camera;
         LastRenderingCamera = camera ?? stereoRightEyeCamera;
         LastWindowViewport = viewport;
+        EffectiveOutputHDRThisFrame = camera?.OutputHDROverride
+            ?? (camera is null ? stereoRightEyeCamera?.OutputHDROverride : null)
+            ?? Engine.Rendering.Settings.OutputHDR;
 
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)
@@ -360,6 +372,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     public void InvalidatePhysicalResources()
     {
         Resources.DestroyAllPhysicalResources(retainDescriptors: true);
+        ResourceGeneration++;
     }
 
     public void ViewportResized(Vector2 size)

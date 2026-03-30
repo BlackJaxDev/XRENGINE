@@ -24,6 +24,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private sealed class InstanceResourceState
         {
             public bool ResourcesAllocated;
+            public int AllocatedAtGeneration;
         }
 
         private readonly Dictionary<XRRenderPipelineInstance, InstanceResourceState> _instanceStates = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -318,13 +319,26 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void EnsureResourcesAllocated(XRRenderPipelineInstance instance)
         {
             var state = GetInstanceState(instance);
-            if (state.ResourcesAllocated)
+            int generation = instance.ResourceGeneration;
+
+            if (state.ResourcesAllocated && state.AllocatedAtGeneration == generation)
                 return;
+
+            // If resources were previously allocated but the pipeline's physical
+            // resources have been invalidated (e.g., after a viewport resize),
+            // release the stale per-command resources first so they are rebuilt
+            // with the correct dimensions and texture/FBO references.
+            if (state.ResourcesAllocated)
+            {
+                for (int i = _commands.Count - 1; i >= 0; i--)
+                    _commands[i].ReleaseContainerResources(instance);
+            }
 
             for (int i = 0; i < _commands.Count; i++)
                 _commands[i].AllocateContainerResources(instance);
 
             state.ResourcesAllocated = true;
+            state.AllocatedAtGeneration = generation;
         }
 
         private void ReleaseResources(XRRenderPipelineInstance instance)

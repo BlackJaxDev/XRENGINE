@@ -276,7 +276,7 @@ void main()
 
             ColorGradingSettings settings = ResolveSettings();
             bool hasExposureTexture = instance.TryGetTexture(AutoExposureTextureName, out XRTexture? exposureTexture) && exposureTexture is not null;
-            bool useGpuAutoExposure = settings.AutoExposure && AbstractRenderer.Current?.SupportsGpuAutoExposure == true && hasExposureTexture;
+            bool useGpuAutoExposure = settings.UseGpuAutoExposureThisFrame && hasExposureTexture;
 
             program.Sampler("SourceTexture", sourceTexture, 0);
             program.Sampler("AutoExposureTex", hasExposureTexture ? exposureTexture! : sourceTexture, 1);

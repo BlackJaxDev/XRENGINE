@@ -14,6 +14,77 @@ namespace XREngine.Rendering
         public XRFrameBuffer(params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
             => SetRenderTargets(targets);
 
+        private void AttachedTargetResized()
+            => Resized?.Invoke();
+
+        private void SubscribeToTargetResizeEvents((IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
+        {
+            if (targets is null)
+                return;
+
+            foreach (var (target, _, _, _) in targets)
+            {
+                switch (target)
+                {
+                    case XRTexture1D texture1D:
+                        texture1D.Resized += AttachedTargetResized;
+                        break;
+                    case XRTexture1DArray texture1DArray:
+                        texture1DArray.Resized += AttachedTargetResized;
+                        break;
+                    case XRTexture2D texture2D:
+                        texture2D.Resized += AttachedTargetResized;
+                        break;
+                    case XRTexture2DArray texture2DArray:
+                        texture2DArray.Resized += AttachedTargetResized;
+                        break;
+                    case XRTexture3D texture3D:
+                        texture3D.Resized += AttachedTargetResized;
+                        break;
+                    case XRTextureCube textureCube:
+                        textureCube.Resized += AttachedTargetResized;
+                        break;
+                    case XRTextureCubeArray textureCubeArray:
+                        textureCubeArray.Resized += AttachedTargetResized;
+                        break;
+                }
+            }
+        }
+
+        private void UnsubscribeFromTargetResizeEvents((IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
+        {
+            if (targets is null)
+                return;
+
+            foreach (var (target, _, _, _) in targets)
+            {
+                switch (target)
+                {
+                    case XRTexture1D texture1D:
+                        texture1D.Resized -= AttachedTargetResized;
+                        break;
+                    case XRTexture1DArray texture1DArray:
+                        texture1DArray.Resized -= AttachedTargetResized;
+                        break;
+                    case XRTexture2D texture2D:
+                        texture2D.Resized -= AttachedTargetResized;
+                        break;
+                    case XRTexture2DArray texture2DArray:
+                        texture2DArray.Resized -= AttachedTargetResized;
+                        break;
+                    case XRTexture3D texture3D:
+                        texture3D.Resized -= AttachedTargetResized;
+                        break;
+                    case XRTextureCube textureCube:
+                        textureCube.Resized -= AttachedTargetResized;
+                        break;
+                    case XRTextureCubeArray textureCubeArray:
+                        textureCubeArray.Resized -= AttachedTargetResized;
+                        break;
+                }
+            }
+        }
+
         private EDrawBuffersAttachment[]? _drawBuffers;
         private EFrameBufferTextureTypeFlags _textureTypes = EFrameBufferTextureTypeFlags.None;
         private (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? _targets;
@@ -139,7 +210,9 @@ namespace XREngine.Rendering
 
         public void SetRenderTargets(params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
         {
+            UnsubscribeFromTargetResizeEvents(Targets);
             Targets = targets;
+            SubscribeToTargetResizeEvents(Targets);
             TextureTypes = EFrameBufferTextureTypeFlags.None;
 
             List<EDrawBuffersAttachment> fboAttachments = [];
@@ -207,6 +280,7 @@ namespace XREngine.Rendering
             }
 
             DrawBuffers = [.. fboAttachments];
+            Resized?.Invoke();
         }
 
         private static EDrawBuffersAttachment ToDrawBuffer(EFrameBufferAttachment attachment)
