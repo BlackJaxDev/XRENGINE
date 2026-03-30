@@ -60,16 +60,31 @@ namespace XREngine.Rendering
         {
             mat.RenderOptions.CullMode = ECullMode.None;
             FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
+            FullScreenMesh.Name = $"FullscreenQuad:{mat.Name ?? "Material"}";
             FullScreenMesh.GenerateAsync = false;
             FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
             FullScreenMesh.EnsureRenderPipelineVersionsCreated();
             FullScreenMesh.SettingUniforms += SetUniforms;
 
+            string diagName = $"FullscreenQuad:{mat.Name ?? "Material"}";
+
             // Force simple program linking for fullscreen blits; shader pipelines may skip rendering
             // if no separable program is present on the material (common for utility shaders).
-            FullScreenMesh.GetDefaultVersion().AllowShaderPipelines = false;
-            FullScreenMesh.GetOVRMultiViewVersion().AllowShaderPipelines = false;
-            FullScreenMesh.GetNVStereoVersion().AllowShaderPipelines = false;
+            var defaultVer = FullScreenMesh.GetDefaultVersion();
+            var ovrVer = FullScreenMesh.GetOVRMultiViewVersion();
+            var nvVer = FullScreenMesh.GetNVStereoVersion();
+
+            defaultVer.AllowShaderPipelines = false;
+            defaultVer.Name = diagName;
+            ovrVer.AllowShaderPipelines = false;
+            ovrVer.Name = diagName;
+            nvVer.AllowShaderPipelines = false;
+            nvVer.Name = diagName;
+
+            // Pre-generate GL resources immediately when on the render thread to avoid
+            // inline-generate fallback stalls on the first frame these quads are drawn.
+            if (Engine.IsRenderThread)
+                defaultVer.Generate();
         }
 
         public XRQuadFrameBuffer(

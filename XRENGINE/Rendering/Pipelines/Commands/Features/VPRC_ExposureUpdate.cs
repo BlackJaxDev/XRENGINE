@@ -31,6 +31,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            grading.MarkGpuAutoExposureReady(false);
+
             var sourceTexture = ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName);
             if (sourceTexture is null)
             {
@@ -45,7 +47,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 if (exposureTexture is not null)
                 {
                     grading.UpdateExposureGpu(sourceTexture, exposureTexture, GenerateMipmapsHere);
-                    return;
+                    if (grading.UseGpuAutoExposureThisFrame)
+                        return;
+
+                    Debug.Out("[ExposureUpdate] GPU exposure update skipped or failed, falling back to CPU");
                 }
                 else
                 {
@@ -57,7 +62,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 //Debug.Out($"[ExposureUpdate] GPU auto exposure not supported, using CPU path");
             }
 
-            //grading.UpdateExposure(sourceTexture, GenerateMipmapsHere);
+            grading.UpdateExposure(sourceTexture, GenerateMipmapsHere);
         }
 
         public void SetOptions(string hdrSceneTextureName, bool generateMipmapsHere)

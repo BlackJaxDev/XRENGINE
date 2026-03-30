@@ -6,6 +6,7 @@ using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Lights
@@ -467,7 +468,10 @@ namespace XREngine.Components.Lights
                 XROrthographicCameraParameters parameters = new(1.0f, 1.0f, NearZ, 1.0f);
                 parameters.InheritAspectRatio = false; // Shadow cameras need independent W/H
                 parameters.SetOriginPercentages(0.5f, 0.5f);
-                var camera = new XRCamera(transform, parameters);
+                var camera = new XRCamera(transform, parameters)
+                {
+                    CullingMask = DefaultLayers.EverythingExceptGizmos,
+                };
                 var viewport = new XRViewport(null, width, height)
                 {
                     RenderPipeline = new ShadowRenderPipeline(),

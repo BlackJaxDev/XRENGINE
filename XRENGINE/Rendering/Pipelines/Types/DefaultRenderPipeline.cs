@@ -78,13 +78,29 @@ public partial class DefaultRenderPipeline : RenderPipeline
     /// Prefers SceneCamera (the viewport's main camera, unaffected by
     /// <see cref="RenderingState.PushRenderingCamera"/>) so per-camera overrides
     /// survive the null-push inside <see cref="XRQuadFrameBuffer.Render"/>.
+    /// Latches the effective value once per pipeline render so nested scene/light-probe
+    /// captures cannot bleed HDR state into resize-time resource recreation or final output.
     /// Falls back to global engine setting when no camera is available.
     /// </summary>
     internal static bool ResolveOutputHDR()
     {
-        var camera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera
-                  ?? Engine.Rendering.State.RenderingCamera;
-        return camera?.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline is not null)
+        {
+            bool? latched = pipeline.EffectiveOutputHDRThisFrame;
+            if (latched.HasValue)
+                return latched.Value;
+
+            XRCamera? camera = pipeline.RenderState.SceneCamera
+                ?? pipeline.RenderState.RenderingCamera
+                ?? pipeline.LastSceneCamera
+                ?? pipeline.LastRenderingCamera;
+            return camera?.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+        }
+
+        var fallbackCamera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera
+            ?? Engine.Rendering.State.RenderingCamera;
+        return fallbackCamera?.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
     }
 
     private static EPixelInternalFormat ResolveOutputInternalFormat()
@@ -446,7 +462,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     //Textures
     public const string AmbientOcclusionNoiseTextureName = "AmbientOcclusionNoiseTexture";
-    public const string AmbientOcclusionIntensityTextureName = "AmbientOcclusionTexture";
+    public const string AmbientOcclusionIntensityTextureName = EngineShaderBindingNames.Samplers.AmbientOcclusionTexture;
     public const string GTAORawTextureName = "GTAORawTexture";
     public const string GTAOBlurIntermediateTextureName = "GTAOBlurIntermediateTexture";
     public const string HBAOPlusRawTextureName = "HBAOPlusRawTexture";
@@ -471,7 +487,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string AutoExposureTextureName = "AutoExposureTex";
     public const string BloomBlurTextureName = "BloomBlurTexture";
     public const string UserInterfaceTextureName = "HUDTex";
-    public const string BRDFTextureName = "BRDF";
+    public const string BRDFTextureName = EngineShaderBindingNames.Samplers.BRDF;
     public const string RestirGITextureName = "RestirGITexture";
     public const string LightVolumeGITextureName = "LightVolumeGITexture";
     public const string VoxelConeTracingVolumeTextureName = "VoxelConeTracingVolume";

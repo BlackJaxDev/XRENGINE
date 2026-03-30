@@ -1361,7 +1361,8 @@ public partial class DefaultRenderPipeline
         => Engine.VRState.IsInVR && !Engine.Rendering.Settings.RenderVRSinglePassStereo;
 
     private static bool ShouldUseMotionBlur()
-        => !DisableHistoryBasedVrEffects()
+        => !IsLightProbePass
+        && !DisableHistoryBasedVrEffects()
         && GetMotionBlurSettings() is { Enabled: true };
 
     private static DepthOfFieldSettings? GetDepthOfFieldSettings()
@@ -1372,7 +1373,8 @@ public partial class DefaultRenderPipeline
     }
 
     private static bool ShouldUseDepthOfField()
-        => GetDepthOfFieldSettings() is { Enabled: true };
+        => !IsLightProbePass
+        && GetDepthOfFieldSettings() is { Enabled: true };
 
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class
         => state?.GetStage<TSettings>()?.TryGetBacking(out TSettings? settings) == true ? settings : null;

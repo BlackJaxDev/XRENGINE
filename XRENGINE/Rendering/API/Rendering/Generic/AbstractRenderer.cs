@@ -427,8 +427,9 @@ namespace XREngine.Rendering
         /// <summary>
         /// Updates a 1x1 exposure texture based on the supplied HDR source texture.
         /// Implementations should avoid CPU readback and keep the exposure value on-GPU.
+        /// Returns true only when a valid GPU exposure value was produced for the current frame.
         /// </summary>
-        public virtual void UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
+        public virtual bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
             => throw new NotSupportedException();
 
         public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)

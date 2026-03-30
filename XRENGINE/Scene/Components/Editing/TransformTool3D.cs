@@ -173,18 +173,26 @@ namespace XREngine.Scene.Components.Editing
 
             ModelComponent translationModelComp = skelRoot.AddComponent<ModelComponent>("Translation Model")!;
             translationModelComp.Model = new Model(translationMeshes);
+            translationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
+            translationModelComp.MeshCastsShadows = false;
             _translationModel = translationModelComp;
 
             ModelComponent nonRotationModelComp = skelRoot.AddComponent<ModelComponent>("Non-Rotation Model")!;
             nonRotationModelComp.Model = new Model(nonRotationMeshes);
+            nonRotationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
+            nonRotationModelComp.MeshCastsShadows = false;
             _nonRotationModel = nonRotationModelComp;
 
             ModelComponent scaleModelComp = skelRoot.AddComponent<ModelComponent>("Scale Model")!;
             scaleModelComp.Model = new Model(scaleMeshes);
+            scaleModelComp.MeshLayer = DefaultLayers.GizmosIndex;
+            scaleModelComp.MeshCastsShadows = false;
             _scaleModel = scaleModelComp;
 
             ModelComponent rotationModelComp = skelRoot.AddComponent<ModelComponent>("Rotation Model")!;
             rotationModelComp.Model = new Model(rotationMeshes);
+            rotationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
+            rotationModelComp.MeshCastsShadows = false;
             _rotationModel = rotationModelComp;
 
             SceneNode screenNode = skelRoot.NewChild();
@@ -194,10 +202,14 @@ namespace XREngine.Scene.Components.Editing
 
             ModelComponent screenRotationModelComp = screenNode.AddComponent<ModelComponent>("Screen Rotation Model")!;
             screenRotationModelComp.Model = new Model(screenRotationMeshes);
+            screenRotationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
+            screenRotationModelComp.MeshCastsShadows = false;
             _screenRotationModel = screenRotationModelComp;
 
             ModelComponent screenTranslationModelComp = screenNode.AddComponent<ModelComponent>("Screen Translation Model")!;
             screenTranslationModelComp.Model = new Model(screenTranslationMeshes);
+            screenTranslationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
+            screenTranslationModelComp.MeshCastsShadows = false;
             _screenTranslationModel = screenTranslationModelComp;
 
             ModeChanged();

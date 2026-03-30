@@ -212,8 +212,12 @@ public sealed class LightProbeComponentEditor : IXRComponentEditor
         Vector2 displaySize = GetPreviewSize(pixelSize);
 
         const int facesPerRow = 3;
-        Vector2 uv0 = new(0.0f, 1.0f);
-        Vector2 uv1 = new(1.0f, 0.0f);
+        // Cubemap face cameras use OpenGL convention (e.g. up=-Y for +X face), which
+        // already renders floor at viewport-top → texture t=1. Applying the standard
+        // OpenGL Y-flip (uv0.y=1) would show floor at the top of the ImGui image.
+        // Skip the flip so the face displays ceiling-up as expected visually.
+        Vector2 uv0 = new(0.0f, 0.0f);
+        Vector2 uv1 = new(1.0f, 1.0f);
 
         for (int i = 0; i < CubemapFaces.Length; ++i)
         {

@@ -19,14 +19,32 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     private const float TexturePreviewMaxEdge = 96.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
 
+    private static readonly Dictionary<string, string> RuntimeDrivenSamplerProviders = new(StringComparer.Ordinal)
+    {
+        [EngineShaderBindingNames.Samplers.PrevPeelDepth] = "Exact transparency depth peeling",
+        [EngineShaderBindingNames.Samplers.PpllHeadPointers] = "Per-pixel linked list transparency"
+    };
+
+    /// <summary>
+    /// Uniforms driven by the pipeline outside the RequiredEngineUniforms flag system.
+    /// </summary>
+    private static readonly Dictionary<string, string> RuntimeDrivenUniformProviders = new(StringComparer.Ordinal)
+    {
+        [EngineShaderBindingNames.Uniforms.PpllMaxNodes] = "Per-pixel linked list transparency",
+        [EngineShaderBindingNames.Uniforms.DepthPeelLayerIndex] = "Exact transparency depth peeling",
+        [EngineShaderBindingNames.Uniforms.DepthPeelEpsilon] = "Exact transparency depth peeling"
+    };
+
     private static readonly Vector4 EngineTagColor = new(0.40f, 0.75f, 0.95f, 1.0f);
     private static readonly Vector4 EngineActiveColor = new(0.30f, 0.85f, 0.55f, 1.0f);
     private static readonly Vector4 EngineMissingFlagColor = new(0.95f, 0.75f, 0.25f, 1.0f);
 
+    private static bool _hideEngineDrivenUniforms;
+
     private static bool IsEngineUniform(string name, out EUniformRequirements requiredFlags)
     {
         requiredFlags = UniformRequirementsDetection.GetAllProviders(name);
-        return requiredFlags != EUniformRequirements.None;
+        return requiredFlags != EUniformRequirements.None || RuntimeDrivenUniformProviders.ContainsKey(name);
     }
 
     private static bool HasAnyRequiredFlag(XRMaterial material, EUniformRequirements required)
@@ -55,6 +73,10 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         DrawTransparencySettings(material);
         DrawShaderList(material);
         DrawRenderOptions(material, visitedObjects);
+        ImGui.Checkbox("Hide engine-driven", ref _hideEngineDrivenUniforms);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Hide uniforms and samplers that are automatically driven by the engine.");
+
         DrawUniforms(material);
         DrawUniformBlocks(material);
         DrawSamplerList(material);
@@ -266,6 +288,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             return;
 
         var samplers = CollectSamplerDefinitions(material);
+        var samplerBindings = ResolveSamplerBindings(material, samplers);
         if (samplers.Count == 0)
         {
             ImGui.TextDisabled("No sampler uniforms found in assigned shaders.");
@@ -283,8 +306,11 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
             for (int i = 0; i < samplers.Count; i++)
             {
-                var sampler = samplers[i];
-                XRTexture? texture = i < material.Textures.Count ? material.Textures[i] : null;
+                var binding = samplerBindings[i];
+                var sampler = binding.Sampler;
+
+                if (_hideEngineDrivenUniforms && binding.EngineBinding is not null)
+                    continue;
 
                 ImGui.TableNextRow();
                 ImGui.TableSetColumnIndex(0);
@@ -292,17 +318,24 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
                 ImGui.TableSetColumnIndex(1);
                 ImGui.TextUnformatted(sampler.Name);
+                if (binding.EngineBinding is not null)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(EngineTagColor, "(engine)");
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(GetEngineSamplerTooltip(material, binding.EngineBinding));
+                }
 
                 ImGui.TableSetColumnIndex(2);
                 ImGui.TextUnformatted(sampler.TypeLabel);
 
                 ImGui.TableSetColumnIndex(3);
                 ImGui.PushID($"SamplerTexture_{i}");
-                DrawSamplerTextureField(material, sampler, i, texture);
+                DrawSamplerTextureField(material, binding);
                 ImGui.PopID();
 
                 ImGui.TableSetColumnIndex(4);
-                DrawTexturePreviewCell(texture, TexturePreviewMaxEdge);
+                DrawTexturePreviewCell(binding.PreviewTexture, TexturePreviewMaxEdge);
             }
 
             ImGui.EndTable();
@@ -349,7 +382,11 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         foreach (var uniform in uniforms)
         {
             bool isEngine = IsEngineUniform(uniform.Name, out var requiredFlags);
-            bool flagsActive = isEngine && HasAnyRequiredFlag(material, requiredFlags);
+            bool isRuntimeDriven = RuntimeDrivenUniformProviders.TryGetValue(uniform.Name, out string? runtimeProvider);
+            bool flagsActive = isEngine && (isRuntimeDriven || HasAnyRequiredFlag(material, requiredFlags));
+
+            if (_hideEngineDrivenUniforms && isEngine)
+                continue;
 
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
@@ -360,10 +397,15 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 ImGui.TextColored(EngineTagColor, "(engine)");
                 if (ImGui.IsItemHovered())
                 {
-                    string provider = FormatFlagNames(requiredFlags);
-                    ImGui.SetTooltip(flagsActive
-                        ? $"Driven by engine via RequiredEngineUniforms: {provider}"
-                        : $"Enable {provider} in Render Options > RequiredEngineUniforms to drive this uniform");
+                    if (isRuntimeDriven)
+                        ImGui.SetTooltip($"Driven by engine pipeline: {runtimeProvider}");
+                    else
+                    {
+                        string provider = FormatFlagNames(requiredFlags);
+                        ImGui.SetTooltip(flagsActive
+                            ? $"Driven by engine via RequiredEngineUniforms: {provider}"
+                            : $"Enable {provider} in Render Options > RequiredEngineUniforms to drive this uniform");
+                    }
                 }
             }
 
@@ -413,7 +455,11 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         foreach (var member in block.Members)
         {
             bool isEngine = IsEngineUniform(member.Name, out var requiredFlags);
-            bool flagsActive = isEngine && HasAnyRequiredFlag(material, requiredFlags);
+            bool isRuntimeDriven = RuntimeDrivenUniformProviders.TryGetValue(member.Name, out string? runtimeProvider);
+            bool flagsActive = isEngine && (isRuntimeDriven || HasAnyRequiredFlag(material, requiredFlags));
+
+            if (_hideEngineDrivenUniforms && isEngine)
+                continue;
 
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
@@ -424,10 +470,15 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 ImGui.TextColored(EngineTagColor, "(engine)");
                 if (ImGui.IsItemHovered())
                 {
-                    string provider = FormatFlagNames(requiredFlags);
-                    ImGui.SetTooltip(flagsActive
-                        ? $"Driven by engine via RequiredEngineUniforms: {provider}"
-                        : $"Enable {provider} in Render Options > RequiredEngineUniforms to drive this uniform");
+                    if (isRuntimeDriven)
+                        ImGui.SetTooltip($"Driven by engine pipeline: {runtimeProvider}");
+                    else
+                    {
+                        string provider = FormatFlagNames(requiredFlags);
+                        ImGui.SetTooltip(flagsActive
+                            ? $"Driven by engine via RequiredEngineUniforms: {provider}"
+                            : $"Enable {provider} in Render Options > RequiredEngineUniforms to drive this uniform");
+                    }
                 }
             }
 
@@ -572,8 +623,30 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         }
     }
 
-    private static void DrawSamplerTextureField(XRMaterial material, SamplerEntry sampler, int slotIndex, XRTexture? currentTexture)
+    private static void DrawSamplerTextureField(XRMaterial material, SamplerBindingEntry binding)
     {
+        if (binding.EngineBinding is { } engineBinding)
+        {
+            if (engineBinding.IsDriven(material))
+            {
+                ImGui.TextColored(EngineActiveColor, "Driven by engine");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(GetEngineSamplerTooltip(material, engineBinding));
+            }
+            else
+            {
+                string provider = FormatFlagNames(engineBinding.RequiredFlags);
+                ImGui.TextColored(EngineMissingFlagColor, $"Enable {provider}");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(GetEngineSamplerTooltip(material, engineBinding));
+            }
+            return;
+        }
+
+        int slotIndex = binding.MaterialTextureSlot ?? binding.FallbackTextureSlot;
+        XRTexture? currentTexture = binding.AssignedTexture;
+        SamplerEntry sampler = binding.Sampler;
+
         void Assign(XRTexture? tex)
         {
             EnsureTextureSlots(material, slotIndex + 1);
@@ -620,6 +693,152 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     {
         while (material.Textures.Count < count)
             material.Textures.Add(null);
+    }
+
+    private static List<SamplerBindingEntry> ResolveSamplerBindings(XRMaterial material, IReadOnlyList<SamplerEntry> samplers)
+    {
+        var bindings = new List<SamplerBindingEntry>(samplers.Count);
+        for (int i = 0; i < samplers.Count; i++)
+        {
+            SamplerEntry sampler = samplers[i];
+            string baseSamplerName = GetBaseSamplerName(sampler.Name);
+            EngineSamplerBindingInfo? engineBinding = TryGetEngineSamplerBinding(baseSamplerName);
+            int? materialTextureSlot = TryGetTextureSlotForSampler(material, sampler.Name, baseSamplerName);
+            XRTexture? assignedTexture = materialTextureSlot is int slot
+                && slot >= 0
+                && slot < material.Textures.Count
+                    ? material.Textures[slot]
+                    : null;
+
+            XRTexture? previewTexture = assignedTexture;
+            if (previewTexture is null && engineBinding?.IsDriven(material) == true)
+                previewTexture = TryResolveEngineSamplerPreview(baseSamplerName);
+
+            bindings.Add(new SamplerBindingEntry(
+                sampler,
+                assignedTexture,
+                previewTexture,
+                materialTextureSlot,
+                i,
+                engineBinding));
+        }
+
+        return bindings;
+    }
+
+    private static int? TryGetTextureSlotForSampler(XRMaterial material, string samplerName, string baseSamplerName)
+    {
+        if (TryFindNamedTextureSlot(material, samplerName, out int namedSlot))
+            return namedSlot;
+
+        if (!samplerName.Equals(baseSamplerName, StringComparison.Ordinal)
+            && TryFindNamedTextureSlot(material, baseSamplerName, out namedSlot))
+        {
+            return namedSlot;
+        }
+
+        if (TryParseDefaultTextureSlot(baseSamplerName, out int defaultSlot))
+        {
+            if (defaultSlot >= material.Textures.Count)
+                return defaultSlot;
+
+            XRTexture? existingTexture = material.Textures[defaultSlot];
+            if (existingTexture is null
+                || string.IsNullOrWhiteSpace(existingTexture.SamplerName)
+                || existingTexture.SamplerName.Equals(baseSamplerName, StringComparison.Ordinal))
+            {
+                return defaultSlot;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryFindNamedTextureSlot(XRMaterial material, string samplerName, out int slotIndex)
+    {
+        for (int i = 0; i < material.Textures.Count; i++)
+        {
+            XRTexture? texture = material.Textures[i];
+            if (texture?.SamplerName?.Equals(samplerName, StringComparison.Ordinal) == true)
+            {
+                slotIndex = i;
+                return true;
+            }
+        }
+
+        slotIndex = -1;
+        return false;
+    }
+
+    private static bool TryParseDefaultTextureSlot(string samplerName, out int slotIndex)
+    {
+        slotIndex = -1;
+        if (!samplerName.StartsWith("Texture", StringComparison.Ordinal))
+            return false;
+
+        string suffix = samplerName["Texture".Length..];
+        return int.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out slotIndex);
+    }
+
+    private static string GetBaseSamplerName(string samplerName)
+    {
+        int bracketIndex = samplerName.IndexOf('[');
+        return bracketIndex >= 0 ? samplerName[..bracketIndex] : samplerName;
+    }
+
+    private static EngineSamplerBindingInfo? TryGetEngineSamplerBinding(string samplerName)
+    {
+        EUniformRequirements requiredFlags = UniformRequirementsDetection.GetAllProviders(samplerName);
+        if (requiredFlags != EUniformRequirements.None)
+            return new EngineSamplerBindingInfo($"RequiredEngineUniforms: {FormatFlagNames(requiredFlags)}", requiredFlags);
+
+        if (RuntimeDrivenSamplerProviders.TryGetValue(samplerName, out string? provider))
+            return new EngineSamplerBindingInfo(provider, EUniformRequirements.None);
+
+        return null;
+    }
+
+    private static string GetEngineSamplerTooltip(XRMaterial material, EngineSamplerBindingInfo binding)
+    {
+        if (binding.RequiredFlags == EUniformRequirements.None)
+            return $"Driven by engine via {binding.ProviderDescription}";
+
+        return binding.IsDriven(material)
+            ? $"Driven by engine via {binding.ProviderDescription}"
+            : $"Enable {FormatFlagNames(binding.RequiredFlags)} in Render Options > RequiredEngineUniforms to drive this sampler";
+    }
+
+    private static XRTexture? TryResolveEngineSamplerPreview(string samplerName)
+    {
+        XRRenderPipelineInstance? pipelineInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        if (pipelineInstance?.Pipeline is null)
+            return null;
+
+        switch (samplerName)
+        {
+            case EngineShaderBindingNames.Samplers.BRDF:
+                return RenderPipeline.TryGetTexture(EngineShaderBindingNames.Samplers.BRDF, out XRTexture? brdfTexture) ? brdfTexture : null;
+
+            case EngineShaderBindingNames.Samplers.AmbientOcclusionTexture:
+                return RenderPipeline.TryGetTexture(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, out XRTexture? aoTexture) ? aoTexture : null;
+
+            case EngineShaderBindingNames.Samplers.IrradianceArray:
+                if (pipelineInstance.Pipeline is DefaultRenderPipeline defaultPipeline)
+                    return defaultPipeline.ProbeIrradianceArray;
+                if (pipelineInstance.Pipeline is DefaultRenderPipeline2 defaultPipeline2)
+                    return defaultPipeline2.ProbeIrradianceArray;
+                return null;
+
+            case EngineShaderBindingNames.Samplers.PrefilterArray:
+                if (pipelineInstance.Pipeline is DefaultRenderPipeline defaultPipeline3)
+                    return defaultPipeline3.ProbePrefilterArray;
+                if (pipelineInstance.Pipeline is DefaultRenderPipeline2 defaultPipeline4)
+                    return defaultPipeline4.ProbePrefilterArray;
+                return null;
+
+            default:
+                return null;
+        }
     }
 
     private static void DrawTexturePreviewCell(XRTexture? texture, float maxSize)
@@ -881,6 +1100,20 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     private sealed record UniformBlockEntry(string BlockName, string InstanceName, List<UniformEntry> Members);
 
     private sealed record SamplerEntry(string Name, string TypeLabel, SamplerKind Kind, int ArraySize);
+
+    private sealed record SamplerBindingEntry(
+        SamplerEntry Sampler,
+        XRTexture? AssignedTexture,
+        XRTexture? PreviewTexture,
+        int? MaterialTextureSlot,
+        int FallbackTextureSlot,
+        EngineSamplerBindingInfo? EngineBinding);
+
+    private sealed record EngineSamplerBindingInfo(string ProviderDescription, EUniformRequirements RequiredFlags)
+    {
+        public bool IsDriven(XRMaterial material)
+            => RequiredFlags == EUniformRequirements.None || HasAnyRequiredFlag(material, RequiredFlags);
+    }
 
     private enum SamplerKind
     {

@@ -281,7 +281,7 @@ namespace XREngine.Rendering
             program.Uniform($"{ColorGradeUniformName}.{nameof(Tint)}", Tint);
 
             float exposure = Exposure;
-            bool useGpuExposure = AutoExposure && AbstractRenderer.Current?.SupportsGpuAutoExposure == true;
+            bool useGpuExposure = UseGpuAutoExposureThisFrame;
             if (ExposureMode == ExposureControlMode.Physical)
             {
                 float physicalBase = ComputePhysicalExposureMultiplier();
@@ -309,8 +309,9 @@ namespace XREngine.Rendering
             program.Uniform($"{ColorGradeUniformName}.{nameof(Saturation)}", Saturation);
             program.Uniform($"{ColorGradeUniformName}.{nameof(Brightness)}", Brightness);
 
-            // Optional GPU-driven auto exposure path (PostProcess.fs / PostProcessStereo.fs)
-            // Shader-side logic falls back to uniform exposure if the GPU texture isn't valid yet.
+            // Only tell the shader to sample the 1x1 GPU exposure texture when it was
+            // successfully written this frame.  Otherwise the texture may contain stale or
+            // uninitialised data (common after resize / FBO recreation).
             program.Uniform("UseGpuAutoExposure", useGpuExposure);
         }
 
@@ -360,9 +361,18 @@ uniform ColorGradeStruct ColorGrade;";
 
         private float _lastUpdateTime = float.MinValue;
         private float _lastLumDot = 0.0f;
+        private bool _gpuAutoExposureReadyThisFrame;
+
+        [Browsable(false)]
+        internal bool UseGpuAutoExposureThisFrame => AutoExposure && _gpuAutoExposureReadyThisFrame;
+
+        internal void MarkGpuAutoExposureReady(bool ready)
+            => _gpuAutoExposureReadyThisFrame = AutoExposure && ready;
 
         public void UpdateExposure(BoundingRectangle rect)
         {
+            _gpuAutoExposureReadyThisFrame = false;
+
             if (!RequiresAutoExposure || Engine.Rendering.State.IsLightProbePass || Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsSceneCapturePass)
                 return;
 
@@ -383,6 +393,8 @@ uniform ColorGradeStruct ColorGrade;";
 
         public void UpdateExposure(XRTexture tex, bool generateMipmapsNow)
         {
+            _gpuAutoExposureReadyThisFrame = false;
+
             if (!RequiresAutoExposure || Engine.Rendering.State.IsLightProbePass || Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsSceneCapturePass)
                 return;
 
@@ -411,6 +423,8 @@ uniform ColorGradeStruct ColorGrade;";
 
         public void UpdateExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, bool generateMipmapsNow)
         {
+            _gpuAutoExposureReadyThisFrame = false;
+
             if (!RequiresAutoExposure || Engine.Rendering.State.IsLightProbePass || Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsSceneCapturePass)
                 return;
 
@@ -425,9 +439,15 @@ uniform ColorGradeStruct ColorGrade;";
             // The compute shader or the renderer will handle the time-based lerp using deltaTime.
             float time = Engine.ElapsedTime;
             float deltaTime = _lastUpdateTime == float.MinValue ? 0.0f : time - _lastUpdateTime;
-            _lastUpdateTime = time;
 
-            renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow);
+            bool success = renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow);
+            _gpuAutoExposureReadyThisFrame = success;
+
+            // Only consume the timestamp budget when the GPU dispatch actually succeeded.
+            // If GPU fails, leaving _lastUpdateTime untouched lets the CPU fallback path
+            // pass its own throttle check and produce a valid exposure value this frame.
+            if (success)
+                _lastUpdateTime = time;
         }
 
         private void LerpExposure(bool success, float lumDot)

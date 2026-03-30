@@ -1474,6 +1474,7 @@ uniform float ExposureDividend;
 uniform float MinExposure;
 uniform float MaxExposure;
 uniform float ExposureBase;
+uniform float FallbackExposure;
 uniform float ExposureTransitionSpeed;
 
 uniform int MeteringMode;
@@ -1612,13 +1613,12 @@ void main()
     lumDot = min(lumDot, maxLumForMinExposure);
 
     float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
-    if (isnan(current) || isinf(current))
-        current = 1.0;
-    float clampedCurrent = clamp(current, MinExposure, MaxExposure);
+    bool currentValid = !(isnan(current) || isinf(current)) && current >= MinExposure && current <= MaxExposure;
+    float stableCurrent = currentValid ? current : clamp(FallbackExposure, MinExposure, MaxExposure);
 
     if (!(lumDot > 0.0) || isnan(lumDot) || isinf(lumDot))
     {
-        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
         return;
     }
 
@@ -1629,11 +1629,11 @@ void main()
 
     if (isnan(target) || isinf(target))
     {
-        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
         return;
     }
 
-    float outExposure = (current < MinExposure || current > MaxExposure)
+    float outExposure = !currentValid
         ? target
         : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
 
@@ -1658,6 +1658,7 @@ uniform float ExposureDividend;
 uniform float MinExposure;
 uniform float MaxExposure;
 uniform float ExposureBase;
+uniform float FallbackExposure;
 uniform float ExposureTransitionSpeed;
 
 uniform int MeteringMode;
@@ -1794,13 +1795,12 @@ void main()
     lumDot = min(lumDot, maxLumForMinExposure);
 
     float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
-    if (isnan(current) || isinf(current))
-        current = 1.0;
-    float clampedCurrent = clamp(current, MinExposure, MaxExposure);
+    bool currentValid = !(isnan(current) || isinf(current)) && current >= MinExposure && current <= MaxExposure;
+    float stableCurrent = currentValid ? current : clamp(FallbackExposure, MinExposure, MaxExposure);
 
     if (!(lumDot > 0.0) || isnan(lumDot) || isinf(lumDot))
     {
-        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
         return;
     }
 
@@ -1811,11 +1811,11 @@ void main()
 
     if (isnan(target) || isinf(target))
     {
-        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
         return;
     }
 
-    float outExposure = (current < MinExposure || current > MaxExposure)
+    float outExposure = !currentValid
         ? target
         : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
 
@@ -1912,7 +1912,7 @@ void main()
             }
         }
 
-        public override void UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
+        public override bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
         {
             using var prof = Engine.Profiler.Start("GLRenderer.UpdateAutoExposureGpu");
 
@@ -1921,17 +1921,17 @@ void main()
             {
                 // Prevent repeated attempts if compilation failed (ensures CPU fallback is used).
                 _supportsGpuAutoExposure = false;
-                return;
+                return false;
             }
 
-            var glExposure = GenericToAPI<GLTexture2D>(exposureTex);
-            if (glExposure is null || !glExposure.IsGenerated || !Api.IsTexture(glExposure.BindingId))
+            var glExposure = GetOrCreateAPIRenderObject(exposureTex, generateNow: true) as GLTexture2D;
+            if (glExposure is null || !glExposure.TryGetBindingId(out uint exposureBindingId) || !Api.IsTexture(exposureBindingId))
             {
                 // An invalid image binding causes expensive GL debug-driver error handling
                 // and repeated stalls. Drop back to the CPU exposure path for this session.
                 //_supportsGpuAutoExposure = false;
                 //Debug.OpenGLWarning($"[AutoExposure] Disabling GPU auto exposure because the exposure texture is invalid. Texture='{exposureTex.Name}', BindingId={glExposure?.BindingId ?? 0}.");
-                return;
+                return false;
             }
 
             int smallestMip;
@@ -1943,12 +1943,12 @@ void main()
 
             if (sourceTex is XRTexture2D source2D)
             {
-                var glSource = GenericToAPI<GLTexture2D>(source2D);
-                if (glSource is null || !glSource.IsGenerated || !Api.IsTexture(glSource.BindingId))
+                var glSource = GetOrCreateAPIRenderObject(source2D, generateNow: true) as GLTexture2D;
+                if (glSource is null || !glSource.TryGetBindingId(out sourceBindingId) || !Api.IsTexture(sourceBindingId))
                 {
                     _supportsGpuAutoExposure = false;
                     Debug.OpenGLWarning($"[AutoExposure] Disabling GPU auto exposure because the source texture is invalid. Texture='{sourceTex.Name}', BindingId={glSource?.BindingId ?? 0}.");
-                    return;
+                    return false;
                 }
 
                 if (generateMipmapsNow)
@@ -1957,16 +1957,15 @@ void main()
                 smallestMip = XRTexture.GetSmallestMipmapLevel(source2D.Width, source2D.Height, source2D.SmallestAllowedMipmapLevel);
                 glProgram = GenericToAPI<GLRenderProgram>(_autoExposureComputeProgram2D);
                 bindTarget = (uint)TextureTarget.Texture2D;
-                sourceBindingId = glSource.BindingId;
             }
             else if (sourceTex is XRTexture2DArray source2DArray)
             {
-                var glSource = GenericToAPI<GLTexture2DArray>(source2DArray);
-                if (glSource is null || !glSource.IsGenerated || !Api.IsTexture(glSource.BindingId))
+                var glSource = GetOrCreateAPIRenderObject(source2DArray, generateNow: true) as GLTexture2DArray;
+                if (glSource is null || !glSource.TryGetBindingId(out sourceBindingId) || !Api.IsTexture(sourceBindingId))
                 {
                     _supportsGpuAutoExposure = false;
                     Debug.OpenGLWarning($"[AutoExposure] Disabling GPU auto exposure because the array source texture is invalid. Texture='{sourceTex.Name}', BindingId={glSource?.BindingId ?? 0}.");
-                    return;
+                    return false;
                 }
 
                 if (generateMipmapsNow)
@@ -1976,15 +1975,20 @@ void main()
                 layerCount = (int)source2DArray.Depth;
                 glProgram = GenericToAPI<GLRenderProgram>(_autoExposureComputeProgram2DArray);
                 bindTarget = (uint)TextureTarget.Texture2DArray;
-                sourceBindingId = glSource.BindingId;
             }
             else
             {
-                return;
+                return false;
             }
 
-            if (glProgram is null || !glProgram.IsLinked)
-                return;
+            if (glProgram is null)
+                return false;
+
+            // The compute program may not be linked yet because linkNow fires before
+            // the GL wrapper exists (the event has no subscribers during the constructor).
+            // Attempt a deferred link here, mirroring what UseRequested does.
+            if (!glProgram.IsLinked && !glProgram.Link())
+                return false;
 
             Api.UseProgram(glProgram.BindingId);
 
@@ -2007,6 +2011,10 @@ void main()
             glProgram.Uniform("ExposureBase", settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
                 ? settings.ComputePhysicalExposureMultiplier()
                 : 1.0f);
+            float fallbackExposure = settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
+                ? settings.ComputePhysicalExposureMultiplier()
+                : settings.Exposure;
+            glProgram.Uniform("FallbackExposure", Math.Clamp(fallbackExposure, settings.MinExposure, settings.MaxExposure));
 
             glProgram.Uniform("MeteringMode", (int)settings.AutoExposureMetering);
             glProgram.Uniform("MeteringMip", meteringMip);
@@ -2027,13 +2035,14 @@ void main()
             glProgram.Uniform("SourceTex", 0);
 
             // Bind exposure texture as an image for read/write
-            Api.BindImageTexture(0, glExposure.BindingId, 0, false, 0, BufferAccessARB.ReadWrite, InternalFormat.R32f);
+            Api.BindImageTexture(0, exposureBindingId, 0, false, 0, BufferAccessARB.ReadWrite, InternalFormat.R32f);
 
             Api.DispatchCompute(1, 1, 1);
             Api.MemoryBarrier((uint)(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit));
 
             // Ensure that the compute shader write is visible to subsequent reads (by the fragment shader or the next compute dispatch)
             Api.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit);
+            return true;
         }
 
         public override unsafe void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
