@@ -190,6 +190,7 @@ void main()
     private XRQuadFrameBuffer? _edgeQuad;
     private XRQuadFrameBuffer? _blendQuad;
     private XRQuadFrameBuffer? _neighborhoodQuad;
+    private XRTexture? _resolvedSourceTexture;
     private uint _cachedWidth;
     private uint _cachedHeight;
     private EPixelInternalFormat _cachedOutputInternalFormat;
@@ -309,27 +310,36 @@ void main()
         if (_outputFbo is null)
             return;
 
-        if (sourceTexture is XRTexture2D)
+        try
         {
-            if (_edgeFbo is null || _blendFbo is null)
+            _resolvedSourceTexture = sourceTexture;
+
+            if (sourceTexture is XRTexture2D)
+            {
+                if (_edgeFbo is null || _blendFbo is null)
+                    return;
+
+                _edgeQuad.Render(_edgeFbo);
+                _blendQuad.Render(_blendFbo);
+                _neighborhoodQuad.Render(_outputFbo);
                 return;
+            }
 
-            _edgeQuad.Render(_edgeFbo);
-            _blendQuad.Render(_blendFbo);
-            _neighborhoodQuad.Render(_outputFbo);
-            return;
+            if (TryResolveSourceFrameBuffer(instance, sourceTexture, out XRFrameBuffer? sourceFbo))
+            {
+                AbstractRenderer.Current?.BlitFBOToFBO(
+                    sourceFbo,
+                    _outputFbo,
+                    EReadBufferMode.ColorAttachment0,
+                    true,
+                    false,
+                    false,
+                    true);
+            }
         }
-
-        if (TryResolveSourceFrameBuffer(instance, sourceTexture, out XRFrameBuffer? sourceFbo))
+        finally
         {
-            AbstractRenderer.Current?.BlitFBOToFBO(
-                sourceFbo,
-                _outputFbo,
-                EReadBufferMode.ColorAttachment0,
-                true,
-                false,
-                false,
-                true);
+            _resolvedSourceTexture = null;
         }
     }
 
@@ -608,10 +618,17 @@ void main()
 
     private void Edge_SettingUniforms(XRRenderProgram program)
     {
-        XRRenderPipelineInstance instance = ActivePipelineInstance;
-        if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out _) ||
-            sourceTexture is null)
-            return;
+        XRTexture? sourceTexture = _resolvedSourceTexture;
+        if (sourceTexture is null)
+        {
+            XRRenderPipelineInstance instance = ActivePipelineInstance;
+            if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out sourceTexture, out _) ||
+                sourceTexture is null)
+            {
+                program.SuppressFallbackSamplerWarning("SourceTexture");
+                return;
+            }
+        }
 
         Vector3 sourceSize = (_edgeTexture ?? sourceTexture).WidthHeightDepth;
         program.Sampler("SourceTexture", sourceTexture, 0);
@@ -637,11 +654,20 @@ void main()
 
     private void Neighborhood_SettingUniforms(XRRenderProgram program)
     {
-        XRRenderPipelineInstance instance = ActivePipelineInstance;
-        if (_blendTexture is null ||
-            !VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out _) ||
-            sourceTexture is null)
+        XRTexture? sourceTexture = _resolvedSourceTexture;
+        if (_blendTexture is null)
             return;
+
+        if (sourceTexture is null)
+        {
+            XRRenderPipelineInstance instance = ActivePipelineInstance;
+            if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out sourceTexture, out _) ||
+                sourceTexture is null)
+            {
+                program.SuppressFallbackSamplerWarning("SourceTexture");
+                return;
+            }
+        }
 
         Vector3 sourceSize = (_outputTexture ?? _blendTexture).WidthHeightDepth;
         program.Sampler("SourceTexture", sourceTexture, 0);

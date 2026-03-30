@@ -215,6 +215,36 @@ public partial class DefaultRenderPipeline2
         };
     }
 
+    private XRFrameBuffer CreateDeferredTransparencyBlurFBO()
+    {
+        XRTexture[] references =
+        [
+            GetTexture<XRTexture>(TransparentSceneCopyTextureName)!,
+            GetTexture<XRTexture>(AlbedoOpacityTextureName)!,
+            GetTexture<XRTexture>(DepthViewTextureName)!,
+        ];
+
+        XRMaterial material = new(
+            references,
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, DeferredTransparencyBlurShaderName()), EShaderType.Fragment))
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material) { Name = DeferredTransparencyBlurFBOName };
+        var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
+        fbo.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        return fbo;
+    }
+
     private XRFrameBuffer CreateTransparentAccumulationFBO()
     {
         var accumAttachment = EnsureTextureAttachment(TransparentAccumTextureName, CreateTransparentAccumTexture);
@@ -283,6 +313,31 @@ public partial class DefaultRenderPipeline2
             TransparentOverdrawDebugFBO_SettingUniforms,
             GetTexture<XRTexture>(TransparentRevealageTextureName)!,
             GetTexture<XRTexture>(TransparentAccumTextureName)!);
+
+    private XRFrameBuffer CreateSceneCopyFBO()
+    {
+        XRTexture[] references =
+        [
+            GetTexture<XRTexture>(HDRSceneTextureName)!,
+        ];
+
+        XRMaterial material = new(
+            references,
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, SceneCopyShaderName()), EShaderType.Fragment))
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+
+        return new XRQuadFrameBuffer(material) { Name = SceneCopyFBOName };
+    }
 
     private XRFrameBuffer CreateTransparencyDebugFBO(
         string name,
@@ -426,6 +481,30 @@ public partial class DefaultRenderPipeline2
         return new XRFrameBuffer((aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
             Name = GBufferFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateDeferredGBufferFBO()
+    {
+        if (GetTexture<XRTexture>(AlbedoOpacityTextureName) is not IFrameBufferAttachement albedoAttach)
+            throw new InvalidOperationException("AlbedoOpacity texture must be FBO-attachable.");
+        if (GetTexture<XRTexture>(NormalTextureName) is not IFrameBufferAttachement normalAttach)
+            throw new InvalidOperationException("Normal texture must be FBO-attachable.");
+        if (GetTexture<XRTexture>(RMSETextureName) is not IFrameBufferAttachement rmseAttach)
+            throw new InvalidOperationException("RMSE texture must be FBO-attachable.");
+        if (GetTexture<XRTexture>(TransformIdTextureName) is not IFrameBufferAttachement transformIdAttach)
+            throw new InvalidOperationException("TransformId texture must be FBO-attachable.");
+        if (GetTexture<XRTexture>(DepthStencilTextureName) is not IFrameBufferAttachement depthStencilAttach)
+            throw new InvalidOperationException("DepthStencil texture must be FBO-attachable.");
+
+        return new XRFrameBuffer(
+            (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+            (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
+            (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
+            (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = DeferredGBufferFBOName
         };
     }
 

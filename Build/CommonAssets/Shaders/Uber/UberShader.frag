@@ -2,6 +2,21 @@
 
 #version 450 core
 
+#define XRENGINE_UBER_MVP_FRAGMENT 1
+#define XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS 1
+#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1
+#define XRENGINE_UBER_DISABLE_SHADOW_MASKS 1
+#define XRENGINE_UBER_DISABLE_RIM_LIGHTING 1
+#define XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR 1
+#define XRENGINE_UBER_DISABLE_DETAIL_TEXTURES 1
+#define XRENGINE_UBER_DISABLE_OUTLINE 1
+#define XRENGINE_UBER_DISABLE_BACKFACE 1
+#define XRENGINE_UBER_DISABLE_GLITTER 1
+#define XRENGINE_UBER_DISABLE_FLIPBOOK 1
+#define XRENGINE_UBER_DISABLE_SUBSURFACE 1
+#define XRENGINE_UBER_DISABLE_DISSOLVE 1
+#define XRENGINE_UBER_DISABLE_PARALLAX 1
+
 #include "common.glsl"
 #include "uniforms.glsl"
 #undef PI
@@ -64,18 +79,16 @@ struct FragmentData {
     vec3 emission;
 };
 
-#include "pbr.glsl"
-#include "decals.glsl"
-#include "matcap.glsl"
-#include "emission.glsl"
-#include "specular.glsl"
-#include "details.glsl"
-#include "backface.glsl"
-#include "glitter.glsl"
-#include "flipbook.glsl"
-#include "subsurface.glsl"
-#include "dissolve.glsl"
-#include "parallax.glsl"
+struct PBRData {
+    float metallic;
+    float roughness;
+    float perceptualRoughness;
+    float reflectionMask;
+    float specularMask;
+    vec3 F0;
+    vec3 diffuseColor;
+    vec3 specularColor;
+};
 
 // ============================================
 // UV Selection Helper
@@ -142,6 +155,9 @@ vec4 calculateBaseColor(ToonMesh mesh) {
 // Color Adjustments
 // ============================================
 vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
+#ifdef XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS
+    return color;
+#else
     if (_MainColorAdjustToggle < 0.5) return color;
     
     // Sample adjustment mask
@@ -172,6 +188,7 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
     }
     
     return color;
+#endif
 }
 
 // ============================================
@@ -215,10 +232,6 @@ float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
 // Forward Lighting Helpers
 // ============================================
 PBRData buildSurfacePbrData(vec2 uv, vec3 baseColor) {
-    if (_PBRBRDF > 0.5) {
-        return calculatePBRMaps(uv, baseColor);
-    }
-
     PBRData pbr;
     pbr.metallic = 0.0;
     pbr.perceptualRoughness = clamp(1.0 - _SpecularSmoothness, 0.04, 1.0);
@@ -232,8 +245,7 @@ PBRData buildSurfacePbrData(vec2 uv, vec3 baseColor) {
 }
 
 float resolveSpecularIntensity(PBRData pbr) {
-    float baseStrength = _PBRBRDF > 0.5 ? _PBRSpecularStrength : _SpecularStrength;
-    return max(baseStrength * pbr.specularMask, 0.0);
+    return max(_SpecularStrength * pbr.specularMask, 0.0);
 }
 
 vec3 resolveSurfaceRms(PBRData pbr) {
@@ -338,6 +350,18 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
         light.color = vec3(0.0);
     }
     light.attenuation = 1.0;
+
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    light.indirectColor = indirectColor;
+    light.nDotL = dot(normal, light.direction);
+    light.nDotV = dot(normal, mesh.viewDir);
+    light.halfDir = normalize(light.direction + mesh.viewDir);
+    light.nDotH = dot(normal, light.halfDir);
+    light.lDotH = dot(light.direction, light.halfDir);
+    light.reflectionDir = reflect(-mesh.viewDir, normal);
+    light.lightMap = saturate(light.nDotL);
+    return light;
+#else
     
     // Indirect/ambient lighting
     light.indirectColor = indirectColor;
@@ -376,6 +400,7 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
     light.lightMap = lightMap;
     
     return light;
+#endif
 }
 
 // ============================================
@@ -391,6 +416,9 @@ float sampleShadowMap(vec3 worldPos, vec3 normal, float nDotL) {
 // Shading Modes
 // ============================================
 vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    return baseColor * (light.color * saturate(light.nDotL) + light.indirectColor);
+#else
     if (_ShadingEnabled < 0.5) {
         // No shading - just apply light color
         return baseColor * (light.color + light.indirectColor);
@@ -493,6 +521,7 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
     }
     
     return result;
+#endif
 }
 
 // ============================================
@@ -568,6 +597,9 @@ vec3 calculateMatcap(ToonMesh mesh, vec3 normal, ToonLight light, inout vec3 emi
 // Rim Lighting
 // ============================================
 vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
+#ifdef XRENGINE_UBER_DISABLE_RIM_LIGHTING
+    return vec3(0.0);
+#else
     if (_EnableRimLighting < 0.5) return vec3(0.0);
     
     float nDotV = saturate(dot(normal, mesh.viewDir));
@@ -605,6 +637,7 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
     rimColor = mix(rimColor, rimColor * light.color, _RimLightColorBias);
     
     return rimColor;
+#endif
 }
 
 // ============================================
@@ -632,6 +665,7 @@ void main() {
     mesh.TBN = mat3(v_WorldTangent, bitangent, mesh.vertexNormal);
     
     // Apply parallax mapping to UVs (before any texture sampling)
+#ifndef XRENGINE_UBER_DISABLE_PARALLAX
     if (_EnableParallax > 0.5) {
         int parallaxMode = int(_ParallaxMode);
         float parallaxValid = 1.0;
@@ -644,6 +678,7 @@ void main() {
 
         mesh.uv[0] = parallaxUV;
     }
+#endif
     
     // Calculate world normal (with normal mapping)
     mesh.worldNormal = calculateNormal(mesh);
@@ -671,13 +706,16 @@ void main() {
     fragData.baseColor = baseColor.rgb;
     
     // Apply dissolve effect (early out if dissolved)
+#ifndef XRENGINE_UBER_DISABLE_DISSOLVE
     if (_EnableDissolve > 0.5) {
         if (applyDissolve(mesh.uv[0], mesh.worldPos, mesh.localPos, fragData.baseColor, fragData.emission, fragData.alpha)) {
             discard;
         }
     }
+#endif
     
     // Apply detail textures (before lighting)
+#ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
     if (_DetailEnabled > 0.5) {
         vec2 detailUV = transformUV(mesh.uv[0], _DetailTex_ST);
         detailUV = panUV(detailUV, _DetailTexPan, u_Time);
@@ -689,6 +727,7 @@ void main() {
 
         fragData.baseColor = mix(fragData.baseColor, fragData.baseColor * detailColor, detailStrength);
     }
+#endif
     
     // Calculate lighting
     float screenAmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
@@ -699,6 +738,7 @@ void main() {
     ToonLight light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
     
     // Apply back face coloring
+#ifndef XRENGINE_UBER_DISABLE_BACKFACE
     if (_EnableBackFace > 0.5) {
         if (mesh.isFrontFace < 0.0) {
             vec4 backTex = texture(_BackFaceTexture, mesh.uv[0]);
@@ -708,8 +748,12 @@ void main() {
             fragData.emission += backColor * _BackFaceEmission;
         }
     }
+#endif
     
     // Apply shading
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
+#else
     bool useStylizedPrimaryLighting = _ShadingEnabled > 0.5 && _LightingMode != 6;
     if (useStylizedPrimaryLighting) {
         fragData.finalColor = applyShading(fragData.baseColor, light, mesh, mesh.worldNormal);
@@ -717,8 +761,10 @@ void main() {
     } else {
         fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
     }
+#endif
     
     // Apply subsurface scattering
+#ifndef XRENGINE_UBER_DISABLE_SUBSURFACE
     if (_EnableSSS > 0.5) {
         float backLight = max(0.0, dot(-mesh.worldNormal, light.direction));
         float viewWrap = pow(max(0.0, dot(mesh.viewDir, -light.direction)), max(_SSSPower, 0.001));
@@ -727,6 +773,7 @@ void main() {
         vec3 sss = _SSSColor.rgb * (light.color + light.indirectColor * _SSSAmbient) * sssStrength;
         fragData.finalColor += sss;
     }
+#endif
     
     // Calculate matcap
     vec3 matcapColor = calculateMatcap(mesh, mesh.worldNormal, light, fragData.emission);
@@ -739,11 +786,14 @@ void main() {
     }
     
     // Calculate rim lighting
+#ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
     vec3 rimColor = calculateRimLight(mesh, mesh.worldNormal, light);
     fragData.finalColor += rimColor;
     fragData.emission += rimColor * _RimEmission;
+#endif
     
     // Apply glitter/sparkle
+#ifndef XRENGINE_UBER_DISABLE_GLITTER
     if (_EnableGlitter > 0.5) {
         vec2 glitterUV = mesh.uv[0] * max(_GlitterDensity, 0.001);
         float glitterNoise = hash21(floor(glitterUV) + vec2(u_Time * _GlitterSpeed));
@@ -755,8 +805,10 @@ void main() {
         fragData.finalColor += glitter;
         fragData.emission += glitter; // Glitter is emissive
     }
+#endif
     
     // Apply flipbook animation (additive blend)
+#ifndef XRENGINE_UBER_DISABLE_FLIPBOOK
     if (_EnableFlipbook > 0.5 && _FlipbookBlendMode > 0.5) {
         vec4 flipbookColor = simpleFlipbook(
             _FlipbookTexture,
@@ -768,6 +820,7 @@ void main() {
         );
         fragData.finalColor += flipbookColor.rgb * flipbookColor.a;
     }
+#endif
     
     // Calculate emission
     fragData.emission += calculateEmission(mesh, light);

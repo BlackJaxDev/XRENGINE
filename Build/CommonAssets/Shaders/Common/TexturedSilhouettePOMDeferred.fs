@@ -168,7 +168,8 @@ void main()
     if (ParallaxSilhouette <= 0.5 && !pomValid)
         uv = FragUV0;
 
-    vec3 albedo = texture(Texture0, uv).rgb * BaseColor;
+    vec4 albedoSample = texture(Texture0, uv);
+    vec3 albedo = albedoSample.rgb * BaseColor;
 
     Normal = XRENGINE_EncodeNormal(n);
     AlbedoOpacity = vec4(albedo, Opacity);

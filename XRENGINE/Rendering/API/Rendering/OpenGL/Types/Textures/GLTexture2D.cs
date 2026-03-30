@@ -289,7 +289,7 @@ namespace XREngine.Rendering.OpenGL
             bool restorePrevious = previousTexture is not null && !ReferenceEquals(previousTexture, this);
 
             Api.BindTexture(ToGLEnum(TextureTarget), BindingId);
-            Renderer.BoundTexture = this;
+            Renderer.SetBoundTexture(TextureTarget, this, Data.Name);
 
             try
             {
@@ -311,7 +311,7 @@ namespace XREngine.Rendering.OpenGL
                     previousTexture!.Bind();
                 else
                 {
-                    Renderer.BoundTexture = null;
+                    Renderer.SetBoundTexture(TextureTarget, null);
                     Api.BindTexture(ToGLEnum(TextureTarget), 0);
                 }
             }

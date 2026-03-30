@@ -368,14 +368,15 @@ void main()
 
         ivec2 coord = ivec2(gl_FragCoord.xy);
 #ifdef XRENGINE_MSAA_DEFERRED
-        vec3 albedoColor = texelFetch(AlbedoOpacity, coord, gl_SampleID).rgb;
+        vec4 albedoOpacity = texelFetch(AlbedoOpacity, coord, gl_SampleID);
         vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
         vec4 rmse = texelFetch(RMSE, coord, gl_SampleID);
 #else
-        vec3 albedoColor = texture(AlbedoOpacity, uv).rgb;
+        vec4 albedoOpacity = texture(AlbedoOpacity, uv);
         vec3 normal = XRENGINE_ReadNormal(Normal, uv);
         vec4 rmse = texture(RMSE, uv);
 #endif
+        vec3 albedoColor = albedoOpacity.rgb;
         float ao = UseAmbientOcclusion ? pow(texture(AmbientOcclusionTexture, uv).r, max(AmbientOcclusionPower, 0.001f)) : 1.0f;
 #ifdef XRENGINE_MSAA_DEFERRED
         float depth = texelFetch(DepthView, coord, gl_SampleID).r;
@@ -468,5 +469,5 @@ void main()
         float specOcclusion = SpecularOcclusionEnabled ? GTSpecularOcclusion(NoV, ao, roughness) : ao;
         vec3 ambient = kD * diffuse * diffuseAO + specular * specOcclusion;
 
-        OutLo = vec4(ambient + InLo + emissiveIntensity * albedoColor, 1.0);
+        OutLo = vec4(ambient + InLo + emissiveIntensity * albedoColor, albedoOpacity.a);
 }

@@ -122,6 +122,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             var cam = Engine.Rendering.State.RenderingCamera;
             Matrix4x4 view = cam?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 proj = cam?.ProjectionMatrix ?? Matrix4x4.Identity;
+            float cameraNear = cam?.Parameters.NearZ ?? 0.1f;
+            float cameraFar = cam?.Parameters.FarZ ?? 10000f;
             if (stereo)
             {
                 if (depthTex is not XRTexture2DArray depthArray)
@@ -142,6 +144,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 _computeProgramStereo!.Uniform("screenSize", new IVector2(width, height));
                 _computeProgramStereo!.Uniform("lightCount", lightCount);
                 _computeProgramStereo!.Uniform("DepthMode", (int)(cam?.DepthMode ?? XRCamera.EDepthMode.Normal));
+                _computeProgramStereo!.Uniform("cameraNear", cameraNear);
+                _computeProgramStereo!.Uniform("cameraFar", cameraFar);
 
                 _computeProgramStereo!.Uniform("view", view);
                 _computeProgramStereo!.Uniform("projection", proj);
@@ -165,6 +169,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 _computeProgram!.Uniform("screenSize", new IVector2(width, height));
                 _computeProgram!.Uniform("lightCount", lightCount);
                 _computeProgram!.Uniform("DepthMode", (int)(cam?.DepthMode ?? XRCamera.EDepthMode.Normal));
+                _computeProgram!.Uniform("cameraNear", cameraNear);
+                _computeProgram!.Uniform("cameraFar", cameraFar);
                 _computeProgram!.DispatchCompute((uint)tileCountX, (uint)tileCountY, 1, EMemoryBarrierMask.ShaderStorage);
             }
 

@@ -1576,7 +1576,7 @@ namespace XREngine.Rendering
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             if (_materialPrograms.TryGetValue((materialID, rendererKey), out var existing))
             {
-                //Debug.Out("Using cached program");
+                existing.Program.Link();
                 return existing.Program;
             }
 
@@ -2439,15 +2439,42 @@ namespace XREngine.Rendering
         }
 
         private static bool HasRendererBuffer(XRMeshRenderer? renderer, string binding)
-            => renderer?.Buffers is not null && renderer.Buffers.TryGetValue(binding, out _);
+        {
+            if (renderer is null)
+                return false;
+
+            if (renderer.Mesh?.Buffers is not null && renderer.Mesh.Buffers.TryGetValue(binding, out _))
+                return true;
+
+            return renderer.Buffers is not null && renderer.Buffers.TryGetValue(binding, out _);
+        }
 
         private static List<string> GetRendererBuffersWithPrefix(XRMeshRenderer? renderer, string prefix)
-            => renderer?.Buffers is null
-                ? []
-                : (List<string>)[.. renderer.Buffers
-                .Where(kvp => kvp.Key.StartsWith(prefix, StringComparison.Ordinal))
-                .Select(kvp => kvp.Key)
-                .OrderBy(name => name, StringComparer.Ordinal)];
+        {
+            if (renderer is null)
+                return [];
+
+            HashSet<string> bindings = new(StringComparer.Ordinal);
+            if (renderer.Mesh?.Buffers is IEventDictionary<string, XRDataBuffer> meshBuffers)
+            {
+                foreach (var kvp in meshBuffers)
+                {
+                    if (kvp.Key.StartsWith(prefix, StringComparison.Ordinal))
+                        bindings.Add(kvp.Key);
+                }
+            }
+
+            if (renderer.Buffers is IEventDictionary<string, XRDataBuffer> rendererBuffers)
+            {
+                foreach (var kvp in rendererBuffers)
+                {
+                    if (kvp.Key.StartsWith(prefix, StringComparison.Ordinal))
+                        bindings.Add(kvp.Key);
+                }
+            }
+
+            return [.. bindings.OrderBy(name => name, StringComparer.Ordinal)];
+        }
 
         // Traditional indirect path but issuing separate MultiDraw calls per material batch
         private void RenderTraditionalBatched(

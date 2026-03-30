@@ -74,6 +74,7 @@ uniform float _AlphaMod;
 // ============================================
 // Color Adjustments
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS
 uniform float _MainColorAdjustToggle;
 uniform sampler2D _MainColorAdjustTexture;
 uniform vec4 _MainColorAdjustTexture_ST;
@@ -86,10 +87,12 @@ uniform float _MainHueShift;
 uniform float _MainHueShiftSpeed;
 uniform int _MainHueShiftColorSpace;    // 0: OKLab, 1: HSV
 uniform float _MainHueShiftReplace;
+#endif
 
 // ============================================
 // Shading / Lighting
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
 uniform float _ShadingEnabled;
 uniform int _LightingMode;          // 0: Ramp, 1: Multilayer, 2: Wrapped, 3: Skin, 4: ShadeMap, 5: Flat, 6: Realistic, 7: Cloth, 8: SDF
 
@@ -126,6 +129,7 @@ uniform float _LightingWrappedWrap;
 uniform float _LightingWrappedNormalization;
 uniform float _LightingGradientStart;
 uniform float _LightingGradientEnd;
+#endif
 
 // AO Maps
 uniform sampler2D _LightingAOMaps;
@@ -135,9 +139,11 @@ uniform int _LightingAOMapsUV;
 uniform float _LightDataAOStrengthR;
 
 // Shadow Mask
+#ifndef XRENGINE_UBER_DISABLE_SHADOW_MASKS
 uniform sampler2D _LightingShadowMasks;
 uniform vec4 _LightingShadowMasks_ST;
 uniform float _LightingShadowMaskStrengthR;
+#endif
 
 // ============================================
 // Emission
@@ -179,6 +185,7 @@ uniform float _MatcapMaskInvert;
 // ============================================
 // Rim Lighting
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
 uniform float _EnableRimLighting;
 uniform vec4 _RimLightColor;
 uniform float _RimWidth;
@@ -193,21 +200,26 @@ uniform int _RimBlendMode;
 uniform sampler2D _RimMask;
 uniform vec4 _RimMask_ST;
 uniform int _RimMaskChannel;
+#endif
 
 // ============================================
 // Specular
 // ============================================
+uniform float _SpecularSmoothness;
+uniform float _SpecularStrength;
+
+#ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
 uniform float _StylizedSpecular;
 uniform sampler2D _SpecularMap;
 uniform vec4 _SpecularMap_ST;
 uniform vec4 _SpecularTint;
-uniform float _SpecularSmoothness;
-uniform float _SpecularStrength;
 uniform int _SpecularType;          // 0: Realistic, 1: Toon, 2: Anisotropic
+#endif
 
 // ============================================
 // Detail Textures
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
 uniform float _DetailEnabled;
 uniform sampler2D _DetailMask;
 uniform vec4 _DetailMask_ST;
@@ -222,6 +234,7 @@ uniform sampler2D _DetailNormalMap;
 uniform vec4 _DetailNormalMap_ST;
 uniform vec2 _DetailNormalMapPan;
 uniform float _DetailNormalMapScale;
+#endif
 
 // ============================================
 // Vertex Colors
@@ -234,6 +247,7 @@ uniform float _MainUseVertexColorAlpha;
 // ============================================
 // Outline (for outline pass)
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_OUTLINE
 uniform float _EnableOutline;
 uniform vec4 _OutlineColor;
 uniform float _OutlineWidth;
@@ -244,20 +258,24 @@ uniform float _OutlineDistanceFadeStart;
 uniform float _OutlineDistanceFadeEnd;
 uniform float _OutlineTextureTint;
 uniform float _OutlineVertexColorTint;
+#endif
 
 // ============================================
 // Back Face
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_BACKFACE
 uniform float _EnableBackFace;
 uniform vec4 _BackFaceColor;
 uniform float _BackFaceBlendMode;
 uniform sampler2D _BackFaceTexture;
 uniform float _BackFaceEmission;
 uniform float _BackFaceAlpha;
+#endif
 
 // ============================================
 // Glitter / Sparkle
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_GLITTER
 uniform float _EnableGlitter;
 uniform vec4 _GlitterColor;
 uniform float _GlitterDensity;
@@ -268,10 +286,12 @@ uniform float _GlitterMinAngle;
 uniform float _GlitterMaxAngle;
 uniform float _GlitterRainbow;
 uniform sampler2D _GlitterMask;
+#endif
 
 // ============================================
 // Flipbook Animation
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_FLIPBOOK
 uniform float _EnableFlipbook;
 uniform sampler2D _FlipbookTexture;
 uniform float _FlipbookColumns;
@@ -281,10 +301,12 @@ uniform float _FlipbookFrame;
 uniform float _FlipbookManualFrame;
 uniform float _FlipbookBlendMode;
 uniform float _FlipbookCrossfade;
+#endif
 
 // ============================================
 // Subsurface Scattering
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_SUBSURFACE
 uniform float _EnableSSS;
 uniform vec4 _SSSColor;
 uniform float _SSSPower;
@@ -292,10 +314,12 @@ uniform float _SSSDistortion;
 uniform float _SSSScale;
 uniform sampler2D _SSSThicknessMap;
 uniform float _SSSAmbient;
+#endif
 
 // ============================================
 // Dissolve
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_DISSOLVE
 uniform float _EnableDissolve;
 uniform float _DissolveType;
 uniform float _DissolveProgress;
@@ -309,10 +333,12 @@ uniform vec3 _DissolveStartPoint;
 uniform vec3 _DissolveEndPoint;
 uniform float _DissolveInvert;
 uniform float _DissolveCutoff;
+#endif
 
 // ============================================
 // Parallax / Height Mapping
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_PARALLAX
 uniform float _EnableParallax;
 uniform float _ParallaxMode;
 uniform sampler2D _ParallaxMap;
@@ -322,5 +348,6 @@ uniform float _ParallaxMinSamples;
 uniform float _ParallaxMaxSamples;
 uniform float _ParallaxOffset;
 uniform float _ParallaxMapChannel;
+#endif
 
 #endif // TOON_UNIFORMS_GLSL

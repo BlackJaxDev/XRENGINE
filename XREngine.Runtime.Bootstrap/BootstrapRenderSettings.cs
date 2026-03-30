@@ -51,7 +51,9 @@ public static class BootstrapRenderSettings
         if (settings.RenderPhysicsDebug)
             renderSettings.PhysicsVisualizeSettings.SetAllTrue();
 
-        Engine.Profiler.EnableFrameLogging = settings.EnableProfilerLogging;
+        // Profiler frame logging is driven by EditorPreferences.Debug.EnableProfilerFrameLogging,
+        // whose setter syncs Engine.Profiler.EnableFrameLogging automatically.
+        // Do not override it here — that would discard the user's saved preference.
 
         EnsureEmulatedVRStereoPreviewRenderingHooked();
     }

@@ -310,6 +310,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     string programName = program.Data?.Name ?? program.BindingId.ToString();
                     Debug.OpenGLWarning($"[GLMeshRenderer] BindBuffers: no vertex attributes found in program '{programName}'. Skipping VAO setup to prevent rendering with corrupt state.");
+
                     Renderer.BindMeshRenderer(null);
                     return;
                 }

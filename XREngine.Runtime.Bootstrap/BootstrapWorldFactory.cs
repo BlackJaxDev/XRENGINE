@@ -82,12 +82,7 @@ public static class BootstrapWorldFactory
                     BootstrapModelBuilder.AddSkybox(rootNode, skyEquirect);
             };
 
-            if (!BootstrapStartupWork.TryQueueDeferredWork(
-                setupEnvironment,
-                "[BootstrapWorldFactory] Deferred startup environment setup until the first visible frame."))
-            {
-                setupEnvironment();
-            }
+            setupEnvironment();
         }
 
         if (settings.Mirror)
@@ -138,12 +133,7 @@ public static class BootstrapWorldFactory
                 BootstrapModelBuilder.AddSkybox(rootNode, null);
             };
 
-            if (!BootstrapStartupWork.TryQueueDeferredWork(
-                setupEnvironment,
-                "[BootstrapWorldFactory] Deferred default-world environment setup until the first visible frame."))
-            {
-                setupEnvironment();
-            }
+            setupEnvironment();
 
             AddDefaultGridFloor(rootNode);
 

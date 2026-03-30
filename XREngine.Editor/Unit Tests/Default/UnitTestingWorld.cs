@@ -56,7 +56,9 @@ public static partial class EditorUnitTests
         if (Toggles.RenderPhysicsDebug)
             s.PhysicsVisualizeSettings.SetAllTrue();
 
-        Engine.Profiler.EnableFrameLogging = Toggles.EnableProfilerLogging;
+        // Profiler frame logging is driven by EditorPreferences.Debug.EnableProfilerFrameLogging,
+        // whose setter syncs Engine.Profiler.EnableFrameLogging automatically.
+        // Do not override it here — that would discard the user's saved preference.
 
         EnsureEmulatedVRStereoPreviewRenderingHooked();
     }

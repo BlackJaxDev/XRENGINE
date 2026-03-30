@@ -380,11 +380,26 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         // --- Uniform callbacks ---
 
+        private void BindBloomSourceTexture(XRRenderProgram program)
+        {
+            var instance = ActivePipelineInstance;
+            XRTexture? bloomTexture = instance?.GetTexture<XRTexture>(BloomOutputTextureName);
+            if (bloomTexture is null)
+            {
+                program.SuppressFallbackSamplerWarning("SourceTexture");
+                return;
+            }
+
+            program.Sampler("SourceTexture", bloomTexture, 0);
+        }
+
         /// <summary>
         /// First downsample level: applies threshold + Karis average.
         /// </summary>
-        private static void DownsampleLevel1_SettingUniforms(XRRenderProgram program)
+        private void DownsampleLevel1_SettingUniforms(XRRenderProgram program)
         {
+            BindBloomSourceTexture(program);
+
             var instance = ActivePipelineInstance;
             if (instance is null)
             {
@@ -407,8 +422,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// Subsequent downsample levels: no threshold, no Karis.
         /// </summary>
-        private static void DownsampleLevelN_SettingUniforms(XRRenderProgram program)
+        private void DownsampleLevelN_SettingUniforms(XRRenderProgram program)
         {
+            BindBloomSourceTexture(program);
+
             var instance = ActivePipelineInstance;
             if (instance is null)
             {
@@ -439,8 +456,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("UseKarisAverage", firstLevel);
         }
 
-        private static void UpsampleFbo_SettingUniforms(XRRenderProgram program)
+        private void UpsampleFbo_SettingUniforms(XRRenderProgram program)
         {
+            BindBloomSourceTexture(program);
+
             var instance = ActivePipelineInstance;
             if (instance is null)
             {

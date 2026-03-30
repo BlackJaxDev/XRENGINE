@@ -21,11 +21,14 @@ using XREngine.Rendering.Shaders.Generator;
 using PixelFormat = Silk.NET.OpenGL.PixelFormat;
 using XREngine.Components;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace XREngine.Rendering.OpenGL
 {
     public partial class OpenGLRenderer : AbstractRenderer<GL>
     {
+        private sealed record BoundTextureDebugState(IGLTexture Texture, string Name, uint BindingId);
+
         public GL RawGL => Api; // public accessor for underlying GL instance
         public OvrMultiview? OVRMultiView { get; }
         public Silk.NET.OpenGL.Extensions.NV.NVMeshShader? NVMeshShader { get; }
@@ -433,7 +436,23 @@ namespace XREngine.Rendering.OpenGL
                 return;
 
             string messageStr = new((sbyte*)message);
-            Debug.OpenGLWarning($"OPENGL {FormatSeverity(severity)} #{id} | {FormatSource(source)} {FormatType(type)} | {messageStr}");
+            string formattedMessage = $"OPENGL {FormatSeverity(severity)} #{id} | {FormatSource(source)} {FormatType(type)} | {messageStr}";
+            if (type == GLEnum.DebugTypeError)
+            {
+                if (Current is OpenGLRenderer renderer)
+                {
+                    string context = renderer.BuildOpenGLErrorContext();
+                    if (!string.IsNullOrWhiteSpace(context))
+                        formattedMessage = $"{formattedMessage}{Environment.NewLine}{context}";
+                }
+
+                // Keep driver-reported GL errors deeper than ordinary warnings so the log reaches the calling render pass.
+                Debug.LogWarning(ELogCategory.OpenGL, 0, 10, formattedMessage);
+            }
+            else
+            {
+                Debug.OpenGLWarning(formattedMessage);
+            }
             bool shouldTrack = type == GLEnum.DebugTypeError;
             RecordOpenGLError(id, FormatSource(source), FormatType(type), FormatSeverity(severity), messageStr, shouldTrack);
 
@@ -3935,11 +3954,30 @@ void main()
         /// </summary>
         public int ActiveTextureUnit { get; private set; } = 0;
 
+        private int _maxFragmentTextureImageUnits;
+        public int MaxFragmentTextureImageUnits
+        {
+            get
+            {
+                if (_maxFragmentTextureImageUnits > 0)
+                    return _maxFragmentTextureImageUnits;
+
+                int units = Api.GetInteger(GLEnum.MaxTextureImageUnits);
+                _maxFragmentTextureImageUnits = units > 0 ? units : 16;
+                return _maxFragmentTextureImageUnits;
+            }
+        }
+
         /// <summary>
         /// Tracks which texture is bound to each texture unit, keyed by unit index.
         /// This allows proper optimization when the same texture is bound to different units.
         /// </summary>
         private readonly Dictionary<int, IGLTexture?> _boundTexturesPerUnit = new();
+        private readonly Dictionary<int, Dictionary<ETextureTarget, BoundTextureDebugState>> _boundTexturesPerUnitTarget = new();
+        private string? _currentDrawProgramName;
+        private string? _currentDrawMaterialName;
+        private string? _currentDrawMeshName;
+        private int[] _currentDrawTextureUnits = [];
 
         /// <summary>
         /// Gets or sets the texture bound to the currently active texture unit.
@@ -3949,6 +3987,133 @@ void main()
         {
             get => _boundTexturesPerUnit.TryGetValue(ActiveTextureUnit, out var tex) ? tex : null;
             set => _boundTexturesPerUnit[ActiveTextureUnit] = value;
+        }
+
+        public IGLTexture? GetBoundTexture(ETextureTarget target)
+        {
+            if (_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var unitBindings)
+                && unitBindings.TryGetValue(target, out var binding))
+            {
+                return binding.Texture;
+            }
+
+            return null;
+        }
+
+        public void SetBoundTexture(ETextureTarget target, IGLTexture? texture, string? name = null)
+        {
+            BoundTexture = texture;
+
+            if (texture is null)
+            {
+                if (_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var unitBindings))
+                {
+                    unitBindings.Remove(target);
+                    if (unitBindings.Count == 0)
+                        _boundTexturesPerUnitTarget.Remove(ActiveTextureUnit);
+                }
+
+                return;
+            }
+
+            if (!_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var trackedBindings))
+            {
+                trackedBindings = new Dictionary<ETextureTarget, BoundTextureDebugState>();
+                _boundTexturesPerUnitTarget[ActiveTextureUnit] = trackedBindings;
+            }
+
+            trackedBindings[target] = new BoundTextureDebugState(
+                texture,
+                string.IsNullOrWhiteSpace(name) ? texture.GetType().Name : name!,
+                texture.BindingId);
+        }
+
+        public void SetDrawDebugContext(string? programName, string? materialName, string? meshName, int[] textureUnits)
+        {
+            _currentDrawProgramName = string.IsNullOrWhiteSpace(programName) ? null : programName;
+            _currentDrawMaterialName = string.IsNullOrWhiteSpace(materialName) ? null : materialName;
+            _currentDrawMeshName = string.IsNullOrWhiteSpace(meshName) ? null : meshName;
+            _currentDrawTextureUnits = textureUnits.Length == 0 ? [] : [.. textureUnits];
+        }
+
+        public void ClearDrawDebugContext()
+        {
+            _currentDrawProgramName = null;
+            _currentDrawMaterialName = null;
+            _currentDrawMeshName = null;
+            _currentDrawTextureUnits = [];
+        }
+
+        private string BuildOpenGLErrorContext()
+        {
+            StringBuilder sb = new();
+
+            if (!string.IsNullOrWhiteSpace(_currentDrawProgramName)
+                || !string.IsNullOrWhiteSpace(_currentDrawMaterialName)
+                || !string.IsNullOrWhiteSpace(_currentDrawMeshName))
+            {
+                sb.Append("[GL Error Context] DrawProgram='")
+                    .Append(_currentDrawProgramName ?? "<unknown>")
+                    .Append("', Material='")
+                    .Append(_currentDrawMaterialName ?? "<unknown>")
+                    .Append("', Mesh='")
+                    .Append(_currentDrawMeshName ?? "<unknown>")
+                    .AppendLine("'");
+            }
+
+            int currentProgramId = Api.GetInteger(GetPName.CurrentProgram);
+            sb.Append("[GL Error Context] CurrentProgramId=")
+                .Append(currentProgramId)
+                .Append(", ActiveTextureUnit=")
+                .Append(ActiveTextureUnit)
+                .Append(", MaxFragmentTextureUnits=")
+                .Append(MaxFragmentTextureImageUnits)
+                .AppendLine();
+
+            sb.Append("[GL Error Context] TextureUnits=");
+            AppendTrackedTextureUnits(sb);
+            return sb.ToString().TrimEnd();
+        }
+
+        private void AppendTrackedTextureUnits(StringBuilder sb)
+        {
+            int[] units = _currentDrawTextureUnits.Length > 0 ? [.. _currentDrawTextureUnits] : [.. _boundTexturesPerUnitTarget.Keys];
+            if (units.Length == 0)
+            {
+                sb.Append("<none>");
+                return;
+            }
+
+            Array.Sort(units);
+            bool wroteAnyUnit = false;
+            foreach (int unit in units)
+            {
+                if (!_boundTexturesPerUnitTarget.TryGetValue(unit, out var bindings) || bindings.Count == 0)
+                    continue;
+
+                if (wroteAnyUnit)
+                    sb.Append("; ");
+
+                sb.Append("unit ").Append(unit).Append("=[");
+                bool wroteBinding = false;
+                foreach (var pair in bindings)
+                {
+                    if (wroteBinding)
+                        sb.Append(", ");
+
+                    sb.Append(pair.Key)
+                        .Append(':')
+                        .Append(pair.Value.Name)
+                        .Append('#')
+                        .Append(pair.Value.BindingId);
+                    wroteBinding = true;
+                }
+                sb.Append(']');
+                wroteAnyUnit = true;
+            }
+
+            if (!wroteAnyUnit)
+                sb.Append("<none>");
         }
 
         /// <summary>
@@ -4293,7 +4458,7 @@ void main()
         {
             var glProgram = GenericToAPI<GLRenderProgram>(program);
             var glMesh = version is null ? ActiveMeshRenderer : GenericToAPI<GLMeshRenderer>(version);
-            if (glProgram is null || glMesh is null)
+            if (glProgram is null || glMesh is null || !glProgram.IsLinked)
                 return;
 
             // Bind VAO to ensure we write into the correct object
@@ -4393,6 +4558,7 @@ void main()
                 return;
 
             glMaterial.SetUniforms(glProgram);
+            glMaterial.FinalizeUniformBindings(glProgram);
         }
     }
 }

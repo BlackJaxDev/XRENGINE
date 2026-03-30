@@ -28,6 +28,8 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | GPU softbody rigging | Active | [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md) | Still an active work item. |
 | Voxel cone tracing / VXAO | Active | [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md) | Shared-voxel roadmap item. |
 | Vulkan backlog | Active | [todo/vulkan.md](todo/vulkan.md) | Canonical Vulkan backlog, status, audit, and preserved diagnostics. |
+| Startup FPS drops (2026-03-28) | Active | [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md) | Remaining startup stalls after the earlier GL warmup fixes; includes engine and editor attack order. |
+| Default pipeline regressions (2026-03-28) | Active | [audit/default-render-pipeline-regression-diagnosis-2026-03-28.md](audit/default-render-pipeline-regression-diagnosis-2026-03-28.md) | AO, AA, deferred grayscale, and sampler-binding diagnosis. |
 | Affine matrix rollout | Closed | [audit/affine-matrix-phase4-closeout-2026-03-19.md](audit/affine-matrix-phase4-closeout-2026-03-19.md) | Final consolidated closeout record. |
 | Steam Audio | Stable doc | [../features/steam-audio.md](../features/steam-audio.md) | Remaining validation now lives in the stable feature doc. |
 | Remote profiler | Stable doc | [../features/profiler.md](../features/profiler.md) | Design notes were merged into the stable feature doc. |
@@ -62,6 +64,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/runtime-modularization-plan.md](design/runtime-modularization-plan.md)
 - [design/shadow-pass-material-binding-optimization-plan.md](design/shadow-pass-material-binding-optimization-plan.md)
 - [design/slang-shader-cross-compile-plan.md](design/slang-shader-cross-compile-plan.md)
+- [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md)
 - [design/transparency-and-oit-implementation-plan.md](design/transparency-and-oit-implementation-plan.md)
 - [design/vxao-implementation-plan.md](design/vxao-implementation-plan.md)
 - [design/zero-readback-gpu-driven-rendering-plan.md](design/zero-readback-gpu-driven-rendering-plan.md)

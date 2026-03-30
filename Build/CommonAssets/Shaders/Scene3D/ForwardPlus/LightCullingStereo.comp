@@ -24,6 +24,8 @@ uniform mat4 projection;
 uniform ivec2 screenSize;
 uniform int lightCount;
 uniform int DepthMode;
+uniform float cameraNear;
+uniform float cameraFar;
 uniform int EyeIndex;
 uniform int EyeTileOffset;
 
@@ -32,7 +34,6 @@ shared uint maxDepthInt;
 shared uint visibleLightCount;
 shared vec4 frustumPlanes[6];
 shared int visibleLightIndices[MAX_LIGHTS_PER_TILE];
-shared mat4 viewProjection;
 
 layout(local_size_x = TILE_SIZE, local_size_y = TILE_SIZE, local_size_z = 1) in;
 
@@ -48,7 +49,6 @@ void main()
 		minDepthInt = 0xFFFFFFFFu;
 		maxDepthInt = 0u;
 		visibleLightCount = 0u;
-		viewProjection = projection * view;
 	}
 
 	barrier();
@@ -82,18 +82,19 @@ void main()
 		frustumPlanes[1] = vec4(-1.0, 0.0, 0.0, -1.0 + posStep.x);
 		frustumPlanes[2] = vec4( 0.0, 1.0, 0.0,  1.0 - negStep.y);
 		frustumPlanes[3] = vec4( 0.0,-1.0, 0.0, -1.0 + posStep.y);
-		frustumPlanes[4] = vec4( 0.0, 0.0,-1.0, -minDepth);
-		frustumPlanes[5] = vec4( 0.0, 0.0, 1.0,  maxDepth);
+		// Use camera near/far instead of per-tile depth for near/far planes.
+		// The depth buffer may not contain forward geometry at culling time.
+		frustumPlanes[4] = vec4( 0.0, 0.0,-1.0, -cameraNear);
+		frustumPlanes[5] = vec4( 0.0, 0.0, 1.0,  cameraFar);
 
 		for (uint i = 0u; i < 4u; ++i)
 		{
-			frustumPlanes[i] *= viewProjection;
+			frustumPlanes[i] *= projection;
 			frustumPlanes[i] /= max(length(frustumPlanes[i].xyz), 1e-6);
 		}
 
-		frustumPlanes[4] *= view;
+		// Min/max depth was already linearized into view-space depth, so these planes stay in view space.
 		frustumPlanes[4] /= max(length(frustumPlanes[4].xyz), 1e-6);
-		frustumPlanes[5] *= view;
 		frustumPlanes[5] /= max(length(frustumPlanes[5].xyz), 1e-6);
 	}
 

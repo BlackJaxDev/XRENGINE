@@ -40,7 +40,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (sourceFBO is null)
                 return;
 
-            sourceFBO.Render(DestinationFBOName is null ? null : ActivePipelineInstance.GetFBO<XRFrameBuffer>(DestinationFBOName));
+            var destFBO = DestinationFBOName is null ? null : ActivePipelineInstance.GetFBO<XRFrameBuffer>(DestinationFBOName);
+
+            sourceFBO.Render(destFBO);
         }
 
         private int ResolvePassIndex(string passName)

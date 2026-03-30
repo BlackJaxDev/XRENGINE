@@ -39,6 +39,16 @@ public sealed class LightProbeCapturePipelineTests
         source.ShouldNotContain("VPRC_RenderDebugPhysics");
     }
 
+    [Test]
+    public void LightProbeComponent_RendersFullPrefilterMipChain()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Capture/LightProbeComponent.cs");
+
+        source.ShouldContain("int maxMipLevels = PrefilterTexture.SmallestMipmapLevel + 1;");
+        source.ShouldContain("for (int mip = 0; mip < maxMipLevels; ++mip)");
+        source.ShouldContain("float roughness = maxMipLevels <= 1 ? 0.0f : (float)mip / (maxMipLevels - 1);");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string repoRoot = ResolveRepoRoot();

@@ -24,9 +24,11 @@ uniform samplerCube ShadowMap; //Point Shadow Map
 
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
+uniform float ShadowNearPlaneDist = 0.1f;
 uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
@@ -61,13 +63,26 @@ const vec3 LocalShadowCubeKernel[20] = vec3[](
 	vec3( 0.0,  1.0,  1.0), vec3( 0.0, -1.0, -1.0)
 );
 
+const int LocalShadowCubeKernelTapOrder[20] = int[](
+	0, 3, 5, 6,
+	7, 4, 2, 1,
+	8, 9, 10, 11,
+	12, 13, 14, 17,
+	15, 16, 18, 19
+);
+
+vec3 GetShadowCubeKernelTapLocal(int tapIndex)
+{
+	return LocalShadowCubeKernel[LocalShadowCubeKernelTapOrder[tapIndex]];
+}
+
 float SampleShadowCubePCFLocal(in samplerCube shadowMap, in vec3 shadowDir, in float biasedLightDist, in float farPlaneDist, in float sampleRadius)
 {
 	float lit = 0.0f;
 
 	for (int i = 0; i < 20; ++i)
 	{
-		vec3 sampleDir = normalize(shadowDir + LocalShadowCubeKernel[i] * sampleRadius);
+		vec3 sampleDir = normalize(shadowDir + GetShadowCubeKernelTapLocal(i) * sampleRadius);
 		float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
 		lit += biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
 	}
@@ -106,7 +121,7 @@ float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir,
 			if (i >= sampleCount)
 				break;
 
-			vec3 sampleDir = normalize(shadowDir + LocalShadowCubeKernel[i] * sampleRadius);
+			vec3 sampleDir = normalize(shadowDir + GetShadowCubeKernelTapLocal(i) * sampleRadius);
 			float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
 			lit += biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
 		}
@@ -126,11 +141,22 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 {
 	if (!LightHasShadowMap) return 1.0f;
 
-	vec3 fragToLight = fragPosWS - LightData.Position;
+	vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
+	vec3 fragToLight = offsetPosWS - LightData.Position;
 	float lightDist = length(fragToLight);
+	float nearPlaneDist = max(ShadowNearPlaneDist, 0.0f);
 
 	// Beyond the shadow far plane: treat as lit (attenuation handles falloff)
 	if (lightDist >= farPlaneDist) return 1.0f;
+	// The cubemap shadow cameras clip everything inside the near plane.
+	// Triangles crossing that clip can form a synthetic blocker shell around the light,
+	// so receivers inside the blind zone must be treated as unshadowed.
+	if (lightDist <= nearPlaneDist + ShadowBiasMax)
+	{
+		_dbgShadowMargin = nearPlaneDist / max(farPlaneDist, 0.001f);
+		_dbgShadowLit = 1.0f;
+		return 1.0f;
+	}
 
 	float faceSize = max(float(textureSize(ShadowMap, 0).x), 1.0f);
 
@@ -158,9 +184,10 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 	// ---- User bias (converted to relative) ----
 	float userBias = GetShadowBias(NoL);
 	float userRel  = userBias / max(lightDist, 0.001f);
+	float r16fRel  = 1.0f / 512.0f;
 
 	// Take the largest of the three contributors
-	float relThreshold = max(texelRel, max(userRel, depthRel));
+	float relThreshold = max(texelRel, max(userRel, max(depthRel, r16fRel)));
 
 	// Pre-multiply threshold into lightDist for a single comparison per sample
 	float biasedLightDist = lightDist * (1.0f - relThreshold);
@@ -254,9 +281,10 @@ in vec3 rms)
 }
 void main()
 {
-    vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+    vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;
+    vec2 uv = clamp(fragCoordLocal / vec2(ScreenWidth, ScreenHeight), vec2(0.0f), vec2(1.0f));
 #ifdef XRENGINE_MSAA_DEFERRED
-	ivec2 coord = ivec2(gl_FragCoord.xy);
+	ivec2 coord = ivec2(floor(fragCoordLocal));
 	vec3 albedo = texelFetch(AlbedoOpacity, coord, gl_SampleID).rgb;
 	vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
 	vec3 rms = texelFetch(RMSE, coord, gl_SampleID).rgb;
@@ -288,9 +316,9 @@ void main()
 	}
 	else if (ShadowDebugMode == 2)
 	{
-		// Margin heatmap: green = lit margin, red = shadow margin, brighter = more margin
-		float m = _dbgShadowMargin;
-		OutColor = m >= 0.0f ? vec3(0.0f, min(m * 20.0f, 1.0f), 0.0f)
-		                     : vec3(min(-m * 20.0f, 1.0f), 0.0f, 0.0f);
+		// Margin heatmap: hue follows the filtered shadow result, intensity follows margin magnitude.
+		float intensity = min(abs(_dbgShadowMargin) * 20.0f, 1.0f);
+		float clampedLit = clamp(_dbgShadowLit, 0.0f, 1.0f);
+		OutColor = vec3((1.0f - clampedLit) * intensity, clampedLit * intensity, 0.0f);
 	}
 }

@@ -35,13 +35,6 @@ struct DebugTriangle
     vec4 color;
 };
 
-out gl_PerVertex
-{
-    vec4 gl_Position;
-    float gl_PointSize;
-    float gl_ClipDistance[];
-};
-
 // Bindings for SSBOs.
 layout(std430, binding = 0) buffer PointsBuffer
 {

@@ -539,6 +539,9 @@ namespace XREngine.Rendering
             if (Shaders.Count == 0)
                 return;
 
+            bool keepDeferredBase = _opaqueRenderPass == (int)EDefaultRenderPass.OpaqueDeferred &&
+                effectiveMode is ETransparencyMode.Opaque or ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage;
+
             for (int i = 0; i < Shaders.Count; i++)
             {
                 XRShader? shader = Shaders[i];
@@ -550,6 +553,7 @@ namespace XREngine.Rendering
                     ETransparencyMode.WeightedBlendedOit => ShaderHelper.GetWeightedBlendedOitForwardVariant(shader),
                     ETransparencyMode.PerPixelLinkedList => ShaderHelper.GetPerPixelLinkedListForwardVariant(shader),
                     ETransparencyMode.DepthPeeling => ShaderHelper.GetDepthPeelingForwardVariant(shader),
+                    _ when keepDeferredBase => ShaderHelper.GetDeferredVariantOfShader(shader),
                     _ => ShaderHelper.GetStandardForwardVariant(shader),
                 };
 
@@ -719,10 +723,20 @@ namespace XREngine.Rendering
             => new(ShaderHelper.UnlitTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateLitTextureMaterial(bool deferred = true)
-            => new((deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => new((deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!)
+            {
+                RenderPass = deferred
+                    ? (int)EDefaultRenderPass.OpaqueDeferred
+                    : (int)EDefaultRenderPass.OpaqueForward
+            };
 
         public static XRMaterial CreateLitTextureMaterial(XRTexture2D texture, bool deferred = true)
-            => new([texture], (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => new([texture], (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!)
+            {
+                RenderPass = deferred
+                    ? (int)EDefaultRenderPass.OpaqueDeferred
+                    : (int)EDefaultRenderPass.OpaqueForward
+            };
 
         public static XRMaterial CreateLitTextureSilhouettePOMMaterial(
             XRTexture2D albedo,

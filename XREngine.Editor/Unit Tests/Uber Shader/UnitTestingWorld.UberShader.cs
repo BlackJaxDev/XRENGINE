@@ -119,6 +119,7 @@ public static partial class EditorUnitTests
         {
             RenderPass = (int)EDefaultRenderPass.OpaqueForward,
             RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            Name = $"UberPreview_{(config.EnableEmission ? "Emission" : "Base")}_{(config.EnableMatcap ? "Matcap" : "NoMatcap")}",
         };
 
         material.SetVector4("_Color", new Vector4(config.Tint.R, config.Tint.G, config.Tint.B, config.Tint.A));

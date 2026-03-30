@@ -54,6 +54,12 @@ namespace XREngine.Rendering.OpenGL
             private volatile bool _budgetBoosted;
 
             /// <summary>
+            /// During startup budget boosts, even render-pipeline meshes should defer out of the draw path
+            /// and respect the temporary frame budget instead of forcing inline generation.
+            /// </summary>
+            public bool ThrottlePriorityGeneration => _budgetBoosted;
+
+            /// <summary>
             /// Temporarily increases <see cref="FrameBudgetMs"/> to drain a large backlog
             /// faster (e.g. after bulk-spawning many mesh-bearing objects).
             /// The original budget is automatically restored when the pending queue empties.
@@ -149,8 +155,14 @@ namespace XREngine.Rendering.OpenGL
                 int generated = 0;
                 int failed = 0;
 
-                // Priority lane: drain all pipeline meshes immediately (no budget limit).
-                while (_priorityQueue.TryDequeue(out var priorityRenderer))
+                bool throttlePriorityGeneration = ThrottlePriorityGeneration;
+
+                // Priority lane: normally drains immediately so render-pipeline quads are ready the same frame.
+                // During startup budget boosts, throttle this lane too so cold-start mesh generation is spread
+                // across frames instead of stalling a single frame for hundreds of milliseconds.
+                while (!_renderer._oomDetectedThisFrame
+                    && (!throttlePriorityGeneration || sw.Elapsed.TotalMilliseconds < budgetMs)
+                    && _priorityQueue.TryDequeue(out var priorityRenderer))
                 {
                     _pendingSet.TryRemove(priorityRenderer, out _);
                     ProcessRenderer(priorityRenderer, ref generated, ref failed);

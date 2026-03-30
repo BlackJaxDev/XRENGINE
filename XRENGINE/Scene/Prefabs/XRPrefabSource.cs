@@ -237,43 +237,7 @@ namespace XREngine.Scene.Prefabs
         }
 
         private static XRMaterial CreateMaterial(XRTexture[] textureList, List<TextureSlot> textures, string name)
-        {
-            XRMaterial mat = new(textureList);
-            ModelImporter.FillTextures(mat, textureList);
-
-            mat.Shaders.Clear();
-
-            XRShader color = ShaderHelper.LitColorFragDeferred()!;
-            XRShader albedo = ShaderHelper.LitTextureFragDeferred()!;
-            XRShader albedoNormal = ShaderHelper.LitTextureNormalFragDeferred()!;
-            XRShader albedoNormalMetallic = ShaderHelper.LitTextureNormalMetallicFragDeferred()!;
-            XRShader albedoMetallic = ShaderHelper.LitTextureMetallicFragDeferred()!;
-            XRShader albedoNormalRoughnessMetallic = ShaderHelper.LitTextureNormalRoughnessMetallicDeferred()!;
-            XRShader albedoRoughness = ShaderHelper.LitTextureRoughnessFragDeferred()!;
-            XRShader albedoMatcap = ShaderHelper.LitTextureMatcapDeferred()!;
-            XRShader albedoEmissive = ShaderHelper.LitTextureEmissiveDeferred();
-
-            switch (name)
-            {
-                default:
-                    // Default material setup - use textured deferred if we have valid albedo textures
-                    if (textureList.Length > 0 && textureList[0] is not null)
-                    {
-                        mat.Shaders.Add(albedo);
-                        mat.Textures = [textureList[0]];
-                    }
-                    else
-                    {
-                        mat.Shaders.Add(color);
-                    }
-                    MakeDefaultParameters(mat);
-                    break;
-            }
-            mat.Name = name;
-            ModelImporter.ConfigureImportedTransparency(mat, textureList, textures);
-
-            return mat;
-        }
+            => ModelImporter.MakeMaterialDeferred(textureList, textures, name);
 
         private static void MakeDefaultParameters(XRMaterial mat)
             => mat.Parameters =

@@ -4,13 +4,13 @@
 #extension GL_NV_viewport_array2 : require
 #extension GL_NV_stereo_view_rendering : require
 
-layout(secondary_view_offset = 1) out highp int gl_Layer;
-
 out gl_PerVertex {
 	vec4 gl_Position;
 	float gl_PointSize;
 	float gl_ClipDistance[];
 };
+
+layout(secondary_view_offset = 1) out highp int gl_Layer;
 
 // ============================================
 // Vertex Inputs

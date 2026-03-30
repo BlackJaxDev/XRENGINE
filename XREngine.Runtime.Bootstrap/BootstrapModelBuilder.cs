@@ -20,11 +20,6 @@ public static class BootstrapModelBuilder
             return;
         }
 
-        if (BootstrapStartupWork.TryQueueDeferredWork(
-            () => importBridge.ImportModels(desktopDir, rootNode, characterParentNode),
-            "[BootstrapModelBuilder] Deferred startup model imports until the first visible frame."))
-            return;
-
         importBridge.ImportModels(desktopDir, rootNode, characterParentNode);
     }
 

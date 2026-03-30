@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
+using System.Threading.Tasks;
 using ImGuiNET;
 using XREngine;
 using XREngine.Core.Files;
@@ -34,6 +35,7 @@ public static partial class EditorImGuiUI
         private static bool _assetExplorerExtensionFilterHasWildcard;
         private static readonly Dictionary<string, AssetTypeDescriptor?> _assetExplorerAssetTypeCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, HashSet<string>> _assetExplorerYamlKeyCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly AssetExplorerDirectorySnapshot _emptyAssetExplorerDirectorySnapshot = new([], []);
         // (Removed) Reflection-based AssetManager.Load lookup. Use the strongly-typed overload instead.
 
         private static bool _assetExplorerDeletePopupRequested;
@@ -80,8 +82,6 @@ public static partial class EditorImGuiUI
         private static partial void DrawAssetExplorerHeader(ImGuiViewportPtr viewport, bool headerAtBottom, bool dockedTop, bool dockedBottom, bool isDocked, float minHeight, float reservedVerticalMargin)
         {
             ImGui.PushID(headerAtBottom ? "AssetExplorerHeaderBottom" : "AssetExplorerHeaderTop");
-
-            EnsureAssetExplorerCategoryFilters();
 
             if (headerAtBottom)
                 ImGui.Separator();
@@ -132,6 +132,8 @@ public static partial class EditorImGuiUI
             ImGui.SameLine(0f, 6f);
             if (ImGui.BeginCombo("##AssetExplorerCategoryFilter", _assetExplorerCategoryFilterLabel))
             {
+                EnsureAssetExplorerCategoryFilters();
+
                 bool changed = false;
                 bool allSelected = AreAllAssetExplorerCategoriesSelected();
                 bool anySelected = AreAnyAssetExplorerCategoriesSelected();
@@ -246,23 +248,13 @@ public static partial class EditorImGuiUI
         private static partial void DrawAssetExplorerDirectoryChildren(AssetExplorerTabState state, string directory)
         {
             using var profilerScope = Engine.Profiler.Start("UI.AssetExplorer.DirectoryChildren");
-            string[] subdirectories;
-            try
-            {
-                subdirectories = Directory.GetDirectories(directory);
-            }
-            catch
-            {
-                return;
-            }
-
-            Array.Sort(subdirectories, StringComparer.OrdinalIgnoreCase);
+            string[] subdirectories = GetAssetExplorerDirectoryChildren(state, directory);
 
             foreach (var subdir in subdirectories)
             {
                 string name = Path.GetFileName(subdir) ?? subdir;
                 string normalized = NormalizeAssetExplorerPath(subdir);
-                bool hasChildren = DirectoryHasChildren(normalized);
+                bool hasChildren = DirectoryHasChildren(state, normalized);
 
                 ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.SpanFullWidth | ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.OpenOnDoubleClick;
                 if (!hasChildren)
@@ -297,6 +289,7 @@ public static partial class EditorImGuiUI
         private static partial void DrawAssetExplorerFileList(AssetExplorerTabState state)
         {
             using var profilerScope = Engine.Profiler.Start($"UI.AssetExplorer.FileList.{state.Id}");
+
             string directory = Directory.Exists(state.CurrentDirectory) ? state.CurrentDirectory : state.RootPath;
             directory = NormalizeAssetExplorerPath(directory);
             if (!string.Equals(state.CurrentDirectory, directory, StringComparison.OrdinalIgnoreCase))
@@ -338,6 +331,10 @@ public static partial class EditorImGuiUI
                 return;
 
             ImGui.SameLine();
+            if (ImGui.SmallButton($"Refresh##{state.Id}"))
+                InvalidateAssetExplorerSnapshots(state);
+
+            ImGui.SameLine();
             bool useTileView = state.UseTileView;
             if (ImGui.Checkbox($"Tile View##{state.Id}", ref useTileView))
                 state.UseTileView = useTileView;
@@ -354,71 +351,44 @@ public static partial class EditorImGuiUI
             ImGui.Separator();
 
             _assetExplorerScratchEntries.Clear();
-
-            EnsureAssetExplorerCategoryFilters();
             bool descriptorNeeded = AssetExplorerFiltersNeedDescriptor();
+            AssetExplorerDirectorySnapshot snapshot;
 
             try
             {
-                if (_assetExplorerShowDirectories)
+                snapshot = GetAssetExplorerDirectorySnapshot(state, directory);
+                foreach (var entry in snapshot.Entries)
                 {
-                    foreach (var subdir in Directory.GetDirectories(directory))
+                    if (entry.IsDirectory)
                     {
-                        string normalized = NormalizeAssetExplorerPath(subdir);
-                        string name = Path.GetFileName(normalized) ?? normalized;
-
-                        if (!MatchesAssetExplorerSearch(normalized, name, true, null))
+                        if (!_assetExplorerShowDirectories)
                             continue;
 
-                        if (!MatchesAssetExplorerFilters(normalized, true, null))
+                        if (!MatchesAssetExplorerSearch(entry.Path, entry.Name, true, null))
                             continue;
 
-                        DateTime modifiedUtc;
-                        try
-                        {
-                            modifiedUtc = Directory.GetLastWriteTimeUtc(subdir);
-                        }
-                        catch
-                        {
-                            modifiedUtc = DateTime.MinValue;
-                        }
+                        if (!MatchesAssetExplorerFilters(entry.Path, true, null))
+                            continue;
 
-                        _assetExplorerScratchEntries.Add(new AssetExplorerEntry(name, normalized, true, 0L, modifiedUtc));
+                        _assetExplorerScratchEntries.Add(entry);
+                        continue;
                     }
-                }
 
-                if (_assetExplorerShowFiles)
-                {
-                    foreach (var file in Directory.GetFiles(directory))
-                    {
-                        string normalized = NormalizeAssetExplorerPath(file);
-                        string name = Path.GetFileName(normalized) ?? normalized;
-                        AssetTypeDescriptor? descriptor = descriptorNeeded ? ResolveAssetTypeForPath(normalized) : null;
+                    if (!_assetExplorerShowFiles)
+                        continue;
 
-                        if (!MatchesAssetExplorerSearch(normalized, name, false, descriptor))
-                            continue;
+                    AssetTypeDescriptor? descriptor = descriptorNeeded ? ResolveAssetTypeForPath(entry.Path) : null;
 
-                        if (!ShouldIncludeFileByExtension(normalized))
-                            continue;
+                    if (!MatchesAssetExplorerSearch(entry.Path, entry.Name, false, descriptor))
+                        continue;
 
-                        if (!MatchesAssetExplorerFilters(normalized, false, descriptor))
-                            continue;
+                    if (!ShouldIncludeFileByExtension(entry.Path))
+                        continue;
 
-                        long size = 0L;
-                        DateTime modifiedUtc;
-                        try
-                        {
-                            var info = new FileInfo(file);
-                            size = info.Length;
-                            modifiedUtc = info.LastWriteTimeUtc;
-                        }
-                        catch
-                        {
-                            modifiedUtc = DateTime.MinValue;
-                        }
+                    if (!MatchesAssetExplorerFilters(entry.Path, false, descriptor))
+                        continue;
 
-                        _assetExplorerScratchEntries.Add(new AssetExplorerEntry(name, normalized, false, size, modifiedUtc));
-                    }
+                    _assetExplorerScratchEntries.Add(entry);
                 }
             }
             catch (Exception ex)
@@ -426,8 +396,6 @@ public static partial class EditorImGuiUI
                 ImGui.TextDisabled($"Unable to read '{directory}': {ex.Message}");
                 return;
             }
-
-            _assetExplorerScratchEntries.Sort(AssetExplorerEntryComparer.Instance);
 
             if (_assetExplorerScratchEntries.Count == 0)
             {
@@ -1736,10 +1704,10 @@ public static partial class EditorImGuiUI
 
         private static bool MatchesAssetExplorerFilters(string path, bool isDirectory, AssetTypeDescriptor? descriptor)
         {
-            EnsureAssetExplorerCategoryFilters();
-
             if (!_assetExplorerCategoryFilterActive || isDirectory)
                 return true;
+
+            EnsureAssetExplorerCategoryFilters();
 
             string category = GetAssetExplorerCategory(path, descriptor);
             if (!_assetExplorerCategoryFilterSelections.TryGetValue(category, out bool allowed))
@@ -1885,6 +1853,7 @@ public static partial class EditorImGuiUI
                 }
 
                 RemoveAssetExplorerCachedData(normalizedPath, isDirectory);
+                InvalidateAssetExplorerSnapshots(state);
             }
             catch (Exception ex)
             {
@@ -2080,6 +2049,8 @@ public static partial class EditorImGuiUI
                     TransferAssetExplorerCachedData(oldPath, newPath, false);
                     SetAssetExplorerSelection(state, newPath, true);
                 }
+
+                InvalidateAssetExplorerSnapshots(state);
             }
             catch (Exception ex)
             {
@@ -2575,9 +2546,12 @@ public static partial class EditorImGuiUI
 
         private static partial void EnsureAssetExplorerState(AssetExplorerTabState state, string rootPath)
         {
+            ApplyPendingAssetExplorerSnapshotInvalidations(state);
+
             string normalizedRoot = NormalizeAssetExplorerPath(rootPath);
             if (string.IsNullOrEmpty(normalizedRoot) || !Directory.Exists(normalizedRoot))
             {
+                DisposeAssetExplorerWatcher(state);
                 state.RootPath = string.Empty;
                 state.CurrentDirectory = string.Empty;
                 ClearAssetExplorerSelection(state);
@@ -2586,10 +2560,24 @@ public static partial class EditorImGuiUI
 
             if (!string.Equals(state.RootPath, normalizedRoot, StringComparison.OrdinalIgnoreCase))
             {
+                DisposeAssetExplorerWatcher(state);
                 state.RootPath = normalizedRoot;
                 state.CurrentDirectory = normalizedRoot;
+                state.DirectorySnapshots.Clear();
+                lock (state.SnapshotInvalidationLock)
+                {
+                    state.PendingInvalidatedDirectories.Clear();
+                    state.ClearAllSnapshotsPending = false;
+                }
+                lock (state.SnapshotBuildLock)
+                {
+                    state.PendingDirectorySnapshotBuilds.Clear();
+                    state.CompletedDirectorySnapshots.Clear();
+                }
                 ClearAssetExplorerSelection(state);
             }
+
+            EnsureAssetExplorerWatcher(state);
 
             if (string.IsNullOrEmpty(state.CurrentDirectory)
                 || !Directory.Exists(state.CurrentDirectory)
@@ -2635,17 +2623,279 @@ public static partial class EditorImGuiUI
             }
         }
 
-        private static partial bool DirectoryHasChildren(string path)
+        private static partial bool DirectoryHasChildren(AssetExplorerTabState state, string path)
         {
             try
             {
-                using var enumerator = Directory.EnumerateDirectories(path).GetEnumerator();
-                return enumerator.MoveNext();
+                return GetAssetExplorerDirectorySnapshot(state, path).ChildDirectories.Length > 0;
             }
             catch
             {
                 return false;
             }
+        }
+
+        private static void EnsureAssetExplorerWatcher(AssetExplorerTabState state)
+        {
+            if (string.Equals(state.WatcherRootPath, state.RootPath, StringComparison.OrdinalIgnoreCase)
+                && state.Watcher is not null)
+                return;
+
+            DisposeAssetExplorerWatcher(state);
+
+            if (string.IsNullOrEmpty(state.RootPath) || !Directory.Exists(state.RootPath))
+                return;
+
+            try
+            {
+                var watcher = new FileSystemWatcher(state.RootPath)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                    EnableRaisingEvents = true,
+                };
+
+                FileSystemEventHandler invalidate = (_, args) => InvalidateAssetExplorerSnapshotForPath(state, args.FullPath);
+                RenamedEventHandler invalidateRename = (_, args) =>
+                {
+                    InvalidateAssetExplorerSnapshotForPath(state, args.OldFullPath);
+                    InvalidateAssetExplorerSnapshotForPath(state, args.FullPath);
+                };
+                ErrorEventHandler invalidateError = (_, _) => InvalidateAssetExplorerSnapshots(state);
+
+                watcher.Created += invalidate;
+                watcher.Deleted += invalidate;
+                watcher.Renamed += invalidateRename;
+                watcher.Error += invalidateError;
+
+                state.Watcher = watcher;
+                state.WatcherRootPath = state.RootPath;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to watch asset root '{state.RootPath}'.");
+            }
+        }
+
+        private static void DisposeAssetExplorerWatcher(AssetExplorerTabState state)
+        {
+            state.Watcher?.Dispose();
+            state.Watcher = null;
+            state.WatcherRootPath = string.Empty;
+        }
+
+        private static void InvalidateAssetExplorerSnapshots(AssetExplorerTabState state)
+        {
+            lock (state.SnapshotInvalidationLock)
+            {
+                state.ClearAllSnapshotsPending = true;
+                state.PendingInvalidatedDirectories.Clear();
+            }
+        }
+
+        private static void InvalidateAssetExplorerSnapshotForPath(AssetExplorerTabState state, string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            try
+            {
+                string normalizedPath = NormalizeAssetExplorerPath(path);
+                if (!AssetPathWithinRoot(state, normalizedPath) && !string.Equals(normalizedPath, state.RootPath, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                lock (state.SnapshotInvalidationLock)
+                {
+                    if (state.ClearAllSnapshotsPending)
+                        return;
+
+                    state.PendingInvalidatedDirectories.Add(normalizedPath);
+
+                    string? parentPath = Path.GetDirectoryName(normalizedPath);
+                    if (!string.IsNullOrEmpty(parentPath))
+                        state.PendingInvalidatedDirectories.Add(NormalizeAssetExplorerPath(parentPath));
+                }
+            }
+            catch
+            {
+                InvalidateAssetExplorerSnapshots(state);
+            }
+        }
+
+        private static void ApplyPendingAssetExplorerSnapshotInvalidations(AssetExplorerTabState state)
+        {
+            bool clearAll;
+            string[] invalidatedDirectories;
+
+            lock (state.SnapshotInvalidationLock)
+            {
+                clearAll = state.ClearAllSnapshotsPending;
+                invalidatedDirectories = state.PendingInvalidatedDirectories.Count == 0
+                    ? []
+                    : [.. state.PendingInvalidatedDirectories];
+
+                state.ClearAllSnapshotsPending = false;
+                state.PendingInvalidatedDirectories.Clear();
+            }
+
+            if (!clearAll && invalidatedDirectories.Length == 0)
+                return;
+
+            if (clearAll)
+            {
+                state.DirectorySnapshots.Clear();
+
+                lock (state.SnapshotBuildLock)
+                    state.CompletedDirectorySnapshots.Clear();
+
+                return;
+            }
+
+            foreach (string invalidatedDirectory in invalidatedDirectories)
+            {
+                state.DirectorySnapshots.Remove(invalidatedDirectory);
+
+                lock (state.SnapshotBuildLock)
+                    state.CompletedDirectorySnapshots.Remove(invalidatedDirectory);
+            }
+        }
+
+        private static void ApplyCompletedAssetExplorerDirectorySnapshots(AssetExplorerTabState state)
+        {
+            KeyValuePair<string, AssetExplorerDirectorySnapshot>[] completedSnapshots;
+            lock (state.SnapshotBuildLock)
+            {
+                if (state.CompletedDirectorySnapshots.Count == 0)
+                    return;
+
+                completedSnapshots = [.. state.CompletedDirectorySnapshots];
+                state.CompletedDirectorySnapshots.Clear();
+            }
+
+            bool clearAllPending;
+            string[] invalidatedDirectories;
+            lock (state.SnapshotInvalidationLock)
+            {
+                clearAllPending = state.ClearAllSnapshotsPending;
+                invalidatedDirectories = state.PendingInvalidatedDirectories.Count == 0
+                    ? []
+                    : [.. state.PendingInvalidatedDirectories];
+            }
+
+            foreach (var pair in completedSnapshots)
+            {
+                if (clearAllPending || invalidatedDirectories.Contains(pair.Key, StringComparer.OrdinalIgnoreCase))
+                    continue;
+
+                state.DirectorySnapshots[pair.Key] = pair.Value;
+            }
+        }
+
+        private static void QueueAssetExplorerDirectorySnapshotBuild(AssetExplorerTabState state, string directory)
+        {
+            string normalizedDirectory = NormalizeAssetExplorerPath(directory);
+
+            lock (state.SnapshotBuildLock)
+            {
+                if (state.PendingDirectorySnapshotBuilds.Contains(normalizedDirectory)
+                    || state.CompletedDirectorySnapshots.ContainsKey(normalizedDirectory))
+                {
+                    return;
+                }
+
+                state.PendingDirectorySnapshotBuilds.Add(normalizedDirectory);
+            }
+
+            _ = Task.Run(() =>
+            {
+                AssetExplorerDirectorySnapshot snapshot;
+                try
+                {
+                    snapshot = BuildAssetExplorerDirectorySnapshot(normalizedDirectory);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex, $"Failed to snapshot asset directory '{normalizedDirectory}'.");
+                    snapshot = _emptyAssetExplorerDirectorySnapshot;
+                }
+
+                lock (state.SnapshotBuildLock)
+                {
+                    state.PendingDirectorySnapshotBuilds.Remove(normalizedDirectory);
+                    state.CompletedDirectorySnapshots[normalizedDirectory] = snapshot;
+                }
+            });
+        }
+
+        private static AssetExplorerDirectorySnapshot GetAssetExplorerDirectorySnapshot(AssetExplorerTabState state, string directory)
+        {
+            ApplyPendingAssetExplorerSnapshotInvalidations(state);
+            ApplyCompletedAssetExplorerDirectorySnapshots(state);
+
+            string normalizedDirectory = NormalizeAssetExplorerPath(directory);
+            if (state.DirectorySnapshots.TryGetValue(normalizedDirectory, out var snapshot))
+                return snapshot;
+
+            QueueAssetExplorerDirectorySnapshotBuild(state, normalizedDirectory);
+            return _emptyAssetExplorerDirectorySnapshot;
+        }
+
+        private static string[] GetAssetExplorerDirectoryChildren(AssetExplorerTabState state, string directory)
+            => GetAssetExplorerDirectorySnapshot(state, directory).ChildDirectories;
+
+        private static AssetExplorerDirectorySnapshot BuildAssetExplorerDirectorySnapshot(string directory)
+        {
+            string[] subdirectories = Directory.GetDirectories(directory);
+            Array.Sort(subdirectories, StringComparer.OrdinalIgnoreCase);
+
+            string[] files = Directory.GetFiles(directory);
+            var entries = new List<AssetExplorerEntry>(subdirectories.Length + files.Length);
+
+            foreach (var subdir in subdirectories)
+            {
+                string normalized = NormalizeAssetExplorerPath(subdir);
+                string name = Path.GetFileName(normalized) ?? normalized;
+
+                DateTime modifiedUtc;
+                try
+                {
+                    modifiedUtc = Directory.GetLastWriteTimeUtc(subdir);
+                }
+                catch
+                {
+                    modifiedUtc = DateTime.MinValue;
+                }
+
+                entries.Add(new AssetExplorerEntry(name, normalized, true, 0L, modifiedUtc));
+            }
+
+            foreach (var file in files)
+            {
+                string normalized = NormalizeAssetExplorerPath(file);
+                string name = Path.GetFileName(normalized) ?? normalized;
+
+                long size = 0L;
+                DateTime modifiedUtc;
+                try
+                {
+                    var info = new FileInfo(file);
+                    size = info.Length;
+                    modifiedUtc = info.LastWriteTimeUtc;
+                }
+                catch
+                {
+                    modifiedUtc = DateTime.MinValue;
+                }
+
+                entries.Add(new AssetExplorerEntry(name, normalized, false, size, modifiedUtc));
+            }
+
+            entries.Sort(AssetExplorerEntryComparer.Instance);
+
+            for (int i = 0; i < subdirectories.Length; i++)
+                subdirectories[i] = NormalizeAssetExplorerPath(subdirectories[i]);
+
+            return new AssetExplorerDirectorySnapshot([.. entries], subdirectories);
         }
 
         private static partial string FormatFileSize(long size)

@@ -112,7 +112,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 transformIdTex is null ||
                 depthStencilTex is null)
             {
-                Log("Missing required GBuffer textures; skipping GTAO resource refresh.");
+                Log($"Missing required GBuffer textures; skipping GTAO resource refresh. normal={normalTex is not null}, depthView={depthViewTex is not null}, albedo={albedoTex is not null}, rmse={rmseTex is not null}, transformId={transformIdTex is not null}, depthStencil={depthStencilTex is not null}");
                 return;
             }
 
@@ -328,10 +328,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private void GTAOHorizontalBlur_SetUniforms(XRRenderProgram program)
-            => SetBlurUniforms(program, new Vector2(1.0f, 0.0f));
+        {
+            SetBlurUniforms(program, new Vector2(1.0f, 0.0f));
+        }
 
         private void GTAOVerticalBlur_SetUniforms(XRRenderProgram program)
-            => SetBlurUniforms(program, new Vector2(0.0f, 1.0f));
+        {
+            SetBlurUniforms(program, new Vector2(0.0f, 1.0f));
+        }
 
         private void SetBlurUniforms(XRRenderProgram program, Vector2 direction)
         {

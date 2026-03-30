@@ -253,6 +253,13 @@ namespace XREngine.Rendering
         public BaseVersion GetDefaultVersion() => GetOrCreateVersion(0);
         public BaseVersion GetOVRMultiViewVersion() => GetOrCreateVersion(1);
         public BaseVersion GetNVStereoVersion() => GetOrCreateVersion(2);
+
+        public void EnsureRenderPipelineVersionsCreated()
+        {
+            _ = GetDefaultVersion();
+            _ = GetOVRMultiViewVersion();
+            _ = GetNVStereoVersion();
+        }
         
         public BaseVersion GetMeshDeformDefaultVersion() => GetOrCreateVersion(3);
         public BaseVersion GetMeshDeformOVRMultiViewVersion() => GetOrCreateVersion(4);

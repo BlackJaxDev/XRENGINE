@@ -1,7 +1,12 @@
 # FPS Drop Startup Audit — TODO
 
+Reference work docs:
+- [March 28 startup remediation TODO](design/startup-fps-drop-remediation-plan.md)
+
 Source log: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-03-22_20-21-53_pid50924/profiler-fps-drops.log`  
 Date: 2026-03-22
+
+This TODO captures the original March 22 startup investigation and the first wave of fixes. The March 28 TODO continues with the remaining startup stalls after those fixes landed.
 
 All drops occur within the first ~9 seconds of editor launch. The scene is minimal (camera pawn, text node, light probe). Every item below is a distinct root cause observed in the profiler.
 

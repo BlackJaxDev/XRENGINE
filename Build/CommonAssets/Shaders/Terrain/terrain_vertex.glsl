@@ -10,11 +10,6 @@ layout (location = 1) in Vector2 inTexCoord;
 
 layout (binding = 0) uniform sampler2D heightmap;
 
-out gl_PerVertex
-{
-    Vector4 gl_Position;
-};
-
 out Vector3 worldPos;
 out Vector2 texCoord;
 

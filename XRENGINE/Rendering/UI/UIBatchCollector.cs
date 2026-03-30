@@ -363,6 +363,8 @@ public sealed class UIBatchCollector : IDisposable
             GenerationPriority = EMeshGenerationPriority.RenderPipeline
         };
 
+        _matQuadMesh.EnsureRenderPipelineVersionsCreated();
+
         DisableShaderPipelines(_matQuadMesh);
 
         // Create initial SSBOs with a reasonable starting capacity
@@ -499,6 +501,7 @@ public sealed class UIBatchCollector : IDisposable
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
             material);
         gpu.Mesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
+        gpu.Mesh.EnsureRenderPipelineVersionsCreated();
 
         DisableShaderPipelines(gpu.Mesh);
 

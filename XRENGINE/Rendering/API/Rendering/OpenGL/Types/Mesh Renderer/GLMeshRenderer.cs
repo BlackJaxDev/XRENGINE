@@ -304,6 +304,9 @@ namespace XREngine.Rendering.OpenGL
                 Engine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
             }
 
+            if (ActiveMeshRenderer.RequiresTriangleOnlyDrawsForCurrentPass())
+                return;
+
             uint lines = lineBuffer?.Data?.ElementCount ?? 0u;
             if (lines > 0
                 && lineBuffer!.IsReadyForRendering

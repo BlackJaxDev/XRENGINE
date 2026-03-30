@@ -139,6 +139,13 @@ Pass identities the render graph should model internally:
 - `TransparentResolve` — fullscreen resolve/composite
 - `TransparentExact` — multi-pass or high-cost modes (depth peeling)
 
+Current deferred approximation path:
+
+- Alpha-aware deferred textured variants currently write effective opacity (`texture alpha * material opacity`) into `AlbedoOpacity.a`; the ordinary opaque deferred PBR variants still write material opacity only so albedo alpha channels do not accidentally drive opacity.
+- Deferred-based opaque, masked, and alpha-to-coverage materials keep their deferred fragment variants instead of being normalized back to forward shading.
+- A fullscreen `DeferredTransparencyBlur` reconstruction pass runs after opaque scene assembly and before forward transparency / OIT compositing so dithered deferred transparency is softened against the resolved opaque scene.
+- Forward transparency remains the preferred path for richer blending, weighted OIT, and exact techniques.
+
 ### 3.3 Depth Policy
 
 | Material class | Depth test | Depth write |

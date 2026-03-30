@@ -670,7 +670,7 @@ namespace XREngine.Components.Capture.Lights
                 return;
 
             int baseExtent = (int)Math.Max(PrefilterTexture.Width, PrefilterTexture.Height);
-            int maxMipLevels = PrefilterTexture.SmallestMipmapLevel;
+            int maxMipLevels = PrefilterTexture.SmallestMipmapLevel + 1;
             for (int mip = 0; mip < maxMipLevels; ++mip)
             {
                 int mipWidth = Math.Max(1, baseExtent >> mip);

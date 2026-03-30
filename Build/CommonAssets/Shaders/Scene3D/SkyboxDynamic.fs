@@ -1,10 +1,9 @@
 #version 450
 
 layout (location = 0) out vec3 OutColor;
-layout (location = 0) in vec3 FragClipPos;
+layout (location = 1) in vec3 FragWorldDir;
 
 uniform float SkyboxIntensity = 1.0;
-uniform float SkyboxRotation = 0.0;
 uniform float SkyTimeOfDay = 0.25;
 uniform float SkyCloudCoverage = 0.45;
 uniform float SkyCloudScale = 1.4;
@@ -15,19 +14,7 @@ uniform float SkyHorizonHaze = 1.0;
 uniform float SkySunDiscSize = 0.9994;
 uniform float SkyMoonDiscSize = 0.99965;
 
-uniform mat4 InverseViewMatrix;
-uniform mat4 InverseProjMatrix;
-uniform mat4 ProjMatrix;
-
 const float PI = 3.14159265359;
-
-vec3 GetWorldDirection(vec3 clipPos)
-{
-    vec4 viewPos = InverseProjMatrix * vec4(clipPos.xy, 1.0, 1.0);
-    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
-    mat3 camRotation = mat3(InverseViewMatrix);
-    return normalize(camRotation * viewDir);
-}
 
 float Hash(vec2 p)
 {
@@ -67,10 +54,7 @@ vec3 NightSky(vec3 dir, float nightFactor)
 
 void main()
 {
-    vec3 dir = GetWorldDirection(FragClipPos);
-    float cosRot = cos(SkyboxRotation);
-    float sinRot = sin(SkyboxRotation);
-    dir = vec3(dir.x * cosRot - dir.z * sinRot, dir.y, dir.x * sinRot + dir.z * cosRot);
+    vec3 dir = normalize(FragWorldDir);
 
     float angle = SkyTimeOfDay * PI * 2.0;
     vec3 sunDir = normalize(vec3(cos(angle), sin(angle), 0.2));

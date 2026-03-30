@@ -418,7 +418,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture2D noiseTex = new()
             {
                 Name = SSAONoiseTextureName,
-                SamplerName = SSAONoiseTextureName,
+                SamplerName = "AONoiseTexture",
                 MinFilter = ETexMinFilter.Nearest,
                 MagFilter = ETexMagFilter.Nearest,
                 UWrap = ETexWrapMode.Repeat,

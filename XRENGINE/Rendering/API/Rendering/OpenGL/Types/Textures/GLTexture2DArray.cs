@@ -278,6 +278,42 @@ namespace XREngine.Rendering.OpenGL
             EnsureStorage(Data.SizedInternalFormat, width, height, depth, levels);
         }
 
+        private uint ResolveTargetLevels(XRTexture2D? firstSource, uint width, uint height)
+        {
+            if (firstSource is not null)
+                return (uint)Math.Max(1, firstSource.SmallestMipmapLevel + 1);
+
+            if (Data.AutoGenerateMipmaps)
+                return (uint)Math.Max(1, XRTexture.GetSmallestMipmapLevel(width, height, Data.SmallestAllowedMipmapLevel) + 1);
+
+            if (Data.SmallestAllowedMipmapLevel < 1000)
+                return (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
+
+            return 1;
+        }
+
+        private int ResolveMaxMipLevel(int baseLevel)
+        {
+            if (Data.MultiSample)
+                return baseLevel;
+
+            int configuredMaxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
+            int allocatedMaxLevel = _allocatedLevels > 0
+                ? Math.Max(baseLevel, (int)_allocatedLevels - 1)
+                : baseLevel;
+
+            return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, configuredMaxLevel));
+        }
+
+        private void ApplyMipRangeParameters()
+        {
+            int baseLevel = Math.Max(0, Data.LargestMipmapLevel);
+            int maxLevel = ResolveMaxMipLevel(baseLevel);
+
+            Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevel);
+            Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
+        }
+
         public override void PushData()
         {
             if (IsPushing)
@@ -326,10 +362,7 @@ namespace XREngine.Rendering.OpenGL
                         Api.TextureParameterI(BindingId, GLEnum.TextureCompareFunc, in compareFuncRt);
                     }
 
-                    int baseLevelRt = 0;
-                    int maxLevelRt = 0;
-                    Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevelRt);
-                    Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevelRt);
+                    ApplyMipRangeParameters();
 
                     if (allowPostPushCallback)
                         OnPostPushData();
@@ -342,16 +375,8 @@ namespace XREngine.Rendering.OpenGL
                 for (int i = 0; i < Data.Textures.Length && firstSource is null; ++i)
                     firstSource = Data.Textures[i];
 
-                if (firstSource is null)
-                {
-                    if (allowPostPushCallback)
-                        OnPostPushData();
-                    IsPushing = false;
-                    return;
-                }
-
                 var desiredInternalFormat = Data.SizedInternalFormat;
-                if (desiredInternalFormat != firstSource.SizedInternalFormat)
+                if (firstSource is not null && desiredInternalFormat != firstSource.SizedInternalFormat)
                 {
                     Debug.OpenGL($"Adjusting texture array '{Data.Name}' internal format from {desiredInternalFormat} to {firstSource.SizedInternalFormat} to match source textures.");
                     desiredInternalFormat = firstSource.SizedInternalFormat;
@@ -361,21 +386,66 @@ namespace XREngine.Rendering.OpenGL
                 // Ensure array dimensions match the first valid source so storage is allocated correctly.
                 uint targetWidth = Data.Width;
                 uint targetHeight = Data.Height;
-                uint targetDepth = (uint)Math.Max(1, Data.Textures.Length);
+                uint targetDepth = Math.Max(1u, Data.Depth > 0 ? Data.Depth : (uint)Data.Textures.Length);
 
                 if (targetWidth == 0 || targetHeight == 0)
                 {
-                    targetWidth = firstSource.Width;
-                    targetHeight = firstSource.Height;
+                    if (firstSource is not null)
+                    {
+                        targetWidth = firstSource.Width;
+                        targetHeight = firstSource.Height;
+                    }
+                    else
+                    {
+                        targetWidth = Math.Max(1u, targetWidth);
+                        targetHeight = Math.Max(1u, targetHeight);
+                    }
+                }
+                else
+                {
+                    targetWidth = Math.Max(1u, targetWidth);
+                    targetHeight = Math.Max(1u, targetHeight);
                 }
 
-                // Keep mip level count in sync with the target dimensions to avoid CopyImageSubData hitting undefined mips.
-                uint targetLevels = (uint)Math.Max(1, XRTexture.GetSmallestMipmapLevel(targetWidth, targetHeight, Data.SmallestAllowedMipmapLevel) + 1);
+                uint targetLevels = ResolveTargetLevels(firstSource, targetWidth, targetHeight);
 
                 // Allocate storage (or reallocate if format changed) before copying data.
                 EnsureStorage(desiredInternalFormat, targetWidth, targetHeight, targetDepth, targetLevels);
 
-                var glTarget = ToGLEnum(TextureTarget);
+                if (firstSource is null)
+                {
+                    int minLODNoSource = -1000;
+                    int maxLODNoSource = 1000;
+                    Api.TextureParameterI(BindingId, GLEnum.TextureMinLod, in minLODNoSource);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureMaxLod, in maxLODNoSource);
+
+                    int magFilterNoSource = (int)ToGLEnum(Data.MagFilter);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureMagFilter, in magFilterNoSource);
+
+                    int minFilterNoSource = (int)ToGLEnum(Data.MinFilter);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureMinFilter, in minFilterNoSource);
+
+                    int uWrapNoSource = (int)ToGLEnum(Data.UWrap);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureWrapS, in uWrapNoSource);
+
+                    int vWrapNoSource = (int)ToGLEnum(Data.VWrap);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrapNoSource);
+
+                    int compareModeNoSource = (int)(Data.EnableComparison ? GLEnum.CompareRefToTexture : GLEnum.None);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureCompareMode, in compareModeNoSource);
+                    if (Data.EnableComparison)
+                    {
+                        int compareFuncNoSource = (int)ToGLEnum(Data.CompareFunc);
+                        Api.TextureParameterI(BindingId, GLEnum.TextureCompareFunc, in compareFuncNoSource);
+                    }
+
+                    ApplyMipRangeParameters();
+
+                    if (allowPostPushCallback)
+                        OnPostPushData();
+                    IsPushing = false;
+                    return;
+                }
                 
                 // Copy each source texture's data to its respective layer in the array
                 for (int layer = 0; layer < Data.Textures.Length; ++layer)
@@ -427,8 +497,14 @@ namespace XREngine.Rendering.OpenGL
                     numMips = Math.Min(numMips, (int)targetLevels);
                     for (int mip = 0; mip < numMips; ++mip)
                     {
-                        uint mipWidth = Math.Max(1u, tex.Width >> mip);
-                        uint mipHeight = Math.Max(1u, tex.Height >> mip);
+                        Api.GetTextureLevelParameter(srcId, mip, GLEnum.TextureWidth, out int sourceMipWidth);
+                        Api.GetTextureLevelParameter(srcId, mip, GLEnum.TextureHeight, out int sourceMipHeight);
+
+                        if (sourceMipWidth <= 0 || sourceMipHeight <= 0)
+                            break;
+
+                        uint mipWidth = (uint)sourceMipWidth;
+                        uint mipHeight = (uint)sourceMipHeight;
 
                         // glCopyImageSubData(srcName, srcTarget, srcLevel, srcX, srcY, srcZ,
                         //                    dstName, dstTarget, dstLevel, dstX, dstY, dstZ,
@@ -440,13 +516,9 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                int baseLevel = 0;
-                int maxLevel = 1000;
                 int minLOD = -1000;
                 int maxLOD = 1000;
 
-                Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevel);
-                Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
                 Api.TextureParameterI(BindingId, GLEnum.TextureMinLod, in minLOD);
                 Api.TextureParameterI(BindingId, GLEnum.TextureMaxLod, in maxLOD);
 
@@ -471,6 +543,8 @@ namespace XREngine.Rendering.OpenGL
                     int compareFunc = (int)ToGLEnum(Data.CompareFunc);
                     Api.TextureParameterI(BindingId, GLEnum.TextureCompareFunc, in compareFunc);
                 }
+
+                ApplyMipRangeParameters();
 
                 if (Data.AutoGenerateMipmaps)
                     GenerateMipmaps();

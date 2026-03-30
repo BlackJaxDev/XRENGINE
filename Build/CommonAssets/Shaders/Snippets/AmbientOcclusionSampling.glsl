@@ -7,7 +7,10 @@ uniform bool AmbientOcclusionArrayEnabled;
 uniform float AmbientOcclusionPower;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+#ifndef XRENGINE_SCREEN_ORIGIN_UNIFORM
+#define XRENGINE_SCREEN_ORIGIN_UNIFORM
 uniform vec2 ScreenOrigin;
+#endif
 
 // DEBUG uniform: when > 0 the sampled AO is raised to this power so the
 // effect becomes dramatically visible (e.g. 4.0 turns AO 0.9 → 0.66).

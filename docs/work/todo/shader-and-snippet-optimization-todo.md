@@ -1,6 +1,6 @@
 # Shader And Snippet Optimization TODO
 
-Last Updated: 2026-03-25
+Last Updated: 2026-03-28
 Status: Active audit and remediation planning.
 Scope: shader runtime cost, shader compile/preprocess cost, shader-variant pressure, and shared snippet hot-path cleanup across OpenGL-first rendering paths.
 
@@ -112,10 +112,10 @@ Acceptance criteria:
 
 Outcome: include/snippet expansion stops paying repeated disk and search costs after the first resolve.
 
-- [ ] add cached include expansion keyed by normalized path plus invalidation data such as last-write time
-- [ ] build a reusable snippet index instead of calling recursive `Directory.EnumerateFiles(..., SearchOption.AllDirectories)` during resolution
-- [ ] memoize snippet file contents and resolved snippet expansions where safe
-- [ ] preserve recursive-include detection and error reporting while reducing allocations and repeated file I/O
+- [x] add cached include expansion keyed by normalized path plus invalidation data such as last-write time
+- [x] build a reusable snippet index instead of calling recursive `Directory.EnumerateFiles(..., SearchOption.AllDirectories)` during resolution
+- [x] memoize snippet file contents and resolved snippet expansions where safe
+- [x] preserve recursive-include detection and error reporting while reducing allocations and repeated file I/O
 - [ ] benchmark shader startup/load paths before and after the cache changes
 
 Acceptance criteria:
@@ -123,13 +123,21 @@ Acceptance criteria:
 - repeated shader resolves do not perform recursive snippet directory scans
 - include/snippet-heavy shaders show a measurable reduction in CPU-side resolve time
 
+Implementation notes:
+
+- `ShaderSourceResolver` now caches include expansion by normalized path and validates cached entries against dependency file stamps before reuse.
+- shader-root file lookup and snippet discovery are indexed once per root and invalidated when directory timestamps change, so repeated resolves avoid recursive tree scans.
+- snippet file contents are memoized in the shared text cache, and top-level snippet expansion results are memoized per expanded source plus registered-snippet version.
+- `XRShader` now validates include/snippet dependency stamps before returning its per-asset resolved-source cache, preventing stale source after nested file edits.
+- `ShaderSourcePreprocessor` and `ShaderSnippets` now route through the shared resolver so OpenGL/Vulkan preprocess paths use the same cache and invalidation behavior.
+
 ## Phase 5 - Tame Runtime Variant Generation
 
 Outcome: runtime-created shader variants stop scaling linearly with regex-heavy source rewriting work.
 
-- [ ] hash and memoize generated forward depth-normal variants by source content
-- [ ] evaluate whether explicit companion shaders should replace regex-based rewriting for the most common variant families
-- [ ] keep any remaining source rewriting limited to narrow, deterministic transformations
+- [x] hash and memoize generated forward depth-normal variants by source content
+- [x] evaluate whether explicit companion shaders should replace regex-based rewriting for the most common variant families
+- [x] keep any remaining source rewriting limited to narrow, deterministic transformations
 - [ ] measure startup savings for scenes with many distinct forward materials
 
 Acceptance criteria:
@@ -137,23 +145,42 @@ Acceptance criteria:
 - the same material source is not repeatedly rewritten into identical variants
 - variant generation cost is bounded and observable
 
+Implementation notes:
+
+- `ForwardDepthNormalVariantFactory` now memoizes fallback depth-normal rewrite results by hashed source-content buckets and caches both success and failure outcomes, so custom forward shaders do not repeat the regex-heavy rewrite path.
+- the common named forward families continue to prefer `ShaderHelper.GetDepthNormalPrePassForwardVariant(...)`, and `ShaderHelper.CreateDefinedShaderVariant(...)` now memoizes define-injected variant source text by define name plus source content.
+- the remaining runtime rewrite path is intentionally limited to custom or unmapped forward fragment sources, and its transformation stays narrow: strip forward-lighting outputs/snippets, preserve pre-light setup, and replace the lighting write with encoded normal output.
+
 ## Phase 6 - Reduce Forward Shader Duplication
 
 Outcome: the forward family has a smaller, more intentional permutation surface.
 
-- [ ] inventory duplicated forward fragment files by feature and transparency technique
-- [ ] decide which differences should remain separate shaders versus preprocessor permutations or specialization flags
-- [ ] collapse the worst duplication clusters first, especially lit/unlit textured forward families
-- [ ] ensure transparent technique selection does not explode the number of near-identical source files unnecessarily
+- [x] inventory duplicated forward fragment files by feature and transparency technique
+- [x] decide which differences should remain separate shaders versus preprocessor permutations or specialization flags
+- [x] collapse the worst duplication clusters first, especially lit/unlit textured forward families
+- [x] ensure transparent technique selection does not explode the number of near-identical source files unnecessarily
 
 Acceptance criteria:
 
 - the forward shader family count is materially lower without losing needed technique separation
 - compile/load pressure drops for the common forward path
 
+Implementation notes:
+
+- the common textured forward families now generate `WeightedOit`, `PerPixelLinkedList`, and `DepthPeel` variants from the base forward shader source via explicit defines in `ShaderHelper`, instead of loading separate transparency-only shader files for those families.
+- the base textured forward shaders now inline a small output-policy block gated by `XRENGINE_FORWARD_WEIGHTED_OIT`, `XRENGINE_FORWARD_PPLL`, and `XRENGINE_FORWARD_DEPTH_PEEL`, so the same fragment source handles opaque and transparent forward techniques without duplicating the lighting/material body.
+- redundant common textured transparency shader files were removed for lit textured, lit normal/spec/alpha combinations, silhouette-POM, unlit textured, stereo unlit textured, and unlit alpha-textured families; the colored and decal paths remain separate for now where their migration payoff was lower.
+
 ## Phase 7 - Split Or Trim The Uber Path
 
 Outcome: the Uber shader no longer forces every material through the same feature-heavy fragment path.
+
+Audit status:
+
+- the current repo state only partially implements this phase
+- `UberShader.frag` now has a trimmed MVP-style compile-time path and `uniforms.glsl` gates several optional uniform blocks behind feature defines
+- imported/default Uber materials still bind the same single fragment shader, and there is not yet a distinct "full rich path" family kept for feature-heavy materials versus a separate simpler material family for common cases
+- because of that, the acceptance criteria are not fully met yet: the repo has trimming work, but not a complete family split with a reserved full path
 
 - [ ] profile the Uber shader with representative simple and feature-heavy materials
 - [ ] identify which features should become compile-time families instead of runtime branches
@@ -169,14 +196,21 @@ Acceptance criteria:
 
 Outcome: expensive secondary passes are optimized only where profiling justifies it.
 
-- [ ] review TSR texture-fetch count and simplify only if it remains a measured bottleneck
-- [ ] replace transcendental-heavy UI blur paths with separable or preweighted kernels where practical
-- [ ] review skybox, debug, and utility shaders for any remaining repeated inverse or reconstruction work
+- [x] review TSR texture-fetch count and simplify only if it remains a measured bottleneck
+- [x] replace transcendental-heavy UI blur paths with separable or preweighted kernels where practical
+- [x] review skybox, debug, and utility shaders for any remaining repeated inverse or reconstruction work
 
 Acceptance criteria:
 
 - secondary-pass work is driven by measured benefit
 - low-value rewrites are avoided
+
+Implementation notes:
+
+- `GrabpassGaussian.frag` no longer evaluates gaussian weights or radial directions with `exp`, `sqrt`, `cos`, and `sin` in nested per-fragment loops; it now uses a truncated preweighted fixed-tap kernel with bounded sample count.
+- the shared skybox vertex shader now reconstructs and rotates the world ray once per fullscreen-triangle vertex, and the equirectangular, octahedral, cubemap, cubemap-array, gradient, and dynamic skybox fragment shaders consume the interpolated `FragWorldDir` instead of repeating inverse-matrix reconstruction per pixel.
+- the inline skybox fallback shader sources in `SkyboxComponent.cs` were updated to match the on-disk shader contract so runtime fallback behavior stays aligned.
+- TSR was reviewed and intentionally left unchanged in this pass: without a fresh measured bottleneck, the current `TemporalSuperResolution.fs` path avoids speculative fetch-count churn while the higher-confidence blur and skybox wins land first.
 
 ## Key Files
 
