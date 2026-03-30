@@ -13,20 +13,6 @@ uniform float Magnitude = 0.5f;
 uniform mat4 WorldToCameraSpaceMatrix;
 uniform mat4 ProjMatrix;
 
-in gl_PerVertex
-{
-  vec4  gl_Position;
-  float gl_PointSize;
-  float gl_ClipDistance[];
-} gl_in[];
-
-out gl_PerVertex
-{
-  vec4  gl_Position;
-  float gl_PointSize;
-  float gl_ClipDistance[];
-};
-
 void main()
 {
   for (int i = 0; i < gl_in.length(); i++)

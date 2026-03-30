@@ -24,6 +24,7 @@ uniform sampler2D ShadowMap; //Spot Shadow Map
 
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
@@ -355,9 +356,10 @@ in vec3 rms)
 }
 void main()
 {
-    vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+    vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;
+    vec2 uv = clamp(fragCoordLocal / vec2(ScreenWidth, ScreenHeight), vec2(0.0f), vec2(1.0f));
 #ifdef XRENGINE_MSAA_DEFERRED
-	ivec2 coord = ivec2(gl_FragCoord.xy);
+	ivec2 coord = ivec2(floor(fragCoordLocal));
 	vec3 albedo = texelFetch(AlbedoOpacity, coord, gl_SampleID).rgb;
 	vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
 	vec3 rms = texelFetch(RMSE, coord, gl_SampleID).rgb;

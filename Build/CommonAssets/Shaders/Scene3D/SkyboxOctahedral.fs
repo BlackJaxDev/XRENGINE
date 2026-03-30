@@ -1,24 +1,10 @@
 #version 450
 
 layout (location = 0) out vec3 OutColor;
-layout (location = 0) in vec3 FragClipPos;
+layout (location = 1) in vec3 FragWorldDir;
 
 uniform sampler2D Texture0;
 uniform float SkyboxIntensity = 1.0;
-uniform float SkyboxRotation = 0.0;
-
-// Camera matrices
-uniform mat4 InverseViewMatrix;
-uniform mat4 InverseProjMatrix;
-uniform mat4 ProjMatrix;
-
-vec3 GetWorldDirection(vec3 clipPos)
-{
-    vec4 viewPos = InverseProjMatrix * vec4(clipPos.xy, 1.0, 1.0);
-    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
-    mat3 camRotation = mat3(InverseViewMatrix);
-    return normalize(camRotation * viewDir);
-}
 
 vec2 EncodeOcta(vec3 dir)
 {
@@ -39,16 +25,7 @@ vec2 EncodeOcta(vec3 dir)
 
 void main()
 {
-    vec3 dir = GetWorldDirection(FragClipPos);
-    
-    // Apply rotation around Y axis
-    float cosRot = cos(SkyboxRotation);
-    float sinRot = sin(SkyboxRotation);
-    dir = vec3(
-        dir.x * cosRot - dir.z * sinRot,
-        dir.y,
-        dir.x * sinRot + dir.z * cosRot
-    );
+    vec3 dir = normalize(FragWorldDir);
 
     vec2 uv = EncodeOcta(dir);
     OutColor = texture(Texture0, uv).rgb * SkyboxIntensity;

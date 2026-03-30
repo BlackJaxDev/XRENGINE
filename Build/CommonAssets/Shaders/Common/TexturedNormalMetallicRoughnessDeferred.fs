@@ -34,9 +34,11 @@ vec3 getNormalFromMap()
 
 void main()
 {
+    vec4 albedoSample = texture(Texture0, FragUV0);
+
     TransformId = floatBitsToUint(FragTransformId);
     Normal = XRENGINE_EncodeNormal(getNormalFromMap());
-    AlbedoOpacity = vec4(texture(Texture0, FragUV0).rgb * BaseColor, Opacity);
+    AlbedoOpacity = vec4(albedoSample.rgb * BaseColor, Opacity);
 
     float metallicTex = texture(Texture2, FragUV0).r;
     float roughnessTex = texture(Texture3, FragUV0).r;

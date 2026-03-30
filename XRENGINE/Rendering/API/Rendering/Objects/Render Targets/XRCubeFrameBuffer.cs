@@ -24,6 +24,7 @@ namespace XREngine.Rendering
             //    mat.RenderOptions.CullMode = ECullMode.None;
             FullScreenCubeMesh = new XRMeshRenderer(XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f), true), mat);
             FullScreenCubeMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
+            FullScreenCubeMesh.EnsureRenderPipelineVersionsCreated();
             FullScreenCubeMesh.SettingUniforms += SetUniforms;
         }
 

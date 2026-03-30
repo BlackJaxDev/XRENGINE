@@ -28,6 +28,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private bool _useGeometryShader = true;
         private XRFrameBuffer? _perFaceFbo;
+        private const float PointShadowNearPlaneDistanceDefault = 0.1f;
 
         /// <summary>
         /// When enabled, renders all 6 cubemap shadow faces in a single draw call
@@ -46,6 +47,11 @@ namespace XREngine.Components.Capture.Lights.Types
                     RecreateShadowMapMaterial();
             }
         }
+
+        public float ShadowNearPlaneDistance
+            => ShadowCameras is { Length: > 0 }
+                ? ShadowCameras[0].NearZ
+                : PointShadowNearPlaneDistanceDefault;
 
         private void RecreateShadowMapMaterial()
         {
@@ -107,7 +113,7 @@ namespace XREngine.Components.Capture.Lights.Types
             {
                 // Single draw: the GS writes to all 6 cubemap layers via gl_Layer.
                 int cmdCount = _viewports[0].RenderPipelineInstance.MeshRenderCommands.GetRenderingCommandCount();
-
+/*
                 Debug.RenderingEvery(
                     $"PointLight.GSShadow.{GetHashCode()}",
                     TimeSpan.FromSeconds(2),
@@ -118,7 +124,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     ShadowMap is null,
                     _influenceVolume.Radius,
                     _influenceVolume.Center);
-
+*/
                 _viewports[0].Render(ShadowMap, null, null, true, ShadowMap!.Material);
             }
             else
@@ -279,6 +285,7 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform($"{flatPrefix}Position", lightPosition);
             program.Uniform($"{flatPrefix}Radius", _influenceVolume.Radius);
             program.Uniform($"{flatPrefix}Brightness", _brightness);
+            program.Uniform("ShadowNearPlaneDist", ShadowNearPlaneDistance);
 
             // Structured Base.* uniforms for ForwardLighting snippet compatibility.
             program.Uniform($"{basePrefix}Color", _color);
@@ -340,16 +347,12 @@ namespace XREngine.Components.Capture.Lights.Types
                 },
             ];
 
-            //This material is used for rendering to the framebuffer.
-            // No custom vertex shader — the engine auto-generates one that outputs
-            // FragPos (location 0) in world-space and sets gl_Position to clip-space,
-            // which is what both the GS and FS paths expect.
             XRShader fragShader = XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment);
             XRMaterial mat;
             if (_useGeometryShader)
             {
                 XRShader geomShader = XRShader.EngineShader("PointLightShadowDepth.gs", EShaderType.Geometry);
-                mat = new(refs, fragShader, geomShader);
+                mat = new(refs, geomShader, fragShader);
             }
             else
             {

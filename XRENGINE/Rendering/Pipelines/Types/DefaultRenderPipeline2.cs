@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System;
 using System.Collections;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -245,6 +246,20 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         };
     }
 
+    private void RetargetTextureView(XRTexture texture, string viewedTextureName)
+    {
+        XRTexture? viewedTexture = GetTexture<XRTexture>(viewedTextureName);
+        switch (texture)
+        {
+            case XRTexture2DView texture2DView when viewedTexture is XRTexture2D expected && !ReferenceEquals(texture2DView.ViewedTexture, expected):
+                texture2DView.ViewedTexture = expected;
+                break;
+            case XRTexture2DArrayView texture2DArrayView when viewedTexture is XRTexture2DArray expected && !ReferenceEquals(texture2DArrayView.ViewedTexture, expected):
+                texture2DArrayView.ViewedTexture = expected;
+                break;
+        }
+    }
+
     private bool NeedsRecreateMsaaFbo(XRFrameBuffer fbo)
     {
         if (fbo.EffectiveSampleCount != MsaaSampleCount)
@@ -262,6 +277,67 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         }
 
         return false;
+    }
+
+    private bool NeedsRecreateMsaaLightCombineFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 7)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(MsaaAlbedoOpacityTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(MsaaNormalTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(MsaaRMSETextureName))
+            || !ReferenceEquals(textures[3], GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName))
+            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(MsaaDepthViewTextureName))
+            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(MsaaLightingTextureName))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(BRDFTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader baseShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()), EShaderType.Fragment);
+        XRShader expectedShader = ShaderHelper.CreateDefinedShaderVariant(baseShader, MsaaDeferredDefine) ?? baseShader;
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateDeferredGBufferFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete || fbo.EffectiveSampleCount != 1u)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 5)
+            return true;
+
+        XRTexture? albedo = GetTexture<XRTexture>(AlbedoOpacityTextureName);
+        XRTexture? normal = GetTexture<XRTexture>(NormalTextureName);
+        XRTexture? rmse = GetTexture<XRTexture>(RMSETextureName);
+        XRTexture? transformId = GetTexture<XRTexture>(TransformIdTextureName);
+        XRTexture? depthStencil = GetTexture<XRTexture>(DepthStencilTextureName);
+
+        return !ReferenceEquals(targets[0].Target, albedo)
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0
+            || !ReferenceEquals(targets[1].Target, normal)
+            || targets[1].Attachment != EFrameBufferAttachment.ColorAttachment1
+            || !ReferenceEquals(targets[2].Target, rmse)
+            || targets[2].Attachment != EFrameBufferAttachment.ColorAttachment2
+            || !ReferenceEquals(targets[3].Target, transformId)
+            || targets[3].Attachment != EFrameBufferAttachment.ColorAttachment3
+            || !ReferenceEquals(targets[4].Target, depthStencil)
+            || targets[4].Attachment != EFrameBufferAttachment.DepthStencilAttachment;
     }
 
     /// <summary>
@@ -285,6 +361,12 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private string DeferredLightCombineShaderName() => 
         Stereo ? "DeferredLightCombineStereo.fs" : 
         "DeferredLightCombine.fs";
+
+    private string SceneCopyShaderName() =>
+        Stereo ? "SceneCopyStereo.fs" : "SceneCopy.fs";
+
+    private string DeferredTransparencyBlurShaderName() =>
+        Stereo ? "DeferredTransparencyBlurStereo.fs" : "DeferredTransparencyBlur.fs";
 
     /// <summary>
     /// Affects how textures and FBOs are created for single-pass stereo rendering.
@@ -319,11 +401,14 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string AmbientOcclusionBlurFBOName = "AmbientOcclusionBlurFBO";
     public const string HBAOPlusBlurIntermediateFBOName = "HBAOPlusBlurIntermediateFBO";
     public const string GTAOBlurIntermediateFBOName = "GTAOBlurIntermediateFBO";
+    public const string DeferredGBufferFBOName = "DeferredGBufferFBO";
     public const string GBufferFBOName = "GBufferFBO";
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
     public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
+    public const string SceneCopyFBOName = "SceneCopyFBO";
     public const string TransparentSceneCopyFBOName = "TransparentSceneCopyFBO";
+    public const string DeferredTransparencyBlurFBOName = "DeferredTransparencyBlurFBO";
     public const string TransparentAccumulationFBOName = "TransparentAccumulationFBO";
     public const string TransparentResolveFBOName = "TransparentResolveFBO";
     public const string TransparentAccumulationDebugFBOName = "TransparentAccumulationDebugFBO";
@@ -480,10 +565,13 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         HistoryExposureFBOName,
         DepthPreloadFBOName,
         ForwardPassMsaaFBOName,
+        SceneCopyFBOName,
         TransparentSceneCopyFBOName,
+        DeferredTransparencyBlurFBOName,
         TransparentAccumulationFBOName,
         TransparentResolveFBOName,
         VelocityFBOName,
+        DeferredGBufferFBOName,
         MsaaGBufferFBOName,
         MsaaLightingFBOName,
         MsaaLightCombineFBOName,
@@ -689,7 +777,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
     {
-        program.Uniform("UseAmbientOcclusion", ShouldUseAmbientOcclusion());
+        bool useAo = ShouldUseAmbientOcclusion();
+        program.Uniform("UseAmbientOcclusion", useAo);
 
         float aoPower = 1.0f;
         bool multiBounce = false;
@@ -715,12 +804,19 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     public bool BindPbrLightingResources(XRRenderProgram program)
     {
+        void SuppressOptionalProbeSamplers()
+        {
+            program.SuppressFallbackSamplerWarning("IrradianceArray");
+            program.SuppressFallbackSamplerWarning("PrefilterArray");
+        }
+
         XRTexture? brdfTexture = GetTexture<XRTexture>(BRDFTextureName);
         if (brdfTexture is not null)
             program.Sampler("BRDF", brdfTexture, 6);
 
         if (!UsesLightProbeGI)
         {
+            SuppressOptionalProbeSamplers();
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
@@ -731,6 +827,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         var world = RenderingWorld;
         if (world is null)
         {
+            SuppressOptionalProbeSamplers();
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
@@ -743,6 +840,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (readyProbes.Count == 0)
         {
             ClearProbeResources();
+            SuppressOptionalProbeSamplers();
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
@@ -762,6 +860,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         program.Uniform("ForwardPbrResourcesEnabled", enabled);
         if (!enabled)
         {
+            SuppressOptionalProbeSamplers();
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
             program.Uniform("UseProbeGrid", false);
@@ -815,10 +914,17 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             ?? CurrentRenderingPipeline?.LastSceneCamera
             ?? CurrentRenderingPipeline?.LastRenderingCamera;
 
-        var stage = camera?.GetPostProcessStageState<AmbientOcclusionSettings>();
-        return stage?.TryGetBacking(out AmbientOcclusionSettings? settings) == true
-            ? settings
-            : null;
+        if (camera is null)
+            return null;
+
+        var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>();
+        if (stage is null)
+            return null;
+
+        if (!stage.TryGetBacking(out AmbientOcclusionSettings? settings))
+            return null;
+
+        return settings;
     }
 
     private void RenderProbeTetrahedra(List<LightProbeComponent> readyProbes, int tetraCount)

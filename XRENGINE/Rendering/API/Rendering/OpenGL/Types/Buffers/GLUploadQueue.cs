@@ -26,6 +26,9 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool Enabled { get; set; } = true;
 
+            private double _savedBudgetMs;
+            private bool _budgetBoosted;
+
             /// <summary>
             /// Number of pending uploads in the queue.
             /// </summary>
@@ -71,7 +74,14 @@ namespace XREngine.Rendering.OpenGL
             public void ProcessUploads()
             {
                 if (_pendingUploads.IsEmpty)
+                {
+                    if (_budgetBoosted)
+                    {
+                        FrameBudgetMs = _savedBudgetMs;
+                        _budgetBoosted = false;
+                    }
                     return;
+                }
 
                 // Bail if the GPU is in OOM recovery — uploading more data would worsen VRAM pressure.
                 if (_renderer._oomDetectedThisFrame)
@@ -84,6 +94,28 @@ namespace XREngine.Rendering.OpenGL
                 {
                     ExecuteUpload(upload);
                 }
+
+                if (_budgetBoosted && _pendingUploads.IsEmpty)
+                {
+                    FrameBudgetMs = _savedBudgetMs;
+                    _budgetBoosted = false;
+                }
+            }
+
+            /// <summary>
+            /// Temporarily increases <see cref="FrameBudgetMs"/> to drain a large backlog
+            /// faster (e.g. during startup when many buffers and shaders need uploading).
+            /// The original budget is automatically restored when the pending queue empties.
+            /// Safe to call from any thread.
+            /// </summary>
+            public void BoostBudgetUntilDrained(double boostedMs)
+            {
+                if (_budgetBoosted)
+                    return;
+
+                _savedBudgetMs = FrameBudgetMs;
+                FrameBudgetMs = boostedMs;
+                _budgetBoosted = true;
             }
 
             private void ExecuteUpload(PendingUpload upload)

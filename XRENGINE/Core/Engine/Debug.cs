@@ -417,11 +417,17 @@ namespace XREngine
         /// Logs a warning message under an explicit category with stack trace.
         /// </summary>
         public static void LogWarning(ELogCategory category, string message, params object[] args)
+            => LogWarning(category, 0, 5, message, args);
+
+        /// <summary>
+        /// Logs a warning message under an explicit category with configurable stack trace depth.
+        /// </summary>
+        public static void LogWarning(ELogCategory category, int lineIgnoreCount, int includedLineCount, string message, params object[] args)
         {
 #if DEBUG || EDITOR
             if (args.Length > 0)
                 message = string.Format(message, args);
-            string stackTrace = GetStackTrace(4, 5);
+            string stackTrace = GetStackTrace(4 + lineIgnoreCount, includedLineCount);
             WriteLogMessage($"[WARN] {message}{Environment.NewLine}{stackTrace}", Engine.GameSettings?.LogOutputToFile ?? false, category);
 #endif
         }

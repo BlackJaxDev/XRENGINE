@@ -170,7 +170,11 @@ namespace XREngine.Rendering.OpenGL
             /// <returns></returns>
             private bool GenerateVertexShader(out GLRenderProgram? vertexProgram, GLRenderProgram? materialProgram, EProgramStageMask mask)
             {
-                bool forceGeneratedVertexProgram = Engine.Rendering.State.RenderingPipelineState?.ForceGeneratedVertexProgram ?? false;
+                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                bool pointLightShadowPass = renderState?.ShadowPass == true
+                    && renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
+                    && UsesPointLightShadowCubemap(globalMaterialOverride);
+                bool forceGeneratedVertexProgram = (renderState?.ForceGeneratedVertexProgram ?? false) || pointLightShadowPass;
                 vertexProgram = forceGeneratedVertexProgram
                     ? GetForcedGeneratedVertexProgram()
                     : GetOrCreateSeparatedVertexProgram();

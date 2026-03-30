@@ -426,6 +426,7 @@ namespace XREngine.Scene
             }
 
             int[] pointShadowSlots = Enumerable.Repeat(-1, 16).ToArray();
+            float[] pointShadowNearPlanes = new float[16];
             float[] pointShadowFarPlanes = new float[16];
             float[] pointShadowBase = new float[16];
             float[] pointShadowExponent = new float[16];
@@ -434,10 +435,12 @@ namespace XREngine.Scene
             int[] pointShadowSamples = new int[16];
             float[] pointShadowFilterRadius = new float[16];
             bool[] pointShadowEnablePCSS = new bool[16];
+            int[] pointShadowDebugModes = new int[16];
             int pointShadowSlot = 0;
             for (int i = 0; i < DynamicPointLights.Count && i < pointShadowSlots.Length; ++i)
             {
                 PointLightComponent light = DynamicPointLights[i];
+                pointShadowNearPlanes[i] = light.ShadowNearPlaneDistance;
                 pointShadowFarPlanes[i] = light.Radius;
                 pointShadowBase[i] = light.ShadowExponentBase;
                 pointShadowExponent[i] = light.ShadowExponent;
@@ -446,6 +449,7 @@ namespace XREngine.Scene
                 pointShadowSamples[i] = light.Samples;
                 pointShadowFilterRadius[i] = light.FilterRadius;
                 pointShadowEnablePCSS[i] = light.EnablePCSS;
+                pointShadowDebugModes[i] = light.ShadowDebugMode;
 
                 XRTexture? shadowTexture = light.CastsShadows
                     ? light.ShadowMap?.Material?.Textures.FirstOrDefault(x => x?.SamplerName == "ShadowMap")
@@ -468,6 +472,7 @@ namespace XREngine.Scene
             int[] spotShadowSamples = new int[16];
             float[] spotShadowFilterRadius = new float[16];
             bool[] spotShadowEnablePCSS = new bool[16];
+            int[] spotShadowDebugModes = new int[16];
             int spotShadowSlot = 0;
             for (int i = 0; i < DynamicSpotLights.Count && i < spotShadowSlots.Length; ++i)
             {
@@ -479,6 +484,7 @@ namespace XREngine.Scene
                 spotShadowSamples[i] = light.Samples;
                 spotShadowFilterRadius[i] = light.FilterRadius;
                 spotShadowEnablePCSS[i] = light.EnablePCSS;
+                spotShadowDebugModes[i] = light.ShadowDebugMode;
 
                 XRTexture? shadowTexture = light.CastsShadows
                     ? light.ShadowMap?.Material?.Textures.FirstOrDefault(x => x?.SamplerName == "ShadowMap")
@@ -494,6 +500,7 @@ namespace XREngine.Scene
                 program.Sampler($"SpotLightShadowMaps[{spotShadowSlot}]", DummyShadowMap, spotShadowStartUnit + spotShadowSlot);
 
             program.Uniform("PointLightShadowSlots", pointShadowSlots);
+            program.Uniform("PointLightShadowNearPlanes", pointShadowNearPlanes);
             program.Uniform("PointLightShadowFarPlanes", pointShadowFarPlanes);
             program.Uniform("PointLightShadowBase", pointShadowBase);
             program.Uniform("PointLightShadowExponent", pointShadowExponent);
@@ -502,6 +509,7 @@ namespace XREngine.Scene
             program.Uniform("PointLightShadowSamples", pointShadowSamples);
             program.Uniform("PointLightShadowFilterRadius", pointShadowFilterRadius);
             program.Uniform("PointLightShadowEnablePCSS", pointShadowEnablePCSS);
+            program.Uniform("PointLightShadowDebugModes", pointShadowDebugModes);
 
             program.Uniform("SpotLightShadowSlots", spotShadowSlots);
             program.Uniform("SpotLightShadowBase", spotShadowBase);
@@ -511,6 +519,7 @@ namespace XREngine.Scene
             program.Uniform("SpotLightShadowSamples", spotShadowSamples);
             program.Uniform("SpotLightShadowFilterRadius", spotShadowFilterRadius);
             program.Uniform("SpotLightShadowEnablePCSS", spotShadowEnablePCSS);
+            program.Uniform("SpotLightShadowDebugModes", spotShadowDebugModes);
 
             // Bind the actual shadow texture after per-light SetUniforms.
             // ALWAYS bind a texture to unit 15 - if no shadow map, use a 1x1 white dummy.

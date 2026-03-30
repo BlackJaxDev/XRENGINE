@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
 using XREngine.Data.Rendering;
@@ -8,6 +9,7 @@ namespace XREngine.Rendering.Shaders;
 public static class ForwardDepthNormalVariantFactory
 {
     private const string ForwardLightingFunction = "XRENGINE_CalculateForwardLighting";
+    private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<string, CachedFragmentVariantResult>> FragmentVariantSourceCache = new();
 
     private static readonly Regex OutputDeclarationRegex = new(
         "^\\s*layout\\s*\\(\\s*location\\s*=\\s*\\d+\\s*\\)\\s*out\\s+[^;]+;\\s*$",
@@ -33,6 +35,15 @@ public static class ForwardDepthNormalVariantFactory
         @"^\s*#(?:if|ifdef|ifndef|elif|else|endif)\b",
         RegexOptions.Compiled | RegexOptions.Multiline);
 
+    private sealed class CachedFragmentVariantResult(bool success, string variantSource)
+    {
+        public bool Success { get; } = success;
+        public string VariantSource { get; } = variantSource;
+    }
+
+    internal static void ClearCaches()
+        => FragmentVariantSourceCache.Clear();
+
     public static XRMaterial? CreateMaterialVariant(XRMaterial sourceMaterial)
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
@@ -50,10 +61,9 @@ public static class ForwardDepthNormalVariantFactory
         if (explicitVariantShader is not null)
             return CreateMaterialVariant(sourceMaterial, explicitVariantShader);
 
-        if (!TryCreateFragmentVariantSource(fragmentSource, out string variantSource))
-            return null;
-
-        return CreateMaterialVariant(sourceMaterial, new XRShader(EShaderType.Fragment, variantSource));
+        return TryCreateFragmentVariantSource(fragmentSource, out string variantSource)
+            ? CreateMaterialVariant(sourceMaterial, new XRShader(EShaderType.Fragment, variantSource))
+            : (XRMaterial?)null;
     }
 
     private static XRMaterial CreateMaterialVariant(XRMaterial sourceMaterial, XRShader fragmentVariantShader)
@@ -83,10 +93,34 @@ public static class ForwardDepthNormalVariantFactory
 
     public static bool TryCreateFragmentVariantSource(string fragmentSource, out string variantSource)
     {
-        variantSource = string.Empty;
-
         if (string.IsNullOrWhiteSpace(fragmentSource))
+        {
+            variantSource = string.Empty;
             return false;
+        }
+
+        ulong sourceHash = ComputeSourceHash(fragmentSource);
+        ConcurrentDictionary<string, CachedFragmentVariantResult> bucket = FragmentVariantSourceCache.GetOrAdd(
+            sourceHash,
+            static _ => new(StringComparer.Ordinal));
+
+        CachedFragmentVariantResult cachedResult = bucket.GetOrAdd(
+            fragmentSource,
+            static source => CreateCachedFragmentVariantResult(source));
+
+        variantSource = cachedResult.VariantSource;
+        return cachedResult.Success;
+    }
+
+    private static CachedFragmentVariantResult CreateCachedFragmentVariantResult(string fragmentSource)
+    {
+        bool success = TryCreateFragmentVariantSourceCore(fragmentSource, out string variantSource);
+        return new(success, success ? variantSource : string.Empty);
+    }
+
+    private static bool TryCreateFragmentVariantSourceCore(string fragmentSource, out string variantSource)
+    {
+        variantSource = string.Empty;
 
         if (fragmentSource.Contains("XRE_WriteWeightedBlendedOit", StringComparison.Ordinal) ||
             fragmentSource.Contains("XRE_StorePerPixelLinkedListFragment", StringComparison.Ordinal))
@@ -100,6 +134,23 @@ public static class ForwardDepthNormalVariantFactory
             return false;
 
         return true;
+    }
+
+    private static ulong ComputeSourceHash(string source)
+    {
+        const ulong fnvOffset = 14695981039346656037ul;
+        const ulong fnvPrime = 1099511628211ul;
+
+        ulong hash = fnvOffset;
+        for (int i = 0; i < source.Length; i++)
+        {
+            hash ^= source[i];
+            hash *= fnvPrime;
+        }
+
+        hash ^= (ulong)source.Length;
+        hash *= fnvPrime;
+        return hash;
     }
 
     private static RenderingParameters CreateRenderOptions(RenderingParameters? source)

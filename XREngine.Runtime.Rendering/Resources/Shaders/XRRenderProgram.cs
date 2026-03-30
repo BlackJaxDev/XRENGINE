@@ -389,6 +389,7 @@ namespace XREngine.Rendering
 
         public event Action<string, IRenderTextureResource, int>? SamplerRequested = null;
         public event Action<int, IRenderTextureResource, int>? SamplerRequestedByLocation = null;
+        public event Action<string>? SuppressFallbackSamplerWarningRequested = null;
 
         public event Action<uint, IRenderTextureResource, int, bool, int, EImageAccess, EImageFormat>? BindImageTextureRequested = null;
         public event Action<uint, uint, uint, IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, EImageAccess access, EImageFormat format)>?>? DispatchComputeRequested = null;
@@ -799,6 +800,13 @@ namespace XREngine.Rendering
         /// <param name="value"></param>
         public void Sampler(int location, IRenderTextureResource texture, int textureUnit)
             => SamplerRequestedByLocation?.Invoke(location, texture, textureUnit);
+
+        /// <summary>
+        /// Suppresses the fallback binding warning for the named sampler during the current draw batch.
+        /// A fallback texture may still be bound if the sampler remains unbound.
+        /// </summary>
+        public void SuppressFallbackSamplerWarning(string name)
+            => SuppressFallbackSamplerWarningRequested?.Invoke(name);
 
         public enum EImageAccess
         {

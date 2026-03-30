@@ -112,6 +112,7 @@ layout(binding = 17) uniform samplerCube PointLightShadowMaps[XRENGINE_MAX_FORWA
 layout(binding = 21) uniform sampler2D SpotLightShadowMaps[XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS];
 
 uniform int PointLightShadowSlots[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float PointLightShadowNearPlanes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowFarPlanes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowBase[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowExponent[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
@@ -120,6 +121,7 @@ uniform float PointLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int PointLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform bool PointLightShadowEnablePCSS[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform int PointLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 
 uniform int SpotLightShadowSlots[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float SpotLightShadowBase[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
@@ -129,6 +131,7 @@ uniform float SpotLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int SpotLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float SpotLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform bool SpotLightShadowEnablePCSS[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform int SpotLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 
 // Forward+ tiled light culling uniforms
 uniform bool ForwardPlusEnabled;
@@ -136,6 +139,10 @@ uniform vec2 ForwardPlusScreenSize;
 uniform int ForwardPlusTileSize;
 uniform int ForwardPlusMaxLightsPerTile;
 uniform int ForwardPlusEyeCount;
+#ifndef XRENGINE_SCREEN_ORIGIN_UNIFORM
+#define XRENGINE_SCREEN_ORIGIN_UNIFORM
+uniform vec2 ScreenOrigin;
+#endif
 
 struct ForwardPlusLocalLight
 {
@@ -155,6 +162,33 @@ layout(std430, binding = 21) readonly buffer ForwardPlusVisibleIndicesBuffer
 {
     int ForwardPlusVisibleIndices[];
 };
+
+int XRENGINE_ForwardShadowDebugModeActive = 0;
+vec3 XRENGINE_ForwardShadowDebugColor = vec3(0.0);
+
+vec3 XRENGINE_ResolveForwardShadowDebugColor(int debugMode, float lit, float margin)
+{
+    if (debugMode == 1)
+        return vec3(lit);
+
+    if (debugMode == 2)
+    {
+        float intensity = min(abs(margin) * 20.0, 1.0);
+        float clampedLit = clamp(lit, 0.0, 1.0);
+        return vec3((1.0 - clampedLit) * intensity, clampedLit * intensity, 0.0);
+    }
+
+    return vec3(0.0);
+}
+
+void XRENGINE_TrySetForwardShadowDebug(int debugMode, float lit, float margin)
+{
+    if (debugMode == 0 || XRENGINE_ForwardShadowDebugModeActive != 0)
+        return;
+
+    XRENGINE_ForwardShadowDebugModeActive = debugMode;
+    XRENGINE_ForwardShadowDebugColor = XRENGINE_ResolveForwardShadowDebugColor(debugMode, lit, margin);
+}
 
 vec3 XRENGINE_MultiBounceAO(float ao, vec3 albedo)
 {
@@ -720,15 +754,13 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
     if (lightIndex < 0 || lightIndex >= PointLightCount)
         return 1.0;
 
+    int debugMode = PointLightShadowDebugModes[lightIndex];
     int shadowSlot = PointLightShadowSlots[lightIndex];
     if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS)
+    {
+        XRENGINE_TrySetForwardShadowDebug(debugMode, 1.0, 1.0);
         return 1.0;
-
-    vec3 fragToLight = fragPos - light.Position;
-    float lightDist = length(fragToLight);
-    float farPlaneDist = PointLightShadowFarPlanes[lightIndex];
-    if (lightDist >= farPlaneDist)
-        return 1.0;
+    }
 
     float NoL = max(dot(normal, normalize(light.Position - fragPos)), 0.0);
     float bias = XRENGINE_GetLocalShadowBias(
@@ -737,8 +769,28 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
         PointLightShadowExponent[lightIndex],
         PointLightShadowBiasMin[lightIndex],
         PointLightShadowBiasMax[lightIndex]);
+    vec3 offsetPosWS = fragPos + normal * PointLightShadowBiasMax[lightIndex];
+    vec3 fragToLight = offsetPosWS - light.Position;
+    float lightDist = length(fragToLight);
+    float nearPlaneDist = max(PointLightShadowNearPlanes[lightIndex], 0.0);
+    float farPlaneDist = PointLightShadowFarPlanes[lightIndex];
+    if (lightDist >= farPlaneDist)
+        return 1.0;
+    // The cubemap shadow cameras clip everything inside the near plane.
+    // Geometry crossing that plane can create a synthetic blocker shell near the light,
+    // so receivers in that blind zone should be treated as unshadowed.
+    if (lightDist <= nearPlaneDist + PointLightShadowBiasMax[lightIndex])
+    {
+        if (debugMode != 0)
+            XRENGINE_TrySetForwardShadowDebug(debugMode, 1.0, nearPlaneDist / max(farPlaneDist, 0.001));
+        return 1.0;
+    }
+    // Point-light shadow cubemaps use R16f (10-bit mantissa). The half-float
+    // quantization error in world space is approximately lightDist / 2048.
+    // Ensure the bias is at least ~4 ULPs to prevent universal shadow acne.
+    bias = max(bias, lightDist * (1.0 / 512.0));
     float sampleRadius = XRENGINE_GetPointShadowSampleRadius(PointLightShadowMaps[shadowSlot], PointLightShadowFilterRadius[lightIndex]);
-    return XRENGINE_SampleShadowCubeFiltered(
+    float shadow = XRENGINE_SampleShadowCubeFiltered(
         PointLightShadowMaps[shadowSlot],
         fragToLight,
         lightDist,
@@ -747,6 +799,15 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
         sampleRadius,
         PointLightShadowSamples[lightIndex],
         PointLightShadowEnablePCSS[lightIndex]);
+
+    if (debugMode != 0)
+    {
+        float centerDepth = texture(PointLightShadowMaps[shadowSlot], normalize(fragToLight)).r * farPlaneDist;
+        float margin = (centerDepth - (lightDist - bias)) / max(farPlaneDist, 0.001);
+        XRENGINE_TrySetForwardShadowDebug(debugMode, shadow, margin);
+    }
+
+    return shadow;
 }
 
 float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, vec3 fragPos, vec3 lightDir)
@@ -754,9 +815,13 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
     if (lightIndex < 0 || lightIndex >= SpotLightCount)
         return 1.0;
 
+    int debugMode = SpotLightShadowDebugModes[lightIndex];
     int shadowSlot = SpotLightShadowSlots[lightIndex];
     if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS)
+    {
+        XRENGINE_TrySetForwardShadowDebug(debugMode, 1.0, 1.0);
         return 1.0;
+    }
 
     float NoL = max(dot(normal, lightDir), 0.0);
     float bias = XRENGINE_GetLocalShadowBias(
@@ -787,13 +852,22 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
             contactSampleCount)
         : 1.0;
 
-    return XRENGINE_SampleShadowMapFiltered(
+    float shadow = XRENGINE_SampleShadowMapFiltered(
         SpotLightShadowMaps[shadowSlot],
         fragCoord,
         bias,
         SpotLightShadowSamples[lightIndex],
         SpotLightShadowFilterRadius[lightIndex],
         SpotLightShadowEnablePCSS[lightIndex]) * contact;
+
+    if (debugMode != 0)
+    {
+        float centerDepth = texture(SpotLightShadowMaps[shadowSlot], fragCoord.xy).r;
+        float margin = centerDepth - (fragCoord.z - bias);
+        XRENGINE_TrySetForwardShadowDebug(debugMode, shadow, margin);
+    }
+
+    return shadow;
 }
 
 vec3 XRENGINE_CalcPointLight(int lightIndex, PointLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0)
@@ -854,6 +928,8 @@ vec3 XRENGINE_CalcForwardPlusSpotLight(ForwardPlusLocalLight light, vec3 normal,
 // Call this from your fragment shader main() with your surface parameters
 vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, float specularIntensity, float ambientOcclusion)
 {
+    XRENGINE_ForwardShadowDebugModeActive = 0;
+    XRENGINE_ForwardShadowDebugColor = vec3(0.0);
     normal = normalize(normal);
     vec3 viewDir = normalize(XRENGINE_GetForwardCameraPosition() - fragPos);
     vec3 rms = vec3(clamp(Roughness, 0.0, 1.0), clamp(Metallic, 0.0, 1.0), max(specularIntensity, 0.0));
@@ -871,9 +947,10 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
     // Local lights: use Forward+ if available, otherwise brute-force
     if (ForwardPlusEnabled)
     {
-        ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;
         int tileCountX = (int(ForwardPlusScreenSize.x) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
         int tileCountY = (int(ForwardPlusScreenSize.y) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
+        ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;
+        tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));
         int tileIndex = XRENGINE_GetForwardViewIndex() * (tileCountX * tileCountY) + tileCoord.y * tileCountX + tileCoord.x;
         int baseIndex = tileIndex * ForwardPlusMaxLightsPerTile;
 
@@ -897,6 +974,9 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
         for (int i = 0; i < SpotLightCount; ++i)
             totalLight += XRENGINE_CalcSpotLight(i, SpotLights[i], normal, fragPos, albedo, rms, F0);
     }
+
+    if (XRENGINE_ForwardShadowDebugModeActive != 0)
+        return XRENGINE_ForwardShadowDebugColor;
 
     return totalLight + XRENGINE_CalculateAmbientPbr(normal, fragPos, albedo, viewDir, rms, ambientOcclusion) + albedo * Emission;
 }

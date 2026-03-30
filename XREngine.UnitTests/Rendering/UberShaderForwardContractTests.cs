@@ -49,6 +49,43 @@ public sealed class UberShaderForwardContractTests
     }
 
     [Test]
+    public void UberShaderFragment_SharedScreenOriginUniform_IsGuardedAcrossSnippets()
+    {
+        string forwardLighting = LoadShaderSource(Path.Combine("Snippets", "ForwardLighting.glsl"));
+        string ambientOcclusion = LoadShaderSource(Path.Combine("Snippets", "AmbientOcclusionSampling.glsl"));
+
+        foreach (string source in new[] { forwardLighting, ambientOcclusion })
+        {
+            source.ShouldContain("#ifndef XRENGINE_SCREEN_ORIGIN_UNIFORM");
+            source.ShouldContain("#define XRENGINE_SCREEN_ORIGIN_UNIFORM");
+            source.ShouldContain("uniform vec2 ScreenOrigin;");
+            source.ShouldContain("#endif");
+        }
+    }
+
+    [Test]
+    public void UberShaderFragment_MvpPath_CompileTimeTrimsOptionalFeatureSurface()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+        string uniforms = LoadShaderSource(Path.Combine("Uber", "uniforms.glsl"));
+
+        source.ShouldContain("#define XRENGINE_UBER_MVP_FRAGMENT 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_DETAIL_TEXTURES 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_DISSOLVE 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_PARALLAX 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_SUBSURFACE 1");
+        source.ShouldNotContain("#include \"pbr.glsl\"");
+        source.ShouldContain("struct PBRData {");
+
+        uniforms.ShouldContain("#ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING");
+        uniforms.ShouldContain("#ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR");
+        uniforms.ShouldContain("#ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES");
+        uniforms.ShouldContain("#ifndef XRENGINE_UBER_DISABLE_DISSOLVE");
+        uniforms.ShouldContain("#ifndef XRENGINE_UBER_DISABLE_PARALLAX");
+    }
+
+    [Test]
     public void DefaultUberMaterialContract_RequestsForwardEngineUniforms_AndFeatureDefaults()
     {
         ShaderVar[] parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters();
@@ -78,11 +115,17 @@ public sealed class UberShaderForwardContractTests
     {
         string monoSource = LoadShaderSource(Path.Combine("Uber", "UberShader.vert"));
         string ovrSource = LoadShaderSource(Path.Combine("Uber", "UberShader_OVR.vert"));
+        string nvSource = LoadShaderSource(Path.Combine("Uber", "UberShader_NV.vert"));
 
+        monoSource.ShouldContain("out gl_PerVertex {");
         monoSource.ShouldContain("layout(location = 22) out float FragViewIndex;");
         monoSource.ShouldContain("FragViewIndex = 0.0;");
+        ovrSource.ShouldContain("out gl_PerVertex {");
         ovrSource.ShouldContain("layout(location = 22) out float FragViewIndex;");
         ovrSource.ShouldContain("FragViewIndex = float(gl_ViewID_OVR);");
+        nvSource.ShouldContain("out gl_PerVertex {");
+        nvSource.ShouldContain("layout(location = 22) out float FragViewIndex;");
+        nvSource.ShouldContain("FragViewIndex = 0.0;");
     }
 
     private static string LoadShaderSource(string shaderRelativePath)

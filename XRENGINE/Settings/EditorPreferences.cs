@@ -1147,7 +1147,7 @@ namespace XREngine
         private bool _enableProfilerFrameLogging = true;
         private bool _enableProfilerComponentTiming = true;
         private bool _enableRenderStatisticsTracking = true;
-        private bool _enableGpuRenderPipelineProfiling = false;
+        private bool _enableGpuRenderPipelineProfiling = true;
         private bool _enableMainThreadInvokeDiagnostics = false;
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
@@ -1466,6 +1466,7 @@ namespace XREngine
         [Category("Profiling")]
         [DisplayName("Enable Thread Allocation Tracking")]
         [Description("Tracks GC allocations per engine thread/tick using GC.GetAllocatedBytesForCurrentThread(). Used by the Profiler panel.")]
+        [DefaultValue(true)]
         public bool EnableThreadAllocationTracking
         {
             get
@@ -1489,6 +1490,7 @@ namespace XREngine
         [Category("Profiling")]
         [DisplayName("Enable Profiler Frame Logging")]
         [Description("When enabled, the code profiler records method timings for the Profiler panel. Disable to reduce overhead in hot paths.")]
+        [DefaultValue(true)]
         public bool EnableProfilerFrameLogging
         {
             get
@@ -1513,6 +1515,7 @@ namespace XREngine
         [Category("Profiling")]
         [DisplayName("Enable Profiler Component Timing")]
         [Description("When enabled, the profiler records per-component tick timings for the Profiler panel's Components view. Disable to remove that tracking overhead while leaving frame logging unchanged.")]
+        [DefaultValue(true)]
         public bool EnableProfilerComponentTiming
         {
             get
@@ -1537,6 +1540,7 @@ namespace XREngine
         [Category("Profiling")]
         [DisplayName("Enable Render Statistics Tracking")]
         [Description("When enabled, tracks per-frame rendering statistics (draw calls, triangles, etc.). Disable to reduce overhead.")]
+        [DefaultValue(true)]
         public bool EnableRenderStatisticsTracking
         {
             get
@@ -1562,6 +1566,7 @@ namespace XREngine
         [Category("Profiling")]
         [DisplayName("Enable GPU Render-Pipeline Profiling")]
         [Description("When enabled, records GPU timestamp timings for render-pipeline commands on the OpenGL backend for the Profiler panel.")]
+        [DefaultValue(true)]
         public bool EnableGpuRenderPipelineProfiling
         {
             get

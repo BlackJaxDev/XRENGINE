@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System.Collections.Concurrent;
+using System.IO;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Core.Files;
@@ -15,10 +16,39 @@ public static class ShaderHelper
 {
     private const string DepthNormalPrePassDefine = "XRENGINE_DEPTH_NORMAL_PREPASS";
     private const string ShadowCasterPassDefine = "XRENGINE_SHADOW_CASTER_PASS";
+    private const string WeightedBlendedOitDefine = "XRENGINE_FORWARD_WEIGHTED_OIT";
+    private const string PerPixelLinkedListDefine = "XRENGINE_FORWARD_PPLL";
+    private const string DepthPeelingDefine = "XRENGINE_FORWARD_DEPTH_PEEL";
+    private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<DefinedVariantCacheKey, string>> DefinedVariantSourceCache = new();
+    private static readonly ConcurrentDictionary<DefinedVariantShaderCacheKey, XRShader> DefinedVariantShaderCache = new();
+    private static readonly HashSet<string> DefineBasedTransparencyForwardShaderFiles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "LitTexturedForward.fs",
+        "LitTexturedSilhouettePOMForward.fs",
+        "LitTexturedNormalForward.fs",
+        "LitTexturedNormalSpecForward.fs",
+        "LitTexturedNormalAlphaForward.fs",
+        "LitTexturedNormalSpecAlphaForward.fs",
+        "LitTexturedSpecForward.fs",
+        "LitTexturedAlphaForward.fs",
+        "LitTexturedSpecAlphaForward.fs",
+        "UnlitTexturedForward.fs",
+        "UnlitTexturedStereoForward.fs",
+        "UnlitAlphaTexturedForward.fs",
+    };
 
     private static IRuntimeShaderServices Services
         => RuntimeShaderServices.Current
         ?? throw new InvalidOperationException("RuntimeShaderServices.Current has not been configured.");
+
+    private readonly record struct DefinedVariantCacheKey(string DefineName, string SourceText);
+    private readonly record struct DefinedVariantShaderCacheKey(string DefineName, EShaderType ShaderType, string SourceText, string? FilePath, string? SourceName);
+
+    internal static void ClearDefinedVariantSourceCache()
+    {
+        DefinedVariantSourceCache.Clear();
+        DefinedVariantShaderCache.Clear();
+    }
 
     /// <summary>
     /// Loads an engine shader from the Shaders asset directory.
@@ -189,43 +219,43 @@ public static class ShaderHelper
     #region Weighted OIT Forward Shaders
 
     public static XRShader LitTextureFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(LitTextureFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader LitTextureSilhouettePOMFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedSilhouettePOMForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(LitTextureSilhouettePOMFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader LitTextureNormalFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader LitTextureNormalSpecFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalSpecForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalSpecFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader LitTextureNormalAlphaFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalAlphaForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalAlphaFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader LitTextureNormalSpecAlphaFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalSpecAlphaForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalSpecAlphaFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader LitTextureSpecFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedSpecForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(LitTextureSpecFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader LitTextureAlphaFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedAlphaForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(LitTextureAlphaFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader LitTextureSpecAlphaFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedSpecAlphaForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(LitTextureSpecAlphaFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader LitColorFragForwardWeightedOit()
         => LoadEngineShader(Path.Combine("Common", "LitColoredForwardWeightedOit.fs"));
 
     public static XRShader UnlitTextureFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "UnlitTexturedForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(UnlitTextureFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader UnlitTextureStereoFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "UnlitTexturedStereoForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(UnlitTextureStereoFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader UnlitAlphaTextureFragForwardWeightedOit()
-        => LoadEngineShader(Path.Combine("Common", "UnlitAlphaTexturedForwardWeightedOit.fs"));
+        => CreateDefinedShaderVariant(UnlitAlphaTextureFragForward(), WeightedBlendedOitDefine)!;
 
     public static XRShader UnlitColorFragForwardWeightedOit()
         => LoadEngineShader(Path.Combine("Common", "UnlitColoredForwardWeightedOit.fs"));
@@ -234,92 +264,212 @@ public static class ShaderHelper
         => XRShader.EngineShader(Path.Combine("Scene3D", "DeferredDecalForwardWeightedOit.fs"), EShaderType.Fragment);
 
     public static XRShader LitTextureFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedForwardPpll.fs"));
+        => CreateDefinedShaderVariant(LitTextureFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader LitTextureSilhouettePOMFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedSilhouettePOMForwardPpll.fs"));
+        => CreateDefinedShaderVariant(LitTextureSilhouettePOMFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader LitTextureNormalFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalForwardPpll.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader LitTextureNormalSpecFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalSpecForwardPpll.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalSpecFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader LitTextureNormalAlphaFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalAlphaForwardPpll.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalAlphaFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader LitTextureNormalSpecAlphaFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalSpecAlphaForwardPpll.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalSpecAlphaFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader LitTextureSpecFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedSpecForwardPpll.fs"));
+        => CreateDefinedShaderVariant(LitTextureSpecFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader LitTextureAlphaFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedAlphaForwardPpll.fs"));
+        => CreateDefinedShaderVariant(LitTextureAlphaFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader LitTextureSpecAlphaFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedSpecAlphaForwardPpll.fs"));
+        => CreateDefinedShaderVariant(LitTextureSpecAlphaFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader LitColorFragForwardPerPixelLinkedList()
         => LoadEngineShader(Path.Combine("Common", "LitColoredForwardPpll.fs"));
 
     public static XRShader UnlitTextureFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "UnlitTexturedForwardPpll.fs"));
+        => CreateDefinedShaderVariant(UnlitTextureFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader UnlitTextureStereoFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "UnlitTexturedStereoForwardPpll.fs"));
+        => CreateDefinedShaderVariant(UnlitTextureStereoFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader UnlitAlphaTextureFragForwardPerPixelLinkedList()
-        => LoadEngineShader(Path.Combine("Common", "UnlitAlphaTexturedForwardPpll.fs"));
+        => CreateDefinedShaderVariant(UnlitAlphaTextureFragForward(), PerPixelLinkedListDefine)!;
 
     public static XRShader UnlitColorFragForwardPerPixelLinkedList()
         => LoadEngineShader(Path.Combine("Common", "UnlitColoredForwardPpll.fs"));
 
     public static XRShader LitTextureFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(LitTextureFragForward(), DepthPeelingDefine)!;
 
     public static XRShader LitTextureSilhouettePOMFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedSilhouettePOMForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(LitTextureSilhouettePOMFragForward(), DepthPeelingDefine)!;
 
     public static XRShader LitTextureNormalFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalFragForward(), DepthPeelingDefine)!;
 
     public static XRShader LitTextureNormalSpecFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalSpecForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalSpecFragForward(), DepthPeelingDefine)!;
 
     public static XRShader LitTextureNormalAlphaFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalAlphaForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalAlphaFragForward(), DepthPeelingDefine)!;
 
     public static XRShader LitTextureNormalSpecAlphaFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalSpecAlphaForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(LitTextureNormalSpecAlphaFragForward(), DepthPeelingDefine)!;
 
     public static XRShader LitTextureSpecFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedSpecForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(LitTextureSpecFragForward(), DepthPeelingDefine)!;
 
     public static XRShader LitTextureAlphaFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedAlphaForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(LitTextureAlphaFragForward(), DepthPeelingDefine)!;
 
     public static XRShader LitTextureSpecAlphaFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "LitTexturedSpecAlphaForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(LitTextureSpecAlphaFragForward(), DepthPeelingDefine)!;
 
     public static XRShader LitColorFragForwardDepthPeeling()
         => LoadEngineShader(Path.Combine("Common", "LitColoredForwardDepthPeel.fs"));
 
     public static XRShader UnlitTextureFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "UnlitTexturedForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(UnlitTextureFragForward(), DepthPeelingDefine)!;
 
     public static XRShader UnlitTextureStereoFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "UnlitTexturedStereoForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(UnlitTextureStereoFragForward(), DepthPeelingDefine)!;
 
     public static XRShader UnlitAlphaTextureFragForwardDepthPeeling()
-        => LoadEngineShader(Path.Combine("Common", "UnlitAlphaTexturedForwardDepthPeel.fs"));
+        => CreateDefinedShaderVariant(UnlitAlphaTextureFragForward(), DepthPeelingDefine)!;
 
     public static XRShader UnlitColorFragForwardDepthPeeling()
         => LoadEngineShader(Path.Combine("Common", "UnlitColoredForwardDepthPeel.fs"));
 
+    private static bool HasTransparencyForwardVariantDefine(XRShader? shader)
+    {
+        string? sourceText = shader?.Source?.Text;
+        if (string.IsNullOrWhiteSpace(sourceText))
+            return false;
+
+        return sourceText.Contains($"#define {WeightedBlendedOitDefine}", StringComparison.Ordinal) ||
+            sourceText.Contains($"#define {PerPixelLinkedListDefine}", StringComparison.Ordinal) ||
+            sourceText.Contains($"#define {DepthPeelingDefine}", StringComparison.Ordinal);
+    }
+
+    private static XRShader? LoadStandardForwardShaderByFileName(string fileName)
+        => fileName switch
+        {
+            "LitTexturedForward.fs" => LitTextureFragForward(),
+            "LitTexturedSilhouettePOMForward.fs" => LitTextureSilhouettePOMFragForward(),
+            "LitTexturedNormalForward.fs" => LitTextureNormalFragForward(),
+            "LitTexturedNormalSpecForward.fs" => LitTextureNormalSpecFragForward(),
+            "LitTexturedNormalAlphaForward.fs" => LitTextureNormalAlphaFragForward(),
+            "LitTexturedNormalSpecAlphaForward.fs" => LitTextureNormalSpecAlphaFragForward(),
+            "LitTexturedSpecForward.fs" => LitTextureSpecFragForward(),
+            "LitTexturedAlphaForward.fs" => LitTextureAlphaFragForward(),
+            "LitTexturedSpecAlphaForward.fs" => LitTextureSpecAlphaFragForward(),
+            "LitColoredForward.fs" => LitColorFragForward(),
+            "UnlitTexturedForward.fs" => UnlitTextureFragForward(),
+            "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForward(),
+            "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForward(),
+            "UnlitColoredForward.fs" => UnlitColorFragForward(),
+            "DeferredDecal.fs" => XRShader.EngineShader(Path.Combine("Scene3D", "DeferredDecal.fs"), EShaderType.Fragment),
+            _ => null,
+        };
+
+    private static XRShader? LoadDeferredShaderByFileName(string fileName)
+        => fileName switch
+        {
+            "TexturedDeferred.fs" => LitTextureFragDeferred(),
+            "TexturedSilhouettePOMDeferred.fs" => LitTextureSilhouettePOMFragDeferred(),
+            "ColoredDeferred.fs" => LitColorFragDeferred(),
+            "TexturedNormalDeferred.fs" => LitTextureNormalFragDeferred(),
+            "TexturedNormalMetallicDeferred.fs" => LitTextureNormalMetallicFragDeferred(),
+            "TexturedNormalMetallicRoughnessDeferred.fs" => LitTextureNormalRoughnessMetallicDeferred(),
+            "TexturedMetallicDeferred.fs" => LitTextureMetallicFragDeferred(),
+            "TexturedMetallicRoughnessDeferred.fs" => LitTextureMetallicRoughnessDeferred(),
+            "TexturedRoughnessDeferred.fs" => LitTextureRoughnessFragDeferred(),
+            "TexturedMatcapDeferred.fs" => LitTextureMatcapDeferred(),
+            "TexturedEmissiveDeferred.fs" => LitTextureEmissiveDeferred(),
+            _ => null,
+        };
+
+    private static bool TryGetStandardForwardFileName(string fileName, out string standardFileName)
+    {
+        standardFileName = fileName switch
+        {
+            "DeferredDecalForwardWeightedOit.fs" => "DeferredDecal.fs",
+            _ => string.Empty,
+        };
+
+        if (!string.IsNullOrWhiteSpace(standardFileName))
+            return true;
+
+        const string weightedSuffix = "ForwardWeightedOit.fs";
+        const string ppllSuffix = "ForwardPpll.fs";
+        const string depthPeelSuffix = "ForwardDepthPeel.fs";
+
+        if (fileName.EndsWith(weightedSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            standardFileName = fileName[..^weightedSuffix.Length] + "Forward.fs";
+            return true;
+        }
+
+        if (fileName.EndsWith(ppllSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            standardFileName = fileName[..^ppllSuffix.Length] + "Forward.fs";
+            return true;
+        }
+
+        if (fileName.EndsWith(depthPeelSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            standardFileName = fileName[..^depthPeelSuffix.Length] + "Forward.fs";
+            return true;
+        }
+
+        standardFileName = string.Empty;
+        return false;
+    }
+
+    private static bool TryGetDeferredFileName(string fileName, out string deferredFileName)
+    {
+        deferredFileName = fileName switch
+        {
+            "TexturedDeferred.fs" => "TexturedDeferred.fs",
+            "TexturedSilhouettePOMDeferred.fs" => "TexturedSilhouettePOMDeferred.fs",
+            "ColoredDeferred.fs" => "ColoredDeferred.fs",
+            "TexturedNormalDeferred.fs" => "TexturedNormalDeferred.fs",
+            "TexturedNormalMetallicDeferred.fs" => "TexturedNormalMetallicDeferred.fs",
+            "TexturedNormalMetallicRoughnessDeferred.fs" => "TexturedNormalMetallicRoughnessDeferred.fs",
+            "TexturedMetallicDeferred.fs" => "TexturedMetallicDeferred.fs",
+            "TexturedMetallicRoughnessDeferred.fs" => "TexturedMetallicRoughnessDeferred.fs",
+            "TexturedRoughnessDeferred.fs" => "TexturedRoughnessDeferred.fs",
+            "TexturedMatcapDeferred.fs" => "TexturedMatcapDeferred.fs",
+            "TexturedEmissiveDeferred.fs" => "TexturedEmissiveDeferred.fs",
+            "LitTexturedForward.fs" => "TexturedDeferred.fs",
+            "LitTexturedSilhouettePOMForward.fs" => "TexturedSilhouettePOMDeferred.fs",
+            "LitColoredForward.fs" => "ColoredDeferred.fs",
+            "LitTexturedNormalForward.fs" => "TexturedNormalDeferred.fs",
+            _ => string.Empty,
+        };
+
+        if (!string.IsNullOrWhiteSpace(deferredFileName))
+            return true;
+
+        if (TryGetStandardForwardFileName(fileName, out string standardFileName))
+            return TryGetDeferredFileName(standardFileName, out deferredFileName);
+
+        deferredFileName = string.Empty;
+        return false;
+    }
+
     public static XRShader? GetWeightedBlendedOitForwardVariant(XRShader? shader)
     {
-        string? path = shader?.Source?.FilePath;
+        XRShader? sourceShader = GetStandardForwardVariant(shader) ?? GetForwardVariantOfDeferredShader(shader) ?? shader;
+
+        string? path = sourceShader?.Source?.FilePath ?? sourceShader?.FilePath;
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
@@ -352,7 +502,9 @@ public static class ShaderHelper
 
     public static XRShader? GetPerPixelLinkedListForwardVariant(XRShader? shader)
     {
-        string? path = shader?.Source?.FilePath;
+        XRShader? sourceShader = GetStandardForwardVariant(shader) ?? GetForwardVariantOfDeferredShader(shader) ?? shader;
+
+        string? path = sourceShader?.Source?.FilePath ?? sourceShader?.FilePath;
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
@@ -384,7 +536,9 @@ public static class ShaderHelper
 
     public static XRShader? GetDepthPeelingForwardVariant(XRShader? shader)
     {
-        string? path = shader?.Source?.FilePath;
+        XRShader? sourceShader = GetStandardForwardVariant(shader) ?? GetForwardVariantOfDeferredShader(shader) ?? shader;
+
+        string? path = sourceShader?.Source?.FilePath ?? sourceShader?.FilePath;
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
@@ -454,6 +608,18 @@ public static class ShaderHelper
         return fileName.EndsWith("Deferred.fs", System.StringComparison.OrdinalIgnoreCase);
     }
 
+    public static XRShader? GetDeferredVariantOfShader(XRShader? shader)
+    {
+        string? path = shader?.Source?.FilePath ?? shader?.FilePath;
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        string fileName = Path.GetFileName(path);
+        return TryGetDeferredFileName(fileName, out string deferredFileName)
+            ? LoadDeferredShaderByFileName(deferredFileName)
+            : null;
+    }
+
     public static XRShader? GetStandardForwardVariant(XRShader? shader)
     {
         string? path = shader?.Source?.FilePath ?? shader?.FilePath;
@@ -461,57 +627,20 @@ public static class ShaderHelper
             return null;
 
         string fileName = Path.GetFileName(path);
-        return fileName switch
-        {
-            "LitTexturedForwardWeightedOit.fs" => LitTextureFragForward(),
-            "LitTexturedSilhouettePOMForwardWeightedOit.fs" => LitTextureSilhouettePOMFragForward(),
-            "LitTexturedNormalForwardWeightedOit.fs" => LitTextureNormalFragForward(),
-            "LitTexturedNormalSpecForwardWeightedOit.fs" => LitTextureNormalSpecFragForward(),
-            "LitTexturedNormalAlphaForwardWeightedOit.fs" => LitTextureNormalAlphaFragForward(),
-            "LitTexturedNormalSpecAlphaForwardWeightedOit.fs" => LitTextureNormalSpecAlphaFragForward(),
-            "LitTexturedSpecForwardWeightedOit.fs" => LitTextureSpecFragForward(),
-            "LitTexturedAlphaForwardWeightedOit.fs" => LitTextureAlphaFragForward(),
-            "LitTexturedSpecAlphaForwardWeightedOit.fs" => LitTextureSpecAlphaFragForward(),
-            "LitColoredForwardWeightedOit.fs" => LitColorFragForward(),
-            "UnlitTexturedForwardWeightedOit.fs" => UnlitTextureFragForward(),
-            "UnlitTexturedStereoForwardWeightedOit.fs" => UnlitTextureStereoFragForward(),
-            "UnlitAlphaTexturedForwardWeightedOit.fs" => UnlitAlphaTextureFragForward(),
-            "UnlitColoredForwardWeightedOit.fs" => UnlitColorFragForward(),
-            "LitTexturedForwardPpll.fs" => LitTextureFragForward(),
-            "LitTexturedSilhouettePOMForwardPpll.fs" => LitTextureSilhouettePOMFragForward(),
-            "LitTexturedNormalForwardPpll.fs" => LitTextureNormalFragForward(),
-            "LitTexturedNormalSpecForwardPpll.fs" => LitTextureNormalSpecFragForward(),
-            "LitTexturedNormalAlphaForwardPpll.fs" => LitTextureNormalAlphaFragForward(),
-            "LitTexturedNormalSpecAlphaForwardPpll.fs" => LitTextureNormalSpecAlphaFragForward(),
-            "LitTexturedSpecForwardPpll.fs" => LitTextureSpecFragForward(),
-            "LitTexturedAlphaForwardPpll.fs" => LitTextureAlphaFragForward(),
-            "LitTexturedSpecAlphaForwardPpll.fs" => LitTextureSpecAlphaFragForward(),
-            "LitColoredForwardPpll.fs" => LitColorFragForward(),
-            "UnlitTexturedForwardPpll.fs" => UnlitTextureFragForward(),
-            "UnlitTexturedStereoForwardPpll.fs" => UnlitTextureStereoFragForward(),
-            "UnlitAlphaTexturedForwardPpll.fs" => UnlitAlphaTextureFragForward(),
-            "UnlitColoredForwardPpll.fs" => UnlitColorFragForward(),
-            "LitTexturedForwardDepthPeel.fs" => LitTextureFragForward(),
-            "LitTexturedSilhouettePOMForwardDepthPeel.fs" => LitTextureSilhouettePOMFragForward(),
-            "LitTexturedNormalForwardDepthPeel.fs" => LitTextureNormalFragForward(),
-            "LitTexturedNormalSpecForwardDepthPeel.fs" => LitTextureNormalSpecFragForward(),
-            "LitTexturedNormalAlphaForwardDepthPeel.fs" => LitTextureNormalAlphaFragForward(),
-            "LitTexturedNormalSpecAlphaForwardDepthPeel.fs" => LitTextureNormalSpecAlphaFragForward(),
-            "LitTexturedSpecForwardDepthPeel.fs" => LitTextureSpecFragForward(),
-            "LitTexturedAlphaForwardDepthPeel.fs" => LitTextureAlphaFragForward(),
-            "LitTexturedSpecAlphaForwardDepthPeel.fs" => LitTextureSpecAlphaFragForward(),
-            "LitColoredForwardDepthPeel.fs" => LitColorFragForward(),
-            "UnlitTexturedForwardDepthPeel.fs" => UnlitTextureFragForward(),
-            "UnlitTexturedStereoForwardDepthPeel.fs" => UnlitTextureStereoFragForward(),
-            "UnlitAlphaTexturedForwardDepthPeel.fs" => UnlitAlphaTextureFragForward(),
-            "UnlitColoredForwardDepthPeel.fs" => UnlitColorFragForward(),
-            "DeferredDecalForwardWeightedOit.fs" => XRShader.EngineShader(Path.Combine("Scene3D", "DeferredDecal.fs"), EShaderType.Fragment),
-            _ => null,
-        };
+        if (TryGetStandardForwardFileName(fileName, out string standardFileName))
+            return LoadStandardForwardShaderByFileName(standardFileName);
+
+        if (HasTransparencyForwardVariantDefine(shader) && DefineBasedTransparencyForwardShaderFiles.Contains(fileName))
+            return LoadStandardForwardShaderByFileName(fileName);
+
+        return null;
     }
 
     public static XRShader? GetDepthNormalPrePassForwardVariant(XRShader? shader)
     {
+        if (HasTransparencyForwardVariantDefine(shader))
+            return null;
+
         string? path = shader?.Source?.FilePath ?? shader?.FilePath;
         if (string.IsNullOrWhiteSpace(path))
             return null;
@@ -567,15 +696,39 @@ public static class ShaderHelper
         if (shader?.Source?.Text is not { Length: > 0 } source)
             return null;
 
-        string variantSource = InjectDefineAfterVersion(source, defineName);
-        TextFile variantText = TextFile.FromText(variantSource);
-        variantText.FilePath = shader.Source?.FilePath;
-        variantText.Name = shader.Source?.Name;
-        return new XRShader(shader.Type, variantText)
-        {
-            Name = shader.Name,
-            GenerateAsync = shader.GenerateAsync,
-        };
+        DefinedVariantShaderCacheKey cacheKey = new(
+            defineName,
+            shader.Type,
+            source,
+            shader.Source?.FilePath,
+            shader.Source?.Name);
+
+        return DefinedVariantShaderCache.GetOrAdd(
+            cacheKey,
+            _ =>
+            {
+                string variantSource = GetOrCreateDefinedVariantSource(source, defineName);
+                TextFile variantText = TextFile.FromText(variantSource);
+                variantText.FilePath = shader.Source?.FilePath;
+                variantText.Name = shader.Source?.Name;
+                return new XRShader(shader.Type, variantText)
+                {
+                    Name = shader.Name,
+                    GenerateAsync = shader.GenerateAsync,
+                };
+            });
+    }
+
+    private static string GetOrCreateDefinedVariantSource(string source, string defineName)
+    {
+        ulong sourceHash = ComputeDefinedVariantSourceHash(source, defineName);
+        ConcurrentDictionary<DefinedVariantCacheKey, string> bucket = DefinedVariantSourceCache.GetOrAdd(
+            sourceHash,
+            static _ => new());
+
+        return bucket.GetOrAdd(
+            new(defineName, source),
+            static key => InjectDefineAfterVersion(key.SourceText, key.DefineName));
     }
 
     private static string InjectDefineAfterVersion(string source, string defineName)
@@ -587,6 +740,32 @@ public static class ShaderHelper
         string header = source[..(versionLineEnd + 1)];
         string body = source[(versionLineEnd + 1)..].TrimStart('\r', '\n');
         return header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine + Environment.NewLine + body;
+    }
+
+    private static ulong ComputeDefinedVariantSourceHash(string source, string defineName)
+    {
+        const ulong fnvOffset = 14695981039346656037ul;
+        const ulong fnvPrime = 1099511628211ul;
+
+        ulong hash = fnvOffset;
+        for (int i = 0; i < defineName.Length; i++)
+        {
+            hash ^= defineName[i];
+            hash *= fnvPrime;
+        }
+
+        hash ^= 0xffu;
+        hash *= fnvPrime;
+
+        for (int i = 0; i < source.Length; i++)
+        {
+            hash ^= source[i];
+            hash *= fnvPrime;
+        }
+
+        hash ^= (ulong)source.Length;
+        hash *= fnvPrime;
+        return hash;
     }
 
     public static int ResolveTransparentRenderPass(ETransparencyMode mode)

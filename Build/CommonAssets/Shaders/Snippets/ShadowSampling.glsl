@@ -327,6 +327,19 @@ const vec3 XRENGINE_ShadowCubeKernel[20] = vec3[](
     vec3( 0.0,  1.0,  1.0), vec3( 0.0, -1.0, -1.0)
 );
 
+const int XRENGINE_ShadowCubeKernelTapOrder[20] = int[](
+    0, 3, 5, 6,
+    7, 4, 2, 1,
+    8, 9, 10, 11,
+    12, 13, 14, 17,
+    15, 16, 18, 19
+);
+
+vec3 XRENGINE_GetShadowCubeKernelTap(int tapIndex)
+{
+    return XRENGINE_ShadowCubeKernel[XRENGINE_ShadowCubeKernelTapOrder[tapIndex]];
+}
+
 float XRENGINE_SampleShadowCubeSimple(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist)
 {
     float sampleDepth = texture(shadowMap, normalize(shadowDir)).r * farPlaneDist;
@@ -339,7 +352,7 @@ float XRENGINE_SampleShadowCubePCF(samplerCube shadowMap, vec3 shadowDir, float 
 
     for (int i = 0; i < 20; ++i)
     {
-        vec3 sampleDir = normalize(shadowDir + XRENGINE_ShadowCubeKernel[i] * sampleRadius);
+        vec3 sampleDir = normalize(shadowDir + XRENGINE_GetShadowCubeKernelTap(i) * sampleRadius);
         float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
         lit += (compareDepth - bias) <= sampleDepth ? 1.0 : 0.0;
     }
@@ -357,7 +370,7 @@ float XRENGINE_SampleShadowCubeSoft(samplerCube shadowMap, vec3 shadowDir, float
         if (i >= clampedSamples)
             break;
 
-        vec3 sampleDir = normalize(shadowDir + XRENGINE_ShadowCubeKernel[i] * sampleRadius);
+        vec3 sampleDir = normalize(shadowDir + XRENGINE_GetShadowCubeKernelTap(i) * sampleRadius);
         float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
         lit += (compareDepth - bias) <= sampleDepth ? 1.0 : 0.0;
     }

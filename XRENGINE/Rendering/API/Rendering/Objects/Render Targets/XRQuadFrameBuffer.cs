@@ -62,6 +62,7 @@ namespace XREngine.Rendering
             FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
             FullScreenMesh.GenerateAsync = false;
             FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
+            FullScreenMesh.EnsureRenderPipelineVersionsCreated();
             FullScreenMesh.SettingUniforms += SetUniforms;
 
             // Force simple program linking for fullscreen blits; shader pipelines may skip rendering

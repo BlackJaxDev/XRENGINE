@@ -35,6 +35,7 @@ void main()
 
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
+    private XRTexture? _resolvedSourceTexture;
 
     public string? SourceTextureName { get; set; }
     public string? SourceFBOName { get; set; }
@@ -107,7 +108,15 @@ void main()
         if (ClearColor || ClearDepth || ClearStencil)
             Engine.Rendering.State.Clear(ClearColor, ClearDepth, ClearStencil);
 
-        _quad.Render(null);
+        try
+        {
+            _resolvedSourceTexture = sourceTexture;
+            _quad.Render(null);
+        }
+        finally
+        {
+            _resolvedSourceTexture = null;
+        }
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
@@ -175,10 +184,17 @@ void main()
 
     private void Present_SettingUniforms(XRRenderProgram program)
     {
-        XRRenderPipelineInstance instance = ActivePipelineInstance;
-        if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out _)
-            || sourceTexture is null)
-            return;
+        XRTexture? sourceTexture = _resolvedSourceTexture;
+        if (sourceTexture is null)
+        {
+            XRRenderPipelineInstance instance = ActivePipelineInstance;
+            if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out sourceTexture, out _)
+                || sourceTexture is null)
+            {
+                program.SuppressFallbackSamplerWarning("SourceTexture");
+                return;
+            }
+        }
 
         program.Sampler("SourceTexture", sourceTexture, 0);
     }

@@ -490,7 +490,7 @@ namespace XREngine.Components.Scene.Mesh
                     UpdateDepth = false,
                     Function = EComparison.Lequal,
                 },
-                // Skybox fragment shaders reconstruct view rays, so they require camera matrices.
+                // Skybox shaders reconstruct and rotate view rays in the vertex stage, so they require camera matrices.
                 RequiredEngineUniforms = EUniformRequirements.Camera,
                 // Skybox uses a specialized vertex shader that outputs clip-space positions directly.
                 // GPU indirect dispatch would replace it with a model-matrix-based shader, breaking rendering.
@@ -688,19 +688,44 @@ namespace XREngine.Components.Scene.Mesh
         #region Inline Shader Sources
 
         /// <summary>
-        /// Vertex shader that outputs clip-space position and passes through for view ray reconstruction.
+        /// Vertex shader that outputs the fullscreen triangle and precomputes world-space sky rays.
         /// </summary>
         private const string VertexShaderSource = @"
 #version 450
 
 layout(location = 0) in vec3 Position;
 layout(location = 0) out vec3 FragClipPos;
+layout(location = 1) out vec3 FragWorldDir;
+
+uniform mat4 InverseViewMatrix;
+uniform mat4 InverseProjMatrix;
+uniform float SkyboxRotation = 0.0;
+
+vec3 GetWorldRay(vec2 clipXY)
+{
+    vec4 viewPos = InverseProjMatrix * vec4(clipXY, 1.0, 1.0);
+    float invW = abs(viewPos.w) > 1e-6 ? 1.0 / viewPos.w : 1.0;
+    vec3 viewRay = viewPos.xyz * invW;
+    return mat3(InverseViewMatrix) * viewRay;
+}
+
+vec3 RotateSkyDirection(vec3 dir)
+{
+    float cosRot = cos(SkyboxRotation);
+    float sinRot = sin(SkyboxRotation);
+    return vec3(
+        dir.x * cosRot - dir.z * sinRot,
+        dir.y,
+        dir.x * sinRot + dir.z * cosRot);
+}
 
 void main()
 {
+    vec2 clipXY = Position.xy;
     FragClipPos = Position;
+    FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));
     // Output at maximum depth (z=1) so skybox is behind everything
-    gl_Position = vec4(Position.xy, 1.0, 1.0);
+    gl_Position = vec4(clipXY, 1.0, 1.0);
 }
 ";
 
@@ -708,44 +733,16 @@ void main()
 #version 450
 
 layout (location = 0) out vec3 OutColor;
-layout (location = 0) in vec3 FragClipPos;
+layout (location = 1) in vec3 FragWorldDir;
 
 uniform sampler2D Texture0;
 uniform float SkyboxIntensity = 1.0;
-uniform float SkyboxRotation = 0.0;
-
-// Camera matrices - InverseViewMatrix is the camera's world transform
-uniform mat4 InverseViewMatrix;
-uniform mat4 InverseProjMatrix;
-uniform mat4 ProjMatrix;
 
 const float PI = 3.14159265359;
 
-vec3 GetWorldDirection(vec3 clipPos)
-{
-    // Reconstruct view-space ray direction from clip coordinates
-    // Use inverse projection to go from clip space to view space
-    vec4 viewPos = InverseProjMatrix * vec4(clipPos.xy, 1.0, 1.0);
-    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
-    
-    // Transform view direction to world space using camera's world transform
-    // InverseViewMatrix is the camera's world matrix (position + orientation)
-    mat3 camRotation = mat3(InverseViewMatrix);
-    return normalize(camRotation * viewDir);
-}
-
 void main()
 {
-    vec3 dir = GetWorldDirection(FragClipPos);
-    
-    // Apply rotation around Y axis
-    float cosRot = cos(SkyboxRotation);
-    float sinRot = sin(SkyboxRotation);
-    dir = vec3(
-        dir.x * cosRot - dir.z * sinRot,
-        dir.y,
-        dir.x * sinRot + dir.z * cosRot
-    );
+    vec3 dir = normalize(FragWorldDir);
 
     // Convert direction to spherical coordinates
     float phi = atan(dir.z, dir.x);
@@ -762,24 +759,10 @@ void main()
 #version 450
 
 layout (location = 0) out vec3 OutColor;
-layout (location = 0) in vec3 FragClipPos;
+layout (location = 1) in vec3 FragWorldDir;
 
 uniform sampler2D Texture0;
 uniform float SkyboxIntensity = 1.0;
-uniform float SkyboxRotation = 0.0;
-
-// Camera matrices
-uniform mat4 InverseViewMatrix;
-uniform mat4 InverseProjMatrix;
-uniform mat4 ProjMatrix;
-
-vec3 GetWorldDirection(vec3 clipPos)
-{
-    vec4 viewPos = InverseProjMatrix * vec4(clipPos.xy, 1.0, 1.0);
-    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
-    mat3 camRotation = mat3(InverseViewMatrix);
-    return normalize(camRotation * viewDir);
-}
 
 vec2 EncodeOcta(vec3 dir)
 {
@@ -800,16 +783,7 @@ vec2 EncodeOcta(vec3 dir)
 
 void main()
 {
-    vec3 dir = GetWorldDirection(FragClipPos);
-    
-    // Apply rotation around Y axis
-    float cosRot = cos(SkyboxRotation);
-    float sinRot = sin(SkyboxRotation);
-    dir = vec3(
-        dir.x * cosRot - dir.z * sinRot,
-        dir.y,
-        dir.x * sinRot + dir.z * cosRot
-    );
+    vec3 dir = normalize(FragWorldDir);
 
     vec2 uv = EncodeOcta(dir);
     OutColor = texture(Texture0, uv).rgb * SkyboxIntensity;
@@ -820,37 +794,14 @@ void main()
 #version 450
 
 layout (location = 0) out vec3 OutColor;
-layout (location = 0) in vec3 FragClipPos;
+layout (location = 1) in vec3 FragWorldDir;
 
 uniform samplerCube Texture0;
 uniform float SkyboxIntensity = 1.0;
-uniform float SkyboxRotation = 0.0;
-
-// Camera matrices
-uniform mat4 InverseViewMatrix;
-uniform mat4 InverseProjMatrix;
-uniform mat4 ProjMatrix;
-
-vec3 GetWorldDirection(vec3 clipPos)
-{
-    vec4 viewPos = InverseProjMatrix * vec4(clipPos.xy, 1.0, 1.0);
-    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
-    mat3 camRotation = mat3(InverseViewMatrix);
-    return normalize(camRotation * viewDir);
-}
 
 void main()
 {
-    vec3 dir = GetWorldDirection(FragClipPos);
-    
-    // Apply rotation around Y axis
-    float cosRot = cos(SkyboxRotation);
-    float sinRot = sin(SkyboxRotation);
-    dir = vec3(
-        dir.x * cosRot - dir.z * sinRot,
-        dir.y,
-        dir.x * sinRot + dir.z * cosRot
-    );
+    vec3 dir = normalize(FragWorldDir);
 
     OutColor = texture(Texture0, dir).rgb * SkyboxIntensity;
 }
@@ -860,38 +811,15 @@ void main()
 #version 450
 
 layout (location = 0) out vec3 OutColor;
-layout (location = 0) in vec3 FragClipPos;
+layout (location = 1) in vec3 FragWorldDir;
 
 uniform samplerCubeArray Texture0;
 uniform float SkyboxIntensity = 1.0;
-uniform float SkyboxRotation = 0.0;
 uniform int CubemapLayer = 0;
-
-// Camera matrices
-uniform mat4 InverseViewMatrix;
-uniform mat4 InverseProjMatrix;
-uniform mat4 ProjMatrix;
-
-vec3 GetWorldDirection(vec3 clipPos)
-{
-    vec4 viewPos = InverseProjMatrix * vec4(clipPos.xy, 1.0, 1.0);
-    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
-    mat3 camRotation = mat3(InverseViewMatrix);
-    return normalize(camRotation * viewDir);
-}
 
 void main()
 {
-    vec3 dir = GetWorldDirection(FragClipPos);
-    
-    // Apply rotation around Y axis
-    float cosRot = cos(SkyboxRotation);
-    float sinRot = sin(SkyboxRotation);
-    dir = vec3(
-        dir.x * cosRot - dir.z * sinRot,
-        dir.y,
-        dir.x * sinRot + dir.z * cosRot
-    );
+    vec3 dir = normalize(FragWorldDir);
 
     OutColor = texture(Texture0, vec4(dir, float(CubemapLayer))).rgb * SkyboxIntensity;
 }
@@ -901,28 +829,15 @@ void main()
 #version 450
 
 layout (location = 0) out vec3 OutColor;
-layout (location = 0) in vec3 FragClipPos;
+layout (location = 1) in vec3 FragWorldDir;
 
 uniform float SkyboxIntensity = 1.0;
 uniform vec3 SkyboxTopColor = vec3(0.52, 0.74, 1.0);
 uniform vec3 SkyboxBottomColor = vec3(0.05, 0.06, 0.08);
 
-// Camera matrices
-uniform mat4 InverseViewMatrix;
-uniform mat4 InverseProjMatrix;
-uniform mat4 ProjMatrix;
-
-vec3 GetWorldDirection(vec3 clipPos)
-{
-    vec4 viewPos = InverseProjMatrix * vec4(clipPos.xy, 1.0, 1.0);
-    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
-    mat3 camRotation = mat3(InverseViewMatrix);
-    return normalize(camRotation * viewDir);
-}
-
 void main()
 {
-    vec3 dir = GetWorldDirection(FragClipPos);
+    vec3 dir = normalize(FragWorldDir);
     float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 col = mix(SkyboxBottomColor, SkyboxTopColor, t);
     OutColor = col * SkyboxIntensity;
@@ -933,10 +848,9 @@ void main()
 #version 450
 
 layout (location = 0) out vec3 OutColor;
-layout (location = 0) in vec3 FragClipPos;
+layout (location = 1) in vec3 FragWorldDir;
 
 uniform float SkyboxIntensity = 1.0;
-uniform float SkyboxRotation = 0.0;
 uniform float SkyTimeOfDay = 0.25;
 uniform float SkyCloudCoverage = 0.45;
 uniform float SkyCloudScale = 1.4;
@@ -947,19 +861,7 @@ uniform float SkyHorizonHaze = 1.0;
 uniform float SkySunDiscSize = 0.9994;
 uniform float SkyMoonDiscSize = 0.99965;
 
-uniform mat4 InverseViewMatrix;
-uniform mat4 InverseProjMatrix;
-uniform mat4 ProjMatrix;
-
 const float PI = 3.14159265359;
-
-vec3 GetWorldDirection(vec3 clipPos)
-{
-    vec4 viewPos = InverseProjMatrix * vec4(clipPos.xy, 1.0, 1.0);
-    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
-    mat3 camRotation = mat3(InverseViewMatrix);
-    return normalize(camRotation * viewDir);
-}
 
 float Hash(vec2 p)
 {
@@ -999,10 +901,7 @@ vec3 NightSky(vec3 dir, float nightFactor)
 
 void main()
 {
-    vec3 dir = GetWorldDirection(FragClipPos);
-    float cosRot = cos(SkyboxRotation);
-    float sinRot = sin(SkyboxRotation);
-    dir = vec3(dir.x * cosRot - dir.z * sinRot, dir.y, dir.x * sinRot + dir.z * cosRot);
+    vec3 dir = normalize(FragWorldDir);
 
     float angle = SkyTimeOfDay * PI * 2.0;
     vec3 sunDir = normalize(vec3(cos(angle), sin(angle), 0.2));

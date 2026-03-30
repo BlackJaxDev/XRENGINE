@@ -1,7 +1,2 @@
-// Shared gl_PerVertex redeclaration for instanced debug geometry shaders.
-out gl_PerVertex
-{
-    vec4 gl_Position;
-    float gl_PointSize;
-    float gl_ClipDistance[];
-};
+// gl_PerVertex redeclaration is now auto-injected for separable programs.
+// This file is kept as an empty include target for backward compatibility.

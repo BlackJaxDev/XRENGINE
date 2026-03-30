@@ -200,79 +200,7 @@ namespace XREngine
         }
 
         public static XRMaterial MakeMaterialDefault(XRTexture[] textureList, List<TextureSlot> textures, string name)
-        {
-            ETransparencyMode transparencyMode = ResolveTransparencyMode(textureList, textures);
-            bool transp = IsTransparentLike(transparencyMode);
-            bool hasAnyTexture = textureList.Any(x => x is not null);
-
-            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
-            if (diffuseIndex < 0)
-                diffuseIndex = Array.FindIndex(textureList, t => t is not null);
-            if (diffuseIndex < 0)
-                diffuseIndex = 0;
-
-            XRTexture? diffuse = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
-
-            // Default material allocates the same number of texture slots as were discovered.
-            // Texture loading/binding is handled elsewhere.
-            var mat = new XRMaterial();
-
-            if (hasAnyTexture)
-            {
-                if (transp)
-                {
-                    mat.Textures = [diffuse];
-                    mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
-                }
-                else
-                {
-                    mat.Textures = [diffuse];
-                    mat.Shaders.Add(ShaderHelper.LitTextureFragDeferred()!);
-                    mat.Parameters =
-                    [
-                        new ShaderFloat(1.0f, "Opacity"),
-                        new ShaderFloat(1.0f, "Specular"),
-                        new ShaderFloat(0.9f, "Roughness"),
-                        new ShaderFloat(0.0f, "Metallic"),
-                        new ShaderFloat(1.0f, "IndexOfRefraction"),
-                    ];
-                }
-            }
-            else
-            {
-                // Show the material as magenta if no textures are present.
-                mat.Shaders.Add(ShaderHelper.LitColorFragDeferred()!);
-                mat.Textures = [];
-                mat.Parameters =
-                [
-                    new ShaderVector3(ColorF3.Magenta, "BaseColor"),
-                    new ShaderFloat(1.0f, "Opacity"),
-                    new ShaderFloat(1.0f, "Specular"),
-                    new ShaderFloat(1.0f, "Roughness"),
-                    new ShaderFloat(0.0f, "Metallic"),
-                    new ShaderFloat(1.0f, "IndexOfRefraction"),
-                ];
-            }
-
-            mat.RenderPass = transp ? ShaderHelper.ResolveTransparentRenderPass(transparencyMode) : (int)EDefaultRenderPass.OpaqueDeferred;
-            mat.Name = name;
-            mat.RenderOptions = new RenderingParameters()
-            {
-                CullMode = ECullMode.Back,
-                DepthTest = new DepthTest()
-                {
-                    UpdateDepth = true,
-                    Enabled = ERenderParamUsage.Enabled,
-                    Function = EComparison.Lequal,
-                },
-                //LineWidth = 5.0f,
-                BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
-            };
-
-            ConfigureImportedTransparency(mat, textureList, textures);
-
-            return mat;
-        }
+            => MakeMaterialDeferred(textureList, textures, name);
 
         public XRMaterial MaterialFactory(
             string modelFilePath,
@@ -610,16 +538,31 @@ namespace XREngine
         private const int ImportedSurfaceDetailHeightMapMode = 1;
         private const float ImportedHeightMapScale = 2.0f;
 
+        private static int ResolveTextureIndex(List<TextureSlot> textures, params TextureType[] textureTypes)
+        {
+            foreach (TextureType textureType in textureTypes)
+            {
+                int index = textures.FindIndex(x => x.TextureType == textureType);
+                if (index >= 0)
+                    return index;
+            }
+
+            return -1;
+        }
+
+        private static XRTexture? ResolveTexture(XRTexture[] textureList, int textureIndex)
+            => textureIndex >= 0 && textureIndex < textureList.Length ? textureList[textureIndex] : null;
+
         private static int ResolveSurfaceDetailTextureIndex(List<TextureSlot> textures, out bool isHeightMap)
         {
-            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals);
+            int normalIndex = ResolveTextureIndex(textures, TextureType.Normals, TextureType.NormalCamera);
             if (normalIndex >= 0)
             {
                 isHeightMap = false;
                 return normalIndex;
             }
 
-            int heightIndex = textures.FindIndex(x => x.TextureType == TextureType.Height);
+            int heightIndex = ResolveTextureIndex(textures, TextureType.Height);
             isHeightMap = heightIndex >= 0;
             return heightIndex;
         }
@@ -637,17 +580,27 @@ namespace XREngine
             bool transp = IsTransparentLike(transparencyMode);
             bool hasAnyTexture = textureList.Length > 0;
 
-            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
+            int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
             if (diffuseIndex < 0)
                 diffuseIndex = Array.FindIndex(textureList, t => t is not null);
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
             int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
-            bool hasNormal = normalIndex >= 0;
+            int metallicIndex = ResolveTextureIndex(textures, TextureType.Metalness);
+            int roughnessIndex = ResolveTextureIndex(textures, TextureType.Roughness);
+            int emissiveIndex = ResolveTextureIndex(textures, TextureType.EmissionColor, TextureType.Emissive);
 
-            XRTexture? diffuse = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
-            XRTexture? normal = normalIndex >= 0 && normalIndex < textureList.Length ? textureList[normalIndex] : null;
+            XRTexture? diffuse = ResolveTexture(textureList, diffuseIndex);
+            XRTexture? normal = ResolveTexture(textureList, normalIndex);
+            XRTexture? metallic = ResolveTexture(textureList, metallicIndex);
+            XRTexture? roughness = ResolveTexture(textureList, roughnessIndex);
+            XRTexture? emissive = ResolveTexture(textureList, emissiveIndex);
+
+            bool hasNormal = normal is not null;
+            bool hasMetallic = metallic is not null;
+            bool hasRoughness = roughness is not null;
+            bool hasEmissive = emissive is not null;
 
             mat.Shaders.Clear();
 
@@ -685,26 +638,63 @@ namespace XREngine
                 }
                 else
                 {
-                    if (hasNormal && normal is not null)
+                    float roughnessScale = hasRoughness ? 1.0f : 0.9f;
+                    float metallicScale = hasMetallic ? 1.0f : 0.0f;
+                    float emissionScale = hasEmissive ? 1.0f : 0.0f;
+
+                    if (hasNormal && hasRoughness)
                     {
-                        // Deferred normal shader expects Texture0=albedo, Texture1=normal.
+                        // Sparse metallic slot is intentional: the shader expects Texture2=metallic and Texture3=roughness.
+                        mat.Textures = [diffuse, normal, metallic, roughness];
+                        mat.Shaders.Add(ShaderHelper.LitTextureNormalRoughnessMetallicDeferred());
+                    }
+                    else if (hasNormal && hasMetallic)
+                    {
+                        mat.Textures = [diffuse, normal, metallic];
+                        mat.Shaders.Add(ShaderHelper.LitTextureNormalMetallicFragDeferred());
+                    }
+                    else if (hasNormal)
+                    {
                         mat.Textures = [diffuse, normal];
                         mat.Shaders.Add(ShaderHelper.LitTextureNormalFragDeferred());
+                    }
+                    else if (hasMetallic && hasRoughness)
+                    {
+                        // Sparse slot 1 is intentional: Texture2/Texture3 map to metallic/roughness in the shader.
+                        mat.Textures = [diffuse, null, metallic, roughness];
+                        mat.Shaders.Add(ShaderHelper.LitTextureMetallicRoughnessDeferred());
+                    }
+                    else if (hasMetallic)
+                    {
+                        mat.Textures = [diffuse, null, metallic];
+                        mat.Shaders.Add(ShaderHelper.LitTextureMetallicFragDeferred());
+                    }
+                    else if (hasRoughness)
+                    {
+                        mat.Textures = [diffuse, null, roughness];
+                        mat.Shaders.Add(ShaderHelper.LitTextureRoughnessFragDeferred());
+                    }
+                    else if (hasEmissive)
+                    {
+                        mat.Textures = [diffuse, emissive];
+                        mat.Shaders.Add(ShaderHelper.LitTextureEmissiveDeferred());
                     }
                     else
                     {
                         mat.Textures = [diffuse];
                         mat.Shaders.Add(ShaderHelper.LitTextureFragDeferred()!);
                     }
+
                     mat.Parameters =
                     [
                         new ShaderFloat(1.0f, "Opacity"),
                         new ShaderFloat(1.0f, "Specular"),
-                        new ShaderFloat(0.9f, "Roughness"),
-                        new ShaderFloat(0.0f, "Metallic"),
-                        new ShaderFloat(1.0f, "IndexOfRefraction"),
+                        new ShaderFloat(roughnessScale, "Roughness"),
+                        new ShaderFloat(metallicScale, "Metallic"),
+                        new ShaderFloat(emissionScale, "Emission"),
                     ];
-                    if (hasNormal && normal is not null)
+
+                    if (hasNormal)
                     {
                         var parameters = mat.Parameters;
                         AppendSurfaceDetailParameters(ref parameters, usesHeightMap);
@@ -724,7 +714,7 @@ namespace XREngine
                     new ShaderFloat(1.0f, "Specular"),
                     new ShaderFloat(1.0f, "Roughness"),
                     new ShaderFloat(0.0f, "Metallic"),
-                    new ShaderFloat(1.0f, "IndexOfRefraction"),
+                    new ShaderFloat(0.0f, "Emission"),
                 ];
                 mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
             }

@@ -14,6 +14,7 @@ namespace XREngine.Rendering.OpenGL
         {
             Data.SetDrawBuffersRequested -= SetDrawBuffers;
             Data.PropertyChanged -= DataOnPropertyChanged;
+            Data.Resized -= DataOnResized;
             Data.BindForReadRequested -= BindForReading;
             Data.BindForWriteRequested -= BindForWriting;
             Data.BindRequested -= Bind;
@@ -26,12 +27,18 @@ namespace XREngine.Rendering.OpenGL
         {
             Data.SetDrawBuffersRequested += SetDrawBuffers;
             Data.PropertyChanged += DataOnPropertyChanged;
+            Data.Resized += DataOnResized;
             Data.BindForReadRequested += BindForReading;
             Data.BindForWriteRequested += BindForWriting;
             Data.BindRequested += Bind;
             Data.UnbindFromReadRequested += UnbindFromReading;
             Data.UnbindFromWriteRequested += UnbindFromWriting;
             Data.UnbindRequested += Unbind;
+        }
+
+        private void DataOnResized()
+        {
+            _invalidated = true;
         }
 
         private volatile bool _invalidated = true;

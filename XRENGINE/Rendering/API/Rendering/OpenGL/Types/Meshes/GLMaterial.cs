@@ -86,11 +86,16 @@ namespace XREngine.Rendering.OpenGL
                 SetEngineUniforms(materialProgram);
                 Data.OnSettingUniforms(materialProgram.Data);
                 Engine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(materialProgram.Data);
+            }
 
-                // Ensure any active sampler uniforms left unbound by material/engine code still receive
-                // a type-correct placeholder texture so the draw does not hit GL_INVALID_OPERATION.
+            public void FinalizeUniformBindings(GLRenderProgram? materialProgram)
+            {
+                if (materialProgram is null)
+                    return;
+
+                // Mesh/FBO SettingUniforms hooks run after SetUniforms(); defer fallback binding until
+                // the full binding batch is complete so late sampler binds are observed correctly.
                 materialProgram.BindFallbackSamplers();
-
                 materialProgram.WarnIfNoUniformOrSamplerBindings(Data.Name);
             }
 
@@ -163,19 +168,67 @@ namespace XREngine.Rendering.OpenGL
 
             public void SetTextureUniforms(GLRenderProgram program)
             {
-                for (int i = 0; i < Data.Textures.Count; ++i)
-                    SetTextureUniform(program, i);
+                int textureUnit = 0;
+                for (int textureIndex = 0; textureIndex < Data.Textures.Count; ++textureIndex)
+                {
+                    if (!TryGetTexture(textureIndex, out IGLTexture texture))
+                        continue;
+
+                    SetTextureUniform(program, textureIndex, texture, textureUnit);
+                    textureUnit++;
+                }
             }
+
             public void SetTextureUniform(GLRenderProgram program, int textureIndex, string? samplerNameOverride = null)
             {
-                if (!Data.Textures.IndexInRange(textureIndex))
-                    return;
-                
-                var tex = Data.Textures[textureIndex];
-                if (tex is null || Renderer.GetOrCreateAPIRenderObject(tex) is not IGLTexture texture)
+                if (!TryGetTextureBinding(textureIndex, out IGLTexture texture, out int textureUnit))
                     return;
 
-                program?.Sampler(texture.ResolveSamplerName(textureIndex, samplerNameOverride), texture, textureIndex);
+                SetTextureUniform(program, textureIndex, texture, textureUnit, samplerNameOverride);
+            }
+
+            private void SetTextureUniform(GLRenderProgram program, int textureIndex, IGLTexture texture, int textureUnit, string? samplerNameOverride = null)
+                => program?.Sampler(texture.ResolveSamplerName(textureIndex, samplerNameOverride), texture, textureUnit);
+
+            private bool TryGetTextureBinding(int textureIndex, out IGLTexture texture, out int textureUnit)
+            {
+                texture = null!;
+                textureUnit = 0;
+
+                if (!Data.Textures.IndexInRange(textureIndex))
+                    return false;
+
+                int nextTextureUnit = 0;
+                for (int i = 0; i <= textureIndex; ++i)
+                {
+                    if (!TryGetTexture(i, out IGLTexture currentTexture))
+                        continue;
+
+                    if (i == textureIndex)
+                    {
+                        texture = currentTexture;
+                        textureUnit = nextTextureUnit;
+                        return true;
+                    }
+
+                    nextTextureUnit++;
+                }
+
+                return false;
+            }
+
+            private bool TryGetTexture(int textureIndex, out IGLTexture texture)
+            {
+                texture = null!;
+                if (!Data.Textures.IndexInRange(textureIndex))
+                    return false;
+
+                var tex = Data.Textures[textureIndex];
+                if (tex is null || Renderer.GetOrCreateAPIRenderObject(tex) is not IGLTexture glTexture)
+                    return false;
+
+                texture = glTexture;
+                return true;
             }
         }
     }

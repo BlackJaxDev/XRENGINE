@@ -63,12 +63,10 @@ namespace XREngine.Rendering.OpenGL
             protected internal override void PostGenerated()
             {
                 var rend = Renderer.ActiveMeshRenderer;
-                // If a mesh renderer is active, bind attributes now; otherwise just allocate storage so future PushSubData works.
-                if (rend is not null && Data.Target == EBufferTarget.ArrayBuffer)
-                {
-                    BindToRenderer(rend.GetVertexProgram(), rend);
-                }
-                else if (rend is null && Data.Target == EBufferTarget.ArrayBuffer && IsGpuBufferLoggingEnabled())
+                // Attribute binding must be driven by GLMeshRenderer.BindBuffers(), which knows the
+                // owning VAO/program pair. Async mesh generation can happen while an unrelated renderer
+                // is active, and eagerly binding here pollutes that VAO and emits bogus missing-attribute logs.
+                if (rend is null && Data.Target == EBufferTarget.ArrayBuffer && IsGpuBufferLoggingEnabled())
                 {
                     // Suppress noisy warning; atlas / generic buffers can legitimately be created before a renderer binds them.
                     Debug.OpenGL($"{GetDescribingName()} generated (no active mesh renderer yet) – delaying attribute binding.");

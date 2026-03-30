@@ -21,6 +21,7 @@ namespace XREngine.Rendering
         private string? _resolvedSourceCache;
         private string? _resolvedSourceCachePath;
         private string? _resolvedSourceCacheText;
+        private ShaderSourceFileDependency[]? _resolvedSourceDependencies;
 
         internal EShaderType _type = EShaderType.Fragment;
         public EShaderType Type
@@ -177,6 +178,7 @@ namespace XREngine.Rendering
                 _resolvedSourceCache = null;
                 _resolvedSourceCachePath = null;
                 _resolvedSourceCacheText = null;
+                _resolvedSourceDependencies = null;
             }
 
             _existingUniforms.Clear();
@@ -199,7 +201,8 @@ namespace XREngine.Rendering
                 {
                     if (_resolvedSourceCache is not null &&
                         string.Equals(_resolvedSourceCacheText, sourceText, StringComparison.Ordinal) &&
-                        string.Equals(_resolvedSourceCachePath, sourcePath, StringComparison.Ordinal))
+                        string.Equals(_resolvedSourceCachePath, sourcePath, StringComparison.Ordinal) &&
+                        ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
                     {
                         resolvedSource = _resolvedSourceCache;
                         return true;
@@ -209,7 +212,11 @@ namespace XREngine.Rendering
 
             try
             {
-                resolvedSource = ShaderSourceResolver.ResolveSource(sourceText, sourcePath, annotateIncludes: annotateIncludes);
+                ShaderSourceResolutionResult resolution = ShaderSourceResolver.ResolveSourceDetailed(
+                    sourceText,
+                    sourcePath,
+                    annotateIncludes: annotateIncludes);
+                resolvedSource = resolution.Source;
 
                 if (!annotateIncludes)
                 {
@@ -218,6 +225,7 @@ namespace XREngine.Rendering
                         _resolvedSourceCache = resolvedSource;
                         _resolvedSourceCacheText = sourceText;
                         _resolvedSourceCachePath = sourcePath;
+                        _resolvedSourceDependencies = resolution.FileDependencies;
                     }
                 }
 

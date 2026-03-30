@@ -15,5 +15,14 @@ public static partial class EditorImGuiUI
         public bool RenamingIsDirectory { get; set; }
         public bool RenameFocusRequested { get; set; }
         public Dictionary<string, AssetExplorerPreviewCacheEntry> PreviewCache { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, AssetExplorerDirectorySnapshot> DirectorySnapshots { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public FileSystemWatcher? Watcher { get; set; }
+        public string WatcherRootPath { get; set; } = string.Empty;
+        public object SnapshotInvalidationLock { get; } = new();
+        public HashSet<string> PendingInvalidatedDirectories { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public bool ClearAllSnapshotsPending { get; set; }
+        public object SnapshotBuildLock { get; } = new();
+        public HashSet<string> PendingDirectorySnapshotBuilds { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, AssetExplorerDirectorySnapshot> CompletedDirectorySnapshots { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }

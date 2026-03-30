@@ -373,7 +373,7 @@ public static partial class EditorImGuiUI
         private static partial void HandleAssetExplorerDockResize(ImGuiViewportPtr viewport, float reservedLeft, float reservedRight, bool dockedTop);
         private static partial void EnsureAssetExplorerState(AssetExplorerTabState state, string rootPath);
         private static partial string NormalizeAssetExplorerPath(string path);
-        private static partial bool DirectoryHasChildren(string path);
+        private static partial bool DirectoryHasChildren(AssetExplorerTabState state, string path);
         private static partial string FormatFileSize(long size);
 
         internal static void EnqueueSceneEdit(Action edit)

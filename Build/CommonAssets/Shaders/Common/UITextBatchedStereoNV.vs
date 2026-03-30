@@ -36,13 +36,6 @@ layout (location = 1) out vec3 FragNorm;
 layout (location = 4) out vec2 FragUV0;
 layout (location = 5) flat out vec4 InstanceTextColor;
 
-out gl_PerVertex
-{
-	vec4 gl_Position;
-	float gl_PointSize;
-	float gl_ClipDistance[];
-};
-
 mat4 getTextModelMatrix(uint textIndex)
 {
     uint base6 = textIndex * 6u;

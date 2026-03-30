@@ -10,6 +10,8 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLMeshRenderer
         {
+            private bool _inlineGenerateFallbackLogged;
+
             /// <summary>
             /// Select the effective material, honoring global/pipeline overrides.
             /// </summary>
@@ -73,6 +75,18 @@ namespace XREngine.Rendering.OpenGL
             private static bool UsesPointLightShadowCubemap(XRMaterial material)
                 => material.Textures.Any(texture => texture is XRTextureCube { SamplerName: "ShadowMap" });
 
+            private static bool IsPointLightShadowGeometryPass()
+            {
+                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                return renderState?.ShadowPass == true
+                    && renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
+                    && globalMaterialOverride.GeometryShaders.Count > 0
+                    && UsesPointLightShadowCubemap(globalMaterialOverride);
+            }
+
+            internal bool RequiresTriangleOnlyDrawsForCurrentPass()
+                => IsPointLightShadowGeometryPass();
+
             /// <summary>
             /// Primary render entry point, handling shader selection, buffer binding, and uniforms.
             /// Sets per-mesh and per-camera uniforms required for rendering, including support for stereo (VR) passes,
@@ -123,23 +137,33 @@ namespace XREngine.Rendering.OpenGL
                 {
                     bool shadowPass = Engine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false;
                     bool isRenderPipelinePriority = MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline;
+                    bool throttleRenderPipelineGeneration = isRenderPipelinePriority && Renderer.MeshGenerationQueue.ThrottlePriorityGeneration;
 
                     // Shadow passes never cold-start GL resources to avoid amplifying startup cost.
                     // Normal scene meshes defer to the frame-budgeted queue when enabled.
-                    // Render-pipeline meshes (fullscreen tri for IBL, UI quads, etc.) always generate
-                    // inline because their output is consumed the same frame — deferring them produces
-                    // black framebuffers.
-                    if (shadowPass || (Renderer.MeshGenerationQueue.Enabled && !isRenderPipelinePriority))
+                    // Render-pipeline meshes normally generate inline because their output is consumed
+                    // the same frame, but during startup budget boosts they also defer so cold-start
+                    // warmup is spread across frames instead of stalling the render thread.
+                    if (shadowPass || (Renderer.MeshGenerationQueue.Enabled && (!isRenderPipelinePriority || throttleRenderPipelineGeneration)))
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                         Dbg(shadowPass
                             ? "Not generated yet during shadow pass - queued for deferred generation"
-                            : "Not generated yet - queued for deferred generation", "Render");
+                            : throttleRenderPipelineGeneration
+                                ? "Not generated yet - startup throttling queued render-pipeline generation"
+                                : "Not generated yet - queued for deferred generation", "Render");
                         return; // Skip rendering until generated
                     }
 
                     using (Engine.Profiler.Start("GLMeshRenderer.Render.Generate"))
                     {
+                        if (!_inlineGenerateFallbackLogged)
+                        {
+                            _inlineGenerateFallbackLogged = true;
+                            Debug.OpenGLWarning(
+                                $"[GLMeshRenderer] Inline Generate fallback for '{GetDescribingName()}' (priority={MeshRenderer.GenerationPriority}, shadowPass={shadowPass}, queueEnabled={Renderer.MeshGenerationQueue.Enabled}).");
+                        }
+
                         Dbg("Not generated yet - calling Generate()", "Render");
                         Generate();
                     }
@@ -199,10 +223,24 @@ namespace XREngine.Rendering.OpenGL
                     }
 
                     OnSettingUniforms(vtx!, mat!);
+                    material.FinalizeUniformBindings(mat);
+                    GLRenderProgram materialProgram = mat!;
+                    Renderer.SetDrawDebugContext(
+                        materialProgram.Data.Name,
+                        material.Data.Name,
+                        Mesh?.Name,
+                        materialProgram.GetBoundSamplerUnitsSnapshot());
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw"))
+                    try
                     {
-                        Renderer.RenderMesh(this, false, instances);
+                        using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw"))
+                        {
+                            Renderer.RenderMesh(this, false, instances);
+                        }
+                    }
+                    finally
+                    {
+                        Renderer.ClearDrawDebugContext();
                     }
                     Dbg("Render mesh submitted", "Render");
                 }
@@ -255,11 +293,7 @@ namespace XREngine.Rendering.OpenGL
                 SetUniformBoth(EEngineUniform.ModelMatrix, modelMatrix);
                 SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModelMatrix);
 
-                var renderState = Engine.Rendering.State.RenderingPipelineState;
-                bool pointLightShadowGeometryPass = renderState?.ShadowPass == true
-                    && renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
-                    && globalMaterialOverride.GeometryShaders.Count > 0
-                    && UsesPointLightShadowCubemap(globalMaterialOverride);
+                bool pointLightShadowGeometryPass = IsPointLightShadowGeometryPass();
 
                 // CPU draw path has gl_BaseInstance==0; provide a per-draw TransformId uniform so
                 // deferred shaders can write stable per-transform IDs into the GBuffer.

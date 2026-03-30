@@ -142,7 +142,7 @@ public partial class DefaultRenderPipeline2
                 .UseLifetime(RenderResourceLifetime.Transient);
         }
 
-        c.Add<VPRC_RenderQuadToFBO>().SetTargets(ForwardPassFBOName, TransparentSceneCopyFBOName);
+        c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
         c.Add<VPRC_Manual>().ManualAction = ResetPpllResources;
         using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
         {
@@ -154,7 +154,7 @@ public partial class DefaultRenderPipeline2
         }
         c.Add<VPRC_RenderQuadFBO>().FrameBufferName = PpllResolveFBOName;
 
-        c.Add<VPRC_RenderQuadToFBO>().SetTargets(ForwardPassFBOName, TransparentSceneCopyFBOName);
+        c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
         for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
         {
             int capture = layerIndex;

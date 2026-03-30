@@ -25,6 +25,7 @@ using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.OpenGL;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -41,6 +42,7 @@ internal class Program
     private static int s_captureInFlight;
     private static int s_deferredStartupWorkFlushed;
     private static int s_fontPrewarmStarted;
+    private static int s_textShaderPrewarmStarted;
     private static int s_startupTimerStopped;
     private static string? s_bootstrapTracePath;
 
@@ -155,14 +157,13 @@ internal class Program
             XREngine.Engine.UserSettings.PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI;
             WriteBootstrapTrace($"Applied unit-test overrides: Render={EditorUnitTests.Toggles.RenderAPI}, Physics={EditorUnitTests.Toggles.PhysicsAPI}");
             StartStartupFontPrewarm();
+            StartStartupTextShaderPrewarm();
             
             // Initialize MCP server after last project or sandbox editor preferences are loaded
             McpServerHost.Initialize(args);
 
             // Assign the target world AFTER all settings have been applied and BEFORE windows are created, 
             // so that the render pipeline and other systems can be properly initialized.
-            RuntimeBootstrapState.DeferNonEssentialStartupWorkUntilStartupCompletes = true;
-            WriteBootstrapTrace("Deferring startup model imports until first visible frame.");
             Stopwatch targetWorldStopwatch = Stopwatch.StartNew();
             settings.StartupWindows[0].TargetWorld = GetTargetWorld(ResolveWorldMode(args));
             targetWorldStopwatch.Stop();
@@ -335,6 +336,7 @@ internal class Program
             s_captureInFlight = 0;
             s_deferredStartupWorkFlushed = 0;
             s_fontPrewarmStarted = 0;
+            s_textShaderPrewarmStarted = 0;
             s_startupTimerStopped = 0;
             Engine.StartupPresentationEnabled = true;
             s_startupStopwatch = Stopwatch.StartNew();
@@ -365,12 +367,56 @@ internal class Program
         });
     }
 
+    /// <summary>
+    /// Pre-loads all common text shader variants into the asset cache on a background thread.
+    /// This eliminates synchronous shader deserialization during collect-visible when the first
+    /// <see cref="XREngine.Components.UI.UITextComponent"/> lazily builds its material.
+    /// </summary>
+    private static void StartStartupTextShaderPrewarm()
+    {
+        if (Interlocked.CompareExchange(ref s_textShaderPrewarmStarted, 1, 0) != 0)
+            return;
+
+        WriteBootstrapTrace("Starting text shader prewarm.");
+        _ = Task.Run(() =>
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            try
+            {
+                // Vertex shaders
+                _ = XRShader.EngineShader(Path.Combine("Common", "Text.vs"), EShaderType.Vertex);
+                _ = XRShader.EngineShader(Path.Combine("Common", "TextStereo.vs"), EShaderType.Vertex);
+                _ = XRShader.EngineShader(Path.Combine("Common", "TextRotatable.vs"), EShaderType.Vertex);
+                _ = XRShader.EngineShader(Path.Combine("Common", "TextRotatableStereo.vs"), EShaderType.Vertex);
+                // Fragment shaders
+                _ = XRShader.EngineShader(Path.Combine("Common", "Text.fs"), EShaderType.Fragment);
+                _ = XRShader.EngineShader(Path.Combine("Common", "TextMsdf.fs"), EShaderType.Fragment);
+                _ = XRShader.EngineShader(Path.Combine("Common", "TextMtsdfScreen.fs"), EShaderType.Fragment);
+                stopwatch.Stop();
+                WriteBootstrapTrace($"Text shaders prewarmed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms.");
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                WriteBootstrapTrace($"Text shader prewarm failed after {stopwatch.Elapsed.TotalMilliseconds:F0} ms: {ex.Message}");
+            }
+        });
+    }
+
     private static void OnStartupWindowAdded(XRWindow window)
     {
         if (Interlocked.CompareExchange(ref s_startupWindowHooked, 1, 0) != 0)
             return;
 
         s_startupWindow = window;
+
+        if (window.Renderer is OpenGLRenderer glRenderer)
+        {
+            glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(100.0);
+            glRenderer.UploadQueue.BoostBudgetUntilDrained(50.0);
+            WriteBootstrapTrace("Boosted GL mesh-generation and upload budgets until startup warmup drains.");
+        }
+
         window.PostRenderViewportsCallback += OnStartupPostRenderViewports;
     }
 
@@ -435,7 +481,7 @@ internal class Program
         {
             BootstrapStartupWork.FlushDeferredWork();
             WriteBootstrapTrace("Deferred startup work flushed.");
-        }, "Program.FlushDeferredStartupWork", executeNowIfAlreadyMainThread: true);
+        }, "Program.FlushDeferredStartupWork", executeNowIfAlreadyMainThread: false);
     }
 
     /// <summary>

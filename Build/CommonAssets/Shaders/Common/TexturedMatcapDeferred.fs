@@ -28,8 +28,9 @@ void main()
     vec3 reflected = reflect(viewDir, normalize(FragNorm));
     float m = 2.0f * sqrt(reflected.x * reflected.x + reflected.y * reflected.y + (reflected.z + 1.0f) * (reflected.z + 1.0f));
     vec2 matcapUV = vec2(reflected.x / m + 0.5f, reflected.y / m + 0.5f);
+    vec4 matcapSample = texture(Texture0, matcapUV);
 
     Normal = XRENGINE_EncodeNormal(FragNorm);
-    AlbedoOpacity = vec4(texture(Texture0, matcapUV).rgb * BaseColor, Opacity);
+    AlbedoOpacity = vec4(matcapSample.rgb * BaseColor, Opacity);
     RMSI = vec4(Roughness, Metallic, Specular, Emission);
 }

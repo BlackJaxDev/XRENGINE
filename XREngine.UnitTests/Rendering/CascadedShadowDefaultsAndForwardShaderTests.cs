@@ -27,8 +27,12 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("layout(binding = 17) uniform samplerCube PointLightShadowMaps");
         source.ShouldContain("layout(binding = 21) uniform sampler2D SpotLightShadowMaps");
         source.ShouldContain("uniform int ForwardPlusEyeCount;");
+        source.ShouldContain("uniform float PointLightShadowNearPlanes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
+        source.ShouldContain("uniform int PointLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
+        source.ShouldContain("uniform int SpotLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
         source.ShouldContain("int XRENGINE_GetForwardViewIndex()");
         source.ShouldContain("vec3 XRENGINE_GetForwardCameraPosition()");
+        source.ShouldContain("void XRENGINE_TrySetForwardShadowDebug(int debugMode, float lit, float margin)");
         source.ShouldContain("float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal, vec3 fragPos)");
         source.ShouldContain("float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, vec3 fragPos, vec3 lightDir)");
         source.ShouldContain("uniform bool UseCascadedDirectionalShadows;");
@@ -48,6 +52,89 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("SpotLightShadowMaps[shadowSlot],");
         source.ShouldContain("light.Base.Base.WorldToLightSpaceProjMatrix,");
         source.ShouldContain("SpotLightShadowBiasMax[lightIndex],");
+    }
+
+    [Test]
+    public void PointLightShadow_HasR16fQuantizationBiasGuard()
+    {
+        string source = LoadShaderSource("Snippets/ForwardLighting.glsl");
+
+        // Point-light cubemap shadows store in R16f (10-bit mantissa). Without a minimum
+        // bias proportional to lightDist, half-float quantization causes universal shadow
+        // acne (the debug heatmap shows red everywhere).
+        source.ShouldContain("bias = max(bias, lightDist * (1.0 / 512.0));");
+    }
+
+    [Test]
+    public void PointLightShadow_OffsetsReceiverBeforeSampling()
+    {
+        string forwardSource = LoadShaderSource("Snippets/ForwardLighting.glsl");
+        forwardSource.ShouldContain("vec3 offsetPosWS = fragPos + normal * PointLightShadowBiasMax[lightIndex];");
+        forwardSource.ShouldContain("vec3 fragToLight = offsetPosWS - light.Position;");
+        forwardSource.ShouldContain("if (lightDist <= nearPlaneDist + PointLightShadowBiasMax[lightIndex])");
+
+        string deferredSource = LoadShaderSource("Scene3D/DeferredLightingPoint.fs");
+        deferredSource.ShouldContain("vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;");
+        deferredSource.ShouldContain("vec3 fragToLight = offsetPosWS - LightData.Position;");
+        deferredSource.ShouldContain("if (lightDist <= nearPlaneDist + ShadowBiasMax)");
+    }
+
+    [Test]
+    public void PointLightDebugHeatmaps_ColorFromFilteredLitState()
+    {
+        string forwardSource = LoadShaderSource("Snippets/ForwardLighting.glsl");
+        forwardSource.ShouldContain("float intensity = min(abs(margin) * 20.0, 1.0);");
+        forwardSource.ShouldContain("float clampedLit = clamp(lit, 0.0, 1.0);");
+        forwardSource.ShouldContain("return vec3((1.0 - clampedLit) * intensity, clampedLit * intensity, 0.0);");
+
+        string deferredSource = LoadShaderSource("Scene3D/DeferredLightingPoint.fs");
+        deferredSource.ShouldContain("float intensity = min(abs(_dbgShadowMargin) * 20.0f, 1.0f);");
+        deferredSource.ShouldContain("float clampedLit = clamp(_dbgShadowLit, 0.0f, 1.0f);");
+        deferredSource.ShouldContain("OutColor = vec3((1.0f - clampedLit) * intensity, clampedLit * intensity, 0.0f);");
+    }
+
+    [Test]
+    public void DeferredPointShadow_HasR16fQuantizationBiasGuard()
+    {
+        string source = LoadShaderSource("Scene3D/DeferredLightingPoint.fs");
+
+        source.ShouldContain("uniform float ShadowNearPlaneDist = 0.1f;");
+        source.ShouldContain("float r16fRel  = 1.0f / 512.0f;");
+        source.ShouldContain("float relThreshold = max(texelRel, max(userRel, max(depthRel, r16fRel)));");
+    }
+
+    [Test]
+    public void ForwardPlusShaders_ViewportRelativeTileLookup()
+    {
+        string forwardSource = LoadShaderSource("Snippets/ForwardLighting.glsl");
+        forwardSource.ShouldContain("uniform vec2 ScreenOrigin;");
+        forwardSource.ShouldContain("ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;");
+        forwardSource.ShouldContain("tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));");
+    }
+
+    [Test]
+    public void ForwardPlusCullingShaders_UseViewSpaceTileFrustums()
+    {
+        string monoSource = LoadShaderSource("Scene3D/ForwardPlus/LightCulling.comp");
+        monoSource.ShouldContain("frustumPlanes[i] *= projection;");
+        monoSource.ShouldNotContain("frustumPlanes[i] *= viewProjection;");
+        monoSource.ShouldNotContain("frustumPlanes[4] *= view;");
+        monoSource.ShouldNotContain("frustumPlanes[5] *= view;");
+        // Near/far planes use camera near/far instead of per-tile depth
+        monoSource.ShouldContain("uniform float cameraNear;");
+        monoSource.ShouldContain("uniform float cameraFar;");
+        monoSource.ShouldContain("frustumPlanes[4] = vec4( 0.0, 0.0,-1.0, -cameraNear);");
+        monoSource.ShouldContain("frustumPlanes[5] = vec4( 0.0, 0.0, 1.0,  cameraFar);");
+
+        string stereoSource = LoadShaderSource("Scene3D/ForwardPlus/LightCullingStereo.comp");
+        stereoSource.ShouldContain("frustumPlanes[i] *= projection;");
+        stereoSource.ShouldNotContain("frustumPlanes[i] *= viewProjection;");
+        stereoSource.ShouldNotContain("frustumPlanes[4] *= view;");
+        stereoSource.ShouldNotContain("frustumPlanes[5] *= view;");
+        stereoSource.ShouldContain("uniform float cameraNear;");
+        stereoSource.ShouldContain("uniform float cameraFar;");
+        stereoSource.ShouldContain("frustumPlanes[4] = vec4( 0.0, 0.0,-1.0, -cameraNear);");
+        stereoSource.ShouldContain("frustumPlanes[5] = vec4( 0.0, 0.0, 1.0,  cameraFar);");
     }
 
     [Test]
@@ -89,6 +176,22 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
 
         source.ShouldNotContain("MinFade");
         source.ShouldNotContain("MaxFade");
+        source.ShouldContain("uniform vec2 ScreenOrigin;");
+        source.ShouldContain("vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;");
+    }
+
+    [Test]
+    public void PointShadowSampling_UsesBalancedKernelTapOrder()
+    {
+        string deferredSource = LoadShaderSource("Scene3D/DeferredLightingPoint.fs");
+        deferredSource.ShouldContain("const int LocalShadowCubeKernelTapOrder[20] = int[](");
+        deferredSource.ShouldContain("vec3 GetShadowCubeKernelTapLocal(int tapIndex)");
+        deferredSource.ShouldContain("LocalShadowCubeKernel[LocalShadowCubeKernelTapOrder[tapIndex]]");
+
+        string samplingSource = LoadShaderSource("Snippets/ShadowSampling.glsl");
+        samplingSource.ShouldContain("const int XRENGINE_ShadowCubeKernelTapOrder[20] = int[](");
+        samplingSource.ShouldContain("vec3 XRENGINE_GetShadowCubeKernelTap(int tapIndex)");
+        samplingSource.ShouldContain("XRENGINE_ShadowCubeKernel[XRENGINE_ShadowCubeKernelTapOrder[tapIndex]]");
     }
 
     [Test]
@@ -100,6 +203,39 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("program.Uniform($\"{flatPrefix}Position\", lightPosition);");
         source.ShouldContain("program.Uniform($\"{prefix}.Position\", lightPosition);");
         source.ShouldContain("program.Uniform(\"LightPos\", Transform.RenderTranslation);");
+        source.ShouldContain("program.Uniform(\"ShadowNearPlaneDist\", ShadowNearPlaneDistance);");
+    }
+
+    [Test]
+    public void PointLightShadowPath_UsesForcedGeneratedVertexContract()
+    {
+        string pointLightSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
+        pointLightSource.ShouldNotContain("PointLightShadowDepth.vs");
+        pointLightSource.ShouldContain("mat = new(refs, geomShader, fragShader);");
+        pointLightSource.ShouldContain("mat = new(refs, fragShader);");
+
+        string pointLightGeometrySource = LoadShaderSource("PointLightShadowDepth.gs");
+        pointLightGeometrySource.ShouldContain("gl_Position = ViewProjectionMatrices[face] * vec4(FragPos, 1.0);");
+
+        string glShaderSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLShader.cs"));
+        glShaderSource.ShouldContain("GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks");
+
+        string compatibilitySource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLShaderSourceCompatibility.cs"));
+        compatibilitySource.ShouldContain("InjectMissingGLPerVertexBlocks");
+        compatibilitySource.ShouldContain("in gl_PerVertex");
+        compatibilitySource.ShouldContain("out gl_PerVertex");
+
+        string meshRendererSource = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Shaders.cs"));
+        meshRendererSource.ShouldContain("bool pointLightShadowPass = renderState?.ShadowPass == true");
+        meshRendererSource.ShouldContain("&& UsesPointLightShadowCubemap(globalMaterialOverride);");
+        meshRendererSource.ShouldContain("|| pointLightShadowPass;");
+
+        string meshRendererRenderingSource = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
+        meshRendererRenderingSource.ShouldContain("private static bool IsPointLightShadowGeometryPass()");
+        meshRendererRenderingSource.ShouldContain("internal bool RequiresTriangleOnlyDrawsForCurrentPass()");
+
+        string meshRendererDrawSource = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.cs"));
+        meshRendererDrawSource.ShouldContain("if (ActiveMeshRenderer.RequiresTriangleOnlyDrawsForCurrentPass())");
     }
 
     [Test]
@@ -110,10 +246,25 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform bool EnableContactShadows = true;");
         source.ShouldContain("uniform float ContactShadowDistance = 0.1f;");
         source.ShouldContain("uniform int ContactShadowSamples = 4;");
+        source.ShouldContain("uniform vec2 ScreenOrigin;");
+        source.ShouldContain("vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;");
         source.ShouldContain("SampleContactShadowScreenSpaceLocal(");
         source.ShouldContain("ResolveContactShadowSampleCountLocal(");
         source.ShouldNotContain("MinFade");
         source.ShouldNotContain("MaxFade");
+    }
+
+    [Test]
+    public void UniformRequirementsDetection_RecognizesForwardLightingEngineUniforms()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Materials", "Options", "EUniformRequirements.cs"));
+
+        source.ShouldContain("[\"ForwardPlusEnabled\"] = EUniformRequirements.Lights,");
+        source.ShouldContain("[\"ProbeGridDims\"] = EUniformRequirements.Lights,");
+        source.ShouldContain("[\"ShadowMapEnabled\"] = EUniformRequirements.Lights,");
+        source.ShouldContain("[\"PointLightShadowNearPlanes\"] = EUniformRequirements.Lights,");
+        source.ShouldContain("[\"PointLightShadowDebugModes\"] = EUniformRequirements.Lights,");
+        source.ShouldContain("[\"SpotLightShadowDebugModes\"] = EUniformRequirements.Lights,");
     }
 
     [Test]

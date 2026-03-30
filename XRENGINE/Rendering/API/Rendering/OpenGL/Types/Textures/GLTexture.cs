@@ -168,7 +168,7 @@ namespace XREngine.Rendering.OpenGL
 
         protected virtual bool OnPreBind()
         {
-            if (Renderer.BoundTexture == this)
+            if (ReferenceEquals(Renderer.GetBoundTexture(TextureTarget), this))
                 return false;
 
             PreBindCallback callback = new();
@@ -209,16 +209,15 @@ namespace XREngine.Rendering.OpenGL
             // Even if our engine-side tracking believes this texture is already bound, perform the GL bind.
             // This prevents state drift (or new texture names from `glGenTextures`) from leaving the object
             // non-existent/uninitialized for DSA calls (e.g. `glTextureStorage2D`, `glTextureView`, FBO attach).
-            bool alreadyTrackedBound = ReferenceEquals(Renderer.BoundTexture, this);
+            bool alreadyTrackedBound = ReferenceEquals(Renderer.GetBoundTexture(TextureTarget), this);
             if (!alreadyTrackedBound)
             {
                 if (!OnPreBind())
                     return;
-                Renderer.BoundTexture = this;
             }
 
             Api.BindTexture(ToGLEnum(TextureTarget), id);
-            Renderer.BoundTexture = this;
+            Renderer.SetBoundTexture(TextureTarget, this, Data.Name);
             VerifySettings();
         }
 
@@ -235,10 +234,10 @@ namespace XREngine.Rendering.OpenGL
 
         public void Unbind()
         {
-            if (Renderer.BoundTexture != this)
+            if (!ReferenceEquals(Renderer.GetBoundTexture(TextureTarget), this))
                 return;
             
-            Renderer.BoundTexture = null;
+            Renderer.SetBoundTexture(TextureTarget, null);
             Api.BindTexture(ToGLEnum(TextureTarget), 0);
         }
 

@@ -1,0 +1,150 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
+using Assimp;
+using NUnit.Framework;
+using Shouldly;
+using XREngine.Core.Files;
+using XREngine.Data.Rendering;
+using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
+
+namespace XREngine.UnitTests.Rendering;
+
+[TestFixture]
+public sealed class ImportedDeferredMaterialTests
+{
+    private IRuntimeShaderServices? _previousServices;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _previousServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new TestRuntimeShaderServices();
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+        RuntimeShaderServices.Current = _previousServices;
+    }
+
+    [Test]
+    public void MakeMaterialDefault_PbrInputs_SelectDeferredPbrShaderAndTextureLayout()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D normal = new();
+        XRTexture2D metallic = new();
+        XRTexture2D roughness = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDefault(
+            [albedo, normal, metallic, roughness],
+            [
+                CreateSlot("albedo.png", TextureType.BaseColor),
+                CreateSlot("normal.png", TextureType.NormalCamera),
+                CreateSlot("metallic.png", TextureType.Metalness),
+                CreateSlot("roughness.png", TextureType.Roughness),
+            ],
+            "PbrMaterial");
+
+        material.RenderPass.ShouldBe((int)EDefaultRenderPass.OpaqueDeferred);
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("TexturedNormalMetallicRoughnessDeferred.fs");
+        material.Textures.Count.ShouldBe(4);
+        material.Textures[0].ShouldBeSameAs(albedo);
+        material.Textures[1].ShouldBeSameAs(normal);
+        material.Textures[2].ShouldBeSameAs(metallic);
+        material.Textures[3].ShouldBeSameAs(roughness);
+        material.Parameter<ShaderFloat>("Metallic")?.Value.ShouldBe(1.0f);
+        material.Parameter<ShaderFloat>("Roughness")?.Value.ShouldBe(1.0f);
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_NormalCameraTexturesCountAsNormalMaps()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D normal = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, normal],
+            [
+                CreateSlot("albedo.png", TextureType.BaseColor),
+                CreateSlot("normal.png", TextureType.NormalCamera),
+            ],
+            "NormalCameraMaterial");
+
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("TexturedNormalDeferred.fs");
+        material.Textures.Count.ShouldBe(2);
+        material.Textures[0].ShouldBeSameAs(albedo);
+        material.Textures[1].ShouldBeSameAs(normal);
+    }
+
+    [Test]
+    public void PrefabSource_CreateMaterial_DelegatesToDeferredImporterFactory()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Scene/Prefabs/XRPrefabSource.cs").Replace("\r\n", "\n");
+
+        source.ShouldContain("=> ModelImporter.MakeMaterialDeferred(textureList, textures, name);");
+    }
+
+    private static TextureSlot CreateSlot(string filePath, TextureType textureType)
+        => new(filePath, textureType, 0, default, 0, 1.0f, default, default, default, 0);
+
+    private static string ReadWorkspaceFile(string relativePath)
+    {
+        string fullPath = ResolveWorkspacePath(relativePath);
+        File.Exists(fullPath).ShouldBeTrue($"Expected workspace file does not exist: {fullPath}");
+        return File.ReadAllText(fullPath);
+    }
+
+    private static string ResolveWorkspacePath(string relativePath)
+    {
+        DirectoryInfo? dir = new(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            string candidate = Path.Combine(dir.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(candidate))
+                return candidate;
+
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
+    }
+
+    private sealed class TestRuntimeShaderServices : IRuntimeShaderServices
+    {
+        public T? LoadAsset<T>(string filePath) where T : XRAsset, new()
+            => new T();
+
+        public T LoadEngineAsset<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+            => CreateShaderAsset<T>(relativePath);
+
+        public Task<T> LoadEngineAssetAsync<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+            => Task.FromResult(CreateShaderAsset<T>(relativePath));
+
+        public void LogWarning(string message)
+        {
+        }
+
+        private static T CreateShaderAsset<T>(string relativePath) where T : XRAsset, new()
+        {
+            if (typeof(T) == typeof(XRShader))
+            {
+                TextFile source = TextFile.FromText("void main() {}\n");
+                source.FilePath = relativePath;
+
+                XRShader shader = new(EShaderType.Fragment, source)
+                {
+                    FilePath = relativePath,
+                };
+
+                return (T)(XRAsset)shader;
+            }
+
+            return new T();
+        }
+    }
+}

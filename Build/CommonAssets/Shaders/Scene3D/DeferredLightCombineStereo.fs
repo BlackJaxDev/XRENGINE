@@ -61,7 +61,8 @@ void main()
 	mat4 InverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
 	mat4 ProjMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
-	vec3 albedoColor = texture(AlbedoOpacity, uvi).rgb;
+	vec4 albedoOpacity = texture(AlbedoOpacity, uvi);
+	vec3 albedoColor = albedoOpacity.rgb;
 	vec3 normal = XRENGINE_ReadNormal(Normal, uvi);
 	vec3 rms = texture(RMSE, uvi).rgb;
 	float ao = UseAmbientOcclusion ? pow(texture(AmbientOcclusionTexture, uvi).r, max(AmbientOcclusionPower, 0.001f)) : 1.0f;
@@ -97,5 +98,5 @@ void main()
 	float specOcclusion = SpecularOcclusionEnabled ? GTSpecularOcclusion(NoV, ao, roughness) : ao;
 	vec3 ambient = kD * diffuse * diffuseAO + specular * specOcclusion;
 
-	OutLo = vec4(ambient + InLo, 1.0);
+	OutLo = vec4(ambient + InLo, albedoOpacity.a);
 }

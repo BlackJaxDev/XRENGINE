@@ -37,16 +37,27 @@ namespace XREngine.Data.Geometry
 
         public readonly EContainment ContainsAABB(AABB box, float tolerance = float.Epsilon)
         {
-            Vector3 min = box.Min;
-            Vector3 max = box.Max;
-            Vector3 closestPoint = ClosestPoint(min, false);
-            if (closestPoint.X < min.X || closestPoint.X > max.X)
+            float allowedRadius = Radius + tolerance;
+            float allowedRadiusSquared = allowedRadius * allowedRadius;
+
+            Vector3 closestPoint = Vector3.Clamp(Center, box.Min, box.Max);
+            Vector3 closestDelta = closestPoint - Center;
+            if (Vector3.Dot(closestDelta, closestDelta) > allowedRadiusSquared)
                 return EContainment.Disjoint;
-            if (closestPoint.Y < min.Y || closestPoint.Y > max.Y)
-                return EContainment.Disjoint;
-            if (closestPoint.Z < min.Z || closestPoint.Z > max.Z)
-                return EContainment.Disjoint;
-            return EContainment.Contains;
+
+            Vector3 minDelta = Vector3.Abs(box.Min - Center);
+            Vector3 maxDelta = Vector3.Abs(box.Max - Center);
+            float farthestX = MathF.Max(minDelta.X, maxDelta.X);
+            float farthestY = MathF.Max(minDelta.Y, maxDelta.Y);
+            float farthestZ = MathF.Max(minDelta.Z, maxDelta.Z);
+            float farthestDistanceSquared =
+                farthestX * farthestX +
+                farthestY * farthestY +
+                farthestZ * farthestZ;
+
+            return farthestDistanceSquared <= allowedRadiusSquared
+                ? EContainment.Contains
+                : EContainment.Intersects;
         }
 
         public readonly EContainment ContainsSphere(Sphere sphere)

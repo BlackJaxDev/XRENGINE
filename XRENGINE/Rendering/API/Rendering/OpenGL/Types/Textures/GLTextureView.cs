@@ -92,7 +92,7 @@ namespace XREngine.Rendering.OpenGL
             viewed.Bind();
             if (previous is null)
             {
-                Renderer.BoundTexture = null;
+                Renderer.SetBoundTexture(viewed.TextureTarget, null);
                 Api.BindTexture(ToGLEnum(viewed.TextureTarget), 0);
             }
             else

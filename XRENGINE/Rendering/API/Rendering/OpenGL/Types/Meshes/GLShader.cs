@@ -1,7 +1,6 @@
 using System.IO;
 using Silk.NET.OpenGL;
 using XREngine.Data.Core;
-using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -15,6 +14,7 @@ namespace XREngine.Rendering.OpenGL
             
             private bool _isCompiled = false;
             private bool _compilePending;
+            private bool _compileAsSeparable;
 
             /// <summary>
             /// GL_COMPLETION_STATUS_ARB (0x91B1) — used to poll non-blocking compile/link when
@@ -78,6 +78,9 @@ namespace XREngine.Rendering.OpenGL
             /// Only meaningful when GL_ARB_parallel_shader_compile is active.
             /// </summary>
             public bool IsCompilePending => _compilePending;
+
+            public void PrepareCompileVariant(bool separableProgram)
+                => _compileAsSeparable = separableProgram;
 
             /// <summary>
             /// Polls the driver for async shader-compilation completion (GL_ARB_parallel_shader_compile).
@@ -233,12 +236,23 @@ namespace XREngine.Rendering.OpenGL
 
             public string? ResolveFullSource()
             {
-                string? src = ShaderSourcePreprocessor.ResolveSource(SourceText ?? string.Empty, Data.Source?.FilePath, out List<string> resolvedPaths);
+                Data.TryGetResolvedSource(out string src);
 
-                if (resolvedPaths.Count > 0)
-                    Debug.OpenGL($"Resolved {resolvedPaths.Count} includes:{Environment.NewLine}{string.Join(Environment.NewLine, resolvedPaths.Select(x => $" - {x}"))}");
-                
-                return src;
+                return GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(src, Mode, RequiresSeparableCompatibility());
+            }
+
+            private bool RequiresSeparableCompatibility()
+            {
+                if (_compileAsSeparable)
+                    return true;
+
+                foreach (GLRenderProgram program in ActivePrograms)
+                {
+                    if (program.Data.Separable)
+                        return true;
+                }
+
+                return false;
             }
         }
 

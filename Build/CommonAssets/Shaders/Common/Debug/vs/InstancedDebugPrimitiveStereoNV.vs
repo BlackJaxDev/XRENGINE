@@ -10,13 +10,6 @@ layout(location = 1) out vec3 vPos;
 out int gl_ViewportMask[1];
 out int gl_SecondaryViewportMaskNV[1];
 
-out gl_PerVertex
-{
-    vec4 gl_Position;
-    float gl_PointSize;
-    float gl_ClipDistance[];
-};
-
 void main()
 {
     instanceID = gl_InstanceID;

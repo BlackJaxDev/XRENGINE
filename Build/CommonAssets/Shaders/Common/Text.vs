@@ -22,13 +22,6 @@ layout (location = 4) out vec2 FragUV0;
 layout (location = 5) flat out vec4 GlyphUVBounds;
 layout (location = 20) out vec3 FragPosLocal;
 
-out gl_PerVertex
-{
-	vec4 gl_Position;
-	float gl_PointSize;
-	float gl_ClipDistance[];
-};
-
 void main()
 {
     vec4 tfm = GlyphTransforms[gl_InstanceID];
