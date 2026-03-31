@@ -218,6 +218,9 @@ namespace XREngine.Scene
                 ActivateTransform();
             else
                 DeactivateTransform();
+
+            foreach (XRComponent component in ComponentsInternal)
+                component.NotifyOwningSceneNodePostDeserialize();
         }
 
         #endregion

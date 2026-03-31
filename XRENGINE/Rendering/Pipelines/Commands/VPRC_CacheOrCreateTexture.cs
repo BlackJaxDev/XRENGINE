@@ -57,8 +57,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Name is null)
                 return;
 
-            XRTexture? texture = null;
-            bool hasTexture = ActivePipelineInstance.TryGetTexture(Name, out texture);
+            // Cache-or-create commands manage concrete pipeline resources, not variable aliases.
+            // Using the broader name-resolution path here can suppress recreation after cache
+            // invalidation by resolving a stale variable entry with the same name.
+            bool hasTexture = ActivePipelineInstance.Resources.TryGetTexture(Name, out XRTexture? texture);
 
             if (hasTexture && texture is not null)
             {

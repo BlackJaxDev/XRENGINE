@@ -69,11 +69,7 @@ public partial class DefaultRenderPipeline2
 
     private XRFrameBuffer CreatePostProcessOutputFBO()
     {
-        XRTexture? outputTexture = GetTexture<XRTexture>(PostProcessOutputTextureName);
-        if (outputTexture is null)
-            throw new InvalidOperationException($"Post-process output texture '{PostProcessOutputTextureName}' not found. Ensure textures are created before FBOs.");
-        if (outputTexture is not IFrameBufferAttachement attach)
-            throw new InvalidOperationException($"Post-process output texture must be FBO attachable. Got type: {outputTexture.GetType().Name}");
+        IFrameBufferAttachement attach = EnsureTextureAttachment(PostProcessOutputTextureName, CreatePostProcessOutputTexture);
 
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
@@ -411,7 +407,7 @@ public partial class DefaultRenderPipeline2
 
     private XRFrameBuffer CreateForwardPassFBO()
     {
-        XRTexture hdrSceneTex = GetTexture<XRTexture>(HDRSceneTextureName)!;
+        XRTexture hdrSceneTex = (XRTexture)EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
 
         XRTexture[] brightRefs = [hdrSceneTex];
         XRMaterial brightMat = new(
@@ -438,11 +434,8 @@ public partial class DefaultRenderPipeline2
         var fbo = new XRQuadFrameBuffer(brightMat, false);
         fbo.SettingUniforms += BrightPassFBO_SettingUniforms;
 
-        if (hdrSceneTex is not IFrameBufferAttachement hdrAttach)
-            throw new InvalidOperationException("HDR Scene texture is not an FBO-attachable texture.");
-
-        if (GetTexture<XRTexture>(DepthStencilTextureName) is not IFrameBufferAttachement dsAttach)
-            throw new InvalidOperationException("Depth/Stencil texture is not an FBO-attachable texture.");
+        IFrameBufferAttachement hdrAttach = (IFrameBufferAttachement)hdrSceneTex;
+        IFrameBufferAttachement dsAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
 
         fbo.SetRenderTargets(
             (hdrAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -460,8 +453,7 @@ public partial class DefaultRenderPipeline2
         };
         colorBuffer.Allocate();
 
-        if (GetTexture<XRTexture>(ForwardPassMsaaDepthStencilTextureName) is not IFrameBufferAttachement depthAttach)
-            throw new InvalidOperationException("Forward MSAA depth/stencil texture is not an FBO-attachable texture.");
+        IFrameBufferAttachement depthAttach = EnsureTextureAttachment(ForwardPassMsaaDepthStencilTextureName, CreateForwardPassMsaaDepthStencilTexture);
 
         XRFrameBuffer fbo = new(
             (colorBuffer, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -486,16 +478,11 @@ public partial class DefaultRenderPipeline2
 
     private XRFrameBuffer CreateDeferredGBufferFBO()
     {
-        if (GetTexture<XRTexture>(AlbedoOpacityTextureName) is not IFrameBufferAttachement albedoAttach)
-            throw new InvalidOperationException("AlbedoOpacity texture must be FBO-attachable.");
-        if (GetTexture<XRTexture>(NormalTextureName) is not IFrameBufferAttachement normalAttach)
-            throw new InvalidOperationException("Normal texture must be FBO-attachable.");
-        if (GetTexture<XRTexture>(RMSETextureName) is not IFrameBufferAttachement rmseAttach)
-            throw new InvalidOperationException("RMSE texture must be FBO-attachable.");
-        if (GetTexture<XRTexture>(TransformIdTextureName) is not IFrameBufferAttachement transformIdAttach)
-            throw new InvalidOperationException("TransformId texture must be FBO-attachable.");
-        if (GetTexture<XRTexture>(DepthStencilTextureName) is not IFrameBufferAttachement depthStencilAttach)
-            throw new InvalidOperationException("DepthStencil texture must be FBO-attachable.");
+        IFrameBufferAttachement albedoAttach = EnsureTextureAttachment(AlbedoOpacityTextureName, CreateAlbedoOpacityTexture);
+        IFrameBufferAttachement normalAttach = EnsureTextureAttachment(NormalTextureName, CreateNormalTexture);
+        IFrameBufferAttachement rmseAttach = EnsureTextureAttachment(RMSETextureName, CreateRMSETexture);
+        IFrameBufferAttachement transformIdAttach = EnsureTextureAttachment(TransformIdTextureName, CreateTransformIdTexture);
+        IFrameBufferAttachement depthStencilAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
 
         return new XRFrameBuffer(
             (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -581,12 +568,15 @@ public partial class DefaultRenderPipeline2
 
     private IFrameBufferAttachement EnsureTextureAttachment(string textureName, Func<XRTexture> factory)
     {
-        var texture = GetTexture<XRTexture>(textureName);
-        if (texture is IFrameBufferAttachement attachment)
+        XRTexture? texture = null;
+        bool hasConcreteTexture = Engine.Rendering.State.CurrentRenderingPipeline?.Resources.TryGetTexture(textureName, out texture) == true;
+        if (hasConcreteTexture && texture is IFrameBufferAttachement attachment)
             return attachment;
 
-        // Texture missing from the cache — can occur when a transient FBO is rebuilt
-        // after a cache invalidation that didn't re-run the texture caching commands.
+        // These attachment names refer to concrete pipeline resources. After cache
+        // invalidation, the registry can be empty or hold a stale non-attachable
+        // survivor under the same name. Rebuild the concrete texture instead of
+        // trusting variable aliases or dangling view instances.
         texture = factory();
         SetTexture(texture);
         return texture as IFrameBufferAttachement
@@ -807,11 +797,8 @@ public partial class DefaultRenderPipeline2
     /// </summary>
     private XRFrameBuffer CreateForwardDepthPrePassMergeFBO()
     {
-        if (GetTexture<XRTexture>(DepthStencilTextureName) is not IFrameBufferAttachement dsAttach)
-            throw new InvalidOperationException("Depth/Stencil texture is not an FBO-attachable texture.");
-
-        if (GetTexture<XRTexture>(NormalTextureName) is not IFrameBufferAttachement normalAttach)
-            throw new InvalidOperationException("Normal texture is not an FBO-attachable texture.");
+        IFrameBufferAttachement dsAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
+        IFrameBufferAttachement normalAttach = EnsureTextureAttachment(NormalTextureName, CreateNormalTexture);
 
         return new XRFrameBuffer(
             (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -1024,16 +1011,11 @@ public partial class DefaultRenderPipeline2
 
     private XRFrameBuffer CreateMsaaGBufferFBO()
     {
-        if (GetTexture<XRTexture>(MsaaAlbedoOpacityTextureName) is not IFrameBufferAttachement albedoAttach)
-            throw new InvalidOperationException("MSAA AlbedoOpacity texture must be FBO-attachable.");
-        if (GetTexture<XRTexture>(MsaaNormalTextureName) is not IFrameBufferAttachement normalAttach)
-            throw new InvalidOperationException("MSAA Normal texture must be FBO-attachable.");
-        if (GetTexture<XRTexture>(MsaaRMSETextureName) is not IFrameBufferAttachement rmseAttach)
-            throw new InvalidOperationException("MSAA RMSE texture must be FBO-attachable.");
-        if (GetTexture<XRTexture>(MsaaTransformIdTextureName) is not IFrameBufferAttachement transformIdAttach)
-            throw new InvalidOperationException("MSAA TransformId texture must be FBO-attachable.");
-        if (GetTexture<XRTexture>(MsaaDepthStencilTextureName) is not IFrameBufferAttachement depthStencilAttach)
-            throw new InvalidOperationException("MSAA DepthStencil texture must be FBO-attachable.");
+        IFrameBufferAttachement albedoAttach = EnsureTextureAttachment(MsaaAlbedoOpacityTextureName, CreateMsaaAlbedoOpacityTexture);
+        IFrameBufferAttachement normalAttach = EnsureTextureAttachment(MsaaNormalTextureName, CreateMsaaNormalTexture);
+        IFrameBufferAttachement rmseAttach = EnsureTextureAttachment(MsaaRMSETextureName, CreateMsaaRMSETexture);
+        IFrameBufferAttachement transformIdAttach = EnsureTextureAttachment(MsaaTransformIdTextureName, CreateMsaaTransformIdTexture);
+        IFrameBufferAttachement depthStencilAttach = EnsureTextureAttachment(MsaaDepthStencilTextureName, CreateMsaaDepthStencilTexture);
 
         return new XRFrameBuffer(
             (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -1052,10 +1034,8 @@ public partial class DefaultRenderPipeline2
     /// </summary>
     private XRFrameBuffer CreateMsaaLightingFBO()
     {
-        if (GetTexture<XRTexture>(MsaaLightingTextureName) is not IFrameBufferAttachement lightingAttach)
-            throw new InvalidOperationException("MSAA Lighting texture must be FBO-attachable.");
-        if (GetTexture<XRTexture>(MsaaDepthStencilTextureName) is not IFrameBufferAttachement depthStencilAttach)
-            throw new InvalidOperationException("MSAA DepthStencil texture must be FBO-attachable.");
+        IFrameBufferAttachement lightingAttach = EnsureTextureAttachment(MsaaLightingTextureName, CreateMsaaLightingTexture);
+        IFrameBufferAttachement depthStencilAttach = EnsureTextureAttachment(MsaaDepthStencilTextureName, CreateMsaaDepthStencilTexture);
 
         return new XRFrameBuffer(
             (lightingAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),

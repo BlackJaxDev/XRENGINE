@@ -120,7 +120,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             var renderer = new XRMeshRenderer(mesh, mat);
             renderer.SettingUniforms += (_, materialProgram) =>
             {
-                uint sampleCount = Math.Max(1u, DefaultRenderPipeline.ResolveEffectiveMsaaSampleCount());
+                uint sampleCount = XREngine.Rendering.RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame();
                 materialProgram.Uniform("SampleCount", (int)sampleCount);
                 materialProgram.Uniform("NormalThreshold", NormalThreshold);
                 materialProgram.Uniform("DepthThreshold", DepthThreshold);

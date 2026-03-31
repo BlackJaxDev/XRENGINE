@@ -4301,10 +4301,9 @@ void main()
             if (outputFbo is not null)
                 return outputFbo.IsMultisampled;
 
-            // Resolve AA mode through the current camera's override, falling back to global settings.
-            var camera = Engine.Rendering.State.RenderingCamera;
-            var aaMode = camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
-            var msaaSamples = camera?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount;
+            // Resolve AA through the current pipeline's latched per-frame state when available.
+            var aaMode = XREngine.Rendering.RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame();
+            var msaaSamples = XREngine.Rendering.RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame();
             return aaMode == XREngine.EAntiAliasingMode.Msaa
                 && msaaSamples > 1u;
         }

@@ -60,7 +60,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Name is null)
                 return;
 
-            if (ActivePipelineInstance.TryGetFBO(Name, out var fbo) && fbo is not null)
+            // Cache-or-create commands manage concrete pipeline resources, not variable aliases.
+            // Using the broader name-resolution path here can suppress recreation after cache
+            // invalidation by resolving a stale variable entry with the same name.
+            if (ActivePipelineInstance.Resources.TryGetFrameBuffer(Name, out var fbo) && fbo is not null)
             {
                 if (NeedsRecreate?.Invoke(fbo) == true)
                     fbo = null;

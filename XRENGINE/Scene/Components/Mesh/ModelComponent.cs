@@ -112,12 +112,19 @@ namespace XREngine.Components.Scene.Mesh
         {
             using var t = Engine.Profiler.Start("ModelComponent.ModelChanged");
 
+            if (Model is not null)
+            {
+                Model.Meshes.PostAnythingAdded -= AddMesh;
+                Model.Meshes.PostAnythingRemoved -= RemoveMesh;
+            }
+
             // Dispose any remaining renderable meshes not already cleaned up in
             // OnPropertyChanging. This unsubscribes bone transform events and destroys
             // GPU buffers, preventing leaked subscriptions and stale SSBO references.
             foreach (RenderableMesh mesh in Meshes)
                 mesh.Dispose();
             Meshes.Clear();
+            _meshLinks.Clear();
             if (Model is null)
                 return;
             
@@ -137,6 +144,14 @@ namespace XREngine.Components.Scene.Mesh
             BuildMeshBVHs();
 
             ModelChanged?.Invoke();
+        }
+
+        protected override void OwningSceneNodePostDeserialize()
+        {
+            base.OwningSceneNodePostDeserialize();
+
+            if (Model is not null)
+                OnModelChanged();
         }
 
         private void BuildMeshBVHs()

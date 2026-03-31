@@ -183,6 +183,50 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     public static RenderingState State
         => TryState ?? throw new InvalidOperationException("Rendering pipeline state is not available.");
 
+    private static XRCamera? ResolveEffectiveCameraForFrame()
+    {
+        XRRenderPipelineInstance? pipeline = CurrentRenderingPipeline;
+        if (pipeline is not null)
+        {
+            return pipeline.RenderState.SceneCamera
+                ?? pipeline.RenderState.RenderingCamera
+                ?? pipeline.LastSceneCamera
+                ?? pipeline.LastRenderingCamera;
+        }
+
+        return Engine.Rendering.State.RenderingPipelineState?.SceneCamera
+            ?? Engine.Rendering.State.RenderingCamera;
+    }
+
+    internal static EAntiAliasingMode ResolveEffectiveAntiAliasingModeForFrame()
+    {
+        if (CurrentRenderingPipeline?.EffectiveAntiAliasingModeThisFrame is EAntiAliasingMode latched)
+            return latched;
+
+        return ResolveEffectiveCameraForFrame()?.AntiAliasingModeOverride
+            ?? Engine.EffectiveSettings.AntiAliasingMode;
+    }
+
+    internal static uint ResolveEffectiveMsaaSampleCountForFrame()
+    {
+        if (CurrentRenderingPipeline?.EffectiveMsaaSampleCountThisFrame is uint latched)
+            return Math.Max(1u, latched);
+
+        return Math.Max(1u,
+            ResolveEffectiveCameraForFrame()?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount);
+    }
+
+    internal static float ResolveEffectiveTsrRenderScaleForFrame()
+    {
+        if (CurrentRenderingPipeline?.EffectiveTsrRenderScaleThisFrame is float latched)
+            return Math.Clamp(latched, 0.5f, 1.0f);
+
+        return Math.Clamp(
+            ResolveEffectiveCameraForFrame()?.TsrRenderScaleOverride ?? Engine.Rendering.Settings.TsrRenderScale,
+            0.5f,
+            1.0f);
+    }
+
     public static T? GetTexture<T>(string name) where T : XRTexture
         => CurrentRenderingPipeline!.GetTexture<T>(name);
 

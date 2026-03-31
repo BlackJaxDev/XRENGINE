@@ -223,12 +223,14 @@ namespace XREngine.Scene
                 }
                 else
                 {
+                    /*
                     // Debug: log why shadow map isn't available
                     string reason = !firstDirLight.CastsShadows ? "CastsShadows=false" :
                                     firstDirLight.ShadowMap is null ? "ShadowMap=null" :
                                     firstDirLight.ShadowMap.Material is null ? "ShadowMap.Material=null" :
                                     $"Textures.Count={firstDirLight.ShadowMap.Material.Textures.Count}";
                     Debug.Out($"[ForwardShadow] No shadow tex: {reason}");
+                    */
                 }
             }
             bool shadowEnabled = forwardShadowTex != null;
