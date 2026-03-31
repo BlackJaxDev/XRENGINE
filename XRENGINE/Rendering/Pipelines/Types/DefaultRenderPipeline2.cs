@@ -166,14 +166,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     /// <summary>
     /// Resolves the effective anti-aliasing mode for the current rendering camera.
-    /// Prefers SceneCamera so per-camera overrides survive null-push scopes.
+    /// Prefers the latched per-frame value when available so nested quad/light-probe
+    /// renders cannot observe a different AA mode partway through the frame.
     /// </summary>
     private static EAntiAliasingMode ResolveAntiAliasingMode()
-    {
-        var camera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera
-                  ?? Engine.Rendering.State.RenderingCamera;
-        return camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
-    }
+        => RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame();
 
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
     {
@@ -188,14 +185,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     /// <summary>
     /// Resolves the effective MSAA sample count for the current rendering camera.
-    /// Prefers SceneCamera so per-camera overrides survive null-push scopes.
+    /// Prefers the latched per-frame value when available so nested quad/light-probe
+    /// renders cannot observe a different MSAA sample count partway through the frame.
     /// </summary>
     internal static uint ResolveEffectiveMsaaSampleCount()
-    {
-        var camera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera
-                  ?? Engine.Rendering.State.RenderingCamera;
-        return Math.Max(1u, camera?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount);
-    }
+        => RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame();
 
     /// <summary>
     /// True when MSAA should be active for the current rendering camera.
@@ -644,10 +638,24 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
                             ? DepthPeelingDebugFBOName
                     : null;
 
+    protected override void OnDestroying()
+    {
+        Engine.Rendering.SettingsChanged -= HandleRenderingSettingsChanged;
+        Engine.Rendering.AntiAliasingSettingsChanged -= HandleAntiAliasingSettingsChanged;
+        ClearProbeResources();
+        base.OnDestroying();
+    }
+
     private void HandleRenderingSettingsChanged()
     {
+        if (IsDestroyed)
+            return;
+
         Engine.InvokeOnMainThread(() =>
         {
+            if (IsDestroyed)
+                return;
+
             ApplyAntiAliasingResolutionHint();
             CommandChain = GenerateCommandChain();
             foreach (var instance in Instances)
@@ -657,8 +665,14 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private void HandleAntiAliasingSettingsChanged()
     {
+        if (IsDestroyed)
+            return;
+
         Engine.InvokeOnMainThread(() =>
         {
+            if (IsDestroyed)
+                return;
+
             ApplyAntiAliasingResolutionHint();
 
             foreach (var instance in Instances)

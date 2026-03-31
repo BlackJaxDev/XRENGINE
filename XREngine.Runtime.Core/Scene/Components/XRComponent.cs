@@ -408,5 +408,28 @@ namespace XREngine.Components
 
         internal void NotifyAddedToSceneNode(SceneNode sceneNode)
             => AddedToSceneNode(sceneNode);
+
+        protected virtual void OwningSceneNodePostDeserialize()
+        {
+        }
+
+        internal void NotifyOwningSceneNodePostDeserialize()
+        {
+            if (_sceneNode is null)
+                return;
+
+            World = _sceneNode.World;
+
+            if (_sceneNode.IsTransformNull)
+                return;
+
+            OnTransformChanging();
+            OnTransformChanged();
+
+            if (IsActiveInHierarchy)
+                TryActivateComponent();
+
+            OwningSceneNodePostDeserialize();
+        }
     }
 }

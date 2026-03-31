@@ -35,6 +35,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     public XRCamera? LastRenderingCamera { get; private set; }
     public XRViewport? LastWindowViewport { get; private set; }
     public bool? EffectiveOutputHDRThisFrame { get; private set; }
+    public EAntiAliasingMode? EffectiveAntiAliasingModeThisFrame { get; private set; }
+    public uint? EffectiveMsaaSampleCountThisFrame { get; private set; }
+    public float? EffectiveTsrRenderScaleThisFrame { get; private set; }
 
     public XRRenderPipelineInstance(RenderPipeline pipeline) : this()
     {
@@ -291,14 +294,26 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         LastSceneCamera = camera;
         LastRenderingCamera = camera ?? stereoRightEyeCamera;
         LastWindowViewport = viewport;
+        XRCamera? effectiveAntiAliasingCamera = camera ?? stereoRightEyeCamera;
+        EAntiAliasingMode effectiveAntiAliasingMode = effectiveAntiAliasingCamera?.AntiAliasingModeOverride
+            ?? Engine.EffectiveSettings.AntiAliasingMode;
         EffectiveOutputHDRThisFrame = camera?.OutputHDROverride
             ?? (camera is null ? stereoRightEyeCamera?.OutputHDROverride : null)
             ?? Engine.Rendering.Settings.OutputHDR;
+        EffectiveAntiAliasingModeThisFrame = effectiveAntiAliasingMode;
+        EffectiveMsaaSampleCountThisFrame = Math.Max(1u,
+            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount);
+        EffectiveTsrRenderScaleThisFrame = effectiveAntiAliasingMode == EAntiAliasingMode.Tsr
+            ? Math.Clamp(
+                effectiveAntiAliasingCamera?.TsrRenderScaleOverride ?? Engine.Rendering.Settings.TsrRenderScale,
+                0.5f,
+                1.0f)
+            : null;
 
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)
         {
-            float? requestedScale = Pipeline.GetRequestedInternalResolutionForCamera(camera);
+            float? requestedScale = Pipeline.GetRequestedInternalResolutionForCamera(effectiveAntiAliasingCamera);
 
             // Avoid redundant resets: only touch the viewport when the requested scale changes.
             if (requestedScale.HasValue)

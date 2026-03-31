@@ -4,6 +4,7 @@ using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
@@ -44,6 +45,9 @@ public sealed class ModelComponentTests
 
         return new Model(subMesh);
     }
+
+    private static SubMesh CreateSkinnedSubMesh(Transform bone, string meshName, params float[] maxVisibleDistances)
+        => CreateSkinnedModel(bone, meshName, maxVisibleDistances).Meshes.Single();
 
     [Test]
     public void ReplacingModel_DisposesRemovedRenderableMeshes()
@@ -93,5 +97,31 @@ public sealed class ModelComponentTests
         replaced.ShouldBeTrue();
         renderers.ShouldNotBeNull();
         renderers.Count.ShouldBe(2);
+    }
+
+    [Test]
+    public void CookedBinarySerializer_RoundTrips_ModelComponent_RebuildsRuntimeMeshes()
+    {
+        SceneNode original = new("ModelComponentSerializationNode", new Transform());
+        Transform bone = (Transform)original.Transform;
+        ModelComponent component = original.AddComponent<ModelComponent>()!;
+        component.Model = CreateSkinnedModel(bone, "InitialMesh");
+
+        byte[] bytes = CookedBinarySerializer.Serialize(original);
+        bytes.Length.ShouldBeGreaterThan(0);
+
+        SceneNode? cloneNode = CookedBinarySerializer.Deserialize(typeof(SceneNode), bytes) as SceneNode;
+        cloneNode.ShouldNotBeNull();
+
+        ModelComponent? cloneComponent = cloneNode!.GetComponent<ModelComponent>();
+        cloneComponent.ShouldNotBeNull();
+        cloneComponent!.Model.ShouldNotBeNull();
+        cloneComponent.Meshes.Count.ShouldBe(1);
+        cloneComponent.RenderedObjects.Length.ShouldBe(1);
+
+        cloneComponent.Model!.Meshes.Add(CreateSkinnedSubMesh((Transform)cloneNode.Transform, "AddedMesh"));
+
+        cloneComponent.Meshes.Count.ShouldBe(2);
+        cloneComponent.RenderedObjects.Length.ShouldBe(2);
     }
 }

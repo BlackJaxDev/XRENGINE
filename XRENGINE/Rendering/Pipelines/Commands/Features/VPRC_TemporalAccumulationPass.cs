@@ -212,8 +212,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (Engine.VRState.IsInVR && !Engine.Rendering.Settings.RenderVRSinglePassStereo)
             return EAntiAliasingMode.None;
 
-        var camera = Engine.Rendering.State.RenderingCamera;
-        return camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
+        return XREngine.Rendering.RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame();
     }
 
     private static bool ShouldUseTemporalJitter(EAntiAliasingMode mode)

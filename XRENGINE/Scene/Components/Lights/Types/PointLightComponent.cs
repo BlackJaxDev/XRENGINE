@@ -29,6 +29,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private bool _useGeometryShader = true;
         private XRFrameBuffer? _perFaceFbo;
         private const float PointShadowNearPlaneDistanceDefault = 0.1f;
+        private readonly PositionOnlyTransform _shadowCameraParentTransform = new();
 
         /// <summary>
         /// When enabled, renders all 6 cubemap shadow faces in a single draw call
@@ -158,7 +159,9 @@ namespace XREngine.Components.Capture.Lights.Types
                 SetField(ref _influenceVolume, new Sphere(_influenceVolume.Center, value));
                 foreach (var cam in ShadowCameras)
                     cam.FarZ = value;
-                MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Radius);
+
+                if (SceneNode is not null && !SceneNode.IsTransformNull)
+                    MeshCenterAdjustMatrix = Matrix4x4.CreateScale(value);
             }
         }
 
@@ -205,11 +208,12 @@ namespace XREngine.Components.Capture.Lights.Types
         public PointLightComponent(float radius, float brightness)
             : base()
         {
-            _influenceVolume = new Sphere(Transform.RenderTranslation, radius);
+            // Cooked reflection deserialization constructs the component before it is
+            // attached to an owning SceneNode, so Transform is not available here.
+            _influenceVolume = new Sphere(Vector3.Zero, radius);
             Brightness = brightness;
 
-            PositionOnlyTransform positionTransform = new(Transform);
-            ShadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(0.1f, radius, true, positionTransform);
+            ShadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(0.1f, radius, true, _shadowCameraParentTransform);
             for (int i = 0; i < ShadowCameras.Length; i++)
             {
                 var cam = ShadowCameras[i];
@@ -227,15 +231,15 @@ namespace XREngine.Components.Capture.Lights.Types
                     colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
                 }
             }
-
-            MeshCenterAdjustMatrix = Matrix4x4.CreateScale(radius);
         }
 
         protected override void OnTransformChanged()
         {
-            PositionOnlyTransform positionTransform = new(Transform);
+            _shadowCameraParentTransform.Parent = Transform;
             foreach (var cam in ShadowCameras)
-                cam.Transform.Parent = positionTransform;
+                cam.Transform.Parent = _shadowCameraParentTransform;
+
+            MeshCenterAdjustMatrix = Matrix4x4.CreateScale(_influenceVolume.Radius);
             base.OnTransformChanged();
         }
 
