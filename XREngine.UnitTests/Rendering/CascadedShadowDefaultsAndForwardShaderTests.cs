@@ -301,6 +301,32 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         spotSource.ShouldContain("ContactShadowSamples = 4;");
     }
 
+    [Test]
+    public void DeferredDirectionalShader_SkipsShadowing_WhenNoShadowMapIsAvailable()
+    {
+        string source = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
+
+        source.ShouldContain("uniform bool LightHasShadowMap = true;");
+        source.ShouldContain("if (!LightHasShadowMap)");
+        source.ShouldContain("return 1.0f;");
+    }
+
+    [Test]
+    public void DeferredDirectionalLightPass_BindsSafeShadowFallbacks_AfterLightReactivation()
+    {
+        string lightComponentSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "LightComponent.cs"));
+        lightComponentSource.ShouldContain("ShadowMap?.Destroy();");
+        lightComponentSource.ShouldContain("ShadowMap = null;");
+
+        string lightCombineSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
+        lightCombineSource.ShouldContain("public XRMeshRenderer? DirectionalLightRenderer { get; private set; }");
+        lightCombineSource.ShouldContain("RenderLight(DirectionalLightRenderer!, c);");
+        lightCombineSource.ShouldContain("DirectionalLightRenderer = new XRMeshRenderer(dirLightMesh, dirLightMat);");
+        lightCombineSource.ShouldContain("materialProgram.Uniform(\"LightHasShadowMap\", directionalHasShadowMap);");
+        lightCombineSource.ShouldContain("else if (_currentLightComponent is DirectionalLightComponent)");
+        lightCombineSource.ShouldContain("selectedShadowMap as XRTexture2D ?? DummyShadowMap, 4");
+    }
+
     private static string LoadRepoSource(string relativePath)
     {
         string dir = AppContext.BaseDirectory;

@@ -144,6 +144,33 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void ReactivatingDirectionalLight_RecreatesShadowMapAndReregistersIt()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode root = new("Root");
+        SceneNode lightNode = new(root, "DirectionalLight");
+        DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
+
+        world.RootNodes.Add(root);
+
+        var initialShadowMap = light.ShadowMap;
+
+        Assert.That(initialShadowMap, Is.Not.Null);
+        Assert.That(world.Lights.DynamicDirectionalLights, Does.Contain(light));
+
+        light.IsActive = false;
+
+        Assert.That(light.ShadowMap, Is.Null);
+        Assert.That(world.Lights.DynamicDirectionalLights, Does.Not.Contain(light));
+
+        light.IsActive = true;
+
+        Assert.That(light.ShadowMap, Is.Not.Null);
+        Assert.That(light.ShadowMap, Is.Not.SameAs(initialShadowMap));
+        Assert.That(world.Lights.DynamicDirectionalLights, Does.Contain(light));
+    }
+
+    [Test]
     public void Constructor_UsesRuntimeSceneNodeService_DefaultTransformFactory()
     {
         IRuntimeSceneNodeServices previous = RuntimeSceneNodeServices.Current;

@@ -1,11 +1,30 @@
 # Default Render Pipeline Regression Fixes
 
-Tracked regressions confirmed against `git diff HEAD` on 2026-03-28.
-Working tree already contains partial fixes for all items below — each step is about verifying, completing, and committing that fix cleanly.
+Tracked regressions confirmed against `git diff HEAD` on 2026-03-28 and re-audited against the deferred path on 2026-04-01.
+Working tree already contains partial fixes for several items below; each step is about verifying, completing, and committing that fix cleanly, plus capturing the newly confirmed deferred-composite cache issues.
 
 Reference:
 
 - [Regression diagnosis](../audit/default-render-pipeline-regression-diagnosis-2026-03-28.md)
+
+---
+
+## Audit update — 2026-04-01 deferred-path review
+
+**Confirmed not root causes in the current workspace:**
+
+- [TexturedDeferred.fs](../../../../Build/CommonAssets/Shaders/Common/TexturedDeferred.fs), [TexturedNormalDeferred.fs](../../../../Build/CommonAssets/Shaders/Common/TexturedNormalDeferred.fs), and [TexturedMetallicRoughnessDeferred.fs](../../../../Build/CommonAssets/Shaders/Common/TexturedMetallicRoughnessDeferred.fs) still write textured albedo into the deferred GBuffer.
+- [DeferredLightingDir.fs](../../../../Build/CommonAssets/Shaders/Scene3D/DeferredLightingDir.fs), [DeferredLightingPoint.fs](../../../../Build/CommonAssets/Shaders/Scene3D/DeferredLightingPoint.fs), and [DeferredLightingSpot.fs](../../../../Build/CommonAssets/Shaders/Scene3D/DeferredLightingSpot.fs) still multiply deferred radiance by the sampled albedo.
+- [DefaultRenderPipeline.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs) still binds BRDF / light-probe resources in `BindPbrLightingResources(...)`, and current logs report `[ProbeGI] Probes bound successfully. Ready=1, ProbeCount=1`.
+- [DefaultRenderPipeline.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs) `BuildProbeGrid(...)` still builds valid grid/index buffers even for a one-probe scene.
+
+**Highest-priority unresolved issue from this audit:**
+
+- Standard non-MSAA `LightCombineFBOName` still lacks a material / texture identity recreation predicate in both pipelines. This is now the best code-proven explanation for “direct lighting only, no textures, no probe GI” on the deferred path.
+
+**Secondary follow-up risk:**
+
+- `ForwardPassFBOName` is also cached without a dedicated compatibility validator in both pipelines. This was not proven to be the primary current regression, but it shares the same stale-target failure mode and should be fixed adjacent to the standard LightCombine change.
 
 ---
 
@@ -150,16 +169,23 @@ Reference:
 
 **Files:**
 
+- [DefaultRenderPipeline.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs) — MSAA light combine cache entry and `NeedsRecreateMsaaLightCombineFbo`
 - [DefaultRenderPipeline2.CommandChain.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs) — MSAA light combine `VPRC_CacheOrCreateFBO` entry
 - [DefaultRenderPipeline2.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs) — `NeedsRecreateMsaaLightCombineFbo`
+- [AlphaToCoveragePhase2Tests.cs](../../../../XREngine.UnitTests/Rendering/AlphaToCoveragePhase2Tests.cs) — `MsaaLightCombineQuad_UsesMaterialIdentityPredicate_InsteadOfMsaaAttachmentPredicate`
 
 **Steps:**
 
-- [ ] Confirm `NeedsRecreateMsaaLightCombineFbo(...)` method exists and is distinct from `NeedsRecreateMsaaFbo`
-- [ ] Confirm the `VPRC_CacheOrCreateFBO` entry for `MsaaLightCombineFBOName` references `NeedsRecreateMsaaLightCombineFbo`
+- [x] Confirm `NeedsRecreateMsaaLightCombineFbo(...)` method exists and is distinct from `NeedsRecreateMsaaFbo`
+- [x] Confirm the `VPRC_CacheOrCreateFBO` entry for `MsaaLightCombineFBOName` references `NeedsRecreateMsaaLightCombineFbo`
+- [x] Run `MsaaLightCombineQuad_UsesMaterialIdentityPredicate_InsteadOfMsaaAttachmentPredicate`
 - [ ] Trigger a viewport resize or MSAA sample-count change at runtime: verify the light-combine FBO recreates correctly without a black frame
 
----
+**Status:**
+
+- Code is already present in the working tree for both `DefaultRenderPipeline` and `DefaultRenderPipeline2`.
+- `MsaaLightCombineQuad_UsesMaterialIdentityPredicate_InsteadOfMsaaAttachmentPredicate` passed on 2026-04-01.
+- Runtime resize / sample-count validation is still pending.
 
 ---
 
@@ -200,19 +226,80 @@ This fix is general and handles any `layout(binding=X)` shader without requiring
 
 **Steps:**
 
-- [ ] Add the `glGetUniformiv` guard in `BindFallbackSamplers()` after the existing `_boundSamplerLocations` check
+- [x] Add the `glGetUniformiv` guard in `BindFallbackSamplers()` after the existing `_boundSamplerLocations` check
 - [ ] Verify no fallback sampler fires for `AlbedoOpacity`, `Normal`, `RMSE`, `AmbientOcclusionTexture`, `DepthView`, or `LightingTexture` in the LightCombine pass
 - [ ] Run deferred scene: verify textured meshes now show correct albedo colors (not grayscale)
+
+**Status:**
+
+- The `GetUniform(... assignedUnit)` guard is already present in the working tree.
+- Current deferred-path audit found no remaining code path that would still overwrite `layout(binding=X)` LightCombine samplers, and current logs do not show fallback-sampler warnings.
+- End-to-end deferred-scene validation is still pending.
+
+---
+
+## Fix 8 — Standard LightCombine quad lacks texture-identity recreation
+
+**Symptoms:** On the standard deferred path, the scene can still show direct lighting while textured surface color, AO contribution, and probe GI disappear.
+
+**Root cause:** `LightCombineFBOName` caches a material-backed `XRQuadFrameBuffer` in both pipelines without validating the bound deferred composite inputs. When the deferred GBuffer, AO, depth, or lighting textures are recreated, the cached quad can keep sampling stale or disposed textures. The MSAA path already uses `NeedsRecreateMsaaLightCombineFbo(...)`; the standard path still has no equivalent `NeedsRecreateLightCombineFbo(...)`.
+
+**Files:**
+
+- [DefaultRenderPipeline.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs) — add `NeedsRecreateLightCombineFbo` and wire the standard `LightCombineFBOName` cache entry
+- [DefaultRenderPipeline2.CommandChain.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs) — wire the standard `LightCombineFBOName` cache entry
+- [DefaultRenderPipeline2.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs) — add `NeedsRecreateLightCombineFbo`
+- [DefaultRenderPipeline.FBOs.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs) — `CreateLightCombineFBO`
+- [DefaultRenderPipeline2.FBOs.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs) — `CreateLightCombineFBO`
+- [AlphaToCoveragePhase2Tests.cs](../../../../XREngine.UnitTests/Rendering/AlphaToCoveragePhase2Tests.cs) — add non-MSAA LightCombine validator coverage
+
+**Steps:**
+
+- [ ] Add `NeedsRecreateLightCombineFbo(XRFrameBuffer fbo)` to `DefaultRenderPipeline`, mirroring the MSAA validator but checking the standard deferred composite inputs / shader used by `CreateLightCombineFBO()`
+- [ ] Add the same validator to `DefaultRenderPipeline2`
+- [ ] Wire the standard `VPRC_CacheOrCreateFBO` entry for `LightCombineFBOName` to `NeedsRecreateLightCombineFbo` in both pipelines
+- [ ] Add a regression test beside `MsaaLightCombineQuad_UsesMaterialIdentityPredicate_InsteadOfMsaaAttachmentPredicate` proving the standard path uses the specialized validator
+- [ ] Trigger viewport resize, AO enable / disable changes, and deferred pipeline invalidation at runtime: verify textured albedo and probe GI survive on the non-MSAA deferred path
+
+**Status:**
+
+- This is the highest-confidence unresolved bug remaining from the 2026-04-01 deferred-path audit.
+- There is currently no non-MSAA equivalent regression test in [AlphaToCoveragePhase2Tests.cs](../../../../XREngine.UnitTests/Rendering/AlphaToCoveragePhase2Tests.cs) for the standard LightCombine quad.
+- Do not rework deferred mesh material selection or probe-grid generation until this validator is implemented and retested.
+
+---
+
+## Fix 9 — Forward-pass handoff FBO lacks a compatibility validator
+
+**Symptoms:** After the deferred composite is produced, the handoff into the forward path can retain stale render targets after resize or pipeline invalidation.
+
+**Root cause:** `ForwardPassFBOName` is also cached without a dedicated compatibility predicate in both pipelines. This was not proven to be the primary cause of the current “direct lighting only” report, but it shares the same stale-target failure mode as Fix 8 and can mask follow-up validation if left in place.
+
+**Files:**
+
+- [DefaultRenderPipeline.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs) — forward-pass cache entry
+- [DefaultRenderPipeline2.CommandChain.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs) — forward-pass cache entry
+- [DefaultRenderPipeline.FBOs.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs) — `CreateForwardPassFBO`
+- [DefaultRenderPipeline2.FBOs.cs](../../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs) — `CreateForwardPassFBO`
+
+**Steps:**
+
+- [ ] Add a dedicated validator for `ForwardPassFBOName` in both pipelines, or factor a shared helper if Fix 8 introduces one cleanly
+- [ ] Ensure the validator checks render-target / material / shader compatibility instead of size only
+- [ ] Re-run deferred-to-forward handoff validation after viewport resize and pipeline invalidation
+
+**Status:**
+
+- Secondary follow-up risk identified during the 2026-04-01 audit.
+- Land this adjacent to Fix 8 if the implementation naturally shares validation logic.
 
 ---
 
 ## Commit order
 
-Recommended commit sequence (each fix is independently testable):
+Recommended remaining implementation / verification sequence after the 2026-04-01 deferred-path audit:
 
-1. Fix 1 + supporting FBO creation (deferred routing — highest visual impact)
-2. Fix 2 (GLMaterial texture unit compaction + deferred fallback binding)
-3. Fix 3 (SMAA + RenderToWindow source texture caching)
-4. Fix 4 (AO camera resolution fallback)
-5. Fix 5 (noise texture sampler name)
-6. Fix 6 (MSAA light combine validator)
+1. Finish the real-scene runtime validation still pending for Fixes 1, 6, and 7.
+2. Implement Fix 8 in both pipelines and add the missing non-MSAA regression test.
+3. Re-test deferred non-MSAA with textured meshes, AO enabled, probe GI enabled, and at least one viewport resize / pipeline invalidation.
+4. Implement Fix 9 if the forward handoff still shows stale outputs or if the LightCombine work makes the validator trivial to share.

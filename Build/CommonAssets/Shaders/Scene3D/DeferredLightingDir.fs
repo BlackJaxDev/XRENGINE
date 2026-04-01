@@ -24,6 +24,7 @@ layout(binding = 3) uniform sampler2D DepthView; //Depth
 uniform sampler2D ShadowMap; //Directional Shadow Map
 uniform sampler2DArray ShadowMapArray; //Directional Cascaded Shadow Map
 uniform bool UseCascadedDirectionalShadows = false;
+uniform bool LightHasShadowMap = true;
 uniform bool EnableCascadedShadows = true;
 uniform bool DebugCascadeColors = false;
 
@@ -327,6 +328,9 @@ int GetCascadeIndex(in vec3 fragPosWS)
 //0 is fully in shadow, 1 is fully lit
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
 {
+		if (!LightHasShadowMap)
+			return 1.0f;
+
 		vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
 		vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
 		vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
@@ -362,6 +366,9 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 
 float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int cascadeIndex)
 {
+		if (!LightHasShadowMap)
+			return 1.0f;
+
 		mat4 lightMatrix = LightData.CascadeMatrices[cascadeIndex];
 		vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
 		vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
