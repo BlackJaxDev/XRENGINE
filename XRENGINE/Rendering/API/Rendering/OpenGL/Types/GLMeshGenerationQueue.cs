@@ -190,12 +190,14 @@ namespace XREngine.Rendering.OpenGL
                     _totalFailed += failed;
                     int remaining = PendingCount;
                     double elapsed = _logTimer.Elapsed.TotalMilliseconds;
+                    bool queueJustDrained = remaining == 0 && _lastLoggedRemaining > 0;
 
-                    // Log when: queue empties, failures occur, remaining changes significantly, or periodic interval
-                    bool shouldLog = remaining == 0
+                    // Log when: the queue just drained, failures occur, remaining changes significantly,
+                    // or the periodic interval elapses while a backlog is still active.
+                    bool shouldLog = queueJustDrained
                         || failed > 0
                         || Math.Abs(remaining - _lastLoggedRemaining) >= RemainingChangeThreshold
-                        || elapsed - _timeSinceLastLogMs >= LogIntervalMs;
+                        || (remaining > 0 && elapsed - _timeSinceLastLogMs >= LogIntervalMs);
 
                     if (shouldLog)
                     {

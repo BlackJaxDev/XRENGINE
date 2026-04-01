@@ -87,9 +87,20 @@ void main()
             return;
 
         XRRenderPipelineInstance instance = ActivePipelineInstance;
-        if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out _)
+        if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out string resolveFailure)
             || sourceTexture is null)
+        {
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.SourceMissing.{instance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow skipped: {0}. SourceTex='{1}' SourceFBO='{2}' Pipeline={3} Generation={4}",
+                resolveFailure,
+                SourceTextureName ?? "<null>",
+                SourceFBOName ?? "<null>",
+                instance.Pipeline?.DebugName ?? "<null>",
+                instance.ResourceGeneration);
             return;
+        }
 
         AbstractRenderer? renderer = AbstractRenderer.Current;
         if (renderer is null)

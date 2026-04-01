@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Components.Lights
 {
@@ -42,6 +43,29 @@ namespace XREngine.Components.Lights
             c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
             return c;
         }
+
+        protected override void DescribeRenderPasses(RenderPassMetadataCollection metadata)
+        {
+            base.DescribeRenderPasses(metadata);
+
+            static void Chain(RenderPassMetadataCollection collection, EDefaultRenderPass pass, params EDefaultRenderPass[] dependencies)
+            {
+                var builder = collection.ForPass((int)pass, pass.ToString(), ERenderGraphPassStage.Graphics);
+                foreach (var dependency in dependencies)
+                    builder.DependsOn((int)dependency);
+            }
+
+            Chain(metadata, EDefaultRenderPass.PreRender);
+            Chain(metadata, EDefaultRenderPass.OpaqueDeferred, EDefaultRenderPass.PreRender);
+            Chain(metadata, EDefaultRenderPass.OpaqueForward, EDefaultRenderPass.OpaqueDeferred);
+            Chain(metadata, EDefaultRenderPass.MaskedForward, EDefaultRenderPass.OpaqueForward);
+            Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.MaskedForward);
+            Chain(metadata, EDefaultRenderPass.WeightedBlendedOitForward, EDefaultRenderPass.TransparentForward);
+            Chain(metadata, EDefaultRenderPass.PerPixelLinkedListForward, EDefaultRenderPass.WeightedBlendedOitForward);
+            Chain(metadata, EDefaultRenderPass.DepthPeelingForward, EDefaultRenderPass.PerPixelLinkedListForward);
+            Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.DepthPeelingForward);
+        }
+
         protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         {
             // Include all standard passes so that render commands targeting any pass

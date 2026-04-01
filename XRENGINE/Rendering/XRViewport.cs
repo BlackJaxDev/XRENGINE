@@ -626,9 +626,10 @@ namespace XREngine.Rendering
                         _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight);
                         _renderPipeline.ViewportResized(Width, Height);
 
-                        // When the camera changes, destroy the pipeline cache to ensure
-                        // stale textures/FBOs from the previous camera don't persist.
-                        _renderPipeline.DestroyCache();
+                        // InternalResolutionResized already invalidates the physical GPU
+                        // resources. Doing it again here can tear down the GBuffer in the
+                        // middle of the transition frame, leaving LightCombine with null
+                        // attachments immediately after the camera swap.
                     }
                     break;
                 case nameof(CameraComponent):
@@ -652,6 +653,24 @@ namespace XREngine.Rendering
         #endregion
 
         #region Visibility Collection
+
+        private bool ShouldSuspendPipelineWork(string operation)
+        {
+            if (!Engine.PlayMode.IsTransitioning)
+                return false;
+
+            Debug.RenderingEvery(
+                $"XRViewport.{operation}.TransitionSuspended.{GetHashCode()}[{Index}]",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] {0} skipped during play-mode transition. VP[{1}] State={2} World={3} CameraComponent={4}",
+                operation,
+                Index,
+                Engine.PlayMode.State,
+                World?.TargetWorld?.Name ?? "<null>",
+                CameraComponent?.Name ?? "<null>");
+
+            return true;
+        }
 
         /// <summary>
         /// Collects all visible items in the world and UI for rendering.
@@ -677,6 +696,9 @@ namespace XREngine.Rendering
             IVolume? collectionVolumeOverride = null)
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.CollectVisible");
+
+            if (ShouldSuspendPipelineWork(nameof(CollectVisible)))
+                return;
             
 /*
             Debug.RenderingEvery(
@@ -761,21 +783,20 @@ namespace XREngine.Rendering
                 if (world?.VisualScene is VisualScene3D vs3d)
                     gpuVisible = vs3d.LastGpuVisibility;
 
-/*
+                int updatingPasses = commandCollection.GetUpdatingPassCount();
+
                 Debug.RenderingEvery(
                     $"XRViewport.CollectVisible.Submit.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
                     TimeSpan.FromSeconds(1),
-                    "[RenderDiag] CollectVisible submit. PlayMode={0} VP[{1}] CmdsUpdating={2} Delta={3} VisualScene={4} TrackedRenderables={5} CpuDrawCalls={6} GpuVisibleDraws={7} GpuVisibleInstances={8}",
+                    "[RenderDiag] CollectVisible submit. PlayMode={0} VP[{1}] CmdsUpdating={2} Delta={3} UpdatingPasses={4} VisualScene={5} TrackedRenderables={6} Camera={7}",
                     Engine.PlayMode.State,
                     Index,
                     afterUpdatingCount,
                     delta,
+                    updatingPasses,
                     visualSceneType,
                     trackedRenderables,
-                    afterUpdatingCount,
-                    gpuVisible.Draws,
-                    gpuVisible.Instances);
-*/
+                    camera?.GetHashCode().ToString() ?? "null");
             }
 
             if (allowScreenSpaceUICollectVisible)
@@ -859,6 +880,9 @@ namespace XREngine.Rendering
             bool allowScreenSpaceUISwap = true)
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope($"XRViewport.SwapBuffers[{Index}]");
+
+            if (ShouldSuspendPipelineWork(nameof(SwapBuffers)))
+                return;
 
 /*
             Debug.RenderingEvery(
@@ -951,6 +975,9 @@ namespace XREngine.Rendering
             XRMaterial? forcedMaterial = null)
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.Render");
+
+            if (ShouldSuspendPipelineWork(nameof(Render)))
+                return;
 
             XRCamera? camera = cameraOverride ?? ActiveCamera;
             if (camera is null)

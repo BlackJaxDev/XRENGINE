@@ -57,6 +57,27 @@ namespace XREngine
             AutoSpawnedPawns.Add(pawn);
         }
 
+        protected static void ApplySpawnTransform(TransformBase transform, System.Numerics.Vector3 position, System.Numerics.Quaternion rotation)
+        {
+            switch (transform)
+            {
+                case Transform standardTransform:
+                    standardTransform.SetWorldTranslationRotation(position, rotation);
+                    break;
+                case RigidBodyTransform rigidBodyTransform:
+                    rigidBodyTransform.SetWorldTranslation(position);
+                    rigidBodyTransform.SetWorldRotation(rotation);
+                    break;
+                default:
+                    return;
+            }
+
+            // Spawn-time camera handoff happens while play-mode state is changing.
+            // Sync the render matrix immediately so the first stable play frame doesn't
+            // render from the default identity pose.
+            transform.RecalculateMatrixHierarchy(true, true, ELoopType.Sequential).GetAwaiter().GetResult();
+        }
+
         /// <summary>
         /// Whether this GameMode is currently active (in play mode).
         /// </summary>
@@ -165,14 +186,6 @@ namespace XREngine
             }
 
             WorldInstance.RootNodes.Add(pawnNode);
-
-            // If the world is already playing, manually run begin-play/activation so late-spawned pawns are fully initialized.
-            if (WorldInstance.PlayState == XRWorldInstance.EPlayState.Playing)
-            {
-                pawnNode.OnBeginPlay();
-                if (pawnNode.IsActiveSelf)
-                    pawnNode.OnActivated();
-            }
             return pawnComponent;
         }
 
@@ -184,7 +197,25 @@ namespace XREngine
         /// <returns>Spawn position and rotation.</returns>
         public virtual (System.Numerics.Vector3 Position, System.Numerics.Quaternion Rotation) GetSpawnPoint(ELocalPlayerIndex playerIndex)
         {
-            // Default: spawn at origin
+            // Default to the player's current view transform so entering play mode
+            // keeps the camera where the editor/player was already looking from.
+            if (Engine.State.GetLocalPlayer(playerIndex) is { } player)
+            {
+                if (player.Viewport is XRViewport viewport)
+                {
+                    TransformBase? cameraTransform = viewport.CameraComponent?.Transform ?? viewport.ActiveCamera?.Transform;
+                    if (cameraTransform is not null)
+                        return (cameraTransform.WorldTranslation, cameraTransform.WorldRotation);
+                }
+
+                if (player.ControlledPawnComponent is PawnComponent pawn
+                    && pawn.SceneNode?.GetTransformAs<Transform>(false) is Transform pawnTransform)
+                {
+                    return (pawnTransform.WorldTranslation, pawnTransform.WorldRotation);
+                }
+            }
+
+            // Fallback: spawn at origin
             return (System.Numerics.Vector3.Zero, System.Numerics.Quaternion.Identity);
         }
 
@@ -206,11 +237,8 @@ namespace XREngine
 
                 // Apply spawn transform
                 var (position, rotation) = GetSpawnPoint(playerIndex);
-                if (pawn.SceneNode?.GetTransformAs<Transform>(false) is Transform transform)
-                {
-                    transform.SetWorldTranslation(position);
-                    transform.SetWorldRotation(rotation);
-                }
+                if (pawn.SceneNode?.Transform is TransformBase transform)
+                    ApplySpawnTransform(transform, position, rotation);
 
                 // Possess the pawn
                 ForcePossession(pawn, playerIndex);

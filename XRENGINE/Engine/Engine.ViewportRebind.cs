@@ -220,22 +220,12 @@ namespace XREngine
                             camViewportCount,
                             viewport.World is null);
 
-                        // Snapshot restore can invalidate cached GPU resources.
-                        if (phase is "PostSnapshotRestore" or "PostEnterPlay")
-                        {
-                            var capturedViewport = viewport;
-                            EnqueueSwapTask(() =>
-                            {
-                                try
-                                {
-                                    capturedViewport.RenderPipelineInstance.DestroyCache();
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.LogException(ex, $"[{phase}] Failed to destroy render cache for viewport {capturedViewport.Index}.");
-                                }
-                            });
-                        }
+                        // Resource invalidation is already handled by:
+                        // 1. XRWindow.OnPlayModeTransition (immediate invalidation at transition start)
+                        // 2. XRViewport camera-change handler → InternalResolutionResized → InvalidatePhysicalResources
+                        // Enqueueing additional swap-task invalidations here races with the render
+                        // thread's command chain and can null texture Instances between CacheTextures
+                        // (which creates them) and the render passes that consume them.
 
                         // Only warn when we *expected* a camera/world to exist.
                         if (viewport.ActiveCamera is null && (viewport.AssociatedPlayer?.ControlledPawnComponent as PawnComponent)?.GetCamera() is not null)

@@ -86,6 +86,7 @@ public static class EditorPlayModeController
     private static void OnPreEnterPlay()
     {
         Debug.Out("EditorPlayModeController: PreEnterPlay");
+        LogPlayerBindings("PreEnterPlay.BeforeSnapshot");
 
         // Disable undo recording during play
         // Undo.SuppressRecording(); // TODO: Implement in Undo class
@@ -103,6 +104,8 @@ public static class EditorPlayModeController
         // Enable input
         Engine.Input.SetUIInputCaptured(false);
 
+        LogPlayerBindings("PreEnterPlay.AfterSnapshot");
+
         // Notify UI to update
         PlayModeUIChanged?.Invoke(true);
     }
@@ -110,6 +113,7 @@ public static class EditorPlayModeController
     private static void OnPostEnterPlay()
     {
         Debug.Out("EditorPlayModeController: PostEnterPlay - Now in play mode");
+        LogPlayerBindings("PostEnterPlay");
     }
 
     private static void OnPreExitPlay()
@@ -151,6 +155,7 @@ public static class EditorPlayModeController
     private static void OnPostSnapshotRestore(XRWorld world)
     {
         Debug.Out($"EditorPlayModeController: PostSnapshotRestore for world {world?.Name ?? "<null>"} State={Engine.PlayMode.State}");
+        LogPlayerBindings($"PostSnapshotRestore.BeforeRebind State={Engine.PlayMode.State}");
 
         // Rebuild light caches after deserialization
         if (world is not null && XRWorldInstance.WorldInstances.TryGetValue(world, out var instance))
@@ -182,6 +187,8 @@ public static class EditorPlayModeController
             Debug.Out("[EditorPlayModeController] ExitingPlay PostSnapshotRestore: restoring editor pawn possession now.");
             RestoreEditorPawnSnapshot();
         }
+
+        LogPlayerBindings($"PostSnapshotRestore.AfterRebind State={Engine.PlayMode.State}");
     }
 
     /// <summary>
@@ -342,6 +349,31 @@ public static class EditorPlayModeController
         // First try the first window's target world
         var window = Engine.Windows.FirstOrDefault();
         return window?.TargetWorldInstance?.TargetWorld;
+    }
+
+    private static void LogPlayerBindings(string phase)
+    {
+        Debug.Out($"[EditorPlayModeController] {phase}: SnapshotCount={_editorPossessionSnapshot.Count} Windows={Engine.Windows.Count}");
+
+        for (int playerIndex = 0; playerIndex < Engine.State.LocalPlayers.Length; playerIndex++)
+        {
+            var player = Engine.State.LocalPlayers[playerIndex] as LocalPlayerController;
+            if (player is null)
+            {
+                Debug.Out($"[EditorPlayModeController] {phase}: P{playerIndex + 1} Controller=<null>");
+                continue;
+            }
+
+            var viewport = player.Viewport;
+            var pawn = player.ControlledPawn;
+            var pawnCamera = pawn?.GetCamera();
+            Debug.Out(
+                $"[EditorPlayModeController] {phase}: P{playerIndex + 1} Pawn={pawn?.Name ?? "<null>"} " +
+                $"PawnId={pawn?.ID.ToString() ?? "null"} Viewport={viewport?.GetHashCode().ToString() ?? "NULL"} " +
+                $"ViewportWorld={viewport?.World?.TargetWorld?.Name ?? "<null>"} " +
+                $"ViewportCamera={viewport?.CameraComponent?.Name ?? "<null>"} ActiveCamera={viewport?.ActiveCamera?.GetHashCode().ToString() ?? "NULL"} " +
+                $"PawnCamera={pawnCamera?.Name ?? "<null>"}");
+        }
     }
 
     /// <summary>

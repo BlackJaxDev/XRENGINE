@@ -143,6 +143,65 @@ namespace XREngine
 
             #endregion
 
+            #region Diagnostics
+
+            private static void LogTransitionContext(string transition, string phase, XRWorld? targetWorld)
+            {
+                Debug.Out(
+                    $"[PlayTransition] {transition}.{phase}: State={State} TargetWorld={targetWorld?.Name ?? "<null>"} " +
+                    $"SnapshotMode={Configuration.StateRestorationMode} SnapshotAvailable={_editModeSnapshot is not null} " +
+                    $"Windows={Windows.Count} WorldInstances={XRWorldInstance.WorldInstances.Count} " +
+                    $"ActiveGameMode={_activeGameMode?.GetType().Name ?? "<null>"} TimerRunning={Time.Timer.IsRunning} TimerPaused={Time.Timer.Paused}");
+
+                for (int windowIndex = 0; windowIndex < Windows.Count; windowIndex++)
+                {
+                    XRWindow window = Windows[windowIndex];
+                    Debug.Out(
+                        $"[PlayTransition] {transition}.{phase}: Window[{windowIndex}] Hash={window.GetHashCode()} " +
+                        $"TargetWorld={window.TargetWorldInstance?.TargetWorld?.Name ?? "<null>"} Viewports={window.Viewports.Count}");
+
+                    for (int viewportIndex = 0; viewportIndex < window.Viewports.Count; viewportIndex++)
+                    {
+                        XRViewport viewport = window.Viewports[viewportIndex];
+                        Debug.Out(
+                            $"[PlayTransition] {transition}.{phase}: Window[{windowIndex}] VP[{viewport.Index}] AssocPlayer={viewport.AssociatedPlayer?.LocalPlayerIndex?.ToString() ?? "<none>"} " +
+                            $"World={viewport.World?.TargetWorld?.Name ?? "<null>"} CameraComponent={viewport.CameraComponent?.Name ?? "<null>"} " +
+                            $"ActiveCamera={viewport.ActiveCamera?.GetHashCode().ToString() ?? "NULL"} Pipeline={viewport.RenderPipelineInstance.Pipeline?.DebugName ?? "<null>"} " +
+                            $"Generation={viewport.RenderPipelineInstance.ResourceGeneration}");
+                    }
+                }
+
+                for (int playerIndex = 0; playerIndex < Engine.State.LocalPlayers.Length; playerIndex++)
+                {
+                    var player = Engine.State.LocalPlayers[playerIndex];
+                    if (player is null)
+                    {
+                        Debug.Out($"[PlayTransition] {transition}.{phase}: P{playerIndex + 1} Controller=<null>");
+                        continue;
+                    }
+
+                    var pawn = player.ControlledPawnComponent as PawnComponent;
+                    var pawnCamera = pawn?.GetCamera();
+                    var playerViewport = player.Viewport as XRViewport;
+                    Debug.Out(
+                        $"[PlayTransition] {transition}.{phase}: P{playerIndex + 1} Controller={player.GetType().Name} " +
+                        $"Pawn={pawn?.Name ?? "<null>"} PawnCamera={pawnCamera?.Name ?? "<null>"} " +
+                        $"Viewport={playerViewport?.GetHashCode().ToString() ?? "NULL"} " +
+                        $"ViewportCamera={playerViewport?.CameraComponent?.Name ?? "<null>"}");
+                }
+            }
+
+            private static void LogWorldInstanceState(string transition, string phase, XRWorldInstance worldInstance)
+            {
+                Debug.Out(
+                    $"[PlayTransition] {transition}.{phase}: WorldInstance={worldInstance.GetHashCode()} World={worldInstance.TargetWorld?.Name ?? "<null>"} " +
+                    $"PlayState={worldInstance.PlayState} PhysicsEnabled={worldInstance.PhysicsEnabled} " +
+                    $"VisualScene={worldInstance.VisualScene?.GetType().Name ?? "<null>"} RootNodes={worldInstance.RootNodes.Count} " +
+                    $"GameMode={worldInstance.GameMode?.GetType().Name ?? "<null>"}");
+            }
+
+            #endregion
+
             #region Public Methods
 
             /// <summary>
@@ -150,6 +209,8 @@ namespace XREngine
             /// </summary>
             public static Task EnterPlayModeAsync()
             {
+                XRWorld? targetWorld = null;
+
                 // Play-mode transitions should never run on the render thread (ImGui draw callstack).
                 if (Engine.IsRenderThread)
                 {
@@ -172,40 +233,53 @@ namespace XREngine
                     if (!Time.Timer.IsRunning)
                         Time.Timer.RunGameLoop();
 
+                    targetWorld = ResolveStartupWorld();
+                    LogTransitionContext("EnterPlay", "ResolvedStartupWorld", targetWorld);
+
                     State = EPlayModeState.EnteringPlay;
+                    LogTransitionContext("EnterPlay", "StateSetEnteringPlay", targetWorld);
 
                     // Ensure the timer is unpaused so update/fixed threads run when play starts
                     Time.Timer.Paused = false;
+                    LogTransitionContext("EnterPlay", "BeforePreEnterPlay", targetWorld);
                     PreEnterPlay?.Invoke();
+                    LogTransitionContext("EnterPlay", "AfterPreEnterPlay", targetWorld);
 
                     // Step 1: Capture world state for restoration
-                    var targetWorld = ResolveStartupWorld();
                     if (Configuration.StateRestorationMode == EStateRestorationMode.SerializeAndRestore)
                     {
                         _editModeSnapshot = WorldStateSnapshot.Capture(targetWorld);
+                        LogTransitionContext("EnterPlay", "AfterSnapshotCapture", targetWorld);
 
                         // IMPORTANT: play mode should run from a deserialized copy of the world state.
                         // This forces a clean object graph and ensures physics bodies are constructed from deserialized scene data.
                         _editModeSnapshot?.Restore();
+                        LogTransitionContext("EnterPlay", "AfterSnapshotRestore", targetWorld);
                         if (targetWorld is not null)
                         {
                             var restoredTarget = targetWorld;
                             PostSnapshotRestore?.Invoke(restoredTarget);
+                            LogTransitionContext("EnterPlay", "AfterPostSnapshotRestore", restoredTarget);
                         }
                     }
 
                     // Step 2: Reload gameplay assemblies if configured
                     if (Configuration.ReloadGameplayAssemblies)
                     {
+                        LogTransitionContext("EnterPlay", "BeforeReloadGameplayAssemblies", targetWorld);
                         ReloadGameplayAssembliesAsync().GetAwaiter().GetResult();
+                        LogTransitionContext("EnterPlay", "AfterReloadGameplayAssemblies", targetWorld);
                     }
 
                     // Step 3: Resolve and initialize GameMode
                     _activeGameMode = ResolveGameMode(targetWorld);
+                    LogTransitionContext("EnterPlay", "AfterResolveGameMode", targetWorld);
                     
                     // Step 4: Begin play on all world instances
                     foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
                     {
+                        LogWorldInstanceState("EnterPlay", "BeforeBeginPlay", worldInstance);
+
                         // Enable physics if configured
                         worldInstance.PhysicsEnabled = Configuration.SimulatePhysics;
                         
@@ -215,18 +289,23 @@ namespace XREngine
 
                         // Begin play
                         worldInstance.BeginPlay().GetAwaiter().GetResult();
+                        LogWorldInstanceState("EnterPlay", "AfterBeginPlay", worldInstance);
                     }
 
                     // Step 5: Call GameMode.OnBeginPlay
                     _activeGameMode?.OnBeginPlay();
+                    LogTransitionContext("EnterPlay", "AfterGameModeBeginPlay", targetWorld);
 
                     State = EPlayModeState.Play;
+                    LogTransitionContext("EnterPlay", "StateSetPlay", targetWorld);
                     PostEnterPlay?.Invoke();
+                    LogTransitionContext("EnterPlay", "AfterPostEnterPlay", targetWorld);
 
                     Debug.Out("Entered play mode");
                 }
                 catch (Exception ex)
                 {
+                    LogTransitionContext("EnterPlay", "Exception", targetWorld);
                     Debug.LogException(ex, "Failed to enter play mode");
                     // Attempt recovery
                     State = EPlayModeState.Edit;

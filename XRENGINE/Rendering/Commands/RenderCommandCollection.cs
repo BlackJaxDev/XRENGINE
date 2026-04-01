@@ -109,6 +109,12 @@ namespace XREngine.Rendering.Commands
                 return _updatingPasses.Values.Sum(static pass => pass.Count);
         }
 
+        public int GetUpdatingPassCount()
+        {
+            using (_lock.EnterScope())
+                return _updatingPasses.Count;
+        }
+
         public int GetRenderingCommandCount()
         {
             using (_lock.EnterScope())
