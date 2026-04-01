@@ -676,6 +676,8 @@ namespace XREngine.Rendering
 
             // Subscribe to play mode transitions to invalidate scene panel resources
             RuntimeRenderingHostServices.Current.SubscribePlayModeTransitions(OnPlayModeTransition);
+            Engine.PlayMode.PostEnterPlay += OnPlayModeTransition;
+            Engine.PlayMode.PreExitPlay += OnPlayModeTransition;
         }
 
         private void UnlinkWindow()
@@ -692,24 +694,35 @@ namespace XREngine.Rendering
 
             // Unsubscribe from play mode events
             RuntimeRenderingHostServices.Current.UnsubscribePlayModeTransitions(OnPlayModeTransition);
+            Engine.PlayMode.PostEnterPlay -= OnPlayModeTransition;
+            Engine.PlayMode.PreExitPlay -= OnPlayModeTransition;
         }
 
         private void OnPlayModeTransition()
         {
-            Debug.Out($"[XRWindow] OnPlayModeTransition called. PlayModeState={Engine.PlayMode.State} Viewports={Viewports.Count}");
+            bool isTransitioning = Engine.PlayMode.IsTransitioning;
+            Debug.Out($"[XRWindow] OnPlayModeTransition called. PlayModeState={Engine.PlayMode.State} Viewports={Viewports.Count} Transitioning={isTransitioning}");
             
             // Invalidate scene panel resources IMMEDIATELY so stale textures don't persist.
             // Using immediate destruction ensures the GL texture handle is invalidated before
             // ImGui tries to display it on the next frame.
             _scenePanelAdapter.InvalidateResourcesImmediate();
 
-            // Also destroy all viewport render pipeline caches to ensure stale textures/FBOs
+            // Invalidate viewport render pipeline resources so stale textures/FBOs
             // from the previous play mode state don't persist into the new state.
+            // Use InvalidatePhysicalResources (retains descriptor metadata) instead of
+            // DestroyCache so that render commands can lazily recreate FBOs/textures
+            // on the next frame without losing registry structure.
             foreach (var viewport in Viewports)
             {
-                Debug.Out($"[XRWindow] Destroying pipeline cache for VP[{viewport.Index}] CameraComponent={viewport.CameraComponent?.Name ?? "<null>"} ActiveCamera={viewport.ActiveCamera?.GetHashCode().ToString() ?? "null"}");
-                viewport.RenderPipelineInstance.DestroyCache();
+                Debug.Out($"[XRWindow] Invalidating pipeline resources for VP[{viewport.Index}] CameraComponent={viewport.CameraComponent?.Name ?? "<null>"} ActiveCamera={viewport.ActiveCamera?.GetHashCode().ToString() ?? "null"}");
+                viewport.RenderPipelineInstance.InvalidatePhysicalResources();
             }
+
+            if (isTransitioning)
+                Debug.Out("[XRWindow] Play-mode transition is active; viewport pipelines are torn down until the state stabilizes.");
+            else
+                Debug.Out("[XRWindow] Play-mode transition settled; viewport pipelines will rebuild from retained descriptors on the next stable frame.");
 
             // Some rendering state (viewport size/internal resolution/aspect ratio) is only recomputed
             // on resize events. Play mode transitions can invalidate cached GPU resources without
@@ -888,7 +901,20 @@ namespace XREngine.Rendering
                 bool viewportRenderFailed = false;
                 try
                 {
-                    RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                    if (Engine.PlayMode.IsTransitioning)
+                    {
+                        Debug.RenderingEvery(
+                            $"XRWindow.RenderCallback.TransitionSuspended.{GetHashCode()}",
+                            TimeSpan.FromSeconds(1),
+                            "[RenderDiag] Window viewport rendering suspended during play-mode transition. Window={0} State={1} Viewports={2}",
+                            GetHashCode(),
+                            Engine.PlayMode.State,
+                            Viewports.Count);
+                    }
+                    else
+                    {
+                        RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                    }
                 }
                 catch (Exception vpEx)
                 {

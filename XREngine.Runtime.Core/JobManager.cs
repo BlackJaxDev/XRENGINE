@@ -28,6 +28,7 @@ namespace XREngine
         private const int DefaultQueueLimit = 8192;
         private const int QueueAcquireWaitMs = 50;
         private static readonly TimeSpan StarvationWarningThreshold = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan StarvationLogInterval = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan BackpressureLogInterval = TimeSpan.FromSeconds(1);
         private static readonly long StarvationWarningTicks = (long)(StarvationWarningThreshold.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
         private static readonly TimeSpan RemoteWorkerIdleTimeout = TimeSpan.FromSeconds(30);
@@ -74,6 +75,7 @@ namespace XREngine
         ];
         private readonly List<Job> _active = new();
         private readonly object _activeLock = new();
+        private readonly ConcurrentDictionary<string, long> _lastStarvationLogTicksByLabel = new(StringComparer.Ordinal);
 
         private readonly int[] _pendingCounts = new int[PriorityLevels];
         private readonly int[] _pendingMainThreadCounts = new int[PriorityLevels];
@@ -534,7 +536,30 @@ namespace XREngine
             if (waitMs >= StarvationWarningThreshold.TotalMilliseconds && job.TryMarkStarvationLogged())
             {
                 string label = job.GetProfilerLabel();
-                Log($"Job {job.Id} [{job.Affinity}/{job.Priority}] {label} waited {waitMs:F1} ms before execution.");
+                if (ShouldLogStarvation(label, job.Affinity, job.Priority, now))
+                    Log($"Job {job.Id} [{job.Affinity}/{job.Priority}] {label} waited {waitMs:F1} ms before execution.");
+            }
+        }
+
+        private bool ShouldLogStarvation(string label, JobAffinity affinity, JobPriority priority, long now)
+        {
+            string key = $"{affinity}|{priority}|{label}";
+
+            while (true)
+            {
+                if (_lastStarvationLogTicksByLabel.TryGetValue(key, out long lastLogTick))
+                {
+                    if (TicksToTimeSpan(now - lastLogTick) < StarvationLogInterval)
+                        return false;
+
+                    if (_lastStarvationLogTicksByLabel.TryUpdate(key, now, lastLogTick))
+                        return true;
+
+                    continue;
+                }
+
+                if (_lastStarvationLogTicksByLabel.TryAdd(key, now))
+                    return true;
             }
         }
 

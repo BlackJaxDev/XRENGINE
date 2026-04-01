@@ -87,12 +87,49 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (ActivePipelineInstance.RenderState.Scene is null)
                 return;
 
+            var viewport = ActivePipelineInstance.RenderState.WindowViewport;
+            var world = viewport?.World;
+
             var albOpacTex = ActivePipelineInstance.GetTexture<XRTexture>(AlbedoOpacityTexture);
             var normTex = ActivePipelineInstance.GetTexture<XRTexture>(NormalTexture);
             var rmseTex = ActivePipelineInstance.GetTexture<XRTexture>(RMSETexture);
             var depthViewTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTexture);
             if (albOpacTex is null || normTex is null || rmseTex is null || depthViewTex is null)
-                throw new Exception("One or more required textures are missing.");
+            {
+                string missingTextures = string.Empty;
+
+                static void AppendMissing(ref string missing, string name)
+                    => missing = string.IsNullOrEmpty(missing) ? name : $"{missing}, {name}";
+
+                if (albOpacTex is null)
+                    AppendMissing(ref missingTextures, AlbedoOpacityTexture);
+                if (normTex is null)
+                    AppendMissing(ref missingTextures, NormalTexture);
+                if (rmseTex is null)
+                    AppendMissing(ref missingTextures, RMSETexture);
+                if (depthViewTex is null)
+                    AppendMissing(ref missingTextures, DepthViewTexture);
+
+                BoundingRectangle missingRegion = ActivePipelineInstance.RenderState.CurrentRenderRegion;
+                Debug.RenderingWarningEvery(
+                    $"RenderDiag.LightCombine.MissingTextures.{ActivePipelineInstance.GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] LightCombine skipped: missing [{0}]. VP={1} World={2} Play={3} Camera={4} Region={5}x{6} Pipeline={7} Generation={8} Albedo={9} Normal={10} RMSE={11} Depth={12}",
+                    missingTextures,
+                    viewport?.Index ?? -1,
+                    world?.TargetWorld?.Name ?? "<null>",
+                    Engine.PlayMode.State,
+                    viewport?.CameraComponent?.Name ?? "<null>",
+                    missingRegion.Width,
+                    missingRegion.Height,
+                    ActivePipelineInstance.Pipeline?.DebugName ?? "<null>",
+                    ActivePipelineInstance.ResourceGeneration,
+                    DescribeTexture(albOpacTex),
+                    DescribeTexture(normTex),
+                    DescribeTexture(rmseTex),
+                    DescribeTexture(depthViewTex));
+                return;
+            }
 
             if (_albedoOpacityTextureCache != albOpacTex ||
                 _normalTextureCache != normTex ||
@@ -111,8 +148,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (msaaActive)
                 EnsureMsaaRenderers();
 
-            var viewport = ActivePipelineInstance.RenderState.WindowViewport;
-            var world = viewport?.World;
             var lights = world?.Lights;
             if (lights is null)
                 return;

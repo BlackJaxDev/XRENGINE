@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 
 namespace XREngine
 {
@@ -71,6 +73,8 @@ namespace XREngine
 
             try
             {
+                LogWorldSceneTree(world, "BeforeSerialize");
+
                 // Serialize each scene
                 foreach (var scene in world.Scenes)
                 {
@@ -293,6 +297,8 @@ namespace XREngine
                         Debug.Out($"[SnapshotRestore] Removed {removedCount} orphan root node(s) not present in restored scenes.");
                 }
 
+                LogWorldSceneTree(SourceWorld, "AfterDeserialize");
+
                 Debug.Out($"World state restored from snapshot taken at {CaptureTime}");
                 return true;
             }
@@ -358,5 +364,77 @@ namespace XREngine
 
         private static string GetSceneKey(XRScene scene)
             => scene.Name ?? scene.GetHashCode().ToString();
+
+        private static void LogWorldSceneTree(XRWorld world, string phase)
+        {
+            Debug.Out($"[SnapshotDiag] Scene tree ({phase}). World={world.Name ?? "<unnamed>"} Scenes={world.Scenes.Count}");
+
+            if (world.Scenes.Count == 0)
+            {
+                Debug.Out($"[SnapshotDiag] Scene tree ({phase}) has no scenes.");
+                return;
+            }
+
+            for (int sceneIndex = 0; sceneIndex < world.Scenes.Count; sceneIndex++)
+            {
+                XRScene scene = world.Scenes[sceneIndex];
+                Debug.Out(
+                    $"[SnapshotDiag] Scene[{sceneIndex}] '{scene.Name ?? "<unnamed>"}' Visible={scene.IsVisible} Roots={scene.RootNodes?.Count ?? 0}");
+
+                if (scene.RootNodes is null || scene.RootNodes.Count == 0)
+                    continue;
+
+                for (int rootIndex = 0; rootIndex < scene.RootNodes.Count; rootIndex++)
+                {
+                    SceneNode? root = scene.RootNodes[rootIndex];
+                    if (root is null)
+                    {
+                        Debug.Out($"[SnapshotDiag]   Root[{rootIndex}] <null>");
+                        continue;
+                    }
+
+                    LogSceneNodeRecursive(root, depth: 1);
+                }
+            }
+        }
+
+        private static void LogSceneNodeRecursive(SceneNode node, int depth)
+        {
+            string indent = new(' ', depth * 2);
+            string transformType = node.Transform?.GetType().FullName ?? "<null>";
+            string componentTypes = node.Components.Count == 0
+                ? "<none>"
+                : string.Join(", ", node.Components.Select(component => component?.GetType().FullName ?? "<null>"));
+            int childCount = node.Transform?.Children.Count(child => child?.SceneNode is not null) ?? 0;
+
+            var line = new StringBuilder();
+            line.Append("[SnapshotDiag] ");
+            line.Append(indent);
+            line.Append("- Node='");
+            line.Append(node.Name ?? SceneNode.DefaultName);
+            line.Append("' Transform=");
+            line.Append(transformType);
+            line.Append(" Components=[");
+            line.Append(componentTypes);
+            line.Append("] Children=");
+            line.Append(childCount);
+
+            if (node.Transform is { } tfm)
+            {
+                var wt = tfm.WorldTranslation;
+                var wr = tfm.WorldRotation;
+                var rt = tfm.RenderTranslation;
+                var rr = tfm.RenderRotation;
+                line.Append($" WorldPos=<{wt.X:G5},{wt.Y:G5},{wt.Z:G5}>");
+                line.Append($" WorldRot=<{wr.X:G4},{wr.Y:G4},{wr.Z:G4},{wr.W:G4}>");
+                line.Append($" RenderPos=<{rt.X:G5},{rt.Y:G5},{rt.Z:G5}>");
+                line.Append($" RenderRot=<{rr.X:G4},{rr.Y:G4},{rr.Z:G4},{rr.W:G4}>");
+            }
+
+            Debug.Out(line.ToString());
+
+            foreach (SceneNode childNode in SceneNodePrefabUtility.EnumerateHierarchy(node).Skip(1).Where(child => ReferenceEquals(child.Parent, node)))
+                LogSceneNodeRecursive(childNode, depth + 1);
+        }
     }
 }

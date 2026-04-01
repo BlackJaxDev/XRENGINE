@@ -60,13 +60,6 @@ namespace XREngine
 
             WorldInstance.RootNodes.Add(pawnNode);
 
-            if (WorldInstance.PlayState == XRWorldInstance.EPlayState.Playing)
-            {
-                pawnNode.OnBeginPlay();
-                if (pawnNode.IsActiveSelf)
-                    pawnNode.OnActivated();
-            }
-
             return pawn;
         }
     }

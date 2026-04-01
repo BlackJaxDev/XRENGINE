@@ -61,11 +61,8 @@ namespace XREngine
 
             WorldInstance.RootNodes.Add(pawnNode);
 
-            if (pawnNode.GetTransformAs<Transform>(false) is Transform tfm)
-            {
-                tfm.SetWorldTranslation(spawnTransform.Position);
-                tfm.SetWorldRotation(spawnTransform.Rotation);
-            }
+            if (pawnNode.Transform is TransformBase transform)
+                ApplySpawnTransform(transform, spawnTransform.Position, spawnTransform.Rotation);
 
             TrackAutoSpawnedPawn(pawn);
             _noClipPawns[playerIndex] = pawn;

@@ -701,7 +701,8 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             PostProcessFBOName,
             CreatePostProcessFBO,
-            GetDesiredFBOSizeInternal)
+            GetDesiredFBOSizeInternal,
+            NeedsRecreatePostProcessFbo)
             .UseLifetime(RenderResourceLifetime.Transient);
 
     }

@@ -323,6 +323,38 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
 
+    private bool NeedsRecreatePostProcessFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 5)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(HDRSceneTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(BloomBlurTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
+            || !ReferenceEquals(textures[3], GetTexture<XRTexture>(StencilViewTextureName))
+            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(AutoExposureTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, PostProcessShaderName()),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
     private bool NeedsRecreateDeferredGBufferFbo(XRFrameBuffer fbo)
     {
         if (!fbo.IsLastCheckComplete || fbo.EffectiveSampleCount != 1u)

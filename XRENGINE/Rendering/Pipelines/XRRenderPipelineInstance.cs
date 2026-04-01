@@ -290,6 +290,19 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             return;
         }
 
+        if (Engine.PlayMode.IsTransitioning)
+        {
+            Debug.RenderingEvery(
+                $"XRRenderPipelineInstance.Render.TransitionSuspended.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] Pipeline execution skipped during play-mode transition. Pipeline={0} State={1} Camera={2} Viewport={3}",
+                Pipeline.DebugName ?? "<null>",
+                Engine.PlayMode.State,
+                camera?.Transform.SceneNode?.Name ?? stereoRightEyeCamera?.Transform.SceneNode?.Name ?? "<null>",
+                viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}");
+            return;
+        }
+
         // Capture the last render context for editor tooling.
         LastSceneCamera = camera;
         LastRenderingCamera = camera ?? stereoRightEyeCamera;
