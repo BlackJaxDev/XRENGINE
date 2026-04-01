@@ -238,8 +238,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
-        private void RenderDirLight(DirectionalLightComponent c)
-            => RenderLight(DirectionalLightRenderer!, c);
         private void RenderPointLight(PointLightComponent c)
             => RenderLight(PointLightRenderer!, c);
         private void RenderSpotLight(SpotLightComponent c)
@@ -325,6 +323,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             bool hasShadowMap = _currentLightComponent.CastsShadows && selectedShadowMap is not null;
+            bool directionalHasShadowMap = useCascadedDirectionalShadows;
+            if (_currentLightComponent is DirectionalLightComponent directionalLightComponent)
+                directionalHasShadowMap |= hasShadowMap && directionalLightComponent.IntersectsActiveCamera;
+
             if (_currentLightComponent is PointLightComponent)
             {
                 materialProgram.Uniform("LightHasShadowMap", hasShadowMap);
@@ -335,6 +337,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 materialProgram.Uniform("LightHasShadowMap", hasShadowMap);
                 // Spot lights use a 2D shadow map; rebind with explicit dummy fallback
                 // to guarantee a valid sampler2D is always bound at unit 4.
+                materialProgram.Sampler("ShadowMap", selectedShadowMap as XRTexture2D ?? DummyShadowMap, 4);
+            }
+            else if (_currentLightComponent is DirectionalLightComponent)
+            {
+                materialProgram.Uniform("LightHasShadowMap", directionalHasShadowMap);
+                // Directional lights fall back to the single shadow map when cascades are unavailable.
                 materialProgram.Sampler("ShadowMap", selectedShadowMap as XRTexture2D ?? DummyShadowMap, 4);
             }
         }
@@ -365,13 +373,14 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             XRMesh pointLightMesh = PointLightComponent.GetVolumeMesh();
             XRMesh spotLightMesh = SpotLightComponent.GetVolumeMesh();
-            XRMesh dirLightMesh = DirectionalLightComponent.GetVolumeMesh();
 
             PointLightRenderer = new XRMeshRenderer(pointLightMesh, pointLightMat);
             PointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
             SpotLightRenderer = new XRMeshRenderer(spotLightMesh, spotLightMat);
             SpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+
+            XRMesh dirLightMesh = DirectionalLightComponent.GetVolumeMesh();
 
             DirectionalLightRenderer = new XRMeshRenderer(dirLightMesh, dirLightMat);
             DirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
@@ -469,6 +478,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             XRMesh pointMesh = PointLightComponent.GetVolumeMesh();
             XRMesh spotMesh = SpotLightComponent.GetVolumeMesh();
+
             XRMesh dirMesh = DirectionalLightComponent.GetVolumeMesh();
 
             MsaaSimplePointLightRenderer = new XRMeshRenderer(pointMesh, simplePointMat);

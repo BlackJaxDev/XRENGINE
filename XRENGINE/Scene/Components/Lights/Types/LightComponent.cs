@@ -297,6 +297,7 @@ namespace XREngine.Components.Capture.Lights.Types
             ClearDynamicWorldRegistration();
             base.OnComponentDeactivated();
             ShadowMap?.Destroy();
+            ShadowMap = null;
         }
 
         public int Samples
