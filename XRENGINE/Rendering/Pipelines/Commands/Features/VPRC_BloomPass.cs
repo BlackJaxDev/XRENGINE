@@ -449,7 +449,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static void SetDefaultDownsampleUniforms(XRRenderProgram program, int sourceLod, bool firstLevel)
         {
             program.Uniform("SourceLOD", sourceLod);
-            program.Uniform("UseThreshold", firstLevel);
+            // BrightPass.fs already thresholds; never re-threshold in the downsample chain.
+            program.Uniform("UseThreshold", false);
             program.Uniform("BloomThreshold", 1.0f);
             program.Uniform("BloomSoftKnee", 0.5f);
             program.Uniform("BloomIntensity", 1.0f);

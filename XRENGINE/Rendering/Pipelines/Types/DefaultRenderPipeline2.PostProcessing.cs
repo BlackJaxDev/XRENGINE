@@ -358,7 +358,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Threshold),
             PostProcessParameterKind.Float,
-            0.0f,
+            0.8f,
             displayName: "Threshold",
             min: 0.0f,
             max: 5.0f,
@@ -385,7 +385,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Strength),
             PostProcessParameterKind.Float,
-            0.04f,
+            0.5f,
             displayName: "Bloom Strength",
             min: 0.0f,
             max: 1.0f,

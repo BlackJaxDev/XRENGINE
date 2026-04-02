@@ -166,9 +166,9 @@ Still needed:
 
 ### CI integration
 
-- [x] Add CI pipeline step that runs Vulkan-focused unit tests
-- [x] Configure CI to fail on Vulkan test regressions
-- [x] Verify existing `VulkanTodoP2ValidationTests` run in CI
+- [ ] Add CI pipeline step that runs Vulkan-focused unit tests
+- [ ] Configure CI to fail on Vulkan test regressions
+- [ ] Verify existing `VulkanTodoP2ValidationTests` run in CI
 
 ---
 
