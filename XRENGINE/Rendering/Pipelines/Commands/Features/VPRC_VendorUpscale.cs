@@ -9,9 +9,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 {
     /// <summary>
     /// Attempts to run a vendor-provided upscale pass (Intel XeSS or NVIDIA DLSS) before the final blit.
-    /// Falls back to the standard quad blit when no upscaler is available.
-    /// When the source FBO is a plain <see cref="XRFrameBuffer"/> (not <see cref="XRQuadFrameBuffer"/>),
-    /// resolves its first color texture and presents it via a passthrough quad.
+    /// When no upscaler is available, resolves the source FBO's first color texture and presents it
+    /// via a passthrough quad instead of re-running the source quad shader directly to the backbuffer.
     /// </summary>
     [RenderPipelineScriptCommand]
     public class VPRC_VendorUpscale : VPRC_RenderQuadFBO
@@ -113,28 +112,6 @@ void main()
                 return;
             }
 
-            // Standard quad blit requires XRQuadFrameBuffer.
-            if (FrameBufferName is not null &&
-                ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName) is not null)
-            {
-                if (presentingToWindow)
-                    Engine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
-
-                Debug.RenderingEvery(
-                    $"VendorUpscale.StandardBlit.{ActivePipelineInstance.GetHashCode()}",
-                    TimeSpan.FromSeconds(2),
-                    "[RenderDiag] VendorUpscale standard blit. SourceFBO='{0}' TargetFBO='{1}' OutputFBO='{2}' Pipeline={3} WindowViewport={4}",
-                    FrameBufferName,
-                    TargetFrameBufferName ?? "<backbuffer>",
-                    ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<null>",
-                    ActivePipelineInstance.Pipeline?.DebugName ?? ActivePipelineInstance.Pipeline?.GetType().Name ?? "<null>",
-                    windowViewport?.GetHashCode().ToString() ?? "<null>");
-                base.Execute();
-                return;
-            }
-
-            // Source is a plain XRFrameBuffer (e.g., SMAA output).
-            // Resolve its first color texture and present via passthrough quad.
             FallbackBlit(presentingToWindow);
         }
 
