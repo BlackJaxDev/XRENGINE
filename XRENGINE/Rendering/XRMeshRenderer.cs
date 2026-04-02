@@ -432,6 +432,15 @@ namespace XREngine.Rendering
             set => SetField(ref _submeshes, value);
         }
 
+        [MemoryPackIgnore]
+        private XREngine.Rendering.Models.SubMesh? _sourceSubMeshAsset;
+        [MemoryPackIgnore]
+        public XREngine.Rendering.Models.SubMesh? SourceSubMeshAsset
+        {
+            get => _sourceSubMeshAsset;
+            set => SetField(ref _sourceSubMeshAsset, value);
+        }
+
         private XRMesh? _mesh;
         /// <summary>
         /// Represents the sole mesh this renderer will render.

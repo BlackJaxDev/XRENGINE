@@ -2,7 +2,6 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
-using static Meshoptimizer.Meshopt;
 
 namespace XREngine.Rendering.Meshlets
 {
@@ -22,6 +21,7 @@ namespace XREngine.Rendering.Meshlets
 
         private readonly Dictionary<uint, (int offsetIndex, int count)> _meshletOffsets = [];
         private readonly List<Meshlet> _meshlets = [];
+        private readonly List<MeshletVertex> _vertices = [];
         private readonly List<MeshletMaterial> _materials = [];
         private readonly Dictionary<uint, Matrix4x4> _transforms = [];
 
@@ -71,30 +71,46 @@ namespace XREngine.Rendering.Meshlets
         /// <summary>
         /// Add a mesh to the meshlet renderer
         /// </summary>
-        public void AddMesh(XRMesh mesh, uint meshID, uint materialID, Matrix4x4 transform)
+        public void AddMesh(XRMesh mesh, uint instanceID, uint materialID, int renderPass, Matrix4x4 transform, MeshletGenerationSettings? settings = null)
         {
             EnsureInitialized();
 
-            var meshletData = MeshletGenerator.Build([mesh], out var vertexIndices, out var triangleIndices);
+            settings ??= new MeshletGenerationSettings
+            {
+                Enabled = true,
+                BuildMode = MeshletBuildMode.Dense,
+            };
+
+            if (!settings.Enabled)
+                return;
+
+            MeshletBuildResult build = MeshletGenerator.Build(mesh, settings);
+            if (build.Meshlets.Length == 0)
+                return;
 
             // Adjust offsets in returned meshlets and append to global lists
+            uint baseVertexOffset = (uint)_vertices.Count;
             uint baseVertOffset = (uint)_vertexIndices.Count;
-            byte baseTriOffset = (byte)(_triangleIndices.Count / 3); // 3 indices per triangle
-            for (int i = 0; i < meshletData.Length; i++)
+            uint baseTriOffset = (uint)(_triangleIndices.Count / 3); // 3 indices per triangle
+
+            for (int i = 0; i < build.Meshlets.Length; i++)
             {
-                var m = meshletData[i];
-                m.MeshID = meshID;
+                var m = build.Meshlets[i];
+                m.MeshID = instanceID;
                 m.MaterialID = materialID;
+                m.RenderPass = (uint)renderPass;
                 m.VertexOffset += baseVertOffset;
                 m.TriangleOffset += baseTriOffset;
                 _meshlets.Add(m);
             }
 
-            _vertexIndices.AddRange(vertexIndices);
-            _triangleIndices.AddRange(triangleIndices);
+            _vertices.AddRange(build.Vertices);
+            for (int i = 0; i < build.VertexIndices.Length; i++)
+                _vertexIndices.Add(build.VertexIndices[i] + baseVertexOffset);
+            _triangleIndices.AddRange(build.TriangleIndices);
 
-            _meshletOffsets[meshID] = (_meshlets.Count - meshletData.Length, meshletData.Length);
-            _transforms[meshID] = transform;
+            _meshletOffsets[instanceID] = (_meshlets.Count - build.Meshlets.Length, build.Meshlets.Length);
+            _transforms[instanceID] = transform;
             _buffersDirty = true;
             _transformBufferDirty = true;
         }
@@ -117,11 +133,24 @@ namespace XREngine.Rendering.Meshlets
         /// <summary>
         /// Update transform for a mesh
         /// </summary>
-        public void UpdateTransform(uint meshID, Matrix4x4 transform)
+        public void UpdateTransform(uint instanceID, Matrix4x4 transform)
         {
             EnsureInitialized();
-            _transforms[meshID] = transform;
+            _transforms[instanceID] = transform;
             _transformBufferDirty = true;
+        }
+
+        private static uint[] PackTriangleIndices(IReadOnlyList<byte> triangleIndices)
+        {
+            if (triangleIndices.Count == 0)
+                return [];
+
+            int packedLength = (triangleIndices.Count + 3) / 4;
+            uint[] packed = new uint[packedLength];
+            for (int i = 0; i < triangleIndices.Count; i++)
+                packed[i >> 2] |= (uint)triangleIndices[i] << ((i & 3) * 8);
+
+            return packed;
         }
 
         private bool _buffersDirty = true;
@@ -135,12 +164,13 @@ namespace XREngine.Rendering.Meshlets
             if (_buffersDirty)
             {
                 _meshletBuffer?.SetDataRaw(_meshlets.ToArray());
+                _vertexBuffer?.SetDataRaw(_vertices.ToArray());
 
                 // Vertex remap indices per meshlet
                 _indexBuffer?.SetDataRaw(_vertexIndices.ToArray());
 
                 // Triangle local indices per meshlet
-                _triangleBuffer?.SetDataRaw(_triangleIndices.ToArray());
+                _triangleBuffer?.SetDataRaw(PackTriangleIndices(_triangleIndices));
                 
                 // Initialize visible meshlet buffer (counter + max meshlets)
                 var visibleMeshletData = new uint[1 + _meshlets.Count];
@@ -173,7 +203,7 @@ namespace XREngine.Rendering.Meshlets
         /// <summary>
         /// Issue an OpenGL NV_mesh_shader draw using current meshlet data.
         /// </summary>
-        public bool Render(XRCamera camera)
+        public bool Render(XRCamera camera, int renderPass)
         {
             EnsureInitialized();
 
@@ -222,6 +252,10 @@ namespace XREngine.Rendering.Meshlets
             _taskMeshProgram.Uniform("ViewProjectionMatrix", viewProjectionMatrix);
             _taskMeshProgram.Uniform("ViewMatrix", viewMatrix);
             _taskMeshProgram.Uniform("cameraPosition", cameraPosition);
+            _taskMeshProgram.Uniform("RenderPass", renderPass);
+            _taskMeshProgram.Uniform("lightDirection", Vector3.Normalize(new Vector3(-0.35f, -1.0f, -0.25f)));
+            _taskMeshProgram.Uniform("lightColor", Vector3.One);
+            _taskMeshProgram.Uniform("lightIntensity", 2.0f);
 
             for (int i = 0; i < Math.Min(frustumPlanes.Length, 6); i++)
                 _taskMeshProgram.Uniform($"FrustumPlanes[{i}]", frustumPlanes[i]);
@@ -246,6 +280,8 @@ namespace XREngine.Rendering.Meshlets
         public void Clear()
         {
             _meshlets.Clear();
+            _meshletOffsets.Clear();
+            _vertices.Clear();
             _materials.Clear();
             _transforms.Clear();
             _vertexIndices.Clear();

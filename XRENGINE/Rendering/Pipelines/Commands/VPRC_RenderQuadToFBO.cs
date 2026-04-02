@@ -13,6 +13,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_RenderQuadToFBO : ViewportRenderCommand
     {
+        private static readonly bool _diagEnabled =
+            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DIAG_QUAD_BLIT"));
+
         public string? SourceQuadFBOName { get; set; }
         public string? DestinationFBOName { get; set; } = null;
 
@@ -38,9 +41,41 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             XRQuadFrameBuffer? sourceFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);
             if (sourceFBO is null)
+            {
+                if (_diagEnabled)
+                    Debug.LogWarning($"[QuadBlitDiag] Source FBO '{SourceQuadFBOName}' not found as XRQuadFrameBuffer.");
                 return;
+            }
 
             var destFBO = DestinationFBOName is null ? null : ActivePipelineInstance.GetFBO<XRFrameBuffer>(DestinationFBOName);
+            if (_diagEnabled && DestinationFBOName is not null && destFBO is null)
+                Debug.LogWarning($"[QuadBlitDiag] Dest FBO '{DestinationFBOName}' not found.");
+
+            if ((string.Equals(SourceQuadFBOName, DefaultRenderPipeline.PostProcessFBOName, StringComparison.Ordinal)
+                    && string.Equals(DestinationFBOName, "PostProcessOutputFBO", StringComparison.Ordinal))
+                || (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.FxaaFBOName, StringComparison.Ordinal)
+                    && string.Equals(DestinationFBOName, DefaultRenderPipeline.FxaaFBOName, StringComparison.Ordinal))
+                || (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal)
+                    && string.Equals(DestinationFBOName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal))
+                || string.Equals(SourceQuadFBOName, DefaultRenderPipeline.MsaaLightCombineFBOName, StringComparison.Ordinal))
+            {
+                Debug.RenderingEvery(
+                    $"QuadBlit.{ActivePipelineInstance.GetHashCode()}.{SourceQuadFBOName}.{DestinationFBOName}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] QuadBlit Source={0} Dest={1} SourceTargets={2} DestTargets={3} DestType={4} CurrentOutput={5}",
+                    SourceQuadFBOName,
+                    DestinationFBOName ?? "<current>",
+                    sourceFBO.Targets?.Length ?? 0,
+                    destFBO?.Targets?.Length ?? 0,
+                    destFBO?.GetType().Name ?? "<null>",
+                    ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<backbuffer>");
+            }
+
+            if (_diagEnabled)
+            {
+                bool hasTargets = destFBO?.Targets is { Length: > 0 };
+                Debug.Log(ELogCategory.Rendering, $"[QuadBlitDiag] Rendering '{SourceQuadFBOName}' → '{DestinationFBOName ?? "<current>"}' (dest has targets: {hasTargets}, dest type: {destFBO?.GetType().Name ?? "null"})");
+            }
 
             sourceFBO.Render(destFBO);
         }

@@ -15,6 +15,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_VendorUpscale : VPRC_RenderQuadFBO
     {
+        private static readonly bool _diagEnabled =
+            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DIAG_VENDOR_UPSCALE"));
+
         public string? DepthTextureName { get; set; }
         public string? MotionTextureName { get; set; }
 
@@ -94,28 +97,84 @@ void main()
             if (TryRunDlss())
                 return;
 
-            bool presentingToWindow = TargetFrameBufferName is null;
-            var windowViewport = ActivePipelineInstance.RenderState.WindowViewport;
-            bool isActiveWindowViewport = windowViewport?.Window?.Viewports.Contains(windowViewport) == true;
-
-            if (presentingToWindow && !isActiveWindowViewport)
+            if (FrameBufferName is null)
             {
                 Debug.RenderingWarningEvery(
-                    $"VendorUpscale.SkipOffscreenPresent.{ActivePipelineInstance.GetHashCode()}",
+                    $"VendorUpscale.NoSource.{ActivePipelineInstance.GetHashCode()}",
                     TimeSpan.FromSeconds(1),
-                    "[RenderDiag] VendorUpscale skipped backbuffer present for non-window pipeline instance. SourceFBO='{0}' TargetFBO='<backbuffer>' OutputFBO='{1}' Pipeline={2} WindowViewport={3} HasWindow={4}",
-                    FrameBufferName ?? "<null>",
+                    "[RenderDiag] VendorUpscale skipped: no source FBO. Target={0} OutputFBO={1} AA={2}",
+                    TargetFrameBufferName ?? "<current>",
                     ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<null>",
-                    ActivePipelineInstance.Pipeline?.DebugName ?? ActivePipelineInstance.Pipeline?.GetType().Name ?? "<null>",
-                    windowViewport?.GetHashCode().ToString() ?? "<null>",
-                    windowViewport?.Window is not null);
+                    ActivePipelineInstance.EffectiveAntiAliasingModeThisFrame?.ToString() ?? "<null>");
                 return;
             }
 
-            FallbackBlit(presentingToWindow);
+            XRQuadFrameBuffer? quadFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
+            bool hasColorTexture = VPRCSourceTextureHelpers.TryResolveColorTexture(
+                ActivePipelineInstance,
+                null,
+                FrameBufferName,
+                out XRTexture? resolvedColorTexture,
+                out string resolveFailure)
+                && resolvedColorTexture is not null;
+
+            string outputTarget = TargetFrameBufferName
+                ?? ActivePipelineInstance.RenderState.OutputFBO?.Name
+                ?? "<backbuffer>";
+
+            if (quadFbo is not null && !hasColorTexture)
+            {
+                Debug.RenderingEvery(
+                    $"VendorUpscale.Path.ShaderOnly.{ActivePipelineInstance.GetHashCode()}.{FrameBufferName}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] VendorUpscale path=QuadShader Source={0} Target={1} AA={2} HDR={3}",
+                    FrameBufferName,
+                    outputTarget,
+                    ActivePipelineInstance.EffectiveAntiAliasingModeThisFrame?.ToString() ?? "<null>",
+                    ActivePipelineInstance.EffectiveOutputHDRThisFrame?.ToString() ?? "<null>");
+
+                if (_diagEnabled)
+                    Debug.Log(ELogCategory.Rendering, $"[VendorUpscaleDiag] QuadBlit path. Source='{FrameBufferName}' Target='{TargetFrameBufferName ?? "<current>"}' OutputFBO='{ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<null>"}'");
+
+                base.Execute();
+                return;
+            }
+
+            if (hasColorTexture)
+            {
+                Debug.RenderingEvery(
+                    $"VendorUpscale.Path.ResolvedColor.{ActivePipelineInstance.GetHashCode()}.{FrameBufferName}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] VendorUpscale path=ResolvedColor Source={0} Target={1} Texture={2} QuadSource={3} AA={4} HDR={5}",
+                    FrameBufferName,
+                    outputTarget,
+                    resolvedColorTexture!.Name ?? resolvedColorTexture.SamplerName ?? "<unnamed>",
+                    quadFbo is not null,
+                    ActivePipelineInstance.EffectiveAntiAliasingModeThisFrame?.ToString() ?? "<null>",
+                    ActivePipelineInstance.EffectiveOutputHDRThisFrame?.ToString() ?? "<null>");
+
+                if (_diagEnabled)
+                    Debug.Log(ELogCategory.Rendering, $"[VendorUpscaleDiag] FallbackBlit path. Source='{FrameBufferName}' Target='{TargetFrameBufferName ?? "<current>"}' Texture='{resolvedColorTexture.Name ?? resolvedColorTexture.SamplerName ?? "<unnamed>"}'");
+
+                _fallbackSourceTexture = resolvedColorTexture;
+                _fallbackQuad?.Render(
+                    TargetFrameBufferName is not null
+                        ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
+                        : null);
+                return;
+            }
+
+            Debug.RenderingWarningEvery(
+                $"VendorUpscale.NoPresentableSource.{ActivePipelineInstance.GetHashCode()}.{FrameBufferName}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] VendorUpscale skipped: no presentable source for FBO={0}. Reason={1} Target={2} AA={3}",
+                FrameBufferName,
+                resolveFailure,
+                outputTarget,
+                ActivePipelineInstance.EffectiveAntiAliasingModeThisFrame?.ToString() ?? "<null>");
         }
 
-        private void FallbackBlit(bool presentingToWindow)
+        private void FallbackBlit()
         {
             if (FrameBufferName is null || _fallbackQuad is null)
                 return;
@@ -125,19 +184,7 @@ void main()
                 || colorTexture is null)
                 return;
 
-            if (presentingToWindow)
-                Engine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
-
             _fallbackSourceTexture = colorTexture;
-            Debug.RenderingEvery(
-                $"VendorUpscale.FallbackBlit.{ActivePipelineInstance.GetHashCode()}",
-                TimeSpan.FromSeconds(2),
-                "[RenderDiag] VendorUpscale fallback blit. SourceFBO='{0}' TargetFBO='{1}' OutputFBO='{2}' Pipeline={3} WindowViewport={4}",
-                FrameBufferName,
-                TargetFrameBufferName ?? "<backbuffer>",
-                ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<null>",
-                ActivePipelineInstance.Pipeline?.DebugName ?? ActivePipelineInstance.Pipeline?.GetType().Name ?? "<null>",
-                ActivePipelineInstance.RenderState.WindowViewport?.GetHashCode().ToString() ?? "<null>");
             _fallbackQuad.Render(
                 TargetFrameBufferName is not null
                     ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)

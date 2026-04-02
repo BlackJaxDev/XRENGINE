@@ -2028,6 +2028,7 @@ namespace XREngine.Rendering.Commands
             _bvhNodeCount = 0;
             _bvhPrimitiveCount = 0;
             _bvhRefitPending = false;
+            _meshletsDirty = true;
         }
 
         #endregion
@@ -2117,6 +2118,9 @@ namespace XREngine.Rendering.Commands
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
+
+                if (_meshletsDirty)
+                    RebuildMeshletsFromUpdatingCommands();
 
                 // Update BVH
                 if (_useInternalBvh)
@@ -2374,9 +2378,40 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Collection of meshlets for meshlet-based rendering.</summary>
         private readonly MeshletCollection _meshlets = new();
+        private bool _meshletsDirty = true;
 
         /// <summary>Gets the meshlet collection for this scene.</summary>
         public MeshletCollection Meshlets => _meshlets;
+
+        private void RebuildMeshletsFromUpdatingCommands()
+        {
+            _meshlets.Clear();
+
+            foreach ((uint commandIndex, (IRenderCommandMesh command, int subMeshIndex) entry) in _commandIndexLookup.OrderBy(static kvp => kvp.Key))
+            {
+                IRenderCommandMesh meshCommand = entry.command;
+                var subMeshes = meshCommand.Mesh?.GetMeshes();
+                if (subMeshes is null || (uint)entry.subMeshIndex >= (uint)subMeshes.Length)
+                    continue;
+
+                (XRMesh? mesh, XRMaterial? materialSource) = subMeshes[entry.subMeshIndex];
+                XRMaterial? material = meshCommand.MaterialOverride ?? materialSource;
+                if (mesh is null || material is null)
+                    continue;
+
+                GetOrCreateMaterialID(material, out uint materialID);
+                _meshlets.AddMaterial(materialID, MeshOptimizerIntegration.CreateMeshletMaterial(material));
+
+                MeshletGenerationSettings? settings = meshCommand.Mesh?.SourceSubMeshAsset?.MeshOptimizer?.Meshlets;
+                if (settings is { Enabled: false })
+                    continue;
+
+                Matrix4x4 modelMatrix = meshCommand.WorldMatrixIsModelMatrix ? meshCommand.WorldMatrix : Matrix4x4.Identity;
+                _meshlets.AddMesh(mesh, commandIndex, materialID, meshCommand.RenderPass, modelMatrix, settings);
+            }
+
+            _meshletsDirty = false;
+        }
 
         /// <summary>Bounding box encompassing all scene geometry.</summary>
         private AABB _bounds;
@@ -2613,6 +2648,8 @@ namespace XREngine.Rendering.Commands
                     // Mark BVH dirty so it gets rebuilt before next cull pass
                     if (_useInternalBvh)
                         MarkBvhDirty();
+
+                    _meshletsDirty = true;
                 }
                 RebuildAtlasIfDirty();
             }
@@ -3004,6 +3041,8 @@ namespace XREngine.Rendering.Commands
                     if (_useInternalBvh)
                         MarkBvhDirty();
 
+                    _meshletsDirty = true;
+
                     RebuildAtlasIfDirty();
                 }
             }
@@ -3069,6 +3108,7 @@ namespace XREngine.Rendering.Commands
                 ReleaseLogicalMeshResidency(removedLogicalMeshId, "RemoveCommandAtIndex");
             else
                 DecrementAtlasMeshRefCount(removedMeshId, "RemoveCommandAtIndex");
+            _meshletsDirty = true;
             --UpdatingCommandCount;
         }
 
@@ -3455,6 +3495,7 @@ namespace XREngine.Rendering.Commands
                             MarkBvhDirty();
                     }
 
+                    _meshletsDirty = true;
                     RebuildAtlasIfDirty();
                 }
             }

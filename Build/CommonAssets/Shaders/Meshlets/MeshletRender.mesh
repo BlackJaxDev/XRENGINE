@@ -10,10 +10,17 @@ struct Meshlet
 {
     vec4 BoundingSphere;        // xyz center, w radius
     uvec4 Indices;              // x = vertex offset, y = triangle offset, z = vertex count, w = triangle count
-    uvec4 Meta;                 // x = mesh ID, y = material ID
+    uvec4 Meta;                 // x = transform index, y = material ID, z = render pass
 };
 
-struct Vertex { vec3 position; vec3 normal; vec2 texCoord; vec4 tangent; };
+struct Vertex
+{
+    vec4 position;
+    vec4 normal;
+    vec2 texCoord;
+    vec2 padding;
+    vec4 tangent;
+};
 
 layout(std430, binding = 0) buffer MeshletBuffer { Meshlet meshlets[]; };
 layout(std430, binding = 2) buffer VertexBuffer { Vertex vertices[]; };

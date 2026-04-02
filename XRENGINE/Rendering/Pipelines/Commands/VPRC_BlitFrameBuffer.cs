@@ -53,6 +53,30 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (source is null || destination is null)
                 return;
 
+            if ((string.Equals(SourceFBOName, DefaultRenderPipeline.MsaaLightingFBOName, StringComparison.Ordinal)
+                    && string.Equals(DestinationFBOName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal))
+                || (string.Equals(SourceFBOName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal)
+                    && string.Equals(DestinationFBOName, DefaultRenderPipeline.TsrHistoryColorFBOName, StringComparison.Ordinal)))
+            {
+                Debug.RenderingEvery(
+                    $"BlitFbo.{ActivePipelineInstance.GetHashCode()}.{SourceFBOName}.{DestinationFBOName}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] FboBlit Source={0} Dest={1} Read={2} Color={3} Depth={4} Stencil={5} Linear={6} SrcSamples={7} DstSamples={8} SrcSize={9}x{10} DstSize={11}x{12}",
+                    SourceFBOName,
+                    DestinationFBOName,
+                    ReadBuffer,
+                    BlitColor,
+                    BlitDepth,
+                    BlitStencil,
+                    LinearFilter,
+                    source.EffectiveSampleCount,
+                    destination.EffectiveSampleCount,
+                    source.Width,
+                    source.Height,
+                    destination.Width,
+                    destination.Height);
+            }
+
             AbstractRenderer.Current?.BlitFBOToFBO(
                 source,
                 destination,

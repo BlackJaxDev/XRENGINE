@@ -615,6 +615,11 @@ namespace XREngine.Rendering.Commands
 
         // Hybrid rendering manager (meshlets vs traditional indirect)
         private readonly HybridRenderingManager _renderManager = new() { UseMeshletPipeline = false };
+        public bool UseMeshletPipeline
+        {
+            get => _renderManager.UseMeshletPipeline;
+            set => _renderManager.UseMeshletPipeline = value;
+        }
 
         public GPURenderPassCollection(int renderPass)
         {

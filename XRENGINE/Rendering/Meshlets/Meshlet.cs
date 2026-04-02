@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Meshlets
         public uint TriangleCount;       // triangles in this meshlet
         public uint MeshID;              // lookup into transform buffer
         public uint MaterialID;          // lookup into material buffer
-        private uint _padding0;
+        public uint RenderPass;          // pass filter for the meshlet pipeline
         private uint _padding1;
 
         public readonly EComponentType ComponentType => EComponentType.Struct;

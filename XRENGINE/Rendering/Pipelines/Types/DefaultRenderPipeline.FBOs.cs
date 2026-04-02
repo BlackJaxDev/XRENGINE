@@ -62,7 +62,7 @@ public partial class DefaultRenderPipeline
                 },
             }
         };
-        var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat);
+        var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
         PostProcessFBO.SettingUniforms += PostProcessFBO_SettingUniforms;
         return PostProcessFBO;
     }
@@ -167,6 +167,7 @@ public partial class DefaultRenderPipeline
                 }
             }
         };
+        upscaleMaterial.SettingUniforms += (_, program) => TsrUpscaleFBO_SettingUniforms(program);
         var fbo = new XRQuadFrameBuffer(upscaleMaterial, deriveRenderTargetsFromMaterial: false)
         {
             Name = TsrUpscaleFBOName

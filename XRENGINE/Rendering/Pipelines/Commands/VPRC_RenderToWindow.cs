@@ -176,15 +176,6 @@ void main()
         try
         {
             _resolvedSourceTexture = sourceTexture;
-            Debug.RenderingEvery(
-                $"RenderToWindow.Present.{instance.GetHashCode()}",
-                TimeSpan.FromSeconds(2),
-                "[RenderDiag] RenderToWindow presenting. SourceTex='{0}' SourceFBO='{1}' Region={2}x{3} Pipeline={4}",
-                SourceTextureName ?? "<null>",
-                SourceFBOName ?? "<null>",
-                region.Width,
-                region.Height,
-                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>");
             _quad.Render(null);
         }
         finally

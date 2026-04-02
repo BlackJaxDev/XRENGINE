@@ -323,6 +323,100 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
 
+    private bool HasSingleColorTarget(XRFrameBuffer fbo, string textureName)
+    {
+        if (fbo.Targets is not { Length: 1 })
+            return false;
+
+        var (target, attachment, mipLevel, layerIndex) = fbo.Targets[0];
+        return attachment == EFrameBufferAttachment.ColorAttachment0
+            && mipLevel == 0
+            && layerIndex == -1
+            && ReferenceEquals(target, GetTexture<XRTexture>(textureName));
+    }
+
+    private bool NeedsRecreatePostProcessOutputFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToOutputFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        return !HasSingleColorTarget(fbo, PostProcessOutputTextureName);
+    }
+
+    private bool NeedsRecreateFxaaFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToOutputFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        if (!HasSingleColorTarget(fbo, FxaaOutputTextureName))
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(PostProcessOutputTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "FXAA.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateTsrHistoryColorFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToOutputFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        return !HasSingleColorTarget(fbo, TsrHistoryColorTextureName);
+    }
+
+    private bool NeedsRecreateTsrUpscaleFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToOutputFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        if (!HasSingleColorTarget(fbo, FxaaOutputTextureName))
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 5)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(PostProcessOutputTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VelocityTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
+            || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
+            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
     private bool NeedsRecreatePostProcessFbo(XRFrameBuffer fbo)
     {
         if (!fbo.IsLastCheckComplete)
@@ -1439,13 +1533,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 PostProcessOutputFBOName,
                 CreatePostProcessOutputFBO,
                 GetDesiredFBOSizeInternal,
-                NeedsRecreateFboDueToOutputFormat);
+                NeedsRecreatePostProcessOutputFbo);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 FxaaFBOName,
                 CreateFxaaFBO,
                 GetDesiredFBOSizeFull,
-                NeedsRecreateFboDueToOutputFormat);
+                NeedsRecreateFxaaFbo);
 
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 TsrHistoryColorTextureName,
@@ -1457,13 +1551,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 TsrHistoryColorFBOName,
                 CreateTsrHistoryColorFBO,
                 GetDesiredFBOSizeFull,
-                NeedsRecreateFboDueToOutputFormat);
+                NeedsRecreateTsrHistoryColorFbo);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 TsrUpscaleFBOName,
                 CreateTsrUpscaleFBO,
                 GetDesiredFBOSizeFull,
-                NeedsRecreateFboDueToOutputFormat);
+                NeedsRecreateTsrUpscaleFbo);
 
             //c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             //    UserInterfaceFBOName,

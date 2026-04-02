@@ -270,7 +270,7 @@ namespace XREngine.Rendering
             XRDataBuffer? parameterBuffer,
             IReadOnlyList<DrawBatch>? batches = null)
         {
-            if (camera is null || scene is null || (_useMeshletPipeline && scene.Meshlets.Render(camera)))
+            if (camera is null || scene is null || (_useMeshletPipeline && scene.Meshlets.Render(camera, currentRenderPass)))
                 return;
 
             // Material map from scene (ID -> XRMaterial)

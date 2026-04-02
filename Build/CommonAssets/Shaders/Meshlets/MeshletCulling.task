@@ -9,7 +9,7 @@ struct Meshlet
 {
     vec4 BoundingSphere;        // xyz center, w radius
     uvec4 Indices;              // x = vertex offset, y = triangle offset, z = vertex count, w = triangle count
-    uvec4 Meta;                 // x = mesh ID, y = material ID
+    uvec4 Meta;                 // x = transform index, y = material ID, z = render pass
 };
 
 layout(std430, binding = 0) buffer MeshletBuffer { Meshlet meshlets[]; };
@@ -23,6 +23,7 @@ shared uint sVisibleCount;
 shared uint sIndices[GROUP_SIZE];
 
 uniform vec4 FrustumPlanes[6];
+uniform uint RenderPass;
 
 vec4 TransformSphere(in Meshlet m)
 {
@@ -57,12 +58,15 @@ void main()
     if (idx < meshlets.length())
     {
         Meshlet m = meshlets[idx];
-        vec4 worldSphere = TransformSphere(m);
-        if (!FrustumCulled(worldSphere))
+        if (m.Meta.z == RenderPass)
         {
-            uint dst = atomicAdd(sVisibleCount, 1u);
-            if (dst < GROUP_SIZE)
-                sIndices[dst] = idx;
+            vec4 worldSphere = TransformSphere(m);
+            if (!FrustumCulled(worldSphere))
+            {
+                uint dst = atomicAdd(sVisibleCount, 1u);
+                if (dst < GROUP_SIZE)
+                    sIndices[dst] = idx;
+            }
         }
     }
 

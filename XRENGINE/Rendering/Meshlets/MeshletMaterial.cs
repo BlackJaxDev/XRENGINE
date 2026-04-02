@@ -30,9 +30,9 @@ namespace XREngine.Rendering.Meshlets
             Metallic = 0f;
             Roughness = 1f;
             AO = 1f;
-            DiffuseTextureID = 0;
-            NormalTextureID = 0;
-            MetallicRoughnessTextureID = 0;
+            DiffuseTextureID = 32;
+            NormalTextureID = 32;
+            MetallicRoughnessTextureID = 32;
             Padding1 = 0;
             Padding2 = 0;
         }

@@ -329,6 +329,19 @@ public sealed partial class XRRenderPipelineInstance : XRBase
                 1.0f)
             : null;
 
+        Debug.RenderingEvery(
+            $"XRRenderPipelineInstance.FrameSettings.{GetHashCode()}.{viewport?.Index ?? -1}",
+            TimeSpan.FromSeconds(1),
+            "[RenderDiag] FrameSettings Pipeline={0} VP={1} Camera={2} AA={3} HDR={4} MsaaSamples={5} TsrScale={6} OutputFBO={7}",
+            Pipeline.DebugName ?? Pipeline.GetType().Name,
+            viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}",
+            effectiveAntiAliasingCamera?.Transform.SceneNode?.Name ?? "<null>",
+            EffectiveAntiAliasingModeThisFrame?.ToString() ?? "<null>",
+            EffectiveOutputHDRThisFrame?.ToString() ?? "<null>",
+            EffectiveMsaaSampleCountThisFrame?.ToString() ?? "<null>",
+            EffectiveTsrRenderScaleThisFrame?.ToString() ?? "<null>",
+            targetFBO?.Name ?? "<backbuffer>");
+
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)
         {
