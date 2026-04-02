@@ -2,16 +2,30 @@ namespace XREngine.Rendering.Pipelines.Commands;
 
 internal static class VPRC_RenderMeshesPassMeshlet
 {
-    private static bool _warned;
-
     public static void Execute(VPRC_RenderMeshesPassShared command)
     {
-        if (!_warned)
-        {
-            _warned = true;
-            XREngine.Debug.LogWarning("Meshlet mesh rendering path is not implemented yet; falling back to Traditional path.");
-        }
+        using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
+        var activeInstance = ViewportRenderCommand.ActivePipelineInstance;
+        var camera = activeInstance.RenderState.SceneCamera;
 
-        VPRC_RenderMeshesPassTraditional.Execute(command);
+        activeInstance.MeshRenderCommands.RenderCPU(
+            command.RenderPass,
+            true,
+            camera,
+            allowExcludedGpuFallbackMeshes: false);
+
+        if (!activeInstance.MeshRenderCommands.TryGetGpuPass(command.RenderPass, out var gpuPass))
+            return;
+
+        bool previousValue = gpuPass.UseMeshletPipeline;
+        gpuPass.UseMeshletPipeline = true;
+        try
+        {
+            activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass);
+        }
+        finally
+        {
+            gpuPass.UseMeshletPipeline = previousValue;
+        }
     }
 }

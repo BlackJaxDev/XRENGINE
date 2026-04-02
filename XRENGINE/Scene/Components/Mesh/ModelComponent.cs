@@ -108,6 +108,9 @@ namespace XREngine.Components.Scene.Mesh
 
         public event Action? ModelChanged;
 
+        public void RebuildRuntimeMeshes()
+            => OnModelChanged();
+
         private void OnModelChanged()
         {
             using var t = Engine.Profiler.Start("ModelComponent.ModelChanged");

@@ -3283,10 +3283,9 @@ void main()
             var inID = glIn?.BindingId ?? 0u;
             var outID = glOut?.BindingId ?? 0u;
 
-            // Guard: verify both FBOs are complete before blitting depth/stencil.
-            // Incomplete FBOs (e.g. unallocated depth textures) cause per-frame
-            // GL_INVALID_OPERATION spam from BlitNamedFramebuffer.
-            if (depthBit || stencilBit)
+            // Guard: verify both FBOs are complete before blitting.
+            // Incomplete FBOs can fail color resolves just as silently as depth/stencil blits,
+            // so keep the same once-per-pair warning for all blit paths.
             {
                 var srcStatus = Api.CheckNamedFramebufferStatus(inID, FramebufferTarget.ReadFramebuffer);
                 var dstStatus = Api.CheckNamedFramebufferStatus(outID, FramebufferTarget.DrawFramebuffer);
@@ -3340,7 +3339,7 @@ void main()
             if (!_blitSkipWarned.Add((srcId, dstId)))
                 return;
             Debug.OpenGLWarning(
-                $"Skipping depth/stencil blit: FBO {srcId}→{dstId} incomplete " +
+                $"Skipping blit: FBO {srcId}→{dstId} incomplete " +
                 $"(src={srcStatus}, dst={dstStatus}).");
         }
 
@@ -3367,8 +3366,19 @@ void main()
             var inID = glIn?.BindingId ?? 0u;
             var outID = glOut?.BindingId ?? 0u;
 
+            var srcStatus = Api.CheckNamedFramebufferStatus(inID, FramebufferTarget.ReadFramebuffer);
+            var dstStatus = Api.CheckNamedFramebufferStatus(outID, FramebufferTarget.DrawFramebuffer);
+            if (srcStatus != GLEnum.FramebufferComplete || dstStatus != GLEnum.FramebufferComplete)
+            {
+                LogBlitSkipOnce(inID, outID, srcStatus, dstStatus);
+                return;
+            }
+
             Api.NamedFramebufferReadBuffer(inID, ToGLEnum(readBufferMode));
             Api.NamedFramebufferDrawBuffer(outID, ToGLEnum(drawBufferMode));
+
+            while (Api.GetError() != GLEnum.NoError) { }
+
             Api.BlitNamedFramebuffer(
                 inID,
                 outID,
@@ -3376,6 +3386,10 @@ void main()
                 0, 0, (int)outW, (int)outH,
                 mask,
                 linearFilter ? BlitFramebufferFilter.Linear : BlitFramebufferFilter.Nearest);
+
+            var blitErr = Api.GetError();
+            if (blitErr != GLEnum.NoError)
+                LogBlitErrorOnce(inID, outID, blitErr);
         }
 
         public static int GetBytesPerPixel(InternalFormat internalFormat) => internalFormat switch

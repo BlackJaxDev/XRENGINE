@@ -164,6 +164,7 @@ namespace XREngine.Components.Scene.Mesh
                 foreach (var lod in mesh.LODs)
                 {
                     var renderer = lod.NewRenderer();
+                    renderer.SourceSubMeshAsset = mesh;
                     renderer.SettingUniforms += SettingUniforms;
                     void UpdateReferences(object? s, IXRPropertyChangedEventArgs e)
                     {

@@ -1,6 +1,7 @@
 ﻿using MemoryPack;
 using XREngine.Core.Files;
 using XREngine.Data.Geometry;
+using XREngine.Rendering.Meshlets;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.Models
@@ -12,6 +13,7 @@ namespace XREngine.Rendering.Models
     public partial class SubMesh : XRAsset
     {
         private SortedSet<SubMeshLOD> _lods = new(new LODSorter());
+        private MeshOptimizerSubMeshSettings _meshOptimizer = new();
 
         public SortedSet<SubMeshLOD> LODs
         {
@@ -25,6 +27,12 @@ namespace XREngine.Rendering.Models
                         _lods.Add(lod);
                 }
             }
+        }
+
+        public MeshOptimizerSubMeshSettings MeshOptimizer
+        {
+            get => _meshOptimizer;
+            set => SetField(ref _meshOptimizer, value ?? new MeshOptimizerSubMeshSettings());
         }
 
         private AABB _bounds;

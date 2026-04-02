@@ -6,6 +6,22 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh
 {
+    public void RebuildBlendshapeBuffersFromVertices()
+    {
+        Buffers.RemoveBuffer(ECommonBufferType.BlendshapeCount.ToString());
+        Buffers.RemoveBuffer($"{ECommonBufferType.BlendshapeIndices}Buffer");
+        Buffers.RemoveBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer");
+
+        BlendshapeCounts = null;
+        BlendshapeIndices = null;
+        BlendshapeDeltas = null;
+
+        if (Vertices is not { Length: > 0 } || !HasBlendshapes)
+            return;
+
+        PopulateBlendshapeBuffers(Vertices);
+    }
+
     private unsafe void PopulateBlendshapeBuffers(Vertex[] sourceList)
     {
         using var _ = RuntimeRenderingHostServices.Current.StartProfileScope(null);
