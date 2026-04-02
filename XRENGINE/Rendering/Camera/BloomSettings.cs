@@ -5,10 +5,10 @@ namespace XREngine.Rendering
     public class BloomSettings : PostProcessSettings
     {
         private float _intensity = 1.0f;
-        private float _threshold = 0.0f;
+        private float _threshold = 1.0f;
         private float _softKnee = 0.5f;
         private float _radius = 1.0f;
-        private float _strength = 0.04f;
+        private float _strength = 0.25f;
         private int _startMip = 1;
         private int _endMip = 1;
         private float _lod0Weight = 0.0f;
@@ -45,8 +45,8 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Overall bloom strength applied when compositing bloom into the scene.
-        /// In physically-based mode (Threshold = 0) this controls how much of the
-        /// accumulated bloom contribution is added. Typical PBR range: 0.01–0.10.
+        /// Controls how much of the accumulated bloom contribution is added.
+        /// Typical range: 0.05–0.50.
         /// </summary>
         public float Strength
         {

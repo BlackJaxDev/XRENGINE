@@ -72,7 +72,7 @@ uniform vec3 BrownConradyRadial;     // k1,k2,k3
 uniform vec2 BrownConradyTangential; // p1,p2
 
 // Bloom combine controls
-uniform float BloomStrength = 0.04;
+uniform float BloomStrength = 0.25;
 uniform int BloomStartMip = 1;
 uniform int BloomEndMip = 1;
 uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);
