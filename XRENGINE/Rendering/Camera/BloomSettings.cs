@@ -5,10 +5,10 @@ namespace XREngine.Rendering
     public class BloomSettings : PostProcessSettings
     {
         private float _intensity = 1.0f;
-        private float _threshold = 1.0f;
+        private float _threshold = 0.8f;
         private float _softKnee = 0.5f;
         private float _radius = 1.0f;
-        private float _strength = 0.25f;
+        private float _strength = 0.5f;
         private int _startMip = 1;
         private int _endMip = 1;
         private float _lod0Weight = 0.0f;
@@ -122,7 +122,9 @@ namespace XREngine.Rendering
             float softKnee = MathF.Min(1.0f, MathF.Max(0.0f, SoftKnee));
 
             program.Uniform("SourceLOD", sourceLod);
-            program.Uniform("UseThreshold", firstLevel && threshold > 0.0f);
+            // BrightPass.fs already applies the soft-knee threshold before writing to mip 0,
+            // so the downsample chain must NOT re-threshold (that would kill the signal).
+            program.Uniform("UseThreshold", false);
             program.Uniform("BloomThreshold", threshold);
             program.Uniform("BloomSoftKnee", softKnee);
             program.Uniform("BloomIntensity", MathF.Max(0.0f, Intensity));
