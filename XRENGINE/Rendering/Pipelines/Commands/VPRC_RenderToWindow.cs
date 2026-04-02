@@ -137,6 +137,22 @@ void main()
             return;
         }
 
+        XRViewport? windowViewport = instance.RenderState.WindowViewport;
+        bool isActiveWindowViewport = windowViewport?.Window?.Viewports.Contains(windowViewport) == true;
+        if (windowViewport is not null && !isActiveWindowViewport)
+        {
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.SkipOffscreenPresent.{instance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow skipped backbuffer present for non-window pipeline instance. SourceTex='{0}' SourceFBO='{1}' Pipeline={2} WindowViewport={3} HasWindow={4}",
+                SourceTextureName ?? "<null>",
+                SourceFBOName ?? "<null>",
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>",
+                windowViewport.GetHashCode().ToString(),
+                windowViewport.Window is not null);
+            return;
+        }
+
         BoundingRectangle region = ResolveTargetRegion(instance, targetWindow);
         if (region.Width <= 0 || region.Height <= 0)
         {
