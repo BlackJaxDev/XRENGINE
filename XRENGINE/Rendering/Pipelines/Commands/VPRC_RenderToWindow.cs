@@ -84,7 +84,16 @@ void main()
     protected override void Execute()
     {
         if (_quad is null)
+        {
+            XRRenderPipelineInstance activeInstance = ActivePipelineInstance;
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.NoQuad.{activeInstance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow skipped: present quad not allocated. Pipeline={0} Generation={1}",
+                activeInstance.Pipeline?.DebugName ?? activeInstance.Pipeline?.GetType().Name ?? "<null>",
+                activeInstance.ResourceGeneration);
             return;
+        }
 
         XRRenderPipelineInstance instance = ActivePipelineInstance;
         if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out string resolveFailure)
@@ -104,15 +113,44 @@ void main()
 
         AbstractRenderer? renderer = AbstractRenderer.Current;
         if (renderer is null)
+        {
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.NoRenderer.{instance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow skipped: no active renderer. Pipeline={0} Generation={1}",
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>",
+                instance.ResourceGeneration);
             return;
+        }
 
         XRWindow? targetWindow = ResolveTargetWindow(renderer);
         if (targetWindow is null || !ReferenceEquals(targetWindow, renderer.XRWindow))
+        {
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.WindowMismatch.{instance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow skipped: target window mismatch. ResolvedTarget={0} ActiveRendererWindow={1} RequestedTitle='{2}' Pipeline={3}",
+                targetWindow?.GetHashCode().ToString() ?? "<null>",
+                renderer.XRWindow?.GetHashCode().ToString() ?? "<null>",
+                WindowTitle ?? "<null>",
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>");
             return;
+        }
 
         BoundingRectangle region = ResolveTargetRegion(instance, targetWindow);
         if (region.Width <= 0 || region.Height <= 0)
+        {
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.InvalidRegion.{instance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow skipped: invalid region {0}x{1}. ViewportIndex={2} UseTargetViewportRegion={3} Pipeline={4}",
+                region.Width,
+                region.Height,
+                ViewportIndex?.ToString() ?? "<null>",
+                UseTargetViewportRegion,
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>");
             return;
+        }
 
         Engine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
         using var areaScope = instance.RenderState.PushRenderArea(region);
@@ -122,6 +160,15 @@ void main()
         try
         {
             _resolvedSourceTexture = sourceTexture;
+            Debug.RenderingEvery(
+                $"RenderToWindow.Present.{instance.GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDiag] RenderToWindow presenting. SourceTex='{0}' SourceFBO='{1}' Region={2}x{3} Pipeline={4}",
+                SourceTextureName ?? "<null>",
+                SourceFBOName ?? "<null>",
+                region.Width,
+                region.Height,
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>");
             _quad.Render(null);
         }
         finally

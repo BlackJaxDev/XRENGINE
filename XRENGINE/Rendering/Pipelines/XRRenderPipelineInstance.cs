@@ -286,7 +286,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     {
         if (Pipeline is null)
         {
-            Debug.Rendering("No render pipeline is set.");
+            Debug.RenderingWarningEvery(
+                $"XRRenderPipelineInstance.Render.NoPipeline.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] No render pipeline is set. Instance={0} Camera={1} Viewport={2}",
+                GetHashCode(),
+                camera?.Transform.SceneNode?.Name ?? "<null>",
+                viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}");
             return;
         }
 

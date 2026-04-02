@@ -95,20 +95,50 @@ void main()
             if (TryRunDlss())
                 return;
 
+            bool presentingToWindow = TargetFrameBufferName is null;
+            var windowViewport = ActivePipelineInstance.RenderState.WindowViewport;
+            bool isActiveWindowViewport = windowViewport?.Window?.Viewports.Contains(windowViewport) == true;
+
+            if (presentingToWindow && !isActiveWindowViewport)
+            {
+                Debug.RenderingWarningEvery(
+                    $"VendorUpscale.SkipOffscreenPresent.{ActivePipelineInstance.GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] VendorUpscale skipped backbuffer present for non-window pipeline instance. SourceFBO='{0}' TargetFBO='<backbuffer>' OutputFBO='{1}' Pipeline={2} WindowViewport={3} HasWindow={4}",
+                    FrameBufferName ?? "<null>",
+                    ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<null>",
+                    ActivePipelineInstance.Pipeline?.DebugName ?? ActivePipelineInstance.Pipeline?.GetType().Name ?? "<null>",
+                    windowViewport?.GetHashCode().ToString() ?? "<null>",
+                    windowViewport?.Window is not null);
+                return;
+            }
+
             // Standard quad blit requires XRQuadFrameBuffer.
             if (FrameBufferName is not null &&
                 ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName) is not null)
             {
+                if (presentingToWindow)
+                    Engine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
+
+                Debug.RenderingEvery(
+                    $"VendorUpscale.StandardBlit.{ActivePipelineInstance.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDiag] VendorUpscale standard blit. SourceFBO='{0}' TargetFBO='{1}' OutputFBO='{2}' Pipeline={3} WindowViewport={4}",
+                    FrameBufferName,
+                    TargetFrameBufferName ?? "<backbuffer>",
+                    ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<null>",
+                    ActivePipelineInstance.Pipeline?.DebugName ?? ActivePipelineInstance.Pipeline?.GetType().Name ?? "<null>",
+                    windowViewport?.GetHashCode().ToString() ?? "<null>");
                 base.Execute();
                 return;
             }
 
             // Source is a plain XRFrameBuffer (e.g., SMAA output).
             // Resolve its first color texture and present via passthrough quad.
-            FallbackBlit();
+            FallbackBlit(presentingToWindow);
         }
 
-        private void FallbackBlit()
+        private void FallbackBlit(bool presentingToWindow)
         {
             if (FrameBufferName is null || _fallbackQuad is null)
                 return;
@@ -118,7 +148,19 @@ void main()
                 || colorTexture is null)
                 return;
 
+            if (presentingToWindow)
+                Engine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
+
             _fallbackSourceTexture = colorTexture;
+            Debug.RenderingEvery(
+                $"VendorUpscale.FallbackBlit.{ActivePipelineInstance.GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDiag] VendorUpscale fallback blit. SourceFBO='{0}' TargetFBO='{1}' OutputFBO='{2}' Pipeline={3} WindowViewport={4}",
+                FrameBufferName,
+                TargetFrameBufferName ?? "<backbuffer>",
+                ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<null>",
+                ActivePipelineInstance.Pipeline?.DebugName ?? ActivePipelineInstance.Pipeline?.GetType().Name ?? "<null>",
+                ActivePipelineInstance.RenderState.WindowViewport?.GetHashCode().ToString() ?? "<null>");
             _fallbackQuad.Render(
                 TargetFrameBufferName is not null
                     ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)

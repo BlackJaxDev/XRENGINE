@@ -453,6 +453,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("BloomThreshold", 1.0f);
             program.Uniform("BloomSoftKnee", 0.5f);
             program.Uniform("BloomIntensity", 1.0f);
+            program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
             program.Uniform("UseKarisAverage", firstLevel);
         }
 
