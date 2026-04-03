@@ -814,11 +814,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
     {
+        const string reason = "AntiAliasingSettingsChanged";
+
         foreach (string name in AntiAliasingFrameBufferDependencies)
-            instance.Resources.RemoveFrameBuffer(name);
+            instance.RemoveFrameBufferResource(name, reason);
 
         foreach (string name in AntiAliasingTextureDependencies)
-            instance.Resources.RemoveTexture(name);
+            instance.RemoveTextureResource(name, reason);
     }
 
     private void ApplyAntiAliasingResolutionHint()

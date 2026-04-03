@@ -408,6 +408,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     public void DestroyCache()
     {
+        LogDefaultRenderPipelineResourceDestruction("DestroyCache");
         Resources.DestroyAllPhysicalResources();
     }
 
@@ -418,8 +419,33 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     /// </summary>
     public void InvalidatePhysicalResources()
     {
+        LogDefaultRenderPipelineResourceDestruction($"InvalidatePhysicalResources (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
         Resources.DestroyAllPhysicalResources(retainDescriptors: true);
         ResourceGeneration++;
+    }
+
+    internal void RemoveTextureResource(string name, string reason)
+    {
+        if (_pipeline is DefaultRenderPipeline pipeline
+            && Resources.TryGetTexture(name, out XRTexture? texture)
+            && texture is not null)
+        {
+            pipeline.LogTextureDestroy(this, name, texture, reason);
+        }
+
+        Resources.RemoveTexture(name);
+    }
+
+    internal void RemoveFrameBufferResource(string name, string reason)
+    {
+        if (_pipeline is DefaultRenderPipeline pipeline
+            && Resources.TryGetFrameBuffer(name, out XRFrameBuffer? frameBuffer)
+            && frameBuffer is not null)
+        {
+            pipeline.LogFrameBufferDestroy(this, name, frameBuffer, reason);
+        }
+
+        Resources.RemoveFrameBuffer(name);
     }
 
     public void ViewportResized(Vector2 size)
@@ -459,6 +485,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             Debug.Rendering("Texture name must be set before adding to the pipeline.");
             return;
         }
+
+        Resources.TryGetTexture(name, out XRTexture? existingTexture);
+        if (!ReferenceEquals(existingTexture, texture) && _pipeline is DefaultRenderPipeline pipeline)
+            pipeline.LogTextureBinding(this, name, texture, existingTexture);
+
         Resources.BindTexture(texture, descriptor);
     }
 
@@ -508,7 +539,67 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             Debug.Rendering("FBO name must be set before adding to the pipeline.");
             return;
         }
+
+        Resources.TryGetFrameBuffer(name, out XRFrameBuffer? existingFbo);
+        if (!ReferenceEquals(existingFbo, fbo) && _pipeline is DefaultRenderPipeline pipeline)
+            pipeline.LogFrameBufferBinding(this, name, fbo, existingFbo);
+
         Resources.BindFrameBuffer(fbo, descriptor);
+    }
+
+    private void LogDefaultRenderPipelineResourceDestruction(string reason)
+    {
+        if (_pipeline is not DefaultRenderPipeline pipeline)
+            return;
+
+        int liveTextureCount = 0;
+        int liveFrameBufferCount = 0;
+        int liveBufferCount = 0;
+        int liveRenderBufferCount = 0;
+
+        foreach (var record in Resources.TextureRecords.Values)
+        {
+            if (record.Instance is not XRTexture texture)
+                continue;
+
+            liveTextureCount++;
+            pipeline.LogTextureDestroy(this, texture.Name ?? "<unnamed>", texture, reason);
+        }
+
+        foreach (var record in Resources.FrameBufferRecords.Values)
+        {
+            if (record.Instance is not XRFrameBuffer frameBuffer)
+                continue;
+
+            liveFrameBufferCount++;
+            pipeline.LogFrameBufferDestroy(this, frameBuffer.Name ?? "<unnamed>", frameBuffer, reason);
+        }
+
+        foreach (var record in Resources.BufferRecords.Values)
+            if (record.Instance is not null)
+                liveBufferCount++;
+
+        foreach (var record in Resources.RenderBufferRecords.Values)
+            if (record.Instance is not null)
+                liveRenderBufferCount++;
+
+        if (liveTextureCount == 0
+            && liveFrameBufferCount == 0
+            && liveBufferCount == 0
+            && liveRenderBufferCount == 0)
+        {
+            return;
+        }
+
+        Debug.Rendering(
+            "[RenderResourceDiag][{0}] Destroying physical resources for {1}. Reason={2}. textures={3} framebuffers={4} buffers={5} renderbuffers={6}",
+            pipeline.DebugName,
+            DebugDescriptor,
+            reason,
+            liveTextureCount,
+            liveFrameBufferCount,
+            liveBufferCount,
+            liveRenderBufferCount);
     }
 
     public XRRenderBuffer? GetRenderBuffer(string name)

@@ -176,6 +176,8 @@ Settings handlers that queue `Engine.InvokeOnMainThread(...)` should guard both 
 
 Affected FBOs: `PostProcessOutputFBO`, `FxaaFBO`, `TsrHistoryColorFBO`, `TsrUpscaleFBO`.
 
+If a quad FBO writes to an explicitly assigned output attachment, create it with `deriveRenderTargetsFromMaterial: false`. Leaving derivation enabled makes the cache predicate classify the FBO as stale immediately and can force unnecessary recreate/destroy churn in the post-AA path.
+
 `RenderTextureResource.Bind()` **destroys** the old texture when replacing. FBOs holding destroyed textures become incomplete → black screen. Always verify FBO attachment identity after format changes.
 
 Use `ResolveOutputHDR()` (which reads `RenderingPipelineState.SceneCamera`) rather than `Engine.Rendering.Settings.OutputHDR`, because `XRQuadFrameBuffer.Render()` calls `PushRenderingCamera(null)` during uniform setting.

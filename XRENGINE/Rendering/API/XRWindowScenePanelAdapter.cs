@@ -182,8 +182,16 @@ namespace XREngine.Rendering
         {
             if (window.Viewports.Count > 0)
             {
+                uint w = (uint)framebufferWidth;
+                uint h = (uint)framebufferHeight;
                 foreach (var vp in window.Viewports)
-                    vp.Resize((uint)framebufferWidth, (uint)framebufferHeight, setInternalResolution: true);
+                {
+                    // Only resize if the viewport dimensions differ from the target.
+                    // FramebufferResizeCallback already resized viewports before calling
+                    // OnFramebufferResized, so this avoids a redundant invalidation cycle.
+                    if (vp.Width != (int)w || vp.Height != (int)h)
+                        vp.Resize(w, h, setInternalResolution: true);
+                }
             }
 
             _scenePanelSizingActive = false;

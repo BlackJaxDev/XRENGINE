@@ -1351,17 +1351,24 @@ namespace XREngine.Rendering
         /// <param name="correctAspect">When true, adjusts dimensions to match the viewport's aspect ratio.</param>
         public void SetInternalResolution(int width, int height, bool correctAspect)
         {
-            _internalResolutionRegion.Width = width;
-            _internalResolutionRegion.Height = height;
+            int newWidth = width;
+            int newHeight = height;
             if (correctAspect)
             {
-                //Shrink the internal resolution to fit the aspect ratio of the viewport
+                // Shrink the internal resolution to fit the aspect ratio of the viewport.
                 float aspect = (float)_region.Width / _region.Height;
                 if (aspect > 1.0f)
-                    _internalResolutionRegion.Height = (int)(_internalResolutionRegion.Width / aspect);
+                    newHeight = (int)(newWidth / aspect);
                 else
-                    _internalResolutionRegion.Width = (int)(_internalResolutionRegion.Height * aspect);
+                    newWidth = (int)(newHeight * aspect);
             }
+
+            // Skip the expensive pipeline invalidation when the dimensions haven't changed.
+            if (_internalResolutionRegion.Width == newWidth && _internalResolutionRegion.Height == newHeight)
+                return;
+
+            _internalResolutionRegion.Width = newWidth;
+            _internalResolutionRegion.Height = newHeight;
             _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight);
             InternalResolutionResized?.Invoke(this);
         }
