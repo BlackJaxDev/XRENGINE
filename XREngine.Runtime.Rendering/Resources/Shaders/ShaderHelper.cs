@@ -168,11 +168,29 @@ public static class ShaderHelper
     public static XRShader LitTextureNormalFragDeferred()
         => LoadEngineShader(Path.Combine("Common", "TexturedNormalDeferred.fs"));
 
+    public static XRShader LitTextureNormalSpecFragDeferred()
+        => LoadEngineShader(Path.Combine("Common", "TexturedNormalSpecDeferred.fs"));
+
+    public static XRShader LitTextureNormalAlphaFragDeferred()
+        => LoadEngineShader(Path.Combine("Common", "TexturedNormalAlphaDeferred.fs"));
+
+    public static XRShader LitTextureNormalSpecAlphaFragDeferred()
+        => LoadEngineShader(Path.Combine("Common", "TexturedNormalSpecAlphaDeferred.fs"));
+
     public static XRShader LitTextureNormalMetallicFragDeferred()
         => LoadEngineShader(Path.Combine("Common", "TexturedNormalMetallicDeferred.fs"));
 
     public static XRShader LitTextureNormalRoughnessMetallicDeferred()
         => LoadEngineShader(Path.Combine("Common", "TexturedNormalMetallicRoughnessDeferred.fs"));
+
+    public static XRShader LitTextureSpecFragDeferred()
+        => LoadEngineShader(Path.Combine("Common", "TexturedSpecDeferred.fs"));
+
+    public static XRShader LitTextureAlphaFragDeferred()
+        => LoadEngineShader(Path.Combine("Common", "TexturedAlphaDeferred.fs"));
+
+    public static XRShader LitTextureSpecAlphaFragDeferred()
+        => LoadEngineShader(Path.Combine("Common", "TexturedSpecAlphaDeferred.fs"));
 
     public static XRShader LitTextureMetallicFragDeferred()
         => LoadEngineShader(Path.Combine("Common", "TexturedMetallicDeferred.fs"));
@@ -386,8 +404,14 @@ public static class ShaderHelper
             "TexturedSilhouettePOMDeferred.fs" => LitTextureSilhouettePOMFragDeferred(),
             "ColoredDeferred.fs" => LitColorFragDeferred(),
             "TexturedNormalDeferred.fs" => LitTextureNormalFragDeferred(),
+            "TexturedNormalSpecDeferred.fs" => LitTextureNormalSpecFragDeferred(),
+            "TexturedNormalAlphaDeferred.fs" => LitTextureNormalAlphaFragDeferred(),
+            "TexturedNormalSpecAlphaDeferred.fs" => LitTextureNormalSpecAlphaFragDeferred(),
             "TexturedNormalMetallicDeferred.fs" => LitTextureNormalMetallicFragDeferred(),
             "TexturedNormalMetallicRoughnessDeferred.fs" => LitTextureNormalRoughnessMetallicDeferred(),
+            "TexturedSpecDeferred.fs" => LitTextureSpecFragDeferred(),
+            "TexturedAlphaDeferred.fs" => LitTextureAlphaFragDeferred(),
+            "TexturedSpecAlphaDeferred.fs" => LitTextureSpecAlphaFragDeferred(),
             "TexturedMetallicDeferred.fs" => LitTextureMetallicFragDeferred(),
             "TexturedMetallicRoughnessDeferred.fs" => LitTextureMetallicRoughnessDeferred(),
             "TexturedRoughnessDeferred.fs" => LitTextureRoughnessFragDeferred(),

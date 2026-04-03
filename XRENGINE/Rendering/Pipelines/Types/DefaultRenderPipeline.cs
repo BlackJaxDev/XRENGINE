@@ -323,6 +323,43 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
 
+    private bool NeedsRecreateLightCombineFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (!HasSingleColorTarget(fbo, DiffuseTextureName))
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 7)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(AlbedoOpacityTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(NormalTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(RMSETextureName))
+            || !ReferenceEquals(textures[3], GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName))
+            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(DepthViewTextureName))
+            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(DiffuseTextureName))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(BRDFTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
     private bool HasSingleColorTarget(XRFrameBuffer fbo, string textureName)
     {
         if (fbo.Targets is not { Length: 1 })
@@ -1079,7 +1116,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 LightCombineFBOName,
                 CreateLightCombineFBO,
-                GetDesiredFBOSizeInternal)
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateLightCombineFbo)
                 .UseLifetime(RenderResourceLifetime.Transient);
 
             // MSAA deferred: mark complex pixels in the MSAA depth-stencil before lighting
