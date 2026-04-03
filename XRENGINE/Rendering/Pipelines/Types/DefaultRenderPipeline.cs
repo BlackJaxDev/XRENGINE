@@ -1566,6 +1566,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         }
 
+        // GPU auto-exposure: dispatch the compute shader BEFORE the post-process quad
+        // so the 1x1 exposure texture and the _gpuAutoExposureReadyThisFrame flag are
+        // current when PostProcess.fs samples them.  The HDR scene buffer is already
+        // fully rendered at this point (opaque + transparent + bloom are complete).
+        {
+            string exposureSource = HDRSceneTextureName;
+            c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
+        }
+
             // Post-AA chain: FXAA and SMAA run against the post-process output, while TSR
             // resolves from internal resolution and writes a full-resolution result.
         {
@@ -1622,14 +1631,6 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 upscaleChoice.TrueCommands = upscaleCmds;
             }
         }
-
-        // Auto exposure uses a GPU compute shader dispatch. Schedule it before the
-        // final swapchain output so the compute dispatch does not interrupt (and
-        // force a LoadOp.Clear restart of) the swapchain render pass.
-        // The HDR scene buffer is already fully rendered at this point, so reading
-        // it here produces the same result as reading it after the output blit.
-        string exposureSource = HDRSceneTextureName;
-        c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
 
         // Temporal commit is CPU-side state bookkeeping only (no GPU ops).
         c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;

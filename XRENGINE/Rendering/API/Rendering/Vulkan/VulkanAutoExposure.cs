@@ -132,8 +132,9 @@ public unsafe partial class VulkanRenderer
         program.Uniform("AutoExposureBias", settings.AutoExposureBias);
         program.Uniform("AutoExposureScale", settings.AutoExposureScale);
         program.Uniform("ExposureDividend", settings.ExposureDividend);
-        program.Uniform("MinExposure", settings.MinExposure);
-        program.Uniform("MaxExposure", settings.MaxExposure);
+        settings.GetResolvedExposureBounds(out float minExposure, out float maxExposure);
+        program.Uniform("MinExposure", minExposure);
+        program.Uniform("MaxExposure", maxExposure);
         program.Uniform("ExposureBase", settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
             ? settings.ComputePhysicalExposureMultiplier()
             : 1.0f);

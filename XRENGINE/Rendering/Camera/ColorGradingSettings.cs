@@ -64,11 +64,11 @@ namespace XREngine.Rendering
         private bool _autoExposure = true;
         private float _autoExposureBias = 0.0f;
         private float _autoExposureScale = 1.0f;
-        private float _exposureDividend = 0.18f;
-        private float _minExposure = 0.01f;
-        private float _maxExposure = 500.0f;
+        private float _exposureDividend = 0.1f;
+        private float _minExposure = 0.0001f;
+        private float _maxExposure = 100.0f;
 
-        private AutoExposureMeteringMode _autoExposureMetering = AutoExposureMeteringMode.Average;
+        private AutoExposureMeteringMode _autoExposureMetering = AutoExposureMeteringMode.LogAverage;
         private int _autoExposureMeteringTargetSize = 16;
         private float _autoExposureIgnoreTopPercent = 0.02f;
         private float _autoExposureCenterWeightStrength = 1.0f;
@@ -173,6 +173,18 @@ namespace XREngine.Rendering
         {
             get => _maxExposure;
             set => SetField(ref _maxExposure, value);
+        }
+
+        internal void GetResolvedExposureBounds(out float minExposure, out float maxExposure)
+        {
+            minExposure = MathF.Min(MinExposure, MaxExposure);
+            maxExposure = MathF.Max(MinExposure, MaxExposure);
+        }
+
+        internal float ClampExposureToResolvedBounds(float exposure)
+        {
+            GetResolvedExposureBounds(out float minExposure, out float maxExposure);
+            return Math.Clamp(exposure, minExposure, maxExposure);
         }
 
         public AutoExposureMeteringMode AutoExposureMetering
@@ -455,15 +467,17 @@ uniform ColorGradeStruct ColorGrade;";
             if (!success)
                 return;
 
+            GetResolvedExposureBounds(out float minExposure, out float maxExposure);
+
             //If the dot factor is zero, this means the screen is perfectly black.
             //Usually that means nothing is being rendered, so don't update the exposure now.
             //If we were to update the exposure now, the scene would look very bright once it finally starts rendering.
             if (lumDot <= 0.0f)
             {
-                if (Exposure < MinExposure)
-                    Exposure = MinExposure;
-                if (Exposure > MaxExposure)
-                    Exposure = MaxExposure;
+                if (Exposure < minExposure)
+                    Exposure = minExposure;
+                if (Exposure > maxExposure)
+                    Exposure = maxExposure;
                 return;
             }
 
@@ -471,10 +485,10 @@ uniform ColorGradeStruct ColorGrade;";
             exposure = AutoExposureBias + AutoExposureScale * exposure;
             if (ExposureMode == ExposureControlMode.Physical)
                 exposure *= ComputePhysicalExposureMultiplier();
-            exposure = exposure.Clamp(MinExposure, MaxExposure);
+            exposure = exposure.Clamp(minExposure, maxExposure);
 
             //If the current exposure is an invalid value, that means we want the exposure to be set immediately.
-            if (Exposure < MinExposure || Exposure > MaxExposure)
+            if (Exposure < minExposure || Exposure > maxExposure)
                 Exposure = exposure;
             else
                 Exposure = Interp.Lerp(Exposure, exposure, ExposureTransitionSpeed);

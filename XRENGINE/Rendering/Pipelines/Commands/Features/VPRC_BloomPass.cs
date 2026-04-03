@@ -243,6 +243,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 [
                     new ShaderInt(0, "SourceLOD"),
                     new ShaderFloat(1.0f, "Radius"),
+                    new ShaderFloat(0.7f, "Scatter"),
                 ],
                 [outputTexture],
                 XRShader.EngineShader(upsampleShader, EShaderType.Fragment))
@@ -404,7 +405,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (instance is null)
             {
                 LogGuardFailure(nameof(DownsampleLevel1_SettingUniforms), "No active pipeline instance; using safe defaults.");
-                SetDefaultDownsampleUniforms(program, 0, true);
+                SetDefaultDownsampleUniforms(program, true);
                 return;
             }
 
@@ -412,11 +413,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
             if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
             {
-                bloom.SetDownsampleUniforms(program, 0, firstLevel: true);
+                bloom.SetDownsampleUniforms(program, firstLevel: true);
                 return;
             }
 
-            SetDefaultDownsampleUniforms(program, 0, true);
+            SetDefaultDownsampleUniforms(program, true);
         }
 
         /// <summary>
@@ -430,7 +431,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (instance is null)
             {
                 LogGuardFailure(nameof(DownsampleLevelN_SettingUniforms), "No active pipeline instance; using safe defaults.");
-                SetDefaultDownsampleUniforms(program, 0, false);
+                SetDefaultDownsampleUniforms(program, false);
                 return;
             }
 
@@ -439,18 +440,18 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
             {
                 // SourceLOD is set dynamically in DownsamplePass via SetInt; just set the static uniforms.
-                bloom.SetDownsampleUniforms(program, 0, firstLevel: false);
+                bloom.SetDownsampleUniforms(program, firstLevel: false);
                 return;
             }
 
-            SetDefaultDownsampleUniforms(program, 0, false);
+            SetDefaultDownsampleUniforms(program, false);
         }
 
-        private static void SetDefaultDownsampleUniforms(XRRenderProgram program, int sourceLod, bool firstLevel)
+        private static void SetDefaultDownsampleUniforms(XRRenderProgram program, bool firstLevel)
         {
-            program.Uniform("SourceLOD", sourceLod);
-            // BrightPass.fs already thresholds; never re-threshold in the downsample chain.
-            program.Uniform("UseThreshold", false);
+            // SourceLOD is set dynamically via material ShaderInt; do not override here.
+            // Apply threshold on the first downsample level to extract only bright areas.
+            program.Uniform("UseThreshold", firstLevel);
             program.Uniform("BloomThreshold", 1.0f);
             program.Uniform("BloomSoftKnee", 0.5f);
             program.Uniform("BloomIntensity", 1.0f);
@@ -466,8 +467,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (instance is null)
             {
                 LogGuardFailure(nameof(UpsampleFbo_SettingUniforms), "No active pipeline instance; using safe defaults.");
-                program.Uniform("SourceLOD", 0);
+                // SourceLOD is set dynamically via material ShaderInt; do not override here.
                 program.Uniform("Radius", 1.0f);
+                program.Uniform("Scatter", 0.7f);
                 return;
             }
 
@@ -475,12 +477,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
             if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
             {
-                bloom.SetUpsampleUniforms(program, 0);
+                bloom.SetUpsampleUniforms(program);
                 return;
             }
 
-            program.Uniform("SourceLOD", 0);
+            // SourceLOD is set dynamically via material ShaderInt; do not override here.
             program.Uniform("Radius", 1.0f);
+            program.Uniform("Scatter", 0.7f);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

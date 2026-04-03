@@ -1,4 +1,4 @@
-
+using System;
 using XREngine.Rendering;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -22,6 +22,25 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public bool GenerateMipmapsHere { get; set; } = true;
 
+        private static bool IsAutoExposureRestrictedPass()
+            => Engine.Rendering.State.IsLightProbePass
+            || Engine.Rendering.State.IsShadowPass
+            || Engine.Rendering.State.IsSceneCapturePass;
+
+        private static string DescribeRestrictedPass()
+        {
+            if (Engine.Rendering.State.IsLightProbePass)
+                return "light-probe";
+
+            if (Engine.Rendering.State.IsShadowPass)
+                return "shadow";
+
+            if (Engine.Rendering.State.IsSceneCapturePass)
+                return "scene-capture";
+
+            return "restricted";
+        }
+
         protected override void Execute()
         {
             var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<ColorGradingSettings>();
@@ -32,6 +51,16 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             grading.MarkGpuAutoExposureReady(false);
+
+            if (IsAutoExposureRestrictedPass())
+            {
+                Debug.RenderingWarningEvery(
+                    $"ExposureUpdate.Skip.{DescribeRestrictedPass()}",
+                    TimeSpan.FromSeconds(1),
+                    "[ExposureUpdate] Skipping auto exposure during {0} pass.",
+                    DescribeRestrictedPass());
+                return;
+            }
 
             var sourceTexture = ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName);
             if (sourceTexture is null)
@@ -50,7 +79,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     if (grading.UseGpuAutoExposureThisFrame)
                         return;
 
-                    Debug.Out("[ExposureUpdate] GPU exposure update skipped or failed, falling back to CPU");
+                    Debug.Out("[ExposureUpdate] GPU exposure update failed, falling back to CPU");
                 }
                 else
                 {

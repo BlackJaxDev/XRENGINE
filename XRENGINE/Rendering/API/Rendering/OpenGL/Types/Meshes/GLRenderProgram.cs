@@ -238,6 +238,13 @@ namespace XREngine.Rendering.OpenGL
 
             public override void Destroy()
             {
+                if (!Engine.IsRenderThread)
+                {
+                    Engine.EnqueueMainThreadTask(Destroy);
+                    return;
+                }
+
+                ReleaseAsyncLinkState();
                 base.Destroy();
                 Reset();
             }

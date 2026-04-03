@@ -507,6 +507,16 @@ namespace XREngine.Rendering.OpenGL
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
             }
 
+            private void ReleaseAsyncLinkState()
+            {
+                if (Hash != 0)
+                    InFlightCompilations.TryRemove(Hash, out _);
+
+                CleanupAsyncLink();
+                _asyncBinaryUploadPending = false;
+                _asyncCompileLinkPending = false;
+            }
+
             private void DetachShaders(uint programId, ReadOnlySpan<uint> attachedShaderIds)
             {
                 if (programId == 0 || attachedShaderIds.Length == 0)

@@ -946,12 +946,14 @@ public partial class DefaultRenderPipeline
                 EPixelFormat.Rgba,
                 EPixelType.HalfFloat,
                 EFrameBufferAttachment.ColorAttachment0);
+            t.Resizable = false;
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.UWrap = ETexWrapMode.ClampToEdge;
             t.VWrap = ETexWrapMode.ClampToEdge;
             // Auto exposure samples the smallest mip of the HDR scene texture.
-            // Recent GL texture parameter clamping requires this flag so mip levels are generated/accessible.
+            // Immutable storage + AutoGenerateMipmaps ensures all mip levels are allocated
+            // so glGenerateMipmap and texelFetch at the smallest mip work correctly.
             t.AutoGenerateMipmaps = true;
             t.SamplerName = HDRSceneTextureName;
             t.Name = HDRSceneTextureName;

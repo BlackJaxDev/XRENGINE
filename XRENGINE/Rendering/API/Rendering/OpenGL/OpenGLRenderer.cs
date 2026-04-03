@@ -1925,12 +1925,42 @@ void main()
             }
 
             var glExposure = GetOrCreateAPIRenderObject(exposureTex, generateNow: true) as GLTexture2D;
-            if (glExposure is null || !glExposure.TryGetBindingId(out uint exposureBindingId) || !Api.IsTexture(exposureBindingId))
+            if (glExposure is null)
             {
+                string exposureTextureName = exposureTex.Name ?? "<unnamed>";
+
                 // An invalid image binding causes expensive GL debug-driver error handling
                 // and repeated stalls. Drop back to the CPU exposure path for this session.
-                //_supportsGpuAutoExposure = false;
-                //Debug.OpenGLWarning($"[AutoExposure] Disabling GPU auto exposure because the exposure texture is invalid. Texture='{exposureTex.Name}', BindingId={glExposure?.BindingId ?? 0}.");
+                Debug.OpenGLWarningEvery(
+                    $"AutoExposure.InvalidExposure.{exposureTextureName}",
+                    TimeSpan.FromSeconds(1),
+                    "[AutoExposure] Exposure texture is not ready for image load/store. Texture='{0}', BindingId={1}.",
+                    exposureTextureName,
+                    glExposure?.BindingId ?? 0);
+                return false;
+            }
+
+            // Framebuffer-only textures may still only be a generated GL name here.
+            // Bind once to force the driver to materialize the texture object and allocate
+            // immutable storage before we use it as an image.
+            IGLTexture? previousBoundTexture = BoundTexture;
+            glExposure.Bind();
+            if (previousBoundTexture is null || ReferenceEquals(previousBoundTexture, glExposure))
+                glExposure.Unbind();
+            else
+                previousBoundTexture.Bind();
+
+            uint exposureBindingId = glExposure.BindingId;
+            if (exposureBindingId == GLObjectBase.InvalidBindingId || !Api.IsTexture(exposureBindingId))
+            {
+                string exposureTextureName = exposureTex.Name ?? "<unnamed>";
+
+                Debug.OpenGLWarningEvery(
+                    $"AutoExposure.InvalidExposure.{exposureTextureName}",
+                    TimeSpan.FromSeconds(1),
+                    "[AutoExposure] Exposure texture is not ready for image load/store. Texture='{0}', BindingId={1}.",
+                    exposureTextureName,
+                    exposureBindingId);
                 return false;
             }
 
@@ -1982,13 +2012,29 @@ void main()
             }
 
             if (glProgram is null)
+            {
+                Debug.OpenGLWarningEvery(
+                    $"AutoExposure.NullProgram.{sourceTex.GetType().Name}",
+                    TimeSpan.FromSeconds(1),
+                    "[AutoExposure] Failed to resolve GL compute program for source texture type '{0}'.",
+                    sourceTex.GetType().Name);
                 return false;
+            }
 
             // The compute program may not be linked yet because linkNow fires before
             // the GL wrapper exists (the event has no subscribers during the constructor).
             // Attempt a deferred link here, mirroring what UseRequested does.
             if (!glProgram.IsLinked && !glProgram.Link())
+            {
+                Debug.OpenGLWarningEvery(
+                    $"AutoExposure.ProgramNotReady.{glProgram.Hash}",
+                    TimeSpan.FromSeconds(1),
+                    "[AutoExposure] Compute program hash {0} is not ready yet. LinkReady={1}, IsLinked={2}.",
+                    glProgram.Hash,
+                    glProgram.LinkReady,
+                    glProgram.IsLinked);
                 return false;
+            }
 
             Api.UseProgram(glProgram.BindingId);
 
@@ -2006,15 +2052,17 @@ void main()
             glProgram.Uniform("AutoExposureBias", settings.AutoExposureBias);
             glProgram.Uniform("AutoExposureScale", settings.AutoExposureScale);
             glProgram.Uniform("ExposureDividend", settings.ExposureDividend);
-            glProgram.Uniform("MinExposure", settings.MinExposure);
-            glProgram.Uniform("MaxExposure", settings.MaxExposure);
+            settings.GetResolvedExposureBounds(out float minExposure, out float maxExposure);
+
+            glProgram.Uniform("MinExposure", minExposure);
+            glProgram.Uniform("MaxExposure", maxExposure);
             glProgram.Uniform("ExposureBase", settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
                 ? settings.ComputePhysicalExposureMultiplier()
                 : 1.0f);
             float fallbackExposure = settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
                 ? settings.ComputePhysicalExposureMultiplier()
                 : settings.Exposure;
-            glProgram.Uniform("FallbackExposure", Math.Clamp(fallbackExposure, settings.MinExposure, settings.MaxExposure));
+            glProgram.Uniform("FallbackExposure", Math.Clamp(fallbackExposure, minExposure, maxExposure));
 
             glProgram.Uniform("MeteringMode", (int)settings.AutoExposureMetering);
             glProgram.Uniform("MeteringMip", meteringMip);

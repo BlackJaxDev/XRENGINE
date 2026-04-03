@@ -383,9 +383,18 @@ public partial class DefaultRenderPipeline2
             step: 0.01f);
 
         stage.AddParameter(
+            nameof(BloomSettings.Scatter),
+            PostProcessParameterKind.Float,
+            0.75f,
+            displayName: "Scatter",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
             nameof(BloomSettings.Strength),
             PostProcessParameterKind.Float,
-            0.5f,
+            0.15f,
             displayName: "Bloom Strength",
             min: 0.0f,
             max: 1.0f,
@@ -394,7 +403,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.StartMip),
             PostProcessParameterKind.Int,
-            1,
+            2,
             displayName: "Start Mip (Quality)",
             min: 0,
             max: 4,
@@ -403,7 +412,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.EndMip),
             PostProcessParameterKind.Int,
-            1,
+            4,
             displayName: "End Mip",
             min: 0,
             max: 4,
@@ -421,7 +430,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod1Weight),
             PostProcessParameterKind.Float,
-            1.0f,
+            0.0f,
             displayName: "LOD1 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -430,7 +439,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod2Weight),
             PostProcessParameterKind.Float,
-            0.0f,
+            0.65f,
             displayName: "LOD2 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -439,7 +448,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod3Weight),
             PostProcessParameterKind.Float,
-            0.0f,
+            0.25f,
             displayName: "LOD3 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -448,7 +457,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod4Weight),
             PostProcessParameterKind.Float,
-            0.0f,
+            0.10f,
             displayName: "LOD4 Weight",
             min: 0.0f,
             max: 2.0f,

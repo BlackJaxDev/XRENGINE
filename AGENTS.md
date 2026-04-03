@@ -44,6 +44,7 @@ These are repository-default expectations unless a task explicitly says otherwis
 - `.vscode/tasks.json` and `.vscode/launch.json` - source of truth for local run/debug task orchestration.
 - `ExecTool.bat` - interactive launcher for all `Tools/` scripts (see §6).
 - `docs/` - architecture, API guides, rendering notes, backlog/design docs.
+- `docs/architecture/rendering/default-render-pipeline-notes.md` - known issues and invariants for DefaultRenderPipeline (texture storage, FBO lifecycle, bloom, auto-exposure, MSAA, etc.).
 - `docs/features/mcp-server.md` - full MCP server documentation (see §15).
 
 ### Editor UI Paths
