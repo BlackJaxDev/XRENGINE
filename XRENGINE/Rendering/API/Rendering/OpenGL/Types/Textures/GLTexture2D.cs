@@ -47,6 +47,7 @@ namespace XREngine.Rendering.OpenGL
         /// Tracks the currently allocated GPU memory size for this texture in bytes.
         /// </summary>
         private long _allocatedVRAMBytes = 0;
+        private uint _allocatedLevels = 0;
 
         protected override void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
@@ -96,6 +97,7 @@ namespace XREngine.Rendering.OpenGL
         {
             bool wasImmutable = !Data.Resizable && StorageSet;
             StorageSet = false;
+            _allocatedLevels = 0;
             Mipmaps.ForEach(m =>
             {
                 m.NeedsFullPush = true;
@@ -199,6 +201,7 @@ namespace XREngine.Rendering.OpenGL
 
                 internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
                 StorageSet = true;
+                _allocatedLevels = levels;
 
                 _allocatedVRAMBytes = CalculateTextureVRAMSize(w, h, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
                 Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
@@ -213,14 +216,18 @@ namespace XREngine.Rendering.OpenGL
                 return baseLevel;
 
             int configuredMaxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
+            int naturalMaxLevel = Data.SmallestMipmapLevel;
+            int allocatedMaxLevel = _allocatedLevels > 0
+                ? Math.Max(baseLevel, (int)_allocatedLevels - 1)
+                : naturalMaxLevel; // Mutable storage: glGenerateMipmap/texelFetch can use up to the natural max.
 
             if (Data.AutoGenerateMipmaps)
-                return Math.Max(baseLevel, Data.SmallestMipmapLevel);
+                return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, naturalMaxLevel));
 
             if (Mipmaps is not null && Mipmaps.Length > 0)
-                return Math.Max(baseLevel, Math.Min(Mipmaps.Length - 1, configuredMaxLevel));
+                return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, Math.Min(Mipmaps.Length - 1, configuredMaxLevel)));
 
-            return baseLevel;
+            return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, configuredMaxLevel));
         }
 
         private void ApplyMipRangeParameters()

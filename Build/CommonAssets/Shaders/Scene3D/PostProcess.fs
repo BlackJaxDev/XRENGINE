@@ -72,10 +72,10 @@ uniform vec3 BrownConradyRadial;     // k1,k2,k3
 uniform vec2 BrownConradyTangential; // p1,p2
 
 // Bloom combine controls
-uniform float BloomStrength = 0.25;
-uniform int BloomStartMip = 1;
-uniform int BloomEndMip = 1;
-uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);
+uniform float BloomStrength = 0.15;
+uniform int BloomStartMip = 2;
+uniform int BloomEndMip = 4;
+uniform float BloomLodWeights[5] = float[](0.0, 0.0, 0.65, 0.25, 0.10);
 
 vec3 RGBtoHSV(vec3 c)
 {

@@ -51,3 +51,7 @@ Program.Main()
 | **Shader format** | GLSL (compiled by driver) | GLSL → SPIR-V (compiled at build/runtime) |
 | **Pipeline state** | Mutable global state | Immutable pipeline objects (cached to disk) |
 | **`WindowRenderCallback`** | Empty (no-op) | Full frame lifecycle (~180 lines) |
+
+## Shared Post-Processing Defaults
+
+Camera post-processing stages are authored through the pipeline schema, but some fallback paths instantiate settings classes directly. Auto-exposure constructor defaults are intentionally kept aligned with the schema defaults so standalone and fallback color-grading paths use the same baseline behavior: log-average metering, `ExposureDividend = 0.1`, and a `0.0001..100.0` exposure clamp range.

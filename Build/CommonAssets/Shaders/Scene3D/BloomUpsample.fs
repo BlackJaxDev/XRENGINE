@@ -13,6 +13,7 @@ uniform sampler2D SourceTexture;
 
 uniform int SourceLOD;    // Mip level to read from (lower-res, being upsampled)
 uniform float Radius;     // Scale factor for the tent filter kernel
+uniform float Scatter = 0.7; // Energy attenuation per upsample level (0=tight, 1=wide)
 
 void main()
 {
@@ -39,6 +40,7 @@ void main()
     result += textureLod(SourceTexture, uv + texelSize * vec2( 1.0,  1.0), lod).rgb * 1.0;
     result *= 1.0 / 16.0;
 
-    // Additive blending (GL_ONE, GL_ONE) adds this to the existing downsample content.
-    OutColor = max(result, vec3(0.0));
+    // Scatter attenuates each upsample level so wider mip contributions fall off
+    // naturally, preventing the accumulated bloom from acting as a flat exposure boost.
+    OutColor = max(result, vec3(0.0)) * Scatter;
 }

@@ -22,10 +22,13 @@ float KarisWeight(vec3 c)
 vec3 BrightPass(vec3 c)
 {
     float brightness = dot(c, Luminance);
-    float knee = BloomThreshold * BloomSoftKnee;
-    float weight = clamp((brightness - BloomThreshold + knee) / (2.0 * knee + 1e-5), 0.0, 1.0);
-    weight = weight * weight;
-    return c * weight * BloomIntensity;
+    if (brightness <= 1e-5)
+        return vec3(0.0);
+    float knee = max(BloomThreshold * BloomSoftKnee, 1e-5);
+    float soft = clamp(brightness - BloomThreshold + knee, 0.0, 2.0 * knee);
+    soft = (soft * soft) / (4.0 * knee + 1e-5);
+    float contribution = max(soft, brightness - BloomThreshold);
+    return c * (contribution / brightness) * BloomIntensity;
 }
 
 void main()

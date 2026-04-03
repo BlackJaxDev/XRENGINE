@@ -24,6 +24,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Prefab Workflow](api/prefab-workflow.md)
 
 ## Rendering
+- [Default Render Pipeline Notes (Known Issues & Invariants)](architecture/rendering/default-render-pipeline-notes.md)
 - [Rendering Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [CoACD Integration](architecture/CoACD.md)
 - [GPU Render Pass Pipeline](work/design/gpu-render-pass-pipeline.md)

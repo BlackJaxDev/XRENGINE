@@ -111,8 +111,11 @@ public partial class DefaultRenderPipeline2
             AppendAntiAliasingResourceCaching(c);
         }
 
-        AppendFxaaTsrUpscaleChain(c);
+        // Compute exposure BEFORE the post-process quad so the 1x1 exposure
+        // texture and _gpuAutoExposureReadyThisFrame flag are current when
+        // PostProcess.fs reads them.
         AppendExposureUpdate(c);
+        AppendFxaaTsrUpscaleChain(c);
         AppendTemporalCommit(c);
         AppendFinalOutput(c, bypassVendorUpscale);
 
@@ -856,16 +859,14 @@ public partial class DefaultRenderPipeline2
                 upscaleChoice.TrueCommands = upscaleCmds;
             }
         }
-
-        // Auto exposure uses a GPU compute shader dispatch. Schedule it before the
     }
 
-    /// <summary>Dispatches the auto-exposure compute shader before final output.</summary>
+    /// <summary>Dispatches the auto-exposure compute shader before the post-process pass.</summary>
     private void AppendExposureUpdate(ViewportRenderCommandContainer c)
     {
-        // force a LoadOp.Clear restart of) the swapchain render pass.
-        // The HDR scene buffer is already fully rendered at this point, so reading
-        // it here produces the same result as reading it after the output blit.
+        // The HDR scene buffer is fully rendered (opaque + transparent + bloom) by the
+        // time this runs.  Placing the compute dispatch before the post-process quad lets
+        // the 1x1 exposure texture and UseGpuAutoExposure flag be current in the same frame.
         string exposureSource = HDRSceneTextureName;
         c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
     }

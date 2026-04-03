@@ -377,7 +377,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         if (!TryGetColorGradingSettings(instance, out ColorGradingSettings? grading))
             grading = null;
 
-        var mode = grading?.AutoExposureMetering ?? ColorGradingSettings.AutoExposureMeteringMode.Average;
+        var mode = grading?.AutoExposureMetering ?? ColorGradingSettings.AutoExposureMeteringMode.LogAverage;
         int targetSize = grading?.AutoExposureMeteringTargetSize ?? 16;
         float ignoreTopPercent = grading?.AutoExposureIgnoreTopPercent ?? 0.02f;
         float centerStrength = grading?.AutoExposureCenterWeightStrength ?? 1.0f;

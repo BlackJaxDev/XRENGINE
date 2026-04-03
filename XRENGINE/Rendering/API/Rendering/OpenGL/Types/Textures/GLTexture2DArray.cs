@@ -306,9 +306,13 @@ namespace XREngine.Rendering.OpenGL
                 return baseLevel;
 
             int configuredMaxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
+            int naturalMaxLevel = Data.SmallestMipmapLevel;
             int allocatedMaxLevel = _allocatedLevels > 0
                 ? Math.Max(baseLevel, (int)_allocatedLevels - 1)
-                : baseLevel;
+                : naturalMaxLevel; // Mutable storage: glGenerateMipmap/texelFetch can use up to the natural max.
+
+            if (Data.AutoGenerateMipmaps)
+                return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, naturalMaxLevel));
 
             return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, configuredMaxLevel));
         }
