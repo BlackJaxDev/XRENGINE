@@ -14,6 +14,9 @@ namespace XREngine.Rendering.UI
         public event DelSetUniforms? SettingUniforms;
 
         private readonly XRMaterialFrameBuffer _fbo;
+        private uint _requestedWidth = 1u;
+        private uint _requestedHeight = 1u;
+        private bool _pendingResize;
 
         //These bools are to prevent infinite pre-rendering recursion
         private bool _collecting = false;
@@ -83,8 +86,37 @@ namespace XREngine.Rendering.UI
             uint h = (uint)tfm.AxisAlignedRegion.Height;
             w = w.ClampMin(1u);
             h = h.ClampMin(1u);
-            Viewport.Resize(w, h);
-            _fbo.Resize(w, h);
+
+            if (!_pendingResize
+                && _requestedWidth == w
+                && _requestedHeight == h
+                && (uint)Viewport.Width == w
+                && (uint)Viewport.Height == h
+                && _fbo.Width == w
+                && _fbo.Height == h)
+            {
+                return;
+            }
+
+            _requestedWidth = w;
+            _requestedHeight = h;
+            _pendingResize = true;
+        }
+
+        // Apply layout-driven resizes at a frame boundary so the viewport, pipeline,
+        // and output FBO are updated together instead of being invalidated mid-frame.
+        private void ApplyPendingSize()
+        {
+            if (!_pendingResize)
+                return;
+
+            _pendingResize = false;
+
+            if (_fbo.Width != _requestedWidth || _fbo.Height != _requestedHeight)
+                _fbo.Resize(_requestedWidth, _requestedHeight);
+
+            if ((uint)Viewport.Width != _requestedWidth || (uint)Viewport.Height != _requestedHeight)
+                Viewport.Resize(_requestedWidth, _requestedHeight);
         }
 
         public void CollectVisible()
@@ -95,8 +127,14 @@ namespace XREngine.Rendering.UI
                 return;
 
             _collecting = true;
-            Viewport.CollectVisible(false);
-            _collecting = false;
+            try
+            {
+                Viewport.CollectVisible(false);
+            }
+            finally
+            {
+                _collecting = false;
+            }
         }
         public void SwapBuffers()
         {
@@ -106,8 +144,15 @@ namespace XREngine.Rendering.UI
                 return;
 
             _swapping = true;
-            Viewport.SwapBuffers();
-            _swapping = false;
+            try
+            {
+                ApplyPendingSize();
+                Viewport.SwapBuffers();
+            }
+            finally
+            {
+                _swapping = false;
+            }
         }
         public void Render()
         {
@@ -117,8 +162,15 @@ namespace XREngine.Rendering.UI
                 return;
 
             _rendering = true;
-            Viewport.Render(_fbo, null, null, false);
-            _rendering = false;
+            try
+            {
+                ApplyPendingSize();
+                Viewport.Render(_fbo, null, null, false);
+            }
+            finally
+            {
+                _rendering = false;
+            }
         }
     }
 }

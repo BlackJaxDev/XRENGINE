@@ -129,7 +129,7 @@ public partial class DefaultRenderPipeline
                 }
             }
         };
-        XRQuadFrameBuffer fxaaFbo = new(fxaaMaterial)
+        XRQuadFrameBuffer fxaaFbo = new(fxaaMaterial, deriveRenderTargetsFromMaterial: false)
         {
             Name = FxaaFBOName
         };
@@ -578,6 +578,14 @@ public partial class DefaultRenderPipeline
         // invalidation, the registry can be empty or hold a stale non-attachable
         // survivor under the same name. Rebuild the concrete texture instead of
         // trusting variable aliases or dangling view instances.
+        if (Engine.Rendering.State.CurrentRenderingPipeline is { } instance)
+        {
+            string reason = hasConcreteTexture && texture is not null
+                ? $"cached concrete texture type '{texture.GetType().Name}' is not FBO-attachable"
+                : "no concrete texture instance is registered";
+            LogAttachmentTextureRebuild(instance, textureName, texture, reason);
+        }
+
         texture = factory();
         SetTexture(texture);
         return texture as IFrameBufferAttachement

@@ -129,7 +129,7 @@ public partial class DefaultRenderPipeline2
                 }
             }
         };
-        XRQuadFrameBuffer fxaaFbo = new(fxaaMaterial)
+        XRQuadFrameBuffer fxaaFbo = new(fxaaMaterial, deriveRenderTargetsFromMaterial: false)
         {
             Name = FxaaFBOName
         };
