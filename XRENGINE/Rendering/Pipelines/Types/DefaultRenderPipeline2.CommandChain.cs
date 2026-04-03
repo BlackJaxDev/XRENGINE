@@ -280,7 +280,8 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             LightCombineFBOName,
             CreateLightCombineFBO,
-            GetDesiredFBOSizeInternal)
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateLightCombineFbo)
             .UseLifetime(RenderResourceLifetime.Transient);
 
         // MSAA deferred: mark complex pixels in the MSAA depth-stencil before lighting

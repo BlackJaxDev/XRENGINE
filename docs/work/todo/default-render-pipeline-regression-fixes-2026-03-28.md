@@ -20,11 +20,12 @@ Reference:
 
 **Highest-priority unresolved issue from this audit:**
 
-- Standard non-MSAA `LightCombineFBOName` still lacks a material / texture identity recreation predicate in both pipelines. This is now the best code-proven explanation for “direct lighting only, no textures, no probe GI” on the deferred path.
+- Resolved 2026-04-03: standard non-MSAA `LightCombineFBOName` now uses `NeedsRecreateLightCombineFbo(...)` in both pipelines so stale GBuffer / diffuse texture bindings are recreated instead of silently reusing the old quad FBO.
 
 **Secondary follow-up risk:**
 
 - `ForwardPassFBOName` is also cached without a dedicated compatibility validator in both pipelines. This was not proven to be the primary current regression, but it shares the same stale-target failure mode and should be fixed adjacent to the standard LightCombine change.
+- Resolved 2026-04-03: deferred-imported legacy specular/opacity materials now preserve `map_Ks` / `map_d` information via dedicated deferred shader variants instead of silently dropping that data in the GBuffer.
 
 ---
 

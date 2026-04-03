@@ -587,17 +587,23 @@ namespace XREngine
                 diffuseIndex = 0;
 
             int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
+            int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
+            int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
             int metallicIndex = ResolveTextureIndex(textures, TextureType.Metalness);
             int roughnessIndex = ResolveTextureIndex(textures, TextureType.Roughness);
             int emissiveIndex = ResolveTextureIndex(textures, TextureType.EmissionColor, TextureType.Emissive);
 
             XRTexture? diffuse = ResolveTexture(textureList, diffuseIndex);
             XRTexture? normal = ResolveTexture(textureList, normalIndex);
+            XRTexture? specular = ResolveTexture(textureList, specularIndex);
+            XRTexture? alphaMask = ResolveTexture(textureList, alphaMaskIndex);
             XRTexture? metallic = ResolveTexture(textureList, metallicIndex);
             XRTexture? roughness = ResolveTexture(textureList, roughnessIndex);
             XRTexture? emissive = ResolveTexture(textureList, emissiveIndex);
 
             bool hasNormal = normal is not null;
+            bool hasSpecular = specular is not null;
+            bool hasAlphaMask = alphaMask is not null;
             bool hasMetallic = metallic is not null;
             bool hasRoughness = roughness is not null;
             bool hasEmissive = emissive is not null;
@@ -642,6 +648,10 @@ namespace XREngine
                     float metallicScale = hasMetallic ? 1.0f : 0.0f;
                     float emissionScale = hasEmissive ? 1.0f : 0.0f;
 
+                    // Legacy imported materials (for example OBJ/MTL assets like Sponza)
+                    // use specular and separate opacity-mask textures rather than metallic-roughness.
+                    // Keep those textures in the deferred GBuffer so the final deferred shading path
+                    // receives the same material information as the forward path.
                     if (hasNormal && hasRoughness)
                     {
                         // Sparse metallic slot is intentional: the shader expects Texture2=metallic and Texture3=roughness.
@@ -652,6 +662,21 @@ namespace XREngine
                     {
                         mat.Textures = [diffuse, normal, metallic];
                         mat.Shaders.Add(ShaderHelper.LitTextureNormalMetallicFragDeferred());
+                    }
+                    else if (hasNormal && hasSpecular && hasAlphaMask)
+                    {
+                        mat.Textures = [diffuse, normal, specular, alphaMask];
+                        mat.Shaders.Add(ShaderHelper.LitTextureNormalSpecAlphaFragDeferred());
+                    }
+                    else if (hasNormal && hasSpecular)
+                    {
+                        mat.Textures = [diffuse, normal, specular];
+                        mat.Shaders.Add(ShaderHelper.LitTextureNormalSpecFragDeferred());
+                    }
+                    else if (hasNormal && hasAlphaMask)
+                    {
+                        mat.Textures = [diffuse, normal, alphaMask];
+                        mat.Shaders.Add(ShaderHelper.LitTextureNormalAlphaFragDeferred());
                     }
                     else if (hasNormal)
                     {
@@ -673,6 +698,21 @@ namespace XREngine
                     {
                         mat.Textures = [diffuse, null, roughness];
                         mat.Shaders.Add(ShaderHelper.LitTextureRoughnessFragDeferred());
+                    }
+                    else if (hasSpecular && hasAlphaMask)
+                    {
+                        mat.Textures = [diffuse, specular, alphaMask];
+                        mat.Shaders.Add(ShaderHelper.LitTextureSpecAlphaFragDeferred());
+                    }
+                    else if (hasSpecular)
+                    {
+                        mat.Textures = [diffuse, specular];
+                        mat.Shaders.Add(ShaderHelper.LitTextureSpecFragDeferred());
+                    }
+                    else if (hasAlphaMask)
+                    {
+                        mat.Textures = [diffuse, alphaMask];
+                        mat.Shaders.Add(ShaderHelper.LitTextureAlphaFragDeferred());
                     }
                     else if (hasEmissive)
                     {

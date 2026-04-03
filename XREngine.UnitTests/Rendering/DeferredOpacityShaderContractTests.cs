@@ -11,6 +11,8 @@ public sealed class DeferredOpacityShaderContractTests
     [Test]
     [TestCase("Common/TexturedDeferred.fs")]
     [TestCase("Common/TexturedNormalDeferred.fs")]
+    [TestCase("Common/TexturedSpecDeferred.fs")]
+    [TestCase("Common/TexturedNormalSpecDeferred.fs")]
     public void MaskedCapableDeferredShaders_UseMaterialOpacityNotTextureAlpha(string shaderRelativePath)
     {
         string source = LoadShaderSource(shaderRelativePath);
@@ -23,6 +25,21 @@ public sealed class DeferredOpacityShaderContractTests
         // because many albedo textures carry non-transparency data in their alpha channel.
         source.ShouldContain("Opacity);");
         source.ShouldNotContain("effectiveOpacity");
+        source.ShouldNotContain(".a * Opacity");
+    }
+
+    [Test]
+    [TestCase("Common/TexturedAlphaDeferred.fs", "texture(Texture1, FragUV0).r")]
+    [TestCase("Common/TexturedNormalAlphaDeferred.fs", "texture(Texture2, FragUV0).r")]
+    [TestCase("Common/TexturedSpecAlphaDeferred.fs", "texture(Texture2, FragUV0).r")]
+    [TestCase("Common/TexturedNormalSpecAlphaDeferred.fs", "texture(Texture3, FragUV0).r")]
+    public void AlphaMaskDeferredShaders_SampleSeparateOpacityTexture(string shaderRelativePath, string alphaMaskSample)
+    {
+        string source = LoadShaderSource(shaderRelativePath);
+
+        source.ShouldContain("XRENGINE_AlphaCutoffAndDither");
+        source.ShouldContain(alphaMaskSample);
+        source.ShouldContain("Opacity);");
         source.ShouldNotContain(".a * Opacity");
     }
 

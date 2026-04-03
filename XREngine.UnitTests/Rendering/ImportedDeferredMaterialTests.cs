@@ -82,6 +82,79 @@ public sealed class ImportedDeferredMaterialTests
     }
 
     [Test]
+    public void MakeMaterialDeferred_SpecularTexturesSelectDeferredSpecularShader()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D specular = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, specular],
+            [
+                CreateSlot("albedo.png", TextureType.Diffuse),
+                CreateSlot("specular.png", TextureType.Specular),
+            ],
+            "SpecularMaterial");
+
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("TexturedSpecDeferred.fs");
+        material.Textures.Count.ShouldBe(2);
+        material.Textures[0].ShouldBeSameAs(albedo);
+        material.Textures[1].ShouldBeSameAs(specular);
+        material.Parameter<ShaderFloat>("Specular")?.Value.ShouldBe(1.0f);
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_OpacityMaskTexturesSelectDeferredAlphaMaskShader()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D alphaMask = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, alphaMask],
+            [
+                CreateSlot("albedo.png", TextureType.Diffuse),
+                CreateSlot("mask.png", TextureType.Opacity),
+            ],
+            "AlphaMaskMaterial");
+
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("TexturedAlphaDeferred.fs");
+        material.Textures.Count.ShouldBe(2);
+        material.Textures[0].ShouldBeSameAs(albedo);
+        material.Textures[1].ShouldBeSameAs(alphaMask);
+        material.TransparencyMode.ShouldBe(ETransparencyMode.Masked);
+        material.Parameter<ShaderFloat>("AlphaCutoff").ShouldNotBeNull();
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_NormalSpecularOpacityTexturesSelectDeferredLegacyMaskedShader()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D normal = new();
+        XRTexture2D specular = new();
+        XRTexture2D alphaMask = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, normal, specular, alphaMask],
+            [
+                CreateSlot("albedo.png", TextureType.Diffuse),
+                CreateSlot("normal.png", TextureType.NormalCamera),
+                CreateSlot("specular.png", TextureType.Specular),
+                CreateSlot("mask.png", TextureType.Opacity),
+            ],
+            "LegacyMaskedMaterial");
+
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("TexturedNormalSpecAlphaDeferred.fs");
+        material.Textures.Count.ShouldBe(4);
+        material.Textures[0].ShouldBeSameAs(albedo);
+        material.Textures[1].ShouldBeSameAs(normal);
+        material.Textures[2].ShouldBeSameAs(specular);
+        material.Textures[3].ShouldBeSameAs(alphaMask);
+        material.TransparencyMode.ShouldBe(ETransparencyMode.Masked);
+    }
+
+    [Test]
     public void PrefabSource_CreateMaterial_DelegatesToDeferredImporterFactory()
     {
         string source = ReadWorkspaceFile("XRENGINE/Scene/Prefabs/XRPrefabSource.cs").Replace("\r\n", "\n");
