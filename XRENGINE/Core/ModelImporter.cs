@@ -14,6 +14,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Fbx;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
@@ -69,7 +70,7 @@ namespace XREngine
             => textures.Any(x => (x.Flags & 0x2) != 0);
 
         private static bool HasOpacityMask(List<TextureSlot> textures)
-            => textures.Any(x => x.TextureType == TextureType.Opacity);
+            => textures.Any(x => GetEffectiveTextureType(x) == TextureType.Opacity);
 
         /// <summary>
         /// Schedules an import job on the engine's job system.
@@ -142,7 +143,7 @@ namespace XREngine
 
         private static XRTexture? GetDiffuseTexture(XRTexture[] textureList, List<TextureSlot> textures)
         {
-            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
+            int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
             if (diffuseIndex < 0)
                 diffuseIndex = Array.FindIndex(textureList, t => t is not null);
             if (diffuseIndex < 0 || diffuseIndex >= textureList.Length)
@@ -262,19 +263,44 @@ namespace XREngine
                 return p;
             }
 
+            static string? TryExtractRelativeTexturePath(string path)
+            {
+                int texturesIndex = path.LastIndexOf("\\textures\\", StringComparison.OrdinalIgnoreCase);
+                if (texturesIndex >= 0)
+                    return path[(texturesIndex + 1)..];
+
+                string fileName = Path.GetFileName(path);
+                return string.IsNullOrWhiteSpace(fileName) ? null : fileName;
+            }
+
             string normalized = Normalize(rawPath);
             if (string.IsNullOrWhiteSpace(normalized))
                 return rawPath;
 
+            string? modelDir = Path.GetDirectoryName(modelFilePath);
+
             // 1) If rooted, try it directly.
             if (Path.IsPathRooted(normalized))
             {
-                if (!File.Exists(normalized) && _missingTexturePathWarnings.TryAdd(normalized, true))
-                    Debug.LogWarning($"[ModelImporter] Texture path not found (rooted): '{normalized}' (from '{rawPath}')");
-                return normalized;
+                if (File.Exists(normalized))
+                    return normalized;
+
+                if (!string.IsNullOrWhiteSpace(modelDir))
+                {
+                    string? relativeTexturePath = TryExtractRelativeTexturePath(normalized);
+                    if (!string.IsNullOrWhiteSpace(relativeTexturePath))
+                    {
+                        string rootedRelativeCandidate = Path.Combine(modelDir, relativeTexturePath);
+                        if (File.Exists(rootedRelativeCandidate))
+                            return rootedRelativeCandidate;
+
+                        string rootedTexturesCandidate = Path.Combine(modelDir, "textures", Path.GetFileName(relativeTexturePath));
+                        if (File.Exists(rootedTexturesCandidate))
+                            return rootedTexturesCandidate;
+                    }
+                }
             }
 
-            string? modelDir = Path.GetDirectoryName(modelFilePath);
             if (string.IsNullOrWhiteSpace(modelDir))
                 return normalized;
 
@@ -538,11 +564,55 @@ namespace XREngine
         private const int ImportedSurfaceDetailHeightMapMode = 1;
         private const float ImportedHeightMapScale = 2.0f;
 
+        private static TextureType NormalizeTextureType(TextureType textureType)
+            => textureType switch
+            {
+                TextureType.Normals => TextureType.NormalCamera,
+                TextureType.Shininess => TextureType.Specular,
+                TextureType.EmissionColor => TextureType.Emissive,
+                _ => textureType,
+            };
+
+        private static TextureType? InferTextureTypeFromFilePath(string? filePath)
+        {
+            string textureName = Path.GetFileNameWithoutExtension(filePath ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(textureName))
+                return null;
+
+            string key = textureName.ToLowerInvariant();
+            bool looksLikeBaseColor = key.Contains("basecolor") || key.Contains("albedo") || key.Contains("diffuse");
+            bool looksLikeOpacityMask = key.Contains("opacity") || key.Contains("transparent") || key.Contains("mask") || (key.Contains("alpha") && !looksLikeBaseColor);
+
+            return key switch
+            {
+                var text when text.Contains("normal") => TextureType.NormalCamera,
+                var text when text.Contains("bump") || text.Contains("height") => TextureType.Height,
+                var text when text.Contains("spec") || text.Contains("shin") => TextureType.Specular,
+                _ when looksLikeBaseColor => TextureType.BaseColor,
+                _ when looksLikeOpacityMask => TextureType.Opacity,
+                var text when text.Contains("emiss") => TextureType.Emissive,
+                var text when text.Contains("metal") => TextureType.Metalness,
+                var text when text.Contains("rough") => TextureType.Roughness,
+                _ => null,
+            };
+        }
+
+        private static TextureType GetEffectiveTextureType(TextureSlot texture)
+        {
+            TextureType normalizedType = NormalizeTextureType(texture.TextureType);
+            return InferTextureTypeFromFilePath(texture.FilePath) ?? normalizedType;
+        }
+
         private static int ResolveTextureIndex(List<TextureSlot> textures, params TextureType[] textureTypes)
         {
             foreach (TextureType textureType in textureTypes)
             {
-                int index = textures.FindIndex(x => x.TextureType == textureType);
+                TextureType normalizedType = NormalizeTextureType(textureType);
+                int index = textures.FindIndex(x => NormalizeTextureType(x.TextureType) == normalizedType);
+                if (index >= 0)
+                    return index;
+
+                index = textures.FindIndex(x => GetEffectiveTextureType(x) == normalizedType);
                 if (index >= 0)
                     return index;
             }
@@ -607,6 +677,21 @@ namespace XREngine
             bool hasMetallic = metallic is not null;
             bool hasRoughness = roughness is not null;
             bool hasEmissive = emissive is not null;
+
+            // ── Diagnostic dump (TEMPORARY) ────────────────────────────
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.Append($"[MakeMaterialDeferred] '{name}' transparency={transparencyMode} slots=[");
+                for (int i = 0; i < textures.Count; i++)
+                {
+                    var s = textures[i];
+                    sb.Append($" {i}:{s.TextureType}(eff={GetEffectiveTextureType(s)})='{Path.GetFileName(s.FilePath)}'");
+                }
+                sb.Append($" ] resolved: diffuse={diffuseIndex}:{diffuse?.Name ?? "NULL"} normal={normalIndex}:{normal?.Name ?? "NULL"}(heightMap={usesHeightMap}) spec={specularIndex}:{specular?.Name ?? "NULL"} alpha={alphaMaskIndex}:{alphaMask?.Name ?? "NULL"} metal={metallicIndex}:{metallic?.Name ?? "NULL"} rough={roughnessIndex}:{roughness?.Name ?? "NULL"} emis={emissiveIndex}:{emissive?.Name ?? "NULL"}");
+                sb.Append($" flags: N={hasNormal} S={hasSpecular} A={hasAlphaMask} M={hasMetallic} R={hasRoughness} E={hasEmissive}");
+                Debug.Out(sb.ToString());
+            }
+            // ── End diagnostic dump ────────────────────────────────────
 
             mat.Shaders.Clear();
 
@@ -760,6 +845,15 @@ namespace XREngine
             }
 
             mat.Name = name;
+
+            // ── Diagnostic dump (TEMPORARY) ────────────────────────────
+            {
+                string shader = mat.Shaders.Count > 0 ? mat.Shaders[0]?.Name ?? "(null)" : "(none)";
+                string texNames = string.Join(", ", (mat.Textures ?? []).Select((t, i) => $"[{i}]={t?.Name ?? "NULL"}"));
+                Debug.Out($"[MakeMaterialDeferred] '{name}' → shader={shader} textures=({texNames}) pass={mat.RenderPass}");
+            }
+            // ── End diagnostic dump ────────────────────────────────────
+
             if (!transp)
             {
                 mat.RenderOptions = new RenderingParameters()
@@ -789,15 +883,15 @@ namespace XREngine
         {
             ETransparencyMode transparencyMode = ResolveTransparencyMode(textureList, textures);
 
-            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
+            int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
             if (diffuseIndex < 0)
                 diffuseIndex = Array.FindIndex(textureList, t => t is not null);
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
             int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
-            int specularIndex = textures.FindIndex(x => x.TextureType == TextureType.Specular || x.TextureType == TextureType.Shininess);
-            int alphaMaskIndex = textures.FindIndex(x => x.TextureType == TextureType.Opacity);
+            int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
+            int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
 
             XRTexture? diffuse = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
             XRTexture? normal = normalIndex >= 0 && normalIndex < textureList.Length ? textureList[normalIndex] : null;
@@ -1167,13 +1261,13 @@ namespace XREngine
 
         public static void MakeMaterialForwardPlusUberShader(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
-            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
+            int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
             if (diffuseIndex < 0)
                 diffuseIndex = Array.FindIndex(textureList, t => t is not null);
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals);
+            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out _);
 
             XRTexture? diffuseSrc = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
             XRTexture? normalSrc = normalIndex >= 0 && normalIndex < textureList.Length ? textureList[normalIndex] : null;
@@ -1239,6 +1333,27 @@ namespace XREngine
             Action<float>? onProgress = null,
             Matrix4x4? rootTransformMatrix = null)
         {
+            if (ShouldUseNativeFbxBackend())
+            {
+                NativeFbxSceneImporter.ImportResult result = NativeFbxSceneImporter.Import(
+                    this,
+                    SourceFilePath,
+                    ImportOptions,
+                    scaleConversion,
+                    zUp,
+                    _importLayer,
+                    cancellationToken,
+                    onProgress,
+                    rootTransformMatrix);
+
+                foreach (XRMaterial material in result.Materials)
+                    _materials.Add(material);
+                foreach (XRMesh mesh in result.Meshes)
+                    _meshes.Add(mesh);
+
+                return result.RootNode;
+            }
+
             SetAssimpConfig(preservePivots, scaleConversion, zUp, multiThread);
 
             AScene scene;
@@ -1274,6 +1389,10 @@ namespace XREngine
 
             return rootNode;
         }
+
+        private bool ShouldUseNativeFbxBackend()
+            => ImportOptions?.FbxBackend == FbxImportBackend.Native
+                && Path.GetExtension(SourceFilePath).Equals(".fbx", StringComparison.OrdinalIgnoreCase);
 
         private void SetAssimpConfig(bool preservePivots, float scaleConversion, bool zUp, bool multiThread)
         {
@@ -1748,10 +1867,13 @@ namespace XREngine
 
             Material matInfo = scene.Materials[mesh.MaterialIndex];
             List<TextureSlot> textures = [];
-            for (int i = 0; i < 22; ++i)
+            HashSet<TextureType> discoveredTypes = [];
+            foreach (TextureType type in Enum.GetValues<TextureType>())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                TextureType type = (TextureType)i;
+                if (type == default || !discoveredTypes.Add(type))
+                    continue;
+
                 var maps = LoadMaterialTextures(matInfo, type);
                 if (maps.Count > 0)
                     textures.AddRange(maps);

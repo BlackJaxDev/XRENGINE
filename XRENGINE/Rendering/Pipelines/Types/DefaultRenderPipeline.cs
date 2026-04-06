@@ -1,6 +1,7 @@
 using Extensions;
 using System;
 using System.Collections;
+using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Components.Capture.Lights;
@@ -22,6 +23,16 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline : RenderPipeline
 {
+    public enum DeferredDebugViewMode
+    {
+        Disabled = 0,
+        RawAlbedo = 1,
+        DirectLighting = 2,
+        Rmse = 3,
+        Normal = 4,
+        Depth = 5,
+    }
+
     public const string SceneShaderPath = "Scene3D";
 
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
@@ -198,6 +209,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private static bool RuntimeEnableMsaa
         => ResolveAntiAliasingMode() == EAntiAliasingMode.Msaa
         && ResolveEffectiveMsaaSampleCount() > 1u;
+
+    private DeferredDebugViewMode _deferredDebugView = DeferredDebugViewMode.Disabled;
+    [Category("Debug")]
+    [DisplayName("Deferred Debug View")]
+    [Description("Overrides DeferredLightCombine output for diagnostics. Disabled = normal shaded output; other modes show raw deferred inputs.")]
+    public DeferredDebugViewMode DeferredDebugView
+    {
+        get => _deferredDebugView;
+        set => SetField(ref _deferredDebugView, value);
+    }
 
     /// <summary>
     /// True when FXAA should be active for the current rendering camera.
@@ -696,6 +717,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private const string LensDistortionStageKey = "lensDistortion";
     private const string ChromaticAberrationStageKey = "chromaticAberration";
     private const string FogStageKey = "fog";
+    private const string VolumetricFogStageKey = "volumetricFog";
 
     private static readonly string[] AntiAliasingTextureDependencies =
     [
@@ -2596,6 +2618,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
     {
+        program.Uniform("DeferredDebugMode", (int)DeferredDebugView);
+
         bool useAo = ShouldUseAmbientOcclusion();
         program.Uniform("UseAmbientOcclusion", useAo);
 

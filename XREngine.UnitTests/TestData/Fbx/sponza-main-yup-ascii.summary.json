@@ -1,0 +1,16 @@
+{
+  "assetId": "sponza-main-yup-ascii",
+  "importSucceeded": true,
+  "detectedEncoding": "Ascii",
+  "detectedVersionText": "7.4.0",
+  "fileSizeBytes": 929301382,
+  "nodeCount": 411,
+  "meshCount": 405,
+  "materialCount": 28,
+  "animationCount": 0,
+  "boneCount": 0,
+  "totalVertices": 8509638,
+  "totalFaces": 2381308,
+  "maxHierarchyDepth": 6,
+  "notes": "Checked-in semantic baseline only; not representative of the target binary tokenizer path."
+}

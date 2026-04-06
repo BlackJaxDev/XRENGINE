@@ -175,7 +175,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
         string variantText = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
         variantText.ShouldContain("#define XRENGINE_DEPTH_NORMAL_PREPASS");
         variantText.ShouldContain("layout (location = 0) out vec2 Normal;");
-        variantText.ShouldContain("Normal = XRENGINE_EncodeNormal(normalize(FragNorm));");
+        variantText.ShouldContain("Normal = XRENGINE_EncodeNormal(FragNorm);");
     }
 
     [Test]

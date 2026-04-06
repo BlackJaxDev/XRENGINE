@@ -50,6 +50,7 @@ public partial class DefaultRenderPipeline
         DescribeLensDistortionStage(builder.Stage(LensDistortionStageKey, "Lens Distortion").BackedBy<LensDistortionSettings>());
         DescribeChromaticAberrationStage(builder.Stage(ChromaticAberrationStageKey, "Chromatic Aberration").BackedBy<ChromaticAberrationSettings>());
         DescribeFogStage(builder.Stage(FogStageKey, "Depth Fog").BackedBy<FogSettings>());
+        DescribeVolumetricFogStage(builder.Stage(VolumetricFogStageKey, "Volumetric Fog").BackedBy<VolumetricFogSettings>());
 
         builder.Category("imaging", "Imaging")
             .IncludeStages(TonemappingStageKey, ColorGradingStageKey);
@@ -70,7 +71,7 @@ public partial class DefaultRenderPipeline
             .IncludeStages(LensDistortionStageKey, ChromaticAberrationStageKey, DepthOfFieldStageKey);
 
         builder.Category("atmosphere", "Atmosphere")
-            .IncludeStage(FogStageKey);
+            .IncludeStages(FogStageKey, VolumetricFogStageKey);
     }
 
     private static void DescribeTonemappingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -1332,6 +1333,57 @@ public partial class DefaultRenderPipeline
             isColor: true);
     }
 
+    private static void DescribeVolumetricFogStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(VolumetricFogSettings.Enabled),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Enabled");
+
+        bool IsEnabled(object o) => ((VolumetricFogSettings)o).Enabled;
+
+        stage.AddParameter(
+            nameof(VolumetricFogSettings.Intensity),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Intensity",
+            min: 0.0f,
+            max: 4.0f,
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(VolumetricFogSettings.MaxDistance),
+            PostProcessParameterKind.Float,
+            150.0f,
+            displayName: "Max Distance",
+            min: 0.0f,
+            max: 10000.0f,
+            step: 1.0f,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(VolumetricFogSettings.StepSize),
+            PostProcessParameterKind.Float,
+            4.0f,
+            displayName: "Step Size",
+            min: 0.25f,
+            max: 128.0f,
+            step: 0.25f,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(VolumetricFogSettings.JitterStrength),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Jitter Strength",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
+    }
+
     private static PostProcessEnumOption[] BuildEnumOptions<TEnum>() where TEnum : struct, Enum
     {
         var values = Enum.GetValues<TEnum>();
@@ -1416,6 +1468,9 @@ public partial class DefaultRenderPipeline
 
         var fog = GetSettings<FogSettings>(state);
         (fog ?? new FogSettings()).SetUniforms(program);
+
+        var volumetricFog = GetSettings<VolumetricFogSettings>(state);
+        (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(program);
 
         var lens = GetSettings<LensDistortionSettings>(state);
         float widthPx = Math.Max(1, InternalWidth);

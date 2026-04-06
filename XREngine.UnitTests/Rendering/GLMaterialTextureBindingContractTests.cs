@@ -9,16 +9,26 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class GLMaterialTextureBindingContractTests
 {
     [Test]
-    public void GLMaterial_BindsSparseTextureListsToCompactTextureUnits()
+    public void GLMaterial_PreservesTextureIndexBindingForSparseTextureLists()
     {
         string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
 
-        source.ShouldContain("int textureUnit = 0;");
-        source.ShouldContain("SetTextureUniform(program, textureIndex, texture, textureUnit);");
-        source.ShouldContain("textureUnit++;");
-        source.ShouldContain("if (i == textureIndex)");
-        source.ShouldContain("textureUnit = nextTextureUnit;");
-        source.ShouldNotContain("program?.Sampler(texture.ResolveSamplerName(textureIndex, samplerNameOverride), texture, textureIndex);");
+        source.ShouldContain("SetTextureUniform(program, textureIndex, texture, textureIndex);");
+        source.ShouldContain("textureUnit = textureIndex;");
+        source.ShouldNotContain("int textureUnit = 0;");
+        source.ShouldNotContain("textureUnit++;");
+        source.ShouldNotContain("textureUnit = nextTextureUnit;");
+    }
+
+    [Test]
+    public void GLMaterial_BindsIndexedTextureAliasWhenShaderExpectsTextureSlots()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
+
+        source.ShouldContain("string indexedSamplerName = $\"Texture{textureIndex}\";");
+        source.ShouldContain("if (program.GetUniformLocation(resolvedSamplerName) >= 0)");
+        source.ShouldContain("if (program.GetUniformLocation(indexedSamplerName) >= 0)");
+        source.ShouldContain("program.Sampler(indexedSamplerName, texture, textureUnit);");
     }
 
     [Test]

@@ -402,7 +402,6 @@ public class LightProbeOctaTests : GpuTestBase
             
             vec2 EncodeOcta(vec3 dir)
             {
-                dir = normalize(dir);
                 dir /= max(abs(dir.x) + abs(dir.y) + abs(dir.z), 1e-5f);
             
                 vec2 uv = dir.xy;

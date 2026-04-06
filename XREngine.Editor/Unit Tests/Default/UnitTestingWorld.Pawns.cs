@@ -442,11 +442,45 @@ public static partial class EditorUnitTests
             }
 
             if (cameraNode.TryAddComponent(out camComp, "TestCamera"))
+            {
                 camComp!.SetPerspective(60.0f, 0.1f, 100000.0f, null);
+                ConfigureCameraPostProcessing(camComp);
+            }
             else
                 camComp = null;
 
             return cameraNode;
+        }
+
+        private static void ConfigureCameraPostProcessing(CameraComponent cameraComponent)
+        {
+            Debug.Out($"[VolumetricFog] ConfigureCameraPostProcessing called, InitializeVolumetricFog = {Toggles.InitializeVolumetricFog}");
+            if (!Toggles.InitializeVolumetricFog)
+                return;
+
+            var camera = cameraComponent.Camera;
+            if (!camera.RenderPipeline.OverrideProtected)
+                camera.RenderPipeline.OverrideProtected = true;
+
+            var stage = camera.GetPostProcessStageState<VolumetricFogSettings>();
+            if (stage is null)
+            {
+                Debug.Out("[VolumetricFog] Could not find VolumetricFogSettings post-process stage on camera.");
+                return;
+            }
+
+            if (stage.TryGetBacking(out VolumetricFogSettings? settings) != true || settings is null)
+            {
+                Debug.Out("[VolumetricFog] VolumetricFogSettings stage found but backing instance is null.");
+                return;
+            }
+
+            settings.Enabled = true;
+            settings.Intensity = Toggles.VolumetricFog.Intensity;
+            settings.MaxDistance = Toggles.VolumetricFog.MaxDistance;
+            settings.StepSize = Toggles.VolumetricFog.StepSize;
+            settings.JitterStrength = Toggles.VolumetricFog.JitterStrength;
+            Debug.Out($"[VolumetricFog] Camera post-process configured: Enabled=true, Intensity={settings.Intensity}, MaxDistance={settings.MaxDistance}, StepSize={settings.StepSize}");
         }
 
         public static void InitializeLocomotion(

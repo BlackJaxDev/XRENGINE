@@ -1,0 +1,16 @@
+{
+  "assetId": "sponza-curtains-zup-ascii",
+  "importSucceeded": true,
+  "detectedEncoding": "Ascii",
+  "detectedVersionText": "7.4.0",
+  "fileSizeBytes": 386994077,
+  "nodeCount": 35,
+  "meshCount": 43,
+  "materialCount": 4,
+  "animationCount": 1,
+  "boneCount": 0,
+  "totalVertices": 3998532,
+  "totalFaces": 1000583,
+  "maxHierarchyDepth": 4,
+  "notes": "Subset scene used to compare hierarchy/material behavior against the main Sponza export."
+}

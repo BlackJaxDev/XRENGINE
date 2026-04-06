@@ -20,7 +20,7 @@ uniform float Emission = 0.0f;
 void main()
 {
     TransformId = floatBitsToUint(FragTransformId);
-    Normal = XRENGINE_EncodeNormal(FragNorm);
+    Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
     AlbedoOpacity = vec4(BaseColor, Opacity);
     RMSE = vec4(Roughness, Metallic, Specular, Emission);
 }

@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "description": "Phase 0 FBX corpus contract for the native importer/exporter effort.",
+  "entries": [
+    {
+      "id": "sponza-main-yup-ascii",
+      "description": "Large ASCII Sponza main scene exported Y-up.",
+      "availability": "CheckedIn",
+      "relativePath": "Build/CommonAssets/Models/main1_sponza/NewSponza_Main_Yup_003.fbx",
+      "expectedImportSuccess": true,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": "sponza-main-yup-ascii.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "Materials",
+        "ExternalTextures",
+        "LargeFile",
+        "TransformSemantics"
+      ],
+      "notes": "Checked-in semantic baseline only; not representative of the target binary tokenizer path."
+    },
+    {
+      "id": "sponza-main-zup-ascii",
+      "description": "Large ASCII Sponza main scene exported Z-up.",
+      "availability": "CheckedIn",
+      "relativePath": "Build/CommonAssets/Models/main1_sponza/NewSponza_Main_Zup_003.fbx",
+      "expectedImportSuccess": true,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": "sponza-main-zup-ascii.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "Materials",
+        "ExternalTextures",
+        "LargeFile",
+        "TransformSemantics"
+      ],
+      "notes": "Checked-in semantic baseline only; paired with the Y-up scene to validate axis-system handling."
+    },
+    {
+      "id": "sponza-curtains-yup-ascii",
+      "description": "Large ASCII Sponza curtains scene exported Y-up.",
+      "availability": "CheckedIn",
+      "relativePath": "Build/CommonAssets/Models/pkg_a_curtains/NewSponza_Curtains_FBX_YUp.fbx",
+      "expectedImportSuccess": true,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": "sponza-curtains-yup-ascii.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "Materials",
+        "ExternalTextures",
+        "LargeFile",
+        "TransformSemantics"
+      ],
+      "notes": "Subset scene used to compare hierarchy/material behavior against the main Sponza export."
+    },
+    {
+      "id": "sponza-curtains-zup-ascii",
+      "description": "Large ASCII Sponza curtains scene exported Z-up.",
+      "availability": "CheckedIn",
+      "relativePath": "Build/CommonAssets/Models/pkg_a_curtains/NewSponza_Curtains_FBX_ZUp.fbx",
+      "expectedImportSuccess": true,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": "sponza-curtains-zup-ascii.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "Materials",
+        "ExternalTextures",
+        "LargeFile",
+        "TransformSemantics"
+      ],
+      "notes": "Subset scene used to compare hierarchy/material behavior against the main Sponza export."
+    },
+    {
+      "id": "malformed-not-an-fbx",
+      "description": "Trivially invalid file used to verify parser rejection.",
+      "availability": "SyntheticMalformed",
+      "relativePath": "XREngine.UnitTests/TestData/Fbx/malformed/not-an-fbx.fbx",
+      "expectedImportSuccess": false,
+      "expectedEncoding": "Unknown",
+      "expectedVersionText": null,
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": null,
+      "scenarios": [
+        "Malformed"
+      ],
+      "notes": "Future parser should fail closed before attempting semantic decode."
+    },
+    {
+      "id": "malformed-truncated-ascii-header",
+      "description": "Header-shaped but invalid ASCII FBX fragment.",
+      "availability": "SyntheticMalformed",
+      "relativePath": "XREngine.UnitTests/TestData/Fbx/malformed/truncated-ascii-header.fbx",
+      "expectedImportSuccess": false,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": null,
+      "scenarios": [
+        "Malformed"
+      ],
+      "notes": "Future parser should reject truncated ASCII content cleanly."
+    },
+    {
+      "id": "malformed-unbalanced-braces",
+      "description": "ASCII FBX fixture with an unclosed nested block.",
+      "availability": "SyntheticMalformed",
+      "relativePath": "XREngine.UnitTests/TestData/Fbx/malformed/unbalanced-braces.fbx",
+      "expectedImportSuccess": false,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": null,
+      "scenarios": [
+        "Malformed"
+      ],
+      "notes": "Phase 1 ASCII parser should reject unbalanced braces deterministically."
+    },
+    {
+      "id": "malformed-unterminated-string",
+      "description": "ASCII FBX fixture with an unterminated quoted string.",
+      "availability": "SyntheticMalformed",
+      "relativePath": "XREngine.UnitTests/TestData/Fbx/malformed/unterminated-string.fbx",
+      "expectedImportSuccess": false,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": null,
+      "scenarios": [
+        "Malformed"
+      ],
+      "notes": "Phase 1 ASCII parser should reject unterminated strings deterministically."
+    },
+    {
+      "id": "malformed-broken-array-block",
+      "description": "ASCII FBX fixture with an invalid *count array block.",
+      "availability": "SyntheticMalformed",
+      "relativePath": "XREngine.UnitTests/TestData/Fbx/malformed/broken-array-block.fbx",
+      "expectedImportSuccess": false,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": null,
+      "scenarios": [
+        "Malformed"
+      ],
+      "notes": "Phase 1 ASCII parser should reject malformed array-count syntax deterministically."
+    },
+    {
+      "id": "planned-binary-7400-small-static",
+      "description": "Required small binary 7400 static mesh fixture for tokenizer and round-trip tests.",
+      "availability": "Planned",
+      "relativePath": null,
+      "expectedImportSuccess": true,
+      "expectedEncoding": "Binary",
+      "expectedVersionText": "7400",
+      "includeInPerformanceBaseline": true,
+      "expectedSummaryPath": null,
+      "scenarios": [
+        "BinaryTokenizer",
+        "StaticScene"
+      ],
+      "notes": "Must be sourced or authored before Phase 1 tokenizer work is considered complete."
+    },
+    {
+      "id": "planned-binary-7500-skinned-animation",
+      "description": "Required binary 7500 skinned fixture with animation coverage.",
+      "availability": "Planned",
+      "relativePath": null,
+      "expectedImportSuccess": true,
+      "expectedEncoding": "Binary",
+      "expectedVersionText": "7500",
+      "includeInPerformanceBaseline": true,
+      "expectedSummaryPath": null,
+      "scenarios": [
+        "BinaryTokenizer",
+        "SkinnedCharacter",
+        "Animation",
+        "TransformSemantics"
+      ],
+      "notes": "Must cover bones, bind poses, and animation stacks in a native-parser target asset."
+    },
+    {
+      "id": "planned-binary-7400-blendshapes-embedded-textures",
+      "description": "Required binary fixture with blendshapes and embedded textures.",
+      "availability": "Planned",
+      "relativePath": null,
+      "expectedImportSuccess": true,
+      "expectedEncoding": "Binary",
+      "expectedVersionText": "7400",
+      "includeInPerformanceBaseline": true,
+      "expectedSummaryPath": null,
+      "scenarios": [
+        "BinaryTokenizer",
+        "Blendshapes",
+        "EmbeddedTextures"
+      ],
+      "notes": "Needed to prove array decompression and embedded media handling in the native path."
+    }
+  ]
+}

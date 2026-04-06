@@ -181,3 +181,33 @@ If a quad FBO writes to an explicitly assigned output attachment, create it with
 `RenderTextureResource.Bind()` **destroys** the old texture when replacing. FBOs holding destroyed textures become incomplete → black screen. Always verify FBO attachment identity after format changes.
 
 Use `ResolveOutputHDR()` (which reads `RenderingPipelineState.SceneCamera`) rather than `Engine.Rendering.Settings.OutputHDR`, because `XRQuadFrameBuffer.Render()` calls `PushRenderingCamera(null)` during uniform setting.
+
+---
+
+## 16. Deferred Geometry Normals Must Be Normalized Before Encoding
+
+**Rule:** Deferred fragment shaders that encode the interpolated geometric normal directly must call `normalize(FragNorm)` before `XRENGINE_EncodeNormal(...)`.
+
+### What went wrong
+
+Several deferred material variants wrote `XRENGINE_EncodeNormal(FragNorm)` straight into the GBuffer. On imported geometry, interpolated normals were not guaranteed to remain unit length, so octahedral encoding stored skewed directions. Result: deferred lighting could collapse toward black or heavily distorted shading on materials that relied on geometric normals instead of tangent-space normal maps.
+
+### Fix
+
+Normalize `FragNorm` in the direct-geometry deferred shaders (`ColoredDeferred`, `TexturedDeferred`, `TexturedAlphaDeferred`, `TexturedSpecDeferred`, `TexturedSpecAlphaDeferred`, `TexturedMetallicDeferred`, `TexturedMetallicRoughnessDeferred`, `TexturedRoughnessDeferred`, `TexturedEmissiveDeferred`).
+
+---
+
+## 17. Deferred Debug Output Switch
+
+**Rule:** When diagnosing deferred composite issues, use the render pipeline's `Deferred Debug View` setting in the ImGui inspector instead of ad-hoc shader edits.
+
+`DeferredLightCombine.fs` exposes debug modes via the `DeferredDebugMode` uniform, wired from the `Deferred Debug View` property on `DefaultRenderPipeline` / `DefaultRenderPipeline2`.
+
+Current modes:
+
+- `1` = raw albedo
+- `2` = accumulated direct lighting (`InLo`)
+- `3` = RMSE buffer
+- `4` = decoded normal
+- `5` = depth
