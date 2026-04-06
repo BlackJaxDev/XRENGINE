@@ -1,6 +1,7 @@
 using System.Threading.Tasks;
 using System;
 using System.IO;
+using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
@@ -37,6 +38,19 @@ public sealed class MaterialRenderPassContractTests
     }
 
     [Test]
+    public void CreateLitTextureMaterial_DeferredHelper_SeedsDeferredDefaults()
+    {
+        XRMaterial material = XRMaterial.CreateLitTextureMaterial(deferred: true);
+
+        material.Parameter<ShaderVector3>("BaseColor")?.Value.ShouldBe(Vector3.One);
+        material.Parameter<ShaderFloat>("Opacity")?.Value.ShouldBe(1.0f);
+        material.Parameter<ShaderFloat>("Specular")?.Value.ShouldBe(0.2f);
+        material.Parameter<ShaderFloat>("Roughness")?.Value.ShouldBe(0.0f);
+        material.Parameter<ShaderFloat>("Metallic")?.Value.ShouldBe(0.0f);
+        material.Parameter<ShaderFloat>("Emission")?.Value.ShouldBe(0.0f);
+    }
+
+    [Test]
     public void CreateLitTextureMaterial_ForwardHelper_UsesOpaqueForwardPass()
     {
         XRMaterial material = XRMaterial.CreateLitTextureMaterial(deferred: false);
@@ -50,6 +64,19 @@ public sealed class MaterialRenderPassContractTests
         XRMaterial material = XRMaterial.CreateLitTextureMaterial(new XRTexture2D(), deferred: true);
 
         material.RenderPass.ShouldBe((int)EDefaultRenderPass.OpaqueDeferred);
+    }
+
+    [Test]
+    public void CreateColorMaterialDeferred_SeedsDeferredDefaults()
+    {
+        XRMaterial material = XRMaterial.CreateColorMaterialDeferred();
+
+        material.Parameter<ShaderVector3>("BaseColor").ShouldNotBeNull();
+        material.Parameter<ShaderFloat>("Opacity")?.Value.ShouldBe(1.0f);
+        material.Parameter<ShaderFloat>("Specular")?.Value.ShouldBe(0.2f);
+        material.Parameter<ShaderFloat>("Roughness")?.Value.ShouldBe(0.0f);
+        material.Parameter<ShaderFloat>("Metallic")?.Value.ShouldBe(0.0f);
+        material.Parameter<ShaderFloat>("Emission")?.Value.ShouldBe(0.0f);
     }
 
     [Test]

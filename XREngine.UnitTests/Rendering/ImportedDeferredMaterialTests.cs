@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
 using System.Threading.Tasks;
 using Assimp;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -79,6 +81,169 @@ public sealed class ImportedDeferredMaterialTests
         material.Textures.Count.ShouldBe(2);
         material.Textures[0].ShouldBeSameAs(albedo);
         material.Textures[1].ShouldBeSameAs(normal);
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_TexturedMaterialsSeedBaseColorParameter()
+    {
+        XRTexture2D albedo = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo],
+            [CreateSlot("albedo.png", TextureType.Diffuse)],
+            "DiffuseMaterial");
+
+        material.Parameter<ShaderVector3>("BaseColor")?.Value.ShouldBe(Vector3.One);
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_NormalMappedMaterialsSeedBaseColorParameter()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D normal = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, normal],
+            [
+                CreateSlot("albedo.png", TextureType.BaseColor),
+                CreateSlot("normal.png", TextureType.NormalCamera),
+            ],
+            "NormalCameraMaterial");
+
+        material.Parameter<ShaderVector3>("BaseColor")?.Value.ShouldBe(Vector3.One);
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_NormalMappedLegacyMaterialsUseForwardEquivalentRoughnessFallback()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D normal = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, normal],
+            [
+                CreateSlot("albedo.png", TextureType.BaseColor),
+                CreateSlot("normal.png", TextureType.NormalCamera),
+            ],
+            "NormalCameraMaterial");
+
+        material.Parameter<ShaderFloat>("Roughness")?.Value.ShouldBe(
+            ModelImporter.ConvertLegacyShininessToDeferredRoughness(32.0f),
+            0.0001f);
+    }
+
+    [Test]
+    public void ResolveImportedDeferredRoughness_UsesImportedLegacyShininess()
+    {
+        Dictionary<string, List<MaterialProperty>> properties = new()
+        {
+            ["$mat.shininess"] = [new MaterialProperty("$mat.shininess", 128.0f)],
+        };
+
+        ModelImporter.ResolveImportedDeferredRoughness(properties, hasRoughnessTexture: false).ShouldBe(
+            ModelImporter.ConvertLegacyShininessToDeferredRoughness(128.0f),
+            0.0001f);
+    }
+
+    [Test]
+    public void ResolveImportedHeightMapScale_UsesImportedBumpScaling()
+    {
+        Dictionary<string, List<MaterialProperty>> properties = new()
+        {
+            ["$mat.bumpscaling"] = [new MaterialProperty("$mat.bumpscaling", 0.35f)],
+        };
+
+        // Assimp bumpscaling (0.35) is multiplied by the engine scale (1.5) to produce
+        // visible normals from the Sobel 3x3 height-to-normal reconstruction.
+        ModelImporter.ResolveImportedHeightMapScale(properties, isHeightMap: true).ShouldBe(0.35f * 1.5f, 0.0001f);
+        ModelImporter.ResolveImportedHeightMapScale(properties, isHeightMap: false).ShouldBe(0.0f);
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_HeightTextureNamedLikeNormalMap_UsesNormalMapMode()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D surfaceDetail = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, surfaceDetail],
+            [
+                CreateSlot("albedo.png", TextureType.BaseColor),
+                CreateSlot("body_NormalMap.png", TextureType.Height),
+            ],
+            "LegacyBumpMaterial");
+
+        material.Parameter<ShaderInt>("NormalMapMode")?.Value.ShouldBe(0);
+        material.Parameter<ShaderFloat>("HeightMapScale")?.Value.ShouldBe(0.0f);
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("TexturedNormalDeferred.fs");
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_HeightTextureWithoutNormalHint_UsesHeightMapMode()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D surfaceDetail = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, surfaceDetail],
+            [
+                CreateSlot("albedo.png", TextureType.BaseColor),
+                CreateSlot("stone_height.png", TextureType.Height),
+            ],
+            "HeightMaterial");
+
+        material.Parameter<ShaderInt>("NormalMapMode")?.Value.ShouldBe(1);
+        // No Assimp bumpscaling → authored scale defaults to 1.0, multiplied by engine scale (1.5).
+        material.Parameter<ShaderFloat>("HeightMapScale")?.Value.ShouldBe(1.5f, 0.0001f);
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("TexturedNormalDeferred.fs");
+    }
+
+    [Test]
+    public void ResolveTransparencyMode_DiffuseTextureWithCutoutAlphaDefaultsToMasked()
+    {
+        XRTexture2D albedo = CreateDiffuseTextureWithAlpha(255, 255, 0, 0);
+
+        ModelImporter.ResolveTransparencyMode(
+            [albedo],
+            [CreateSlot("lion.png", TextureType.Diffuse)])
+            .ShouldBe(ETransparencyMode.Masked);
+    }
+
+    [Test]
+    public void ResolveTransparencyMode_FullyOpaqueDiffuseAlphaRemainsOpaque()
+    {
+        XRTexture2D albedo = CreateDiffuseTextureWithAlpha(255, 255, 255, 255);
+
+        ModelImporter.ResolveTransparencyMode(
+            [albedo],
+            [CreateSlot("albedo.png", TextureType.Diffuse)])
+            .ShouldBe(ETransparencyMode.Opaque);
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_DiffuseCutoutAlphaWithoutOpacityMapUsesDeferredAlphaShader()
+    {
+        XRTexture2D albedo = CreateDiffuseTextureWithAlpha(255, 255, 0, 0);
+        XRTexture2D normal = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, normal],
+            [
+                CreateSlot("lion.png", TextureType.Diffuse),
+                CreateSlot("lion_bump.png", TextureType.Height),
+            ],
+            "LionMaterial");
+
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("TexturedNormalAlphaDeferred.fs");
+        material.Textures.Count.ShouldBe(3);
+        material.Textures[0].ShouldBeSameAs(albedo);
+        material.Textures[1].ShouldBeSameAs(normal);
+        material.Textures[2].ShouldBeSameAs(albedo);
+        material.TransparencyMode.ShouldBe(ETransparencyMode.Masked);
+        material.Parameter<ShaderFloat>("AlphaCutoff").ShouldNotBeNull();
     }
 
     [Test]
@@ -164,6 +329,27 @@ public sealed class ImportedDeferredMaterialTests
 
     private static TextureSlot CreateSlot(string filePath, TextureType textureType)
         => new(filePath, textureType, 0, default, 0, 1.0f, default, default, default, 0);
+
+    private static XRTexture2D CreateDiffuseTextureWithAlpha(params byte[] alphaValues)
+    {
+        XRTexture2D texture = new(2u, 2u, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, allocateData: false)
+        {
+            AlphaAsTransparency = true,
+        };
+
+        byte[] pixels = new byte[alphaValues.Length * 4];
+        for (int i = 0; i < alphaValues.Length; i++)
+        {
+            int pixelIndex = i * 4;
+            pixels[pixelIndex] = 255;
+            pixels[pixelIndex + 1] = 255;
+            pixels[pixelIndex + 2] = 255;
+            pixels[pixelIndex + 3] = alphaValues[i];
+        }
+
+        texture.Mipmaps[0].Data = new DataSource(pixels);
+        return texture;
+    }
 
     private static string ReadWorkspaceFile(string relativePath)
     {

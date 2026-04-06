@@ -482,7 +482,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         string? name = texture.Name;
         if (name is null)
         {
-            Debug.Rendering("Texture name must be set before adding to the pipeline.");
+            Debug.RenderingWarning("Texture name must be set before adding to the pipeline.");
             return;
         }
 
@@ -511,7 +511,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         string name = buffer.AttributeName;
         if (string.IsNullOrWhiteSpace(name))
         {
-            Debug.Rendering("Data buffer attribute name must be set before adding to the pipeline.");
+            Debug.RenderingWarning("Data buffer attribute name must be set before adding to the pipeline.");
             return;
         }
 
@@ -536,7 +536,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         string? name = fbo.Name;
         if (name is null)
         {
-            Debug.Rendering("FBO name must be set before adding to the pipeline.");
+            Debug.RenderingWarning("FBO name must be set before adding to the pipeline.");
             return;
         }
 
@@ -620,7 +620,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         string? name = renderBuffer.Name;
         if (name is null)
         {
-            Debug.Rendering("RenderBuffer name must be set before adding to the pipeline.");
+            Debug.RenderingWarning("RenderBuffer name must be set before adding to the pipeline.");
             return;
         }
         Resources.BindRenderBuffer(renderBuffer, descriptor);

@@ -289,7 +289,7 @@ namespace XREngine
         /// Convenience helper that routes output through the rendering log.
         /// </summary>
         public static void Rendering(string message, params object[] args)
-            => Log(ELogCategory.Rendering, EOutputVerbosity.Normal, false, message, args);
+            => Log(ELogCategory.Rendering, EOutputVerbosity.Verbose, false, message, args);
 
         /// <summary>
         /// Convenience helper that routes output through the OpenGL log.
@@ -844,6 +844,19 @@ namespace XREngine
             if (!ShouldLogEvery(key, interval))
                 return;
             Log(ELogCategory.OpenGL, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited OpenGL error without stack trace. Use for per-frame error conditions
+        /// that should not spam logs but must be visible as errors rather than warnings.
+        /// </summary>
+        public static void OpenGLErrorEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Log(ELogCategory.OpenGL, EOutputVerbosity.Normal, false, "[ERROR] " + message, args);
     #endif
         }
 

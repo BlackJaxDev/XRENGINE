@@ -851,7 +851,7 @@ public partial class DefaultRenderPipeline
         //  override layout(binding=) probe samplers with fallback textures.)
         lightCombineMat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);
 
-        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat) { Name = LightCombineFBOName };
+        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, true, false) { Name = LightCombineFBOName };
 
         if (diffuseTexture is not IFrameBufferAttachement attach)
         {

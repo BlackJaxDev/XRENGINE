@@ -1031,7 +1031,7 @@ namespace XREngine.Rendering
 
             if (RuntimeRenderingHostServices.Current.IsViewportCurrentlyRendering(this))
             {
-                Debug.Rendering("Render recursion: Viewport is already currently rendering.");
+                Debug.RenderingWarning("Render recursion: Viewport is already currently rendering.");
                 return;
             }
 
@@ -1104,13 +1104,13 @@ namespace XREngine.Rendering
             var world = worldOverride ?? World;
             if (world is null)
             {
-                Debug.Rendering("No world is set to this viewport.");
+                Debug.RenderingWarning("No world is set to this viewport.");
                 return;
             }
 
             if (RuntimeRenderingHostServices.Current.IsViewportCurrentlyRendering(this))
             {
-                Debug.Rendering("Render recursion: Viewport is already currently rendering.");
+                Debug.RenderingWarning("Render recursion: Viewport is already currently rendering.");
                 return;
             }
 

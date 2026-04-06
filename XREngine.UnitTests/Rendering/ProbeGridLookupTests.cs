@@ -207,6 +207,25 @@ public sealed class ProbeGridLookupTests
     }
 
     [Test]
+    public void DeferredLightCombine_InitializesProbeWeightsAndIndices()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
+
+        source.ShouldContain("vec4 probeWeights = vec4(0.0f);");
+        source.ShouldContain("ivec4 probeIndices = ivec4(-1);");
+    }
+
+    [Test]
+    public void DeferredLightCombine_HasGlobalAmbientFallbackWhenNoProbesExist()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
+
+        source.ShouldContain("if (ProbeCount <= 0)");
+        source.ShouldContain("vec3 ambient = kD * (GlobalAmbient * albedoColor) * diffuseAO;");
+        source.ShouldContain("OutLo = vec4(ambient + InLo + emissiveIntensity * albedoColor, albedoOpacity.a);");
+    }
+
+    [Test]
     public void PipelineDefineConstant_Exists()
     {
         string source = ReadCSharpFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
