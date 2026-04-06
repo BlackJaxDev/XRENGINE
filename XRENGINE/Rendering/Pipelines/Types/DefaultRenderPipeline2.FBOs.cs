@@ -840,7 +840,7 @@ public partial class DefaultRenderPipeline2
         // locations are registered in _boundSamplerLocations BEFORE BindFallbackSamplers runs.
         lightCombineMat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);
 
-        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat) { Name = LightCombineFBOName };
+        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, true, false) { Name = LightCombineFBOName };
 
         if (diffuseTexture is not IFrameBufferAttachement attach)
         {

@@ -107,6 +107,12 @@ namespace XREngine.Rendering.OpenGL
                 texture.PreSampling();
                 Renderer.SetActiveTextureUnit(textureUnit);
 
+                // Unbind stale texture targets on this unit that conflict with the
+                // new binding (e.g. a cubemap left from a previous pass when this
+                // shader expects sampler2D).  Prevents NVIDIA GL_INVALID_OPERATION
+                // "program texture usage" errors.
+                Renderer.ClearConflictingTextureTargets(texture.TextureTarget);
+
                 if (canBindUniform && location >= 0)
                     Uniform(location, textureUnit);
 

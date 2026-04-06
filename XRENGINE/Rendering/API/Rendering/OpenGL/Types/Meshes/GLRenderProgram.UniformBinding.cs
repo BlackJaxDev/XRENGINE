@@ -243,10 +243,11 @@ namespace XREngine.Rendering.OpenGL
                     if (!TryReserveFallbackSamplerUnit(out int fallbackUnit))
                     {
                         string programName = Data.Name ?? BindingId.ToString();
-                        Debug.OpenGLWarningEvery(
+                        Debug.OpenGLErrorEvery(
                             $"GLFallbackSamplerNoUnit:{programName}",
                             TimeSpan.FromSeconds(30),
-                            $"[Shader Texture Binding] No free texture units remain for fallback samplers in program '{programName}'.");
+                            $"[Shader Texture Binding] No free texture units remain for fallback samplers in program '{programName}'. " +
+                            "One or more sampler uniforms are unbound — check that all material textures are loaded and assigned.");
                         break;
                     }
 
@@ -256,11 +257,13 @@ namespace XREngine.Rendering.OpenGL
                     if (!suppressWarning)
                     {
                         string programName = Data.Name ?? BindingId.ToString();
-                        string warningKey = $"GLFallbackSampler:{programName}:{name}:{meta.Type}";
-                        Debug.OpenGLWarningEvery(
-                            warningKey,
+                        string errorKey = $"GLFallbackSampler:{programName}:{name}:{meta.Type}";
+                        Debug.OpenGLErrorEvery(
+                            errorKey,
                             TimeSpan.FromSeconds(30),
-                            $"[Shader Texture Binding] Bound fallback sampler for '{name}' in program '{programName}'. SamplerType={meta.Type}, TextureUnit={fallbackUnit}.");
+                            $"[Shader Texture Binding] Sampler '{name}' in program '{programName}' was not bound by any material texture. " +
+                            $"A fallback texture was substituted (SamplerType={meta.Type}, TextureUnit={fallbackUnit}). " +
+                            "This likely means a texture failed to load or the material is missing a required texture slot.");
                     }
                 }
             }

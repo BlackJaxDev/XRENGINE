@@ -278,7 +278,7 @@ internal sealed class RenderPipelineGpuProfiler
             if (!string.IsNullOrWhiteSpace(expectedScopeName) &&
                 !string.Equals(userStack[^1], expectedScopeName, StringComparison.Ordinal))
             {
-                Debug.Rendering($"GPU timer scope mismatch. Expected '{expectedScopeName}', but closing '{userStack[^1]}'.");
+                Debug.RenderingWarning($"GPU timer scope mismatch. Expected '{expectedScopeName}', but closing '{userStack[^1]}'.");
             }
 
             userStack.RemoveAt(userStack.Count - 1);

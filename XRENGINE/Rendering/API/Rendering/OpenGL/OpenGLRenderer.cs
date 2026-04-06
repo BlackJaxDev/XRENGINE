@@ -4099,6 +4099,40 @@ void main()
                 texture.BindingId);
         }
 
+        /// <summary>
+        /// Unbinds any texture targets on the currently active unit that differ from <paramref name="keepTarget"/>.
+        /// Prevents NVIDIA "program texture usage" errors caused by stale bindings on the same unit
+        /// (e.g. a cubemap left over from a previous pass when the shader expects sampler2D).
+        /// </summary>
+        public void ClearConflictingTextureTargets(ETextureTarget keepTarget)
+        {
+            if (!_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var unitBindings))
+                return;
+
+            // Collect targets to remove (can't modify dictionary while iterating).
+            List<ETextureTarget>? toRemove = null;
+            foreach (var kvp in unitBindings)
+            {
+                if (kvp.Key == keepTarget)
+                    continue;
+
+                toRemove ??= [];
+                toRemove.Add(kvp.Key);
+            }
+
+            if (toRemove is null)
+                return;
+
+            foreach (var staleTarget in toRemove)
+            {
+                Api.BindTexture(GLObjectBase.ToGLEnum(staleTarget), 0);
+                unitBindings.Remove(staleTarget);
+            }
+
+            if (unitBindings.Count == 0)
+                _boundTexturesPerUnitTarget.Remove(ActiveTextureUnit);
+        }
+
         public void SetDrawDebugContext(string? programName, string? materialName, string? meshName, int[] textureUnits)
         {
             _currentDrawProgramName = string.IsNullOrWhiteSpace(programName) ? null : programName;

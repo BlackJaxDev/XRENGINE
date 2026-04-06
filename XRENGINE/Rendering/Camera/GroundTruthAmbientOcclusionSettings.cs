@@ -12,8 +12,8 @@ namespace XREngine.Rendering
         private bool _useInputNormals = true;
         private float _falloffStartRatio = 0.4f;
         private float _thicknessHeuristic = 1.0f;
-        private bool _multiBounceEnabled = false;
-        private bool _specularOcclusionEnabled = false;
+        private bool _multiBounceEnabled = true;
+        private bool _specularOcclusionEnabled = true;
 
         public GroundTruthAmbientOcclusionSettings(AmbientOcclusionSettings owner)
             : base(owner, nameof(AmbientOcclusionSettings.GroundTruth))

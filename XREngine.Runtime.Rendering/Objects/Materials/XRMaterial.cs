@@ -722,21 +722,44 @@ namespace XREngine.Rendering
         public static XRMaterial CreateUnlitTextureMaterialForward()
             => new(ShaderHelper.UnlitTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
+        private static ShaderVar[] CreateDeferredLitDefaults(ColorF4 color, float specular = 0.2f, float roughness = 0.0f, float metallic = 0.0f, float emission = 0.0f)
+            =>
+            [
+                new ShaderVector3((ColorF3)color, "BaseColor"),
+                new ShaderFloat(color.A, "Opacity"),
+                new ShaderFloat(specular, "Specular"),
+                new ShaderFloat(roughness, "Roughness"),
+                new ShaderFloat(metallic, "Metallic"),
+                new ShaderFloat(emission, "Emission"),
+            ];
+
         public static XRMaterial CreateLitTextureMaterial(bool deferred = true)
-            => new((deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!)
-            {
-                RenderPass = deferred
-                    ? (int)EDefaultRenderPass.OpaqueDeferred
-                    : (int)EDefaultRenderPass.OpaqueForward
-            };
+        {
+            XRShader fragmentShader = (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!;
+            XRMaterial material = deferred
+                ? new(CreateDeferredLitDefaults(ColorF4.White), fragmentShader)
+                : new(fragmentShader);
+
+            material.RenderPass = deferred
+                ? (int)EDefaultRenderPass.OpaqueDeferred
+                : (int)EDefaultRenderPass.OpaqueForward;
+
+            return material;
+        }
 
         public static XRMaterial CreateLitTextureMaterial(XRTexture2D texture, bool deferred = true)
-            => new([texture], (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!)
-            {
-                RenderPass = deferred
-                    ? (int)EDefaultRenderPass.OpaqueDeferred
-                    : (int)EDefaultRenderPass.OpaqueForward
-            };
+        {
+            XRShader fragmentShader = (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!;
+            XRMaterial material = deferred
+                ? new(CreateDeferredLitDefaults(ColorF4.White), [texture], fragmentShader)
+                : new([texture], fragmentShader);
+
+            material.RenderPass = deferred
+                ? (int)EDefaultRenderPass.OpaqueDeferred
+                : (int)EDefaultRenderPass.OpaqueForward;
+
+            return material;
+        }
 
         public static XRMaterial CreateLitTextureSilhouettePOMMaterial(
             XRTexture2D albedo,
@@ -786,13 +809,7 @@ namespace XREngine.Rendering
 
         public static XRMaterial CreateColorMaterialDeferred(ColorF4 color)
         {
-            ShaderVar[] parameters =
-            [
-                new ShaderVector3((ColorF3)color, "BaseColor"),
-                new ShaderFloat(color.A, "Opacity"),
-            ];
-
-            XRMaterial material = new(parameters, ShaderHelper.LitColorFragDeferred()!)
+            XRMaterial material = new(CreateDeferredLitDefaults(color), ShaderHelper.LitColorFragDeferred()!)
             {
                 RenderPass = (int)EDefaultRenderPass.OpaqueDeferred
             };

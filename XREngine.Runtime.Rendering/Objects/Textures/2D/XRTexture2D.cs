@@ -825,6 +825,21 @@ namespace XREngine.Rendering
         private static MagickImage? _fillerImage = null;
         public static MagickImage FillerImage => _fillerImage ??= GetFillerBitmap();
 
+        private static MagickImage? _normalMapFillerImage = null;
+        /// <summary>
+        /// A flat tangent-space "no perturbation" filler: RGB = (128, 128, 255) → (0, 0, 1) in tangent space.
+        /// Use this for textures that will be sampled as normal maps to avoid the black-fallback
+        /// inversion bug where (0,0,0)*2-1 = (-1,-1,-1) produces an inverted normal and zeroes all lighting.
+        /// </summary>
+        public static MagickImage NormalMapFillerImage => _normalMapFillerImage ??= GetNormalMapFillerBitmap();
+
+        private static MagickImage GetNormalMapFillerBitmap()
+        {
+            // Flat tangent-space normal: (0.5, 0.5, 1.0) in [0,1] = (0, 0, 1) in [-1,1]
+            var flatNormal = new MagickColor(128 * 257, 128 * 257, 255 * 257); // MagickColor uses 16-bit channels
+            return new MagickImage(flatNormal, 1, 1);
+        }
+
         private static MagickImage GetFillerBitmap()
         {
             string? path = RuntimeRenderingHostServices.Current.TextureFallbackPath;
