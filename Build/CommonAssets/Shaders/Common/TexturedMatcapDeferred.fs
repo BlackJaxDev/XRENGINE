@@ -25,12 +25,13 @@ void main()
 {
     TransformId = floatBitsToUint(FragTransformId);
     vec3 viewDir = normalize(-FragPos);
-    vec3 reflected = reflect(viewDir, normalize(FragNorm));
+    vec3 worldNormal = normalize(FragNorm);
+    vec3 reflected = reflect(viewDir, worldNormal);
     float m = 2.0f * sqrt(reflected.x * reflected.x + reflected.y * reflected.y + (reflected.z + 1.0f) * (reflected.z + 1.0f));
     vec2 matcapUV = vec2(reflected.x / m + 0.5f, reflected.y / m + 0.5f);
     vec4 matcapSample = texture(Texture0, matcapUV);
 
-    Normal = XRENGINE_EncodeNormal(FragNorm);
+    Normal = XRENGINE_EncodeNormal(worldNormal);
     AlbedoOpacity = vec4(matcapSample.rgb * BaseColor, Opacity);
     RMSI = vec4(Roughness, Metallic, Specular, Emission);
 }

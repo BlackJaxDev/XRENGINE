@@ -29,7 +29,7 @@ void main()
     vec4 albedoSample = texture(Texture0, FragUV0);
 
     TransformId = floatBitsToUint(FragTransformId);
-    Normal = XRENGINE_EncodeNormal(FragNorm);
+    Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
     AlbedoOpacity = vec4(albedoSample.rgb * BaseColor, Opacity);
 
     float metallicTex = texture(Texture2, FragUV0).r;

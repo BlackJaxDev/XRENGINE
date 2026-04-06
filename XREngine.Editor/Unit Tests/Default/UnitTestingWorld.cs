@@ -3,8 +3,10 @@ using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Lights;
+using XREngine.Components.Scene.Volumes;
 using XREngine.Components.Scene;
 using XREngine.Data.Core;
+using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Components.Animation;
@@ -122,6 +124,10 @@ public static partial class EditorUnitTests
         if (Toggles.Mirror)
             AddMirror(rootNode);
 
+        Debug.Out($"[VolumetricFog] InitializeVolumetricFog = {Toggles.InitializeVolumetricFog}");
+        if (Toggles.InitializeVolumetricFog)
+            AddVolumetricFogVolume(rootNode);
+
         if (Toggles.AddPhysics)
             Physics.AddPhysics(rootNode, Toggles.PhysicsBallCount);
 
@@ -192,6 +198,30 @@ public static partial class EditorUnitTests
         mirrorTfm.Translation = new Vector3(0.0f, 0.0f, -20.0f);
         mirrorTfm.Scale = new Vector3(160.0f, 90.0f, 1.0f);
         var mirrorComp = mirrorNode.AddComponent<MirrorCaptureComponent>()!;
+    }
+
+    private static void AddVolumetricFogVolume(SceneNode rootNode)
+    {
+        var settings = Toggles.VolumetricFog;
+
+        SceneNode fogNode = rootNode.NewChild("VolumetricFogVolume");
+        var fogTransform = fogNode.SetTransform<Transform>();
+        fogTransform.Translation = new Vector3(settings.Translation.X, settings.Translation.Y, settings.Translation.Z);
+
+        var volume = fogNode.AddComponent<VolumetricFogVolumeComponent>()!;
+        volume.HalfExtents = new Vector3(settings.HalfExtents.X, settings.HalfExtents.Y, settings.HalfExtents.Z);
+        volume.ScatteringColor = new ColorF3(settings.ScatteringColor.R, settings.ScatteringColor.G, settings.ScatteringColor.B);
+        volume.Density = settings.Density;
+        volume.NoiseScale = settings.NoiseScale;
+        volume.NoiseVelocity = new Vector3(settings.NoiseVelocity.X, settings.NoiseVelocity.Y, settings.NoiseVelocity.Z);
+        volume.NoiseThreshold = settings.NoiseThreshold;
+        volume.NoiseAmount = settings.NoiseAmount;
+        volume.EdgeFade = settings.EdgeFade;
+        volume.Anisotropy = settings.Anisotropy;
+        volume.LightContribution = settings.LightContribution;
+        volume.Priority = settings.Priority;
+
+        Debug.Out($"[VolumetricFog] Volume node created: Translation=({settings.Translation.X}, {settings.Translation.Y}, {settings.Translation.Z}), HalfExtents=({settings.HalfExtents.X}, {settings.HalfExtents.Y}, {settings.HalfExtents.Z}), Density={settings.Density}");
     }
 
     private static void AddIKTest(SceneNode rootNode)

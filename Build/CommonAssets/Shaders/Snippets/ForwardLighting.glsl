@@ -233,7 +233,6 @@ vec3 XRENGINE_SpecF_SchlickRoughnessApprox(float VoH, vec3 F0, float roughness)
 
 vec2 XRENGINE_EncodeOcta(vec3 dir)
 {
-    dir = normalize(dir);
     vec3 octDir = vec3(dir.x, dir.z, dir.y);
     octDir /= max(abs(octDir.x) + abs(octDir.y) + abs(octDir.z), 1e-5);
 

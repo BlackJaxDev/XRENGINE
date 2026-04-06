@@ -60,6 +60,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime,
             }
         };
         var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
@@ -851,7 +852,7 @@ public partial class DefaultRenderPipeline
         //  override layout(binding=) probe samplers with fallback textures.)
         lightCombineMat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);
 
-        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat) { Name = LightCombineFBOName };
+        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false) { Name = LightCombineFBOName };
 
         if (diffuseTexture is not IFrameBufferAttachement attach)
         {

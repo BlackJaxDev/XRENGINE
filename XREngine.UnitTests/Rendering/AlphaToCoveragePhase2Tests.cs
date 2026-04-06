@@ -195,6 +195,16 @@ public sealed class AlphaToCoveragePhase2Tests
     }
 
     [Test]
+    public void LightCombineQuad_DisablesMaterialDerivedTargets_ToMatchItsRecreateValidator()
+    {
+        string pipelineFboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs");
+        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false)");
+
+        string pipeline2FboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs");
+        pipeline2FboSource.ShouldContain("new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false)");
+    }
+
+    [Test]
     public void AmbientOcclusionModeEvaluation_UsesResolvedCameraFallbacks()
     {
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");

@@ -3,9 +3,8 @@
 
 vec2 XRENGINE_EncodeNormal(vec3 normal)
 {
-    vec3 n = normalize(normal);
-    float invL1Norm = 1.0f / max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6f);
-    n *= invL1Norm;
+    float invL1Norm = 1.0f / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-6f);
+    vec3 n = normal * invL1Norm;
 
     vec2 oct = n.xy;
     if (n.z < 0.0f)

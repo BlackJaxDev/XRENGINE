@@ -62,6 +62,36 @@ public sealed class DeferredOpacityShaderContractTests
         source.ShouldNotContain("XRENGINE_AlphaCutoffAndDither");
     }
 
+    [Test]
+    [TestCase("Common/ColoredDeferred.fs")]
+    [TestCase("Common/TexturedDeferred.fs")]
+    [TestCase("Common/TexturedEmissiveDeferred.fs")]
+    [TestCase("Common/TexturedMatcapDeferred.fs")]
+    [TestCase("Common/TexturedMetallicDeferred.fs")]
+    [TestCase("Common/TexturedMetallicRoughnessDeferred.fs")]
+    [TestCase("Common/TexturedRoughnessDeferred.fs")]
+    [TestCase("Common/TexturedSpecDeferred.fs")]
+    [TestCase("Common/TexturedAlphaDeferred.fs")]
+    [TestCase("Common/TexturedSpecAlphaDeferred.fs")]
+    public void DeferredShaders_UsingGeometryNormals_NormalizeBeforeEncoding(string shaderRelativePath)
+    {
+        string source = LoadShaderSource(shaderRelativePath);
+
+        source.ShouldContain("normalize(FragNorm)");
+        source.ShouldNotContain("EncodeNormal(FragNorm)");
+    }
+
+    [Test]
+    public void SurfaceDetailNormalMapping_FallsBackToGeometricNormal_WhenTangentBasisIsInvalid()
+    {
+        string source = LoadShaderSource("Snippets/SurfaceDetailNormalMapping.glsl");
+
+        source.ShouldContain("XRENGINE_IsFiniteVec3");
+        source.ShouldContain("tangentLengthSq <= 1e-6");
+        source.ShouldContain("bitangentLengthSq <= 1e-6");
+        source.ShouldContain("return N;");
+    }
+
     private static string LoadShaderSource(string shaderRelativePath)
     {
         string fullPath = ResolveWorkspacePath(Path.Combine("Build", "CommonAssets", "Shaders", shaderRelativePath));

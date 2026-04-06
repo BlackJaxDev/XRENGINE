@@ -21,6 +21,12 @@ public enum EOpacityMapMode
     Blended,
 }
 
+public enum FbxImportBackend
+{
+    Assimp,
+    Native,
+}
+
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions
 {
     /// <summary>
@@ -118,6 +124,11 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     /// FBX-specific: preserve pivot transforms.
     /// </summary>
     public bool PreservePivots { get; set; } = true;
+
+    /// <summary>
+    /// Selects the FBX importer implementation.
+    /// </summary>
+    public FbxImportBackend FbxBackend { get; set; } = FbxImportBackend.Assimp;
 
     /// <summary>
     /// FBX-specific: collapse Assimp-generated helper nodes.
