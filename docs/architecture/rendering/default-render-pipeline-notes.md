@@ -211,3 +211,29 @@ Current modes:
 - `3` = RMSE buffer
 - `4` = decoded normal
 - `5` = depth
+
+---
+
+## 18. Temporal AA: Static Edge Rejection and Debug Views
+
+**Rule:** Temporal reprojection needs to stay conservative on moving or disoccluded pixels, but static silhouettes must still accumulate enough history to hide the camera jitter.
+
+### What went wrong
+
+The temporal resolve already used motion vectors, depth rejection, neighborhood clipping, and reactive masks, but the static-edge path was still too distrustful. The combination of a low minimum history weight, a tight depth reject threshold, and an aggressive depth-discontinuity scale left many static silhouettes sampling mostly the current jittered frame instead of converging to a stable anti-aliased edge.
+
+### Fix
+
+- Raised the default temporal history floor and max history weight.
+- Relaxed the depth reject threshold and reduced depth discontinuity amplification.
+- Boosted the confidence floor for static pixels while keeping moving geometry governed by the existing reactive and motion masks.
+- Added a `Temporal AA -> Debug View` enum so the resolve can visualize history weight, velocity, geometry instability, reactive masking, and history acceptance directly from the shader.
+
+### Practical debugging guidance
+
+- Use `HistoryWeight` to verify stable edges are actually accumulating.
+- Use `Velocity` to confirm reprojection is receiving non-zero motion where expected.
+- Use `GeometryInstability` to find edges being over-rejected by depth discontinuities.
+- Use `HistoryAcceptance` to distinguish outright history rejection from low-confidence blending.
+- In the editor, these Temporal AA controls only affect the camera that is actually driving the active viewport. If the scene panel is rendering through the editor flying camera, changing a different camera component's Temporal AA settings will not change the scene panel output.
+- The Temporal AA controls only affect the live output when the active camera's effective AA mode is `TAA` or `TSR`; if the camera is using `None`, `MSAA`, `FXAA`, or `SMAA`, the temporal stage settings are intentionally inert.

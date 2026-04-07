@@ -146,31 +146,6 @@ namespace XREngine.Scene
                     }
             }
 
-            double budgetMs = CaptureBudgetMilliseconds;
-            _captureBudgetStopwatch.Restart();
-
-            while (_captureQueue.TryPeek(out _))
-            {
-                if (ShouldDeferAuxiliaryCaptures())
-                    break;
-
-                if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
-                {
-                    Debug.Out("[Lights3D] CollectVisible: capture budget exceeded, deferring remaining");
-                    break;
-                }
-
-                if (!_captureQueue.TryDequeue(out SceneCaptureComponentBase? capture))
-                    break;
-
-                if (_captureBagUpdating.Contains(capture))
-                    continue;
-
-                Debug.Out($"[Lights3D] CollectVisible: processing capture {capture.GetType().Name}");
-                _captureBagUpdating.Add(capture);
-                capture.CollectVisible();
-            }
-
             //CollectingVisibleShadowMaps = false;
         }
 
@@ -310,18 +285,37 @@ namespace XREngine.Scene
             if (ShouldDeferAuxiliaryCaptures())
                 return;
 
-            foreach (SceneCaptureComponentBase capture in _captureBagRendering)
+            while (_captureWorkQueue.TryPeek(out _))
             {
                 if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
-                {
-                    // Defer remaining captures to next frame
-                    Debug.Out($"[Lights3D] RenderShadowMaps: capture render budget exceeded, deferring {capture.GetType().Name}");
-                    _captureQueue.Enqueue(capture);
-                    continue;
-                }
+                    break;
 
-                Debug.Out($"[Lights3D] RenderShadowMaps: rendering capture {capture.GetType().Name}");
-                capture.Render();
+                if (ShouldDeferAuxiliaryCaptures())
+                    break;
+
+                if (!_captureWorkQueue.TryDequeue(out CaptureWorkItem item))
+                    break;
+
+                switch (item.WorkType)
+                {
+                    case ECaptureWorkType.CubemapFace:
+                        if (item.Component is SceneCaptureComponent scc)
+                            scc.ExecuteCaptureFace(item.FaceIndex);
+                        break;
+
+                    case ECaptureWorkType.CaptureFinalize:
+                        if (item.Component is SceneCaptureComponent finScc)
+                            finScc.FinalizeCubemapCapture();
+                        CompletePendingCapture(item.Component);
+                        break;
+
+                    case ECaptureWorkType.FullCapture:
+                        item.Component.CollectVisible();
+                        item.Component.SwapBuffers();
+                        item.Component.Render();
+                        CompletePendingCapture(item.Component);
+                        break;
+                }
             }
         }
 

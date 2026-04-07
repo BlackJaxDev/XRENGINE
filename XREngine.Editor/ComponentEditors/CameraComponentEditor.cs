@@ -415,6 +415,20 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         EAntiAliasingMode.Tsr,
     ];
 
+    private static readonly Vector4 WarningTextColor = new(1.0f, 0.7f, 0.2f, 1.0f);
+    private static readonly Vector4 InfoTextColor = new(0.4f, 0.8f, 1.0f, 1.0f);
+
+    private static XRViewport? ResolvePrimaryRuntimeViewport()
+        => (Engine.State.MainPlayer?.Viewport as XRViewport)
+            ?? Engine.EnumerateActiveViewports().FirstOrDefault();
+
+    private static EAntiAliasingMode ResolveEffectiveAaMode(XRCamera? camera)
+        => camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
+
+    private static string DescribeCamera(XRCamera? camera)
+        => camera?.Transform.SceneNode?.Name
+            ?? (camera is null ? "<none>" : $"Camera #{camera.GetHashCode()}");
+
     private static void DrawAntiAliasingOverride(CameraComponent component)
     {
         var camera = component.Camera;
@@ -434,6 +448,10 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Enable to override the global AA mode for this camera.");
+
+        ImGui.TextDisabled($"Effective AA: {effectiveMode}");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("This is the anti-aliasing mode the renderer will use when this camera is the active render camera.");
 
         if (camera.AntiAliasingModeOverride.HasValue)
         {
@@ -832,6 +850,52 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
     }
 
+    private static void DrawTemporalControlsStatus(CameraComponent component)
+    {
+        XRViewport? runtimeViewport = ResolvePrimaryRuntimeViewport();
+        XRCamera? runtimeCamera = runtimeViewport?.ActiveCamera;
+        XRCamera inspectedCamera = component.Camera;
+        bool isLiveCamera = ReferenceEquals(runtimeCamera, inspectedCamera);
+        EAntiAliasingMode inspectedMode = ResolveEffectiveAaMode(inspectedCamera);
+        EAntiAliasingMode runtimeMode = ResolveEffectiveAaMode(runtimeCamera);
+
+        ImGui.TextColored(InfoTextColor, $"Inspected Camera AA: {inspectedMode}");
+
+        if (runtimeViewport is null)
+        {
+            ImGui.TextColored(WarningTextColor, "No active runtime viewport is currently available.");
+            return;
+        }
+
+        ImGui.TextDisabled($"Scene Panel Camera: {DescribeCamera(runtimeCamera)}");
+        ImGui.TextDisabled($"Scene Panel AA: {runtimeMode}");
+
+        if (!component.IsActivelyRendering)
+        {
+            ImGui.TextColored(WarningTextColor, "This camera is not actively rendering, so its post-processing controls will not affect the scene panel.");
+            return;
+        }
+
+        if (!isLiveCamera)
+        {
+            ImGui.TextColored(WarningTextColor, "The scene panel is rendering through a different camera. These controls only affect this camera's own viewports or previews.");
+            return;
+        }
+
+        if (runtimeMode != EAntiAliasingMode.Taa && runtimeMode != EAntiAliasingMode.Tsr)
+        {
+            ImGui.TextColored(WarningTextColor, "Temporal AA controls are inactive because the live camera is not using TAA or TSR.");
+            if (ImGui.SmallButton("Set AA Override To TAA"))
+                inspectedCamera.AntiAliasingModeOverride = EAntiAliasingMode.Taa;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Set AA Override To TSR"))
+                inspectedCamera.AntiAliasingModeOverride = EAntiAliasingMode.Tsr;
+            return;
+        }
+
+        ImGui.TextColored(new Vector4(0.2f, 0.8f, 0.2f, 1.0f), "Temporal AA controls are live for the scene panel camera.");
+    }
+
     /// <summary>
     /// Creates a new camera parameter instance of the specified type, using <see cref="XRCameraParameters.CreateFromPrevious"/>
     /// to intelligently convert settings from the previous parameter type.
@@ -1116,9 +1180,9 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         if (!ImGui.CollapsingHeader("Post Processing", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        var pipeline = component.Camera.RenderPipeline;
+        var pipeline = ResolvePostProcessingEditorPipeline(component.Camera);
         var schema = pipeline.PostProcessSchema;
-        var state = component.Camera.GetActivePostProcessState();
+        var state = component.Camera.GetPostProcessState(pipeline);
 
         ImGui.PushID("PostProcessingPanel");
 
@@ -1129,12 +1193,20 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
         else
         {
+            DrawTemporalControlsStatus(component);
+            ImGui.Separator();
             DrawSchemaCategories(schema, state, component);
             DrawAdvancedPostProcessingInspector(state, visited);
         }
 
         ImGui.PopID();
     }
+
+    private static RenderPipeline ResolvePostProcessingEditorPipeline(XRCamera camera)
+        => camera.Viewports
+            .Select(viewport => viewport.RenderPipeline)
+            .FirstOrDefault(pipeline => pipeline is not null)
+            ?? camera.RenderPipeline;
 
     private static void DrawSchemaCategories(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, CameraComponent component)
     {

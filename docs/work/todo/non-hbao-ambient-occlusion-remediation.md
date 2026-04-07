@@ -1,7 +1,7 @@
 # Non-HBAO Ambient Occlusion Status And Remediation TODO
 
 Last Updated: 2026-03-11
-Current Status: non-HBAO AO modes have now been audited against the current code and external references. The MSVO path was confirmed to expose dead UI controls, those controls have been removed from the post-process schema, the misleading SAO selector entry has been removed, the live AO API now uses honest names with compatibility aliases for old enum values, GTAO now has a first real gather plus denoise path, and VXAO now has an explicit enum/schema/pipeline scaffold plus dedicated shared-voxel design and TODO docs instead of existing only as a research note.
+Current Status: non-HBAO AO modes have now been audited against the current code and external references. The MSVO path had its dead UI controls removed, the misleading SAO selector entry is gone, the live AO API now exposes canonical `MVAO` and `MSVO` names while retaining compatibility aliases, GTAO has a first real gather plus denoise path, legacy `HorizonBased` now normalizes to `HBAO+`, and VXAO remains an explicit scaffold plus dedicated shared-voxel design/TODO item instead of silently pretending to work.
 Scope: current non-HBAO AO modes plus roadmap support planning for GTAO and VXAO. HBAO/HBAO+ are handled in separate docs.
 
 This document now consolidates the prior non-HBAO AO audit and the follow-up remediation backlog into one canonical work doc.
@@ -11,15 +11,15 @@ This document now consolidates the prior non-HBAO AO audit and the follow-up rem
 What is already true:
 
 - `ScreenSpace` is a recognizable legacy SSAO implementation.
-- `MultiViewAmbientOcclusion` is internally coherent as a custom AO mode.
+- `MultiViewAmbientOcclusion` is internally coherent as a real multi-view AO family.
+- `MultiScaleVolumetricObscurance` has a dedicated multi-scale obscurance pass.
 - `SpatialHashRaytraced` is implemented as an experimental compute AO path.
 - Dead MSVO editor controls for `ResolutionScale` and `SamplesPerPixel` have been removed because the runtime pass does not consume them.
-- The AO method dropdown now labels the current non-HBAO families in a way that calls out legacy, custom, prototype, alias, and experimental status.
+- The AO method dropdown now labels the current non-HBAO families canonically: `MVAO`, `MSVO`, `HBAO+`, `GTAO`, `VXAO`, and `Spatial Hash AO`.
 
 What remains problematic:
 
-- `ScalableAmbientObscurance` and `MultiScaleVolumetricObscurance` both point at one simplified pass that does not match canonical SAO closely enough.
-- `MultiViewAmbientOcclusion` is still a custom local name with no confirmed canonical external algorithm family.
+- `MultiScaleVolumetricObscurance` still needs deeper validation against canonical MSVO expectations.
 - `SpatialHashRaytraced` still needs stronger validation before it can be treated as production-stable.
 - GTAO now has an early runtime implementation, while VXAO is still only a deliberate scaffold and planning target.
 
@@ -28,8 +28,8 @@ What remains problematic:
 Current classification of the non-HBAO AO families:
 
 - `ScreenSpace` is an honestly named legacy SSAO path.
-- `MultiViewAmbientOcclusion` is coherent, but it is a repo-local custom AO mode rather than a confirmed canonical published family.
-- `ScalableAmbientObscurance` and `MultiScaleVolumetricObscurance` still map to one simplified multi-radius obscurance pass that does not match canonical SAO closely enough.
+- `MultiViewAmbientOcclusion` is treated as a canonical multi-view AO family with its own dedicated pass.
+- `ScalableAmbientObscurance` remains only a compatibility alias; `MultiScaleVolumetricObscurance` is the live multi-scale obscurance mode.
 - `SpatialHashRaytraced` is an experimental compute AO path and should remain documented as such until stronger validation exists.
 - GTAO is the strongest modern canonical screen-space follow-on for this area.
 - VXAO is a longer-range shared-voxel roadmap item, not a small extension of the current screen-space pass set.
@@ -47,8 +47,8 @@ At the end of this work:
 
 - every non-HBAO AO mode is honestly named relative to its implementation
 - the editor shows only controls that actually affect the active pass
-- custom and experimental AO modes are clearly documented as such
-- mislabeled AO modes are either implemented properly or renamed/de-emphasized
+- published and experimental AO modes are documented honestly
+- canonical AO names and compatibility aliases are separated cleanly
 - GTAO and VXAO are tracked as deliberate future families with the right implementation expectations
 
 ## Non-Goals
@@ -64,32 +64,32 @@ Outcome: the AO editor stops implying capabilities the runtime does not have.
 - [x] Remove dead MSVO settings from the schema.
 - [x] Keep only MSVO settings that the runtime currently consumes.
 - [x] Audit other AO modes for any remaining editor controls that do not affect the shader/runtime path.
-- [x] Make the AO method selector label current non-HBAO modes honestly enough for day-to-day editor use.
+- [x] Make the AO method selector use canonical day-to-day names for MVAO, MSVO, HBAO+, GTAO, VXAO, and Spatial Hash AO.
 
 Acceptance criteria:
 
 - no AO mode shows controls that are definitely dead in the current runtime implementation
-- the AO method selector does not present custom, aliased, or experimental modes as if they were all equally canonical
+- the AO method selector does not present legacy aliases as if they were distinct implementations
 
 ## Phase 1 - Classify And Rename Where Needed
 
 Outcome: AO mode names align with reality.
 
 - [x] Remove `ScalableAmbientObscurance` from the editor selector until a canonical SAO implementation exists.
-- [x] Stop exposing `MultiScaleVolumetricObscurance` as the primary live API name for the current simplified pass.
-- [x] Rename the current simplified pass to a non-canonical live API name.
-- [x] Document the multi-view path explicitly as custom.
+- [x] Keep `MultiScaleVolumetricObscurance` as the primary live API name for the current MSVO pass.
+- [x] Remove the old prototype/custom selector wording from the live API surface.
+- [x] Document the multi-view path explicitly as MVAO.
 - [x] Document the spatial-hash path explicitly as experimental.
 - [x] Replace the temporary selector labels with honest live enum/API names while retaining compatibility aliases.
 
 Acceptance criteria:
 
-- the names shown in the editor and docs do not overclaim algorithm correctness
+- the names shown in the editor and docs use the canonical AO family names
 - old enum values still map cleanly to the current runtime behavior
 
 ## Phase 2 - Decide The Fate Of Current MVAO
 
-Outcome: MVAO has an explicit role instead of lingering ambiguously.
+Outcome: MVAO has an explicit supported role instead of lingering ambiguously.
 
 - [ ] Decide whether MVAO remains a supported custom mode after HBAO+ lands.
 - [ ] If kept, document its intent and tuning guidance.
@@ -97,26 +97,26 @@ Outcome: MVAO has an explicit role instead of lingering ambiguously.
 
 Acceptance criteria:
 
-- MVAO has a deliberate product position: supported custom mode, experimental mode, or deprecation path
+- MVAO has a deliberate product position: supported mode, experimental mode, or deprecation path
 
 ## Phase 3 - Repair Or Replace The SAO/MSVO Slot
 
-Outcome: the engine either has a real SAO-style implementation or stops pretending it does.
+Outcome: the engine either validates the current MSVO implementation against its references or narrows its claims further.
 
-Option A: implement a canonical SAO path
+Option A: strengthen the current MSVO implementation
 
-- [ ] add a dedicated SAO implementation with depth prefiltering / depth hierarchy
-- [ ] give `ScalableAmbientObscurance` its own true backing pass
-- [ ] expose only settings that map to the actual SAO implementation
+- [ ] validate the current MSVO gather and blur against its published reference expectations
+- [ ] expose any additional MSVO settings only if the runtime actually consumes them
+- [ ] document the exact algorithmic compromises if the implementation remains approximate
 
-Option B: defer canonical SAO and stop overclaiming
+Option B: narrow claims further if validation fails
 
-- [ ] hide the current SAO/MSVO entry from non-experimental use
-- [ ] or rename it to reflect that it is a simplified multi-radius obscurance prototype
+- [ ] hide the current MSVO entry from non-experimental use
+- [ ] or rename it again if the implementation proves too far from canonical MSVO behavior
 
 Acceptance criteria:
 
-- the engine no longer presents the current simplified pass as canonical SAO/MSVO unless it really becomes one
+- the engine no longer presents the MSVO pass more confidently than its validated implementation quality supports
 
 ## Phase 4 - Validate SpatialHashRaytraced As Experimental
 
@@ -195,7 +195,7 @@ Recommended future non-HBAO target order if new families are approved:
 
 ## Suggested Next Step
 
-The next concrete code task after this TODO should be Phase 1: decide whether the current SAO/MSVO entries stay visible at all before HBAO+ and any future GTAO work redefine the engine's modern AO lineup.
+The next concrete code task after this TODO should be Phase 3: validate the current MSVO implementation quality against its references now that the selector and API use the canonical MSVO/MVAO naming.
 
 ## Research Sources
 

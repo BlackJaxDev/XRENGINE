@@ -210,6 +210,11 @@ namespace XREngine.Rendering.OpenGL
                 Engine.Rendering.State.IsNVIDIA = vendor.Contains("NVIDIA");
                 Engine.Rendering.State.IsIntel = vendor.Contains("Intel");
                 Engine.Rendering.State.IsVulkan = false;
+                Engine.Rendering.State.OpenGLVendor = vendor;
+                Engine.Rendering.State.OpenGLRendererName = renderer;
+                Engine.Rendering.State.VulkanDeviceName = null;
+                Engine.Rendering.State.VulkanVendorId = 0;
+                Engine.Rendering.State.VulkanDeviceId = 0;
 
                 // Cache full extension list once so ImGui/debug panels can display it without re-enumerating each frame.
                 // Also probe for GL_NV_ray_tracing support early so features can decide whether to attempt the RT path.
@@ -261,6 +266,8 @@ namespace XREngine.Rendering.OpenGL
                 Engine.Rendering.State.HasVulkanRtxIo = false;
                 Engine.Rendering.State.HasVulkanMultiView = false;
             }
+
+            Engine.Rendering.RefreshVulkanUpscaleBridgeCapabilitySnapshot(this);
 
             GLRenderProgram.ReadBinaryShaderCache(version);
 
@@ -3286,6 +3293,86 @@ void main()
 
         public uint CreateSemaphore()
             => EXTSemaphore?.GenSemaphore() ?? 0;
+
+        public unsafe uint CreateImportedMemoryObject(ulong size, void* memoryObjectHandle)
+        {
+            uint memoryObject = CreateMemoryObject();
+            if (memoryObject == 0 || EXTMemoryObjectWin32 is null)
+                return 0;
+
+            EXTMemoryObjectWin32.ImportMemoryWin32Handle(memoryObject, size, EXT.HandleTypeOpaqueWin32Ext, memoryObjectHandle);
+            return memoryObject;
+        }
+
+        public unsafe uint CreateImportedSemaphore(void* semaphoreHandle)
+        {
+            uint semaphore = CreateSemaphore();
+            if (semaphore == 0 || EXTSemaphoreWin32 is null)
+                return 0;
+
+            EXTSemaphoreWin32.ImportSemaphoreWin32Handle(semaphore, EXT.HandleTypeOpaqueWin32Ext, semaphoreHandle);
+            return semaphore;
+        }
+
+        public unsafe void DeleteMemoryObject(uint memoryObject)
+        {
+            if (memoryObject == 0 || EXTMemoryObject is null)
+                return;
+
+            EXTMemoryObject.DeleteMemoryObjects(1, &memoryObject);
+        }
+
+        public void DeleteSemaphore(uint semaphore)
+        {
+            if (semaphore == 0)
+                return;
+
+            EXTSemaphore?.DeleteSemaphore(semaphore);
+        }
+
+        public unsafe void SignalExternalTextureSemaphore(uint semaphore, ReadOnlySpan<uint> textureIds, ReadOnlySpan<Silk.NET.OpenGLES.TextureLayout> layouts)
+        {
+            if (semaphore == 0 || EXTSemaphore is null || textureIds.Length == 0 || textureIds.Length != layouts.Length)
+                return;
+
+            fixed (uint* texturePtr = textureIds)
+            fixed (Silk.NET.OpenGLES.TextureLayout* layoutPtr = layouts)
+            {
+                EXTSemaphore.SignalSemaphore(semaphore, 0, (uint*)null, (uint)textureIds.Length, texturePtr, layoutPtr);
+            }
+        }
+
+        public unsafe void WaitExternalTextureSemaphore(uint semaphore, ReadOnlySpan<uint> textureIds, ReadOnlySpan<Silk.NET.OpenGLES.TextureLayout> layouts)
+        {
+            if (semaphore == 0 || EXTSemaphore is null || textureIds.Length == 0 || textureIds.Length != layouts.Length)
+                return;
+
+            fixed (uint* texturePtr = textureIds)
+            fixed (Silk.NET.OpenGLES.TextureLayout* layoutPtr = layouts)
+            {
+                EXTSemaphore.WaitSemaphore(semaphore, 0, (uint*)null, (uint)textureIds.Length, texturePtr, layoutPtr);
+            }
+        }
+
+        public unsafe void SignalExternalTextureSemaphore(uint semaphore, uint textureId, Silk.NET.OpenGLES.TextureLayout layout)
+        {
+            if (textureId == 0)
+                return;
+
+            Span<uint> textureIds = stackalloc uint[1] { textureId };
+            Span<Silk.NET.OpenGLES.TextureLayout> layouts = stackalloc Silk.NET.OpenGLES.TextureLayout[1] { layout };
+            SignalExternalTextureSemaphore(semaphore, textureIds, layouts);
+        }
+
+        public unsafe void WaitExternalTextureSemaphore(uint semaphore, uint textureId, Silk.NET.OpenGLES.TextureLayout layout)
+        {
+            if (textureId == 0)
+                return;
+
+            Span<uint> textureIds = stackalloc uint[1] { textureId };
+            Span<Silk.NET.OpenGLES.TextureLayout> layouts = stackalloc Silk.NET.OpenGLES.TextureLayout[1] { layout };
+            WaitExternalTextureSemaphore(semaphore, textureIds, layouts);
+        }
 
         public IntPtr GetMemoryObjectHandle(uint memoryObject)
         {

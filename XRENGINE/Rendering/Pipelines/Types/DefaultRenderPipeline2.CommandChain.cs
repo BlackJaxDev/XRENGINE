@@ -153,12 +153,11 @@ public partial class DefaultRenderPipeline2
             aoSwitch.Cases = new()
             {
                 [(int)AmbientOcclusionSettings.EType.ScreenSpace] = CreateSSAOPassCommands(),
-                [(int)AmbientOcclusionSettings.EType.HorizonBased] = CreateHBAOPassCommands(),
                 [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusPassCommands(),
                 [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOPassCommands(),
                 [(int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion] = CreateVXAOPassCommands(),
-                [(int)AmbientOcclusionSettings.EType.MultiViewCustom] = CreateMVAOPassCommands(),
-                [(int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype] = CreateMSVOPassCommands(),
+                [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateMVAOPassCommands(),
+                [(int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance] = CreateMSVOPassCommands(),
                 [(int)AmbientOcclusionSettings.EType.SpatialHashExperimental] = CreateSpatialHashAOPassCommands(),
             };
             aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
@@ -170,12 +169,11 @@ public partial class DefaultRenderPipeline2
             aoSwitch.Cases = new()
             {
                 [(int)AmbientOcclusionSettings.EType.ScreenSpace] = CreateSSAOPassCommands(),
-                [(int)AmbientOcclusionSettings.EType.HorizonBased] = CreateHBAOPassCommands(),
                 [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusPassCommands(),
                 [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOPassCommands(),
                 [(int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion] = CreateVXAOPassCommands(),
-                [(int)AmbientOcclusionSettings.EType.MultiViewCustom] = CreateSSAOPassCommands(),
-                [(int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype] = CreateSSAOPassCommands(),
+                [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateSSAOPassCommands(),
+                [(int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance] = CreateSSAOPassCommands(),
                 [(int)AmbientOcclusionSettings.EType.SpatialHashExperimental] = CreateSSAOPassCommands(),
             };
             aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
@@ -512,25 +510,11 @@ public partial class DefaultRenderPipeline2
             //Render the deferred pass lighting result, no depth testing
             c.Add<VPRC_DepthTest>().Enable = false;
 
-            // When deferred MSAA is active, use the per-sample LightCombine variant
-            // so direct light is read from the MSAA lighting texture per-sample via
-            // sampler2DMS + gl_SampleID. This avoids the dark silhouette edges that
-            // occur when the premature resolve averages sky-samples (zero) with
-            // geometry lighting before the skybox has a chance to fill them.
-            var lightCompositeBranch = c.Add<VPRC_IfElse>();
-            lightCompositeBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
-            {
-                var msaaCmds = new ViewportRenderCommandContainer(this);
-                msaaCmds.Add<VPRC_SampleShading>().Enable = true;
-                msaaCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = MsaaLightCombineFBOName;
-                msaaCmds.Add<VPRC_SampleShading>().Enable = false;
-                lightCompositeBranch.TrueCommands = msaaCmds;
-            }
-            {
-                var stdCmds = new ViewportRenderCommandContainer(this);
-                stdCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
-                lightCompositeBranch.FalseCommands = stdCmds;
-            }
+            // Present the resolved deferred light buffer for both standard and MSAA modes.
+            // The fullscreen per-sample combine path can blank deferred content on some
+            // GL drivers, while this resolved path preserves visibility and still lets the
+            // skybox refill uncovered MSAA samples afterward.
+            c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
 
             //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
             c.Add<VPRC_DepthTest>().Enable = true;
@@ -762,38 +746,38 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             FxaaOutputTextureName,
             CreateFxaaOutputTexture,
-            NeedsRecreateOutputTextureFullSize,
+            NeedsRecreatePostProcessTextureFullSize,
             ResizeTextureFullSize);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             PostProcessOutputFBOName,
             CreatePostProcessOutputFBO,
             GetDesiredFBOSizeInternal,
-            NeedsRecreateFboDueToOutputFormat);
+            NeedsRecreatePostProcessOutputFbo);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             FxaaFBOName,
             CreateFxaaFBO,
             GetDesiredFBOSizeFull,
-            NeedsRecreateFboDueToOutputFormat);
+            NeedsRecreateFxaaFbo);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             TsrHistoryColorTextureName,
             CreateTsrHistoryColorTexture,
-            NeedsRecreateOutputTextureFullSize,
+            NeedsRecreatePostProcessTextureFullSize,
             ResizeTextureFullSize);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             TsrHistoryColorFBOName,
             CreateTsrHistoryColorFBO,
             GetDesiredFBOSizeFull,
-            NeedsRecreateFboDueToOutputFormat);
+            NeedsRecreateTsrHistoryColorFbo);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             TsrUpscaleFBOName,
             CreateTsrUpscaleFBO,
             GetDesiredFBOSizeFull,
-            NeedsRecreateFboDueToOutputFormat);
+            NeedsRecreateTsrUpscaleFbo);
 
         //c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
         //    UserInterfaceFBOName,
@@ -812,13 +796,7 @@ public partial class DefaultRenderPipeline2
             {
                 var upscaleCmds = new ViewportRenderCommandContainer(this);
 
-                // First pass: PostProcess quad renders to PostProcessOutputTexture at internal resolution
-                using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
-                {
-                    upscaleCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
-                }
-
-                // Second pass: apply the selected anti-aliasing path.
+                // Apply the selected anti-aliasing path.
                 using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
                 {
                     var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
@@ -870,6 +848,13 @@ public partial class DefaultRenderPipeline2
         // the 1x1 exposure texture and UseGpuAutoExposure flag be current in the same frame.
         string exposureSource = HDRSceneTextureName;
         c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
+
+        // Always materialize the post-process quad into a texture-backed output FBO so
+        // final presentation does not depend on the quad-FBO fallback path.
+        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        {
+            c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
+        }
     }
 
     /// <summary>Commits temporal accumulation state (CPU-side bookkeeping).</summary>
@@ -921,7 +906,7 @@ public partial class DefaultRenderPipeline2
                     {
                         // Dynamic AA/upscale selection: choose the correct source at render time.
                         // FXAA, SMAA, and TSR each publish a distinct post-AA output FBO; when none
-                        // are active, the post-process output goes directly to screen.
+                        // are active, present the texture-backed post-process output directly.
                         var upscaleOutputChoice = c.Add<VPRC_IfElse>();
                         upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
                         {
@@ -939,7 +924,7 @@ public partial class DefaultRenderPipeline2
                             }
                             upscaleOutputChoice.TrueCommands = upscaleOutput;
                         }
-                        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessFBOName, bypassVendorUpscale);
+                        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessOutputFBOName, bypassVendorUpscale);
                     }
                 }
             }
@@ -962,11 +947,24 @@ public partial class DefaultRenderPipeline2
         {
             var vendorBlit = cmds.Add<VPRC_VendorUpscale>();
             vendorBlit.FrameBufferName = sourceFboName;
+            vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
             vendorBlit.DepthTextureName = DepthViewTextureName;
+            vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
             vendorBlit.MotionTextureName = VelocityTextureName;
+            vendorBlit.MotionFrameBufferName = VelocityFBOName;
         }
         return cmds;
     }
+
+    private static string? ResolveVendorUpscaleSourceTextureName(string sourceFboName)
+        => sourceFboName switch
+        {
+            PostProcessOutputFBOName => PostProcessOutputTextureName,
+            FxaaFBOName => FxaaOutputTextureName,
+            SmaaFBOName => SmaaOutputTextureName,
+            TsrUpscaleFBOName => FxaaOutputTextureName,
+            _ => null,
+        };
 
     private string TransparentResolveShaderName()
         => Stereo ? "TransparentResolveStereo.fs" : "TransparentResolve.fs";
@@ -985,8 +983,11 @@ public partial class DefaultRenderPipeline2
         var c = new ViewportRenderCommandContainer(this);
         var vendorBlit = c.Add<VPRC_VendorUpscale>();
         vendorBlit.FrameBufferName = sourceFboName;
+        vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
         vendorBlit.DepthTextureName = DepthViewTextureName;
+        vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
         vendorBlit.MotionTextureName = VelocityTextureName;
+        vendorBlit.MotionFrameBufferName = VelocityFBOName;
         return c;
     }
 
@@ -1226,7 +1227,7 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             PostProcessOutputTextureName,
             CreatePostProcessOutputTexture,
-            NeedsRecreateOutputTextureInternalSize,
+            NeedsRecreatePostProcessTextureInternalSize,
             ResizeTextureInternalSize);
 
         if (EnableFxaa)
@@ -1235,7 +1236,7 @@ public partial class DefaultRenderPipeline2
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 FxaaOutputTextureName,
                 CreateFxaaOutputTexture,
-                NeedsRecreateOutputTextureFullSize,
+                NeedsRecreatePostProcessTextureFullSize,
                 ResizeTextureFullSize);
         }
 
@@ -1770,12 +1771,11 @@ public partial class DefaultRenderPipeline2
         => AmbientOcclusionSettings.NormalizeType(type) switch
         {
             AmbientOcclusionSettings.EType.ScreenSpace => (int)AmbientOcclusionSettings.EType.ScreenSpace,
-            AmbientOcclusionSettings.EType.HorizonBased => (int)AmbientOcclusionSettings.EType.HorizonBased,
             AmbientOcclusionSettings.EType.HorizonBasedPlus => (int)AmbientOcclusionSettings.EType.HorizonBasedPlus,
             AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion => (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
             AmbientOcclusionSettings.EType.VoxelAmbientOcclusion => (int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion,
-            AmbientOcclusionSettings.EType.MultiViewCustom => (int)AmbientOcclusionSettings.EType.MultiViewCustom,
-            AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype => (int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype,
+            AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
+            AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance => (int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance,
             AmbientOcclusionSettings.EType.SpatialHashExperimental => (int)AmbientOcclusionSettings.EType.SpatialHashExperimental,
             _ => (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
         };

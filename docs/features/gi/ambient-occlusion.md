@@ -4,17 +4,16 @@ Ambient Occlusion (AO) simulates the soft shadows that occur in crevices, corner
 
 ## AO Types
 
-The engine currently exposes eight user-facing ambient occlusion modes. One historical SAO enum value remains as a compatibility alias, but it is no longer shown as a separate editor choice because it maps to the same simplified prototype path.
+The engine currently exposes seven user-facing ambient occlusion modes. Historical `ScalableAmbientObscurance` and `HorizonBased` enum values remain as compatibility aliases, but they are no longer shown as separate editor choices because they normalize to `MultiScaleVolumetricObscurance` and `HorizonBasedPlus` respectively.
 
 | Type | Description | Performance | Quality |
 |------|-------------|-------------|---------|
 | `ScreenSpace` | SSAO from the depth buffer | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| `HorizonBased` | HBAO-style horizon tracing | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 | `HorizonBasedPlus` | Enhanced HBAO+ algorithm | ⭐⭐⭐ | ⭐⭐⭐⭐ |
-| `GroundTruthAmbientOcclusion` | Experimental GTAO gather + denoise path | ⭐⭐⭐ | ⭐⭐⭐ |
-| `VoxelAmbientOcclusion` | Planned VXAO family slot backed by an honest neutral stub today | ⭐ | ⭐ |
-| `MultiRadiusObscurancePrototype` | Simplified multi-radius obscurance prototype | ⭐⭐⭐ | ⭐⭐ |
-| `MultiViewCustom` | Custom multi-view AO path | ⭐⭐⭐ | ⭐⭐⭐ |
+| `GroundTruthAmbientOcclusion` | GTAO gather + denoise path | ⭐⭐⭐ | ⭐⭐⭐ |
+| `VoxelAmbientOcclusion` | Planned VXAO family slot; currently the only neutral no-op AO mode | ⭐ | ⭐ |
+| `MultiScaleVolumetricObscurance` | MSVO multi-scale obscurance path | ⭐⭐⭐ | ⭐⭐ |
+| `MultiViewAmbientOcclusion` | MVAO multi-view AO path | ⭐⭐⭐ | ⭐⭐⭐ |
 | `SpatialHashExperimental` | Ray-marched AO with spatial hashing reuse | ⭐⭐ | ⭐⭐⭐ |
 
 ## Configuration
@@ -64,14 +63,13 @@ aoSettings.ResolutionScale = 1.0f; // Render at lower resolution
 aoSettings.Iterations = 1;         // Denoising blur passes
 ```
 
-## Horizon-Based AO
+## Legacy HBAO Alias
 
-Classic HBAO is currently deferred. Keep using HBAO+ unless you are implementing a dedicated reference or debug path:
+Classic standalone HBAO is no longer exposed as a distinct selector option. The legacy `HorizonBased` enum value now normalizes to `HorizonBasedPlus` so old content does not silently route into a neutral stub:
 
 ```csharp
 aoSettings.Type = AmbientOcclusionSettings.EType.HorizonBased;
-
-// Currently renders neutral AO and logs that the classic HBAO path is deferred.
+// Legacy alias. The runtime normalizes this to HorizonBasedPlus.
 ```
 
 ## Horizon-Based Plus (HBAO+)
@@ -85,7 +83,7 @@ aoSettings.Type = AmbientOcclusionSettings.EType.HorizonBasedPlus;
 
 ## Ground-Truth Ambient Occlusion (GTAO)
 
-GTAO now has a real slice-based horizon gather and edge-aware denoise path. It should still be treated as experimental until it is validated against canonical GTAO expectations under motion, thin geometry, and screen-edge stress cases.
+GTAO now has a real slice-based horizon gather and edge-aware denoise path. It is exposed as a first-class selector entry, though it still merits validation against canonical GTAO expectations under motion, thin geometry, and screen-edge stress cases.
 
 ```csharp
 aoSettings.Type = AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion;
@@ -102,7 +100,7 @@ aoSettings.GTAOUseInputNormals = true;
 
 ## Voxel Ambient Occlusion (VXAO)
 
-VXAO is now an explicit planned AO family in the default pipeline, but it is not implemented yet. Selecting it currently routes to a neutral stub while preserving a dedicated settings contract for future voxel work.
+VXAO is now an explicit planned AO family in the default pipeline, but it is not implemented yet. Selecting it currently routes to a neutral stub while preserving a dedicated settings contract for future voxel work. It should remain the only AO selector entry that intentionally behaves as a no-op today.
 
 ```csharp
 aoSettings.Type = AmbientOcclusionSettings.EType.VoxelAmbientOcclusion;
@@ -118,24 +116,24 @@ aoSettings.VXAODetailBlend = 0.35f;
 
 Treat VXAO as roadmap scaffolding until the renderer owns a real voxelization plus cone-tracing path for AO.
 
-## Multi-Radius AO Prototype
+## Multi-Scale Volumetric Obscurance (MSVO)
 
-This is the current simplified obscurance prototype path. It is not a canonical SAO implementation, and the old `ScalableAmbientObscurance` and `MultiScaleVolumetricObscurance` names now exist only as compatibility aliases.
+This is the engine's MSVO path. The historical `ScalableAmbientObscurance` and `MultiRadiusObscurancePrototype` enum values remain as compatibility aliases, but the live selector and public-facing docs now use the canonical MSVO name.
 
 ```csharp
-aoSettings.Type = AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype;
+aoSettings.Type = AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance;
 
-// Prototype path currently consumes only the shared bias/intensity settings
+// Current MSVO tuning is driven primarily by the shared bias/intensity settings
 aoSettings.Intensity = 1.0f;
 aoSettings.Bias = 0.05f;
 ```
 
-## Multi-View AO (Custom)
+## Multi-View Ambient Occlusion (MVAO)
 
 Uses information from multiple depth views for improved accuracy:
 
 ```csharp
-aoSettings.Type = AmbientOcclusionSettings.EType.MultiViewCustom;
+aoSettings.Type = AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion;
 
 // Multi-view specific
 aoSettings.MultiViewBlend = 0.6f;  // Blend factor between views
@@ -193,7 +191,7 @@ aoSettings.Rings = 3.0f;  // Fewer sampling rings
 |----------|------------------|
 | High-end Desktop | `HorizonBasedPlus` |
 | Mid-range Desktop | `HorizonBasedPlus` |
-| VR | `MultiViewCustom` |
+| VR | `MultiViewAmbientOcclusion` |
 | Mobile | `ScreenSpace` at 0.5x resolution |
 
 ## Visual Debugging

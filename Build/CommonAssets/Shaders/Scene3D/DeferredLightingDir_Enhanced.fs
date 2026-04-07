@@ -30,7 +30,8 @@ uniform float ShadowBiasMax = 0.004f;
 // Enhanced shadow quality settings
 uniform int ShadowSamples = 4; // 4-tap soft by default; raise explicitly for higher quality
 uniform float ShadowFilterRadius = 0.01f;
-uniform bool EnablePCSS = true;
+uniform int SoftShadowMode = 1;
+uniform float LightSourceRadius = 0.01f;
 uniform bool EnableCascadedShadows = true;
 uniform bool EnableContactShadows = true;
 uniform float ContactShadowDistance = 0.1f;
@@ -214,7 +215,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL)
     
     // Choose shadow algorithm based on settings
     float shadow;
-    if (EnablePCSS && ShadowSamples >= 16)
+    if (SoftShadowMode == 2 || (SoftShadowMode == 1 && ShadowSamples >= 16))
     {
         shadow = PCSSShadow(fragCoord, bias, cascadeIndex);
     }

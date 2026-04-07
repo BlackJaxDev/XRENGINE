@@ -167,7 +167,10 @@ namespace XREngine
             /// <see cref="Engine.EffectiveSettings"/> when they need the resolved value.
             /// </summary>
             public static void ApplyAntiAliasingPreference()
-                => AntiAliasingSettingsChanged?.Invoke();
+            {
+                AntiAliasingSettingsChanged?.Invoke();
+                InvalidateAllVulkanUpscaleBridges("anti-aliasing settings changed");
+            }
 
             public static void ApplyGpuRenderDispatchPreference()
             {
@@ -299,6 +302,8 @@ namespace XREngine
                         else
                             NvidiaDlssManager.ApplyToViewport(viewport, Settings);
                     }
+
+                    NotifyVulkanUpscaleBridgeVendorSelectionChanged("NVIDIA DLSS preference changed");
                 }
                 Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyNvidiaDlssPreference", true);
             }
@@ -314,6 +319,8 @@ namespace XREngine
                         else
                             IntelXessManager.ApplyToViewport(viewport, Settings);
                     }
+
+                    NotifyVulkanUpscaleBridgeVendorSelectionChanged("Intel XeSS preference changed");
                 }
                 Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyIntelXessPreference", true);
             }

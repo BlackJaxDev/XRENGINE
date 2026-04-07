@@ -2,9 +2,11 @@ using System;
 using System.IO;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Editor;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -205,6 +207,158 @@ public sealed class AlphaToCoveragePhase2Tests
     }
 
     [Test]
+    public void MsaaAttachmentFbos_ValidateCurrentDepthAndColorAttachments()
+    {
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("MsaaGBufferFBOName => !HasMsaaGBufferTargets(fbo)");
+        pipelineSource.ShouldContain("MsaaLightingFBOName => !HasMsaaLightingTargets(fbo)");
+        pipelineSource.ShouldContain("ForwardPassMsaaFBOName => !HasForwardPassMsaaTargets(fbo)");
+        pipelineSource.ShouldContain("HasTextureAttachment(targets[4], MsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment)");
+        pipelineSource.ShouldContain("HasTextureAttachment(targets[1], ForwardPassMsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment)");
+
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("MsaaGBufferFBOName => !HasMsaaGBufferTargets(fbo)");
+        pipeline2Source.ShouldContain("MsaaLightingFBOName => !HasMsaaLightingTargets(fbo)");
+        pipeline2Source.ShouldContain("ForwardPassMsaaFBOName => !HasForwardPassMsaaTargets(fbo)");
+        pipeline2Source.ShouldContain("HasTextureAttachment(targets[4], MsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment)");
+        pipeline2Source.ShouldContain("HasTextureAttachment(targets[1], ForwardPassMsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment)");
+    }
+
+    [Test]
+    public void Pipeline2_PostAaFbos_UseAttachmentIdentityPredicates()
+    {
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("private bool NeedsRecreatePostProcessOutputFbo(XRFrameBuffer fbo)");
+        pipeline2Source.ShouldContain("private bool NeedsRecreateFxaaFbo(XRFrameBuffer fbo)");
+        pipeline2Source.ShouldContain("private bool NeedsRecreateTsrHistoryColorFbo(XRFrameBuffer fbo)");
+        pipeline2Source.ShouldContain("private bool NeedsRecreateTsrUpscaleFbo(XRFrameBuffer fbo)");
+        pipeline2Source.ShouldContain("return !HasSingleColorTarget(fbo, PostProcessOutputTextureName);");
+        pipeline2Source.ShouldContain("!ReferenceEquals(textures[0], GetTexture<XRTexture>(PostProcessOutputTextureName))");
+        pipeline2Source.ShouldContain("!ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName))");
+
+        string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        pipeline2CommandChainSource.ShouldContain("PostProcessOutputFBOName,\n            CreatePostProcessOutputFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreatePostProcessOutputFbo);");
+        pipeline2CommandChainSource.ShouldContain("FxaaFBOName,\n            CreateFxaaFBO,\n            GetDesiredFBOSizeFull,\n            NeedsRecreateFxaaFbo);");
+        pipeline2CommandChainSource.ShouldContain("TsrHistoryColorFBOName,\n            CreateTsrHistoryColorFBO,\n            GetDesiredFBOSizeFull,\n            NeedsRecreateTsrHistoryColorFbo);");
+        pipeline2CommandChainSource.ShouldContain("TsrUpscaleFBOName,\n            CreateTsrUpscaleFBO,\n            GetDesiredFBOSizeFull,\n            NeedsRecreateTsrUpscaleFbo);");
+        pipeline2CommandChainSource.ShouldNotContain("TsrUpscaleFBOName,\n            CreateTsrUpscaleFBO,\n            GetDesiredFBOSizeFull,\n            NeedsRecreateFboDueToOutputFormat);");
+    }
+
+    [Test]
+    public void ForwardPassMsaaColorBuffer_UsesHdrSceneFormat()
+    {
+        string pipelineFboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
+        pipelineFboSource.ShouldContain("private ERenderBufferStorage GetForwardMsaaColorFormat()");
+        pipelineFboSource.ShouldContain("=> ERenderBufferStorage.Rgba16f;");
+
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("renderBuffer.Type != GetForwardMsaaColorFormat())");
+
+        string pipeline2FboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs").Replace("\r\n", "\n");
+        pipeline2FboSource.ShouldContain("private ERenderBufferStorage GetForwardMsaaColorFormat()");
+        pipeline2FboSource.ShouldContain("=> ERenderBufferStorage.Rgba16f;");
+
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("renderBuffer.Type != GetForwardMsaaColorFormat())");
+    }
+
+    [Test]
+    public void AntiAliasingInvalidation_ResetsTemporalHistoryState()
+    {
+        string temporalSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
+        temporalSource.ShouldContain("internal static void ResetHistory(XRRenderPipelineInstance? instance)");
+        temporalSource.ShouldContain("state.HistoryReady = false;");
+        temporalSource.ShouldContain("state.HistoryExposureReady = false;");
+        temporalSource.ShouldContain("state.PendingHistoryReady = false;");
+
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("VPRC_TemporalAccumulationPass.ResetHistory(instance);");
+
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("VPRC_TemporalAccumulationPass.ResetHistory(instance);");
+    }
+
+
+    [Test]
+    public void ViewportResize_EvictsPostProcessSourceChain_AndRequestsRenderRecheck()
+    {
+        string instanceSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/XRRenderPipelineInstance.cs").Replace("\r\n", "\n");
+        instanceSource.ShouldContain("case DefaultRenderPipeline pipeline:");
+        instanceSource.ShouldContain("pipeline.HandleViewportResized(this, width, height);");
+        instanceSource.ShouldContain("case DefaultRenderPipeline2 pipeline:");
+
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)");
+        pipelineSource.ShouldContain("const string reason = \"ViewportResized\";");
+        pipelineSource.ShouldContain("foreach (string name in AntiAliasingFrameBufferDependencies)");
+        pipelineSource.ShouldContain("foreach (string name in ResizeRecoveryFrameBufferDependencies)");
+        pipelineSource.ShouldContain("foreach (string name in AntiAliasingTextureDependencies)");
+        pipelineSource.ShouldContain("foreach (string name in ResizeRecoveryTextureDependencies)");
+        pipelineSource.ShouldContain("HDRSceneTextureName");
+        pipelineSource.ShouldContain("BloomBlurTextureName");
+        pipelineSource.ShouldContain("PostProcessOutputTextureName");
+        pipelineSource.ShouldContain("FxaaOutputTextureName");
+        pipelineSource.ShouldContain("SceneCopyFBOName");
+        pipelineSource.ShouldContain("PostProcessOutputFBOName");
+        pipelineSource.ShouldContain("FxaaFBOName");
+        pipelineSource.ShouldContain("RequestRenderStateRecheck(resetCircuitBreaker: true);");
+
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)");
+        pipeline2Source.ShouldContain("const string reason = \"ViewportResized\";");
+        pipeline2Source.ShouldContain("foreach (string name in AntiAliasingFrameBufferDependencies)");
+        pipeline2Source.ShouldContain("foreach (string name in ResizeRecoveryFrameBufferDependencies)");
+        pipeline2Source.ShouldContain("foreach (string name in AntiAliasingTextureDependencies)");
+        pipeline2Source.ShouldContain("foreach (string name in ResizeRecoveryTextureDependencies)");
+        pipeline2Source.ShouldContain("HDRSceneTextureName");
+        pipeline2Source.ShouldContain("BloomBlurTextureName");
+        pipeline2Source.ShouldContain("PostProcessOutputTextureName");
+        pipeline2Source.ShouldContain("FxaaOutputTextureName");
+        pipeline2Source.ShouldContain("SceneCopyFBOName");
+        pipeline2Source.ShouldContain("PostProcessOutputFBOName");
+        pipeline2Source.ShouldContain("FxaaFBOName");
+        pipeline2Source.ShouldContain("RequestRenderStateRecheck(resetCircuitBreaker: true);");
+    }
+
+    [Test]
+    public void SurfaceDetailNormalMapping_FallsBackToHeightReconstructionForGrayscaleInputs()
+    {
+        string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Snippets/SurfaceDetailNormalMapping.glsl").Replace("\r\n", "\n");
+        shaderSource.ShouldContain("vec3 T = tangentWS - N * dot(N, tangentWS);");
+        shaderSource.ShouldContain("float grayscaleDelta = max(abs(sampledColor.r - sampledColor.g)");
+        shaderSource.ShouldContain("if (grayscaleDelta <= 0.02)");
+        shaderSource.ShouldContain("tangentNormal = XRENGINE_HeightToNormalSobel(uv);");
+    }
+
+    [Test]
+    public void PostProcessOutput_IsMaterialized_BeforeFinalPresentation()
+    {
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);");
+        pipelineSource.ShouldContain("upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessOutputFBOName, bypassVendorUpscale);");
+
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);");
+        pipeline2Source.ShouldContain("upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessOutputFBOName, bypassVendorUpscale);");
+    }
+
+    [Test]
+    public void UnitTestingWorldVolumetricFogSources_MatchRuntimeDefaults()
+    {
+        var editorFog = new EditorUnitTests.Settings.VolumetricFogVolumeInitSettings();
+        var bootstrapFog = new UnitTestingWorldSettings.VolumetricFogVolumeInitSettings();
+        var runtimeFog = new VolumetricFogSettings();
+
+        editorFog.MaxDistance.ShouldBe(runtimeFog.MaxDistance);
+        editorFog.StepSize.ShouldBe(runtimeFog.StepSize);
+        editorFog.JitterStrength.ShouldBe(runtimeFog.JitterStrength);
+
+        bootstrapFog.MaxDistance.ShouldBe(runtimeFog.MaxDistance);
+        bootstrapFog.StepSize.ShouldBe(runtimeFog.StepSize);
+        bootstrapFog.JitterStrength.ShouldBe(runtimeFog.JitterStrength);
+    }
+
+    [Test]
     public void AmbientOcclusionModeEvaluation_UsesResolvedCameraFallbacks()
     {
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
@@ -237,6 +391,94 @@ public sealed class AlphaToCoveragePhase2Tests
 
         string mvaoSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/AO/VPRC_MVAOPass.cs");
         mvaoSource.ShouldContain("SamplerName = \"AONoiseTexture\"");
+    }
+
+    [Test]
+    public void PostAaTextures_UseStableHdrIntermediateFormat()
+    {
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("private static EPixelInternalFormat ResolvePostProcessIntermediateInternalFormat()\n        => EPixelInternalFormat.Rgba16f;");
+        pipelineSource.ShouldContain("private static bool NeedsRecreatePostProcessTextureInternalSize(XRTexture texture)");
+        pipelineSource.ShouldContain("private static bool NeedsRecreatePostProcessTextureFullSize(XRTexture texture)");
+        pipelineSource.ShouldContain("private static bool NeedsRecreateFboDueToPostProcessIntermediateFormat(XRFrameBuffer fbo)");
+        pipelineSource.ShouldContain("NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo)");
+        pipelineSource.ShouldContain("PostProcessOutputTextureName,\n            CreatePostProcessOutputTexture,\n            NeedsRecreatePostProcessTextureInternalSize,");
+        pipelineSource.ShouldContain("FxaaOutputTextureName,\n                CreateFxaaOutputTexture,\n                NeedsRecreatePostProcessTextureFullSize,");
+        pipelineSource.ShouldContain("TsrHistoryColorTextureName,\n                CreateTsrHistoryColorTexture,\n                NeedsRecreatePostProcessTextureFullSize,");
+
+        string texturesSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.Textures.cs").Replace("\r\n", "\n");
+        texturesSource.ShouldContain("EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();");
+        texturesSource.ShouldContain("EPixelType pixelType = ResolvePostProcessIntermediatePixelType();");
+        texturesSource.ShouldContain("ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();");
+
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("private static EPixelInternalFormat ResolvePostProcessIntermediateInternalFormat()\n        => EPixelInternalFormat.Rgba16f;");
+        pipeline2Source.ShouldContain("private static bool NeedsRecreatePostProcessTextureInternalSize(XRTexture texture)");
+        pipeline2Source.ShouldContain("private static bool NeedsRecreatePostProcessTextureFullSize(XRTexture texture)");
+        pipeline2Source.ShouldContain("private static bool NeedsRecreateFboDueToPostProcessIntermediateFormat(XRFrameBuffer fbo)");
+        pipeline2Source.ShouldContain("NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo)");
+
+        string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        pipeline2CommandChainSource.ShouldContain("PostProcessOutputTextureName,\n            CreatePostProcessOutputTexture,\n            NeedsRecreatePostProcessTextureInternalSize,");
+        pipeline2CommandChainSource.ShouldContain("FxaaOutputTextureName,\n            CreateFxaaOutputTexture,\n            NeedsRecreatePostProcessTextureFullSize,");
+        pipeline2CommandChainSource.ShouldContain("TsrHistoryColorTextureName,\n            CreateTsrHistoryColorTexture,\n            NeedsRecreatePostProcessTextureFullSize,");
+
+        string textures2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.Textures.cs").Replace("\r\n", "\n");
+        textures2Source.ShouldContain("EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();");
+        textures2Source.ShouldContain("EPixelType pixelType = ResolvePostProcessIntermediatePixelType();");
+        textures2Source.ShouldContain("ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();");
+    }
+
+    [Test]
+    public void TsrUpscale_RequiresExposureReadyBeforeUsingHistory()
+    {
+        string postProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        postProcessSource.ShouldContain("historyReady = temporalData.HistoryReady && temporalData.HistoryExposureReady;");
+
+        string postProcess2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
+        postProcess2Source.ShouldContain("historyReady = temporalData.HistoryReady && temporalData.HistoryExposureReady;");
+    }
+
+    [Test]
+    public void DeferredMsaaComposite_UsesResolvedLightCombineQuad()
+    {
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("Present the resolved deferred light buffer for both standard and MSAA modes.");
+        pipelineSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;");
+        pipelineSource.ShouldNotContain("msaaCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = MsaaLightCombineFBOName;");
+
+        string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        pipeline2CommandChainSource.ShouldContain("Present the resolved deferred light buffer for both standard and MSAA modes.");
+        pipeline2CommandChainSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;");
+        pipeline2CommandChainSource.ShouldNotContain("msaaCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = MsaaLightCombineFBOName;");
+    }
+
+    [Test]
+    public void VolumetricFog_UsesLightDrivenStableDither()
+    {
+        string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/PostProcess.fs").Replace("\r\n", "\n");
+        shaderSource.ShouldContain("float interleavedGradientNoise(vec2 pixelCoord)");
+        shaderSource.ShouldContain("return vec3(0.0f);");
+        shaderSource.ShouldContain("return lightColor * shadowFactor * lightContribution * phase * 4.0f;");
+        shaderSource.ShouldContain("float jitter = interleavedGradientNoise(gl_FragCoord.xy) * stepSize * VolumetricFog.JitterStrength;");
+        shaderSource.ShouldNotContain("return vec3(1.0f);");
+        shaderSource.ShouldNotContain("vec3(1.0f) + lightColor");
+        shaderSource.ShouldNotContain("fract(RenderTime * 7.0)");
+    }
+
+    [Test]
+    public void VolumetricFog_DisabledPath_UploadsInertShaderState()
+    {
+        string settingsSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/VolumetricFogSettings.cs").Replace("\r\n", "\n");
+        settingsSource.ShouldContain("_activeVolumes[i] = null;");
+        settingsSource.ShouldContain("_worldToLocal[i] = Matrix4x4.Identity;");
+        settingsSource.ShouldContain("_lightParams[i] = Vector4.Zero;");
+        settingsSource.ShouldContain("bool shaderEnabled = activeCount > 0;");
+        settingsSource.ShouldContain("program.Uniform($\"{StructUniformName}.Enabled\", shaderEnabled);");
+        settingsSource.ShouldContain("program.Uniform($\"{StructUniformName}.Intensity\", shaderEnabled ? Intensity : 0.0f);");
+        settingsSource.ShouldContain("program.Uniform($\"{StructUniformName}.MaxDistance\", shaderEnabled ? MaxDistance : 0.0f);");
+        settingsSource.ShouldContain("program.Uniform($\"{StructUniformName}.JitterStrength\", shaderEnabled ? JitterStrength : 0.0f);");
+        settingsSource.ShouldContain("program.Uniform($\"{StructUniformName}.VolumeCount\", activeCount);");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

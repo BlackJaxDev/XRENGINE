@@ -36,7 +36,8 @@ uniform float ShadowBiasMax = 0.004f;
 uniform bool LightHasShadowMap = true; // Added
 uniform int ShadowSamples = 4;
 uniform float ShadowFilterRadius = 0.0012f;
-uniform bool EnablePCSS = true;
+uniform int SoftShadowMode = 1;
+uniform float LightSourceRadius = 0.01f;
 // Debug: 0=normal, 1=shadow-only (white=lit), 2=margin heatmap (green=lit, red=shadow)
 uniform int ShadowDebugMode = 0;
 
@@ -104,7 +105,22 @@ float GetShadowCubeSampleRadius(in samplerCube shadowMap, in float filterRadius)
 	return texelDirectionSpan * max(1.0f, requestedScale);
 }
 
-float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir, in float biasedLightDist, in float farPlaneDist, in float sampleRadius, in int requestedSamples, in bool enableSoft)
+float BlockerSearchCubeLocal(in samplerCube shadowMap, in vec3 shadowDir, in float receiverDepth, in float farPlaneDist, in float sampleRadius, in int sampleCount)
+{
+	float blockerSum = 0.0f;
+	int blockerCount = 0;
+	int clampedSamples = clamp(sampleCount, 1, 20);
+	for (int i = 0; i < 20; ++i)
+	{
+		if (i >= clampedSamples) break;
+		vec3 sampleDir = normalize(shadowDir + GetShadowCubeKernelTapLocal(i) * sampleRadius);
+		float d = texture(shadowMap, sampleDir).r * farPlaneDist;
+		if (d < receiverDepth) { blockerSum += d; blockerCount++; }
+	}
+	return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0f;
+}
+
+float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir, in float biasedLightDist, in float farPlaneDist, in float sampleRadius, in int requestedSamples, in int softMode, in float lightSourceRadius)
 {
 	int sampleCount = clamp(requestedSamples, 1, 20);
 	if (sampleCount <= 1)
@@ -113,7 +129,23 @@ float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir,
 		return biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
 	}
 
-	if (enableSoft || sampleCount <= 4)
+	if (softMode == 2)
+	{
+		float avgBlocker = BlockerSearchCubeLocal(shadowMap, shadowDir, biasedLightDist, farPlaneDist, sampleRadius, sampleCount);
+		if (avgBlocker < 0.0f) return 1.0f;
+		float penumbra = clamp((biasedLightDist - avgBlocker) / max(avgBlocker, 0.0001f) * lightSourceRadius, sampleRadius * 0.1f, sampleRadius * 4.0f);
+		float lit = 0.0f;
+		for (int i = 0; i < 20; ++i)
+		{
+			if (i >= sampleCount) break;
+			vec3 sampleDir = normalize(shadowDir + GetShadowCubeKernelTapLocal(i) * penumbra);
+			float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
+			lit += biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
+		}
+		return lit / float(sampleCount);
+	}
+
+	if (softMode == 1 || sampleCount <= 4)
 	{
 		float lit = 0.0f;
 		for (int i = 0; i < 20; ++i)
@@ -201,7 +233,8 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 		farPlaneDist,
 		sampleRadius,
 		ShadowSamples,
-		EnablePCSS);
+		SoftShadowMode,
+		LightSourceRadius);
 
 	// Write debug state for visualisation (single center sample)
 	if (ShadowDebugMode != 0)

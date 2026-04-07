@@ -1104,11 +1104,9 @@ public partial class DefaultRenderPipeline2
     {
         // Use internal resolution - FXAA pass will upscale to full resolution
         var (width, height) = GetDesiredFBOSizeInternal();
-        bool outputHdr = ResolveOutputHDR();
-
-        EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
-        EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
-        ESizedInternalFormat sized = outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
+        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
 
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
             width,
@@ -1158,11 +1156,9 @@ public partial class DefaultRenderPipeline2
     private XRTexture CreateFxaaOutputTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();
-        bool outputHdr = ResolveOutputHDR();
-
-        EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
-        EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
-        ESizedInternalFormat sized = outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
+        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
 
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
             width,
@@ -1185,11 +1181,9 @@ public partial class DefaultRenderPipeline2
     private XRTexture CreateTsrHistoryColorTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();
-        bool outputHdr = ResolveOutputHDR();
-
-        EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
-        EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
-        ESizedInternalFormat sized = outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
+        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
 
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
             width,

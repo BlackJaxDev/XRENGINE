@@ -23,6 +23,17 @@ public partial class DefaultRenderPipeline2
     private const string TemporalReactiveLumaThresholdParameterName = "ReactiveLumaThreshold";
     private const string TemporalDepthDiscontinuityScaleParameterName = "DepthDiscontinuityScale";
     private const string TemporalConfidencePowerParameterName = "ConfidencePower";
+    private const string TemporalDebugViewModeParameterName = "DebugViewMode";
+
+    public enum TemporalDebugViewMode
+    {
+        Disabled = 0,
+        HistoryWeight = 1,
+        Velocity = 2,
+        GeometryInstability = 3,
+        ReactiveMask = 4,
+        HistoryAcceptance = 5,
+    }
 
     private readonly struct TemporalResolveSettings
     {
@@ -36,6 +47,7 @@ public partial class DefaultRenderPipeline2
         public float ReactiveLumaThreshold { get; init; }
         public float DepthDiscontinuityScale { get; init; }
         public float ConfidencePower { get; init; }
+        public TemporalDebugViewMode DebugMode { get; init; }
     }
 
     protected override void DescribePostProcessSchema(RenderPipelinePostProcessSchemaBuilder builder)
@@ -556,6 +568,13 @@ public partial class DefaultRenderPipeline2
             min: 0.0f,
             max: 4.0f,
             step: 0.01f);
+
+        stage.AddParameter(
+            TemporalDebugViewModeParameterName,
+            PostProcessParameterKind.Int,
+            (int)TemporalDebugViewMode.Disabled,
+            displayName: "Debug View",
+            enumOptions: BuildEnumOptions<TemporalDebugViewMode>());
     }
 
     private static void DescribeAmbientOcclusionStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -589,11 +608,11 @@ public partial class DefaultRenderPipeline2
         bool IsMVAO(object o)
         {
             var type = AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type);
-            return type == AmbientOcclusionSettings.EType.MultiViewCustom;
+            return type == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion;
         }
 
         bool IsPrototypeObscurance(object o)
-            => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype;
+            => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance;
 
         bool IsSpatialHash(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.SpatialHashExperimental;
 
@@ -1402,11 +1421,10 @@ public partial class DefaultRenderPipeline2
         =>
         [
             new("SSAO", (int)AmbientOcclusionSettings.EType.ScreenSpace),
-            new("Multi-View AO (Custom)", (int)AmbientOcclusionSettings.EType.MultiViewCustom),
-            new("Multi-Radius AO (Prototype)", (int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype),
-            new("HBAO (Deferred)", (int)AmbientOcclusionSettings.EType.HorizonBased),
+            new("MVAO", (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion),
+            new("MSVO", (int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance),
             new("HBAO+", (int)AmbientOcclusionSettings.EType.HorizonBasedPlus),
-            new("GTAO (Experimental)", (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion),
+            new("GTAO", (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion),
             new("VXAO / Voxel AO (Planned)", (int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion),
             new("Spatial Hash AO (Experimental)", (int)AmbientOcclusionSettings.EType.SpatialHashExperimental),
         ];
@@ -1541,6 +1559,7 @@ public partial class DefaultRenderPipeline2
             ReactiveLumaThreshold = stage?.GetValue(TemporalReactiveLumaThresholdParameterName, TemporalReactiveLumaThreshold) ?? TemporalReactiveLumaThreshold,
             DepthDiscontinuityScale = stage?.GetValue(TemporalDepthDiscontinuityScaleParameterName, TemporalDepthDiscontinuityScale) ?? TemporalDepthDiscontinuityScale,
             ConfidencePower = stage?.GetValue(TemporalConfidencePowerParameterName, TemporalConfidencePower) ?? TemporalConfidencePower,
+            DebugMode = (TemporalDebugViewMode)(stage?.GetValue(TemporalDebugViewModeParameterName, (int)TemporalDebugViewMode.Disabled) ?? (int)TemporalDebugViewMode.Disabled),
         };
     }
 
@@ -1553,7 +1572,7 @@ public partial class DefaultRenderPipeline2
         Vector2 previousJitterUv = Vector2.Zero;
         if (!DisableHistoryBasedVrEffects() && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
         {
-            historyReady = temporalData.HistoryReady;
+            historyReady = temporalData.HistoryReady && temporalData.HistoryExposureReady;
             currentJitterUv = new Vector2(temporalData.CurrentJitter.X / Math.Max(1u, InternalWidth), temporalData.CurrentJitter.Y / Math.Max(1u, InternalHeight));
             previousJitterUv = new Vector2(temporalData.PreviousJitter.X / Math.Max(1u, InternalWidth), temporalData.PreviousJitter.Y / Math.Max(1u, InternalHeight));
         }
@@ -1578,6 +1597,7 @@ public partial class DefaultRenderPipeline2
         program.Uniform("ReactiveLumaThreshold", temporalSettings.ReactiveLumaThreshold);
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
+        program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
     }
 
     private void BrightPassFBO_SettingUniforms(XRRenderProgram program)
@@ -1663,5 +1683,6 @@ public partial class DefaultRenderPipeline2
         program.Uniform("ReactiveLumaThreshold", temporalSettings.ReactiveLumaThreshold);
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
+        program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
     }
 }

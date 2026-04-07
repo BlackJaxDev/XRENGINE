@@ -245,14 +245,14 @@ public static partial class EditorUnitTests
 
         private static void QueueLightProbeSpawnerModelBoundsWiring(SceneNode rootNode, object importedStaticRootsLock, List<SceneNode> importedStaticRoots)
         {
-            Engine.InvokeOnMainThread(() =>
+            Engine.InvokeOnAppThread(() =>
             {
                 SceneNode[] importedRoots;
                 lock (importedStaticRootsLock)
                     importedRoots = [.. importedStaticRoots];
 
                 WireLightProbeSpawnerToImportedModels(rootNode, importedRoots);
-            }, "UnitTestingWorld.Models.QueueLightProbeSpawnerModelBoundsWiring", executeNowIfAlreadyMainThread: true);
+            }, "UnitTestingWorld.Models.QueueLightProbeSpawnerModelBoundsWiring", executeNowIfAlreadyAppThread: true);
         }
 
         /// <summary>

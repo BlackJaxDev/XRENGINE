@@ -53,7 +53,8 @@ uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 uniform int ShadowSamples = 4;
 uniform float ShadowFilterRadius = 0.0012f;
-uniform bool EnablePCSS = true;
+uniform int SoftShadowMode = 1;
+uniform float LightSourceRadius = 0.01f;
 uniform bool EnableContactShadows = true;
 uniform float ContactShadowDistance = 0.1f;
 uniform int ContactShadowSamples = 4;
@@ -201,24 +202,80 @@ float SampleShadowMapArrayTent4Local(in sampler2DArray shadowMap, in vec3 shadow
 	return lit * 0.25f;
 }
 
-float SampleShadowMapFilteredLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int requestedSamples, in float filterRadius, in bool enableSoft)
+float BlockerSearch2DLocal(in sampler2D shadowMap, in vec2 uv, in float receiverDepth, in float searchRadius, in int sampleCount)
+{
+	float blockerSum = 0.0f;
+	int blockerCount = 0;
+	int clampedSamples = clamp(sampleCount, 1, 16);
+	for (int i = 0; i < 16; ++i)
+	{
+		if (i >= clampedSamples) break;
+		vec2 sampleUv = uv + LocalShadowPoissonDisk[i] * searchRadius;
+		float d = texture(shadowMap, sampleUv).r;
+		if (d < receiverDepth) { blockerSum += d; blockerCount++; }
+	}
+	return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0f;
+}
+
+float BlockerSearch2DArrayLocal(in sampler2DArray shadowMap, in vec2 uv, in float layer, in float receiverDepth, in float searchRadius, in int sampleCount)
+{
+	float blockerSum = 0.0f;
+	int blockerCount = 0;
+	int clampedSamples = clamp(sampleCount, 1, 16);
+	for (int i = 0; i < 16; ++i)
+	{
+		if (i >= clampedSamples) break;
+		vec2 sampleUv = uv + LocalShadowPoissonDisk[i] * searchRadius;
+		float d = texture(shadowMap, vec3(sampleUv, layer)).r;
+		if (d < receiverDepth) { blockerSum += d; blockerCount++; }
+	}
+	return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0f;
+}
+
+float SampleShadowMapCHSSLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int sampleCount, in float searchRadius, in float lightSourceRadius)
+{
+	float receiverDepth = shadowCoord.z - bias;
+	float avgBlocker = BlockerSearch2DLocal(shadowMap, shadowCoord.xy, receiverDepth, searchRadius, sampleCount);
+	if (avgBlocker < 0.0f) return 1.0f;
+	vec2 texelSize = 1.0f / vec2(textureSize(shadowMap, 0));
+	float minR = max(texelSize.x, texelSize.y);
+	float penumbra = clamp((receiverDepth - avgBlocker) / max(avgBlocker, 0.0001f) * lightSourceRadius, minR, searchRadius * 4.0f);
+	return SampleShadowMapSoftLocal(shadowMap, shadowCoord, bias, sampleCount, penumbra);
+}
+
+float SampleShadowMapArrayCHSSLocal(in sampler2DArray shadowMap, in vec3 shadowCoord, in float layer, in float bias, in int sampleCount, in float searchRadius, in float lightSourceRadius)
+{
+	float receiverDepth = shadowCoord.z - bias;
+	float avgBlocker = BlockerSearch2DArrayLocal(shadowMap, shadowCoord.xy, layer, receiverDepth, searchRadius, sampleCount);
+	if (avgBlocker < 0.0f) return 1.0f;
+	vec2 texelSize = 1.0f / vec2(textureSize(shadowMap, 0).xy);
+	float minR = max(texelSize.x, texelSize.y);
+	float penumbra = clamp((receiverDepth - avgBlocker) / max(avgBlocker, 0.0001f) * lightSourceRadius, minR, searchRadius * 4.0f);
+	return SampleShadowMapArraySoftLocal(shadowMap, shadowCoord, layer, bias, sampleCount, penumbra);
+}
+
+float SampleShadowMapFilteredLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int requestedSamples, in float filterRadius, in int softMode, in float lightSourceRadius)
 {
 	int sampleCount = clamp(requestedSamples, 1, 16);
 	if (sampleCount <= 1)
 		return SampleShadowMapSimpleLocal(shadowMap, shadowCoord, bias);
-	if (enableSoft)
+	if (softMode == 2)
+		return SampleShadowMapCHSSLocal(shadowMap, shadowCoord, bias, sampleCount, filterRadius, lightSourceRadius);
+	if (softMode == 1)
 		return SampleShadowMapSoftLocal(shadowMap, shadowCoord, bias, sampleCount, filterRadius);
 	if (sampleCount <= 4)
 		return SampleShadowMapTent4Local(shadowMap, shadowCoord, bias, filterRadius);
 	return SampleShadowMapPCFLocal(shadowMap, shadowCoord, bias, 3);
 }
 
-float SampleShadowMapArrayFilteredLocal(in sampler2DArray shadowMap, in vec3 shadowCoord, in float layer, in float bias, in int requestedSamples, in float filterRadius, in bool enableSoft)
+float SampleShadowMapArrayFilteredLocal(in sampler2DArray shadowMap, in vec3 shadowCoord, in float layer, in float bias, in int requestedSamples, in float filterRadius, in int softMode, in float lightSourceRadius)
 {
 	int sampleCount = clamp(requestedSamples, 1, 16);
 	if (sampleCount <= 1)
 		return SampleShadowMapArraySimpleLocal(shadowMap, shadowCoord, layer, bias);
-	if (enableSoft)
+	if (softMode == 2)
+		return SampleShadowMapArrayCHSSLocal(shadowMap, shadowCoord, layer, bias, sampleCount, filterRadius, lightSourceRadius);
+	if (softMode == 1)
 		return SampleShadowMapArraySoftLocal(shadowMap, shadowCoord, layer, bias, sampleCount, filterRadius);
 	if (sampleCount <= 4)
 		return SampleShadowMapArrayTent4Local(shadowMap, shadowCoord, layer, bias, filterRadius);
@@ -361,7 +418,8 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 			bias,
 			ShadowSamples,
 			ShadowFilterRadius,
-			EnablePCSS) * contact;
+			SoftShadowMode,
+			LightSourceRadius) * contact;
 }
 
 float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int cascadeIndex)
@@ -400,7 +458,8 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int ca
 			bias,
 			ShadowSamples,
 			filterRadius,
-			EnablePCSS) * contact;
+			SoftShadowMode,
+			LightSourceRadius) * contact;
 }
 vec3 CalcColor(
 in float NoL,

@@ -1,0 +1,563 @@
+using System;
+using System.Diagnostics;
+using XREngine.Data.Rendering;
+using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
+
+namespace XREngine.Rendering.Vulkan;
+
+public enum EVulkanUpscaleBridgeState
+{
+    Unsupported,
+    Disabled,
+    Initializing,
+    Ready,
+    NeedsRecreate,
+    Faulted,
+}
+
+public readonly record struct VulkanUpscaleBridgeFrameResources(
+    int DisplayWidth,
+    int DisplayHeight,
+    int InternalWidth,
+    int InternalHeight,
+    bool OutputHdr,
+    EAntiAliasingMode AntiAliasingMode,
+    uint MsaaSampleCount,
+    bool Stereo,
+    bool EnableDlss,
+    EDlssQualityMode DlssQuality,
+    bool EnableXess,
+    EXessQualityMode XessQuality,
+    EVulkanUpscaleBridgeQueueModel QueueModel)
+{
+    public bool VendorRequested => EnableDlss || EnableXess;
+}
+
+public sealed class VulkanUpscaleBridge : IDisposable
+{
+    private const string ViewportResizeReason = "viewport resized";
+    private const string InternalResolutionResizeReason = "internal resolution resized";
+
+    private readonly XRViewport _viewport;
+    private bool _disposed;
+    private EVulkanUpscaleBridgeState _state = EVulkanUpscaleBridgeState.Initializing;
+    private VulkanUpscaleBridgeFrameResources _frameResources;
+    private bool _hasFrameResources;
+    private string? _lastStateReason;
+    private string? _pendingRecreateReason;
+    private string? _lastFaultFingerprint;
+    private VulkanUpscaleBridgeSidecar? _sidecar;
+    private VulkanUpscaleBridgeFrameSlot[] _frameSlots = [];
+    private int _frameSlotIndex = -1;
+
+    public VulkanUpscaleBridge(XRViewport viewport)
+    {
+        _viewport = viewport ?? throw new ArgumentNullException(nameof(viewport));
+        QueueModel = Engine.Rendering.VulkanUpscaleBridgeQueueModel;
+
+        _viewport.Resized += HandleViewportResized;
+        _viewport.InternalResolutionResized += HandleInternalResolutionResized;
+    }
+
+    public XRViewport Viewport => _viewport;
+    public EVulkanUpscaleBridgeState State => _state;
+    public EVulkanUpscaleBridgeQueueModel QueueModel { get; }
+    public VulkanUpscaleBridgeFrameResources CurrentFrameResources => _frameResources;
+    public bool HasFrameResources => _hasFrameResources;
+    public string? LastStateReason => _lastStateReason;
+    public string? PendingRecreateReason => _pendingRecreateReason;
+    public bool SidecarDeviceOwned { get; private set; }
+    internal bool HasInteropResources => _sidecar is not null && _frameSlots.Length > 0;
+    internal VulkanUpscaleBridgeFrameSlot? CurrentFrameSlot
+        => _frameSlotIndex >= 0 && _frameSlotIndex < _frameSlots.Length
+            ? _frameSlots[_frameSlotIndex]
+            : null;
+
+    internal bool TryResolveCurrentFrameSlot(out VulkanUpscaleBridgeFrameSlot? slot)
+    {
+        slot = CurrentFrameSlot;
+        return !_disposed && _state == EVulkanUpscaleBridgeState.Ready && _sidecar is not null && slot is not null;
+    }
+
+    public EVulkanUpscaleBridgeState PrepareForFrame(
+        XRRenderPipelineInstance pipeline,
+        global::XREngine.VulkanUpscaleBridgeCapabilitySnapshot snapshot)
+    {
+        if (_disposed)
+            return EVulkanUpscaleBridgeState.Disabled;
+
+        try
+        {
+            VulkanUpscaleBridgeFrameResources frameResources = BuildFrameResources(pipeline);
+            bool hadFrameResources = _hasFrameResources;
+            VulkanUpscaleBridgeFrameResources previousFrameResources = _frameResources;
+
+            _frameResources = frameResources;
+            _hasFrameResources = true;
+
+            EVulkanUpscaleBridgeState availability = DetermineAvailability(snapshot, in frameResources, out string availabilityReason);
+            if (availability is EVulkanUpscaleBridgeState.Disabled or EVulkanUpscaleBridgeState.Unsupported)
+            {
+                DestroyInteropResources();
+                SidecarDeviceOwned = false;
+                _pendingRecreateReason = null;
+                TransitionState(availability, availabilityReason);
+                return _state;
+            }
+
+            if (hadFrameResources && !previousFrameResources.Equals(frameResources))
+                MarkNeedsRecreate(ResolveConfigurationChangeReason(previousFrameResources, frameResources));
+
+            if (_state == EVulkanUpscaleBridgeState.Faulted && string.IsNullOrWhiteSpace(_pendingRecreateReason))
+                return _state;
+
+            if (!hadFrameResources)
+                _pendingRecreateReason ??= "initial bridge configuration";
+
+            if (_state != EVulkanUpscaleBridgeState.Ready || !string.IsNullOrWhiteSpace(_pendingRecreateReason))
+            {
+                if (_viewport.Window?.Renderer is not OpenGLRenderer renderer)
+                {
+                    DestroyInteropResources();
+                    SidecarDeviceOwned = false;
+                    TransitionState(EVulkanUpscaleBridgeState.Unsupported, "bridge MVP only applies to OpenGL windows");
+                    return _state;
+                }
+
+                string readyReason = _pendingRecreateReason ?? "initial bridge configuration";
+                TransitionState(EVulkanUpscaleBridgeState.Initializing, readyReason, log: false);
+
+                RecreateInteropResources(renderer, snapshot, in frameResources);
+                SidecarDeviceOwned = _sidecar is not null;
+                _pendingRecreateReason = null;
+                _lastFaultFingerprint = null;
+
+                TransitionState(
+                    EVulkanUpscaleBridgeState.Ready,
+                    $"bridge sidecar ready with {_frameSlots.Length} interop slots on '{_sidecar?.DeviceName ?? "<unknown>"}'");
+                return _state;
+            }
+
+            AdvanceFrameSlot();
+
+            return _state;
+        }
+        catch (Exception ex)
+        {
+            return ReportFaultOnce("PrepareForFrame", ex);
+        }
+    }
+
+    public void NotifyVendorSelectionChanged(string reason)
+    {
+        if (_disposed)
+            return;
+
+        if (!Engine.EffectiveSettings.EnableNvidiaDlss && !Engine.EffectiveSettings.EnableIntelXess)
+        {
+            DestroyInteropResources();
+            SidecarDeviceOwned = false;
+            _pendingRecreateReason = null;
+            TransitionState(EVulkanUpscaleBridgeState.Disabled, reason);
+            return;
+        }
+
+        MarkNeedsRecreate(reason);
+    }
+
+    public void NotifyCapabilitySnapshotChanged(string reason)
+    {
+        if (_disposed)
+            return;
+
+        if (!Engine.Rendering.VulkanUpscaleBridgeRequested)
+        {
+            DestroyInteropResources();
+            SidecarDeviceOwned = false;
+            _pendingRecreateReason = null;
+            TransitionState(EVulkanUpscaleBridgeState.Disabled, reason);
+            return;
+        }
+
+        MarkNeedsRecreate(reason);
+    }
+
+    public void MarkNeedsRecreate(string reason)
+    {
+        if (_disposed)
+            return;
+
+        string effectiveReason = string.IsNullOrWhiteSpace(reason)
+            ? "bridge configuration changed"
+            : reason;
+
+        _pendingRecreateReason = effectiveReason;
+        if (_state is EVulkanUpscaleBridgeState.Ready or EVulkanUpscaleBridgeState.Faulted)
+            TransitionState(EVulkanUpscaleBridgeState.NeedsRecreate, effectiveReason);
+    }
+
+    public void Destroy(string reason)
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        _viewport.Resized -= HandleViewportResized;
+        _viewport.InternalResolutionResized -= HandleInternalResolutionResized;
+
+        DestroyInteropResources();
+        SidecarDeviceOwned = false;
+        _pendingRecreateReason = null;
+        TransitionState(EVulkanUpscaleBridgeState.Disabled, reason);
+    }
+
+    public void Dispose()
+        => Destroy("bridge disposed");
+
+    internal bool TryExecutePassthrough(
+        OpenGLRenderer renderer,
+        XRFrameBuffer sourceColorFbo,
+        XRFrameBuffer sourceDepthFbo,
+        XRFrameBuffer sourceMotionFbo,
+        out XRTexture? outputTexture,
+        out TimeSpan dispatchDuration,
+        out string failureReason)
+    {
+        outputTexture = null;
+        dispatchDuration = TimeSpan.Zero;
+        failureReason = string.Empty;
+
+        if (!TryResolveCurrentFrameSlot(out VulkanUpscaleBridgeFrameSlot? slot) || slot is null || _sidecar is null)
+        {
+            failureReason = _disposed
+                ? "bridge was disposed"
+                : _state != EVulkanUpscaleBridgeState.Ready
+                    ? $"bridge is not ready (state={_state})"
+                    : "bridge interop slot is unavailable";
+            return false;
+        }
+
+        try
+        {
+            _sidecar.WaitForFrameSlotAvailability(slot);
+
+            renderer.BlitFBOToFBO(
+                sourceColorFbo,
+                slot.SourceColorFrameBuffer,
+                EReadBufferMode.ColorAttachment0,
+                colorBit: true,
+                depthBit: false,
+                stencilBit: false,
+                linearFilter: false);
+            renderer.BlitFBOToFBO(
+                sourceDepthFbo,
+                slot.SourceDepthFrameBuffer,
+                EReadBufferMode.None,
+                colorBit: false,
+                depthBit: true,
+                stencilBit: true,
+                linearFilter: false);
+            renderer.BlitFBOToFBO(
+                sourceMotionFbo,
+                slot.SourceMotionFrameBuffer,
+                EReadBufferMode.ColorAttachment0,
+                colorBit: true,
+                depthBit: false,
+                stencilBit: false,
+                linearFilter: false);
+
+            if (!TryGetGlTextureBinding(renderer, slot.SourceColorTexture, out uint sourceColorTextureId)
+                || !TryGetGlTextureBinding(renderer, slot.SourceDepthTexture, out uint sourceDepthTextureId)
+                || !TryGetGlTextureBinding(renderer, slot.SourceMotionTexture, out uint sourceMotionTextureId)
+                || !TryGetGlTextureBinding(renderer, slot.OutputColorTexture, out uint outputColorTextureId))
+            {
+                failureReason = "failed to resolve one or more OpenGL bridge texture handles";
+                return false;
+            }
+
+            Span<uint> readyTextureIds = stackalloc uint[3]
+            {
+                sourceColorTextureId,
+                sourceDepthTextureId,
+                sourceMotionTextureId,
+            };
+            Span<Silk.NET.OpenGLES.TextureLayout> readyLayouts = stackalloc Silk.NET.OpenGLES.TextureLayout[3]
+            {
+                Silk.NET.OpenGLES.TextureLayout.GeneralExt,
+                Silk.NET.OpenGLES.TextureLayout.GeneralExt,
+                Silk.NET.OpenGLES.TextureLayout.GeneralExt,
+            };
+
+            renderer.SignalExternalTextureSemaphore(slot.GlReadySemaphore, readyTextureIds, readyLayouts);
+            slot.SourceColor.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
+            slot.SourceDepth.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
+            slot.SourceMotion.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
+
+            Stopwatch dispatchStopwatch = Stopwatch.StartNew();
+            _sidecar.SubmitPassthroughBlit(slot);
+            dispatchStopwatch.Stop();
+            dispatchDuration = dispatchStopwatch.Elapsed;
+
+            renderer.WaitExternalTextureSemaphore(
+                slot.GlCompleteSemaphore,
+                outputColorTextureId,
+                Silk.NET.OpenGLES.TextureLayout.GeneralExt);
+
+            outputTexture = slot.OutputColorTexture;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            failureReason = ex.Message;
+            ReportFaultOnce("TryExecutePassthrough", ex);
+            return false;
+        }
+    }
+
+    private void HandleViewportResized(XRViewport _)
+        => MarkNeedsRecreate(ViewportResizeReason);
+
+    private void HandleInternalResolutionResized(XRViewport _)
+        => MarkNeedsRecreate(InternalResolutionResizeReason);
+
+    private EVulkanUpscaleBridgeState ReportFaultOnce(string stage, Exception ex)
+    {
+        string fingerprint = string.Concat(stage, "|", ex.GetType().FullName, "|", ex.Message);
+        if (!string.Equals(_lastFaultFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            _lastFaultFingerprint = fingerprint;
+            Debug.LogWarning($"Vulkan upscale bridge faulted during {stage} for {DescribeViewport()}: {ex.Message}");
+        }
+
+        DestroyInteropResources();
+        SidecarDeviceOwned = false;
+        TransitionState(EVulkanUpscaleBridgeState.Faulted, ex.Message, log: false);
+        return _state;
+    }
+
+    private void TransitionState(EVulkanUpscaleBridgeState newState, string? reason, bool log = true)
+    {
+        if (_state == newState && string.Equals(_lastStateReason, reason, StringComparison.Ordinal))
+            return;
+
+        _state = newState;
+        _lastStateReason = reason;
+
+        if (!log)
+            return;
+
+        XREngine.Debug.Rendering(
+            "[RenderDiag] VulkanUpscaleBridge VP={0} state={1} queue={2} reason='{3}' sidecarOwned={4}",
+            DescribeViewport(),
+            _state,
+            QueueModel,
+            reason ?? "<none>",
+            SidecarDeviceOwned ? 1 : 0);
+    }
+
+    private string DescribeViewport()
+    {
+        string windowTitle = _viewport.Window?.Window?.Title ?? "Viewport";
+        return $"{windowTitle}#{_viewport.Index}:{_viewport.Width}x{_viewport.Height}/{_viewport.InternalWidth}x{_viewport.InternalHeight}";
+    }
+
+    private static VulkanUpscaleBridgeFrameResources BuildFrameResources(XRRenderPipelineInstance pipeline)
+    {
+        EAntiAliasingMode antiAliasingMode = pipeline.EffectiveAntiAliasingModeThisFrame
+            ?? Engine.EffectiveSettings.AntiAliasingMode;
+        uint msaaSampleCount = Math.Max(1u, pipeline.EffectiveMsaaSampleCountThisFrame ?? Engine.EffectiveSettings.MsaaSampleCount);
+        bool stereo = pipeline.Pipeline switch
+        {
+            DefaultRenderPipeline { Stereo: true } => true,
+            DefaultRenderPipeline2 { Stereo: true } => true,
+            _ => false,
+        };
+
+        return new VulkanUpscaleBridgeFrameResources(
+            DisplayWidth: Math.Max(1, pipeline.LastWindowViewport?.Width ?? 0),
+            DisplayHeight: Math.Max(1, pipeline.LastWindowViewport?.Height ?? 0),
+            InternalWidth: Math.Max(1, pipeline.LastWindowViewport?.InternalWidth ?? 0),
+            InternalHeight: Math.Max(1, pipeline.LastWindowViewport?.InternalHeight ?? 0),
+            OutputHdr: pipeline.EffectiveOutputHDRThisFrame ?? Engine.Rendering.Settings.OutputHDR,
+            AntiAliasingMode: antiAliasingMode,
+            MsaaSampleCount: antiAliasingMode == EAntiAliasingMode.Msaa ? msaaSampleCount : 1u,
+            Stereo: stereo,
+            EnableDlss: Engine.EffectiveSettings.EnableNvidiaDlss,
+            DlssQuality: Engine.EffectiveSettings.DlssQuality,
+            EnableXess: Engine.EffectiveSettings.EnableIntelXess,
+            XessQuality: Engine.EffectiveSettings.XessQuality,
+            QueueModel: Engine.Rendering.VulkanUpscaleBridgeQueueModel);
+    }
+
+    private EVulkanUpscaleBridgeState DetermineAvailability(
+        global::XREngine.VulkanUpscaleBridgeCapabilitySnapshot snapshot,
+        in VulkanUpscaleBridgeFrameResources frameResources,
+        out string reason)
+    {
+        if (!Engine.Rendering.VulkanUpscaleBridgeRequested)
+        {
+            reason = "experimental bridge disabled";
+            return EVulkanUpscaleBridgeState.Disabled;
+        }
+
+        if (!frameResources.VendorRequested)
+        {
+            reason = "no vendor upscaler is enabled";
+            return EVulkanUpscaleBridgeState.Disabled;
+        }
+
+        if (snapshot.WindowsOnly && !OperatingSystem.IsWindows())
+        {
+            reason = "bridge MVP is Windows only";
+            return EVulkanUpscaleBridgeState.Unsupported;
+        }
+
+        if (_viewport.Window?.Renderer is not OpenGLRenderer)
+        {
+            reason = "bridge MVP only applies to OpenGL windows";
+            return EVulkanUpscaleBridgeState.Unsupported;
+        }
+
+        if (snapshot.MonoViewportOnly && (_viewport.Window?.Viewports.Count ?? 0) != 1)
+        {
+            reason = "bridge MVP only supports a single viewport per window";
+            return EVulkanUpscaleBridgeState.Unsupported;
+        }
+
+        if (frameResources.Stereo)
+        {
+            reason = "bridge MVP excludes stereo/XR pipelines";
+            return EVulkanUpscaleBridgeState.Unsupported;
+        }
+
+        if (frameResources.OutputHdr && !snapshot.HdrSupported)
+        {
+            reason = "bridge MVP is SDR only";
+            return EVulkanUpscaleBridgeState.Unsupported;
+        }
+
+        if (!snapshot.HasRequiredOpenGlInterop)
+        {
+            reason = "required OpenGL external-memory/semaphore extensions are unavailable";
+            return EVulkanUpscaleBridgeState.Unsupported;
+        }
+
+        if (!snapshot.VulkanProbeSucceeded)
+        {
+            reason = snapshot.ProbeFailureReason ?? "Vulkan bridge probe failed";
+            return EVulkanUpscaleBridgeState.Unsupported;
+        }
+
+        if (!snapshot.HasRequiredVulkanInterop)
+        {
+            reason = "required Vulkan external-memory/semaphore import extensions are unavailable";
+            return EVulkanUpscaleBridgeState.Unsupported;
+        }
+
+        if (snapshot.SamePhysicalGpu == false)
+        {
+            reason = snapshot.GpuIdentityReason ?? "OpenGL and Vulkan resolved to different physical GPUs";
+            return EVulkanUpscaleBridgeState.Unsupported;
+        }
+
+        reason = "bridge prerequisites satisfied";
+        return EVulkanUpscaleBridgeState.Ready;
+    }
+
+    private static string ResolveConfigurationChangeReason(
+        in VulkanUpscaleBridgeFrameResources previous,
+        in VulkanUpscaleBridgeFrameResources current)
+    {
+        if (previous.DisplayWidth != current.DisplayWidth || previous.DisplayHeight != current.DisplayHeight)
+            return "viewport resized";
+
+        if (previous.InternalWidth != current.InternalWidth || previous.InternalHeight != current.InternalHeight)
+            return "internal resolution changed";
+
+        if (previous.OutputHdr != current.OutputHdr)
+            return "output HDR changed";
+
+        if (previous.AntiAliasingMode != current.AntiAliasingMode || previous.MsaaSampleCount != current.MsaaSampleCount)
+            return "anti-aliasing resources changed";
+
+        if (previous.EnableDlss != current.EnableDlss || previous.EnableXess != current.EnableXess)
+            return "vendor selection changed";
+
+        if (previous.DlssQuality != current.DlssQuality || previous.XessQuality != current.XessQuality)
+            return "vendor quality changed";
+
+        if (previous.QueueModel != current.QueueModel)
+            return "queue model changed";
+
+        if (previous.Stereo != current.Stereo)
+            return "stereo pipeline state changed";
+
+        return "bridge configuration changed";
+    }
+
+    private void RecreateInteropResources(
+        OpenGLRenderer renderer,
+        global::XREngine.VulkanUpscaleBridgeCapabilitySnapshot snapshot,
+        in VulkanUpscaleBridgeFrameResources frameResources)
+    {
+        DestroyInteropResources();
+
+        _sidecar = new VulkanUpscaleBridgeSidecar(snapshot.OpenGlVendor, snapshot.OpenGlRenderer);
+        _frameSlots = _sidecar.CreateFrameSlots(renderer, frameResources, SanitizeLabel(DescribeViewport()));
+        _frameSlotIndex = _frameSlots.Length > 0 ? 0 : -1;
+
+        if (_frameSlots.Length == 0)
+            throw new InvalidOperationException("The Vulkan upscale bridge sidecar did not create any interop frame slots.");
+    }
+
+    private void DestroyInteropResources()
+    {
+        for (int i = _frameSlots.Length - 1; i >= 0; i--)
+            _frameSlots[i].Dispose();
+
+        _frameSlots = [];
+        _frameSlotIndex = -1;
+
+        _sidecar?.Dispose();
+        _sidecar = null;
+    }
+
+    private void AdvanceFrameSlot()
+    {
+        if (_frameSlots.Length == 0)
+        {
+            _frameSlotIndex = -1;
+            return;
+        }
+
+        if (_frameSlotIndex < 0)
+        {
+            _frameSlotIndex = 0;
+            return;
+        }
+
+        _frameSlotIndex = (_frameSlotIndex + 1) % _frameSlots.Length;
+    }
+
+    private static string SanitizeLabel(string value)
+    {
+        Span<char> buffer = stackalloc char[value.Length];
+        int length = 0;
+        foreach (char c in value)
+        {
+            if (char.IsLetterOrDigit(c))
+                buffer[length++] = c;
+            else if (c is '#' or ':' or '/' or '\\' or ' ' or '-')
+                buffer[length++] = '.';
+        }
+
+        return length == 0 ? "Viewport" : new string(buffer[..length]);
+    }
+
+    private static bool TryGetGlTextureBinding(OpenGLRenderer renderer, XRTexture texture, out uint bindingId)
+    {
+        bindingId = renderer.GenericToAPI<GLTexture2D>(texture)?.BindingId ?? 0u;
+        return bindingId != 0;
+    }
+}

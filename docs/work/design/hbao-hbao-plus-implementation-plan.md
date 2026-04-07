@@ -52,7 +52,7 @@ Target AO modes:
 | `ScreenSpace` | cheap legacy SSAO fallback | `VPRC_SSAOPass` | keep simple and low-risk |
 | `HorizonBased` | optional classic reference HBAO | new `VPRC_HBAOPass` | not default |
 | `HorizonBasedPlus` | default high-quality AO | new `VPRC_HBAOPlusPass` | full internal resolution |
-| `MultiViewAmbientOcclusion` | current experimental/custom AO | `VPRC_MVAOPass` | keep separate semantics |
+| `MultiViewAmbientOcclusion` | canonical multi-view AO family | `VPRC_MVAOPass` | keep separate semantics |
 | `ScalableAmbientObscurance` / `MultiScaleVolumetricObscurance` | separate obscurance family | existing MSVO path | keep independent |
 | `SpatialHashRaytraced` | compute/ray-marched experimental AO | existing spatial hash path | keep independent |
 

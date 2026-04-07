@@ -13,6 +13,8 @@ namespace XREngine.Rendering.Vulkan
         /// The KHR_draw_indirect_count extension handle, loaded at device creation if available.
         /// </summary>
         private KhrDrawIndirectCount? _khrDrawIndirectCount;
+        private KhrExternalMemoryWin32? _khrExternalMemoryWin32;
+        private KhrExternalSemaphoreWin32? _khrExternalSemaphoreWin32;
 
         /// <summary>
         /// Indicates whether VK_KHR_draw_indirect_count extension is supported and loaded.
@@ -23,6 +25,8 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsDescriptorBindingPartiallyBound;
         private bool _supportsDescriptorBindingUpdateAfterBind;
         private bool _supportsDescriptorBindingStorageImageUpdateAfterBind;
+        private bool _supportsExternalMemoryWin32;
+        private bool _supportsExternalSemaphoreWin32;
         private NVMemoryDecompression? _nvMemoryDecompression;
         private NVCopyMemoryIndirect? _nvCopyMemoryIndirect;
         private bool _supportsBufferDeviceAddress;
@@ -41,6 +45,8 @@ namespace XREngine.Rendering.Vulkan
 
         public bool SupportsNvMemoryDecompression => _supportsNvMemoryDecompression && _nvMemoryDecompression is not null;
         public bool SupportsNvCopyMemoryIndirect => _supportsNvCopyMemoryIndirect && _nvCopyMemoryIndirect is not null;
+        public bool SupportsExternalMemoryWin32 => _supportsExternalMemoryWin32 && _khrExternalMemoryWin32 is not null;
+        public bool SupportsExternalSemaphoreWin32 => _supportsExternalSemaphoreWin32 && _khrExternalSemaphoreWin32 is not null;
         public bool SupportsBufferDeviceAddress => _supportsBufferDeviceAddress;
         public bool SupportsDynamicRendering => _supportsDynamicRendering;
         public bool SupportsIndexTypeUint8 => _supportsIndexTypeUint8;
@@ -96,6 +102,10 @@ namespace XREngine.Rendering.Vulkan
         private readonly string[] optionalDeviceExtensions =
         [
             "VK_KHR_multiview",
+            "VK_KHR_external_memory",
+            "VK_KHR_external_semaphore",
+            "VK_KHR_external_memory_win32",
+            "VK_KHR_external_semaphore_win32",
             "VK_KHR_draw_indirect_count",
             "VK_KHR_synchronization2",
             "VK_KHR_shader_draw_parameters",

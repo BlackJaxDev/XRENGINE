@@ -506,6 +506,7 @@ namespace XREngine.Rendering
         /// </summary>
         public void Destroy()
         {
+            Engine.Rendering.ReleaseVulkanUpscaleBridge(this, "viewport destroyed");
             Camera = null;
             CameraComponent = null;
         }

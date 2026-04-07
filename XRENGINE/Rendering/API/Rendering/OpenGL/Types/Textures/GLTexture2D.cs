@@ -48,6 +48,7 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         private long _allocatedVRAMBytes = 0;
         private uint _allocatedLevels = 0;
+        private uint _externalMemoryObject;
 
         protected override void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
@@ -194,7 +195,50 @@ namespace XREngine.Rendering.OpenGL
                     _allocatedVRAMBytes = 0;
                 }
 
-                if (Data.MultiSample)
+                if (_externalMemoryObject != 0)
+                {
+                    Renderer.DeleteMemoryObject(_externalMemoryObject);
+                    _externalMemoryObject = 0;
+                }
+
+                if (Data.UsesOpenGlExternalMemoryImport)
+                {
+                    unsafe
+                    {
+                        _externalMemoryObject = Renderer.CreateImportedMemoryObject(
+                            Data.OpenGlExternalMemoryImportSize,
+                            (void*)Data.OpenGlExternalMemoryImportHandle);
+                    }
+
+                    if (_externalMemoryObject == 0)
+                        throw new InvalidOperationException($"Failed to import external memory for texture '{Data.OpenGlExternalMemoryLabel ?? Data.Name ?? BindingId.ToString()}'.");
+
+                    var sizedInternalFormat = (Silk.NET.OpenGLES.SizedInternalFormat)(uint)ToGLEnum(Data.SizedInternalFormat);
+                    if (Data.MultiSample)
+                    {
+                        Renderer.EXTMemoryObject?.TextureStorageMem2DMultisample(
+                            BindingId,
+                            Data.MultiSampleCount,
+                            sizedInternalFormat,
+                            w,
+                            h,
+                            Data.FixedSampleLocations,
+                            _externalMemoryObject,
+                            0);
+                    }
+                    else
+                    {
+                        Renderer.EXTMemoryObject?.TextureStorageMem2D(
+                            BindingId,
+                            levels,
+                            sizedInternalFormat,
+                            w,
+                            h,
+                            _externalMemoryObject,
+                            0);
+                    }
+                }
+                else if (Data.MultiSample)
                     Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), w, h, Data.FixedSampleLocations);
                 else
                     Api.TextureStorage2D(BindingId, levels, ToGLEnum(Data.SizedInternalFormat), w, h);
@@ -543,6 +587,12 @@ namespace XREngine.Rendering.OpenGL
         }
         protected internal override void PostDeleted()
         {
+            if (_externalMemoryObject != 0)
+            {
+                Renderer.DeleteMemoryObject(_externalMemoryObject);
+                _externalMemoryObject = 0;
+            }
+
             // Track VRAM deallocation
             if (_allocatedVRAMBytes > 0)
             {

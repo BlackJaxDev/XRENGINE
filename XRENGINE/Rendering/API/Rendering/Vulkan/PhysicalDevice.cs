@@ -39,6 +39,9 @@ public unsafe partial class VulkanRenderer
         // Intel PCI vendor ID.
         Engine.Rendering.State.IsIntel = properties.VendorID == 0x8086;
         Engine.Rendering.State.IsVulkan = true;
+        Engine.Rendering.State.VulkanDeviceName = Silk.NET.Core.Native.SilkMarshal.PtrToString((nint)properties.DeviceName);
+        Engine.Rendering.State.VulkanVendorId = properties.VendorID;
+        Engine.Rendering.State.VulkanDeviceId = properties.DeviceID;
 
         // Cache Vulkan ray tracing extension availability once at startup.
         Engine.Rendering.State.HasVulkanRayTracing = ProbeVulkanRayTracingSupport(_physicalDevice);

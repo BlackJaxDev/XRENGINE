@@ -25,6 +25,7 @@ uniform float ReactiveVelocityScale;
 uniform float ReactiveLumaThreshold;
 uniform float DepthDiscontinuityScale;
 uniform float ConfidencePower;
+uniform int DebugMode;
 
 const vec3 LuminanceWeights = vec3(0.2126f, 0.7152f, 0.0722f);
 
@@ -183,6 +184,12 @@ float ComputeMotionMask(vec2 velocity)
     return smoothstep(motionStart, ReactiveVelocityScale, motionMagnitude);
 }
 
+vec3 EncodeVelocityDebug(vec2 velocity)
+{
+    float magnitude = clamp(length(velocity) / max(ReactiveVelocityScale, 1e-5f), 0.0f, 1.0f);
+    return vec3(velocity.x * 0.25f + 0.5f, velocity.y * 0.25f + 0.5f, magnitude);
+}
+
 void main()
 {
     vec2 clipXY = FragPos.xy;
@@ -237,7 +244,7 @@ void main()
     float updatedVariance = mix(previousVariance, exposureDelta * exposureDelta, 0.1f);
 
     float motionMask = ComputeMotionMask(velocity);
-    float geometryInstability = clamp(EvaluateDepthDiscontinuity(uv) * mix(0.2f, 1.0f, motionMask), 0.0f, 1.0f);
+    float geometryInstability = clamp(EvaluateDepthDiscontinuity(uv) * mix(0.12f, 1.0f, motionMask), 0.0f, 1.0f);
 
     // Reactive mask: reduce history weight for transparent/moving/luminance-changing areas
     vec4 currentSample = texture(TemporalColorInput, uv);
@@ -247,7 +254,7 @@ void main()
     float reactiveMask = clamp(max(transparencyMask, max(motionMask, luminanceMask)), 0.0f, 1.0f);
 
     float confidence = pow(clamp((1.0f - geometryInstability) * (1.0f - reactiveMask), 0.0f, 1.0f), ConfidencePower);
-    float staticConfidenceFloor = (1.0f - motionMask) * (1.0f - reactiveMask) * 0.5f;
+    float staticConfidenceFloor = (1.0f - motionMask) * (1.0f - reactiveMask) * mix(0.65f, 0.35f, geometryInstability);
     confidence = max(confidence, staticConfidenceFloor);
 
     float stability = exp(-updatedVariance * VarianceGamma);
@@ -255,6 +262,33 @@ void main()
     float historyWeight = mix(FeedbackMin, FeedbackMax, clamp(stability * confidence, 0.0f, 1.0f));
     if (!canUseHistory)
         historyWeight = 0.0f;
+
+    if (DebugMode != 0)
+    {
+        vec3 debugColor = vec3(0.0f);
+        switch (DebugMode)
+        {
+            case 1:
+                debugColor = vec3(historyWeight);
+                break;
+            case 2:
+                debugColor = EncodeVelocityDebug(velocity);
+                break;
+            case 3:
+                debugColor = vec3(geometryInstability);
+                break;
+            case 4:
+                debugColor = vec3(reactiveMask, motionMask, confidence);
+                break;
+            case 5:
+                debugColor = canUseHistory ? vec3(0.0f, 1.0f, historyWeight) : vec3(1.0f, 0.0f, 0.0f);
+                break;
+        }
+
+        OutColor = vec4(debugColor, 1.0f);
+        OutExposureVariance = vec2(updatedExposure, updatedVariance);
+        return;
+    }
 
     // Blend in YCoCg for perceptual accuracy, then convert back
     vec3 accumulated = mix(currentYCoCg, clippedHistory, historyWeight);

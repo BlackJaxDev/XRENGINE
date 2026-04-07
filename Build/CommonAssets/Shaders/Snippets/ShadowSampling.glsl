@@ -272,47 +272,7 @@ float XRENGINE_SampleContactShadowArray(
     return 1.0 - occlusion;
 }
 
-float XRENGINE_SampleShadowMapSimple(sampler2D shadowMap, vec3 shadowCoord, float bias)
-{
-    float depth = texture(shadowMap, shadowCoord.xy).r;
-    return (shadowCoord.z - bias) > depth ? 0.0 : 1.0;
-}
-
-float XRENGINE_SampleShadowMapSimpleAddBias(sampler2D shadowMap, vec3 shadowCoord, float bias)
-{
-    float depth = texture(shadowMap, shadowCoord.xy).r;
-    return (shadowCoord.z + bias) <= depth ? 1.0 : 0.0;
-}
-
-float XRENGINE_SampleShadowMapFiltered(sampler2D shadowMap, vec3 shadowCoord, float bias, int requestedSamples, float filterRadius, bool enableSoft)
-{
-    int sampleCount = clamp(requestedSamples, 1, 16);
-    if (sampleCount <= 1)
-        return XRENGINE_SampleShadowMapSimple(shadowMap, shadowCoord, bias);
-
-    if (enableSoft)
-        return XRENGINE_SampleShadowMapSoft(shadowMap, shadowCoord, bias, sampleCount, filterRadius);
-
-    if (sampleCount <= 4)
-        return XRENGINE_SampleShadowMapTent4(shadowMap, shadowCoord, bias, filterRadius);
-
-    return XRENGINE_SampleShadowMapPCF(shadowMap, shadowCoord, bias, 3);
-}
-
-float XRENGINE_SampleShadowMapArrayFiltered(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias, int requestedSamples, float filterRadius, bool enableSoft)
-{
-    int sampleCount = clamp(requestedSamples, 1, 16);
-    if (sampleCount <= 1)
-        return XRENGINE_SampleShadowMapArraySimple(shadowMap, shadowCoord, layer, bias);
-
-    if (enableSoft)
-        return XRENGINE_SampleShadowMapArraySoft(shadowMap, shadowCoord, layer, bias, sampleCount, filterRadius);
-
-    if (sampleCount <= 4)
-        return XRENGINE_SampleShadowMapArrayTent4(shadowMap, shadowCoord, layer, bias, filterRadius);
-
-    return XRENGINE_SampleShadowMapArrayPCF(shadowMap, shadowCoord, layer, bias, 3);
-}
+// --- Cube shadow kernel and helpers (must precede CHSS cube functions) ---
 
 const vec3 XRENGINE_ShadowCubeKernel[20] = vec3[](
     vec3( 1.0,  1.0,  1.0), vec3( 1.0, -1.0,  1.0),
@@ -378,13 +338,197 @@ float XRENGINE_SampleShadowCubeSoft(samplerCube shadowMap, vec3 shadowDir, float
     return lit / float(clampedSamples);
 }
 
-float XRENGINE_SampleShadowCubeFiltered(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist, float sampleRadius, int requestedSamples, bool enableSoft)
+// --- Contact-Hardening Soft Shadows (CHSS) ---
+// Two-pass technique: blocker search estimates average occluder depth,
+// then the penumbra width is derived from the receiver-to-blocker ratio
+// and the light source's physical radius.
+
+// Blocker search for 2D shadow maps.
+// Returns average blocker depth, or -1.0 if no blockers found.
+float XRENGINE_BlockerSearch2D(sampler2D shadowMap, vec2 uv, float receiverDepth, float searchRadius, int sampleCount)
+{
+    float blockerSum = 0.0;
+    int blockerCount = 0;
+    int clampedSamples = clamp(sampleCount, 1, 16);
+
+    for (int i = 0; i < 16; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        vec2 sampleUv = uv + XRENGINE_ShadowPoissonDisk[i] * searchRadius;
+        float sampleDepth = texture(shadowMap, sampleUv).r;
+        if (sampleDepth < receiverDepth)
+        {
+            blockerSum += sampleDepth;
+            blockerCount++;
+        }
+    }
+
+    return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0;
+}
+
+// Blocker search for 2D array shadow maps.
+float XRENGINE_BlockerSearch2DArray(sampler2DArray shadowMap, vec2 uv, float layer, float receiverDepth, float searchRadius, int sampleCount)
+{
+    float blockerSum = 0.0;
+    int blockerCount = 0;
+    int clampedSamples = clamp(sampleCount, 1, 16);
+
+    for (int i = 0; i < 16; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        vec2 sampleUv = uv + XRENGINE_ShadowPoissonDisk[i] * searchRadius;
+        float sampleDepth = texture(shadowMap, vec3(sampleUv, layer)).r;
+        if (sampleDepth < receiverDepth)
+        {
+            blockerSum += sampleDepth;
+            blockerCount++;
+        }
+    }
+
+    return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0;
+}
+
+// Blocker search for cubemap shadow maps.
+float XRENGINE_BlockerSearchCube(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float farPlaneDist, float sampleRadius, int sampleCount)
+{
+    float blockerSum = 0.0;
+    int blockerCount = 0;
+    int clampedSamples = clamp(sampleCount, 1, 20);
+
+    for (int i = 0; i < 20; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        vec3 sampleDir = normalize(shadowDir + XRENGINE_GetShadowCubeKernelTap(i) * sampleRadius);
+        float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
+        if (sampleDepth < compareDepth)
+        {
+            blockerSum += sampleDepth;
+            blockerCount++;
+        }
+    }
+
+    return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0;
+}
+
+// Estimate penumbra width from blocker and receiver depths.
+float XRENGINE_EstimatePenumbra(float receiverDepth, float avgBlockerDepth, float lightSourceRadius, float minRadius, float maxRadius)
+{
+    float penumbra = (receiverDepth - avgBlockerDepth) / max(avgBlockerDepth, 0.0001) * lightSourceRadius;
+    return clamp(penumbra, minRadius, maxRadius);
+}
+
+// CHSS for 2D shadow maps: blocker search -> variable penumbra -> Poisson filtering.
+float XRENGINE_SampleShadowMapCHSS(sampler2D shadowMap, vec3 shadowCoord, float bias, int sampleCount, float searchRadius, float lightSourceRadius)
+{
+    float receiverDepth = shadowCoord.z - bias;
+    float avgBlockerDepth = XRENGINE_BlockerSearch2D(shadowMap, shadowCoord.xy, receiverDepth, searchRadius, sampleCount);
+
+    if (avgBlockerDepth < 0.0)
+        return 1.0; // no blockers: fully lit
+
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    float minRadius = max(texelSize.x, texelSize.y);
+    float penumbra = XRENGINE_EstimatePenumbra(receiverDepth, avgBlockerDepth, lightSourceRadius, minRadius, searchRadius * 4.0);
+
+    return XRENGINE_SampleShadowMapSoft(shadowMap, shadowCoord, bias, sampleCount, penumbra);
+}
+
+// CHSS for 2D array shadow maps (cascaded directional shadows).
+float XRENGINE_SampleShadowMapArrayCHSS(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias, int sampleCount, float searchRadius, float lightSourceRadius)
+{
+    float receiverDepth = shadowCoord.z - bias;
+    float avgBlockerDepth = XRENGINE_BlockerSearch2DArray(shadowMap, shadowCoord.xy, layer, receiverDepth, searchRadius, sampleCount);
+
+    if (avgBlockerDepth < 0.0)
+        return 1.0;
+
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0).xy);
+    float minRadius = max(texelSize.x, texelSize.y);
+    float penumbra = XRENGINE_EstimatePenumbra(receiverDepth, avgBlockerDepth, lightSourceRadius, minRadius, searchRadius * 4.0);
+
+    return XRENGINE_SampleShadowMapArraySoft(shadowMap, shadowCoord, layer, bias, sampleCount, penumbra);
+}
+
+// CHSS for cubemap shadow maps (point lights).
+float XRENGINE_SampleShadowCubeCHSS(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist, float sampleRadius, int sampleCount, float lightSourceRadius)
+{
+    float receiverDepth = compareDepth - bias;
+    float avgBlockerDepth = XRENGINE_BlockerSearchCube(shadowMap, shadowDir, receiverDepth, farPlaneDist, sampleRadius, sampleCount);
+
+    if (avgBlockerDepth < 0.0)
+        return 1.0;
+
+    float penumbra = XRENGINE_EstimatePenumbra(receiverDepth, avgBlockerDepth, lightSourceRadius, sampleRadius * 0.1, sampleRadius * 4.0);
+
+    return XRENGINE_SampleShadowCubeSoft(shadowMap, shadowDir, compareDepth, bias, farPlaneDist, penumbra, sampleCount);
+}
+
+// --- End CHSS ---
+
+float XRENGINE_SampleShadowMapSimple(sampler2D shadowMap, vec3 shadowCoord, float bias)
+{
+    float depth = texture(shadowMap, shadowCoord.xy).r;
+    return (shadowCoord.z - bias) > depth ? 0.0 : 1.0;
+}
+
+float XRENGINE_SampleShadowMapSimpleAddBias(sampler2D shadowMap, vec3 shadowCoord, float bias)
+{
+    float depth = texture(shadowMap, shadowCoord.xy).r;
+    return (shadowCoord.z + bias) <= depth ? 1.0 : 0.0;
+}
+
+float XRENGINE_SampleShadowMapFiltered(sampler2D shadowMap, vec3 shadowCoord, float bias, int requestedSamples, float filterRadius, int softShadowMode, float lightSourceRadius)
+{
+    int sampleCount = clamp(requestedSamples, 1, 16);
+    if (sampleCount <= 1)
+        return XRENGINE_SampleShadowMapSimple(shadowMap, shadowCoord, bias);
+
+    if (softShadowMode == 2) // ContactHardening
+        return XRENGINE_SampleShadowMapCHSS(shadowMap, shadowCoord, bias, sampleCount, filterRadius, lightSourceRadius);
+
+    if (softShadowMode == 1) // PCSS
+        return XRENGINE_SampleShadowMapSoft(shadowMap, shadowCoord, bias, sampleCount, filterRadius);
+
+    if (sampleCount <= 4)
+        return XRENGINE_SampleShadowMapTent4(shadowMap, shadowCoord, bias, filterRadius);
+
+    return XRENGINE_SampleShadowMapPCF(shadowMap, shadowCoord, bias, 3);
+}
+
+float XRENGINE_SampleShadowMapArrayFiltered(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias, int requestedSamples, float filterRadius, int softShadowMode, float lightSourceRadius)
+{
+    int sampleCount = clamp(requestedSamples, 1, 16);
+    if (sampleCount <= 1)
+        return XRENGINE_SampleShadowMapArraySimple(shadowMap, shadowCoord, layer, bias);
+
+    if (softShadowMode == 2) // ContactHardening
+        return XRENGINE_SampleShadowMapArrayCHSS(shadowMap, shadowCoord, layer, bias, sampleCount, filterRadius, lightSourceRadius);
+
+    if (softShadowMode == 1) // PCSS
+        return XRENGINE_SampleShadowMapArraySoft(shadowMap, shadowCoord, layer, bias, sampleCount, filterRadius);
+
+    if (sampleCount <= 4)
+        return XRENGINE_SampleShadowMapArrayTent4(shadowMap, shadowCoord, layer, bias, filterRadius);
+
+    return XRENGINE_SampleShadowMapArrayPCF(shadowMap, shadowCoord, layer, bias, 3);
+}
+
+float XRENGINE_SampleShadowCubeFiltered(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist, float sampleRadius, int requestedSamples, int softShadowMode, float lightSourceRadius)
 {
     int sampleCount = clamp(requestedSamples, 1, 20);
     if (sampleCount <= 1)
         return XRENGINE_SampleShadowCubeSimple(shadowMap, shadowDir, compareDepth, bias, farPlaneDist);
 
-    if (enableSoft || sampleCount <= 4)
+    if (softShadowMode == 2) // ContactHardening
+        return XRENGINE_SampleShadowCubeCHSS(shadowMap, shadowDir, compareDepth, bias, farPlaneDist, sampleRadius, sampleCount, lightSourceRadius);
+
+    if (softShadowMode == 1 || sampleCount <= 4) // PCSS or low-count
         return XRENGINE_SampleShadowCubeSoft(shadowMap, shadowDir, compareDepth, bias, farPlaneDist, sampleRadius, sampleCount);
 
     return XRENGINE_SampleShadowCubePCF(shadowMap, shadowDir, compareDepth, bias, farPlaneDist, sampleRadius);

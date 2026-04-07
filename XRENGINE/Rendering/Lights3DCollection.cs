@@ -75,9 +75,8 @@ namespace XREngine.Scene
         private bool _capturing = false;
         private ITriangulation<LightProbeComponent, LightProbeCell>? _cells;
         private readonly List<PreparedFrustum> _frustumScratch = new(6);
-        private readonly ConcurrentQueue<SceneCaptureComponentBase> _captureQueue = new();
-        private ConcurrentBag<SceneCaptureComponentBase> _captureBagUpdating = [];
-        private ConcurrentBag<SceneCaptureComponentBase> _captureBagRendering = [];
+        private readonly ConcurrentQueue<CaptureWorkItem> _captureWorkQueue = new();
+        private readonly HashSet<SceneCaptureComponentBase> _pendingCaptureComponents = new();
         private ulong _lastShadowMapsRenderFrameId = ulong.MaxValue;
         private readonly Stopwatch _captureBudgetStopwatch = new();
         private long _lastStreamingPressureLogFrameTicks = -1;
@@ -135,18 +134,37 @@ namespace XREngine.Scene
 
         /// <summary>
         /// Enqueues a scene capture component for rendering.
+        /// Progressive captures are decomposed into per-face work items so the
+        /// per-frame budget can limit how many cubemap faces are rendered each frame.
         /// </summary>
-        /// <param name="component"></param>
         public void QueueForCapture(SceneCaptureComponentBase component)
         {
-            if (_captureQueue.Contains(component))
+            lock (_pendingCaptureComponents)
             {
-                Debug.Out($"[Lights3D] QueueForCapture: ALREADY QUEUED {component.GetType().Name}");
-                return;
+                if (!_pendingCaptureComponents.Add(component))
+                    return;
             }
 
-            _captureQueue.Enqueue(component);
-            Debug.Out($"[Lights3D] QueueForCapture: ENQUEUED {component.GetType().Name}, queue size now ~{_captureQueue.Count}");
+            if (component is SceneCaptureComponent scc && scc.ProgressiveRenderEnabled)
+            {
+                for (int i = 0; i < 6; i++)
+                    _captureWorkQueue.Enqueue(new CaptureWorkItem(scc, ECaptureWorkType.CubemapFace, i));
+                _captureWorkQueue.Enqueue(new CaptureWorkItem(scc, ECaptureWorkType.CaptureFinalize));
+            }
+            else
+            {
+                _captureWorkQueue.Enqueue(new CaptureWorkItem(component, ECaptureWorkType.FullCapture));
+            }
+        }
+
+        /// <summary>
+        /// Removes a component from the pending-capture tracking set.
+        /// Called after a full-capture or finalize work item completes.
+        /// </summary>
+        internal void CompletePendingCapture(SceneCaptureComponentBase component)
+        {
+            lock (_pendingCaptureComponents)
+                _pendingCaptureComponents.Remove(component);
         }
 
         private bool ShouldDeferAuxiliaryCaptures()
@@ -164,6 +182,25 @@ namespace XREngine.Scene
 
             return true;
         }
+
+        #endregion
+
+        #region Capture Work Items
+
+        public enum ECaptureWorkType : byte
+        {
+            /// <summary>Render a single cubemap face (collect + swap + render).</summary>
+            CubemapFace,
+            /// <summary>Finalize a cubemap capture cycle (mip gen, octa encode, IBL).</summary>
+            CaptureFinalize,
+            /// <summary>Full non-progressive capture (all faces + finalize in one call).</summary>
+            FullCapture,
+        }
+
+        public readonly record struct CaptureWorkItem(
+            SceneCaptureComponentBase Component,
+            ECaptureWorkType WorkType,
+            int FaceIndex = -1);
 
         #endregion
     }

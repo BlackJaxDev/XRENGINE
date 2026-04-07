@@ -13,7 +13,6 @@ namespace XREngine.Components.Capture.Lights
             base.OnComponentActivated();
 
             var world = WorldAs<XREngine.Rendering.XRWorldInstance>();
-            Debug.Out($"[LightProbe] OnComponentActivated: world={world is not null}, RealtimeCapture={RealtimeCapture}, Cubemap={EnvironmentTextureCubemap is not null}, Octa={EnvironmentTextureOctahedral is not null}, IrrFBO={_irradianceFBO is not null}");
             if (world is not null)
             {
                 if (_registeredWorld is not null && _registeredWorld != world)
@@ -27,12 +26,10 @@ namespace XREngine.Components.Capture.Lights
                 _startupCaptureTimer.StartSingleFire(() =>
                 {
                     var w = WorldAs<XREngine.Rendering.XRWorldInstance>();
-                    Debug.Out($"[LightProbe] Startup timer fired: IsActiveInHierarchy={IsActiveInHierarchy}, world={w is not null}");
                     if (!IsActiveInHierarchy || w is null)
                         return;
 
                     FullCapture(128, false);
-                    Debug.Out($"[LightProbe] FullCapture queued. Cubemap={EnvironmentTextureCubemap is not null}, Res={Resolution}, Octa={EnvironmentTextureOctahedral is not null}, IrradianceFBO={_irradianceFBO is not null}");
                 }, TimeSpan.FromMilliseconds(1.0f));
             }
         }
@@ -67,7 +64,10 @@ namespace XREngine.Components.Capture.Lights
                     break;
                 case nameof(UseDirectCubemapIblGeneration):
                     if (EnvironmentTextureEquirect is null && IsActiveInHierarchy)
-                        InitializeForCapture();
+                    {
+                        InvalidateCaptureResources();
+                        EnsureCaptureResourcesInitialized();
+                    }
                     CachePreviewSphere();
                     break;
                 case nameof(PreviewDisplay):

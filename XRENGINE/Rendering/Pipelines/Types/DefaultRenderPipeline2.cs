@@ -55,16 +55,16 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         set => SetField(ref _deferredDebugView, value);
     }
 
-    private const float TemporalFeedbackMin = 0.08f;
-    private const float TemporalFeedbackMax = 0.94f;
+    private const float TemporalFeedbackMin = 0.16f;
+    private const float TemporalFeedbackMax = 0.96f;
     private const float TemporalVarianceGamma = 1.0f;
     private const float TemporalCatmullRadius = 1.0f;
-    private const float TemporalDepthRejectThreshold = 0.0045f;
+    private const float TemporalDepthRejectThreshold = 0.0075f;
     private static readonly Vector2 TemporalReactiveTransparencyRange = new(0.4f, 0.85f);
     private const float TemporalReactiveVelocityScale = 0.55f;
     private const float TemporalReactiveLumaThreshold = 0.35f;
-    private const float TemporalDepthDiscontinuityScale = 250.0f;
-    private const float TemporalConfidencePower = 0.65f;
+    private const float TemporalDepthDiscontinuityScale = 140.0f;
+    private const float TemporalConfidencePower = 0.55f;
 
     private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
     public EGlobalIlluminationMode GlobalIlluminationMode
@@ -136,18 +136,36 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private static ERenderBufferStorage ResolveOutputRenderBufferStorage()
         => ResolveOutputHDR() ? ERenderBufferStorage.Rgba16f : ERenderBufferStorage.Rgba8;
 
+    // Keep post-process and temporal AA intermediates in FP16 even when the final
+    // presentation target is SDR so nested captures cannot churn TSR resources between
+    // RGBA8 and RGBA16F across frames.
+    private static EPixelInternalFormat ResolvePostProcessIntermediateInternalFormat()
+        => EPixelInternalFormat.Rgba16f;
+
+    private static EPixelType ResolvePostProcessIntermediatePixelType()
+        => EPixelType.HalfFloat;
+
+    private static ESizedInternalFormat ResolvePostProcessIntermediateSizedInternalFormat()
+        => ESizedInternalFormat.Rgba16f;
+
     private static bool NeedsRecreateOutputTextureInternalSize(XRTexture texture)
         => NeedsRecreateTextureInternalSize(texture) || !MatchesOutputTextureFormat(texture);
 
     private static bool NeedsRecreateOutputTextureFullSize(XRTexture texture)
         => NeedsRecreateTextureFullSize(texture) || !MatchesOutputTextureFormat(texture);
 
-    private static bool MatchesOutputTextureFormat(XRTexture texture)
-    {
-        ESizedInternalFormat sizedFormat = ResolveOutputSizedInternalFormat();
-        EPixelInternalFormat internalFormat = ResolveOutputInternalFormat();
-        EPixelType pixelType = ResolveOutputPixelType();
+    private static bool NeedsRecreatePostProcessTextureInternalSize(XRTexture texture)
+        => NeedsRecreateTextureInternalSize(texture) || !MatchesPostProcessIntermediateTextureFormat(texture);
 
+    private static bool NeedsRecreatePostProcessTextureFullSize(XRTexture texture)
+        => NeedsRecreateTextureFullSize(texture) || !MatchesPostProcessIntermediateTextureFormat(texture);
+
+    private static bool MatchesTextureFormat(
+        XRTexture texture,
+        ESizedInternalFormat sizedFormat,
+        EPixelInternalFormat internalFormat,
+        EPixelType pixelType)
+    {
         return texture switch
         {
             XRTexture2D texture2D when texture2D.Mipmaps is { Length: > 0 }
@@ -158,6 +176,24 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
                 => texture2D.SizedInternalFormat == sizedFormat,
             _ => false,
         };
+    }
+
+    private static bool MatchesOutputTextureFormat(XRTexture texture)
+    {
+        ESizedInternalFormat sizedFormat = ResolveOutputSizedInternalFormat();
+        EPixelInternalFormat internalFormat = ResolveOutputInternalFormat();
+        EPixelType pixelType = ResolveOutputPixelType();
+
+        return MatchesTextureFormat(texture, sizedFormat, internalFormat, pixelType);
+    }
+
+    private static bool MatchesPostProcessIntermediateTextureFormat(XRTexture texture)
+    {
+        ESizedInternalFormat sizedFormat = ResolvePostProcessIntermediateSizedInternalFormat();
+        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+
+        return MatchesTextureFormat(texture, sizedFormat, internalFormat, pixelType);
     }
 
     /// <summary>
@@ -179,6 +215,26 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
                 continue;
 
             if (target is XRTexture tex && !MatchesOutputTextureFormat(tex))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool NeedsRecreateFboDueToPostProcessIntermediateFormat(XRFrameBuffer fbo)
+    {
+        var targets = fbo.Targets;
+        if (targets is null)
+            return false;
+
+        for (int i = 0; i < targets.Length; i++)
+        {
+            var (target, attachment, _, _) = targets[i];
+            if (attachment < EFrameBufferAttachment.ColorAttachment0
+                || attachment > EFrameBufferAttachment.ColorAttachment7)
+                continue;
+
+            if (target is XRTexture tex && !MatchesPostProcessIntermediateTextureFormat(tex))
                 return true;
         }
 
@@ -293,17 +349,32 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private bool NeedsRecreateMsaaFbo(XRFrameBuffer fbo)
     {
-        if (fbo.EffectiveSampleCount != MsaaSampleCount)
+        if (!fbo.IsLastCheckComplete || fbo.EffectiveSampleCount != MsaaSampleCount)
             return true;
 
+        return fbo.Name switch
+        {
+            MsaaGBufferFBOName => !HasMsaaGBufferTargets(fbo),
+            MsaaLightingFBOName => !HasMsaaLightingTargets(fbo),
+            ForwardPassMsaaFBOName => !HasForwardPassMsaaTargets(fbo),
+            _ => NeedsRecreateMsaaFboDueToColorRenderBufferFormat(fbo),
+        };
+    }
+
+    private bool NeedsRecreateMsaaFboDueToColorRenderBufferFormat(XRFrameBuffer fbo)
+    {
         if (fbo.Targets is null)
             return false;
+
+        ERenderBufferStorage expectedColorFormat = fbo.Name == ForwardPassMsaaFBOName
+            ? GetForwardMsaaColorFormat()
+            : ResolveOutputRenderBufferStorage();
 
         foreach (var (target, attachment, _, _) in fbo.Targets)
         {
             if (attachment == EFrameBufferAttachment.ColorAttachment0
                 && target is XRRenderBuffer renderBuffer
-                && renderBuffer.Type != ResolveOutputRenderBufferStorage())
+                && renderBuffer.Type != expectedColorFormat)
                 return true;
         }
 
@@ -385,6 +456,142 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
         XRShader expectedShader = XRShader.EngineShader(
             Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool HasTextureAttachment(
+        (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex) target,
+        string textureName,
+        EFrameBufferAttachment attachment)
+        => target.Attachment == attachment
+            && target.MipLevel == 0
+            && target.LayerIndex == -1
+            && ReferenceEquals(target.Target, GetTexture<XRTexture>(textureName));
+
+    private bool HasSingleColorTarget(XRFrameBuffer fbo, string textureName)
+    {
+        if (fbo.Targets is not { Length: 1 })
+            return false;
+
+        return HasTextureAttachment(fbo.Targets[0], textureName, EFrameBufferAttachment.ColorAttachment0);
+    }
+
+    private bool HasMsaaGBufferTargets(XRFrameBuffer fbo)
+    {
+        if (fbo.Targets is not { Length: 5 } targets)
+            return false;
+
+        return HasTextureAttachment(targets[0], MsaaAlbedoOpacityTextureName, EFrameBufferAttachment.ColorAttachment0)
+            && HasTextureAttachment(targets[1], MsaaNormalTextureName, EFrameBufferAttachment.ColorAttachment1)
+            && HasTextureAttachment(targets[2], MsaaRMSETextureName, EFrameBufferAttachment.ColorAttachment2)
+            && HasTextureAttachment(targets[3], MsaaTransformIdTextureName, EFrameBufferAttachment.ColorAttachment3)
+            && HasTextureAttachment(targets[4], MsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
+    }
+
+    private bool HasMsaaLightingTargets(XRFrameBuffer fbo)
+    {
+        if (fbo.Targets is not { Length: 2 } targets)
+            return false;
+
+        return HasTextureAttachment(targets[0], MsaaLightingTextureName, EFrameBufferAttachment.ColorAttachment0)
+            && HasTextureAttachment(targets[1], MsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
+    }
+
+    private bool HasForwardPassMsaaTargets(XRFrameBuffer fbo)
+    {
+        if (fbo.Targets is not { Length: 2 } targets)
+            return false;
+
+        var (colorTarget, colorAttachment, mipLevel, layerIndex) = targets[0];
+        if (colorAttachment != EFrameBufferAttachment.ColorAttachment0
+            || mipLevel != 0
+            || layerIndex != -1
+            || colorTarget is not XRRenderBuffer renderBuffer
+            || renderBuffer.Type != GetForwardMsaaColorFormat())
+            return false;
+
+        return HasTextureAttachment(targets[1], ForwardPassMsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
+    }
+
+    private bool NeedsRecreatePostProcessOutputFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        return !HasSingleColorTarget(fbo, PostProcessOutputTextureName);
+    }
+
+    private bool NeedsRecreateFxaaFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        if (!HasSingleColorTarget(fbo, FxaaOutputTextureName))
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(PostProcessOutputTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "FXAA.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateTsrHistoryColorFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        return !HasSingleColorTarget(fbo, TsrHistoryColorTextureName);
+    }
+
+    private bool NeedsRecreateTsrUpscaleFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        if (!HasSingleColorTarget(fbo, FxaaOutputTextureName))
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 5)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(PostProcessOutputTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VelocityTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
+            || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
+            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"),
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
@@ -689,6 +896,31 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         MsaaDeferredResolveRmseFBOName,
     ];
 
+    private static readonly string[] ResizeRecoveryTextureDependencies =
+    [
+        AmbientOcclusionIntensityTextureName,
+        DepthViewTextureName,
+        StencilViewTextureName,
+        DiffuseTextureName,
+        HDRSceneTextureName,
+        BloomBlurTextureName,
+        AutoExposureTextureName,
+        TransparentSceneCopyTextureName,
+        TransparentAccumTextureName,
+        TransparentRevealageTextureName,
+    ];
+
+    private static readonly string[] ResizeRecoveryFrameBufferDependencies =
+    [
+        // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
+        // so it must not be destroyed here — the AO pass owns its lifecycle.
+        SceneCopyFBOName,
+        TransparentSceneCopyFBOName,
+        DeferredTransparencyBlurFBOName,
+        TransparentAccumulationFBOName,
+        TransparentResolveFBOName,
+    ];
+
     public DefaultRenderPipeline2() : this(false)
     {
     }
@@ -787,11 +1019,41 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
     {
+        VPRC_TemporalAccumulationPass.ResetHistory(instance);
+
         foreach (string name in AntiAliasingFrameBufferDependencies)
             instance.Resources.RemoveFrameBuffer(name);
 
         foreach (string name in AntiAliasingTextureDependencies)
             instance.Resources.RemoveTexture(name);
+    }
+
+    internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
+    {
+        if (IsDestroyed || width <= 0 || height <= 0)
+            return;
+
+        // Resize callbacks can land after early cache-or-create commands have already run
+        // for the current frame. Explicitly evict the post-process/present source chain so
+        // the next pass/frame rebuilds from fresh descriptors instead of presenting torn-down
+        // attachments from the pre-resize generation.
+        const string reason = "ViewportResized";
+
+        VPRC_TemporalAccumulationPass.ResetHistory(instance);
+
+        foreach (string name in AntiAliasingFrameBufferDependencies)
+            instance.RemoveFrameBufferResource(name, reason);
+
+        foreach (string name in ResizeRecoveryFrameBufferDependencies)
+            instance.RemoveFrameBufferResource(name, reason);
+
+        foreach (string name in AntiAliasingTextureDependencies)
+            instance.RemoveTextureResource(name, reason);
+
+        foreach (string name in ResizeRecoveryTextureDependencies)
+            instance.RemoveTextureResource(name, reason);
+
+        instance.RenderState.WindowViewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
     }
 
     private void ApplyAntiAliasingResolutionHint()

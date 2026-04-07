@@ -131,11 +131,14 @@ internal static class LightComponentEditorShared
         if (ImGui.DragFloat("Shadow Exponent", ref exp, 0.001f, 0.0f, 100.0f, "%.4f"))
             light.ShadowExponent = MathF.Max(0.0f, exp);
 
-        bool pcss = light.EnablePCSS;
-        if (ImGui.Checkbox("Enable PCSS", ref pcss))
-            light.EnablePCSS = pcss;
+        int softMode = (int)light.SoftShadowMode;
+        if (ImGui.Combo("Soft Shadow Mode", ref softMode, "Hard\0PCSS\0Contact Hardening\0"))
+            light.SoftShadowMode = (ESoftShadowMode)Math.Clamp(softMode, 0, 2);
 
-        if (light is not PointLightComponent || pcss)
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Hard = PCF fallback, PCSS = fixed-radius Poisson disk, Contact Hardening = blocker-search variable penumbra (CHSS).");
+
+        if (light is not PointLightComponent || light.SoftShadowMode != ESoftShadowMode.Hard)
         {
             ImGui.Indent();
 
@@ -146,6 +149,16 @@ internal static class LightComponentEditorShared
             float filter = light.FilterRadius;
             if (ImGui.DragFloat("Filter Radius", ref filter, 0.0001f, 0.0f, 1.0f, "%.6f"))
                 light.FilterRadius = MathF.Max(0.0f, filter);
+
+            if (light.SoftShadowMode == ESoftShadowMode.ContactHardening)
+            {
+                float lightRadius = light.LightSourceRadius;
+                if (ImGui.DragFloat("Light Source Radius", ref lightRadius, 0.001f, 0.0f, 10.0f, "%.4f"))
+                    light.LightSourceRadius = MathF.Max(0.0f, lightRadius);
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Physical radius of the light source. Larger values widen the penumbra for contact-hardening shadows.");
+            }
 
             ImGui.Unindent();
         }
