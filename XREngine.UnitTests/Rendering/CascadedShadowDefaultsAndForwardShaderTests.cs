@@ -161,10 +161,15 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform float ContactShadowDistance = 0.1f;");
         source.ShouldContain("uniform int ShadowSamples = 4;");
         source.ShouldContain("uniform int ContactShadowSamples = 4;");
-        source.ShouldContain("SampleContactShadowScreenSpaceLocal(");
+        source.ShouldContain("XRENGINE_SampleContactShadow2D(");
+        source.ShouldContain("XRENGINE_SampleContactShadowArray(");
         source.ShouldContain("SampleShadowMapFilteredLocal(");
         source.ShouldContain("SampleShadowMapArrayFilteredLocal(");
-        source.ShouldContain("ResolveContactShadowSampleCountLocal(");
+        source.ShouldContain("XRENGINE_ResolveContactShadowSampleCount(");
+        source.ShouldContain("ShadowBiasMax,");
+        source.ShouldContain("bias,");
+        source.ShouldNotContain("SampleContactShadowScreenSpaceLocal(");
+        source.ShouldNotContain("ResolveContactShadowSampleCountLocal(");
         source.ShouldNotContain("MinFade");
         source.ShouldNotContain("MaxFade");
     }
@@ -239,7 +244,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
-    public void DeferredSpotShader_UsesScreenSpaceContactShadows()
+    public void DeferredSpotShader_UsesSharedContactShadowHelpers()
     {
         string source = LoadShaderSource("Scene3D/DeferredLightingSpot.fs");
 
@@ -248,8 +253,12 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform int ContactShadowSamples = 4;");
         source.ShouldContain("uniform vec2 ScreenOrigin;");
         source.ShouldContain("vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;");
-        source.ShouldContain("SampleContactShadowScreenSpaceLocal(");
-        source.ShouldContain("ResolveContactShadowSampleCountLocal(");
+        source.ShouldContain("XRENGINE_SampleContactShadow2D(");
+        source.ShouldContain("XRENGINE_ResolveContactShadowSampleCount(");
+        source.ShouldContain("ShadowBiasMax,");
+        source.ShouldContain("bias,");
+        source.ShouldNotContain("SampleContactShadowScreenSpaceLocal(");
+        source.ShouldNotContain("ResolveContactShadowSampleCountLocal(");
         source.ShouldNotContain("MinFade");
         source.ShouldNotContain("MaxFade");
     }

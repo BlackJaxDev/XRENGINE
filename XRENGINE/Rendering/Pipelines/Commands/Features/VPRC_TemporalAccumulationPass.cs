@@ -231,7 +231,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private static EAntiAliasingMode ResolveAntiAliasingMode()
     {
-        if (IsLightProbePass)
+        if (IsLightProbePass || Engine.Rendering.State.IsSceneCapturePass)
             return EAntiAliasingMode.None;
 
         if (Engine.VRState.IsInVR && !Engine.Rendering.Settings.RenderVRSinglePassStereo)

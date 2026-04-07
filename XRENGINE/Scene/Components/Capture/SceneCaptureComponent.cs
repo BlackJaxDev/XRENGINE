@@ -43,7 +43,7 @@ namespace XREngine.Components.Lights
         [YamlIgnore]
         public XRViewport?[] Viewports { get; } = new XRViewport?[6];
 
-        private static readonly Quaternion[] FaceRotationOffsets =
+        protected static readonly Quaternion[] FaceRotationOffsets =
         [
             XRMath.LookRotation(-Vector3.UnitX, -Vector3.UnitY), // +X
             XRMath.LookRotation( Vector3.UnitX, -Vector3.UnitY), // -X
@@ -68,6 +68,10 @@ namespace XREngine.Components.Lights
         private bool _captureResourcesDirty = true;
         private bool _captureResourceInitializationQueued;
         private bool _deferCaptureResourceRefresh;
+
+        // Light probes are captured through a single global queue, so one off-screen viewport
+        // and pipeline instance can be reused across every probe face.
+        private static XRViewport? s_sharedCaptureViewport;
 
         private const uint OctahedralResolutionMultiplier = 2u;
         private static XRShader? s_cubemapToOctaShader;
@@ -183,11 +187,8 @@ namespace XREngine.Components.Lights
                 return false;
             }
 
-            for (int i = 0; i < Viewports.Length; ++i)
-            {
-                if (Viewports[i] is null)
-                    return false;
-            }
+            if (SharedCaptureViewport?.Camera is null)
+                return false;
 
             if (ShouldEncodeEnvironmentToOctahedralMap() && (_octahedralFBO is null || _environmentTextureOctahedral is null))
                 return false;
@@ -248,37 +249,76 @@ namespace XREngine.Components.Lights
             else
                 DisableOctahedralEncodingResources();
 
-            var cameras = XRCubeFrameBuffer.GetCamerasPerFace(0.1f, 10000.0f, true, Transform);
-            for (int i = 0; i < cameras.Length; i++)
+            XRViewport sharedViewport = GetOrCreateSharedCaptureViewport();
+            Viewports[0] = sharedViewport;
+            for (int i = 1; i < Viewports.Length; ++i)
+                Viewports[i] = null;
+
+            PrepareCaptureViewportForFace(_currentFace);
+        }
+
+        private XRViewport GetOrCreateSharedCaptureViewport()
+        {
+            XRViewport viewport = s_sharedCaptureViewport ??= CreateSharedCaptureViewport();
+            ConfigureSharedCaptureViewport(viewport);
+            return viewport;
+        }
+
+        private static XRViewport CreateSharedCaptureViewport()
+        {
+            Transform captureTransform = new();
+            XRCamera captureCamera = new(captureTransform, new XRPerspectiveCameraParameters(90.0f, 1.0f, 0.1f, 10000.0f));
+            XRViewport viewport = new(null, 1u, 1u)
             {
-                XRCamera cam = cameras[i];
-                // Exclude gizmos layer from capture so debug visuals don't appear in reflections/probes
-                cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
-                Viewports[i] = new XRViewport(null, Resolution, Resolution)
-                {
-                    WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>(),
-                    Camera = cam,
-                    RenderPipeline = Engine.Rendering.NewRenderPipeline(),
-                    SetRenderPipelineFromCamera = false,
-                    AutomaticallyCollectVisible = false,
-                    AutomaticallySwapBuffers = false,
-                    AllowUIRender = false,
-                    CullWithFrustum = true,
-                };
-                var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
-                if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
-                {
-                    grading.AutoExposure = false;
-                    grading.Exposure = 1.0f;
-                }
-                else
-                {
-                    colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
-                    colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
-                }
+                Camera = captureCamera,
+                SetRenderPipelineFromCamera = false,
+                AutomaticallyCollectVisible = false,
+                AutomaticallySwapBuffers = false,
+                AllowUIRender = false,
+                CullWithFrustum = true,
+            };
+
+            ApplyCaptureCameraSettings(captureCamera);
+            return viewport;
+        }
+
+        private void ConfigureSharedCaptureViewport(XRViewport viewport)
+        {
+            viewport.WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
+            viewport.SetRenderPipelineFromCamera = false;
+            viewport.AutomaticallyCollectVisible = false;
+            viewport.AutomaticallySwapBuffers = false;
+            viewport.AllowUIRender = false;
+            viewport.CullWithFrustum = true;
+
+            if ((uint)viewport.Width != Resolution ||
+                (uint)viewport.Height != Resolution ||
+                viewport.InternalWidth != (int)Resolution ||
+                viewport.InternalHeight != (int)Resolution)
+            {
+                viewport.Resize(Resolution, Resolution);
             }
 
-            SyncCaptureCameraTransforms();
+            if (viewport.Camera is not null)
+                ApplyCaptureCameraSettings(viewport.Camera);
+        }
+
+        private static void ApplyCaptureCameraSettings(XRCamera camera)
+        {
+            // Exclude gizmos so debug visuals don't end up inside the captured probe data.
+            camera.CullingMask = DefaultLayers.EverythingExceptGizmos;
+
+            var colorStage = camera.GetPostProcessStageState<ColorGradingSettings>();
+            if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
+            {
+                grading.AutoExposure = false;
+                grading.Exposure = 1.0f;
+            }
+            else
+            {
+                colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
+                colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
+            }
         }
 
         protected virtual XRTextureCube CreateEnvironmentColorCubemap(uint resolution)
@@ -316,12 +356,26 @@ namespace XREngine.Components.Lights
         /// </summary>
         protected bool LastRenderCompletedCycle { get; private set; }
 
-        private XRViewport? SharedCaptureViewport => XPosVP;
+        private XRViewport? SharedCaptureViewport => Viewports[0];
+
+        protected bool TryGetCaptureFaceWorldTransform(int faceIndex, out Vector3 translation, out Quaternion rotation)
+        {
+            translation = Vector3.Zero;
+            rotation = Quaternion.Identity;
+
+            TransformBase? probeTransform = Transform;
+            if (probeTransform is null || (uint)faceIndex >= (uint)FaceRotationOffsets.Length)
+                return false;
+
+            translation = probeTransform.GetWorldTranslation();
+            rotation = Quaternion.Normalize(probeTransform.GetWorldRotation() * FaceRotationOffsets[faceIndex]);
+            return true;
+        }
 
         public override void CollectVisible()
         {
             EnsureCaptureResourcesInitialized();
-            if (Viewports[0] is null)
+            if (SharedCaptureViewport is null)
                 return;
 
             if (_progressiveRenderEnabled)
@@ -331,7 +385,14 @@ namespace XREngine.Components.Lights
         }
 
         private void CollectVisibleFace(int i)
-            => Viewports[i]?.CollectVisible(false);
+        {
+            XRViewport? viewport = SharedCaptureViewport;
+            if (viewport is null)
+                return;
+
+            PrepareCaptureViewportForFace(i);
+            viewport.CollectVisible(false);
+        }
 
         private void CollectVisibleShared()
         {
@@ -339,8 +400,10 @@ namespace XREngine.Components.Lights
             if (viewport?.ActiveCamera is null || Transform is null)
                 return;
 
+            PrepareCaptureViewportForFace(0);
+
             float radius = Math.Max(0.1f, viewport.ActiveCamera.FarZ);
-            Sphere collectionVolume = new(Transform.WorldTranslation, radius);
+            Sphere collectionVolume = new(Transform.GetWorldTranslation(), radius);
             viewport.CollectVisible(
                 collectMirrors: false,
                 renderCommandsOverride: null,
@@ -357,7 +420,7 @@ namespace XREngine.Components.Lights
         }
 
         private void SwapBuffersFace(int i)
-            => Viewports[i]?.SwapBuffers();
+            => SharedCaptureViewport?.SwapBuffers();
 
         private void SwapBuffersShared()
             => SharedCaptureViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
@@ -375,8 +438,6 @@ namespace XREngine.Components.Lights
 
             try
             {
-                SyncCaptureCameraTransforms();
-
                 GetDepthParams(out IFrameBufferAttachement depthAttachment, out int[] depthLayers);
 
                 if (_progressiveRenderEnabled)
@@ -386,9 +447,8 @@ namespace XREngine.Components.Lights
                 }
                 else
                 {
-                    RenderCommandCollection? sharedCommands = SharedCaptureViewport?.RenderPipelineInstance.MeshRenderCommands;
                     for (int i = 0; i < 6; ++i)
-                        RenderFace(depthAttachment, depthLayers, i, sharedCommands);
+                        RenderFace(depthAttachment, depthLayers, i);
                 }
 
                 bool completedCycle = !_progressiveRenderEnabled || _currentFace == 0;
@@ -415,33 +475,24 @@ namespace XREngine.Components.Lights
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
-            SyncCaptureCameraTransforms();
+            if (SharedCaptureViewport is not null)
+                PrepareCaptureViewportForFace(_currentFace);
         }
 
-        private void SyncCaptureCameraTransforms()
+        private void PrepareCaptureViewportForFace(int faceIndex)
         {
-            TransformBase? probeTransform = Transform;
-            if (probeTransform is null)
+            XRViewport? viewport = SharedCaptureViewport;
+            if (viewport?.Camera?.Transform is not Transform captureTransform)
                 return;
 
-            if (Viewports is null || Viewports.Length == 0)
+            ConfigureSharedCaptureViewport(viewport);
+
+            if (!TryGetCaptureFaceWorldTransform(faceIndex, out Vector3 translation, out Quaternion rotation))
                 return;
 
-            for (int i = 0; i < Viewports.Length; ++i)
-            {
-                var viewport = Viewports[i];
-                var camera = viewport?.Camera;
-                if (camera?.Transform is not Transform faceTransform)
-                    continue;
-
-                if (!ReferenceEquals(faceTransform.Parent, probeTransform))
-                    faceTransform.SetParent(probeTransform, false, EParentAssignmentMode.Immediate);
-
-                faceTransform.Translation = Vector3.Zero;
-                faceTransform.Rotation = FaceRotationOffsets[i];
-                faceTransform.Scale = Vector3.One;
-                faceTransform.RecalculateMatrices(true, true);
-            }
+            captureTransform.SetWorldTranslationRotation(translation, rotation);
+            captureTransform.Scale = Vector3.One;
+            captureTransform.RecalculateMatrices(true, true);
         }
 
         private void DisableOctahedralEncodingResources()
@@ -451,6 +502,28 @@ namespace XREngine.Components.Lights
 
             _environmentTextureOctahedral?.Destroy();
             EnvironmentTextureOctahedral = null;
+        }
+
+        protected void ReleaseCapturedEnvironmentTextures(bool releaseCubemap, bool releaseOctahedral)
+        {
+            if (releaseOctahedral)
+            {
+                if (_octahedralFBO is not null)
+                    _octahedralFBO.SettingUniforms -= BindOctahedralSampler;
+
+                _environmentTextureOctahedral?.Destroy();
+                EnvironmentTextureOctahedral = null;
+                _octahedralFBO?.Destroy();
+                _octahedralFBO = null;
+                _octahedralMaterial?.Destroy();
+                _octahedralMaterial = null;
+            }
+
+            if (releaseCubemap)
+            {
+                _environmentTextureCubemap?.Destroy();
+                EnvironmentTextureCubemap = null;
+            }
         }
 
         private void InitializeOctahedralEncodingResources()
@@ -604,8 +677,14 @@ namespace XREngine.Components.Lights
             }
         }
 
-        private void RenderFace(IFrameBufferAttachement depthAttachment, int[] depthLayers, int i, RenderCommandCollection? renderCommandsOverride = null)
+        private void RenderFace(IFrameBufferAttachement depthAttachment, int[] depthLayers, int i)
         {
+            XRViewport? viewport = SharedCaptureViewport;
+            if (viewport is null)
+                return;
+
+            PrepareCaptureViewportForFace(i);
+
             RenderFBO!.SetRenderTargets(
                 (_environmentTextureCubemap!, EFrameBufferAttachment.ColorAttachment0, 0, i),
                 (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, depthLayers[i]));
@@ -615,17 +694,7 @@ namespace XREngine.Components.Lights
             if (!RenderFBO.IsLastCheckComplete)
                 return;
 
-            XRViewport viewport = Viewports[i]!;
-            RenderCommandCollection? previousOverride = viewport.MeshRenderCommandsOverride;
-            viewport.MeshRenderCommandsOverride = renderCommandsOverride;
-            try
-            {
-                viewport.Render(RenderFBO, null, null, false, null);
-            }
-            finally
-            {
-                viewport.MeshRenderCommandsOverride = previousOverride;
-            }
+            viewport.Render(RenderFBO, null, null, false, null);
         }
 
         public void FullCapture(uint colorResolution, bool captureDepth)
@@ -644,15 +713,16 @@ namespace XREngine.Components.Lights
         public virtual void ExecuteCaptureFace(int faceIndex)
         {
             EnsureCaptureResourcesInitialized();
-            if (World is null || RenderFBO is null || Viewports[faceIndex] is null)
+            XRViewport? viewport = SharedCaptureViewport;
+            if (World is null || RenderFBO is null || viewport is null)
                 return;
 
             Engine.Rendering.State.IsSceneCapturePass = true;
             try
             {
-                SyncCaptureCameraTransforms();
-                Viewports[faceIndex]!.CollectVisible(false);
-                Viewports[faceIndex]!.SwapBuffers();
+                PrepareCaptureViewportForFace(faceIndex);
+                viewport.CollectVisible(false);
+                viewport.SwapBuffers();
                 GetDepthParams(out var depthAttachment, out int[] depthLayers);
                 RenderFace(depthAttachment, depthLayers, faceIndex);
             }

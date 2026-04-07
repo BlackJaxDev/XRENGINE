@@ -330,34 +330,19 @@ public static class FbxGeometryParser
         if (!hasWorkItem)
             return [];
 
-        byte[] buffer = FbxStructuralParser.DecodeArrayPayload(structural, workItem);
-        bool bigEndian = structural.Header.IsBigEndian;
-        int[] result = new int[property.ArrayLength];
-        ReadOnlySpan<byte> span = buffer;
         switch (property.Kind)
         {
             case FbxPropertyKind.Int32Array:
-                for (int index = 0; index < result.Length; index++)
-                {
-                    ReadOnlySpan<byte> element = span.Slice(index * sizeof(int), sizeof(int));
-                    result[index] = bigEndian
-                        ? BinaryPrimitives.ReadInt32BigEndian(element)
-                        : BinaryPrimitives.ReadInt32LittleEndian(element);
-                }
-                break;
+                return FbxArrayDecodeHelper.ReadInt32ArrayDirect(structural, workItem);
             case FbxPropertyKind.Int64Array:
+                long[] wideValues = FbxArrayDecodeHelper.ReadInt64ArrayDirect(structural, workItem);
+                int[] result = new int[wideValues.Length];
                 for (int index = 0; index < result.Length; index++)
-                {
-                    ReadOnlySpan<byte> element = span.Slice(index * sizeof(long), sizeof(long));
-                    long value = bigEndian
-                        ? BinaryPrimitives.ReadInt64BigEndian(element)
-                        : BinaryPrimitives.ReadInt64LittleEndian(element);
-                    result[index] = checked((int)value);
-                }
-                break;
+                    result[index] = checked((int)wideValues[index]);
+                return result;
         }
 
-        return result;
+        return [];
     }
 
     private static double[] ReadDoubleArray(
@@ -387,33 +372,19 @@ public static class FbxGeometryParser
         if (!hasWorkItem)
             return [];
 
-        byte[] buffer = FbxStructuralParser.DecodeArrayPayload(structural, workItem);
-        bool bigEndian = structural.Header.IsBigEndian;
-        double[] result = new double[property.ArrayLength];
-        ReadOnlySpan<byte> span = buffer;
         switch (property.Kind)
         {
             case FbxPropertyKind.Float32Array:
-                for (int index = 0; index < result.Length; index++)
-                {
-                    ReadOnlySpan<byte> element = span.Slice(index * sizeof(float), sizeof(float));
-                    result[index] = bigEndian
-                        ? BinaryPrimitives.ReadSingleBigEndian(element)
-                        : BinaryPrimitives.ReadSingleLittleEndian(element);
-                }
-                break;
+                float[] narrowValues = FbxArrayDecodeHelper.ReadFloat32ArrayDirect(structural, workItem);
+                double[] widenedValues = new double[narrowValues.Length];
+                for (int index = 0; index < widenedValues.Length; index++)
+                    widenedValues[index] = narrowValues[index];
+                return widenedValues;
             case FbxPropertyKind.Float64Array:
-                for (int index = 0; index < result.Length; index++)
-                {
-                    ReadOnlySpan<byte> element = span.Slice(index * sizeof(double), sizeof(double));
-                    result[index] = bigEndian
-                        ? BinaryPrimitives.ReadDoubleBigEndian(element)
-                        : BinaryPrimitives.ReadDoubleLittleEndian(element);
-                }
-                break;
+                return FbxArrayDecodeHelper.ReadFloat64ArrayDirect(structural, workItem);
         }
 
-        return result;
+        return [];
     }
 
     private static int ReadScalarAsInt32(FbxStructuralDocument structural, FbxPropertyRecord property)

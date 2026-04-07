@@ -384,7 +384,7 @@ namespace XREngine
                     }
                 }
 
-                reasons.Add("phases 0-4 install probing, sidecar ownership, shared interop surfaces, and OpenGL bridge passthrough routing; real vendor SDK dispatch remains pending in later phases");
+                reasons.Add("bridge vendor dispatch also requires a compatible DLSS or XeSS runtime plus per-vendor support checks");
                 return string.Join("; ", reasons.Where(static reason => !string.IsNullOrWhiteSpace(reason)));
             }
 

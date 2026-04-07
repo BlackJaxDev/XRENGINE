@@ -46,6 +46,7 @@ XRENGINE composes behaviour through components that attach to `SceneNode`s. Each
 - Shape is driven by the node transform plus the component's `HalfExtents`, so non-uniform scaling and rotation are respected automatically.
 - Use the component to author local fog banks, god-ray pockets, or dusty interior shafts without changing global world fog.
 - The camera must also enable the `Volumetric Fog` post-process stage in the pipeline's `Atmosphere` category; the stage controls global march distance, step size, jitter, and overall intensity.
+- Keep volumetric-fog jitter conservative unless the pass has a denoiser or temporal resolve. Large full-step jitter produces visible screen-space extinction speckle on opaque surfaces before it meaningfully hides marching bands.
 - Per-volume controls include scattering color, density, edge fade, noise tiling/threshold, scroll velocity, anisotropy, and light contribution from the primary directional light.
 - When the primary directional light has shadows enabled, volumetric scattering now respects the same cascaded shadow data, allowing shadowed fog shafts and occluded light pockets inside the volume.
 - For the unit-testing world, set `InitializeVolumetricFog` in `Assets/UnitTestingWorldSettings.jsonc` to create a demo fog volume and enable the volumetric fog post-process stage on the spawned camera automatically.

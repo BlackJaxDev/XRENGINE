@@ -16,6 +16,6 @@ public class VolumetricFogSettingsTests
         settings.Intensity.ShouldBe(1.0f);
         settings.MaxDistance.ShouldBe(150.0f);
         settings.StepSize.ShouldBe(4.0f);
-        settings.JitterStrength.ShouldBe(1.0f);
+        settings.JitterStrength.ShouldBe(0.25f);
     }
 }

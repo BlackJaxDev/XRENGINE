@@ -376,24 +376,16 @@ namespace XREngine.Scene
             program.Sampler("ShadowMap", forwardShadowTex ?? DummyShadowMap, forwardShadowMapUnit);
             program.Sampler("ShadowMapArray", forwardCascadeShadowTex ?? DummyShadowMapArray, forwardShadowMapArrayUnit);
 
-            // Bind environment/reflection cubemap to dedicated high units.
-            // The uber PBR shader (pbr.glsl) declares samplerCube _PBRReflCube and u_EnvironmentMap.
-            // Without a valid cubemap bound, these samplers default to unit 0 (which has a 2D texture),
-            // causing GL_INVALID_OPERATION "program texture usage" on every draw call.
+            // Bind the legacy cubemap samplers to a stable non-probe fallback.
+            // Probe reflections now come from the prefilter/irradiance probe arrays, and
+            // light probes may release their transient capture cubemap after IBL generation.
+            // These bindings only exist to keep legacy samplerCube uniforms valid.
             const int envMapUnit = 12;
             const int reflCubeUnit = 13;
-
-            // Try to use the nearest light probe's environment cubemap if available.
-            XRTexture? envCubemap = null;
             float envMipLevels = 1.0f;
-            if (LightProbes.Count > 0)
-            {
-                var probe = LightProbes[0];
-                envCubemap = probe.EnvironmentTextureCubemap;
-                if (envCubemap is XRTextureCube envCube && envCube.Mipmaps is { Length: > 0 })
-                    envMipLevels = envCube.Mipmaps.Length;
-            }
-            envCubemap ??= DummyEnvironmentCubemap;
+            XRTextureCube envCubemap = DummyEnvironmentCubemap;
+            if (envCubemap.Mipmaps is { Length: > 0 })
+                envMipLevels = envCubemap.Mipmaps.Length;
 
             program.Sampler("u_EnvironmentMap", envCubemap, envMapUnit);
             program.Uniform("u_EnvironmentMapMipLevels", envMipLevels);

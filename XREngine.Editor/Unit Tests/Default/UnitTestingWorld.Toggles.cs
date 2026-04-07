@@ -292,7 +292,7 @@ public static partial class EditorUnitTests
             public float Intensity { get; set; } = 1.0f;
             public float MaxDistance { get; set; } = 150.0f;
             public float StepSize { get; set; } = 4.0f;
-            public float JitterStrength { get; set; } = 1.0f;
+            public float JitterStrength { get; set; } = 0.25f;
         }
 
         public VolumetricFogVolumeInitSettings VolumetricFog { get; set; } = new();

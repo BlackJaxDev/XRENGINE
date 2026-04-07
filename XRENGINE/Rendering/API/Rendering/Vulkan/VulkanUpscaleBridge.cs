@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
@@ -32,6 +33,43 @@ public readonly record struct VulkanUpscaleBridgeFrameResources(
     EVulkanUpscaleBridgeQueueModel QueueModel)
 {
     public bool VendorRequested => EnableDlss || EnableXess;
+}
+
+internal enum EVulkanUpscaleBridgeVendor
+{
+    Dlss,
+    Xess,
+}
+
+internal readonly struct VulkanUpscaleBridgeDispatchParameters
+{
+    public EVulkanUpscaleBridgeVendor Vendor { get; init; }
+    public uint InputWidth { get; init; }
+    public uint InputHeight { get; init; }
+    public uint OutputWidth { get; init; }
+    public uint OutputHeight { get; init; }
+    public uint FrameIndex { get; init; }
+    public bool ResetHistory { get; init; }
+    public bool ReverseDepth { get; init; }
+    public bool IsOrthographic { get; init; }
+    public EDlssQualityMode DlssQuality { get; init; }
+    public EXessQualityMode XessQuality { get; init; }
+    public float DlssSharpness { get; init; }
+    public float XessSharpness { get; init; }
+    public float JitterOffsetX { get; init; }
+    public float JitterOffsetY { get; init; }
+    public Matrix4x4 CameraViewToClip { get; init; }
+    public Matrix4x4 ClipToCameraView { get; init; }
+    public Matrix4x4 ClipToPrevClip { get; init; }
+    public Matrix4x4 PrevClipToClip { get; init; }
+    public Vector3 CameraPosition { get; init; }
+    public Vector3 CameraUp { get; init; }
+    public Vector3 CameraRight { get; init; }
+    public Vector3 CameraForward { get; init; }
+    public float CameraNear { get; init; }
+    public float CameraFar { get; init; }
+    public float CameraFovRadians { get; init; }
+    public float CameraAspectRatio { get; init; }
 }
 
 public sealed class VulkanUpscaleBridge : IDisposable
@@ -315,6 +353,116 @@ public sealed class VulkanUpscaleBridge : IDisposable
         }
     }
 
+    internal bool TryExecuteVendorUpscale(
+        OpenGLRenderer renderer,
+        XRFrameBuffer sourceColorFbo,
+        XRFrameBuffer sourceDepthFbo,
+        XRFrameBuffer sourceMotionFbo,
+        in VulkanUpscaleBridgeDispatchParameters parameters,
+        out XRTexture? outputTexture,
+        out TimeSpan dispatchDuration,
+        out string failureReason)
+    {
+        outputTexture = null;
+        dispatchDuration = TimeSpan.Zero;
+        failureReason = string.Empty;
+
+        if (!TryResolveCurrentFrameSlot(out VulkanUpscaleBridgeFrameSlot? slot) || slot is null || _sidecar is null)
+        {
+            failureReason = _disposed
+                ? "bridge was disposed"
+                : _state != EVulkanUpscaleBridgeState.Ready
+                    ? $"bridge is not ready (state={_state})"
+                    : "bridge interop slot is unavailable";
+            return false;
+        }
+
+        try
+        {
+            _sidecar.WaitForFrameSlotAvailability(slot);
+
+            renderer.BlitFBOToFBO(
+                sourceColorFbo,
+                slot.SourceColorFrameBuffer,
+                EReadBufferMode.ColorAttachment0,
+                colorBit: true,
+                depthBit: false,
+                stencilBit: false,
+                linearFilter: false);
+            renderer.BlitFBOToFBO(
+                sourceDepthFbo,
+                slot.SourceDepthFrameBuffer,
+                EReadBufferMode.None,
+                colorBit: false,
+                depthBit: true,
+                stencilBit: true,
+                linearFilter: false);
+            renderer.BlitFBOToFBO(
+                sourceMotionFbo,
+                slot.SourceMotionFrameBuffer,
+                EReadBufferMode.ColorAttachment0,
+                colorBit: true,
+                depthBit: false,
+                stencilBit: false,
+                linearFilter: false);
+
+            if (!TryGetGlTextureBinding(renderer, slot.SourceColorTexture, out uint sourceColorTextureId)
+                || !TryGetGlTextureBinding(renderer, slot.SourceDepthTexture, out uint sourceDepthTextureId)
+                || !TryGetGlTextureBinding(renderer, slot.SourceMotionTexture, out uint sourceMotionTextureId)
+                || !TryGetGlTextureBinding(renderer, slot.OutputColorTexture, out uint outputColorTextureId))
+            {
+                failureReason = "failed to resolve one or more OpenGL bridge texture handles";
+                return false;
+            }
+
+            Span<uint> readyTextureIds = stackalloc uint[3]
+            {
+                sourceColorTextureId,
+                sourceDepthTextureId,
+                sourceMotionTextureId,
+            };
+            Span<Silk.NET.OpenGLES.TextureLayout> readyLayouts = stackalloc Silk.NET.OpenGLES.TextureLayout[3]
+            {
+                Silk.NET.OpenGLES.TextureLayout.GeneralExt,
+                Silk.NET.OpenGLES.TextureLayout.GeneralExt,
+                Silk.NET.OpenGLES.TextureLayout.GeneralExt,
+            };
+
+            renderer.SignalExternalTextureSemaphore(slot.GlReadySemaphore, readyTextureIds, readyLayouts);
+            slot.SourceColor.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
+            slot.SourceDepth.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
+            slot.SourceMotion.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
+            slot.OutputColor.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
+
+            Stopwatch dispatchStopwatch = Stopwatch.StartNew();
+            bool submitOk = _sidecar.SubmitVendorUpscale(slot, in parameters, out string vendorFailure);
+            dispatchStopwatch.Stop();
+            dispatchDuration = dispatchStopwatch.Elapsed;
+
+            if (!submitOk)
+            {
+                failureReason = string.IsNullOrWhiteSpace(vendorFailure)
+                    ? $"bridge {parameters.Vendor} submission failed"
+                    : vendorFailure;
+                return false;
+            }
+
+            renderer.WaitExternalTextureSemaphore(
+                slot.GlCompleteSemaphore,
+                outputColorTextureId,
+                Silk.NET.OpenGLES.TextureLayout.GeneralExt);
+
+            outputTexture = slot.OutputColorTexture;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            failureReason = ex.Message;
+            ReportFaultOnce("TryExecuteVendorUpscale", ex);
+            return false;
+        }
+    }
+
     private void HandleViewportResized(XRViewport _)
         => MarkNeedsRecreate(ViewportResizeReason);
 
@@ -503,7 +651,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
     {
         DestroyInteropResources();
 
-        _sidecar = new VulkanUpscaleBridgeSidecar(snapshot.OpenGlVendor, snapshot.OpenGlRenderer);
+        _sidecar = new VulkanUpscaleBridgeSidecar(snapshot.OpenGlVendor, snapshot.OpenGlRenderer, in frameResources);
         _frameSlots = _sidecar.CreateFrameSlots(renderer, frameResources, SanitizeLabel(DescribeViewport()));
         _frameSlotIndex = _frameSlots.Length > 0 ? 0 : -1;
 

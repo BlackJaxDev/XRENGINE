@@ -1,0 +1,31 @@
+{
+  "generatedUtc": "2026-04-07T23:37:44.300056Z",
+  "iterations": 12,
+  "workloads": [
+    {
+      "assetId": "synthetic-phase4-skinned-animation-ascii",
+      "averageMilliseconds": 0.874575,
+      "allocatedBytesPerIteration": 298532,
+      "budget": {
+        "maxAverageMilliseconds": 150,
+        "maxAllocatedBytesPerIteration": 4500000
+      },
+      "withinBudget": true
+    },
+    {
+      "assetId": "synthetic-static-scene-ascii",
+      "averageMilliseconds": 0.4530416666666666,
+      "allocatedBytesPerIteration": 188756,
+      "budget": {
+        "maxAverageMilliseconds": 100,
+        "maxAllocatedBytesPerIteration": 1500000
+      },
+      "withinBudget": true
+    }
+  ],
+  "parallel": {
+    "sequentialMilliseconds": 15.8319,
+    "parallelMilliseconds": 10.031,
+    "speedup": 1.5782972784368456
+  }
+}

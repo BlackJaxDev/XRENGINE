@@ -325,6 +325,6 @@
     // Generated from StepSize on VolumetricFogVolumeInitSettings.
     "StepSize": 4.0,
     // Generated from JitterStrength on VolumetricFogVolumeInitSettings.
-    "JitterStrength": 1.0
+    "JitterStrength": 0.25
   }
 }

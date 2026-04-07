@@ -6,6 +6,7 @@ using System.Numerics;
 using Assimp;
 using XREngine.Data;
 using XREngine.Core.Files;
+using XREngine.Fbx;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
@@ -217,8 +218,8 @@ namespace XREngine.Scene.Prefabs
 
             SceneNode? rootNode = importer.Import(
                 opts.PostProcessSteps,
-                preservePivots: opts.PreservePivots,
-                removeAssimpFBXNodes: opts.RemoveAssimpFBXNodes,
+                preservePivots: opts.FbxPivotPolicy == FbxPivotImportPolicy.PreservePivotSemantics,
+                removeAssimpFBXNodes: opts.CollapseGeneratedFbxHelperNodes,
                 scaleConversion: opts.ScaleConversion,
                 zUp: opts.ZUp,
                 multiThread: opts.MultiThread,

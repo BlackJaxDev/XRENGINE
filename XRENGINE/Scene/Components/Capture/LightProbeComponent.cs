@@ -295,6 +295,7 @@ namespace XREngine.Components.Capture.Lights
         private bool _realtime = false;
         private TimeSpan? _realTimeUpdateInterval = TimeSpan.FromMilliseconds(100.0f);
         private bool _useDirectCubemapIblGeneration = true;
+        private bool _releaseTransientEnvironmentTexturesAfterCapture = true;
         private uint _irradianceResolution = 32;
         private ERenderPreview _previewDisplay = ERenderPreview.Environment;
 

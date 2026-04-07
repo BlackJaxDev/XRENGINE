@@ -9,40 +9,32 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class LightProbeCapturePipelineTests
 {
     [Test]
-    public void LightProbeComponent_UsesDedicatedCapturePipeline()
+    public void SceneCaptureComponent_ReusesOneSharedCaptureViewportAcrossProbeFaces()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Capture/LightProbeComponent.cs");
+        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Capture/SceneCaptureComponent.cs");
 
-        source.ShouldContain("ConfigureCaptureRenderPipelines();");
-        source.ShouldContain("viewport.RenderPipeline = new LightProbeRenderPipeline();");
-        source.ShouldContain("viewport.SetRenderPipelineFromCamera = false;");
+        source.ShouldContain("private static XRViewport? s_sharedCaptureViewport;");
+        source.ShouldContain("XRViewport sharedViewport = GetOrCreateSharedCaptureViewport();");
+        source.ShouldContain("Viewports[0] = sharedViewport;");
+        source.ShouldContain("captureTransform.SetWorldTranslationRotation(translation, rotation);");
+        source.ShouldNotContain("XRCubeFrameBuffer.GetCamerasPerFace(0.1f, 10000.0f, true, Transform);");
     }
 
     [Test]
-    public void LightProbeRenderPipeline_StaysLightweightAndSkipsPostProcessStages()
+    public void LightProbeComponent_ConfiguresTheSharedCaptureViewportForProbeRendering()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/LightProbeRenderPipeline.cs");
+        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Capture/LightProbeComponent.IBL.cs");
 
-        source.ShouldContain("public sealed class LightProbeRenderPipeline : RenderPipeline");
-        source.ShouldContain("OverrideProtected = true;");
-        source.ShouldContain("VPRC_ForwardPlusLightCullingPass");
-        source.ShouldContain("EDefaultRenderPass.OpaqueDeferred");
-        source.ShouldContain("EDefaultRenderPass.TransparentForward");
-
-        source.ShouldNotContain("VPRC_TemporalAccumulationPass");
-        source.ShouldNotContain("AmbientOcclusion");
-        source.ShouldNotContain("Bloom");
-        source.ShouldNotContain("MotionBlur");
-        source.ShouldNotContain("DepthOfField");
-        source.ShouldNotContain("VPRC_RenderScreenSpaceUI");
-        source.ShouldNotContain("VPRC_RenderDebugShapes");
-        source.ShouldNotContain("VPRC_RenderDebugPhysics");
+        source.ShouldContain("viewport.Camera.OutputHDROverride = true;");
+        source.ShouldContain("viewport.Camera.AntiAliasingModeOverride = EAntiAliasingMode.None;");
+        source.ShouldContain("viewport.RenderPipeline ??= Engine.Rendering.NewRenderPipeline();");
+        source.ShouldContain("viewport.SetRenderPipelineFromCamera = false;");
     }
 
     [Test]
     public void LightProbeComponent_RendersFullPrefilterMipChain()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Capture/LightProbeComponent.cs");
+        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Capture/LightProbeComponent.IBL.cs");
 
         source.ShouldContain("int maxMipLevels = PrefilterTexture.SmallestMipmapLevel + 1;");
         source.ShouldContain("for (int mip = 0; mip < maxMipLevels; ++mip)");

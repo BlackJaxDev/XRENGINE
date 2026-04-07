@@ -22,6 +22,13 @@ public class NativeInteropSmokeTests
 
         try
         {
+            Assert.That(TryGetExport(handle, "slInit", out _), Is.True, "sl.interposer.dll is missing slInit; update to a newer Streamline build.");
+            Assert.That(TryGetExport(handle, "slShutdown", out _), Is.True, "sl.interposer.dll is missing slShutdown; update to a newer Streamline build.");
+            Assert.That(TryGetExport(handle, "slSetVulkanInfo", out _), Is.True, "sl.interposer.dll is missing slSetVulkanInfo; Vulkan bridge DLSS cannot initialize.");
+            Assert.That(TryGetExport(handle, "slEvaluateFeature", out _), Is.True, "sl.interposer.dll is missing slEvaluateFeature; DLSS dispatch cannot execute.");
+            Assert.That(TryGetExport(handle, "slSetTagForFrame", out _), Is.True, "sl.interposer.dll is missing slSetTagForFrame; DLSS resource tagging cannot execute.");
+            Assert.That(TryGetExport(handle, "slSetConstants", out _), Is.True, "sl.interposer.dll is missing slSetConstants; DLSS camera constants cannot be uploaded.");
+
             bool hasSetOptions = TryGetExport(handle, "slDLSSSetOptions", out _);
             if (!hasSetOptions)
             {
@@ -31,6 +38,33 @@ public class NativeInteropSmokeTests
             // Optional in older builds but required for auto-tuning; the check helps detect stale DLLs early.
             bool hasOptimalSettings = TryGetExport(handle, "slDLSSGetOptimalSettings", out _);
             Assert.That(hasOptimalSettings, Is.True, "sl.interposer.dll is missing slDLSSGetOptimalSettings; update to a newer Streamline build if DLSS keeps failing.");
+        }
+        finally
+        {
+            NativeLibrary.Free(handle);
+        }
+    }
+
+    [Test]
+    public void XessLibrary_ExportsExpectedVulkanSymbols()
+    {
+        if (!TryFindNative("libxess.dll", out string? primaryPath) && !TryFindNative("xess.dll", out primaryPath))
+            Assert.Inconclusive("libxess.dll/xess.dll was not found; XeSS cannot initialize. Place a recent XeSS redistributable next to the editor executable.");
+
+        string resolvedPath = primaryPath ?? throw new AssertionException("Expected a XeSS library path to be resolved.");
+
+        if (!NativeLibrary.TryLoad(resolvedPath, out nint handle))
+            Assert.Fail($"XeSS library located at '{resolvedPath}' could not be loaded. Likely wrong architecture or missing dependencies.");
+
+        try
+        {
+            Assert.That(TryGetExport(handle, "xessVKGetRequiredInstanceExtensions", out _), Is.True, "XeSS is missing xessVKGetRequiredInstanceExtensions; Vulkan bridge init cannot query instance requirements.");
+            Assert.That(TryGetExport(handle, "xessVKGetRequiredDeviceExtensions", out _), Is.True, "XeSS is missing xessVKGetRequiredDeviceExtensions; Vulkan bridge init cannot query device requirements.");
+            Assert.That(TryGetExport(handle, "xessVKGetRequiredDeviceFeatures", out _), Is.True, "XeSS is missing xessVKGetRequiredDeviceFeatures; Vulkan bridge init cannot query device feature requirements.");
+            Assert.That(TryGetExport(handle, "xessVKCreateContext", out _), Is.True, "XeSS is missing xessVKCreateContext; Vulkan XeSS context creation cannot execute.");
+            Assert.That(TryGetExport(handle, "xessVKInit", out _), Is.True, "XeSS is missing xessVKInit; Vulkan XeSS initialization cannot execute.");
+            Assert.That(TryGetExport(handle, "xessVKExecute", out _), Is.True, "XeSS is missing xessVKExecute; Vulkan XeSS dispatch cannot execute.");
+            Assert.That(TryGetExport(handle, "xessDestroyContext", out _), Is.True, "XeSS is missing xessDestroyContext; Vulkan XeSS contexts cannot be destroyed cleanly.");
         }
         finally
         {

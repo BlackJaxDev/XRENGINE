@@ -86,7 +86,7 @@ public static class FbxStructuralParser
         if (workItem.Encoding != 1)
             throw new FbxParseException("Unsupported FBX array encoding", workItem.PayloadOffset);
 
-        using MemoryStream input = new(document.Source.Slice(workItem.PayloadOffset, workItem.PayloadLength).ToArray(), writable: false);
+        using Stream input = new FbxSourceSliceStream(document, workItem.PayloadOffset, workItem.PayloadLength);
         using ZLibStream stream = new(input, CompressionMode.Decompress, leaveOpen: false);
 
         int totalRead = 0;

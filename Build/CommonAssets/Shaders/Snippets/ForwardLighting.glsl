@@ -316,15 +316,15 @@ float XRENGINE_ComputeInfluenceWeight(int probeIndex, vec3 worldPos)
         float inner = p.InfluenceInner.x;
         float outer = max(p.InfluenceOuter.x, inner + 0.0001);
         float dist = length(worldPos - center);
-        float ndf = clamp((dist - inner) / (outer - inner), 0.0, 1.0);
-        return 1.0 - ndf;
+        return smoothstep(outer, inner, dist);
     }
 
     vec3 inner = p.InfluenceInner.xyz;
     vec3 outer = max(p.InfluenceOuter.xyz, inner + vec3(0.0001));
     vec3 rel = abs(worldPos - center);
     vec3 ndf3 = clamp((rel - inner) / (outer - inner), 0.0, 1.0);
-    return 1.0 - max(ndf3.x, max(ndf3.y, ndf3.z));
+    float ndf = max(ndf3.x, max(ndf3.y, ndf3.z));
+    return smoothstep(1.0, 0.0, ndf);
 }
 
 vec3 XRENGINE_ApplyParallax(int probeIndex, vec3 dirWS, vec3 worldPos)
@@ -585,10 +585,37 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
     }
     else
     {
-        float maxMip = float(textureQueryLevels(PrefilterArray) - 1);
-        float clampedLod = min(roughness * MAX_REFLECTION_LOD, maxMip);
-        irradianceColor = XRENGINE_SampleOctaArray(IrradianceArray, normal, 0.0);
-        prefilteredColor = XRENGINE_SampleOctaArrayLod(PrefilterArray, normal, 0.0, clampedLod);
+        // All resolved probes had zero influence at this fragment.
+        // Fall back to distance-only weighting to avoid black gaps between probe influence volumes.
+        for (int i = 0; i < 4; ++i)
+        {
+            if (probeIndices[i] < 0)
+                continue;
+
+            float weight = probeWeights[i];
+            if (weight <= 0.0)
+                continue;
+
+            vec3 diffuseDir = XRENGINE_ApplyParallax(probeIndices[i], normal, fragPos);
+            vec3 specDir = XRENGINE_ApplyParallax(probeIndices[i], reflectionDir, fragPos);
+            float normalizationScale = max(ProbeParams[probeIndices[i]].ProxyHalfExtents.w, 0.0001);
+            float maxMipFb = float(textureQueryLevels(PrefilterArray) - 1);
+            float clampedLodFb = min(roughness * MAX_REFLECTION_LOD, maxMipFb);
+
+            irradianceColor += weight * normalizationScale * XRENGINE_SampleOctaArray(IrradianceArray, diffuseDir, probeIndices[i]);
+            prefilteredColor += weight * normalizationScale * XRENGINE_SampleOctaArrayLod(PrefilterArray, specDir, probeIndices[i], clampedLodFb);
+            totalWeight += weight;
+        }
+
+        if (totalWeight > 0.0)
+        {
+            irradianceColor /= totalWeight;
+            prefilteredColor /= totalWeight;
+        }
+        else
+        {
+            return GlobalAmbient * albedo * diffuseAO;
+        }
     }
 
     vec2 brdfValue = texture(BRDF, vec2(NoV, roughness)).rg;

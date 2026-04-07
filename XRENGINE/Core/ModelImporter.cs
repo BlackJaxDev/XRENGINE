@@ -137,7 +137,7 @@ namespace XREngine
 
         private XRMaterial MakeMaterialInternal(XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
-            using var _ = ImportOptionsScope.Push(ImportOptions);
+            using var _ = ImportOptionsScope.Push(_currentImportOptions.Value ?? ImportOptions);
             return MakeMaterialAction(textureList, textures, name);
         }
 
@@ -1334,14 +1334,26 @@ namespace XREngine
             Action<float>? onProgress = null,
             Matrix4x4? rootTransformMatrix = null)
         {
-            if (ShouldUseNativeFbxBackend())
+            ModelImportOptions effectiveImportOptions = ResolveEffectiveImportOptions(
+                options,
+                preservePivots,
+                removeAssimpFBXNodes,
+                scaleConversion,
+                zUp,
+                multiThread,
+                processMeshesAsynchronously,
+                batchSubmeshAddsDuringAsyncImport);
+
+            using var _ = ImportOptionsScope.Push(effectiveImportOptions);
+
+            if (ShouldUseNativeFbxBackend(effectiveImportOptions))
             {
                 NativeFbxSceneImporter.ImportResult result = NativeFbxSceneImporter.Import(
                     this,
                     SourceFilePath,
-                    ImportOptions,
-                    scaleConversion,
-                    zUp,
+                    effectiveImportOptions,
+                    effectiveImportOptions.ScaleConversion,
+                    effectiveImportOptions.ZUp,
                     _importLayer,
                     cancellationToken,
                     onProgress,
@@ -1355,12 +1367,12 @@ namespace XREngine
                 return result.RootNode;
             }
 
-            SetAssimpConfig(preservePivots, scaleConversion, zUp, multiThread);
+            SetAssimpConfig(effectiveImportOptions);
 
             AScene scene;
-            using (Engine.Profiler.Start($"Assimp ImportFile: {SourceFilePath} with options: {options}"))
+            using (Engine.Profiler.Start($"Assimp ImportFile: {SourceFilePath} with options: {effectiveImportOptions.PostProcessSteps}"))
             {
-                scene = _assimp.ImportFile(SourceFilePath, options);
+                scene = _assimp.ImportFile(SourceFilePath, effectiveImportOptions.PostProcessSteps);
             }
 
             if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
@@ -1373,15 +1385,15 @@ namespace XREngine
 
             _meshProcessRoutines.Clear();
             _meshFinalizeActions.Clear();
-            bool processMeshesAsync = processMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
-            bool batchSubmeshAdds = batchSubmeshAddsDuringAsyncImport ?? true;
+            bool processMeshesAsync = effectiveImportOptions.ProcessMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
+            bool batchSubmeshAdds = effectiveImportOptions.BatchSubmeshAddsDuringAsyncImport;
 
             SceneNode rootNode;
             using (Engine.Profiler.Start($"Assemble model hierarchy"))
             {
                 rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath)) { Layer = _importLayer };
                 _nodeTransforms.Clear();
-                ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, removeAssimpFBXNodes, null, cancellationToken);
+                ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, effectiveImportOptions.CollapseGeneratedFbxHelperNodes, null, cancellationToken);
                 NormalizeNodeScales(scene, rootNode, cancellationToken, processMeshesAsync, batchSubmeshAdds);
             }
 
@@ -1391,18 +1403,51 @@ namespace XREngine
             return rootNode;
         }
 
-        private bool ShouldUseNativeFbxBackend()
-            => ImportOptions?.FbxBackend == FbxImportBackend.Native
-                && Path.GetExtension(SourceFilePath).Equals(".fbx", StringComparison.OrdinalIgnoreCase);
-
-        private void SetAssimpConfig(bool preservePivots, float scaleConversion, bool zUp, bool multiThread)
+        private ModelImportOptions ResolveEffectiveImportOptions(
+            PostProcessSteps options,
+            bool preservePivots,
+            bool removeAssimpFBXNodes,
+            float scaleConversion,
+            bool zUp,
+            bool multiThread,
+            bool? processMeshesAsynchronously,
+            bool? batchSubmeshAddsDuringAsyncImport)
         {
-            float rotate = zUp ? -90.0f : 0.0f;
+            if (ImportOptions is not null)
+                return ImportOptions;
+
+            ModelImportOptions resolved = new()
+            {
+                FbxPivotPolicy = preservePivots
+                    ? FbxPivotImportPolicy.PreservePivotSemantics
+                    : FbxPivotImportPolicy.BakeIntoLocalTransform,
+                CollapseGeneratedFbxHelperNodes = removeAssimpFBXNodes,
+                ScaleConversion = scaleConversion,
+                ZUp = zUp,
+                MultiThread = multiThread,
+                ProcessMeshesAsynchronously = processMeshesAsynchronously,
+            };
+
+            if (batchSubmeshAddsDuringAsyncImport.HasValue)
+                resolved.BatchSubmeshAddsDuringAsyncImport = batchSubmeshAddsDuringAsyncImport.Value;
+
+            resolved.LegacyPostProcessSteps = options;
+            return resolved;
+        }
+
+        private bool ShouldUseNativeFbxBackend(ModelImportOptions effectiveImportOptions)
+            => Path.GetExtension(SourceFilePath).Equals(".fbx", StringComparison.OrdinalIgnoreCase)
+                && effectiveImportOptions.FbxBackend is not FbxImportBackend.AssimpLegacy;
+
+        private void SetAssimpConfig(ModelImportOptions importOptions)
+        {
+            float rotate = importOptions.ZUp ? -90.0f : 0.0f;
+            bool preservePivots = importOptions.FbxPivotPolicy == FbxPivotImportPolicy.PreservePivotSemantics;
             _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, preservePivots));
             _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_READ_MATERIALS, true));
             _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_READ_TEXTURES, true));
-            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_GLOB_MULTITHREADING, multiThread));
-            _assimp.Scale = scaleConversion;
+            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_GLOB_MULTITHREADING, importOptions.MultiThread));
+            _assimp.Scale = importOptions.ScaleConversion;
             _assimp.XAxisRotation = -rotate;
             //_assimp.ZAxisRotation = 180.0f;
         }

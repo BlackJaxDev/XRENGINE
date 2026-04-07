@@ -40,6 +40,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
+            // Scene captures (light probes, reflection probes) don't need motion vectors.
+            if (Engine.Rendering.State.IsSceneCapturePass)
+                return;
+
             if (ParentPipeline is not DefaultRenderPipeline pipeline)
             {
                 Debug.Out("[Velocity] Motion vectors pass skipped: parent pipeline missing or wrong type.");

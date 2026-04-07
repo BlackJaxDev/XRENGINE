@@ -364,6 +364,15 @@ namespace XREngine.Components.Capture.Lights
             }
         }
 
+        private void ReleaseTransientEnvironmentTexturesAfterIblGeneration()
+        {
+            if (!ReleaseTransientEnvironmentTexturesAfterCapture)
+                return;
+
+            ReleaseCapturedEnvironmentTextures(releaseCubemap: true, releaseOctahedral: true);
+            CachePreviewSphere();
+        }
+
         public override void Render()
         {
             _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
@@ -382,6 +391,7 @@ namespace XREngine.Components.Capture.Lights
                 SynchronizeCaptureTextureWrites();
                 GenerateIrradianceInternal();
                 GeneratePrefilterInternal();
+                ReleaseTransientEnvironmentTexturesAfterIblGeneration();
                 CaptureVersion++;
             }
             finally
@@ -415,6 +425,7 @@ namespace XREngine.Components.Capture.Lights
                 SynchronizeCaptureTextureWrites();
                 GenerateIrradianceInternal();
                 GeneratePrefilterInternal();
+                ReleaseTransientEnvironmentTexturesAfterIblGeneration();
                 CaptureVersion++;
             }
             finally
