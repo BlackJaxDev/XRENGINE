@@ -96,6 +96,25 @@ public sealed class ImportedDeferredMaterialTests
         material.Textures.Count.ShouldBe(2);
         material.Textures[0].ShouldBeSameAs(albedo);
         material.Textures[1].ShouldBeSameAs(normal);
+        material.Parameter<ShaderVector3>("BaseColor")?.Value.ShouldBe(Vector3.One);
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_DiffuseTexturesSeedDeferredBaseColorDefault()
+    {
+        XRTexture2D albedo = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo],
+            [
+                CreateSlot("albedo.png", TextureType.Diffuse),
+            ],
+            "DiffuseMaterial");
+
+        material.RenderPass.ShouldBe((int)EDefaultRenderPass.OpaqueDeferred);
+        material.Textures.Count.ShouldBe(1);
+        material.Textures[0].ShouldBeSameAs(albedo);
+        material.Parameter<ShaderVector3>("BaseColor")?.Value.ShouldBe(Vector3.One);
     }
 
     [Test]
