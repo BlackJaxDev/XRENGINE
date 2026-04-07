@@ -812,6 +812,7 @@ namespace XREngine
 
                     mat.Parameters =
                     [
+                        new ShaderVector3(ColorF3.White, "BaseColor"),
                         new ShaderFloat(1.0f, "Opacity"),
                         new ShaderFloat(1.0f, "Specular"),
                         new ShaderFloat(roughnessScale, "Roughness"),
