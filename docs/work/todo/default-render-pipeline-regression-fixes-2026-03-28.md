@@ -63,7 +63,7 @@ Reference:
 
 **Symptoms:** Repeated `GL_INVALID_OPERATION: program texture usage` on mesh draw calls; probe/BRDF samplers fall back even when GI resources are loaded.
 
-**Root cause:** `SetUniforms()` called `BindFallbackSamplers()` before mesh- and FBO-level `SettingUniforms` hooks had run, leaving late-bound samplers invisible to the fallback allocator. Additionally, raw `textureIndex` was used as the GL texture unit, causing collisions with fixed-unit pipeline bindings.
+**Root cause:** `SetUniforms()` called `BindFallbackSamplers()` before mesh- and FBO-level `SettingUniforms` hooks had run, leaving late-bound samplers invisible to the fallback allocator. A second deferred-specific bug was that compact texture-unit assignment for material texture arrays broke shaders that depend on stable slot numbering (`layout(binding=X)` or sparse material slots with intentional null gaps).
 
 **Files:**
 
@@ -75,7 +75,7 @@ Reference:
 
 - [x] Confirm `SetUniforms()` no longer calls `BindFallbackSamplers()` inline
 - [x] Confirm a new `FinalizeUniformBindings()` method exists and is called after all `SettingUniforms` hooks complete
-- [x] Confirm `SetTextureUniforms()` compacts texture units to contiguous bound slots (skipping null/missing textures) rather than using raw `textureIndex`
+- [x] Confirm `SetTextureUniforms()` preserves array-slot-to-GL-unit mapping so sparse material slots and `layout(binding=X)` samplers keep the expected unit numbers
 - [ ] Verify fallback sampler binding no longer fires for `IrradianceArray`, `PrefilterArray`, and `BRDF` when GI probes are loaded
 - [ ] Check OpenGL log: confirm `GL_INVALID_OPERATION` errors on mesh draws are gone
 

@@ -12,7 +12,7 @@ uniform vec4 MatColor;
 void main()
 {
 #ifdef XRENGINE_DEPTH_NORMAL_PREPASS
-	Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
+	Normal = XRENGINE_EncodeNormal(FragNorm);
 #else
 	OutColor = MatColor;
 #endif

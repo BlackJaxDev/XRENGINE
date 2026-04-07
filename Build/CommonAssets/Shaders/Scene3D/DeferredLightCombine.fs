@@ -91,6 +91,10 @@ uniform float AmbientOcclusionPower = 1.0f;
 uniform bool AmbientOcclusionMultiBounce = false;
 uniform bool SpecularOcclusionEnabled = false;
 
+// Debug: set via XRE_DEFERRED_DEBUG env var.
+// 0 = normal, 1 = raw albedo, 2 = InLo, 3 = RMSE, 4 = normal, 5 = depth, 6 = world pos
+uniform int DeferredDebugMode = 0;
+
 // Multi-bounce AO approximation — Jimenez et al. 2016 Section 5
 // Approximates energy conservation by accounting for light bouncing
 // multiple times before being absorbed, tinted by the surface albedo.
@@ -390,6 +394,17 @@ void main()
                 OutLo = vec4(0.0f);
                 return;
         }
+
+        // Debug visualization modes (set DeferredDebugMode via XRE_DEFERRED_DEBUG env var)
+        if (DeferredDebugMode > 0)
+        {
+                if (DeferredDebugMode == 1) { OutLo = vec4(albedoColor, 1.0f); return; }       // Raw albedo from G-buffer
+                if (DeferredDebugMode == 2) { OutLo = vec4(InLo, 1.0f); return; }              // Light volume accumulation
+                if (DeferredDebugMode == 3) { OutLo = vec4(rmse.rgb, 1.0f); return; }          // RMSE (roughness, metallic, specular)
+                if (DeferredDebugMode == 4) { OutLo = vec4(normal * 0.5f + 0.5f, 1.0f); return; } // Decoded normal
+                if (DeferredDebugMode == 5) { OutLo = vec4(vec3(depth), 1.0f); return; }       // Raw depth
+        }
+
         vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
         //float fogDensity = noise3(fragPosWS);
 

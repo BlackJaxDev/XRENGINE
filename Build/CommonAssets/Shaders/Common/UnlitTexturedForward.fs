@@ -66,7 +66,7 @@ uniform sampler2D Texture0;
 void main()
 {
 #ifdef XRENGINE_DEPTH_NORMAL_PREPASS
-    Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
+    Normal = XRENGINE_EncodeNormal(FragNorm);
 #else
     XRENGINE_BeginForwardFragmentOutput();
     XRENGINE_WriteForwardFragment(texture(Texture0, FragUV0));

@@ -32,20 +32,34 @@ vec3 XRENGINE_HeightToNormalSobel(vec2 uv)
     return normalize(vec3(vec2(slopeX, slopeY) * HeightMapScale, 1.0));
 }
 
+bool XRENGINE_IsFiniteVec3(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
 vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 tangentWS, vec3 bitangentWS, vec3 normalWS)
 {
     vec3 N = normalize(normalWS);
+    if (!XRENGINE_IsFiniteVec3(N) || dot(N, N) <= 0.0)
+        return vec3(0.0, 0.0, 1.0);
 
     // Guard against degenerate tangent/bitangent (e.g., mesh has no tangent data
     // and the fragment inputs are zero/undefined). normalize(vec3(0)) is NaN on
     // most GPUs, which poisons the entire TBN matrix and produces black lighting.
-    float tLen2 = dot(tangentWS, tangentWS);
-    float bLen2 = dot(bitangentWS, bitangentWS);
-    if (tLen2 < 1e-10 || bLen2 < 1e-10)
+    float tangentLengthSq = dot(tangentWS, tangentWS);
+    float bitangentLengthSq = dot(bitangentWS, bitangentWS);
+    if (tangentLengthSq < 1e-10 || bitangentLengthSq < 1e-10)
         return N;
 
-    vec3 T = normalize(tangentWS);
-    vec3 B = normalize(bitangentWS);
+    vec3 T = tangentWS - N * dot(N, tangentWS);
+    vec3 B = bitangentWS - N * dot(N, bitangentWS);
+    if (dot(T, T) < 1e-10 || dot(B, B) < 1e-10)
+        return N;
+
+    T = normalize(T);
+    B = normalize(B);
+    if (!XRENGINE_IsFiniteVec3(T) || !XRENGINE_IsFiniteVec3(B))
+        return N;
     mat3 tbn = mat3(T, B, N);
 
     vec3 tangentNormal;
@@ -58,7 +72,11 @@ vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 tangentWS, vec3 bitangentWS, 
     }
     else
     {
-        tangentNormal = normalize(texture(Texture1, uv).rgb * 2.0 - 1.0);
+        vec3 sampledNormal = texture(Texture1, uv).rgb * 2.0 - 1.0;
+        if (!XRENGINE_IsFiniteVec3(sampledNormal) || dot(sampledNormal, sampledNormal) <= 1e-6)
+            return N;
+
+        tangentNormal = normalize(sampledNormal);
     }
 #endif
 
@@ -69,5 +87,9 @@ vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 tangentWS, vec3 bitangentWS, 
     tangentNormal.z = max(tangentNormal.z, 0.001);
     tangentNormal = normalize(tangentNormal);
 
-    return normalize(tbn * tangentNormal);
+    vec3 mappedNormal = tbn * tangentNormal;
+    if (!XRENGINE_IsFiniteVec3(mappedNormal) || dot(mappedNormal, mappedNormal) <= 1e-6)
+        return N;
+
+    return normalize(mappedNormal);
 }

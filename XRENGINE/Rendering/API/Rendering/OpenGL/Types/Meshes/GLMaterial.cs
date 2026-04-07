@@ -1,5 +1,6 @@
 using Extensions;
 using System.Numerics;
+using System;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering;
@@ -168,14 +169,17 @@ namespace XREngine.Rendering.OpenGL
 
             public void SetTextureUniforms(GLRenderProgram program)
             {
-                int textureUnit = 0;
+                // Use textureIndex as textureUnit so that null entries preserve
+                // the correspondence between array position and GL texture unit.
+                // Shaders with layout(binding=X) rely on this stable mapping;
+                // the previous compact-unit scheme shifted all bindings when a
+                // texture slot was null, breaking deferred lighting in particular.
                 for (int textureIndex = 0; textureIndex < Data.Textures.Count; ++textureIndex)
                 {
                     if (!TryGetTexture(textureIndex, out IGLTexture texture))
                         continue;
 
-                    SetTextureUniform(program, textureIndex, texture, textureUnit);
-                    textureUnit++;
+                    SetTextureUniform(program, textureIndex, texture, textureIndex);
                 }
             }
 
@@ -188,33 +192,39 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private void SetTextureUniform(GLRenderProgram program, int textureIndex, IGLTexture texture, int textureUnit, string? samplerNameOverride = null)
-                => program?.Sampler(texture.ResolveSamplerName(textureIndex, samplerNameOverride), texture, textureUnit);
+            {
+                if (program is null)
+                    return;
+
+                string resolvedSamplerName = texture.ResolveSamplerName(textureIndex, samplerNameOverride);
+                program.Sampler(resolvedSamplerName, texture, textureUnit);
+
+                if (!string.IsNullOrWhiteSpace(samplerNameOverride))
+                    return;
+
+                string indexedSamplerName = $"Texture{textureIndex}";
+                if (string.Equals(resolvedSamplerName, indexedSamplerName, StringComparison.Ordinal))
+                    return;
+
+                // Imported textures can carry explicit sampler names from the source asset
+                // even when the stock engine shader expects Texture0/Texture1/... Bind the
+                // indexed alias too when the shader declares it but not the explicit name.
+                if (program.GetUniformLocation(resolvedSamplerName) >= 0)
+                    return;
+
+                if (program.GetUniformLocation(indexedSamplerName) >= 0)
+                    program.Sampler(indexedSamplerName, texture, textureUnit);
+            }
 
             private bool TryGetTextureBinding(int textureIndex, out IGLTexture texture, out int textureUnit)
             {
                 texture = null!;
-                textureUnit = 0;
+                textureUnit = textureIndex;
 
                 if (!Data.Textures.IndexInRange(textureIndex))
                     return false;
 
-                int nextTextureUnit = 0;
-                for (int i = 0; i <= textureIndex; ++i)
-                {
-                    if (!TryGetTexture(i, out IGLTexture currentTexture))
-                        continue;
-
-                    if (i == textureIndex)
-                    {
-                        texture = currentTexture;
-                        textureUnit = nextTextureUnit;
-                        return true;
-                    }
-
-                    nextTextureUnit++;
-                }
-
-                return false;
+                return TryGetTexture(textureIndex, out texture);
             }
 
             private bool TryGetTexture(int textureIndex, out IGLTexture texture)

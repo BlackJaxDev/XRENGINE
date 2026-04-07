@@ -40,6 +40,34 @@ XRENGINE composes behaviour through components that attach to `SceneNode`s. Each
 - Treat `OnTransformRenderWorldMatrixChanged` (documented in [Transform Architecture](transforms.md)) as the preferred hook for responding to transform motion; it provides the final render matrix after interpolation.
 - Use `GetOrAddComponent` or `TryAddComponent` when building prefab graphs so that repeated initialisation remains idempotent.
 
+## Rendering Volumes
+### `VolumetricFogVolumeComponent`
+- Located at `XRENGINE/Scene/Components/Volumes/VolumetricFog.cs`; registers a bounded box volume that the fullscreen post-process shader raymarches for local volumetric fog.
+- Shape is driven by the node transform plus the component's `HalfExtents`, so non-uniform scaling and rotation are respected automatically.
+- Use the component to author local fog banks, god-ray pockets, or dusty interior shafts without changing global world fog.
+- The camera must also enable the `Volumetric Fog` post-process stage in the pipeline's `Atmosphere` category; the stage controls global march distance, step size, jitter, and overall intensity.
+- Per-volume controls include scattering color, density, edge fade, noise tiling/threshold, scroll velocity, anisotropy, and light contribution from the primary directional light.
+- When the primary directional light has shadows enabled, volumetric scattering now respects the same cascaded shadow data, allowing shadowed fog shafts and occluded light pockets inside the volume.
+- For the unit-testing world, set `InitializeVolumetricFog` in `Assets/UnitTestingWorldSettings.jsonc` to create a demo fog volume and enable the volumetric fog post-process stage on the spawned camera automatically.
+
+```csharp
+var fogNode = world.RootNodes[0].AddChild("Fog Volume");
+var fog = fogNode.AddComponent<VolumetricFogVolumeComponent>();
+fog.HalfExtents = new Vector3(12.0f, 6.0f, 12.0f);
+fog.ScatteringColor = new ColorF3(0.8f, 0.85f, 1.0f);
+fog.Density = 0.05f;
+fog.NoiseScale = 0.15f;
+fog.EdgeFade = 0.3f;
+
+var stage = camera.GetPostProcessStageState<VolumetricFogSettings>();
+if (stage?.TryGetBacking(out VolumetricFogSettings? fogSettings) == true)
+{
+	fogSettings.Enabled = true;
+	fogSettings.MaxDistance = 200.0f;
+	fogSettings.StepSize = 4.0f;
+}
+```
+
 ## Networking Helpers
 ### `RestApiComponent`
 - Lives in `XRENGINE/Scene/Components/Networking/RestApiComponent.cs` and exposes an `HttpClient`-backed bridge for REST APIs.

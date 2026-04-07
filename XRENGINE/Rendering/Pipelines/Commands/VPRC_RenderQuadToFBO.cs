@@ -59,6 +59,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     && string.Equals(DestinationFBOName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal))
                 || string.Equals(SourceQuadFBOName, DefaultRenderPipeline.MsaaLightCombineFBOName, StringComparison.Ordinal))
             {
+                /*
                 Debug.RenderingEvery(
                     $"QuadBlit.{ActivePipelineInstance.GetHashCode()}.{SourceQuadFBOName}.{DestinationFBOName}",
                     TimeSpan.FromSeconds(1),
@@ -69,6 +70,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     destFBO?.Targets?.Length ?? 0,
                     destFBO?.GetType().Name ?? "<null>",
                     ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<backbuffer>");
+                */
             }
 
             if (_diagEnabled)

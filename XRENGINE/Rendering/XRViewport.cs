@@ -785,6 +785,7 @@ namespace XREngine.Rendering
 
                 int updatingPasses = commandCollection.GetUpdatingPassCount();
 
+/*
                 Debug.RenderingEvery(
                     $"XRViewport.CollectVisible.Submit.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
                     TimeSpan.FromSeconds(1),
@@ -797,6 +798,7 @@ namespace XREngine.Rendering
                     visualSceneType,
                     trackedRenderables,
                     camera?.GetHashCode().ToString() ?? "null");
+*/
             }
 
             if (allowScreenSpaceUICollectVisible)
