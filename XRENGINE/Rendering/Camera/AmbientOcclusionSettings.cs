@@ -14,9 +14,9 @@ namespace XREngine.Rendering
         public enum EType
         {
             ScreenSpace,
-            MultiViewCustom,
+            MultiViewAmbientOcclusion,
             ScalableAmbientObscurance,
-            MultiRadiusObscurancePrototype,
+            MultiScaleVolumetricObscurance,
             HorizonBased,
             HorizonBasedPlus,
             SpatialHashExperimental,
@@ -24,8 +24,8 @@ namespace XREngine.Rendering
             VoxelAmbientOcclusion,
 
             ScreenSpaceLegacy = ScreenSpace,
-            MultiViewAmbientOcclusion = MultiViewCustom,
-            MultiScaleVolumetricObscurance = MultiRadiusObscurancePrototype,
+            MultiViewCustom = MultiViewAmbientOcclusion,
+            MultiRadiusObscurancePrototype = MultiScaleVolumetricObscurance,
             SpatialHashRaytraced = SpatialHashExperimental,
             VXAO = VoxelAmbientOcclusion,
         }
@@ -89,7 +89,8 @@ namespace XREngine.Rendering
         public static EType NormalizeType(EType type)
             => type switch
             {
-                (EType)2 => EType.MultiRadiusObscurancePrototype,
+                EType.ScalableAmbientObscurance => EType.MultiScaleVolumetricObscurance,
+                EType.HorizonBased => EType.HorizonBasedPlus,
                 _ => type,
             };
 
@@ -124,7 +125,7 @@ namespace XREngine.Rendering
                 case EType.ScreenSpace:
                     ScreenSpace.ApplyUniforms(program);
                     break;
-                case EType.MultiViewCustom:
+                case EType.MultiViewAmbientOcclusion:
                     MultiView.ApplyUniforms(program);
                     break;
                 case EType.HorizonBased:
@@ -139,7 +140,7 @@ namespace XREngine.Rendering
                 case EType.VoxelAmbientOcclusion:
                     Voxel.ApplyUniforms(program);
                     break;
-                case EType.MultiRadiusObscurancePrototype:
+                case EType.MultiScaleVolumetricObscurance:
                     Prototype.ApplyUniforms(program);
                     break;
                 case EType.SpatialHashExperimental:

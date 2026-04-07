@@ -40,7 +40,7 @@ namespace XREngine.Components.Capture.Lights.Types
             ShadowExponent = 1.0f;
             Samples = 8;
             FilterRadius = 0.0012f;
-            EnablePCSS = true;
+            SoftShadowMode = ESoftShadowMode.PCSS;
             EnableContactShadows = true;
             ContactShadowDistance = 0.1f;
             ContactShadowSamples = 4;

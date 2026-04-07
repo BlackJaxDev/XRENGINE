@@ -321,7 +321,7 @@
     // Generated from Intensity on VolumetricFogVolumeInitSettings.
     "Intensity": 1.0,
     // Generated from MaxDistance on VolumetricFogVolumeInitSettings.
-    "MaxDistance": 180.0,
+    "MaxDistance": 150.0,
     // Generated from StepSize on VolumetricFogVolumeInitSettings.
     "StepSize": 4.0,
     // Generated from JitterStrength on VolumetricFogVolumeInitSettings.

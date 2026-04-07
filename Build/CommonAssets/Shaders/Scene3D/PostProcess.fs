@@ -169,6 +169,10 @@ float rand(vec2 coord)
 {
     return fract(sin(dot(coord, vec2(12.9898f, 78.233f))) * 43758.5453f);
 }
+float interleavedGradientNoise(vec2 pixelCoord)
+{
+  return fract(52.9829189f * fract(dot(pixelCoord, vec2(0.06711056f, 0.00583715f))));
+}
 float saturate(float value)
 {
   return clamp(value, 0.0f, 1.0f);
@@ -359,12 +363,12 @@ vec3 EvaluateVolumeLighting(int index, vec3 viewToCamera, float shadowFactor)
 {
   float lightContribution = VolumetricFogLightParams[index].x;
   if (DirLightCount <= 0 || lightContribution <= 0.0f)
-    return vec3(1.0f);
+    return vec3(0.0f);
 
   vec3 lightDir = normalize(-DirectionalLights[0].Direction);
   vec3 lightColor = DirectionalLights[0].Base.Color * DirectionalLights[0].Base.DiffuseIntensity;
   float phase = PhaseHenyeyGreenstein(dot(viewToCamera, lightDir), VolumetricFogLightParams[index].y);
-  return vec3(1.0f) + lightColor * shadowFactor * lightContribution * phase * 4.0f;
+  return lightColor * shadowFactor * lightContribution * phase * 4.0f;
 }
 vec4 ComputeVolumetricFog(vec2 uv)
 {
@@ -396,8 +400,9 @@ vec4 ComputeVolumetricFog(vec2 uv)
     rayDir = normalize(worldFar - CameraPosition);
   }
 
-  // Uniform [0, stepSize) offset within the first step to reduce banding without introducing asymmetric noise.
-  float jitter = rand(sourceUv + rawDepth) * stepSize * VolumetricFog.JitterStrength;
+  // Use a stable per-pixel dither here. Without temporal reprojection, per-frame jitter
+  // turns into visible sparkle instead of hiding banding.
+  float jitter = interleavedGradientNoise(gl_FragCoord.xy) * stepSize * VolumetricFog.JitterStrength;
   float t = jitter;
   vec3 accumulatedScattering = vec3(0.0f);
   float transmittance = 1.0f;

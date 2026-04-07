@@ -298,6 +298,28 @@ namespace XREngine
                 /// </summary>
                 public static string[] OpenGLExtensions { get; internal set; } = Array.Empty<string>();
                 /// <summary>
+                /// The vendor string reported by the active OpenGL context.
+                /// Useful for cross-API adapter diagnostics.
+                /// </summary>
+                public static string? OpenGLVendor { get; internal set; }
+                /// <summary>
+                /// The renderer string reported by the active OpenGL context.
+                /// Useful for cross-API adapter diagnostics.
+                /// </summary>
+                public static string? OpenGLRendererName { get; internal set; }
+                /// <summary>
+                /// The selected Vulkan physical device name when a Vulkan renderer is active.
+                /// </summary>
+                public static string? VulkanDeviceName { get; internal set; }
+                /// <summary>
+                /// The selected Vulkan physical device PCI vendor ID when a Vulkan renderer is active.
+                /// </summary>
+                public static uint VulkanVendorId { get; internal set; }
+                /// <summary>
+                /// The selected Vulkan physical device PCI device ID when a Vulkan renderer is active.
+                /// </summary>
+                public static uint VulkanDeviceId { get; internal set; }
+                /// <summary>
                 /// If true, the current render is a light probe pass - only what's needed for light probes is rendered.
                 /// All light probe passes contain a scene capture pass.
                 /// </summary>

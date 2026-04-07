@@ -24,6 +24,7 @@ uniform float ReactiveVelocityScale;
 uniform float ReactiveLumaThreshold;
 uniform float DepthDiscontinuityScale;
 uniform float ConfidencePower;
+uniform int DebugMode;
 
 const vec3 LuminanceWeights = vec3(0.2126f, 0.7152f, 0.0722f);
 
@@ -179,6 +180,12 @@ float ComputeMotionMask(vec2 velocity)
     return smoothstep(motionStart, ReactiveVelocityScale, motionMagnitude);
 }
 
+vec3 EncodeVelocityDebug(vec2 velocity)
+{
+    float magnitude = clamp(length(velocity) / max(ReactiveVelocityScale, 1e-5f), 0.0f, 1.0f);
+    return vec3(velocity.x * 0.25f + 0.5f, velocity.y * 0.25f + 0.5f, magnitude);
+}
+
 void main()
 {
     vec2 clipXY = FragPos.xy;
@@ -241,6 +248,32 @@ void main()
     float historyWeight = mix(FeedbackMin, FeedbackMax, confidence);
     if (!canUseHistory)
         historyWeight = 0.0f;
+
+    if (DebugMode != 0)
+    {
+        vec3 debugColor = vec3(0.0f);
+        switch (DebugMode)
+        {
+            case 1:
+                debugColor = vec3(historyWeight);
+                break;
+            case 2:
+                debugColor = EncodeVelocityDebug(velocity);
+                break;
+            case 3:
+                debugColor = vec3(geometryInstability);
+                break;
+            case 4:
+                debugColor = vec3(reactiveMask, motionMask, confidence);
+                break;
+            case 5:
+                debugColor = canUseHistory ? vec3(0.0f, 1.0f, historyWeight) : vec3(1.0f, 0.0f, 0.0f);
+                break;
+        }
+
+        OutColor = vec4(debugColor, 1.0f);
+        return;
+    }
 
     // Blend in YCoCg, convert back
     vec3 resolved = mix(currentYCoCg, clippedHistory, historyWeight);

@@ -32,7 +32,8 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRWorldInstance? _registeredDynamicWorld;
         private int _samples = 4;
         private float _filterRadius = 0.0012f;
-        private bool _enablePcss = true;
+        private ESoftShadowMode _softShadowMode = ESoftShadowMode.PCSS;
+        private float _lightSourceRadius = 0.01f;
         private bool _enableCascadedShadows = true;
         private bool _enableContactShadows = true;
         private float _contactShadowDistance = 0.1f;
@@ -312,10 +313,25 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _filterRadius, MathF.Max(0.0f, value));
         }
 
-        public bool EnablePCSS
+        /// <summary>
+        /// Selects the soft shadow technique: Hard (PCF fallback), PCSS (fixed-radius Poisson disk),
+        /// or ContactHardening (blocker-search variable penumbra).
+        /// </summary>
+        public ESoftShadowMode SoftShadowMode
         {
-            get => _enablePcss;
-            set => SetField(ref _enablePcss, value);
+            get => _softShadowMode;
+            set => SetField(ref _softShadowMode, value);
+        }
+
+        /// <summary>
+        /// Physical radius of the light source in world units. Used by <see cref="ESoftShadowMode.ContactHardening"/>
+        /// to compute the penumbra width. Larger values produce wider, softer penumbrae.
+        /// </summary>
+        [Category("Shadows")]
+        public float LightSourceRadius
+        {
+            get => _lightSourceRadius;
+            set => SetField(ref _lightSourceRadius, MathF.Max(0.0f, value));
         }
 
         public bool EnableCascadedShadows
@@ -363,7 +379,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
             program.Uniform(Engine.Rendering.Constants.ShadowSamples, Samples);
             program.Uniform(Engine.Rendering.Constants.ShadowFilterRadius, FilterRadius);
-            program.Uniform(Engine.Rendering.Constants.EnablePCSS, EnablePCSS);
+            program.Uniform(Engine.Rendering.Constants.SoftShadowMode, (int)SoftShadowMode);
+            program.Uniform(Engine.Rendering.Constants.LightSourceRadius, LightSourceRadius);
 
             program.Uniform(Engine.Rendering.Constants.EnableCascadedShadows, EnableCascadedShadows);
             program.Uniform(Engine.Rendering.Constants.EnableContactShadows, EnableContactShadows);

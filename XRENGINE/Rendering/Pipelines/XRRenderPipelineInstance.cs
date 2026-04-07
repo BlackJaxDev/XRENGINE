@@ -365,6 +365,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase
                 _appliedInternalResolutionScale = null;
                 viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
             }
+
+            Engine.Rendering.PrepareVulkanUpscaleBridgeForFrame(viewport, this);
         }
 
         using (PushRenderingPipeline(this))
@@ -452,11 +454,19 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     public void ViewportResized(Vector2 size)
     {
-        //DestroyCache();
+        ViewportResized((int)size.X, (int)size.Y);
     }
     public void ViewportResized(int width, int height)
     {
-        //DestroyCache();
+        switch (_pipeline)
+        {
+            case DefaultRenderPipeline pipeline:
+                pipeline.HandleViewportResized(this, width, height);
+                break;
+            case DefaultRenderPipeline2 pipeline:
+                pipeline.HandleViewportResized(this, width, height);
+                break;
+        }
     }
     public void InternalResolutionResized(int internalWidth, int internalHeight)
     {

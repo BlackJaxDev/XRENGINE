@@ -92,11 +92,9 @@ public sealed class AmbientOcclusionInspectorController : UIComponent
         SetActive(ScreenSpaceGroup, consistentType == AmbientOcclusionSettings.EType.ScreenSpace);
         SetActive(MultiViewGroup,
             consistentType == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion
-            || consistentType == AmbientOcclusionSettings.EType.HorizonBased
             || consistentType == AmbientOcclusionSettings.EType.HorizonBasedPlus);
         SetActive(MultiScaleGroup,
-            consistentType == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance
-            || consistentType == AmbientOcclusionSettings.EType.ScalableAmbientObscurance);
+            consistentType == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance);
         SetActive(SpatialHashGroup, consistentType == AmbientOcclusionSettings.EType.SpatialHashRaytraced);
 
         bool showWarning = (hasTargets && consistentType is null) || unsupportedType;
@@ -126,8 +124,9 @@ public sealed class AmbientOcclusionInspectorController : UIComponent
                 continue;
 
             hasTargets = true;
+            var normalizedType = AmbientOcclusionSettings.NormalizeType(target.Type);
 
-            if (!IsSupportedType(target.Type))
+            if (!IsSupportedType(normalizedType))
             {
                 unsupportedType = true;
                 return null;
@@ -135,11 +134,11 @@ public sealed class AmbientOcclusionInspectorController : UIComponent
 
             if (type is null)
             {
-                type = target.Type;
+                type = normalizedType;
                 continue;
             }
 
-            if (type != target.Type)
+            if (type != normalizedType)
                 return null;
         }
 
@@ -149,9 +148,7 @@ public sealed class AmbientOcclusionInspectorController : UIComponent
     private static bool IsSupportedType(AmbientOcclusionSettings.EType type)
         => type == AmbientOcclusionSettings.EType.ScreenSpace
         || type == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion
-        || type == AmbientOcclusionSettings.EType.ScalableAmbientObscurance
         || type == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance
-        || type == AmbientOcclusionSettings.EType.HorizonBased
         || type == AmbientOcclusionSettings.EType.HorizonBasedPlus
         || type == AmbientOcclusionSettings.EType.SpatialHashRaytraced;
 

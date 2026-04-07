@@ -89,7 +89,8 @@ uniform float ShadowBiasMin = 0.00001;
 uniform float ShadowBiasMax = 0.004;
 uniform int ShadowSamples = 4;
 uniform float ShadowFilterRadius = 0.0012;
-uniform bool EnablePCSS = true;
+uniform int SoftShadowMode = 1;
+uniform float LightSourceRadius = 0.01;
 uniform bool EnableCascadedShadows = true;
 uniform bool EnableContactShadows = true;
 uniform float ContactShadowDistance = 0.1;
@@ -120,7 +121,8 @@ uniform float PointLightShadowBiasMin[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int PointLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform bool PointLightShadowEnablePCSS[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform int PointLightShadowSoftShadowMode[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float PointLightShadowLightSourceRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int PointLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 
 uniform int SpotLightShadowSlots[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
@@ -130,7 +132,8 @@ uniform float SpotLightShadowBiasMin[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float SpotLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int SpotLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float SpotLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform bool SpotLightShadowEnablePCSS[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform int SpotLightShadowSoftShadowMode[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform float SpotLightShadowLightSourceRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int SpotLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 
 // Forward+ tiled light culling uniforms
@@ -662,7 +665,8 @@ float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseF
         bias,
         ShadowSamples,
         filterRadius,
-        EnablePCSS) * contact;
+        SoftShadowMode,
+        LightSourceRadius) * contact;
 }
 
 // Shadow map reading for primary directional light (uses standalone ShadowMap sampler)
@@ -711,7 +715,8 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
         bias,
         ShadowSamples,
         ShadowFilterRadius,
-        EnablePCSS) * contact;
+        SoftShadowMode,
+        LightSourceRadius) * contact;
 }
 
 vec3 XRENGINE_CalculateDirectPbrLight(vec3 lightColor, float diffuseIntensity, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0, float attenuation)
@@ -797,7 +802,8 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
         farPlaneDist,
         sampleRadius,
         PointLightShadowSamples[lightIndex],
-        PointLightShadowEnablePCSS[lightIndex]);
+        PointLightShadowSoftShadowMode[lightIndex],
+        PointLightShadowLightSourceRadius[lightIndex]);
 
     if (debugMode != 0)
     {
@@ -857,7 +863,8 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
         bias,
         SpotLightShadowSamples[lightIndex],
         SpotLightShadowFilterRadius[lightIndex],
-        SpotLightShadowEnablePCSS[lightIndex]) * contact;
+        SpotLightShadowSoftShadowMode[lightIndex],
+        SpotLightShadowLightSourceRadius[lightIndex]) * contact;
 
     if (debugMode != 0)
     {

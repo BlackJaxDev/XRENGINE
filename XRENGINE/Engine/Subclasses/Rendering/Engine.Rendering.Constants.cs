@@ -20,7 +20,8 @@
 
                 public const string ShadowSamples = "ShadowSamples";
                 public const string ShadowFilterRadius = "ShadowFilterRadius";
-                public const string EnablePCSS = "EnablePCSS";
+                public const string SoftShadowMode = "SoftShadowMode";
+                public const string LightSourceRadius = "LightSourceRadius";
                 public const string EnableCascadedShadows = "EnableCascadedShadows";
                 public const string EnableContactShadows = "EnableContactShadows";
                 public const string ContactShadowDistance = "ContactShadowDistance";

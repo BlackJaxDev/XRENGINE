@@ -74,7 +74,7 @@
   "PointLight": true,
   // Selects which light-probe layout gets added to the scene.
   // LightProbe: Off, Single, Grid, ModelGrid
-  "LightProbe": "Single",
+  "LightProbe": "ModelGrid",
   // Controls whether light probes capture never, once on startup, or continuously.
   // LightProbeCapture: None, Startup, Realtime
   "LightProbeCapture": "Startup",
@@ -87,11 +87,11 @@
   // Probe counts used by Grid and ModelGrid layouts.
   "LightProbeGridCounts": {
     // Generated from X on ProbeGridCounts.
-    "X": 10,
+    "X": 5,
     // Generated from Y on ProbeGridCounts.
-    "Y": 1,
+    "Y": 5,
     // Generated from Z on ProbeGridCounts.
-    "Z": 10
+    "Z": 5
   },
   // Spacing between probes for Grid and ModelGrid layouts.
   "LightProbeGridSpacing": {
@@ -433,10 +433,10 @@
     // Generated from Intensity on VolumetricFogVolumeInitSettings.
     "Intensity": 1.0,
     // Generated from MaxDistance on VolumetricFogVolumeInitSettings.
-    "MaxDistance": 120.0,
+    "MaxDistance": 150.0,
     // Generated from StepSize on VolumetricFogVolumeInitSettings.
-    "StepSize": 2.0,
+    "StepSize": 4.0,
     // Generated from JitterStrength on VolumetricFogVolumeInitSettings.
-    "JitterStrength": 0.25
+    "JitterStrength": 1.0
   }
 }

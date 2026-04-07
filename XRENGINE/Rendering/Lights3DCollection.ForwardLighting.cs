@@ -196,7 +196,8 @@ namespace XREngine.Scene
                 program.Uniform("ShadowBiasMax", firstDirLight.ShadowMaxBias);
                 program.Uniform("ShadowSamples", firstDirLight.Samples);
                 program.Uniform("ShadowFilterRadius", firstDirLight.FilterRadius);
-                program.Uniform("EnablePCSS", firstDirLight.EnablePCSS);
+                program.Uniform("SoftShadowMode", (int)firstDirLight.SoftShadowMode);
+                program.Uniform("LightSourceRadius", firstDirLight.LightSourceRadius);
                 program.Uniform("EnableCascadedShadows", firstDirLight.EnableCascadedShadows);
                 program.Uniform("EnableContactShadows", firstDirLight.EnableContactShadows);
                 program.Uniform("ContactShadowDistance", firstDirLight.ContactShadowDistance);
@@ -276,7 +277,8 @@ namespace XREngine.Scene
             float[] pointShadowBiasMax = new float[16];
             int[] pointShadowSamples = new int[16];
             float[] pointShadowFilterRadius = new float[16];
-            bool[] pointShadowEnablePCSS = new bool[16];
+            int[] pointShadowSoftShadowMode = new int[16];
+            float[] pointShadowLightSourceRadius = new float[16];
             int[] pointShadowDebugModes = new int[16];
             int pointShadowSlot = 0;
             for (int i = 0; i < DynamicPointLights.Count && i < pointShadowSlots.Length; ++i)
@@ -290,7 +292,8 @@ namespace XREngine.Scene
                 pointShadowBiasMax[i] = light.ShadowMaxBias;
                 pointShadowSamples[i] = light.Samples;
                 pointShadowFilterRadius[i] = light.FilterRadius;
-                pointShadowEnablePCSS[i] = light.EnablePCSS;
+                pointShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
+                pointShadowLightSourceRadius[i] = light.LightSourceRadius;
                 pointShadowDebugModes[i] = light.ShadowDebugMode;
 
                 XRTexture? shadowTexture = light.CastsShadows
@@ -313,7 +316,8 @@ namespace XREngine.Scene
             float[] spotShadowBiasMax = new float[16];
             int[] spotShadowSamples = new int[16];
             float[] spotShadowFilterRadius = new float[16];
-            bool[] spotShadowEnablePCSS = new bool[16];
+            int[] spotShadowSoftShadowMode = new int[16];
+            float[] spotShadowLightSourceRadius = new float[16];
             int[] spotShadowDebugModes = new int[16];
             int spotShadowSlot = 0;
             for (int i = 0; i < DynamicSpotLights.Count && i < spotShadowSlots.Length; ++i)
@@ -325,7 +329,8 @@ namespace XREngine.Scene
                 spotShadowBiasMax[i] = light.ShadowMaxBias;
                 spotShadowSamples[i] = light.Samples;
                 spotShadowFilterRadius[i] = light.FilterRadius;
-                spotShadowEnablePCSS[i] = light.EnablePCSS;
+                spotShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
+                spotShadowLightSourceRadius[i] = light.LightSourceRadius;
                 spotShadowDebugModes[i] = light.ShadowDebugMode;
 
                 XRTexture? shadowTexture = light.CastsShadows
@@ -350,7 +355,8 @@ namespace XREngine.Scene
             program.Uniform("PointLightShadowBiasMax", pointShadowBiasMax);
             program.Uniform("PointLightShadowSamples", pointShadowSamples);
             program.Uniform("PointLightShadowFilterRadius", pointShadowFilterRadius);
-            program.Uniform("PointLightShadowEnablePCSS", pointShadowEnablePCSS);
+            program.Uniform("PointLightShadowSoftShadowMode", pointShadowSoftShadowMode);
+            program.Uniform("PointLightShadowLightSourceRadius", pointShadowLightSourceRadius);
             program.Uniform("PointLightShadowDebugModes", pointShadowDebugModes);
 
             program.Uniform("SpotLightShadowSlots", spotShadowSlots);
@@ -360,7 +366,8 @@ namespace XREngine.Scene
             program.Uniform("SpotLightShadowBiasMax", spotShadowBiasMax);
             program.Uniform("SpotLightShadowSamples", spotShadowSamples);
             program.Uniform("SpotLightShadowFilterRadius", spotShadowFilterRadius);
-            program.Uniform("SpotLightShadowEnablePCSS", spotShadowEnablePCSS);
+            program.Uniform("SpotLightShadowSoftShadowMode", spotShadowSoftShadowMode);
+            program.Uniform("SpotLightShadowLightSourceRadius", spotShadowLightSourceRadius);
             program.Uniform("SpotLightShadowDebugModes", spotShadowDebugModes);
 
             // Bind the actual shadow texture after per-light SetUniforms.

@@ -562,7 +562,7 @@ namespace XREngine
 
         private const int ImportedSurfaceDetailNormalMapMode = 0;
         private const int ImportedSurfaceDetailHeightMapMode = 1;
-        private const float ImportedHeightMapScale = 2.0f;
+        private const float ImportedHeightMapScale = 1.0f;
 
         private static TextureType NormalizeTextureType(TextureType textureType)
             => textureType switch
@@ -585,7 +585,7 @@ namespace XREngine
 
             return key switch
             {
-                var text when text.Contains("normal") => TextureType.NormalCamera,
+                var text when text.Contains("norm") || text.Contains("nrm") => TextureType.NormalCamera,
                 var text when text.Contains("bump") || text.Contains("height") => TextureType.Height,
                 var text when text.Contains("spec") || text.Contains("shin") => TextureType.Specular,
                 _ when looksLikeBaseColor => TextureType.BaseColor,

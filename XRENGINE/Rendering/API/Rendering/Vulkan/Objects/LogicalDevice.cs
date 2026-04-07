@@ -871,6 +871,34 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        if (enabledExtensions.Contains("VK_KHR_external_memory_win32"))
+        {
+            if (Api!.TryGetDeviceExtension(instance, device, out _khrExternalMemoryWin32))
+            {
+                _supportsExternalMemoryWin32 = true;
+                Debug.Vulkan("[Vulkan] VK_KHR_external_memory_win32 extension loaded successfully.");
+            }
+            else
+            {
+                Debug.VulkanWarning("[Vulkan] Failed to load VK_KHR_external_memory_win32 extension handle.");
+                _supportsExternalMemoryWin32 = false;
+            }
+        }
+
+        if (enabledExtensions.Contains("VK_KHR_external_semaphore_win32"))
+        {
+            if (Api!.TryGetDeviceExtension(instance, device, out _khrExternalSemaphoreWin32))
+            {
+                _supportsExternalSemaphoreWin32 = true;
+                Debug.Vulkan("[Vulkan] VK_KHR_external_semaphore_win32 extension loaded successfully.");
+            }
+            else
+            {
+                Debug.VulkanWarning("[Vulkan] Failed to load VK_KHR_external_semaphore_win32 extension handle.");
+                _supportsExternalSemaphoreWin32 = false;
+            }
+        }
+
         if (enabledExtensions.Contains("VK_NV_memory_decompression") && _supportsNvMemoryDecompression)
         {
             if (Api!.TryGetDeviceExtension(instance, device, out _nvMemoryDecompression))

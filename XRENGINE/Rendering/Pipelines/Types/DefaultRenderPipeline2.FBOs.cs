@@ -742,7 +742,8 @@ public partial class DefaultRenderPipeline2
     }
 
     private ERenderBufferStorage GetForwardMsaaColorFormat()
-        => ResolveOutputRenderBufferStorage();
+        // ForwardPassMSAAFBO always resolves into HDRSceneTex, which is fixed at RGBA16F.
+        => ERenderBufferStorage.Rgba16f;
 
     private XRFrameBuffer CreateDepthPreloadFBO()
     {

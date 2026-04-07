@@ -420,32 +420,54 @@ namespace XREngine.Rendering
             set => SetField(ref _postProcessStates, value ?? new CameraPostProcessStateCollection());
         }
 
+        private RenderPipeline? ResolveRenderContextPostProcessPipeline()
+        {
+            XRRenderPipelineInstance? currentPipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            var renderState = currentPipeline?.RenderState;
+            bool isActiveRenderCamera = ReferenceEquals(renderState?.SceneCamera, this)
+                || ReferenceEquals(renderState?.RenderingCamera, this)
+                || ReferenceEquals(currentPipeline?.LastSceneCamera, this)
+                || ReferenceEquals(currentPipeline?.LastRenderingCamera, this);
+
+            return isActiveRenderCamera ? currentPipeline?.Pipeline : null;
+        }
+
+        /// <summary>
+        /// Gets the post-process state for a specific render pipeline.
+        /// When no pipeline is supplied, prefers the pipeline currently rendering this camera.
+        /// </summary>
+        /// <param name="pipeline">The pipeline whose state should be returned.</param>
+        /// <returns>The post-process state for the resolved pipeline, or null if no pipeline is available.</returns>
+        public PipelinePostProcessState? GetPostProcessState(RenderPipeline? pipeline)
+        {
+            pipeline ??= ResolveRenderContextPostProcessPipeline();
+            pipeline ??= _renderPipeline ?? RenderPipeline;
+            return pipeline is null ? null : _postProcessStates.GetOrCreateState(pipeline);
+        }
+
         /// <summary>
         /// Gets the active post-process state for the current render pipeline.
         /// Creates a new state if one doesn't exist for the active pipeline.
         /// </summary>
         /// <returns>The post-process state for the active pipeline, or null if no pipeline is set.</returns>
         public PipelinePostProcessState? GetActivePostProcessState()
-        {
-            var pipeline = _renderPipeline ?? RenderPipeline;
-            return pipeline is null ? null : _postProcessStates.GetOrCreateState(pipeline);
-        }
+            => GetPostProcessState(null);
 
         /// <summary>
         /// Gets the state for a specific post-process stage by its key identifier.
         /// </summary>
         /// <param name="stageKey">The unique key identifying the post-process stage.</param>
         /// <returns>The stage state, or null if not found.</returns>
-        public PostProcessStageState? GetPostProcessStageState(string stageKey)
-            => GetActivePostProcessState()?.GetStage(stageKey);
+        public PostProcessStageState? GetPostProcessStageState(string stageKey, RenderPipeline? pipeline = null)
+            => GetPostProcessState(pipeline)?.GetStage(stageKey);
 
         /// <summary>
         /// Gets the state for a post-process stage by its settings type.
         /// </summary>
         /// <typeparam name="TSettings">The settings class type for the post-process stage.</typeparam>
         /// <returns>The stage state, or null if not found.</returns>
-        public PostProcessStageState? GetPostProcessStageState<TSettings>() where TSettings : class
-            => GetActivePostProcessState()?.GetStage<TSettings>();
+        public PostProcessStageState? GetPostProcessStageState<TSettings>(RenderPipeline? pipeline = null) where TSettings : class
+            => GetPostProcessState(pipeline)?.GetStage<TSettings>();
 
         /// <summary>
         /// Finds a post-process stage that contains a parameter with the specified name.
@@ -453,8 +475,8 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="parameterName">The name of the parameter to search for.</param>
         /// <returns>The stage state containing the parameter, or null if not found.</returns>
-        public PostProcessStageState? FindPostProcessStageByParameter(string parameterName)
-            => GetActivePostProcessState()?.FindStageByParameter(parameterName);
+        public PostProcessStageState? FindPostProcessStageByParameter(string parameterName, RenderPipeline? pipeline = null)
+            => GetPostProcessState(pipeline)?.FindStageByParameter(parameterName);
 
         #endregion
 

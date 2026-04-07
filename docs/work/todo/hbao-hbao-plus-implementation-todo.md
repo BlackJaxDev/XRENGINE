@@ -1,14 +1,14 @@
 # HBAO And HBAO+ Implementation TODO
 
 Last Updated: 2026-03-11
-Current Status: AO settings/schema de-entangling is in place, classic `HorizonBased` is explicitly deferred behind a neutral-AO stub branch, `HorizonBasedPlus` has a dedicated full-resolution HBAO+ gather path plus separable cross-bilateral blur, the shared AO resource contract no longer uses the old `SSAO*` naming, and lit forward shaders now sample the shared AO visibility texture.
+Current Status: AO settings/schema de-entangling is in place, legacy `HorizonBased` now normalizes to `HorizonBasedPlus` instead of exposing a distinct neutral-AO branch, `HorizonBasedPlus` has a dedicated full-resolution HBAO+ gather path plus separable cross-bilateral blur, the shared AO resource contract no longer uses the old `SSAO*` naming, and lit forward shaders now sample the shared AO visibility texture.
 Scope: Default render pipeline AO generation and consumption. This work covers AO settings, render-pipeline branch selection, AO passes, deferred/lighted forward shader consumption, and editor-facing schema visibility for AO settings.
 
 ## Current Reality
 
 What is already true:
 
-- `AmbientOcclusionSettings.EType` includes `HorizonBased` and `HorizonBasedPlus`.
+- `AmbientOcclusionSettings.EType` keeps a legacy `HorizonBased` alias and a real `HorizonBasedPlus` mode.
 - The deferred pipeline already has the correct AO insertion point: AO is generated before deferred light combine and consumed as a scalar visibility term.
 - The post-process schema supports per-parameter `visibilityCondition` gating.
 - AO settings/schema de-entangling is implemented so HBAO and HBAO+ no longer inherit MVAO-only editor controls.
@@ -24,7 +24,7 @@ What is still incomplete:
 At the end of this work:
 
 - `HorizonBasedPlus` is a real implementation and becomes the intended default high-quality AO mode.
-- `HorizonBased` is either implemented as a reference/debug mode or explicitly left unsupported and hidden until implemented.
+- `HorizonBased` remains a compatibility alias only unless a deliberate classic-HBAO reference path is reintroduced.
 - Each AO type has clearly scoped settings with no editor leakage from unrelated algorithms.
 - The ImGui render-pipeline editor shows only the settings that affect the currently selected AO type.
 - Deferred light combine continues to consume a single AO visibility texture without broader lighting-pipeline churn.
@@ -116,7 +116,7 @@ Acceptance criteria:
 
 ## Phase 4 - Decide Whether Classic HBAO Is Worth Keeping
 
-Outcome: classic `HorizonBased` is either implemented deliberately or explicitly deferred.
+Outcome: classic `HorizonBased` is either reintroduced deliberately or remains a compatibility alias to `HorizonBasedPlus`.
 
 If we keep it:
 
@@ -127,8 +127,8 @@ If we keep it:
 
 If we defer it:
 
-- [x] Document that `HorizonBased` remains unimplemented.
-- [x] Keep it hidden, disabled, or clearly labeled until the pass exists.
+- [x] Normalize legacy `HorizonBased` selections to `HorizonBasedPlus`.
+- [x] Keep standalone classic HBAO out of the user-facing selector until a real pass exists.
 
 Acceptance criteria:
 
@@ -167,7 +167,7 @@ Acceptance criteria:
 
 - The AO schema/UI layer is now clean enough that future pass work can proceed without confusing the editor.
 - `HorizonBasedPlus` now routes through `VPRC_HBAOPlusPass` and dedicated HBAO+ shaders instead of the neutral stub branch.
-- Classic `HorizonBased` is intentionally deferred for now and exposed as `HBAO (Deferred)` so the editor does not imply that a real classic-HBAO implementation exists.
+- Classic `HorizonBased` now survives only as a compatibility alias that normalizes to `HorizonBasedPlus`, so the editor no longer exposes a separate deferred HBAO entry.
 - Shared AO FBO, texture, and shader sampler names now use ambient-occlusion terminology instead of leaking old SSAO-only naming into every AO path.
 - The next highest-value code change is refining HBAO+ quality/perf rather than splitting effort across a second horizon-search implementation.
 

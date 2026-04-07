@@ -108,7 +108,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     protected override void Execute()
     {
-        if (ParentPipeline is not DefaultRenderPipeline pipeline)
+        if (ParentPipeline is null)
             return;
 
         switch (Phase)
@@ -119,7 +119,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                 break;
             case EPhase.Accumulate:
                 //Debug.Out("[Temporal] Accumulate phase");
-                ExecuteAccumulation(pipeline);
+                ExecuteAccumulation();
                 break;
             case EPhase.PopJitter:
                 PopActiveJitter();
@@ -131,7 +131,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
     }
 
-    private void ExecuteAccumulation(DefaultRenderPipeline pipeline)
+    private void ExecuteAccumulation()
     {
         var renderer = AbstractRenderer.Current;
         if (renderer is null)
@@ -174,23 +174,48 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             accumulationFBO.Render(accumulationFBO);
         }
 
-        renderer.BlitFBOToFBO(
-            forwardFBO,
-            historyColorFBO,
-            EReadBufferMode.ColorAttachment0,
-            true,
-            true,
-            false,
-            false);
-
         if (shouldAccumulate)
         {
+            // TAA history must store the resolved color, not the raw forward pass,
+            // otherwise accumulation never becomes recursive and tuning the temporal
+            // weights has only a weak one-frame effect.
+            renderer.BlitFBOToFBO(
+                accumulationFBO,
+                historyColorFBO,
+                EReadBufferMode.ColorAttachment0,
+                true,
+                false,
+                false,
+                false);
+
+            // Preserve the latest scene depth from the forward pass for depth-based
+            // reprojection rejection next frame.
+            renderer.BlitFBOToFBO(
+                forwardFBO,
+                historyColorFBO,
+                EReadBufferMode.ColorAttachment0,
+                false,
+                true,
+                false,
+                false);
+
             renderer.BlitFBOToFBO(
                 accumulationFBO,
                 historyExposureFBO,
                 EReadBufferMode.ColorAttachment1,
                 true,
                 false,
+                false,
+                false);
+        }
+        else
+        {
+            renderer.BlitFBOToFBO(
+                forwardFBO,
+                historyColorFBO,
+                EReadBufferMode.ColorAttachment0,
+                true,
+                true,
                 false,
                 false);
         }
@@ -258,6 +283,25 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         data = default;
         return false;
+    }
+
+    internal static void ResetHistory(XRRenderPipelineInstance? instance)
+    {
+        XRCamera? camera = instance?.RenderState.SceneCamera
+            ?? instance?.RenderState.RenderingCamera
+            ?? instance?.LastSceneCamera
+            ?? instance?.LastRenderingCamera;
+        if (camera is null || !TemporalStates.TryGetValue(camera, out TemporalState? state))
+            return;
+
+        state.ActiveJitterHandle?.Dispose();
+        state.ActiveJitterHandle = null;
+        state.HistoryReady = false;
+        state.HistoryExposureReady = false;
+        state.PendingHistoryReady = false;
+        state.CurrentJitter = Vector2.Zero;
+        state.PreviousJitter = Vector2.Zero;
+        state.HaltonIndex = 1;
     }
 
     private static bool TryGetActiveState([NotNullWhen(true)] out XRRenderPipelineInstance? instance, [NotNullWhen(true)] out TemporalState? state)

@@ -72,11 +72,24 @@ vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 tangentWS, vec3 bitangentWS, 
     }
     else
     {
-        vec3 sampledNormal = texture(Texture1, uv).rgb * 2.0 - 1.0;
-        if (!XRENGINE_IsFiniteVec3(sampledNormal) || dot(sampledNormal, sampledNormal) <= 1e-6)
-            return N;
+        vec3 sampledColor = texture(Texture1, uv).rgb;
+        float grayscaleDelta = max(abs(sampledColor.r - sampledColor.g), max(abs(sampledColor.r - sampledColor.b), abs(sampledColor.g - sampledColor.b)));
 
-        tangentNormal = normalize(sampledNormal);
+        // Already-imported assets can still route grayscale bump maps or black fallback
+        // textures through the normal-map path. Detect those cases at runtime and fall
+        // back to height reconstruction so deferred lighting does not collapse to black.
+        if (grayscaleDelta <= 0.02)
+        {
+            tangentNormal = XRENGINE_HeightToNormalSobel(uv);
+        }
+        else
+        {
+            vec3 sampledNormal = sampledColor * 2.0 - 1.0;
+            if (!XRENGINE_IsFiniteVec3(sampledNormal) || dot(sampledNormal, sampledNormal) <= 1e-6)
+                return N;
+
+            tangentNormal = normalize(sampledNormal);
+        }
     }
 #endif
 

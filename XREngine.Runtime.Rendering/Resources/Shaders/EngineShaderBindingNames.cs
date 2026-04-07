@@ -41,7 +41,8 @@ public static class EngineShaderBindingNames
         public const string ShadowBiasMax = "ShadowBiasMax";
         public const string ShadowSamples = "ShadowSamples";
         public const string ShadowFilterRadius = "ShadowFilterRadius";
-        public const string EnablePCSS = "EnablePCSS";
+        public const string SoftShadowMode = "SoftShadowMode";
+        public const string LightSourceRadius = "LightSourceRadius";
         public const string EnableCascadedShadows = "EnableCascadedShadows";
         public const string EnableContactShadows = "EnableContactShadows";
         public const string ContactShadowDistance = "ContactShadowDistance";
@@ -63,7 +64,8 @@ public static class EngineShaderBindingNames
         public const string PointLightShadowBiasMax = "PointLightShadowBiasMax";
         public const string PointLightShadowSamples = "PointLightShadowSamples";
         public const string PointLightShadowFilterRadius = "PointLightShadowFilterRadius";
-        public const string PointLightShadowEnablePCSS = "PointLightShadowEnablePCSS";
+        public const string PointLightShadowSoftShadowMode = "PointLightShadowSoftShadowMode";
+        public const string PointLightShadowLightSourceRadius = "PointLightShadowLightSourceRadius";
         public const string PointLightShadowDebugModes = "PointLightShadowDebugModes";
         public const string SpotLightShadowSlots = "SpotLightShadowSlots";
         public const string SpotLightShadowBase = "SpotLightShadowBase";
@@ -72,7 +74,8 @@ public static class EngineShaderBindingNames
         public const string SpotLightShadowBiasMax = "SpotLightShadowBiasMax";
         public const string SpotLightShadowSamples = "SpotLightShadowSamples";
         public const string SpotLightShadowFilterRadius = "SpotLightShadowFilterRadius";
-        public const string SpotLightShadowEnablePCSS = "SpotLightShadowEnablePCSS";
+        public const string SpotLightShadowSoftShadowMode = "SpotLightShadowSoftShadowMode";
+        public const string SpotLightShadowLightSourceRadius = "SpotLightShadowLightSourceRadius";
         public const string SpotLightShadowDebugModes = "SpotLightShadowDebugModes";
         public const string EnvironmentMapMipLevels = "u_EnvironmentMapMipLevels";
 

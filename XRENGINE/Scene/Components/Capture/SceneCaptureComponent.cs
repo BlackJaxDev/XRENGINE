@@ -7,6 +7,7 @@ using XREngine.Data.Vectors;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine;
@@ -64,6 +65,9 @@ namespace XREngine.Components.Lights
         private XRCubeFrameBuffer? _renderFBO;
         private XRQuadFrameBuffer? _octahedralFBO;
         private XRMaterial? _octahedralMaterial;
+        private bool _captureResourcesDirty = true;
+        private bool _captureResourceInitializationQueued;
+        private bool _deferCaptureResourceRefresh;
 
         private const uint OctahedralResolutionMultiplier = 2u;
         private static XRShader? s_cubemapToOctaShader;
@@ -87,15 +91,122 @@ namespace XREngine.Components.Lights
 
         public void SetCaptureResolution(uint colorResolution, bool captureDepth = false)
         {
-            Resolution = colorResolution;
-            CaptureDepthCubeMap = captureDepth;
-            InitializeForCapture();
+            _deferCaptureResourceRefresh = true;
+            try
+            {
+                Resolution = colorResolution;
+                CaptureDepthCubeMap = captureDepth;
+            }
+            finally
+            {
+                _deferCaptureResourceRefresh = false;
+            }
+
+            InvalidateCaptureResources();
+            EnsureCaptureResourcesInitialized();
         }
+
+        protected virtual bool ShouldInitializeCaptureResourcesOnActivate
+            => true;
 
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+
+            if (ShouldInitializeCaptureResourcesOnActivate)
+                EnsureCaptureResourcesInitialized();
+        }
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            switch (propName)
+            {
+                case nameof(Resolution):
+                case nameof(CaptureDepthCubeMap):
+                    InvalidateCaptureResources();
+                    if (!_deferCaptureResourceRefresh && IsActiveInHierarchy &&
+                        (ShouldInitializeCaptureResourcesOnActivate || HasAllocatedCaptureResources()))
+                    {
+                        EnsureCaptureResourcesInitialized();
+                    }
+
+                    break;
+            }
+        }
+
+        protected void InvalidateCaptureResources()
+            => _captureResourcesDirty = true;
+
+        protected void EnsureCaptureResourcesInitialized()
+        {
+            if (!_captureResourcesDirty && AreCaptureResourcesInitialized())
+                return;
+
+            if (!Engine.IsRenderThread)
+            {
+                if (_captureResourceInitializationQueued)
+                    return;
+
+                _captureResourceInitializationQueued = Engine.InvokeOnMainThread(() =>
+                {
+                    _captureResourceInitializationQueued = false;
+                    EnsureCaptureResourcesInitialized();
+                }, $"{GetType().Name}.EnsureCaptureResourcesInitialized", executeNowIfAlreadyMainThread: true);
+                return;
+            }
+
+            _captureResourceInitializationQueued = false;
             InitializeForCapture();
+            _captureResourcesDirty = false;
+        }
+
+        private bool HasAllocatedCaptureResources()
+            => _renderFBO is not null ||
+               _environmentTextureCubemap is not null ||
+               _environmentTextureOctahedral is not null ||
+               Viewports[0] is not null;
+
+        private bool AreCaptureResourcesInitialized()
+        {
+            if (_renderFBO is null || _environmentTextureCubemap is null)
+                return false;
+
+            if (CaptureDepthCubeMap)
+            {
+                if (_environmentDepthTextureCubemap is null)
+                    return false;
+            }
+            else if (_tempDepth is null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < Viewports.Length; ++i)
+            {
+                if (Viewports[i] is null)
+                    return false;
+            }
+
+            if (ShouldEncodeEnvironmentToOctahedralMap() && (_octahedralFBO is null || _environmentTextureOctahedral is null))
+                return false;
+
+            return true;
+        }
+
+        protected static void SynchronizeCaptureTextureWrites()
+        {
+            if (AbstractRenderer.Current is OpenGLRenderer renderer)
+            {
+                renderer.MemoryBarrier(
+                    EMemoryBarrierMask.Framebuffer |
+                    EMemoryBarrierMask.TextureFetch |
+                    EMemoryBarrierMask.TextureUpdate);
+                return;
+            }
+
+            AbstractRenderer.Current?.WaitForGpu();
         }
 
         protected virtual void InitializeForCapture()
@@ -199,12 +310,20 @@ namespace XREngine.Components.Lights
 
         private int _currentFace = 0;
 
+        /// <summary>
+        /// True after the most recent <see cref="Render"/> call completed a full 6-face cubemap cycle.
+        /// Subclasses use this to decide when to run finalization work (e.g. IBL generation).
+        /// </summary>
+        protected bool LastRenderCompletedCycle { get; private set; }
+
         private XRViewport? SharedCaptureViewport => XPosVP;
 
         public override void CollectVisible()
         {
-            int count = _progressiveRenderEnabled ? 1 : 1;
-            Debug.Out($"[SceneCapture] CollectVisible: progressive={_progressiveRenderEnabled}, faces={count}, Viewports[0]={Viewports[0] is not null}, World={Viewports[0]?.World is not null}");
+            EnsureCaptureResourcesInitialized();
+            if (Viewports[0] is null)
+                return;
+
             if (_progressiveRenderEnabled)
                 CollectVisibleFace(_currentFace);
             else
@@ -231,7 +350,6 @@ namespace XREngine.Components.Lights
 
         public override void SwapBuffers()
         {
-            Debug.Out($"[SceneCapture] SwapBuffers: progressive={_progressiveRenderEnabled}");
             if (_progressiveRenderEnabled)
                 SwapBuffersFace(_currentFace);
             else
@@ -249,11 +367,9 @@ namespace XREngine.Components.Lights
         /// </summary>
         public override void Render()
         {
+            EnsureCaptureResourcesInitialized();
             if (World is null || RenderFBO is null)
-            {
-                Debug.Out($"[SceneCapture] Render() SKIPPED: World={World is not null}, RenderFBO={RenderFBO is not null}");
                 return;
-            }
 
             Engine.Rendering.State.IsSceneCapturePass = true;
 
@@ -271,15 +387,12 @@ namespace XREngine.Components.Lights
                 else
                 {
                     RenderCommandCollection? sharedCommands = SharedCaptureViewport?.RenderPipelineInstance.MeshRenderCommands;
-                    Debug.Out($"[SceneCapture] Rendering all 6 faces. Cubemap={_environmentTextureCubemap is not null}, Extent={_environmentTextureCubemap?.Extent ?? 0}");
                     for (int i = 0; i < 6; ++i)
-                    {
                         RenderFace(depthAttachment, depthLayers, i, sharedCommands);
-                        Debug.Out($"[SceneCapture] Face {i} rendered. FBO complete={RenderFBO.IsLastCheckComplete}");
-                    }
                 }
 
                 bool completedCycle = !_progressiveRenderEnabled || _currentFace == 0;
+                LastRenderCompletedCycle = completedCycle;
 
                 if (!completedCycle)
                     WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.QueueForCapture(this);
@@ -288,15 +401,10 @@ namespace XREngine.Components.Lights
                 {
                     _environmentTextureCubemap.Bind();
                     _environmentTextureCubemap.GenerateMipmapsGPU();
-                    Debug.Out("[SceneCapture] Cubemap mipmaps generated.");
                 }
 
                 if (completedCycle && ShouldEncodeEnvironmentToOctahedralMap())
-                {
-                    Debug.Out($"[SceneCapture] Encoding to octahedral. OctaFBO={_octahedralFBO is not null}, OctaTex={_environmentTextureOctahedral is not null}");
                     EncodeEnvironmentToOctahedralMap();
-                    Debug.Out("[SceneCapture] Octahedral encode done.");
-                }
             }
             finally
             {
@@ -447,8 +555,8 @@ namespace XREngine.Components.Lights
             if (_octahedralFBO is null || _environmentTextureOctahedral is null || _environmentTextureCubemap is null)
                 return;
 
-            // Insert a GPU sync point to ensure all cubemap face renders have completed
-            AbstractRenderer.Current?.WaitForGpu();
+            // OpenGL only needs an explicit visibility barrier here; a full GPU drain causes large probe stalls.
+            SynchronizeCaptureTextureWrites();
 
             int width = (int)Math.Max(1u, _environmentTextureOctahedral.Width);
             int height = (int)Math.Max(1u, _environmentTextureOctahedral.Height);
@@ -528,5 +636,56 @@ namespace XREngine.Components.Lights
 
         public void QueueCapture()
             => WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.QueueForCapture(this);
+
+        /// <summary>
+        /// Executes a single cubemap face capture: collect visible, swap buffers, and render.
+        /// Called by the per-frame face-level work queue in <see cref="XREngine.Scene.Lights3DCollection"/>.
+        /// </summary>
+        public virtual void ExecuteCaptureFace(int faceIndex)
+        {
+            EnsureCaptureResourcesInitialized();
+            if (World is null || RenderFBO is null || Viewports[faceIndex] is null)
+                return;
+
+            Engine.Rendering.State.IsSceneCapturePass = true;
+            try
+            {
+                SyncCaptureCameraTransforms();
+                Viewports[faceIndex]!.CollectVisible(false);
+                Viewports[faceIndex]!.SwapBuffers();
+                GetDepthParams(out var depthAttachment, out int[] depthLayers);
+                RenderFace(depthAttachment, depthLayers, faceIndex);
+            }
+            finally
+            {
+                Engine.Rendering.State.IsSceneCapturePass = false;
+            }
+        }
+
+        /// <summary>
+        /// Finalizes a cubemap capture cycle: generates mipmaps and encodes to octahedral.
+        /// Called by the work queue after all 6 faces have been rendered.
+        /// Subclasses override to add IBL generation.
+        /// </summary>
+        public virtual void FinalizeCubemapCapture()
+        {
+            EnsureCaptureResourcesInitialized();
+            if (_environmentTextureCubemap is null)
+                return;
+
+            Engine.Rendering.State.IsSceneCapturePass = true;
+            try
+            {
+                _environmentTextureCubemap.Bind();
+                _environmentTextureCubemap.GenerateMipmapsGPU();
+
+                if (ShouldEncodeEnvironmentToOctahedralMap())
+                    EncodeEnvironmentToOctahedralMap();
+            }
+            finally
+            {
+                Engine.Rendering.State.IsSceneCapturePass = false;
+            }
+        }
     }
 }

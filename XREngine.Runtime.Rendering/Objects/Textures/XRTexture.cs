@@ -346,6 +346,51 @@ namespace XREngine.Rendering
             set => SetField(ref _requiresStorageUsage, value);
         }
 
+        [MemoryPackIgnore]
+        private nint _openGlExternalMemoryImportHandle;
+        [MemoryPackIgnore]
+        public nint OpenGlExternalMemoryImportHandle
+        {
+            get => _openGlExternalMemoryImportHandle;
+            set => SetField(ref _openGlExternalMemoryImportHandle, value);
+        }
+
+        [MemoryPackIgnore]
+        private ulong _openGlExternalMemoryImportSize;
+        [MemoryPackIgnore]
+        public ulong OpenGlExternalMemoryImportSize
+        {
+            get => _openGlExternalMemoryImportSize;
+            set => SetField(ref _openGlExternalMemoryImportSize, value);
+        }
+
+        [MemoryPackIgnore]
+        private string? _openGlExternalMemoryLabel;
+        [MemoryPackIgnore]
+        public string? OpenGlExternalMemoryLabel
+        {
+            get => _openGlExternalMemoryLabel;
+            set => SetField(ref _openGlExternalMemoryLabel, value);
+        }
+
+        [MemoryPackIgnore]
+        public bool UsesOpenGlExternalMemoryImport
+            => OpenGlExternalMemoryImportHandle != 0 && OpenGlExternalMemoryImportSize > 0;
+
+        public void ClearOpenGlExternalMemoryImport()
+        {
+            OpenGlExternalMemoryImportHandle = 0;
+            OpenGlExternalMemoryImportSize = 0;
+            OpenGlExternalMemoryLabel = null;
+        }
+
+        public void SetOpenGlExternalMemoryImport(nint handle, ulong size, string? label = null)
+        {
+            OpenGlExternalMemoryImportHandle = handle;
+            OpenGlExternalMemoryImportSize = size;
+            OpenGlExternalMemoryLabel = label;
+        }
+
         public virtual bool IsResizeable { get; } = false;
         public virtual bool HasAlphaChannel { get; } = false;
         public abstract Vector3 WidthHeightDepth { get; }

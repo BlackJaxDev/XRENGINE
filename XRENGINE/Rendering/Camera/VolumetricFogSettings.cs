@@ -20,9 +20,9 @@ namespace XREngine.Rendering
 
         private bool _enabled;
         private float _intensity = 1.0f;
-        private float _maxDistance = 120.0f;
-        private float _stepSize = 2.0f;
-        private float _jitterStrength = 0.25f;
+        private float _maxDistance = 150.0f;
+        private float _stepSize = 4.0f;
+        private float _jitterStrength = 1.0f;
 
         public bool Enabled
         {
@@ -56,30 +56,25 @@ namespace XREngine.Rendering
 
         public override void SetUniforms(XRRenderProgram program)
         {
-            program.Uniform($"{StructUniformName}.Enabled", Enabled);
-            program.Uniform($"{StructUniformName}.Intensity", Intensity);
-            program.Uniform($"{StructUniformName}.MaxDistance", MaxDistance);
-            program.Uniform($"{StructUniformName}.StepSize", StepSize);
-            program.Uniform($"{StructUniformName}.JitterStrength", JitterStrength);
-
             int activeCount = 0;
+            for (int i = 0; i < MaxVolumeCount; i++)
+            {
+                _activeVolumes[i] = null;
+                _worldToLocal[i] = Matrix4x4.Identity;
+                _colorDensity[i] = Vector4.Zero;
+                _halfExtentsEdgeFade[i] = Vector4.Zero;
+                _noiseScaleThreshold[i] = Vector4.Zero;
+                _noiseOffsetAmount[i] = Vector4.Zero;
+                _noiseVelocity[i] = Vector4.Zero;
+                _lightParams[i] = Vector4.Zero;
+            }
+
             if (Enabled && Intensity > 0.0f && MaxDistance > 0.0f)
             {
                 var world = Engine.Rendering.State.RenderingWorld;
                 if (world is not null)
                 {
                     int count = VolumetricFogVolumeComponent.Registry.CopyActive(world, _activeVolumes);
-                    for (int i = 0; i < MaxVolumeCount; i++)
-                    {
-                        _worldToLocal[i] = Matrix4x4.Identity;
-                        _colorDensity[i] = Vector4.Zero;
-                        _halfExtentsEdgeFade[i] = Vector4.Zero;
-                        _noiseScaleThreshold[i] = Vector4.Zero;
-                        _noiseOffsetAmount[i] = Vector4.Zero;
-                        _noiseVelocity[i] = Vector4.Zero;
-                        _lightParams[i] = Vector4.Zero;
-                    }
-
                     for (int i = 0; i < count; i++)
                     {
                         var volume = _activeVolumes[i];
@@ -105,6 +100,13 @@ namespace XREngine.Rendering
                     Debug.LogWarning("[VolumetricFog] Enabled but RenderingWorld is null — cannot query volumes.");
             }
 
+            bool shaderEnabled = activeCount > 0;
+
+            program.Uniform($"{StructUniformName}.Enabled", shaderEnabled);
+            program.Uniform($"{StructUniformName}.Intensity", shaderEnabled ? Intensity : 0.0f);
+            program.Uniform($"{StructUniformName}.MaxDistance", shaderEnabled ? MaxDistance : 0.0f);
+            program.Uniform($"{StructUniformName}.StepSize", shaderEnabled ? StepSize : 0.25f);
+            program.Uniform($"{StructUniformName}.JitterStrength", shaderEnabled ? JitterStrength : 0.0f);
             program.Uniform($"{StructUniformName}.VolumeCount", activeCount);
             program.Uniform("VolumetricFogWorldToLocal", _worldToLocal);
             program.Uniform("VolumetricFogColorDensity", _colorDensity);

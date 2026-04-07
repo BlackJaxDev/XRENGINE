@@ -30,6 +30,9 @@ namespace XREngine.Components.Capture.Lights
         protected override bool ShouldEncodeEnvironmentToOctahedralMap()
             => !UseDirectCubemapIblGeneration;
 
+        protected override bool ShouldInitializeCaptureResourcesOnActivate
+            => false;
+
         protected override void InitializeForCapture()
         {
             base.InitializeForCapture();
@@ -74,7 +77,7 @@ namespace XREngine.Components.Capture.Lights
                     viewport.Camera.TsrRenderScaleOverride = 1.0f;
                 }
 
-                viewport.RenderPipeline = Engine.Rendering.NewRenderPipeline();
+                viewport.RenderPipeline ??= Engine.Rendering.NewRenderPipeline();
                 viewport.SetRenderPipelineFromCamera = false;
             }
         }
@@ -229,7 +232,7 @@ namespace XREngine.Components.Capture.Lights
                     return;
 
                 RenderIrradianceCubemapInternal();
-                AbstractRenderer.Current?.WaitForGpu();
+                SynchronizeCaptureTextureWrites();
             }
 
             int width = (int)Math.Max(1u, IrradianceTexture.Width);
@@ -251,7 +254,7 @@ namespace XREngine.Components.Capture.Lights
                     return;
 
                 RenderPrefilterCubemapInternal();
-                AbstractRenderer.Current?.WaitForGpu();
+                SynchronizeCaptureTextureWrites();
             }
 
             int baseExtent = (int)Math.Max(PrefilterTexture.Width, PrefilterTexture.Height);
@@ -363,21 +366,56 @@ namespace XREngine.Components.Capture.Lights
 
         public override void Render()
         {
-            Debug.Out($"[LightProbe] Render() START. Cubemap={EnvironmentTextureCubemap is not null}, Octa={EnvironmentTextureOctahedral is not null}, IrrFBO={_irradianceFBO is not null}, PreFBO={_prefilterFBO is not null}");
             _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
             Engine.Rendering.State.IsLightProbePass = true;
 
             try
             {
                 base.Render();
-                AbstractRenderer.Current?.WaitForGpu();
-                Debug.Out($"[LightProbe] base.Render() done. Cubemap extent={EnvironmentTextureCubemap?.Extent ?? 0}, Octa size={EnvironmentTextureOctahedral?.Width ?? 0}x{EnvironmentTextureOctahedral?.Height ?? 0}");
+
+                // Only run IBL generation + version bump when a complete cubemap cycle finishes.
+                // Progressive mode renders one face per Render() call; the base re-enqueues
+                // for remaining faces automatically.
+                if (!LastRenderCompletedCycle)
+                    return;
+
+                SynchronizeCaptureTextureWrites();
                 GenerateIrradianceInternal();
-                Debug.Out($"[LightProbe] Irradiance generated. IrradianceTex={IrradianceTexture is not null}, size={IrradianceTexture?.Width ?? 0}x{IrradianceTexture?.Height ?? 0}");
                 GeneratePrefilterInternal();
-                Debug.Out($"[LightProbe] Prefilter generated. PrefilterTex={PrefilterTexture is not null}, size={PrefilterTexture?.Width ?? 0}x{PrefilterTexture?.Height ?? 0}");
                 CaptureVersion++;
-                Debug.Out($"[LightProbe] Render() DONE. CaptureVersion={CaptureVersion}");
+            }
+            finally
+            {
+                Engine.Rendering.State.IsLightProbePass = false;
+            }
+        }
+
+        public override void ExecuteCaptureFace(int faceIndex)
+        {
+            Engine.Rendering.State.IsLightProbePass = true;
+            try
+            {
+                base.ExecuteCaptureFace(faceIndex);
+            }
+            finally
+            {
+                Engine.Rendering.State.IsLightProbePass = false;
+            }
+        }
+
+        public override void FinalizeCubemapCapture()
+        {
+            EnsureCaptureResourcesInitialized();
+            _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
+            Engine.Rendering.State.IsLightProbePass = true;
+
+            try
+            {
+                base.FinalizeCubemapCapture();
+                SynchronizeCaptureTextureWrites();
+                GenerateIrradianceInternal();
+                GeneratePrefilterInternal();
+                CaptureVersion++;
             }
             finally
             {

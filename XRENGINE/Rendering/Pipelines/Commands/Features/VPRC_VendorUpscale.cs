@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.XeSS;
 
@@ -18,8 +20,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static readonly bool _diagEnabled =
             !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DIAG_VENDOR_UPSCALE"));
 
+        public string? SourceTextureName { get; set; }
         public string? DepthTextureName { get; set; }
+        public string? DepthStencilTextureName { get; set; }
         public string? MotionTextureName { get; set; }
+        public string? MotionFrameBufferName { get; set; }
 
         private static bool _reportedDlssFailure;
         private static bool _reportedXessFailure;
@@ -30,6 +35,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRMaterial? _fallbackMaterial;
         private XRQuadFrameBuffer? _fallbackQuad;
         private XRTexture? _fallbackSourceTexture;
+        private XRFrameBuffer? _bridgeSourceTextureFbo;
+        private XRTexture? _bridgeSourceTexture;
+        private XRFrameBuffer? _bridgeDepthTextureFbo;
+        private XRTexture? _bridgeDepthTexture;
+        private XRFrameBuffer? _bridgeMotionTextureFbo;
+        private XRTexture? _bridgeMotionTexture;
 
         private const string FallbackShaderCode = """
 #version 450
@@ -86,16 +97,54 @@ void main()
             _fallbackMaterial = null;
             _fallbackSourceTexture = null;
 
+            DestroyBridgeHelperFrameBuffer(ref _bridgeSourceTextureFbo, ref _bridgeSourceTexture);
+            DestroyBridgeHelperFrameBuffer(ref _bridgeDepthTextureFbo, ref _bridgeDepthTexture);
+            DestroyBridgeHelperFrameBuffer(ref _bridgeMotionTextureFbo, ref _bridgeMotionTexture);
+
             base.ReleaseContainerResources(instance);
         }
 
         protected override void Execute()
         {
-            if (TryRunXess())
-                return;
+            XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport;
+            XRFrameBuffer? sourceFrameBuffer = FrameBufferName is not null
+                ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(FrameBufferName)
+                : null;
 
-            if (TryRunDlss())
-                return;
+            bool hasColorTexture = VPRCSourceTextureHelpers.TryResolveColorTexture(
+                ActivePipelineInstance,
+                SourceTextureName,
+                FrameBufferName,
+                out XRTexture? resolvedColorTexture,
+                out string resolveFailure)
+                && resolvedColorTexture is not null;
+
+            if (viewport?.Window?.Renderer is VulkanRenderer)
+            {
+                if (TryRunXess())
+                    return;
+
+                if (TryRunDlss())
+                    return;
+            }
+            else if (viewport?.Window?.Renderer is OpenGLRenderer openGlRenderer &&
+                IsBridgePathRequested() &&
+                hasColorTexture &&
+                resolvedColorTexture is not null)
+            {
+                if (TryRunBridge(openGlRenderer, viewport, sourceFrameBuffer, resolvedColorTexture, out string bridgeFailure))
+                    return;
+
+                ReportBridgeFallback(viewport, bridgeFailure);
+            }
+            else if (viewport is not null && IsBridgePathRequested())
+            {
+                ReportBridgeFallback(
+                    viewport,
+                    hasColorTexture
+                        ? Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(viewport, ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false)
+                        : resolveFailure);
+            }
 
             if (FrameBufferName is null)
             {
@@ -110,13 +159,6 @@ void main()
             }
 
             XRQuadFrameBuffer? quadFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
-            bool hasColorTexture = VPRCSourceTextureHelpers.TryResolveColorTexture(
-                ActivePipelineInstance,
-                null,
-                FrameBufferName,
-                out XRTexture? resolvedColorTexture,
-                out string resolveFailure)
-                && resolvedColorTexture is not null;
 
             string outputTarget = TargetFrameBufferName
                 ?? ActivePipelineInstance.RenderState.OutputFBO?.Name
@@ -143,6 +185,7 @@ void main()
 
             if (hasColorTexture)
             {
+                XRTexture colorTexture = resolvedColorTexture!;
 /*
                 Debug.RenderingEvery(
                     $"VendorUpscale.Path.ResolvedColor.{ActivePipelineInstance.GetHashCode()}.{FrameBufferName}",
@@ -157,9 +200,9 @@ void main()
 */
 
                 if (_diagEnabled)
-                    Debug.Log(ELogCategory.Rendering, $"[VendorUpscaleDiag] FallbackBlit path. Source='{FrameBufferName}' Target='{TargetFrameBufferName ?? "<current>"}' Texture='{resolvedColorTexture.Name ?? resolvedColorTexture.SamplerName ?? "<unnamed>"}'");
+                    Debug.Log(ELogCategory.Rendering, $"[VendorUpscaleDiag] FallbackBlit path. Source='{FrameBufferName}' Target='{TargetFrameBufferName ?? "<current>"}' Texture='{colorTexture.Name ?? colorTexture.SamplerName ?? "<unnamed>"}'");
 
-                _fallbackSourceTexture = resolvedColorTexture;
+                _fallbackSourceTexture = colorTexture;
                 _fallbackQuad?.Render(
                     TargetFrameBufferName is not null
                         ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
@@ -200,6 +243,311 @@ void main()
                 program.Sampler("SourceTexture", _fallbackSourceTexture, 0);
         }
 
+        private bool TryRunBridge(
+            OpenGLRenderer renderer,
+            XRViewport viewport,
+            XRFrameBuffer? sourceFrameBuffer,
+            XRTexture resolvedColorTexture,
+            out string failureReason)
+        {
+            failureReason = string.Empty;
+
+            VulkanUpscaleBridge? bridge = Engine.Rendering.GetVulkanUpscaleBridge(viewport);
+            if (bridge is null || !bridge.TryResolveCurrentFrameSlot(out VulkanUpscaleBridgeFrameSlot? slot) || slot is null)
+            {
+                failureReason = Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(
+                    viewport,
+                    ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false);
+                return false;
+            }
+
+            if (!TryResolveBridgeColorSource(renderer, sourceFrameBuffer, resolvedColorTexture, out XRFrameBuffer? sourceColorFbo, out string colorFailure)
+                || sourceColorFbo is null)
+            {
+                failureReason = colorFailure;
+                return false;
+            }
+
+            if (!TryResolveBridgeDepthSource(renderer, out XRFrameBuffer? sourceDepthFbo, out string depthFailure)
+                || sourceDepthFbo is null)
+            {
+                failureReason = depthFailure;
+                return false;
+            }
+
+            if (!TryResolveBridgeMotionSource(renderer, out XRFrameBuffer? sourceMotionFbo, out string motionFailure)
+                || sourceMotionFbo is null)
+            {
+                failureReason = motionFailure;
+                return false;
+            }
+
+            if (!ValidateBridgeInputSizes(sourceColorFbo, sourceDepthFbo, sourceMotionFbo, slot, out string sizeFailure))
+            {
+                failureReason = sizeFailure;
+                return false;
+            }
+
+            bool ok = bridge.TryExecutePassthrough(
+                renderer,
+                sourceColorFbo,
+                sourceDepthFbo,
+                sourceMotionFbo,
+                out XRTexture? bridgeOutput,
+                out TimeSpan dispatchDuration,
+                out string bridgeFailure);
+
+            if (!ok || bridgeOutput is null)
+            {
+                failureReason = string.IsNullOrWhiteSpace(bridgeFailure)
+                    ? "bridge passthrough submission failed"
+                    : bridgeFailure;
+                return false;
+            }
+
+            if (_diagEnabled)
+            {
+                Debug.Log(
+                    ELogCategory.Rendering,
+                    $"[VendorUpscaleDiag] BridgePassthrough path. SourceFBO='{DescribeFrameBuffer(sourceColorFbo)}' DepthFBO='{DescribeFrameBuffer(sourceDepthFbo)}' MotionFBO='{DescribeFrameBuffer(sourceMotionFbo)}' OutputTexture='{DescribeTexture(bridgeOutput)}' Slot={slot.SlotIndex} State='{bridge.State}' Recreate='{bridge.PendingRecreateReason ?? "<none>"}' DispatchMs={dispatchDuration.TotalMilliseconds:F3}");
+            }
+
+            _fallbackSourceTexture = bridgeOutput;
+            _fallbackQuad?.Render(
+                TargetFrameBufferName is not null
+                    ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
+                    : null);
+            return true;
+        }
+
+        private void ReportBridgeFallback(XRViewport viewport, string failureReason)
+        {
+            string reason = string.IsNullOrWhiteSpace(failureReason)
+                ? Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(
+                    viewport,
+                    ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false)
+                : failureReason;
+
+            if (Engine.EffectiveSettings.EnableIntelXess && !_reportedXessApiMismatch)
+            {
+                _reportedXessApiMismatch = true;
+                Debug.LogWarning($"Intel XeSS requires Vulkan or the experimental OpenGL->Vulkan bridge. {reason}. Falling back to standard blit.");
+            }
+
+            if (Engine.EffectiveSettings.EnableNvidiaDlss && !_reportedDlssApiMismatch)
+            {
+                _reportedDlssApiMismatch = true;
+                Debug.LogWarning($"NVIDIA DLSS requires Vulkan or the experimental OpenGL->Vulkan bridge. {reason}. Falling back to standard blit.");
+            }
+        }
+
+        private bool TryResolveBridgeColorSource(
+            OpenGLRenderer renderer,
+            XRFrameBuffer? sourceFrameBuffer,
+            XRTexture resolvedColorTexture,
+            out XRFrameBuffer? bridgeSourceFbo,
+            out string failureReason)
+        {
+            if (sourceFrameBuffer is not null && FrameBufferHasColorAttachment(sourceFrameBuffer))
+            {
+                bridgeSourceFbo = sourceFrameBuffer;
+                failureReason = string.Empty;
+                return true;
+            }
+
+            return TryEnsureBridgeHelperFrameBuffer(
+                renderer,
+                resolvedColorTexture,
+                EFrameBufferAttachment.ColorAttachment0,
+                "VendorUpscale.Bridge.SourceColorFBO",
+                ref _bridgeSourceTextureFbo,
+                ref _bridgeSourceTexture,
+                out bridgeSourceFbo,
+                out failureReason);
+        }
+
+        private bool TryResolveBridgeDepthSource(
+            OpenGLRenderer renderer,
+            out XRFrameBuffer? bridgeDepthFbo,
+            out string failureReason)
+        {
+            XRTexture? depthTexture = !string.IsNullOrWhiteSpace(DepthStencilTextureName)
+                ? ActivePipelineInstance.GetTexture<XRTexture>(DepthStencilTextureName!)
+                : !string.IsNullOrWhiteSpace(DepthTextureName)
+                    ? ActivePipelineInstance.GetTexture<XRTexture>(DepthTextureName!)
+                    : null;
+
+            if (depthTexture is null)
+            {
+                bridgeDepthFbo = null;
+                failureReason = !string.IsNullOrWhiteSpace(DepthStencilTextureName)
+                    ? $"Depth texture '{DepthStencilTextureName}' was not found."
+                    : !string.IsNullOrWhiteSpace(DepthTextureName)
+                        ? $"Depth texture '{DepthTextureName}' was not found."
+                        : "No bridge depth texture source was configured.";
+                return false;
+            }
+
+            return TryEnsureBridgeHelperFrameBuffer(
+                renderer,
+                depthTexture,
+                EFrameBufferAttachment.DepthStencilAttachment,
+                "VendorUpscale.Bridge.DepthSourceFBO",
+                ref _bridgeDepthTextureFbo,
+                ref _bridgeDepthTexture,
+                out bridgeDepthFbo,
+                out failureReason);
+        }
+
+        private bool TryResolveBridgeMotionSource(
+            OpenGLRenderer renderer,
+            out XRFrameBuffer? bridgeMotionFbo,
+            out string failureReason)
+        {
+            if (!string.IsNullOrWhiteSpace(MotionFrameBufferName))
+            {
+                bridgeMotionFbo = ActivePipelineInstance.GetFBO<XRFrameBuffer>(MotionFrameBufferName!);
+                if (bridgeMotionFbo is not null)
+                {
+                    failureReason = string.Empty;
+                    return true;
+                }
+            }
+
+            XRTexture? motionTexture = !string.IsNullOrWhiteSpace(MotionTextureName)
+                ? ActivePipelineInstance.GetTexture<XRTexture>(MotionTextureName!)
+                : null;
+            if (motionTexture is null)
+            {
+                bridgeMotionFbo = null;
+                failureReason = !string.IsNullOrWhiteSpace(MotionFrameBufferName)
+                    ? $"Motion framebuffer '{MotionFrameBufferName}' was not found."
+                    : !string.IsNullOrWhiteSpace(MotionTextureName)
+                        ? $"Motion texture '{MotionTextureName}' was not found."
+                        : "No bridge motion source was configured.";
+                return false;
+            }
+
+            return TryEnsureBridgeHelperFrameBuffer(
+                renderer,
+                motionTexture,
+                EFrameBufferAttachment.ColorAttachment0,
+                "VendorUpscale.Bridge.MotionSourceFBO",
+                ref _bridgeMotionTextureFbo,
+                ref _bridgeMotionTexture,
+                out bridgeMotionFbo,
+                out failureReason);
+        }
+
+        private bool TryEnsureBridgeHelperFrameBuffer(
+            OpenGLRenderer renderer,
+            XRTexture texture,
+            EFrameBufferAttachment attachment,
+            string frameBufferName,
+            ref XRFrameBuffer? cachedFrameBuffer,
+            ref XRTexture? cachedTexture,
+            out XRFrameBuffer? frameBuffer,
+            out string failureReason)
+        {
+            frameBuffer = null;
+            failureReason = string.Empty;
+
+            if (texture is not IFrameBufferAttachement attachmentTarget)
+            {
+                failureReason = $"Texture '{texture.Name ?? texture.SamplerName ?? "<unnamed>"}' cannot be attached to a helper framebuffer for bridge upload.";
+                return false;
+            }
+
+            if (cachedFrameBuffer is null || !ReferenceEquals(cachedTexture, texture))
+            {
+                DestroyBridgeHelperFrameBuffer(ref cachedFrameBuffer, ref cachedTexture);
+
+                cachedFrameBuffer = new XRFrameBuffer((attachmentTarget, attachment, 0, -1))
+                {
+                    Name = frameBufferName,
+                };
+                cachedTexture = texture;
+
+                if (renderer.GenericToAPI<GLFrameBuffer>(cachedFrameBuffer) is not GLFrameBuffer glFrameBuffer)
+                {
+                    DestroyBridgeHelperFrameBuffer(ref cachedFrameBuffer, ref cachedTexture);
+                    failureReason = $"Failed to create the OpenGL framebuffer wrapper for bridge helper '{frameBufferName}'.";
+                    return false;
+                }
+
+                glFrameBuffer.Generate();
+            }
+
+            frameBuffer = cachedFrameBuffer;
+            return true;
+        }
+
+        private static bool ValidateBridgeInputSizes(
+            XRFrameBuffer sourceColorFbo,
+            XRFrameBuffer sourceDepthFbo,
+            XRFrameBuffer sourceMotionFbo,
+            VulkanUpscaleBridgeFrameSlot slot,
+            out string failureReason)
+        {
+            if (sourceColorFbo.Width != slot.SourceColorFrameBuffer.Width || sourceColorFbo.Height != slot.SourceColorFrameBuffer.Height)
+            {
+                failureReason = $"bridge source color size mismatch: expected {slot.SourceColorFrameBuffer.Width}x{slot.SourceColorFrameBuffer.Height}, got {sourceColorFbo.Width}x{sourceColorFbo.Height}.";
+                return false;
+            }
+
+            if (sourceDepthFbo.Width != slot.SourceDepthFrameBuffer.Width || sourceDepthFbo.Height != slot.SourceDepthFrameBuffer.Height)
+            {
+                failureReason = $"bridge source depth size mismatch: expected {slot.SourceDepthFrameBuffer.Width}x{slot.SourceDepthFrameBuffer.Height}, got {sourceDepthFbo.Width}x{sourceDepthFbo.Height}.";
+                return false;
+            }
+
+            if (sourceMotionFbo.Width != slot.SourceMotionFrameBuffer.Width || sourceMotionFbo.Height != slot.SourceMotionFrameBuffer.Height)
+            {
+                failureReason = $"bridge source motion size mismatch: expected {slot.SourceMotionFrameBuffer.Width}x{slot.SourceMotionFrameBuffer.Height}, got {sourceMotionFbo.Width}x{sourceMotionFbo.Height}.";
+                return false;
+            }
+
+            failureReason = string.Empty;
+            return true;
+        }
+
+        private static bool FrameBufferHasColorAttachment(XRFrameBuffer frameBuffer)
+        {
+            var targets = frameBuffer.Targets;
+            if (targets is null)
+                return false;
+
+            for (int i = 0; i < targets.Length; i++)
+            {
+                if (targets[i].Attachment is >= EFrameBufferAttachment.ColorAttachment0 and <= EFrameBufferAttachment.ColorAttachment7)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static string DescribeFrameBuffer(XRFrameBuffer frameBuffer)
+            => $"{frameBuffer.Name ?? "<unnamed>"}({frameBuffer.Width}x{frameBuffer.Height})";
+
+        private static string DescribeTexture(XRTexture texture)
+        {
+            var size = texture.WidthHeightDepth;
+            string descriptor = texture is XRTexture2D texture2D
+                ? texture2D.SizedInternalFormat.ToString()
+                : texture.GetType().Name;
+            return $"{texture.Name ?? texture.SamplerName ?? "<unnamed>"}({size.X}x{size.Y}, {descriptor})";
+        }
+
+        private static bool IsBridgePathRequested()
+            => Engine.EffectiveSettings.EnableIntelXess || Engine.EffectiveSettings.EnableNvidiaDlss;
+
+        private static void DestroyBridgeHelperFrameBuffer(ref XRFrameBuffer? frameBuffer, ref XRTexture? cachedTexture)
+        {
+            frameBuffer?.Destroy();
+            frameBuffer = null;
+            cachedTexture = null;
+        }
+
         private bool TryRunXess()
         {
             if (!Engine.EffectiveSettings.EnableIntelXess || !IntelXessManager.IsSupported)
@@ -213,14 +561,7 @@ void main()
                 return false;
 
             if (viewport.Window?.Renderer is not VulkanRenderer)
-            {
-                if (!_reportedXessApiMismatch)
-                {
-                    _reportedXessApiMismatch = true;
-                    Debug.LogWarning("Intel XeSS requires Vulkan. Skipping XeSS upscale on non-Vulkan renderer.");
-                }
                 return false;
-            }
 
             var sourceFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
             if (sourceFbo is null)
@@ -292,14 +633,7 @@ void main()
                 return false;
 
             if (viewport.Window?.Renderer is not VulkanRenderer)
-            {
-                if (!_reportedDlssApiMismatch)
-                {
-                    _reportedDlssApiMismatch = true;
-                    Debug.LogWarning("NVIDIA DLSS requires Vulkan. Skipping DLSS upscale on non-Vulkan renderer.");
-                }
                 return false;
-            }
 
             var sourceFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
             if (sourceFbo is null)

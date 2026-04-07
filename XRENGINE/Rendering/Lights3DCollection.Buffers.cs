@@ -50,32 +50,6 @@ namespace XREngine.Scene
                     sc.SwapBuffers();
             }
 
-            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.CaptureBags"))
-            {
-                _captureBagRendering.Clear();
-                (_captureBagUpdating, _captureBagRendering) = (_captureBagRendering, _captureBagUpdating);
-
-                double budgetMs = CaptureBudgetMilliseconds;
-                _captureBudgetStopwatch.Restart();
-
-                foreach (SceneCaptureComponentBase capture in _captureBagRendering)
-                {
-                    if (ShouldDeferAuxiliaryCaptures())
-                    {
-                        _captureQueue.Enqueue(capture);
-                        continue;
-                    }
-
-                    if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
-                    {
-                        // push remaining work to next frame
-                        _captureQueue.Enqueue(capture);
-                        continue;
-                    }
-
-                    capture.SwapBuffers();
-                }
-            }
         }
 
         #endregion
