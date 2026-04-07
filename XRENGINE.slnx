@@ -5,6 +5,7 @@
   <Project Path="XREngine.Data/XREngine.Data.csproj" />
   <Project Path="XREngine.Editor/XREngine.Editor.csproj" />
   <Project Path="XREngine.Extensions/XREngine.Extensions.csproj" />
+  <Project Path="XREngine.Fbx/XREngine.Fbx.csproj" />
   <Project Path="XREngine.Input/XREngine.Input.csproj" />
   <Project Path="XREngine.Modeling/XREngine.Modeling.csproj" />
   <Project Path="XREngine.Profiler.UI/XREngine.Profiler.UI.csproj" />

@@ -5,7 +5,9 @@ using XREngine.Components.Animation;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene;
+using XREngine.Components.Scene.Volumes;
 using XREngine.Data.Core;
+using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Runtime.AnimationIntegration;
 using XREngine.Runtime.AudioIntegration;
@@ -88,6 +90,10 @@ public static class BootstrapWorldFactory
         if (settings.Mirror)
             AddMirror(rootNode);
 
+        Debug.Out($"[VolumetricFog] BootstrapWorldFactory.CreateUnitTestWorld InitializeVolumetricFog = {settings.InitializeVolumetricFog}");
+        if (settings.InitializeVolumetricFog)
+            AddVolumetricFogVolume(rootNode, settings);
+
         if (settings.DynamicWaterQuad)
             BootstrapWaterBuilder.AddDynamicWaterPreview(rootNode);
 
@@ -164,6 +170,30 @@ public static class BootstrapWorldFactory
         mirrorTfm.Translation = new Vector3(0.0f, 0.0f, -20.0f);
         mirrorTfm.Scale = new Vector3(160.0f, 90.0f, 1.0f);
         _ = mirrorNode.AddComponent<MirrorCaptureComponent>();
+    }
+
+    private static void AddVolumetricFogVolume(SceneNode rootNode, UnitTestingWorldSettings settings)
+    {
+        var fogSettings = settings.VolumetricFog;
+
+        SceneNode fogNode = rootNode.NewChild("VolumetricFogVolume");
+        var fogTransform = fogNode.SetTransform<Transform>();
+        fogTransform.Translation = new Vector3(fogSettings.Translation.X, fogSettings.Translation.Y, fogSettings.Translation.Z);
+
+        var volume = fogNode.AddComponent<VolumetricFogVolumeComponent>()!;
+        volume.HalfExtents = new Vector3(fogSettings.HalfExtents.X, fogSettings.HalfExtents.Y, fogSettings.HalfExtents.Z);
+        volume.ScatteringColor = new ColorF3(fogSettings.ScatteringColor.R, fogSettings.ScatteringColor.G, fogSettings.ScatteringColor.B);
+        volume.Density = fogSettings.Density;
+        volume.NoiseScale = fogSettings.NoiseScale;
+        volume.NoiseVelocity = new Vector3(fogSettings.NoiseVelocity.X, fogSettings.NoiseVelocity.Y, fogSettings.NoiseVelocity.Z);
+        volume.NoiseThreshold = fogSettings.NoiseThreshold;
+        volume.NoiseAmount = fogSettings.NoiseAmount;
+        volume.EdgeFade = fogSettings.EdgeFade;
+        volume.Anisotropy = fogSettings.Anisotropy;
+        volume.LightContribution = fogSettings.LightContribution;
+        volume.Priority = fogSettings.Priority;
+
+        Debug.Out($"[VolumetricFog] BootstrapWorldFactory created volume node: Translation=({fogSettings.Translation.X}, {fogSettings.Translation.Y}, {fogSettings.Translation.Z}), HalfExtents=({fogSettings.HalfExtents.X}, {fogSettings.HalfExtents.Y}, {fogSettings.HalfExtents.Z}), Density={fogSettings.Density}");
     }
 
     private static void AddDeferredDecal(SceneNode rootNode)

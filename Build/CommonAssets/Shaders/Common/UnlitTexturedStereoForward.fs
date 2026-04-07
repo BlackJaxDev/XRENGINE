@@ -67,7 +67,7 @@ uniform sampler2DArray Texture0;
 void main()
 {
 #ifdef XRENGINE_DEPTH_NORMAL_PREPASS
-    Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
+    Normal = XRENGINE_EncodeNormal(FragNorm);
 #else
     XRENGINE_BeginForwardFragmentOutput();
     vec2 uv = FragUV0;

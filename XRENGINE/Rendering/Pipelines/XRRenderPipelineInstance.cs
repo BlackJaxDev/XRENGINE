@@ -329,6 +329,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
                 1.0f)
             : null;
 
+/*
         Debug.RenderingEvery(
             $"XRRenderPipelineInstance.FrameSettings.{GetHashCode()}.{viewport?.Index ?? -1}",
             TimeSpan.FromSeconds(1),
@@ -341,6 +342,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             EffectiveMsaaSampleCountThisFrame?.ToString() ?? "<null>",
             EffectiveTsrRenderScaleThisFrame?.ToString() ?? "<null>",
             targetFBO?.Name ?? "<backbuffer>");
+*/
 
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)

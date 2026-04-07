@@ -124,6 +124,7 @@ void main()
 
             if (quadFbo is not null && !hasColorTexture)
             {
+/*
                 Debug.RenderingEvery(
                     $"VendorUpscale.Path.ShaderOnly.{ActivePipelineInstance.GetHashCode()}.{FrameBufferName}",
                     TimeSpan.FromSeconds(1),
@@ -132,7 +133,7 @@ void main()
                     outputTarget,
                     ActivePipelineInstance.EffectiveAntiAliasingModeThisFrame?.ToString() ?? "<null>",
                     ActivePipelineInstance.EffectiveOutputHDRThisFrame?.ToString() ?? "<null>");
-
+*/
                 if (_diagEnabled)
                     Debug.Log(ELogCategory.Rendering, $"[VendorUpscaleDiag] QuadBlit path. Source='{FrameBufferName}' Target='{TargetFrameBufferName ?? "<current>"}' OutputFBO='{ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<null>"}'");
 
@@ -142,6 +143,7 @@ void main()
 
             if (hasColorTexture)
             {
+/*
                 Debug.RenderingEvery(
                     $"VendorUpscale.Path.ResolvedColor.{ActivePipelineInstance.GetHashCode()}.{FrameBufferName}",
                     TimeSpan.FromSeconds(1),
@@ -152,6 +154,7 @@ void main()
                     quadFbo is not null,
                     ActivePipelineInstance.EffectiveAntiAliasingModeThisFrame?.ToString() ?? "<null>",
                     ActivePipelineInstance.EffectiveOutputHDRThisFrame?.ToString() ?? "<null>");
+*/
 
                 if (_diagEnabled)
                     Debug.Log(ELogCategory.Rendering, $"[VendorUpscaleDiag] FallbackBlit path. Source='{FrameBufferName}' Target='{TargetFrameBufferName ?? "<current>"}' Texture='{resolvedColorTexture.Name ?? resolvedColorTexture.SamplerName ?? "<unnamed>"}'");

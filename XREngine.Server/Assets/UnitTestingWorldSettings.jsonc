@@ -58,6 +58,8 @@
   "Mirror": false,
   // Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path.
   "DynamicWaterQuad": false,
+  // Adds a demo volumetric fog volume to the default unit-testing world and enables volumetric fog on the unit-test camera(s).
+  "InitializeVolumetricFog": false,
   // Forces the debug opaque render pipeline instead of the default pipeline.
   "ForceDebugOpaquePipeline": false,
 
@@ -261,5 +263,68 @@
   // Generated from UpdateFPS on Settings.
   "UpdateFPS": 60.0,
   // Generated from FixedFPS on Settings.
-  "FixedFPS": 30.0
+  "FixedFPS": 30.0,
+  // Generated from VolumetricFog on Settings.
+  "VolumetricFog": {
+    // Generated from Translation on VolumetricFogVolumeInitSettings.
+    "Translation": {
+      // Generated from X on TranslationXYZ.
+      "X": 0.0,
+      // Generated from Y on TranslationXYZ.
+      "Y": 6.0,
+      // Generated from Z on TranslationXYZ.
+      "Z": 0.0
+    },
+    // Generated from HalfExtents on VolumetricFogVolumeInitSettings.
+    "HalfExtents": {
+      // Generated from X on TranslationXYZ.
+      "X": 24.0,
+      // Generated from Y on TranslationXYZ.
+      "Y": 8.0,
+      // Generated from Z on TranslationXYZ.
+      "Z": 24.0
+    },
+    // Generated from ScatteringColor on VolumetricFogVolumeInitSettings.
+    "ScatteringColor": {
+      // Generated from R on ColorRgb.
+      "R": 0.86,
+      // Generated from G on ColorRgb.
+      "G": 0.9,
+      // Generated from B on ColorRgb.
+      "B": 1.0
+    },
+    // Generated from Density on VolumetricFogVolumeInitSettings.
+    "Density": 0.035,
+    // Generated from NoiseScale on VolumetricFogVolumeInitSettings.
+    "NoiseScale": 0.12,
+    // Generated from NoiseVelocity on VolumetricFogVolumeInitSettings.
+    "NoiseVelocity": {
+      // Generated from X on TranslationXYZ.
+      "X": 0.0,
+      // Generated from Y on TranslationXYZ.
+      "Y": 0.03,
+      // Generated from Z on TranslationXYZ.
+      "Z": 0.01
+    },
+    // Generated from NoiseThreshold on VolumetricFogVolumeInitSettings.
+    "NoiseThreshold": 0.35,
+    // Generated from NoiseAmount on VolumetricFogVolumeInitSettings.
+    "NoiseAmount": 0.75,
+    // Generated from EdgeFade on VolumetricFogVolumeInitSettings.
+    "EdgeFade": 0.25,
+    // Generated from Anisotropy on VolumetricFogVolumeInitSettings.
+    "Anisotropy": 0.2,
+    // Generated from LightContribution on VolumetricFogVolumeInitSettings.
+    "LightContribution": 1.0,
+    // Generated from Priority on VolumetricFogVolumeInitSettings.
+    "Priority": 0,
+    // Generated from Intensity on VolumetricFogVolumeInitSettings.
+    "Intensity": 1.0,
+    // Generated from MaxDistance on VolumetricFogVolumeInitSettings.
+    "MaxDistance": 180.0,
+    // Generated from StepSize on VolumetricFogVolumeInitSettings.
+    "StepSize": 4.0,
+    // Generated from JitterStrength on VolumetricFogVolumeInitSettings.
+    "JitterStrength": 1.0
+  }
 }

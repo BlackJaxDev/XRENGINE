@@ -1,0 +1,16 @@
+{
+  "assetId": "sponza-main-zup-ascii",
+  "importSucceeded": true,
+  "detectedEncoding": "Ascii",
+  "detectedVersionText": "7.4.0",
+  "fileSizeBytes": 929297471,
+  "nodeCount": 303,
+  "meshCount": 405,
+  "materialCount": 28,
+  "animationCount": 0,
+  "boneCount": 0,
+  "totalVertices": 8509638,
+  "totalFaces": 2381308,
+  "maxHierarchyDepth": 5,
+  "notes": "Checked-in semantic baseline only; paired with the Y-up scene to validate axis-system handling."
+}

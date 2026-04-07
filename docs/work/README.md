@@ -20,6 +20,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Default render pipeline V2 | Active | [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
 | Physics-chain performance | Active | [todo/physics-chain-speed-update-todo.md](todo/physics-chain-speed-update-todo.md) | Prior compatibility notes were merged into the active TODO. |
+| Native FBX import/export | Active | [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md) | Assimp replacement roadmap for a low-allocation native FBX path. |
 | Non-HBAO AO | Active | [todo/non-hbao-ambient-occlusion-remediation.md](todo/non-hbao-ambient-occlusion-remediation.md) | Prior audit and remediation notes are consolidated here. |
 | HBAO / HBAO+ | Active | [todo/hbao-hbao-plus-implementation-todo.md](todo/hbao-hbao-plus-implementation-todo.md) | Active implementation tracker. |
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
@@ -38,6 +39,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 
 - [todo/aot-final-game-builds.md](todo/aot-final-game-builds.md)
 - [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md)
+- [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md)
 - [todo/gpu-rendering.md](todo/gpu-rendering.md)
 - [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md)
 - [todo/hbao-hbao-plus-implementation-todo.md](todo/hbao-hbao-plus-implementation-todo.md)

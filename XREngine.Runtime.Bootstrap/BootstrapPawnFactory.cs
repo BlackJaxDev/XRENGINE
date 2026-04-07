@@ -351,10 +351,46 @@ public static class BootstrapPawnFactory
         }
 
         if (cameraNode.TryAddComponent(out camComp, "TestCamera"))
+        {
             camComp!.SetPerspective(60.0f, 0.1f, 100000.0f, null);
+            ConfigureCameraPostProcessing(camComp);
+        }
         else
             camComp = null;
 
         return cameraNode;
+    }
+
+    private static void ConfigureCameraPostProcessing(CameraComponent cameraComponent)
+    {
+        var settings = RuntimeBootstrapState.Settings;
+        Debug.Out($"[VolumetricFog] BootstrapPawnFactory.ConfigureCameraPostProcessing InitializeVolumetricFog = {settings.InitializeVolumetricFog}");
+        if (!settings.InitializeVolumetricFog)
+            return;
+
+        var camera = cameraComponent.Camera;
+        if (!camera.RenderPipeline.OverrideProtected)
+            camera.RenderPipeline.OverrideProtected = true;
+
+        var stage = camera.GetPostProcessStageState<VolumetricFogSettings>();
+        if (stage is null)
+        {
+            Debug.Out("[VolumetricFog] Runtime camera is missing VolumetricFogSettings post-process stage.");
+            return;
+        }
+
+        if (stage.TryGetBacking(out VolumetricFogSettings? fogSettings) != true || fogSettings is null)
+        {
+            Debug.Out("[VolumetricFog] Runtime camera found VolumetricFogSettings stage but backing instance is null.");
+            return;
+        }
+
+        fogSettings.Enabled = true;
+        fogSettings.Intensity = settings.VolumetricFog.Intensity;
+        fogSettings.MaxDistance = settings.VolumetricFog.MaxDistance;
+        fogSettings.StepSize = settings.VolumetricFog.StepSize;
+        fogSettings.JitterStrength = settings.VolumetricFog.JitterStrength;
+
+        Debug.Out($"[VolumetricFog] Runtime camera configured: Enabled=true, Intensity={fogSettings.Intensity}, MaxDistance={fogSettings.MaxDistance}, StepSize={fogSettings.StepSize}, JitterStrength={fogSettings.JitterStrength}");
     }
 }

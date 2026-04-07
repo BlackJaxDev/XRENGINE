@@ -78,7 +78,7 @@ void main()
     // Future tinted transmission: add a separate transmittance target and accumulate color-filtered light attenuation here instead of a depth-only write.
     Depth = gl_FragCoord.z;
 #elif defined(XRENGINE_DEPTH_NORMAL_PREPASS)
-    Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
+    Normal = XRENGINE_EncodeNormal(FragNorm);
 #else
     XRENGINE_WriteForwardFragment(color);
 #endif
