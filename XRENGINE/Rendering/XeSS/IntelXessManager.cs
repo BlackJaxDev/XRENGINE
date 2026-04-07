@@ -18,8 +18,8 @@ namespace XREngine.Rendering.XeSS
 
         private static bool _probed;
         private static bool _cachedIsSupported;
-        private static bool _lastIsIntel;
         private static bool _lastIsVulkan;
+        private static string? _lastBridgeFingerprint;
         private static string? _lastError;
 
         public static bool IsSupported
@@ -43,8 +43,8 @@ namespace XREngine.Rendering.XeSS
         private static void EnsureDetected()
         {
             if (_probed &&
-                _lastIsIntel == Engine.Rendering.State.IsIntel &&
-                _lastIsVulkan == Engine.Rendering.State.IsVulkan)
+                _lastIsVulkan == Engine.Rendering.State.IsVulkan &&
+                string.Equals(_lastBridgeFingerprint, Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint, StringComparison.Ordinal))
                 return;
 
             DetectSupport();
@@ -53,20 +53,16 @@ namespace XREngine.Rendering.XeSS
         private static void DetectSupport()
         {
             _probed = true;
-            _lastIsIntel = Engine.Rendering.State.IsIntel;
             _lastIsVulkan = Engine.Rendering.State.IsVulkan;
+            _lastBridgeFingerprint = Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint;
             _lastError = null;
 
-            if (!_lastIsVulkan)
+            bool usingVulkan = _lastIsVulkan;
+            string? bridgeFailure = null;
+            bool usingBridge = !usingVulkan && TryIsBridgeCapable(out bridgeFailure);
+            if (!usingVulkan && !usingBridge)
             {
-                _lastError = "XeSS requires a Vulkan renderer. OpenGL is not supported.";
-                _cachedIsSupported = false;
-                return;
-            }
-
-            if (!_lastIsIntel)
-            {
-                _lastError = "No Intel GPU detected.";
+                _lastError = bridgeFailure ?? "XeSS requires a Vulkan renderer or the experimental OpenGL->Vulkan bridge.";
                 _cachedIsSupported = false;
                 return;
             }
@@ -74,6 +70,44 @@ namespace XREngine.Rendering.XeSS
             _cachedIsSupported = TryProbeLibrary("libxess.dll") || TryProbeLibrary("xess.dll");
             if (!_cachedIsSupported && _lastError is null)
                 _lastError = "Neither libxess.dll nor xess.dll was found on the probing path.";
+        }
+
+        private static bool TryIsBridgeCapable(out string? failureReason)
+        {
+            var snapshot = Engine.Rendering.VulkanUpscaleBridgeSnapshot;
+            failureReason = null;
+
+            if (!Engine.Rendering.VulkanUpscaleBridgeRequested || !snapshot.EnvironmentEnabled)
+            {
+                failureReason = $"experimental bridge disabled (set {Engine.Rendering.VulkanUpscaleBridgeEnvVar}=1 to opt in)";
+                return false;
+            }
+
+            if (!snapshot.HasRequiredOpenGlInterop)
+            {
+                failureReason = "required OpenGL bridge interop extensions are unavailable";
+                return false;
+            }
+
+            if (!snapshot.VulkanProbeSucceeded)
+            {
+                failureReason = snapshot.ProbeFailureReason ?? "Vulkan bridge probe failed";
+                return false;
+            }
+
+            if (!snapshot.HasRequiredVulkanInterop)
+            {
+                failureReason = "required Vulkan bridge interop extensions are unavailable";
+                return false;
+            }
+
+            if (snapshot.SamePhysicalGpu == false)
+            {
+                failureReason = snapshot.GpuIdentityReason ?? "OpenGL and Vulkan resolved to different physical GPUs";
+                return false;
+            }
+
+            return true;
         }
 
         private static bool TryProbeLibrary(string libraryName)

@@ -59,7 +59,7 @@
   // Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path.
   "DynamicWaterQuad": false,
   // Adds a demo volumetric fog volume to the default unit-testing world and enables volumetric fog on the unit-test camera(s).
-  "InitializeVolumetricFog": true,
+  "InitializeVolumetricFog": false,
   // Forces the debug opaque render pipeline instead of the default pipeline.
   "ForceDebugOpaquePipeline": false,
 
@@ -67,11 +67,11 @@
   // Enables or disables DirLight.
   "DirLight": true,
   // Enables or disables SpotLight.
-  "SpotLight": true,
+  "SpotLight": false,
   // Enables or disables DirLight2.
   "DirLight2": false,
   // Enables or disables PointLight.
-  "PointLight": true,
+  "PointLight": false,
   // Selects which light-probe layout gets added to the scene.
   // LightProbe: Off, Single, Grid, ModelGrid
   "LightProbe": "ModelGrid",
@@ -83,15 +83,15 @@
   // Optional realtime capture timeout, in seconds. Use null to keep realtime capture running.
   "StopRealtimeCaptureSec": 5.0,
   // Capture cubemap resolution used for individually spawned light probes.
-  "LightProbeResolution": 128,
+  "LightProbeResolution": 64,
   // Probe counts used by Grid and ModelGrid layouts.
   "LightProbeGridCounts": {
     // Generated from X on ProbeGridCounts.
-    "X": 5,
+    "X": 3,
     // Generated from Y on ProbeGridCounts.
-    "Y": 5,
+    "Y": 3,
     // Generated from Z on ProbeGridCounts.
-    "Z": 5
+    "Z": 3
   },
   // Spacing between probes for Grid and ModelGrid layouts.
   "LightProbeGridSpacing": {
@@ -107,7 +107,7 @@
     // Generated from X on TranslationXYZ.
     "X": 0.0,
     // Generated from Y on TranslationXYZ.
-    "Y": 50.0,
+    "Y": 0.0,
     // Generated from Z on TranslationXYZ.
     "Z": 0.0
   },
@@ -371,7 +371,7 @@
   // If true, creates a 1x1x1 box at the origin.
   "CreateUnitBox": false,
   // Generated from RenderFPS on Settings.
-  "RenderFPS": 60.0,
+  "RenderFPS": 0.0,
   // Generated from UpdateFPS on Settings.
   "UpdateFPS": 60.0,
   // Generated from FixedFPS on Settings.
@@ -437,6 +437,6 @@
     // Generated from StepSize on VolumetricFogVolumeInitSettings.
     "StepSize": 4.0,
     // Generated from JitterStrength on VolumetricFogVolumeInitSettings.
-    "JitterStrength": 1.0
+    "JitterStrength": 0.25
   }
 }

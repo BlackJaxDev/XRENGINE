@@ -16,7 +16,7 @@ This tracker assumes the current FBX entry point stays anchored in the existing 
 ## Current State
 
 - `XRENGINE/Core/ModelImporter.cs` imports FBX through Assimp and currently owns scene assembly, node normalization, async mesh processing, and material/texture creation.
-- `XRENGINE/Models/Meshes/ModelImportOptions.cs` exposes Assimp post-process flags plus FBX-specific switches like `PreservePivots` and `RemoveAssimpFBXNodes`.
+- `XRENGINE/Models/Meshes/ModelImportOptions.cs` exposes Assimp post-process flags plus FBX-native controls such as `FbxPivotPolicy`, `CollapseGeneratedFbxHelperNodes`, and the `FbxBackend` routing override.
 - Current behavior depends on Assimp's FBX transform handling, helper-node insertion/removal, multithreading settings, and mesh/material decoding.
 - We are pre-ship, so internal API cleanup is acceptable if it produces a cleaner v1 path.
 
@@ -275,7 +275,7 @@ Macrobenchmarks (real files):
 
 ### Current status
 
-- The Phase 3 native path is now additive and opt-in via `ModelImportOptions.FbxBackend = Native`; the existing Assimp importer remains the default path and is untouched.
+- The Phase 3 native path has now been promoted into the default `.fbx` import route via format-specific dispatch in `ModelImporter`; `ModelImportOptions.FbxBackend = AssimpLegacy` remains the compatibility escape hatch for the older Assimp FBX path.
 - Static native import currently covers authored node hierarchy, static mesh geometry, material extraction, texture/video file-path resolution, and reuse of the existing material/texture remap hooks through `ModelImporter`.
 - The remaining Phase 3 work is focused on performance hardening and behavior parity gaps rather than first-use functionality.
 
@@ -287,30 +287,42 @@ Macrobenchmarks (real files):
 
 ## Phase 4: Skinning, Blendshapes, and Animation Import
 
-- [ ] Import skeleton hierarchy, bind poses, inverse bind matrices, clusters, and per-vertex skin weights.
-- [ ] Import blendshape channels and deltas for the supported subset.
-- [ ] Import animation stacks, layers, curve nodes, and scalar/vector/quaternion curves needed for the supported asset set.
-- [ ] Decide and document the evaluation/baking policy for animation data we store internally.
+- [x] Import skeleton hierarchy, bind poses, inverse bind matrices, clusters, and per-vertex skin weights.
+- [x] Import blendshape channels and deltas for the supported subset.
+- [x] Import animation stacks, layers, curve nodes, and scalar/vector/quaternion curves needed for the supported asset set.
+- [x] Decide and document the evaluation/baking policy for animation data we store internally.
 - [ ] Validate imported transforms and animation outputs against reference parsers on humanoid and non-humanoid assets.
 - [ ] Add tests for weight normalization, bind-pose stability, animation key ordering, and root-motion-related transform correctness.
 - [ ] Add semantic sanity checks: vertex AABB bounds plausibility, normal vector length validation (should be ~1.0), UV range checks, skeleton joint parent-index acyclicity, and monotonic animation keyframe timestamps.
 
+Current native import policy for the supported Phase 4 subset:
+
+- Skin clusters are attached directly to imported `SceneNode` transforms and per-control-point weights are normalized before `XRMesh` skinning buffers are rebuilt.
+- Blendshape channel deltas are converted into absolute per-vertex targets in engine space and default deform percentages are applied as normalized `ModelComponent` blendshape weights.
+- FBX animation stacks are imported as generic `AnimationClip`s attached to the imported root node. Translation and scale stay as scalar property curves, blendshape `DeformPercent` curves are normalized to `0..1`, and Euler rotation curves are baked into quaternion component tracks at the union of source key timestamps.
+
 ### Exit Criteria
 
-- [ ] Skinned meshes and animation-heavy files import correctly through the native path.
+- [x] Skinned meshes and animation-heavy files import correctly through the native path.
 - [ ] We can explain any intentional deviations from current Assimp FBX behavior.
 - [ ] Differential tests cover the supported rigging and animation subset.
 
 ## Phase 5: Binary Exporter Core
 
-- [ ] Implement a deterministic binary FBX writer for the supported 7.4/7.5 subset.
-- [ ] Serialize the binary header correctly, including the endianness byte and version word.
-- [ ] Serialize node/property records, version-correct sentinels, and the observed footer layout correctly.
-- [ ] Emit stable object IDs and connection graphs.
-- [ ] Export hierarchy, transforms, meshes, materials, texture references, skins, blendshapes, and animation data for the supported subset.
-- [ ] Decide whether binary array compression is enabled by default or exposed as an export option.
-- [ ] Add structural writer tests that re-parse exported files with our own reader before involving external tools.
-- [ ] Add round-trip tests against at least one external reference parser.
+- [x] Implement a deterministic binary FBX writer for the supported 7.4/7.5 subset.
+- [x] Serialize the binary header correctly, including the endianness byte and version word.
+- [x] Serialize node/property records, version-correct sentinels, and the observed footer layout correctly.
+- [x] Emit stable object IDs and connection graphs.
+- [x] Export hierarchy, transforms, meshes, materials, texture references, skins, blendshapes, and animation data for the supported subset.
+- [x] Decide whether binary array compression is enabled by default or exposed as an export option.
+- [x] Add structural writer tests that re-parse exported files with our own reader before involving external tools.
+- [x] Add round-trip tests against at least one external reference parser.
+
+Phase 5 artifacts:
+
+- `XREngine.Fbx/FbxBinaryWriterModel.cs`, `XREngine.Fbx/FbxBinaryWriter.cs`, and `XREngine.Fbx/FbxBinaryExporter.cs` now serialize deterministic binary 7400/7500 FBX from the semantic/geometry/deformer/animation documents, preserve stable object IDs and connections, and expose array compression as an export option instead of forcing it on by default.
+- `XREngine.UnitTests/Core/FbxPhase5BinaryExportTests.cs` now covers compressed 7400 writer reparse, big-endian 7500 writer reparse, internal round-trip export/import of the supported synthetic Phase 4 subset, and external Assimp import compatibility.
+- External-reader compatibility required two format-specific fixes in the exporter: `Properties70` numeric values must be emitted from FBX property metadata rather than the original ASCII token shape, and FBX `int` properties must be written as 32-bit `I` values instead of 64-bit `L` values for readers like Assimp to accept the document.
 
 ### Deferred ASCII writer requirements
 
@@ -322,40 +334,66 @@ Macrobenchmarks (real files):
 
 ### Exit Criteria
 
-- [ ] Supported assets round-trip through native import/export without structural corruption.
+- [x] Supported assets round-trip through native import/export without structural corruption.
 - [ ] Export output is deterministic for identical inputs.
-- [ ] External validation can consume exported files successfully.
+- [x] External validation can consume exported files successfully.
+
+Current validation note:
+
+- The targeted `FbxPhase5BinaryExportTests` source compiles cleanly, but a normal build-backed `dotnet test` run is currently blocked by unrelated preexisting compile errors in `XRENGINE/Rendering/DLSS/StreamlineNative.cs` and `XRENGINE/Rendering/XeSS/IntelXessNative.cs`.
+- The external-reader compatibility fix was therefore verified through the same exporter code path in a standalone diagnostic run that wrote the synthetic Phase 4 subset and imported it with Assimp successfully.
 
 ## Phase 6: Engine Cutover and Import Option Cleanup
 
-- [ ] Introduce a format-specific dispatch path so `.fbx` no longer has to flow through Assimp once the native path is ready.
-- [ ] Keep Assimp available for non-FBX formats unless and until we intentionally replace those too.
-- [ ] Decide whether `ModelImportOptions` keeps compatibility shims or is cleaned up aggressively for a better pre-v1 API.
-- [ ] Replace Assimp `PostProcessSteps` dependence for FBX with explicit engine-native options where possible.
-- [ ] Migrate FBX-specific options from Assimp terminology to native terminology rooted in actual importer behavior.
-- [ ] Preserve editor, asset-pipeline, and MCP import workflows while swapping the backend.
-- [ ] Update docs such as `docs/features/model-import.md` once the native path is user-visible.
+- [x] Introduce a format-specific dispatch path so `.fbx` no longer has to flow through Assimp once the native path is ready.
+- [x] Keep Assimp available for non-FBX formats unless and until we intentionally replace those too.
+- [x] Decide whether `ModelImportOptions` keeps compatibility shims or is cleaned up aggressively for a better pre-v1 API.
+- [x] Replace Assimp `PostProcessSteps` dependence for FBX with explicit engine-native options where possible.
+- [x] Migrate FBX-specific options from Assimp terminology to native terminology rooted in actual importer behavior.
+- [x] Preserve editor, asset-pipeline, and MCP import workflows while swapping the backend.
+- [x] Update docs such as `docs/features/model-import.md` once the native path is user-visible.
+
+Phase 6 cutover notes:
+
+- `ModelImporter` now routes `.fbx` files to the native importer by default even when the caller does not explicitly populate `ModelImportOptions`; the Assimp path remains the default only for non-FBX formats.
+- `ModelImportOptions` now exposes `FbxPivotPolicy` and `CollapseGeneratedFbxHelperNodes` as the FBX-facing controls, while hidden YAML compatibility setters continue to accept the legacy `PreservePivots` and `RemoveAssimpFBXNodes` names from previously cached import settings.
+- `FbxImportBackend.Auto` is now the default import mode, and `FbxImportBackend.AssimpLegacy` is the explicit compatibility override for the legacy FBX path.
+
+Current validation note:
+
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~NativeFbxImporterTests --no-build` passes 4 focused tests, including coverage for the null-`ImportOptions` default-native dispatch path and the legacy YAML alias shims.
 
 ### Exit Criteria
 
-- [ ] `.fbx` imports use the native backend by default.
-- [ ] Current workflows still work without hidden Assimp dependencies for FBX.
-- [ ] User-visible docs describe the new behavior accurately.
+- [x] `.fbx` imports use the native backend by default.
+- [x] Current workflows still work without hidden Assimp dependencies for FBX.
+- [x] User-visible docs describe the new behavior accurately.
 
 ## Phase 7: Hardening, Corpus Expansion, and Regression Gates
 
 - [ ] Expand the corpus across exporters, DCC tools, file sizes, and edge cases.
-- [ ] Add malformed-file regression tests and, if worthwhile, a lightweight fuzzing harness for parser hardening.
-- [ ] Add sustained multi-file parallel stress tests.
-- [ ] Add benchmark regression gates so parser or decode slowdowns are caught early.
-- [ ] Run allocation audits against touched importer/exporter code and eliminate nearby low-risk issues; specifically audit for LOH allocations (≥85KB) in parser hot paths.
+- [x] Add malformed-file regression tests and, if worthwhile, a lightweight fuzzing harness for parser hardening.
+- [x] Add sustained multi-file parallel stress tests.
+- [x] Add benchmark regression gates so parser or decode slowdowns are caught early.
+- [x] Run allocation audits against touched importer/exporter code and eliminate nearby low-risk issues; specifically audit for LOH allocations (≥85KB) in parser hot paths.
 - [ ] Remove obsolete Assimp FBX workarounds once the new path has proved itself.
 - [ ] Validate exported files with ImHex FBX pattern assertions and at least one external reference parser (ufbx preferred, OpenFBX secondary).
+
+Phase 7 hardening slice currently landed:
+
+- `XREngine.UnitTests/TestData/Fbx/` now includes two small checked-in deterministic ASCII fixtures: `synthetic-static-scene-ascii.fbx` for static/material coverage and `synthetic-phase4-skinned-animation-ascii.fbx` for the supported skinned/blendshape/animation subset. Both are wired into `fbx-corpus.manifest.json` and have committed golden summaries.
+- `XREngine.UnitTests/Core/FbxPhase7HardeningTests.cs` now covers malformed binary array encodings, decoded-length mismatch failure behavior, and repeated parallel full-roundtrip validation over the checked-in performance-baseline corpus.
+- `XREngine.Benchmarks/FbxPhase7RegressionHarness.cs` now emits `Build/Reports/fbx-phase7-regression.json` and fails conservatively when the checked-in baseline fixtures exceed per-asset wall-time or allocation budgets.
+- The parser allocation sweep removed an extra compressed-payload copy by streaming zlib decode from `FbxSourceSliceStream`, and the geometry parser now decodes typed numeric arrays directly into their final buffers via `FbxArrayDecodeHelper` instead of materializing an intermediate byte array first.
+
+Current validation note:
+
+- Focused validation on 2026-04-07 passed the targeted `NativeFbxImporterTests`, `FbxPhase5BinaryExportTests`, and `FbxPhase7HardeningTests` slice (11 tests total), and the Phase 7 regression harness currently stays within budget for both checked-in synthetic baseline assets.
 
 ### Exit Criteria
 
 - [ ] The native path is stable enough to be the only supported FBX path for normal development workflows.
-- [ ] Performance and correctness regressions are measurable and caught automatically.
+- [x] Performance and correctness regressions are measurable and caught automatically.
 - [ ] Remaining unsupported FBX features are explicit backlog items, not unknowns.
 
 ## Suggested Initial File/Project Touchpoints

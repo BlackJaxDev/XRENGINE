@@ -1,6 +1,7 @@
 using Assimp;
 using System.ComponentModel;
 using XREngine.Data;
+using XREngine.Fbx;
 using XREngine.Rendering;
 using YamlDotNet.Serialization;
 
@@ -23,8 +24,10 @@ public enum EOpacityMapMode
 
 public enum FbxImportBackend
 {
-    Assimp,
+    Auto,
     Native,
+    AssimpLegacy,
+    Assimp = AssimpLegacy,
 }
 
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions
@@ -121,22 +124,25 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     }
 
     /// <summary>
-    /// FBX-specific: preserve pivot transforms.
+    /// Selects how .fbx files are imported. Auto uses the native importer by default,
+    /// while AssimpLegacy preserves the older compatibility path.
     /// </summary>
-    public bool PreservePivots { get; set; } = true;
+    public FbxImportBackend FbxBackend { get; set; } = FbxImportBackend.Auto;
 
     /// <summary>
-    /// Selects the FBX importer implementation.
+    /// Controls whether FBX pivots stay explicit in the imported transform semantics
+    /// or are baked into the local transform.
     /// </summary>
-    public FbxImportBackend FbxBackend { get; set; } = FbxImportBackend.Assimp;
+    public FbxPivotImportPolicy FbxPivotPolicy { get; set; } = FbxPivotImportPolicy.PreservePivotSemantics;
 
     /// <summary>
-    /// FBX-specific: collapse Assimp-generated helper nodes.
+    /// When using the legacy Assimp FBX backend, collapse generated helper nodes
+    /// back into the authored hierarchy when possible.
     /// </summary>
-    public bool RemoveAssimpFBXNodes { get; set; } = true;
+    public bool CollapseGeneratedFbxHelperNodes { get; set; } = true;
 
     /// <summary>
-    /// Uniform scale conversion applied by Assimp.
+    /// Uniform scale conversion applied during import.
     /// </summary>
     public float ScaleConversion { get; set; } = 1.0f;
 
@@ -156,7 +162,7 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public EOpacityMapMode OpacityMapMode { get; set; } = EOpacityMapMode.Auto;
 
     /// <summary>
-    /// Enables Assimp's multithreading option.
+    /// Enables Assimp multithreading when the Assimp backend is used.
     /// </summary>
     public bool MultiThread { get; set; } = true;
 
@@ -217,6 +223,30 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public Dictionary<string, string>? LegacyMaterialNameRemap
     {
         set => _legacyMaterialNameRemap = value;
+    }
+
+    /// <summary>
+    /// Backwards-compatibility: older cached YAML stored the FBX pivot behavior under
+    /// the Assimp-era "PreservePivots" boolean.
+    /// </summary>
+    [Browsable(false)]
+    [YamlMember(Alias = "PreservePivots")]
+    public bool LegacyPreservePivots
+    {
+        set => FbxPivotPolicy = value
+            ? FbxPivotImportPolicy.PreservePivotSemantics
+            : FbxPivotImportPolicy.BakeIntoLocalTransform;
+    }
+
+    /// <summary>
+    /// Backwards-compatibility: older cached YAML stored legacy FBX helper-node cleanup under
+    /// the Assimp-specific "RemoveAssimpFBXNodes" boolean.
+    /// </summary>
+    [Browsable(false)]
+    [YamlMember(Alias = "RemoveAssimpFBXNodes")]
+    public bool LegacyRemoveAssimpFbxNodes
+    {
+        set => CollapseGeneratedFbxHelperNodes = value;
     }
 
     [Browsable(false)]

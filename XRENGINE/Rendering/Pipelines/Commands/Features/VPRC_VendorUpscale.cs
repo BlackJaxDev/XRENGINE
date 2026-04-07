@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
@@ -41,6 +42,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRTexture? _bridgeDepthTexture;
         private XRFrameBuffer? _bridgeMotionTextureFbo;
         private XRTexture? _bridgeMotionTexture;
+        private bool _bridgeVendorHistoryValid;
+        private EVulkanUpscaleBridgeVendor _lastBridgeVendor;
 
         private const string FallbackShaderCode = """
 #version 450
@@ -100,6 +103,8 @@ void main()
             DestroyBridgeHelperFrameBuffer(ref _bridgeSourceTextureFbo, ref _bridgeSourceTexture);
             DestroyBridgeHelperFrameBuffer(ref _bridgeDepthTextureFbo, ref _bridgeDepthTexture);
             DestroyBridgeHelperFrameBuffer(ref _bridgeMotionTextureFbo, ref _bridgeMotionTexture);
+            _bridgeVendorHistoryValid = false;
+            _lastBridgeVendor = default;
 
             base.ReleaseContainerResources(instance);
         }
@@ -288,11 +293,24 @@ void main()
                 return false;
             }
 
-            bool ok = bridge.TryExecutePassthrough(
+            if (!TryResolveBridgeVendor(out EVulkanUpscaleBridgeVendor vendor, out string vendorFailure))
+            {
+                failureReason = vendorFailure;
+                return false;
+            }
+
+            if (!TryCreateBridgeDispatchParameters(renderer, viewport, bridge, vendor, out VulkanUpscaleBridgeDispatchParameters dispatchParameters, out string dispatchFailure))
+            {
+                failureReason = dispatchFailure;
+                return false;
+            }
+
+            bool ok = bridge.TryExecuteVendorUpscale(
                 renderer,
                 sourceColorFbo,
                 sourceDepthFbo,
                 sourceMotionFbo,
+                in dispatchParameters,
                 out XRTexture? bridgeOutput,
                 out TimeSpan dispatchDuration,
                 out string bridgeFailure);
@@ -300,7 +318,7 @@ void main()
             if (!ok || bridgeOutput is null)
             {
                 failureReason = string.IsNullOrWhiteSpace(bridgeFailure)
-                    ? "bridge passthrough submission failed"
+                    ? $"bridge {vendor} submission failed"
                     : bridgeFailure;
                 return false;
             }
@@ -309,14 +327,154 @@ void main()
             {
                 Debug.Log(
                     ELogCategory.Rendering,
-                    $"[VendorUpscaleDiag] BridgePassthrough path. SourceFBO='{DescribeFrameBuffer(sourceColorFbo)}' DepthFBO='{DescribeFrameBuffer(sourceDepthFbo)}' MotionFBO='{DescribeFrameBuffer(sourceMotionFbo)}' OutputTexture='{DescribeTexture(bridgeOutput)}' Slot={slot.SlotIndex} State='{bridge.State}' Recreate='{bridge.PendingRecreateReason ?? "<none>"}' DispatchMs={dispatchDuration.TotalMilliseconds:F3}");
+                    $"[VendorUpscaleDiag] BridgeVendor path. Vendor='{vendor}' SourceFBO='{DescribeFrameBuffer(sourceColorFbo)}' DepthFBO='{DescribeFrameBuffer(sourceDepthFbo)}' MotionFBO='{DescribeFrameBuffer(sourceMotionFbo)}' OutputTexture='{DescribeTexture(bridgeOutput)}' Slot={slot.SlotIndex} State='{bridge.State}' Recreate='{bridge.PendingRecreateReason ?? "<none>"}' DispatchMs={dispatchDuration.TotalMilliseconds:F3}");
             }
 
             _fallbackSourceTexture = bridgeOutput;
+            _lastBridgeVendor = vendor;
+            _bridgeVendorHistoryValid = true;
             _fallbackQuad?.Render(
                 TargetFrameBufferName is not null
                     ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
                     : null);
+            return true;
+        }
+
+        private static bool TryResolveBridgeVendor(out EVulkanUpscaleBridgeVendor vendor, out string failureReason)
+        {
+            vendor = default;
+            failureReason = string.Empty;
+
+            bool dlssEnabled = Engine.EffectiveSettings.EnableNvidiaDlss;
+            bool xessEnabled = Engine.EffectiveSettings.EnableIntelXess;
+            bool dlssSupported = dlssEnabled && NvidiaDlssManager.IsSupported;
+            bool xessSupported = xessEnabled && IntelXessManager.IsSupported;
+
+            if (Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst)
+            {
+                if (dlssSupported)
+                {
+                    vendor = EVulkanUpscaleBridgeVendor.Dlss;
+                    return true;
+                }
+
+                if (xessSupported)
+                {
+                    vendor = EVulkanUpscaleBridgeVendor.Xess;
+                    return true;
+                }
+            }
+            else
+            {
+                if (xessSupported)
+                {
+                    vendor = EVulkanUpscaleBridgeVendor.Xess;
+                    return true;
+                }
+
+                if (dlssSupported)
+                {
+                    vendor = EVulkanUpscaleBridgeVendor.Dlss;
+                    return true;
+                }
+            }
+
+            failureReason = dlssEnabled && !string.IsNullOrWhiteSpace(NvidiaDlssManager.LastError)
+                ? NvidiaDlssManager.LastError!
+                : xessEnabled && !string.IsNullOrWhiteSpace(IntelXessManager.LastError)
+                    ? IntelXessManager.LastError!
+                    : "No supported bridge vendor runtime is currently available.";
+            return false;
+        }
+
+        private bool TryCreateBridgeDispatchParameters(
+            OpenGLRenderer renderer,
+            XRViewport viewport,
+            VulkanUpscaleBridge bridge,
+            EVulkanUpscaleBridgeVendor vendor,
+            out VulkanUpscaleBridgeDispatchParameters parameters,
+            out string failureReason)
+        {
+            parameters = default;
+            failureReason = string.Empty;
+
+            XRCamera? camera = ActivePipelineInstance.RenderState.SceneCamera
+                ?? ActivePipelineInstance.RenderState.RenderingCamera
+                ?? ActivePipelineInstance.LastSceneCamera
+                ?? ActivePipelineInstance.LastRenderingCamera;
+            if (camera is null)
+            {
+                failureReason = "Bridge vendor upscale requires an active scene camera.";
+                return false;
+            }
+
+            Matrix4x4 cameraViewToClip = camera.ProjectionMatrixUnjittered;
+            Matrix4x4 clipToCameraView = camera.InverseProjectionMatrixUnjittered;
+            Matrix4x4 currentViewProjectionUnjittered = camera.ViewProjectionMatrixUnjittered;
+            Matrix4x4 previousViewProjectionUnjittered = currentViewProjectionUnjittered;
+            Vector2 jitter = Vector2.Zero;
+            bool resetHistory = true;
+            bool vendorChanged = _bridgeVendorHistoryValid && _lastBridgeVendor != vendor;
+
+            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            {
+                currentViewProjectionUnjittered = temporalData.CurrViewProjectionUnjittered;
+                previousViewProjectionUnjittered = temporalData.HistoryReady
+                    ? temporalData.PrevViewProjectionUnjittered
+                    : temporalData.CurrViewProjectionUnjittered;
+                jitter = temporalData.CurrentJitter;
+                resetHistory = !temporalData.HistoryReady || vendorChanged;
+            }
+
+            if (!Matrix4x4.Invert(currentViewProjectionUnjittered, out Matrix4x4 currentInverseViewProjectionUnjittered))
+            {
+                failureReason = "Failed to invert the current unjittered view-projection matrix for bridge vendor dispatch.";
+                return false;
+            }
+
+            if (!Matrix4x4.Invert(previousViewProjectionUnjittered, out Matrix4x4 previousInverseViewProjectionUnjittered))
+                previousInverseViewProjectionUnjittered = currentInverseViewProjectionUnjittered;
+
+            var frameResources = bridge.CurrentFrameResources;
+            float aspectRatio = camera.Parameters.GetApproximateAspectRatio();
+            if (!float.IsFinite(aspectRatio) || aspectRatio <= 0.0f)
+                aspectRatio = Math.Max(1, viewport.Width) / (float)Math.Max(1, viewport.Height);
+
+            float verticalFovRadians = camera.Parameters.GetApproximateVerticalFov() * (MathF.PI / 180.0f);
+            if (!float.IsFinite(verticalFovRadians) || verticalFovRadians <= 0.0f)
+                verticalFovRadians = 60.0f * (MathF.PI / 180.0f);
+
+            parameters = new VulkanUpscaleBridgeDispatchParameters
+            {
+                Vendor = vendor,
+                InputWidth = (uint)Math.Max(1, frameResources.InternalWidth),
+                InputHeight = (uint)Math.Max(1, frameResources.InternalHeight),
+                OutputWidth = (uint)Math.Max(1, frameResources.DisplayWidth),
+                OutputHeight = (uint)Math.Max(1, frameResources.DisplayHeight),
+                FrameIndex = unchecked((uint)Math.Max(0L, renderer._frameCounter)),
+                ResetHistory = resetHistory,
+                ReverseDepth = camera.IsReversedDepth,
+                IsOrthographic = camera.Parameters is XROrthographicCameraParameters,
+                DlssQuality = frameResources.DlssQuality,
+                XessQuality = frameResources.XessQuality,
+                DlssSharpness = Engine.Rendering.Settings.DlssSharpness,
+                XessSharpness = Engine.Rendering.Settings.XessSharpness,
+                JitterOffsetX = jitter.X,
+                JitterOffsetY = jitter.Y,
+                CameraViewToClip = cameraViewToClip,
+                ClipToCameraView = clipToCameraView,
+                ClipToPrevClip = currentInverseViewProjectionUnjittered * previousViewProjectionUnjittered,
+                PrevClipToClip = previousInverseViewProjectionUnjittered * currentViewProjectionUnjittered,
+                CameraPosition = camera.Transform?.RenderTranslation ?? Vector3.Zero,
+                CameraUp = camera.Transform?.RenderUp ?? Vector3.UnitY,
+                CameraRight = camera.Transform?.RenderRight ?? Vector3.UnitX,
+                CameraForward = camera.Transform?.RenderForward ?? -Vector3.UnitZ,
+                CameraNear = camera.NearZ,
+                CameraFar = camera.FarZ,
+                CameraFovRadians = verticalFovRadians,
+                CameraAspectRatio = aspectRatio,
+            };
+
             return true;
         }
 

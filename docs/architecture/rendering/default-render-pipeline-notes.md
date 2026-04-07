@@ -156,13 +156,29 @@ Many albedo textures carry non-transparency data in alpha (smoothness, AO, paddi
 
 ---
 
-## 13. Fallback Sampler Unit Collisions
+## 13. Contact-Shadow Helper Parity
+
+**Rule:** Deferred directional and spot lighting must use the shared contact-shadow helpers in `ShadowSampling.glsl`, the same as `ForwardLighting.glsl`. Do not keep separate screen-space contact-shadow marchers in the deferred shaders.
+
+### What went wrong
+
+`DeferredLightingDir.fs` and `DeferredLightingSpot.fs` had their own contact-shadow ray march against the current frame depth buffer. That path did not use the shared receiver normal offset, compare bias, or proportional thickness rejection already used by the forward path, so fully opaque deferred receivers could self-occlude into stable black speckle while the forward path stayed clean.
+
+### Fix
+
+- Route deferred directional and spot contact shadows through `XRENGINE_SampleContactShadow2D` / `XRENGINE_SampleContactShadowArray`.
+- Reuse `XRENGINE_ResolveContactShadowSampleCount` so forward and deferred scale contact-shadow step counts identically.
+- Pass the same receiver offset and compare bias inputs used by the forward path (`ShadowBiasMax` plus the angle-scaled shadow bias).
+
+---
+
+## 14. Fallback Sampler Unit Collisions
 
 **Rule:** Forward-lighting mesh draws reserve many fixed sampler units (env/refl 12–13, AO 14 & 25, directional shadow 15–16, point shadows 17–20, spot shadows 21–24). Fallback sampler binding must allocate from genuinely unused units, not hard-coded offsets.
 
 ---
 
-## 14. Pipeline Event Teardown
+## 15. Pipeline Event Teardown
 
 **Rule:** Pipelines subscribe to `Engine.Rendering.SettingsChanged` and `AntiAliasingSettingsChanged` in their constructors. They **must** unsubscribe in `OnDestroying()`.
 
@@ -170,7 +186,7 @@ Settings handlers that queue `Engine.InvokeOnMainThread(...)` should guard both 
 
 ---
 
-## 15. Camera HDR Output Target Recreation
+## 16. Camera HDR Output Target Recreation
 
 **Rule:** When per-camera `OutputHDROverride` changes, all format-dependent targets need `NeedsRecreate` delegates — size-only checks leave stale LDR targets.
 
@@ -184,7 +200,7 @@ Use `ResolveOutputHDR()` (which reads `RenderingPipelineState.SceneCamera`) rath
 
 ---
 
-## 16. Deferred Geometry Normals Must Be Normalized Before Encoding
+## 17. Deferred Geometry Normals Must Be Normalized Before Encoding
 
 **Rule:** Deferred fragment shaders that encode the interpolated geometric normal directly must call `normalize(FragNorm)` before `XRENGINE_EncodeNormal(...)`.
 
@@ -198,7 +214,7 @@ Normalize `FragNorm` in the direct-geometry deferred shaders (`ColoredDeferred`,
 
 ---
 
-## 17. Deferred Debug Output Switch
+## 18. Deferred Debug Output Switch
 
 **Rule:** When diagnosing deferred composite issues, use the render pipeline's `Deferred Debug View` setting in the ImGui inspector instead of ad-hoc shader edits.
 
@@ -214,7 +230,7 @@ Current modes:
 
 ---
 
-## 18. Temporal AA: Static Edge Rejection and Debug Views
+## 19. Temporal AA: Static Edge Rejection and Debug Views
 
 **Rule:** Temporal reprojection needs to stay conservative on moving or disoccluded pixels, but static silhouettes must still accumulate enough history to hide the camera jitter.
 

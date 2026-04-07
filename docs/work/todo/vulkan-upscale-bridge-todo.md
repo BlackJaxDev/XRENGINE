@@ -222,10 +222,10 @@ Implemented in code via `VPRC_VendorUpscale`, `VulkanUpscaleBridge`, `VulkanUpsc
 
 > The current DLSS code is not a full Streamline integration. Implement the real path here.
 
-- [ ] **5.1** Replace the current `slDLSSSetOptions`-only shim with full Streamline lifecycle management.
-- [ ] **5.2** Initialize Streamline against the sidecar Vulkan device.
-- [ ] **5.3** Add the required resource-tagging path for imported color, depth, motion, and output resources.
-- [ ] **5.4** Add actual feature evaluation / dispatch for DLSS instead of only setting options.
+- [x] **5.1** Replace the current `slDLSSSetOptions`-only shim with full Streamline lifecycle management.
+- [x] **5.2** Initialize Streamline against the sidecar Vulkan device.
+- [x] **5.3** Add the required resource-tagging path for imported color, depth, motion, and output resources.
+- [x] **5.4** Add actual feature evaluation / dispatch for DLSS instead of only setting options.
 - [ ] **5.5** Pass full per-frame inputs:
   - input size and output size
   - jitter offsets (from `TemporalState.CurrentJitter`, scaled to match DLSS motion-vector convention)
@@ -241,19 +241,34 @@ Implemented in code via `VPRC_VendorUpscale`, `VulkanUpscaleBridge`, `VulkanUpsc
 - [ ] **5.7** Verify Streamline does not assume a Vulkan-owned swapchain for this use case.
 - [ ] **5.8** Add robust shutdown / re-init handling for device loss or bridge faults.
 
+Current status:
+
+- `XRENGINE/Rendering/DLSS/StreamlineNative.cs` now owns real Streamline bridge lifecycle for the sidecar Vulkan device: `slInit`, `slShutdown`, `slSetVulkanInfo`, feature-function resolution, explicit resource allocation/free, per-frame tagging, constant upload, and `slEvaluateFeature`.
+- `XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs`, `VulkanUpscaleBridge.cs`, and `VPRC_VendorUpscale.cs` now upload OpenGL bridge inputs into shared Vulkan slot surfaces, submit real DLSS bridge work instead of passthrough-only blits, and hand the upscaled result back to OpenGL via the existing semaphore path.
+- Temporal invalidation on resize / AA changes already clears shared history state, and the bridge command now also forces a reset when the selected bridge vendor changes; the remaining 5.6 work is narrower runtime validation around camera cuts, format changes, and bridge recreation edge cases.
+- Current bridge DLSS assumptions are still the MVP SDR path: the sidecar passes LDR / non-HDR options and now opts into Streamline auto-exposure with neutral pre-/exposure scale defaults; the dedicated engine-driven exposure bridge resource work remains open under 5.5 and Phase 7.
+- The editor project now builds successfully with the bridge DLSS path compiled in, but runtime validation on actual vendor hardware is still pending.
+
 ---
 
 ## Phase 6 - Real XeSS On The Same Bridge
 
 > Reuse the bridge, but keep XeSS separate from DLSS bring-up until the bridge is stable.
 
-- [ ] **6.1** Replace the current placeholder XeSS dispatch path with a real `xessVK` integration.
-- [ ] **6.2** Create and own a XeSS context on the sidecar Vulkan device.
-- [ ] **6.3** Feed imported source color, depth, motion, and output resources into the XeSS dispatch.
+- [x] **6.1** Replace the current placeholder XeSS dispatch path with a real `xessVK` integration.
+- [x] **6.2** Create and own a XeSS context on the sidecar Vulkan device.
+- [x] **6.3** Feed imported source color, depth, motion, and output resources into the XeSS dispatch.
 - [ ] **6.4** Wire quality mode, custom scale, and sharpness into the real XeSS path.
 - [ ] **6.5** Pass the same per-frame inputs as Phase 5.5 (jitter, exposure, reversed-Z, HDR, frame index), adapted to the XeSS API conventions.
-- [ ] **6.6** Keep XeSS frame generation explicitly out of scope for this bridge milestone.
-- [ ] **6.7** Add history reset / recreate behavior matching the DLSS path.
+- [x] **6.6** Keep XeSS frame generation explicitly out of scope for this bridge milestone.
+- [x] **6.7** Add history reset / recreate behavior matching the DLSS path.
+
+Current status:
+
+- `XRENGINE/Rendering/XeSS/IntelXessNative.cs` now loads the real Vulkan XeSS exports, queries required instance/device extensions and feature chains, creates a bridge XeSS context, initializes it for the sidecar output size, and records `xessVKExecute` work against the shared bridge images.
+- The sidecar now enables XeSS-required Vulkan instance/device requirements when the XeSS bridge path is requested, and the OpenGL bridge command can select XeSS as a vendor instead of falling back unconditionally on non-Vulkan renderers.
+- The bridge command now applies the same history-reset policy to XeSS vendor switches that it applies to DLSS, while resize / AA invalidation still flows through the shared temporal reset path.
+- The current XeSS bridge path also stays in the MVP SDR configuration and now explicitly enables XeSS auto-exposure without a dedicated engine exposure texture; the existing frame-generation stub remains intentionally out of scope.
 
 ---
 
@@ -283,7 +298,7 @@ Implemented in code via `VPRC_VendorUpscale`, `VulkanUpscaleBridge`, `VulkanUpsc
 
 ### Unit / smoke coverage
 
-- [ ] **8.1** Extend native interop smoke tests to cover any new vendor exports required by the real DLSS/XeSS paths.
+- [x] **8.1** Extend native interop smoke tests to cover any new vendor exports required by the real DLSS/XeSS paths.
 - [ ] **8.2** Add bridge capability tests for extension detection and unsupported fallbacks.
 - [ ] **8.3** Add recreate tests for resize-driven bridge teardown / rebuild.
 - [ ] **8.4** Add a smoke test that OpenGL + bridge gracefully falls back when bridge prerequisites are absent.

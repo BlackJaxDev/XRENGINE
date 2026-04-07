@@ -13,7 +13,14 @@ Generate or refresh the checked-in golden summaries with:
 dotnet run --project XREngine.Benchmarks -- --fbx-phase0-report
 ```
 
+Run the Phase 7 regression harness and refresh the checked-in performance-baseline report with:
+
+```powershell
+dotnet run --project XREngine.Benchmarks -- --fbx-phase7-regression
+```
+
 Current checked-in corpus reality:
 
 - The repo currently contains large ASCII FBX Sponza fixtures that are useful as semantic baselines.
+- The repo also contains two small deterministic Phase 7 fixtures: `synthetic-static-scene-ascii.fbx` and `synthetic-phase4-skinned-animation-ascii.fbx`. These are the checked-in performance-baseline assets used by the hardening tests and regression harness.
 - The binary 7.4/7.5 tokenizer corpus required for the native parser is tracked as planned entries in the manifest and still needs to be sourced.

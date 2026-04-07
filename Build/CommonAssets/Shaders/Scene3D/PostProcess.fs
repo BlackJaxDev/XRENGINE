@@ -400,10 +400,10 @@ vec4 ComputeVolumetricFog(vec2 uv)
     rayDir = normalize(worldFar - CameraPosition);
   }
 
-  // Use a stable per-pixel dither here. Without temporal reprojection, per-frame jitter
-  // turns into visible sparkle instead of hiding banding.
-  float jitter = interleavedGradientNoise(gl_FragCoord.xy) * stepSize * VolumetricFog.JitterStrength;
-  float t = jitter;
+  // Keep the jitter centered around the midpoint of the first step so it breaks up
+  // marching bands without imprinting a full-step extinction bias onto opaque surfaces.
+  float jitter = (interleavedGradientNoise(gl_FragCoord.xy) - 0.5f) * stepSize * VolumetricFog.JitterStrength;
+  float t = max(0.0f, 0.5f * stepSize + jitter);
   vec3 accumulatedScattering = vec3(0.0f);
   float transmittance = 1.0f;
 

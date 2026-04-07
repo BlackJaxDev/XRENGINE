@@ -1,6 +1,5 @@
 using System.Numerics;
 using XREngine.Data.Colors;
-using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Capture.Lights
 {
@@ -20,25 +19,23 @@ namespace XREngine.Components.Capture.Lights
             const float axisOffset = 0.08f;
             const float arrowSize = 0.08f;
 
-            for (int i = 0; i < Viewports.Length; ++i)
+            for (int i = 0; i < FaceRotationOffsets.Length; ++i)
             {
-                var viewport = Viewports[i];
-                var transform = viewport?.Camera?.Transform;
-                if (transform is null)
+                if (!TryGetCaptureFaceWorldTransform(i, out Vector3 faceTranslation, out Quaternion faceRotation))
                     continue;
 
-                Vector3 cameraOrigin = transform.RenderTranslation + transform.RenderForward * forwardOffset;
+                Vector3 faceRight = Vector3.Normalize(Vector3.Transform(Vector3.UnitX, faceRotation));
+                Vector3 faceUp = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, faceRotation));
+                Vector3 faceForward = Vector3.Normalize(Vector3.Transform(-Vector3.UnitZ, faceRotation));
+                Vector3 cameraOrigin = faceTranslation + faceForward * forwardOffset;
                 FaceDebugInfo faceInfo = i < s_faceDebugInfos.Length ? s_faceDebugInfos[i] : s_faceDebugInfos[^1];
 
-                RenderFaceFrame(cameraOrigin, transform, frameHalfExtent, frameInset, faceInfo.Color);
-                Engine.Rendering.Debug.RenderText(
-                    cameraOrigin + transform.RenderUp * labelLift,
-                    $"{faceInfo.Name} face",
-                    faceInfo.Color);
+                RenderFaceFrame(cameraOrigin, faceRight, faceUp, faceForward, frameHalfExtent, frameInset, faceInfo.Color);
+                Engine.Rendering.Debug.RenderText(cameraOrigin + faceUp * labelLift, $"{faceInfo.Name} face", faceInfo.Color);
 
-                RenderAxisPair(cameraOrigin, transform.RenderRight, ColorF4.Red, "+X", "-X", axisLength, axisOffset, arrowSize);
-                RenderAxisPair(cameraOrigin, transform.RenderUp, ColorF4.Green, "+Y", "-Y", axisLength, axisOffset, arrowSize);
-                RenderAxisPair(cameraOrigin, transform.RenderForward, ColorF4.Blue, "-Z", "+Z", axisLength, axisOffset, arrowSize);
+                RenderAxisPair(cameraOrigin, faceRight, ColorF4.Red, "+X", "-X", axisLength, axisOffset, arrowSize);
+                RenderAxisPair(cameraOrigin, faceUp, ColorF4.Green, "+Y", "-Y", axisLength, axisOffset, arrowSize);
+                RenderAxisPair(cameraOrigin, faceForward, ColorF4.Blue, "-Z", "+Z", axisLength, axisOffset, arrowSize);
             }
         }
 
@@ -123,12 +120,8 @@ namespace XREngine.Components.Capture.Lights
             Engine.Rendering.Debug.RenderLine(end, wingD, color);
         }
 
-        private static void RenderFaceFrame(Vector3 origin, TransformBase transform, float halfExtent, float inset, ColorF4 color)
+        private static void RenderFaceFrame(Vector3 origin, Vector3 right, Vector3 up, Vector3 forward, float halfExtent, float inset, ColorF4 color)
         {
-            Vector3 right = Vector3.Normalize(transform.RenderRight);
-            Vector3 up = Vector3.Normalize(transform.RenderUp);
-            Vector3 forward = Vector3.Normalize(transform.RenderForward);
-
             Vector3 topLeft = origin + (-right * halfExtent) + (up * halfExtent);
             Vector3 topRight = origin + (right * halfExtent) + (up * halfExtent);
             Vector3 bottomLeft = origin + (-right * halfExtent) - (up * halfExtent);

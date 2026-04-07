@@ -103,6 +103,16 @@ namespace XREngine.Components.Capture.Lights
             set => SetField(ref _useDirectCubemapIblGeneration, value);
         }
 
+        /// <summary>
+        /// If true, releases the captured environment cubemap and any octahedral intermediate
+        /// once irradiance and prefilter outputs have been generated.
+        /// </summary>
+        public bool ReleaseTransientEnvironmentTexturesAfterCapture
+        {
+            get => _releaseTransientEnvironmentTexturesAfterCapture;
+            set => SetField(ref _releaseTransientEnvironmentTexturesAfterCapture, value);
+        }
+
         public XRTexture2D? IrradianceTexture
         {
             get => _irradianceTexture;

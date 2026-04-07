@@ -2,6 +2,11 @@
 
 Model imports have two separate runtime policies:
 
+- `.fbx` files now route through the native `XREngine.Fbx` importer by default via `ModelImporter`'s format-specific dispatch. Non-FBX formats still import through Assimp.
+- `ModelImportOptions.FbxBackend = AssimpLegacy` is the explicit compatibility override if a particular FBX still needs the older Assimp path.
+- Assimp `PostProcessSteps` flags still apply to non-FBX imports and the `AssimpLegacy` FBX mode, but the default native FBX path uses explicit FBX-native settings such as `FbxPivotPolicy` instead.
+- `CollapseGeneratedFbxHelperNodes` only affects the legacy Assimp FBX path; the native FBX importer preserves the authored FBX model hierarchy directly.
+
 - `ProcessMeshesAsynchronously`: runs mesh conversion work on background jobs instead of finishing the whole import inline.
 - `GenerateMeshRenderersAsync`: leaves `XRMeshRenderer.GenerateAsync` off by default globally, but allows imported model renderers to opt into async renderer generation.
 - `SplitSubmeshesIntoSeparateModelComponents`: creates one `ModelComponent` per imported submesh instead of grouping a source node's submeshes into one model component.

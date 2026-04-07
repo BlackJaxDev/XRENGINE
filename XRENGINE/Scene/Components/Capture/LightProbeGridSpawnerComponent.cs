@@ -91,6 +91,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
     private TimeSpan? _realTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(100.0);
     private TimeSpan? _stopRealtimeCaptureAfter;
     private uint _irradianceResolution = 32;
+    private bool _releaseTransientEnvironmentTexturesAfterCapture = true;
     private LightProbeComponent.EInfluenceShape _influenceShape = LightProbeComponent.EInfluenceShape.Sphere;
     private Vector3 _influenceOffset = Vector3.Zero;
     private float _influenceSphereInnerRadius = 0.0f;
@@ -111,6 +112,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
     private float _pushOutPadding = 0.1f;
     private float _maxPushOutDistance = 8.0f;
     private int _maxPushOutSteps = 24;
+    private bool _deferredSpawnPending;
 
     private static readonly Vector3[] s_probePushDirections =
     [
@@ -184,6 +186,17 @@ public class LightProbeGridSpawnerComponent : XRComponent
         set
         {
             if (SetField(ref _irradianceResolution, value))
+                ApplyDefaultsToExistingProbes();
+        }
+    }
+
+    [Category("Probe Defaults")]
+    public bool ReleaseTransientEnvironmentTexturesAfterCapture
+    {
+        get => _releaseTransientEnvironmentTexturesAfterCapture;
+        set
+        {
+            if (SetField(ref _releaseTransientEnvironmentTexturesAfterCapture, value))
                 ApplyDefaultsToExistingProbes();
         }
     }
@@ -346,10 +359,11 @@ public class LightProbeGridSpawnerComponent : XRComponent
     public void ConfigurePlacementBoundsModels(ModelComponent[]? models, bool enabled)
     {
         ModelComponent[] normalized = models ?? [];
+        UnsubscribeModelChangedEvents();
         bool modelsChanged = SetField(ref _placementBoundsModels, normalized);
         bool enabledChanged = SetField(ref _usePlacementBoundsModels, enabled);
         if (modelsChanged || enabledChanged)
-            RegenerateGridIfSpawned();
+            SpawnOrRegenerateGrid();
     }
 
     [Category("Placement")]
@@ -423,6 +437,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
     protected override void OnEndPlay()
     {
         StopSequentialCapture("Idle");
+        UnsubscribeModelChangedEvents();
         CleanupGrid();
         base.OnEndPlay();
     }
@@ -430,6 +445,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
     protected override void OnDestroying()
     {
         StopSequentialCapture("Idle");
+        UnsubscribeModelChangedEvents();
         CleanupGrid();
         base.OnDestroying();
     }
@@ -467,15 +483,54 @@ public class LightProbeGridSpawnerComponent : XRComponent
         _ = SceneNode.GetTransformAs<Transform>(true)!;
 
         var counts = ProbeCounts;
-        ProbeOccluder[] occluders = CollectProbeOccluders();
         Matrix4x4 parentInverse = SceneNode.Transform.InverseWorldMatrix;
 
         bool usePlacementBounds = TryGetPlacementBounds(out AABB placementBounds);
+
+        // When model-based placement is requested but bounds are not yet
+        // available (models still loading), defer spawning rather than
+        // falling back to the manual grid — subscribe to ModelChanged
+        // so we retry once mesh data arrives.
+        if (UsePlacementBoundsModels && !usePlacementBounds)
+        {
+            Debug.Out("[LightProbeGrid] SpawnGrid: model-based placement requested but no valid bounds yet — deferring spawn.");
+            SubscribeModelChangedEvents();
+            _deferredSpawnPending = true;
+            return;
+        }
+
+        _deferredSpawnPending = false;
+        ProbeOccluder[] occluders = CollectProbeOccluders();
         Vector3 totalSize = new(
             (counts.X - 1) * Spacing.X,
             (counts.Y - 1) * Spacing.Y,
             (counts.Z - 1) * Spacing.Z);
         Vector3 start = -0.5f * totalSize + Offset;
+
+        // When using model-based placement bounds, auto-size the influence
+        // outer radius so adjacent probes overlap fully.  The radius is set
+        // to the length of the diagonal between adjacent grid cells — this
+        // guarantees every point in the volume is covered by at least one
+        // probe's influence region.
+        if (usePlacementBounds)
+        {
+            Vector3 boundsSize = placementBounds.Max - placementBounds.Min;
+            Vector3 cellSize = new(
+                counts.X > 1 ? boundsSize.X / (counts.X - 1) : boundsSize.X,
+                counts.Y > 1 ? boundsSize.Y / (counts.Y - 1) : boundsSize.Y,
+                counts.Z > 1 ? boundsSize.Z / (counts.Z - 1) : boundsSize.Z);
+            float autoOuterRadius = cellSize.Length();
+            if (autoOuterRadius > InfluenceSphereOuterRadius)
+            {
+                Debug.Out($"[LightProbeGrid] Auto-sizing influence outer radius: {InfluenceSphereOuterRadius:F2} → {autoOuterRadius:F2} (cell diagonal).");
+                SetField(ref _influenceSphereOuterRadius, autoOuterRadius);
+            }
+        }
+
+        if (usePlacementBounds)
+            Debug.Out($"[LightProbeGrid] SpawnGrid: using placement bounds {placementBounds} for {counts.X}x{counts.Y}x{counts.Z} grid.");
+        else
+            Debug.Out($"[LightProbeGrid] SpawnGrid: using Spacing={Spacing}, Offset={Offset} for {counts.X}x{counts.Y}x{counts.Z} grid (start={start}).");
 
         for (int x = 0; x < counts.X; ++x)
         {
@@ -512,16 +567,43 @@ public class LightProbeGridSpawnerComponent : XRComponent
         _captureStatus = $"Ready: {_spawnedProbes.Count} probes.";
     }
 
-    private void RegenerateGridIfSpawned()
+    /// <summary>
+    /// Spawns the grid if it hasn't been spawned yet, or regenerates it if it has.
+    /// </summary>
+    private void SpawnOrRegenerateGrid()
     {
         if (_spawnedNodes.Count == 0)
+        {
+            // Grid not yet spawned — attempt initial spawn (will defer if bounds unavailable).
+            SpawnGrid();
+            return;
+        }
+
+        RegenerateGrid();
+    }
+
+    private void RegenerateGridIfSpawned()
+    {
+        if (_spawnedNodes.Count == 0 && !_deferredSpawnPending)
             return;
 
+        if (_spawnedNodes.Count == 0)
+        {
+            // Deferred spawn was pending — try again.
+            SpawnGrid();
+            return;
+        }
+
+        RegenerateGrid();
+    }
+
+    private void RegenerateGrid()
+    {
         bool restartSequentialCapture = _isSequentialCaptureRunning || AutoSequentialCaptureOnBeginPlay;
         CleanupGrid();
         SpawnGrid();
 
-        if (restartSequentialCapture)
+        if (restartSequentialCapture && _spawnedNodes.Count > 0)
             BeginSequentialCapture();
     }
 
@@ -541,6 +623,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
         probe.RealTimeCaptureUpdateInterval = RealTimeCaptureUpdateInterval;
         probe.StopRealtimeCaptureAfter = StopRealtimeCaptureAfter;
         probe.IrradianceResolution = IrradianceResolution;
+        probe.ReleaseTransientEnvironmentTexturesAfterCapture = ReleaseTransientEnvironmentTexturesAfterCapture;
         probe.InfluenceShape = InfluenceShape;
         probe.InfluenceOffset = InfluenceOffset;
         probe.InfluenceSphereInnerRadius = InfluenceSphereInnerRadius;
@@ -648,32 +731,74 @@ public class LightProbeGridSpawnerComponent : XRComponent
         return [.. occluders];
     }
 
+    private void SubscribeModelChangedEvents()
+    {
+        foreach (ModelComponent model in PlacementBoundsModels)
+        {
+            if (model is not null)
+                model.ModelChanged += OnPlacementModelChanged;
+        }
+    }
+
+    private void UnsubscribeModelChangedEvents()
+    {
+        foreach (ModelComponent model in PlacementBoundsModels)
+        {
+            if (model is not null)
+                model.ModelChanged -= OnPlacementModelChanged;
+        }
+    }
+
+    private void OnPlacementModelChanged()
+    {
+        // A placement model's mesh data just arrived — if we can now compute
+        // valid bounds, spawn (or regenerate) the probe grid.
+        if (!TryGetPlacementBounds(out _))
+            return; // Still not ready — stay subscribed.
+
+        Debug.Out("[LightProbeGrid] Placement model meshes now available — spawning grid.");
+        UnsubscribeModelChangedEvents();
+        SpawnOrRegenerateGrid();
+    }
+
     private bool TryGetPlacementBounds(out AABB bounds)
     {
         bounds = default;
         if (!UsePlacementBoundsModels || PlacementBoundsModels.Length == 0)
+        {
+            Debug.Out($"[LightProbeGrid] TryGetPlacementBounds: skipped (enabled={UsePlacementBoundsModels}, models={PlacementBoundsModels.Length}).");
             return false;
+        }
 
         bool found = false;
+        int totalMeshes = 0;
+        int validBounds = 0;
         foreach (ModelComponent model in PlacementBoundsModels)
         {
             if (model is null)
                 continue;
 
+            int meshCount = model.Meshes.Count;
+            totalMeshes += meshCount;
             foreach (RenderableMesh renderable in model.Meshes)
             {
                 if (!renderable.TryGetWorldBounds(out AABB worldBounds) || !worldBounds.IsValid)
                     continue;
 
+                validBounds++;
                 bounds = found ? AABB.Union(bounds, worldBounds) : worldBounds;
                 found = true;
             }
         }
 
         if (!found)
+        {
+            Debug.Out($"[LightProbeGrid] TryGetPlacementBounds: no valid bounds (models={PlacementBoundsModels.Length}, meshes={totalMeshes}, validBounds={validBounds}).");
             return false;
+        }
 
         bounds = new AABB(bounds.Min - PlacementBoundsPadding, bounds.Max + PlacementBoundsPadding);
+        Debug.Out($"[LightProbeGrid] TryGetPlacementBounds: success (models={PlacementBoundsModels.Length}, meshes={totalMeshes}, validBounds={validBounds}, bounds={bounds}).");
         return bounds.IsValid;
     }
 

@@ -19,6 +19,8 @@ namespace XREngine.Components.Capture.Lights
                 ERenderPreview.Prefilter => PrefilterTexture,
                 _ => EnvironmentTextureOctahedral
                     ?? (XRTexture?)EnvironmentTextureCubemap
+                    ?? PrefilterTexture
+                    ?? IrradianceTexture
                     ?? _environmentTextureEquirect,
             };
 
@@ -26,7 +28,7 @@ namespace XREngine.Components.Capture.Lights
             => PreviewDisplay switch
             {
                 ERenderPreview.Irradiance or ERenderPreview.Prefilter => "Scene3D\\OctahedralEnv.fs",
-                _ => EnvironmentTextureOctahedral is not null
+                _ => EnvironmentTextureOctahedral is not null || PrefilterTexture is not null || IrradianceTexture is not null
                     ? "Scene3D\\OctahedralEnv.fs"
                     : EnvironmentTextureCubemap is not null
                         ? "Scene3D\\Cubemap.fs"

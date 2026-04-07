@@ -460,7 +460,8 @@ public sealed class AlphaToCoveragePhase2Tests
         shaderSource.ShouldContain("float interleavedGradientNoise(vec2 pixelCoord)");
         shaderSource.ShouldContain("return vec3(0.0f);");
         shaderSource.ShouldContain("return lightColor * shadowFactor * lightContribution * phase * 4.0f;");
-        shaderSource.ShouldContain("float jitter = interleavedGradientNoise(gl_FragCoord.xy) * stepSize * VolumetricFog.JitterStrength;");
+        shaderSource.ShouldContain("float jitter = (interleavedGradientNoise(gl_FragCoord.xy) - 0.5f) * stepSize * VolumetricFog.JitterStrength;");
+        shaderSource.ShouldContain("float t = max(0.0f, 0.5f * stepSize + jitter);");
         shaderSource.ShouldNotContain("return vec3(1.0f);");
         shaderSource.ShouldNotContain("vec3(1.0f) + lightColor");
         shaderSource.ShouldNotContain("fract(RenderTime * 7.0)");

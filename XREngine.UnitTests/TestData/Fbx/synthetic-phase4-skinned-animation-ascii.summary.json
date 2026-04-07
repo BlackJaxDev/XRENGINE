@@ -1,0 +1,16 @@
+{
+  "assetId": "synthetic-phase4-skinned-animation-ascii",
+  "importSucceeded": true,
+  "detectedEncoding": "Ascii",
+  "detectedVersionText": "7.4.0",
+  "fileSizeBytes": 4086,
+  "nodeCount": 1,
+  "meshCount": 0,
+  "materialCount": 0,
+  "animationCount": 1,
+  "boneCount": 0,
+  "totalVertices": 0,
+  "totalFaces": 0,
+  "maxHierarchyDepth": 0,
+  "notes": "Small deterministic phase-4-style corpus asset used for parser/exporter hardening and parallel regression coverage."
+}

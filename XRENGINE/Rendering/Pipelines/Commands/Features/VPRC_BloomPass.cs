@@ -281,6 +281,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
+            // Scene captures (light probes, reflection probes) don't need bloom.
+            if (Engine.Rendering.State.IsSceneCapturePass)
+                return;
+
             var instance = ActivePipelineInstance;
             if (instance is null)
             {

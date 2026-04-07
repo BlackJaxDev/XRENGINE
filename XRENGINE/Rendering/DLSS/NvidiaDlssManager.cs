@@ -25,6 +25,7 @@ namespace XREngine.Rendering.DLSS
         private static bool _cachedIsSupported;
         private static bool _lastIsNvidia;
         private static bool _lastIsVulkan;
+        private static string? _lastBridgeFingerprint;
         private static string? _lastError;
 
         public static bool IsSupported
@@ -51,7 +52,8 @@ namespace XREngine.Rendering.DLSS
             // The original static ctor probe could run before either of those, permanently caching false.
             if (_probed &&
                 _lastIsNvidia == Engine.Rendering.State.IsNVIDIA &&
-                _lastIsVulkan == Engine.Rendering.State.IsVulkan)
+                _lastIsVulkan == Engine.Rendering.State.IsVulkan &&
+                string.Equals(_lastBridgeFingerprint, Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint, StringComparison.Ordinal))
                 return;
 
             DetectSupport();
@@ -62,11 +64,15 @@ namespace XREngine.Rendering.DLSS
             _probed = true;
             _lastIsNvidia = Engine.Rendering.State.IsNVIDIA;
             _lastIsVulkan = Engine.Rendering.State.IsVulkan;
+            _lastBridgeFingerprint = Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint;
             _lastError = null;
 
-            if (!Engine.Rendering.State.IsVulkan)
+            bool usingVulkan = Engine.Rendering.State.IsVulkan;
+            string? bridgeFailure = null;
+            bool usingBridge = !usingVulkan && TryIsBridgeCapable(out bridgeFailure);
+            if (!usingVulkan && !usingBridge)
             {
-                _lastError = "DLSS requires a Vulkan renderer.";
+                _lastError = bridgeFailure ?? "DLSS requires a Vulkan renderer or the experimental OpenGL->Vulkan bridge.";
                 _cachedIsSupported = false;
                 return;
             }
@@ -89,6 +95,44 @@ namespace XREngine.Rendering.DLSS
             _cachedIsSupported = TryProbeLibrary("sl.interposer.dll") || TryProbeLibrary("nvngx_dlss.dll");
             if (!_cachedIsSupported && _lastError is null)
                 _lastError = "Neither sl.interposer.dll nor nvngx_dlss.dll was found on the probing path.";
+        }
+
+        private static bool TryIsBridgeCapable(out string? failureReason)
+        {
+            var snapshot = Engine.Rendering.VulkanUpscaleBridgeSnapshot;
+            failureReason = null;
+
+            if (!Engine.Rendering.VulkanUpscaleBridgeRequested || !snapshot.EnvironmentEnabled)
+            {
+                failureReason = $"experimental bridge disabled (set {Engine.Rendering.VulkanUpscaleBridgeEnvVar}=1 to opt in)";
+                return false;
+            }
+
+            if (!snapshot.HasRequiredOpenGlInterop)
+            {
+                failureReason = "required OpenGL bridge interop extensions are unavailable";
+                return false;
+            }
+
+            if (!snapshot.VulkanProbeSucceeded)
+            {
+                failureReason = snapshot.ProbeFailureReason ?? "Vulkan bridge probe failed";
+                return false;
+            }
+
+            if (!snapshot.HasRequiredVulkanInterop)
+            {
+                failureReason = "required Vulkan bridge interop extensions are unavailable";
+                return false;
+            }
+
+            if (snapshot.SamePhysicalGpu == false)
+            {
+                failureReason = snapshot.GpuIdentityReason ?? "OpenGL and Vulkan resolved to different physical GPUs";
+                return false;
+            }
+
+            return true;
         }
 
         private static bool TryProbeLibrary(string libraryName)

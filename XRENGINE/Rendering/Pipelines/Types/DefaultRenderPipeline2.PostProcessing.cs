@@ -1395,7 +1395,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(VolumetricFogSettings.JitterStrength),
             PostProcessParameterKind.Float,
-            1.0f,
+            0.25f,
             displayName: "Jitter Strength",
             min: 0.0f,
             max: 1.0f,
@@ -1441,6 +1441,7 @@ public partial class DefaultRenderPipeline2
 
     private static bool ShouldUseMotionBlur()
         => !IsLightProbePass
+        && !Engine.Rendering.State.IsSceneCapturePass
         && !DisableHistoryBasedVrEffects()
         && GetMotionBlurSettings() is { Enabled: true };
 
@@ -1453,6 +1454,7 @@ public partial class DefaultRenderPipeline2
 
     private static bool ShouldUseDepthOfField()
         => !IsLightProbePass
+        && !Engine.Rendering.State.IsSceneCapturePass
         && GetDepthOfFieldSettings() is { Enabled: true };
 
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class

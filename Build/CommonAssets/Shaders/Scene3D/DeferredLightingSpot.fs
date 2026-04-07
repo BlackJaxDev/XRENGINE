@@ -64,6 +64,18 @@ struct SpotLight
 };
 uniform SpotLight LightData;
 
+int XRENGINE_ResolveContactShadowSampleCount(int requestedSamples, float viewDepth, float contactDistance);
+float XRENGINE_SampleContactShadow2D(
+	sampler2D shadowMap,
+	mat4 lightMatrix,
+	vec3 fragPosWS,
+	vec3 normalWS,
+	vec3 lightDirWS,
+	float receiverOffset,
+	float compareBias,
+	float contactDistance,
+	int contactSamples);
+
 const vec2 LocalShadowPoissonDisk[16] = vec2[](
 	vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
 	vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
@@ -180,76 +192,6 @@ float GetShadowBias(in float NoL)
     return mix(ShadowBiasMin, ShadowBiasMax, mapped);
 }
 
-// Screen-space contact shadows: marches along the light direction in screen space
-// and tests against the depth buffer. Inherently camera-stable.
-float SampleContactShadowScreenSpaceLocal(vec3 fragPosWS, vec3 lightDirWS, float maxDistance, int numSteps)
-{
-	if (maxDistance <= 0.0f || numSteps <= 0) return 1.0f;
-	int steps = clamp(numSteps, 1, 32);
-
-	vec3 fragPosVS = (ViewMatrix * vec4(fragPosWS, 1.0f)).xyz;
-	vec3 lightDirVS = normalize(mat3(ViewMatrix) * lightDirWS);
-	vec3 rayEndVS = fragPosVS + lightDirVS * maxDistance;
-	vec3 rayEndWS = fragPosWS + lightDirWS * maxDistance;
-
-	vec4 startClip = ViewProjectionMatrix * vec4(fragPosWS, 1.0f);
-	vec4 endClip = ViewProjectionMatrix * vec4(rayEndWS, 1.0f);
-	vec3 startSS = startClip.xyz / startClip.w * 0.5f + 0.5f;
-	vec3 endSS = endClip.xyz / endClip.w * 0.5f + 0.5f;
-	vec3 rayDelta = endSS - startSS;
-
-	if (length(rayDelta.xy) < 1e-6f) return 1.0f;
-
-	float noise = fract(52.9829189f * fract(dot(gl_FragCoord.xy, vec2(0.06711056f, 0.00583715f))));
-
-	float stepT = 1.0f / float(steps);
-	float occlusion = 0.0f;
-
-	for (int i = 0; i < 32; ++i)
-	{
-		if (i >= steps) break;
-
-		float t = (float(i) + 0.5f + (noise - 0.5f)) * stepT;
-		vec3 sampleSS = startSS + rayDelta * t;
-
-		if (sampleSS.x < 0.0f || sampleSS.x > 1.0f ||
-			sampleSS.y < 0.0f || sampleSS.y > 1.0f)
-			continue;
-
-#ifdef XRENGINE_MSAA_DEFERRED
-		float sceneDepth = texelFetch(DepthView, ivec2(sampleSS.xy * vec2(ScreenWidth, ScreenHeight)), 0).r;
-#else
-		float sceneDepth = texture(DepthView, sampleSS.xy).r;
-#endif
-
-		if (XRENGINE_ResolveDepth(sceneDepth) >= 1.0f) continue;
-
-		float rayDepth = sampleSS.z;
-		float depthDiff = rayDepth - sceneDepth;
-
-		float stepDepthSpan = abs(rayDelta.z) * stepT;
-		float maxThickness = max(stepDepthSpan * 5.0f, 0.0005f);
-
-		if (depthDiff > 0.0f && depthDiff < maxThickness)
-		{
-			float hitWeight = 1.0f - smoothstep(0.0f, maxThickness, depthDiff);
-			float distFade = 1.0f - t;
-			occlusion = max(occlusion, hitWeight * distFade);
-		}
-	}
-
-	return 1.0f - occlusion;
-}
-
-int ResolveContactShadowSampleCountLocal(int requestedSamples, float viewDepth, float contactDistance)
-{
-	if (requestedSamples <= 0 || contactDistance <= 0.0f) return 0;
-	int clampedSamples = clamp(requestedSamples, 1, 32);
-	float normalizedDepth = max(viewDepth, contactDistance);
-	float depthScale = clamp((contactDistance * 24.0f) / normalizedDepth, 0.35f, 1.0f);
-	return max(1, int(ceil(float(clampedSamples) * depthScale)));
-}
-
 // Global debug state written by ReadShadowMap2D for visualization
 float _dbgShadowLit = 1.0f;
 float _dbgShadowMargin = 1.0f;
@@ -270,14 +212,19 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 	//Create bias depending on angle of normal to the light
 	float bias = GetShadowBias(NoL);
 	float viewDepth = abs((ViewMatrix * vec4(fragPosWS, 1.0f)).z);
-	int contactSampleCount = ResolveContactShadowSampleCountLocal(
+	int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
 		ContactShadowSamples,
 		viewDepth,
 		ContactShadowDistance);
 	float contact = EnableContactShadows
-		? SampleContactShadowScreenSpaceLocal(
+		? XRENGINE_SampleContactShadow2D(
+			ShadowMap,
+			lightMatrix,
 			fragPosWS,
+			N,
 			normalize(LightData.Position - fragPosWS),
+			ShadowBiasMax,
+			bias,
 			ContactShadowDistance,
 			contactSampleCount)
 		: 1.0f;

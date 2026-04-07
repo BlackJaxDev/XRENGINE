@@ -70,6 +70,9 @@ namespace XREngine.Components.Capture.Lights
                     }
                     CachePreviewSphere();
                     break;
+                case nameof(ReleaseTransientEnvironmentTexturesAfterCapture):
+                    CachePreviewSphere();
+                    break;
                 case nameof(PreviewDisplay):
                     CachePreviewSphere();
                     break;

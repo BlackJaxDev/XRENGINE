@@ -79,6 +79,42 @@
       "notes": "Subset scene used to compare hierarchy/material behavior against the main Sponza export."
     },
     {
+      "id": "synthetic-static-scene-ascii",
+      "description": "Small checked-in ASCII FBX static scene with one material and one external texture reference.",
+      "availability": "CheckedIn",
+      "relativePath": "XREngine.UnitTests/TestData/Fbx/synthetic-static-scene-ascii.fbx",
+      "expectedImportSuccess": true,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": true,
+      "expectedSummaryPath": "synthetic-static-scene-ascii.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "Materials",
+        "ExternalTextures",
+        "TransformSemantics"
+      ],
+      "notes": "Small deterministic corpus asset used for parser stress tests and performance regression baselines."
+    },
+    {
+      "id": "synthetic-phase4-skinned-animation-ascii",
+      "description": "Small checked-in ASCII FBX scene covering skinning, blendshapes, and animation.",
+      "availability": "CheckedIn",
+      "relativePath": "XREngine.UnitTests/TestData/Fbx/synthetic-phase4-skinned-animation-ascii.fbx",
+      "expectedImportSuccess": true,
+      "expectedEncoding": "Ascii",
+      "expectedVersionText": "7.4.0",
+      "includeInPerformanceBaseline": true,
+      "expectedSummaryPath": "synthetic-phase4-skinned-animation-ascii.summary.json",
+      "scenarios": [
+        "SkinnedCharacter",
+        "Blendshapes",
+        "Animation",
+        "TransformSemantics"
+      ],
+      "notes": "Small deterministic phase-4-style corpus asset used for parser/exporter hardening and parallel regression coverage."
+    },
+    {
       "id": "malformed-not-an-fbx",
       "description": "Trivially invalid file used to verify parser rejection.",
       "availability": "SyntheticMalformed",
