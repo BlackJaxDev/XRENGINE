@@ -316,6 +316,7 @@ namespace XREngine
         private OverrideableSetting<ColorF4> _transformLineColorOverride = new();
         private OverrideableSetting<ColorF4> _transformCapsuleColorOverride = new();
         private OverrideableSetting<ColorF4> _consoleGeneralColorOverride = new();
+        private OverrideableSetting<ColorF4> _consoleAssetsColorOverride = new();
         private OverrideableSetting<ColorF4> _consoleRenderingColorOverride = new();
         private OverrideableSetting<ColorF4> _consoleOpenGLColorOverride = new();
         private OverrideableSetting<ColorF4> _consolePhysicsColorOverride = new();
@@ -406,6 +407,12 @@ namespace XREngine
         {
             get => _consoleGeneralColorOverride;
             set => SetField(ref _consoleGeneralColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> ConsoleAssetsColorOverride
+        {
+            get => _consoleAssetsColorOverride;
+            set => SetField(ref _consoleAssetsColorOverride, value ?? new());
         }
 
         public OverrideableSetting<ColorF4> ConsoleRenderingColorOverride

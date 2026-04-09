@@ -350,7 +350,10 @@ namespace XREngine.Components.Scene.Mesh
 
             var mat = rend?.Material;
             if (mat is not null)
+            {
+                XRTexture2D.RecordImportedTextureStreamingUsage(mat, distance);
                 _rc.RenderPass = mat.RenderPass;
+            }
 
             return true;
         }

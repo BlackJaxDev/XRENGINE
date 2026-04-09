@@ -18,6 +18,7 @@ namespace XREngine
     public enum ELogCategory
     {
         General,
+        Assets,
         Rendering,
         OpenGL,
         Physics,
@@ -73,6 +74,7 @@ namespace XREngine
         private static readonly Dictionary<ELogCategory, StreamWriter?> LogWriters = new()
         {
             [ELogCategory.General] = null,
+            [ELogCategory.Assets] = null,
             [ELogCategory.Rendering] = null,
             [ELogCategory.OpenGL] = null,
             [ELogCategory.Physics] = null,
@@ -280,6 +282,12 @@ namespace XREngine
             => Out(verbosity, debugOnly, false, false, false, 0, 0, message, args);
 
         /// <summary>
+        /// Convenience helper that routes output through the assets log.
+        /// </summary>
+        public static void Assets(string message, params object[] args)
+            => Log(ELogCategory.Assets, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
         /// Convenience helper that routes output through the physics log.
         /// </summary>
         public static void Physics(string message, params object[] args)
@@ -346,6 +354,12 @@ namespace XREngine
             => Log(ELogCategory.AI, EOutputVerbosity.Normal, false, message, args);
 
         #region Category-Specific Warnings
+
+        /// <summary>
+        /// Logs a warning message to the assets log with stack trace.
+        /// </summary>
+        public static void AssetsWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Assets, message, args);
 
         /// <summary>
         /// Logs a warning message to the rendering log with stack trace.
@@ -437,6 +451,12 @@ namespace XREngine
         #region Category-Specific Exceptions
 
         /// <summary>
+        /// Logs an exception to the assets log.
+        /// </summary>
+        public static void AssetsException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Assets, ex, message);
+
+        /// <summary>
         /// Logs an exception to the rendering log.
         /// </summary>
         public static void RenderingException(Exception ex, string? message = null)
@@ -518,6 +538,12 @@ namespace XREngine
         #endregion
 
         #region Category-Specific Errors
+
+        /// <summary>
+        /// Logs an error message to the assets log with stack trace.
+        /// </summary>
+        public static void AssetsError(string message, params object[] args)
+            => LogError(ELogCategory.Assets, message, args);
 
         /// <summary>
         /// Logs an error message to the rendering log with stack trace.

@@ -13,7 +13,7 @@ If you want the fastest way in: build the editor, launch the Unit Testing World,
 - **Audio:** OpenAL (Soft) via Silk.NET, with NAudio and LAME for codec support. Video audio goes through FFmpeg.
 - **Scene graph:** Traditional scene node tree with an attached component model. Nodes form a parent-child transform hierarchy, and components derive from `XRBase` for change tracking.
 - **Animation:** Skeletal animation with blend support, humanoid IK (VRIK for VR), and Assimp-based clip import.
-- **Asset import:** Assimp (via AssimpNetter) handles model loading — FBX, glTF, OBJ, DAE, and others.
+- **Asset import:** FBX uses the native `XREngine.Fbx` importer by default. Other model formats still load through Assimp (via AssimpNetter).
 - **Networking:** Client/server and P2P topologies with entity replication and pose sync for multiplayer testing.
 - **XR:** OpenXR and SteamVR/OpenVR paths. OpenVR is the one that's actually tested today.
 - **Editor UI:** ImGui is the day-to-day interface. A native UI pipeline is under development as the intended production UI.

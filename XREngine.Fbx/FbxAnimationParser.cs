@@ -8,41 +8,55 @@ public static class FbxAnimationParser
         ArgumentNullException.ThrowIfNull(semantic);
         ArgumentNullException.ThrowIfNull(deformers);
 
-        FbxStructuralValueReader reader = new(structural);
-        Dictionary<long, FbxScalarCurve> curvesByObjectId = ParseCurves(reader, semantic);
+        return FbxTrace.TraceOperation(
+            "AnimationParser",
+            $"Parsing animation data from {semantic.Objects.Count:N0} semantic objects.",
+            document => $"Parsed animations: curves={document.CurvesByObjectId.Count:N0}, stacks={document.Stacks.Count:N0}, nodeAnimations={document.Stacks.Sum(static stack => stack.NodeAnimations.Count):N0}, blendShapeAnimations={document.Stacks.Sum(static stack => stack.BlendShapeAnimations.Count):N0}",
+            () =>
+            {
+                FbxStructuralValueReader reader = new(structural);
+                Dictionary<long, FbxScalarCurve> curvesByObjectId = ParseCurves(reader, semantic);
 
-        List<FbxAnimationStackBinding> stacks = [];
-        foreach (FbxSceneObject stackObject in semantic.Objects.Where(static sceneObject => sceneObject.Category == FbxObjectCategory.AnimationStack))
-        {
-            HashSet<long> curveNodeIds = CollectCurveNodeIdsForStack(semantic, stackObject.Id);
-            if (curveNodeIds.Count == 0)
-                continue;
+                List<FbxAnimationStackBinding> stacks = [];
+                foreach (FbxSceneObject stackObject in semantic.Objects.Where(static sceneObject => sceneObject.Category == FbxObjectCategory.AnimationStack))
+                {
+                    HashSet<long> curveNodeIds = CollectCurveNodeIdsForStack(semantic, stackObject.Id);
+                    if (curveNodeIds.Count == 0)
+                        continue;
 
-            Dictionary<long, NodeAnimationAccumulator> nodeAnimations = [];
-            Dictionary<long, BlendShapeAnimationAccumulator> blendShapeAnimations = [];
+                    Dictionary<long, NodeAnimationAccumulator> nodeAnimations = [];
+                    Dictionary<long, BlendShapeAnimationAccumulator> blendShapeAnimations = [];
 
-            foreach (long curveNodeId in curveNodeIds)
-                AccumulateCurveNodeBindings(semantic, deformers, curvesByObjectId, curveNodeId, nodeAnimations, blendShapeAnimations);
+                    foreach (long curveNodeId in curveNodeIds)
+                        AccumulateCurveNodeBindings(semantic, deformers, curvesByObjectId, curveNodeId, nodeAnimations, blendShapeAnimations);
 
-            FbxNodeAnimationBinding[] frozenNodeAnimations = [.. nodeAnimations.Values
-                .OrderBy(static animation => animation.ModelObjectId)
-                .Select(static animation => animation.ToBinding())];
-            FbxBlendShapeAnimationBinding[] frozenBlendShapeAnimations = [.. blendShapeAnimations.Values
-                .OrderBy(static animation => animation.ChannelObjectId)
-                .Select(static animation => animation.ToBinding())];
+                    FbxNodeAnimationBinding[] frozenNodeAnimations = [.. nodeAnimations.Values
+                        .OrderBy(static animation => animation.ModelObjectId)
+                        .Select(static animation => animation.ToBinding())];
+                    FbxBlendShapeAnimationBinding[] frozenBlendShapeAnimations = [.. blendShapeAnimations.Values
+                        .OrderBy(static animation => animation.ChannelObjectId)
+                        .Select(static animation => animation.ToBinding())];
 
-            if (frozenNodeAnimations.Length == 0 && frozenBlendShapeAnimations.Length == 0)
-                continue;
+                    if (frozenNodeAnimations.Length == 0 && frozenBlendShapeAnimations.Length == 0)
+                        continue;
 
-            stacks.Add(new FbxAnimationStackBinding(
-                stackObject.Id,
-                stackObject.DisplayName,
-                stackObject.NodeIndex,
-                frozenNodeAnimations,
-                frozenBlendShapeAnimations));
-        }
+                    if (FbxTrace.IsEnabled(FbxLogVerbosity.Verbose))
+                    {
+                        FbxTrace.Verbose(
+                            "AnimationParser",
+                            $"Animation stack '{stackObject.DisplayName}' (objectId={stackObject.Id}) resolved {curveNodeIds.Count:N0} curve node(s), {frozenNodeAnimations.Length:N0} node animation binding(s), and {frozenBlendShapeAnimations.Length:N0} blend-shape animation binding(s).");
+                    }
 
-        return new FbxAnimationDocument([.. stacks.OrderBy(static stack => stack.ObjectIndex)], new Dictionary<long, FbxScalarCurve>(curvesByObjectId));
+                    stacks.Add(new FbxAnimationStackBinding(
+                        stackObject.Id,
+                        stackObject.DisplayName,
+                        stackObject.NodeIndex,
+                        frozenNodeAnimations,
+                        frozenBlendShapeAnimations));
+                }
+
+                return new FbxAnimationDocument([.. stacks.OrderBy(static stack => stack.ObjectIndex)], new Dictionary<long, FbxScalarCurve>(curvesByObjectId));
+            });
     }
 
     private static Dictionary<long, FbxScalarCurve> ParseCurves(FbxStructuralValueReader reader, FbxSemanticDocument semantic)

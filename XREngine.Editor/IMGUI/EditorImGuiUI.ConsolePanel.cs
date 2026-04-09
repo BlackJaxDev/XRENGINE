@@ -57,6 +57,7 @@ public static partial class EditorImGuiUI
             {
                 DrawConsoleTab("All", null);
                 DrawConsoleTab("General", ELogCategory.General);
+                DrawConsoleTab("Assets", ELogCategory.Assets);
                 DrawConsoleTab("Rendering", ELogCategory.Rendering);
                 DrawConsoleTab("OpenGL", ELogCategory.OpenGL);
                 DrawConsoleTab("Physics", ELogCategory.Physics);
@@ -183,6 +184,7 @@ public static partial class EditorImGuiUI
                 return category switch
                 {
                     ELogCategory.General => new Vector4(0.9f, 0.9f, 0.9f, 1.0f),
+                    ELogCategory.Assets => new Vector4(0.95f, 0.72f, 0.35f, 1.0f),
                     ELogCategory.Rendering => new Vector4(0.4f, 0.8f, 1.0f, 1.0f),
                     ELogCategory.OpenGL => new Vector4(0.4f, 1.0f, 0.4f, 1.0f),
                     ELogCategory.Physics => new Vector4(1.0f, 0.8f, 0.4f, 1.0f),
@@ -196,6 +198,7 @@ public static partial class EditorImGuiUI
             var color = category switch
             {
                 ELogCategory.General => theme.ConsoleGeneralColor,
+                ELogCategory.Assets => theme.ConsoleAssetsColor,
                 ELogCategory.Rendering => theme.ConsoleRenderingColor,
                 ELogCategory.OpenGL => theme.ConsoleOpenGLColor,
                 ELogCategory.Physics => theme.ConsolePhysicsColor,
@@ -212,6 +215,7 @@ public static partial class EditorImGuiUI
             return category switch
             {
                 ELogCategory.General => "[General]",
+                ELogCategory.Assets => "[Assets]",
                 ELogCategory.Rendering => "[Render]",
                 ELogCategory.OpenGL => "[OpenGL]",
                 ELogCategory.Physics => "[Physics]",

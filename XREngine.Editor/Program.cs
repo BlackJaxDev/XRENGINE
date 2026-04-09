@@ -21,6 +21,7 @@ using XREngine.Data.Core;
 using XREngine.Core.Files;
 using XREngine.Editor;
 using XREngine.Editor.Mcp;
+using XREngine.Fbx;
 using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -129,6 +130,7 @@ internal class Program
         UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.Load(false);
         UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
         UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
+        ConfigureFbxTraceLogging(settings);
         EditorUnitTests.SyncTogglesFromRuntime();
         BootstrapEditorHookRegistration.Register();
 
@@ -220,6 +222,28 @@ internal class Program
         XREngine.TraceListener.GlobalMessageCallback = PrintTraceToGeneralLog;
         XREngine.TraceListener.InstallGlobalListener();
         //ConsoleHelper.EnsureConsoleAttached();
+    }
+
+    private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
+    {
+        FbxTrace.LogSink = static message => EngineDebug.Assets(message);
+
+        if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
+            FbxTrace.RefreshFromEnvironment();
+        else
+        {
+            FbxTrace.Verbosity = settings.FbxLogVerbosity switch
+            {
+                UnitTestFbxLogVerbosity.Off => FbxLogVerbosity.Off,
+                UnitTestFbxLogVerbosity.Errors => FbxLogVerbosity.Errors,
+                UnitTestFbxLogVerbosity.Warnings => FbxLogVerbosity.Warnings,
+                UnitTestFbxLogVerbosity.Info => FbxLogVerbosity.Info,
+                UnitTestFbxLogVerbosity.Verbose => FbxLogVerbosity.Verbose,
+                _ => FbxLogVerbosity.Off,
+            };
+        }
+
+        WriteBootstrapTrace($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.");
     }
 
     private static void WriteBootstrapTrace(string message)

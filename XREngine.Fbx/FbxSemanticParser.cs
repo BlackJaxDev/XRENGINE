@@ -21,39 +21,58 @@ public static class FbxSemanticParser
     {
         ArgumentNullException.ThrowIfNull(structural);
 
-        policy ??= FbxSceneSemanticsPolicy.Default;
-        int[][] childrenByNode = BuildChildrenByNode(structural.Nodes);
+        return FbxTrace.TraceOperation(
+            "SemanticParser",
+            $"Parsing semantic document from structural model (nodes={structural.Nodes.Count:N0}, properties={structural.Properties.Count:N0}).",
+            document => $"Parsed semantics: objects={document.Objects.Count:N0} ({DescribeObjectCategories(document.Objects)}), connections={document.Connections.Count:N0}, takes={document.Takes.Count:N0}, intermediateNodes={document.IntermediateScene.Nodes.Count:N0}, meshes={document.IntermediateScene.Meshes.Count:N0}, materials={document.IntermediateScene.Materials.Count:N0}, textures={document.IntermediateScene.Textures.Count:N0}, skins={document.IntermediateScene.Skins.Count:N0}, clusters={document.IntermediateScene.Clusters.Count:N0}, blendShapes={document.IntermediateScene.BlendShapes.Count:N0}, animationStacks={document.IntermediateScene.AnimationStacks.Count:N0}",
+            () =>
+            {
+                policy ??= FbxSceneSemanticsPolicy.Default;
+                int[][] childrenByNode = BuildChildrenByNode(structural.Nodes);
 
-        int globalSettingsNodeIndex = FindTopLevelNode(structural, "GlobalSettings");
-        int definitionsNodeIndex = FindTopLevelNode(structural, "Definitions");
-        int objectsNodeIndex = FindTopLevelNode(structural, "Objects");
-        int connectionsNodeIndex = FindTopLevelNode(structural, "Connections");
-        int takesNodeIndex = FindTopLevelNode(structural, "Takes");
+                int globalSettingsNodeIndex = FindTopLevelNode(structural, "GlobalSettings");
+                int definitionsNodeIndex = FindTopLevelNode(structural, "Definitions");
+                int objectsNodeIndex = FindTopLevelNode(structural, "Objects");
+                int connectionsNodeIndex = FindTopLevelNode(structural, "Connections");
+                int takesNodeIndex = FindTopLevelNode(structural, "Takes");
 
-        FbxGlobalSettings? globalSettings = globalSettingsNodeIndex >= 0 ? ParseGlobalSettings(structural, childrenByNode, globalSettingsNodeIndex) : null;
-        FbxDefinitionType[] definitions = definitionsNodeIndex >= 0 ? ParseDefinitions(structural, childrenByNode, definitionsNodeIndex) : [];
-        FbxSceneObject[] objects = objectsNodeIndex >= 0 ? ParseObjects(structural, childrenByNode, objectsNodeIndex) : [];
-        FbxConnection[] connections = connectionsNodeIndex >= 0 ? ParseConnections(structural, childrenByNode, connectionsNodeIndex) : [];
-        FbxTake[] takes = takesNodeIndex >= 0 ? ParseTakes(structural, childrenByNode, takesNodeIndex) : [];
+                FbxGlobalSettings? globalSettings = globalSettingsNodeIndex >= 0 ? ParseGlobalSettings(structural, childrenByNode, globalSettingsNodeIndex) : null;
+                FbxDefinitionType[] definitions = definitionsNodeIndex >= 0 ? ParseDefinitions(structural, childrenByNode, definitionsNodeIndex) : [];
+                FbxSceneObject[] objects = objectsNodeIndex >= 0 ? ParseObjects(structural, childrenByNode, objectsNodeIndex) : [];
+                FbxConnection[] connections = connectionsNodeIndex >= 0 ? ParseConnections(structural, childrenByNode, connectionsNodeIndex) : [];
+                FbxTake[] takes = takesNodeIndex >= 0 ? ParseTakes(structural, childrenByNode, takesNodeIndex) : [];
 
-        Dictionary<long, int> objectIndexById = new(objects.Length);
-        for (int index = 0; index < objects.Length; index++)
-            objectIndexById[objects[index].Id] = index;
+                Dictionary<long, int> objectIndexById = new(objects.Length);
+                for (int index = 0; index < objects.Length; index++)
+                    objectIndexById[objects[index].Id] = index;
 
-        (int[][] outbound, int[][] inbound) = BuildConnectionIndices(objects, connections, objectIndexById);
-        FbxIntermediateScene intermediateScene = BuildIntermediateScene(policy, objects, connections, objectIndexById, outbound, inbound);
+                (int[][] outbound, int[][] inbound) = BuildConnectionIndices(objects, connections, objectIndexById);
+                FbxIntermediateScene intermediateScene = BuildIntermediateScene(policy, objects, connections, objectIndexById, outbound, inbound);
 
-        return new FbxSemanticDocument(
-            structural.Header,
-            globalSettings,
-            definitions,
-            objects,
-            connections,
-            takes,
-            intermediateScene,
-            objectIndexById,
-            outbound,
-            inbound);
+                return new FbxSemanticDocument(
+                    structural.Header,
+                    globalSettings,
+                    definitions,
+                    objects,
+                    connections,
+                    takes,
+                    intermediateScene,
+                    objectIndexById,
+                    outbound,
+                    inbound);
+            });
+    }
+
+    private static string DescribeObjectCategories(IReadOnlyList<FbxSceneObject> objects)
+    {
+        if (objects.Count == 0)
+            return "none";
+
+        return string.Join(", ",
+            objects
+                .GroupBy(static sceneObject => sceneObject.Category)
+                .OrderBy(static group => group.Key)
+                .Select(static group => $"{group.Key}={group.Count():N0}"));
     }
 
     private static int[][] BuildChildrenByNode(IReadOnlyList<FbxNodeRecord> nodes)

@@ -42,6 +42,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public Vector3 DefaultLuminance => Engine.Rendering.Settings.DefaultLuminance;
     public double RenderDeltaSeconds => Engine.Time.Timer.Render.Delta;
     public long LastRenderTimestampTicks => Engine.Time.Timer.Render.LastTimestampTicks;
+    public long TrackedVramBytes => Engine.Rendering.Stats.AllocatedVRAMBytes;
+    public long TrackedVramBudgetBytes => Engine.Rendering.Stats.VramBudgetBytes;
     public ETwoPlayerPreference TwoPlayerViewportPreference => Engine.GameSettings.TwoPlayerViewportPreference;
     public EThreePlayerPreference ThreePlayerViewportPreference => Engine.GameSettings.ThreePlayerViewportPreference;
     public RuntimeGraphicsApiKind CurrentRenderBackend => GetRendererBackend(AbstractRenderer.Current);
@@ -60,6 +62,14 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public byte[] ReadAllBytes(string filePath)
         => DirectStorageIO.ReadAllBytes(filePath);
+
+    public string ResolveTextureStreamingAuthorityPath(string filePath)
+        => Engine.Assets?.ResolveTextureStreamingAuthorityPath(filePath) ?? Path.GetFullPath(filePath);
+
+    public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
+        => AbstractRenderer.Current is OpenGLRenderer glRenderer
+            ? glRenderer.GetSparseTextureStreamingSupport(format)
+            : SparseTextureStreamingSupport.Unsupported("Sparse texture streaming currently requires the OpenGL renderer.");
 
     public EnumeratorJob ScheduleEnumeratorJob(
         Func<IEnumerable> routineFactory,

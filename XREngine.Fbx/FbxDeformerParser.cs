@@ -9,112 +9,133 @@ public static class FbxDeformerParser
         ArgumentNullException.ThrowIfNull(structural);
         ArgumentNullException.ThrowIfNull(semantic);
 
-        FbxStructuralValueReader reader = new(structural);
-
-        Dictionary<long, FbxSkinBinding> skinsByGeometryObjectId = new();
-        foreach (FbxIntermediateSkin skin in semantic.IntermediateScene.Skins)
-        {
-            if (!semantic.ObjectIndexById.TryGetValue(skin.ObjectId, out int skinObjectIndex))
-                continue;
-
-            long[] geometryObjectIds = [.. skin.ConnectedObjectIds.Where(objectId => semantic.TryGetObject(objectId, out FbxSceneObject sceneObject) && sceneObject.Category == FbxObjectCategory.Geometry)];
-            HashSet<long> clusterObjectIdsSet = [];
-            foreach (int connectionIndex in semantic.GetInboundConnectionIndices(skinObjectIndex))
+        return FbxTrace.TraceOperation(
+            "DeformerParser",
+            $"Parsing deformers for skins={semantic.IntermediateScene.Skins.Count:N0}, clusters={semantic.IntermediateScene.Clusters.Count:N0}, blendShapes={semantic.IntermediateScene.BlendShapes.Count:N0}.",
+            document => $"Parsed deformers: skinnedGeometries={document.SkinsByGeometryObjectId.Count:N0}, totalClusters={document.SkinsByGeometryObjectId.Values.Sum(static skin => skin.Clusters.Count):N0}, geometryBlendShapeSets={document.BlendShapeChannelsByGeometryObjectId.Count:N0}, blendShapeChannels={document.BlendShapeChannelsByGeometryObjectId.Values.Sum(static channels => channels.Length):N0}",
+            () =>
             {
-                FbxConnection connection = semantic.Connections[connectionIndex];
-                if (connection.Source.Id is not long sourceObjectId)
-                    continue;
-                if (!semantic.TryGetObject(sourceObjectId, out FbxSceneObject sceneObject))
-                    continue;
-                if (sceneObject.Category == FbxObjectCategory.Deformer && sceneObject.Subclass.Equals("Cluster", StringComparison.OrdinalIgnoreCase))
-                    clusterObjectIdsSet.Add(sourceObjectId);
-            }
+                FbxStructuralValueReader reader = new(structural);
 
-            long[] clusterObjectIds = [.. clusterObjectIdsSet];
-            if (geometryObjectIds.Length == 0 || clusterObjectIds.Length == 0)
-                continue;
-
-            List<FbxClusterBinding> clusters = [];
-            foreach (long clusterObjectId in clusterObjectIds)
-            {
-                FbxClusterBinding? clusterBinding = ParseClusterBinding(reader, semantic, clusterObjectId);
-                if (clusterBinding is not null)
-                    clusters.Add(clusterBinding);
-            }
-
-            if (clusters.Count == 0)
-                continue;
-
-            foreach (long geometryObjectId in geometryObjectIds)
-            {
-                if (skinsByGeometryObjectId.TryGetValue(geometryObjectId, out FbxSkinBinding? existingBinding))
+                Dictionary<long, FbxSkinBinding> skinsByGeometryObjectId = new();
+                foreach (FbxIntermediateSkin skin in semantic.IntermediateScene.Skins)
                 {
-                    skinsByGeometryObjectId[geometryObjectId] = existingBinding with
+                    if (!semantic.ObjectIndexById.TryGetValue(skin.ObjectId, out int skinObjectIndex))
+                        continue;
+
+                    long[] geometryObjectIds = [.. skin.ConnectedObjectIds.Where(objectId => semantic.TryGetObject(objectId, out FbxSceneObject sceneObject) && sceneObject.Category == FbxObjectCategory.Geometry)];
+                    HashSet<long> clusterObjectIdsSet = [];
+                    foreach (int connectionIndex in semantic.GetInboundConnectionIndices(skinObjectIndex))
                     {
-                        Clusters = existingBinding.Clusters.Concat(clusters).ToArray(),
-                    };
+                        FbxConnection connection = semantic.Connections[connectionIndex];
+                        if (connection.Source.Id is not long sourceObjectId)
+                            continue;
+                        if (!semantic.TryGetObject(sourceObjectId, out FbxSceneObject sceneObject))
+                            continue;
+                        if (sceneObject.Category == FbxObjectCategory.Deformer && sceneObject.Subclass.Equals("Cluster", StringComparison.OrdinalIgnoreCase))
+                            clusterObjectIdsSet.Add(sourceObjectId);
+                    }
+
+                    long[] clusterObjectIds = [.. clusterObjectIdsSet];
+                    if (geometryObjectIds.Length == 0 || clusterObjectIds.Length == 0)
+                        continue;
+
+                    List<FbxClusterBinding> clusters = [];
+                    foreach (long clusterObjectId in clusterObjectIds)
+                    {
+                        FbxClusterBinding? clusterBinding = ParseClusterBinding(reader, semantic, clusterObjectId);
+                        if (clusterBinding is not null)
+                            clusters.Add(clusterBinding);
+                    }
+
+                    if (clusters.Count == 0)
+                        continue;
+
+                    if (FbxTrace.IsEnabled(FbxLogVerbosity.Verbose))
+                    {
+                        FbxTrace.Verbose(
+                            "DeformerParser",
+                            $"Skin '{skin.Name}' (objectId={skin.ObjectId}) binds {clusters.Count:N0} clusters to {geometryObjectIds.Length:N0} geometry object(s).");
+                    }
+
+                    foreach (long geometryObjectId in geometryObjectIds)
+                    {
+                        if (skinsByGeometryObjectId.TryGetValue(geometryObjectId, out FbxSkinBinding? existingBinding))
+                        {
+                            skinsByGeometryObjectId[geometryObjectId] = existingBinding with
+                            {
+                                Clusters = existingBinding.Clusters.Concat(clusters).ToArray(),
+                            };
+                        }
+                        else
+                        {
+                            skinsByGeometryObjectId[geometryObjectId] = new FbxSkinBinding(geometryObjectId, skin.ObjectId, skin.Name, clusters.ToArray());
+                        }
+                    }
                 }
-                else
+
+                Dictionary<long, List<FbxBlendShapeChannelBinding>> blendShapeChannelsByGeometryObjectId = new();
+                Dictionary<long, FbxBlendShapeChannelBinding> blendShapeChannelsByObjectId = new();
+                foreach (FbxIntermediateBlendShape blendShape in semantic.IntermediateScene.BlendShapes)
                 {
-                    skinsByGeometryObjectId[geometryObjectId] = new FbxSkinBinding(geometryObjectId, skin.ObjectId, skin.Name, clusters.ToArray());
+                    if (!blendShape.Subclass.Equals("BlendShapeChannel", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (!semantic.TryGetObject(blendShape.ObjectId, out FbxSceneObject channelObject))
+                        continue;
+
+                    long? shapeGeometryObjectId = FindConnectedObjectId(
+                        blendShape.ConnectedObjectIds,
+                        semantic,
+                        static sceneObject => sceneObject.Category == FbxObjectCategory.Geometry && sceneObject.Subclass.Equals("Shape", StringComparison.OrdinalIgnoreCase));
+                    if (!shapeGeometryObjectId.HasValue)
+                        continue;
+
+                    long? blendShapeObjectId = FindConnectedObjectId(
+                        blendShape.ConnectedObjectIds,
+                        semantic,
+                        static sceneObject => sceneObject.Category == FbxObjectCategory.Deformer && sceneObject.Subclass.Equals("BlendShape", StringComparison.OrdinalIgnoreCase));
+                    if (!blendShapeObjectId.HasValue || !semantic.TryGetObject(blendShapeObjectId.Value, out FbxSceneObject blendShapeObject))
+                        continue;
+
+                    FbxIntermediateBlendShape? blendShapeOwner = semantic.IntermediateScene.BlendShapes.FirstOrDefault(entry => entry.ObjectId == blendShapeObjectId.Value);
+                    long? geometryObjectId = blendShapeOwner is not null
+                        ? FindConnectedObjectId(
+                            blendShapeOwner.ConnectedObjectIds,
+                            semantic,
+                            static sceneObject => sceneObject.Category == FbxObjectCategory.Geometry && sceneObject.Subclass.Equals("Mesh", StringComparison.OrdinalIgnoreCase))
+                        : null;
+                    if (!geometryObjectId.HasValue)
+                        geometryObjectId = FindConnectedObjectIdToObject(semantic, blendShapeObject.Id, static sceneObject => sceneObject.Category == FbxObjectCategory.Geometry && sceneObject.Subclass.Equals("Mesh", StringComparison.OrdinalIgnoreCase));
+                    if (!geometryObjectId.HasValue)
+                        continue;
+
+                    FbxBlendShapeChannelBinding? channelBinding = ParseBlendShapeChannelBinding(reader, semantic, geometryObjectId.Value, channelObject, shapeGeometryObjectId.Value);
+                    if (channelBinding is null)
+                        continue;
+
+                    if (FbxTrace.IsEnabled(FbxLogVerbosity.Verbose))
+                    {
+                        FbxTrace.Verbose(
+                            "DeformerParser",
+                            $"Blend shape channel '{channelBinding.Name}' (channelObjectId={channelBinding.ChannelObjectId}) targets geometryObjectId={channelBinding.GeometryObjectId} with {channelBinding.PositionDeltasByControlPoint.Count:N0} position delta(s) and {channelBinding.NormalDeltasByControlPoint.Count:N0} normal delta(s).");
+                    }
+
+                    blendShapeChannelsByObjectId[channelBinding.ChannelObjectId] = channelBinding;
+                    if (!blendShapeChannelsByGeometryObjectId.TryGetValue(channelBinding.GeometryObjectId, out List<FbxBlendShapeChannelBinding>? channels))
+                    {
+                        channels = [];
+                        blendShapeChannelsByGeometryObjectId[channelBinding.GeometryObjectId] = channels;
+                    }
+
+                    channels.Add(channelBinding);
                 }
-            }
-        }
 
-        Dictionary<long, List<FbxBlendShapeChannelBinding>> blendShapeChannelsByGeometryObjectId = new();
-        Dictionary<long, FbxBlendShapeChannelBinding> blendShapeChannelsByObjectId = new();
-        foreach (FbxIntermediateBlendShape blendShape in semantic.IntermediateScene.BlendShapes)
-        {
-            if (!blendShape.Subclass.Equals("BlendShapeChannel", StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (!semantic.TryGetObject(blendShape.ObjectId, out FbxSceneObject channelObject))
-                continue;
+                Dictionary<long, FbxBlendShapeChannelBinding[]> frozenBlendShapeChannels = new(blendShapeChannelsByGeometryObjectId.Count);
+                foreach ((long geometryObjectId, List<FbxBlendShapeChannelBinding> bindings) in blendShapeChannelsByGeometryObjectId)
+                    frozenBlendShapeChannels[geometryObjectId] = [.. bindings.OrderBy(static binding => binding.ChannelObjectId)];
 
-            long? shapeGeometryObjectId = FindConnectedObjectId(
-                blendShape.ConnectedObjectIds,
-                semantic,
-                static sceneObject => sceneObject.Category == FbxObjectCategory.Geometry && sceneObject.Subclass.Equals("Shape", StringComparison.OrdinalIgnoreCase));
-            if (!shapeGeometryObjectId.HasValue)
-                continue;
-
-            long? blendShapeObjectId = FindConnectedObjectId(
-                blendShape.ConnectedObjectIds,
-                semantic,
-                static sceneObject => sceneObject.Category == FbxObjectCategory.Deformer && sceneObject.Subclass.Equals("BlendShape", StringComparison.OrdinalIgnoreCase));
-            if (!blendShapeObjectId.HasValue || !semantic.TryGetObject(blendShapeObjectId.Value, out FbxSceneObject blendShapeObject))
-                continue;
-
-            FbxIntermediateBlendShape? blendShapeOwner = semantic.IntermediateScene.BlendShapes.FirstOrDefault(entry => entry.ObjectId == blendShapeObjectId.Value);
-            long? geometryObjectId = blendShapeOwner is not null
-                ? FindConnectedObjectId(
-                    blendShapeOwner.ConnectedObjectIds,
-                    semantic,
-                    static sceneObject => sceneObject.Category == FbxObjectCategory.Geometry && sceneObject.Subclass.Equals("Mesh", StringComparison.OrdinalIgnoreCase))
-                : null;
-            if (!geometryObjectId.HasValue)
-                geometryObjectId = FindConnectedObjectIdToObject(semantic, blendShapeObject.Id, static sceneObject => sceneObject.Category == FbxObjectCategory.Geometry && sceneObject.Subclass.Equals("Mesh", StringComparison.OrdinalIgnoreCase));
-            if (!geometryObjectId.HasValue)
-                continue;
-
-            FbxBlendShapeChannelBinding? channelBinding = ParseBlendShapeChannelBinding(reader, semantic, geometryObjectId.Value, channelObject, shapeGeometryObjectId.Value);
-            if (channelBinding is null)
-                continue;
-
-            blendShapeChannelsByObjectId[channelBinding.ChannelObjectId] = channelBinding;
-            if (!blendShapeChannelsByGeometryObjectId.TryGetValue(channelBinding.GeometryObjectId, out List<FbxBlendShapeChannelBinding>? channels))
-            {
-                channels = [];
-                blendShapeChannelsByGeometryObjectId[channelBinding.GeometryObjectId] = channels;
-            }
-
-            channels.Add(channelBinding);
-        }
-
-        Dictionary<long, FbxBlendShapeChannelBinding[]> frozenBlendShapeChannels = new(blendShapeChannelsByGeometryObjectId.Count);
-        foreach ((long geometryObjectId, List<FbxBlendShapeChannelBinding> bindings) in blendShapeChannelsByGeometryObjectId)
-            frozenBlendShapeChannels[geometryObjectId] = [.. bindings.OrderBy(static binding => binding.ChannelObjectId)];
-
-        return new FbxDeformerDocument(skinsByGeometryObjectId, frozenBlendShapeChannels, blendShapeChannelsByObjectId);
+                return new FbxDeformerDocument(skinsByGeometryObjectId, frozenBlendShapeChannels, blendShapeChannelsByObjectId);
+            });
     }
 
     private static FbxClusterBinding? ParseClusterBinding(FbxStructuralValueReader reader, FbxSemanticDocument semantic, long clusterObjectId)

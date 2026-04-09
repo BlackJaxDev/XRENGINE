@@ -2,6 +2,7 @@
 #extension GL_OVR_multiview2 : require
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "DepthUtils"
 
 const float PI = 3.14159265359f;
 const float HALF_PI = 1.57079632679f;
@@ -20,7 +21,6 @@ uniform int StepsPerSlice = 6;
 uniform float FalloffStartRatio = 0.4f;
 uniform float ThicknessHeuristic = 1.0f;
 uniform bool UseInputNormals = true;
-uniform int DepthMode;
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
@@ -37,14 +37,16 @@ bool AOIsFarDepth(float depth)
     return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
 }
 
-vec3 ViewPosFromDepth(float depth, vec2 uv, mat4 inverseProjMatrix)
+// Fast polynomial acos approximation (max error ~0.02 rad)
+float FastAcos(float x)
 {
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
-    return viewSpacePosition.xyz / max(viewSpacePosition.w, 1e-5f);
+    float ax = abs(x);
+    float r = (-0.0187293f * ax + 0.0742610f) * ax - 0.2121144f;
+    r = (r * ax + 1.5707288f) * sqrt(max(1.0f - ax, 0.0f));
+    return x < 0.0f ? PI - r : r;
 }
 
-vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, mat4 inverseProjMatrix)
+vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, float invProjX, float invProjY, float projZScale, float projZBias)
 {
     if (UseInputNormals)
     {
@@ -59,8 +61,8 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, mat4 inverseProjMat
     float depthY = texture(DepthView, vec3(uvY, gl_ViewID_OVR)).r;
     if (AOIsFarDepth(depthX) || AOIsFarDepth(depthY))
         return vec3(0.0f, 0.0f, 1.0f);
-    vec3 posX = ViewPosFromDepth(depthX, uvX, inverseProjMatrix);
-    vec3 posY = ViewPosFromDepth(depthY, uvY, inverseProjMatrix);
+    vec3 posX = XRENGINE_ViewPosFromDepthFast(depthX, uvX, invProjX, invProjY, projZScale, projZBias);
+    vec3 posY = XRENGINE_ViewPosFromDepthFast(depthY, uvY, invProjX, invProjY, projZScale, projZBias);
     return normalize(cross(posX - centerPos, posY - centerPos));
 }
 
@@ -95,14 +97,20 @@ void main()
     mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
     mat4 projMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
+    // Precompute fast reconstruction constants once per pixel
+    float invProjX = 1.0f / projMatrix[0][0];
+    float invProjY = 1.0f / projMatrix[1][1];
+    float projZScale = inverseProjMatrix[2][2];
+    float projZBias  = inverseProjMatrix[3][2];
+
     float depth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
     if (AOIsFarDepth(depth))
     {
         OutIntensity = 1.0f;
         return;
     }
-    vec3 centerPos = ViewPosFromDepth(depth, uv, inverseProjMatrix);
-    vec3 centerNormal = GetViewNormal(uv, centerPos, viewMatrix, inverseProjMatrix);
+    vec3 centerPos = XRENGINE_ViewPosFromDepthFast(depth, uv, invProjX, invProjY, projZScale, projZBias);
+    vec3 centerNormal = GetViewNormal(uv, centerPos, viewMatrix, invProjX, invProjY, projZScale, projZBias);
     vec3 viewDir = normalize(-centerPos);
 
     float radiusVS = max(Radius, 0.001f);
@@ -115,9 +123,6 @@ void main()
     int stepCount = clamp(StepsPerSlice, 1, 16);
     float baseAngle = (InterleavedGradientNoise(floor(gl_FragCoord.xy) + vec2(float(gl_ViewID_OVR) * 13.0f, 0.0f)) - 0.5f) * (PI / float(sliceCount));
     float stepJitter = InterleavedGradientNoise(floor(gl_FragCoord.xy) + vec2(17.0f, 43.0f + float(gl_ViewID_OVR) * 19.0f));
-
-    float invProjX = 1.0f / projMatrix[0][0];
-    float invProjY = 1.0f / projMatrix[1][1];
 
     float visibility = 0.0f;
 
@@ -156,7 +161,7 @@ void main()
                 float fDepth = texture(DepthView, vec3(fUV, gl_ViewID_OVR)).r;
                 if (!AOIsFarDepth(fDepth))
                 {
-                    vec3 fPos = ViewPosFromDepth(fDepth, fUV, projMatrix);
+                    vec3 fPos = XRENGINE_ViewPosFromDepthFast(fDepth, fUV, invProjX, invProjY, projZScale, projZBias);
                     vec3 delta = fPos - centerPos;
                     float dist = length(delta);
 
@@ -168,7 +173,7 @@ void main()
                         if (projLen > 1e-5f)
                         {
                             projDelta /= projLen;
-                            float candidateH = acos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
+                            float candidateH = FastAcos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
 
                             float falloff = 1.0f - smoothstep(falloffStart, radiusVS, dist);
 
@@ -191,7 +196,7 @@ void main()
                 float bDepth = texture(DepthView, vec3(bUV, gl_ViewID_OVR)).r;
                 if (!AOIsFarDepth(bDepth))
                 {
-                    vec3 bPos = ViewPosFromDepth(bDepth, bUV, projMatrix);
+                    vec3 bPos = XRENGINE_ViewPosFromDepthFast(bDepth, bUV, invProjX, invProjY, projZScale, projZBias);
                     vec3 delta = bPos - centerPos;
                     float dist = length(delta);
 
@@ -203,7 +208,7 @@ void main()
                         if (projLen > 1e-5f)
                         {
                             projDelta /= projLen;
-                            float candidateH = acos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
+                            float candidateH = FastAcos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
 
                             float falloff = 1.0f - smoothstep(falloffStart, radiusVS, dist);
 

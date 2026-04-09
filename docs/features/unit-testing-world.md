@@ -100,8 +100,13 @@ Use `ModelsToImport` to add one or more assets at startup. Each entry can choose
 - whether it is enabled
 - static vs animated import
 - material mode
+- importer backend preference
 - import flags
 - scale and transform offsets
+
+`ImporterBackend` defaults to `PreferNativeThenAssimp`, which uses a native importer when the format has one available and falls back to Assimp otherwise. Today that native path exists only for FBX. Set `ImporterBackend` to `AssimpOnly` if you need to force the older FBX compatibility path for a specific startup import.
+
+`FbxLogVerbosity` controls how much native FBX importer/exporter trace output is emitted while the unit-testing world boots. When enabled, those lines go through the engine `Assets` log category, so they show up in the editor console `Assets` tab and in `Build/Logs/.../log_assets.txt` when file logging is enabled.
 
 This is the fastest way to spin up repeatable import tests without hand-building the scene each time.
 

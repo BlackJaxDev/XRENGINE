@@ -37,19 +37,40 @@ public static class FbxBinaryWriter
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(rootNodes);
 
-        options ??= new FbxBinaryExportOptions();
-        ValidateOptions(options);
+        FbxTrace.TraceOperation(
+            "BinaryWriter",
+            $"Writing binary FBX stream (rootNodes={rootNodes.Count:N0}, options={DescribeOptions(options)}).",
+            () =>
+            {
+                options ??= new FbxBinaryExportOptions();
+                ValidateOptions(options);
 
-        EncodedNode[] encodedRoots = [.. rootNodes.Select(node => PrepareNode(node, options))];
+                EncodedNode[] encodedRoots = [.. rootNodes.Select(node => PrepareNode(node, options))];
 
-        WriteHeader(stream, options);
-        long absoluteOffset = stream.Position;
-        foreach (EncodedNode root in encodedRoots)
-            WriteNode(stream, root, ref absoluteOffset, options);
+                if (FbxTrace.IsEnabled(FbxLogVerbosity.Verbose))
+                {
+                    long serializedPayloadBytes = encodedRoots.Sum(static node => node.SerializedSize);
+                    FbxTrace.Verbose(
+                        "BinaryWriter",
+                        $"Prepared {encodedRoots.Length:N0} encoded root node(s) with serializedPayloadBytes={serializedPayloadBytes:N0} before header/footer emission.");
+                }
 
-        WriteSentinel(stream, options.BinaryVersion);
-        if (options.IncludeFooter)
-            WriteFooter(stream, options);
+                WriteHeader(stream, options);
+                long absoluteOffset = stream.Position;
+                foreach (EncodedNode root in encodedRoots)
+                    WriteNode(stream, root, ref absoluteOffset, options);
+
+                WriteSentinel(stream, options.BinaryVersion);
+                if (options.IncludeFooter)
+                    WriteFooter(stream, options);
+            },
+            () => $"Wrote binary FBX stream with rootNodes={rootNodes.Count:N0}, finalPosition={(stream.CanSeek ? stream.Position.ToString("N0") : "n/a")}");
+    }
+
+    private static string DescribeOptions(FbxBinaryExportOptions? options)
+    {
+        FbxBinaryExportOptions resolvedOptions = options ?? new FbxBinaryExportOptions();
+        return $"version={resolvedOptions.BinaryVersion}, bigEndian={resolvedOptions.BigEndian}, footer={resolvedOptions.IncludeFooter}, arrayEncoding={resolvedOptions.ArrayEncodingMode}";
     }
 
     private static void ValidateOptions(FbxBinaryExportOptions options)

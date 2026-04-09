@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,6 +14,7 @@ using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Diagnostics;
+using XREngine.Rendering;
 using XREngine.Serialization;
 
 namespace XREngine
@@ -580,6 +582,35 @@ namespace XREngine
             return timestampUtc != DateTime.MinValue;
         }
 
+        internal string ResolveTextureStreamingAuthorityPath(string filePath)
+            => ResolveThirdPartyCacheAuthorityPath<XRTexture2D>(filePath);
+
+        internal string ResolveThirdPartyCacheAuthorityPath<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(
+            string filePath,
+            object? importOptions = null,
+            string? cacheVariantKey = null) where T : XRAsset, new()
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                return filePath;
+
+            string normalizedPath = Path.GetFullPath(filePath);
+            if (string.Equals(Path.GetExtension(normalizedPath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                return normalizedPath;
+
+            if (!File.Exists(normalizedPath))
+                return normalizedPath;
+
+            if (!TryResolveCachePath(normalizedPath, typeof(T), cacheVariantKey, out string cachePath))
+                return normalizedPath;
+
+            if (IsCacheAssetFresh(cachePath, normalizedPath, typeof(T)))
+                return cachePath;
+
+            return TryImportThirdPartyCacheAsset(normalizedPath, typeof(T), importOptions, cacheVariantKey, cachePath)
+                ? cachePath
+                : normalizedPath;
+        }
+
         internal T? Load3rdPartyVariantWithCache<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, object? importOptions, string cacheVariantKey, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false) where T : XRAsset, new()
             => RunOnJobThreadBlocking(() => Load3rdPartyVariantWithCacheCore<T>(filePath, importOptions, cacheVariantKey), priority, bypassJobThread);
 
@@ -621,41 +652,42 @@ namespace XREngine
             return asset;
         }
 
+        private bool TryImportThirdPartyCacheAsset(
+            string filePath,
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type assetType,
+            object? importOptions,
+            string? cacheVariantKey,
+            string cachePath)
+        {
+            if (!TryGetSourceTimestamp(filePath, out DateTime timestampUtc))
+                return false;
+
+            if (Activator.CreateInstance(assetType) is not XRAsset asset)
+                return false;
+
+            asset.Name = Path.GetFileNameWithoutExtension(filePath);
+            asset.FilePath = cachePath;
+            asset.OriginalPath = filePath;
+            asset.OriginalLastWriteTimeUtc = timestampUtc;
+
+            AssetImportContext context = CreateImportContext(filePath, cacheVariantKey);
+            if (!asset.Load3rdParty(filePath, importOptions, context))
+                return false;
+
+            TryWriteCacheAsset(cachePath, asset);
+            return File.Exists(cachePath);
+        }
+
         private bool TryResolveCachePath(string filePath, Type assetType, string? cacheVariantKey, out string cachePath)
         {
             cachePath = string.Empty;
-            if (string.IsNullOrWhiteSpace(GameCachePath))
+            if (!TryResolveCacheDirectory(filePath, cacheVariantKey, out string cacheDirectory))
                 return false;
 
             string normalizedSource = Path.GetFullPath(filePath);
-
-            // Try game assets first, then engine assets.
-            string? relativePath = TryMakeRelativeTo(normalizedSource, GameAssetsPath);
-            string cacheSubfolder = string.Empty;
-            if (relativePath is null)
-            {
-                relativePath = TryMakeRelativeTo(normalizedSource, EngineAssetsPath);
-                cacheSubfolder = "Engine";
-            }
-
-            if (relativePath is null)
-                return false;
-
-            string? relativeDirectory = Path.GetDirectoryName(relativePath);
-            string originalFileName = Path.GetFileName(relativePath);
+            string originalFileName = Path.GetFileName(normalizedSource);
             string typeSuffix = assetType.FullName ?? assetType.Name;
             string cacheFileName = $"{originalFileName}.{typeSuffix}.{AssetExtension}";
-
-            string cacheRoot = string.IsNullOrEmpty(cacheSubfolder)
-                ? GameCachePath!
-                : Path.Combine(GameCachePath!, cacheSubfolder);
-
-            string? cacheDirectory = string.IsNullOrWhiteSpace(relativeDirectory)
-                ? cacheRoot
-                : Path.Combine(cacheRoot, relativeDirectory);
-
-            if (!string.IsNullOrWhiteSpace(cacheVariantKey))
-                cacheDirectory = Path.Combine(cacheDirectory, cacheVariantKey);
 
             cachePath = Path.Combine(cacheDirectory, cacheFileName);
             return true;
@@ -675,6 +707,77 @@ namespace XREngine
 
             string relative = Path.GetRelativePath(normalizedRoot, normalizedSource);
             return relative.StartsWith("..", StringComparison.Ordinal) ? null : relative;
+        }
+
+        private bool TryResolveCacheDirectory(string filePath, string? cacheVariantKey, out string cacheDirectory)
+        {
+            cacheDirectory = string.Empty;
+            if (string.IsNullOrWhiteSpace(GameCachePath))
+                return false;
+
+            string normalizedSource = Path.GetFullPath(filePath);
+
+            string? relativePath = TryMakeRelativeTo(normalizedSource, GameAssetsPath);
+            string cacheRoot = GameCachePath!;
+            if (relativePath is null)
+            {
+                relativePath = TryMakeRelativeTo(normalizedSource, EngineAssetsPath);
+                if (relativePath is not null)
+                    cacheRoot = Path.Combine(GameCachePath!, "Engine");
+            }
+
+            if (relativePath is not null)
+            {
+                string? relativeDirectory = Path.GetDirectoryName(relativePath);
+                cacheDirectory = string.IsNullOrWhiteSpace(relativeDirectory)
+                    ? cacheRoot
+                    : Path.Combine(cacheRoot, relativeDirectory);
+            }
+            else
+            {
+                cacheDirectory = Path.Combine(
+                    GameCachePath!,
+                    "External",
+                    GetExternalCacheDirectoryName(normalizedSource));
+            }
+
+            if (!string.IsNullOrWhiteSpace(cacheVariantKey))
+                cacheDirectory = Path.Combine(cacheDirectory, cacheVariantKey);
+
+            return true;
+        }
+
+        private bool IsCacheAssetFresh(string cachePath, string sourcePath, Type assetType)
+        {
+            if (!File.Exists(cachePath))
+                return false;
+
+            DateTime cacheTimestampUtc = File.GetLastWriteTimeUtc(cachePath);
+            if (cacheTimestampUtc == DateTime.MinValue)
+                return false;
+
+            if (!TryGetSourceTimestamp(sourcePath, out DateTime sourceTimestampUtc))
+                return false;
+
+            if (cacheTimestampUtc < sourceTimestampUtc)
+                return false;
+
+            if (TryResolveImportOptionsPath(sourcePath, assetType, out string importOptionsPath)
+                && File.Exists(importOptionsPath))
+            {
+                DateTime importOptionsTimestampUtc = File.GetLastWriteTimeUtc(importOptionsPath);
+                if (importOptionsTimestampUtc != DateTime.MinValue && cacheTimestampUtc < importOptionsTimestampUtc)
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static string GetExternalCacheDirectoryName(string normalizedSource)
+        {
+            byte[] sourceBytes = Encoding.UTF8.GetBytes(normalizedSource);
+            byte[] hash = SHA256.HashData(sourceBytes);
+            return Convert.ToHexString(hash.AsSpan(0, 8));
         }
 
         private static bool TryLoadCachedAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc, out T? asset) where T : XRAsset, new()
@@ -799,33 +902,9 @@ namespace XREngine
 
         private AssetImportContext CreateImportContext(string filePath, string? cacheVariantKey)
         {
-            string? cacheDir = null;
-            if (!string.IsNullOrWhiteSpace(GameCachePath))
-            {
-                string normalizedSource = Path.GetFullPath(filePath);
-                string? relativePath = TryMakeRelativeTo(normalizedSource, GameAssetsPath);
-                string cacheSubfolder = string.Empty;
-                if (relativePath is null)
-                {
-                    relativePath = TryMakeRelativeTo(normalizedSource, EngineAssetsPath);
-                    cacheSubfolder = "Engine";
-                }
-
-                if (relativePath is not null)
-                {
-                    string? relativeDirectory = Path.GetDirectoryName(relativePath);
-                    string cacheRoot = string.IsNullOrEmpty(cacheSubfolder)
-                        ? GameCachePath!
-                        : Path.Combine(GameCachePath!, cacheSubfolder);
-                    cacheDir = string.IsNullOrWhiteSpace(relativeDirectory)
-                        ? cacheRoot
-                        : Path.Combine(cacheRoot, relativeDirectory);
-
-                    if (!string.IsNullOrWhiteSpace(cacheVariantKey))
-                        cacheDir = Path.Combine(cacheDir, cacheVariantKey);
-                }
-            }
-
+            string? cacheDir = TryResolveCacheDirectory(filePath, cacheVariantKey, out string resolvedCacheDir)
+                ? resolvedCacheDir
+                : null;
             return new AssetImportContext(filePath, cacheDir);
         }
 

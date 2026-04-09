@@ -258,6 +258,8 @@ namespace XREngine.Rendering.OpenGL
                     Debug.OpenGL("GL_ARB_parallel_shader_compile enabled — shader compilation is non-blocking.");
                 }
 
+                InitializeSparseTextureSupport(extensions);
+
                 // Ray tracing / DLSS / XeSS are Vulkan-focused; do not probe GL_NV_ray_tracing on OpenGL startup.
                 Engine.Rendering.State.HasNvRayTracing = false;
                 Engine.Rendering.State.HasVulkanRayTracing = false;

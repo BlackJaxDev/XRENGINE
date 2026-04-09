@@ -28,6 +28,22 @@ public static partial class EditorUnitTests
         Uber,
     }
 
+    public enum ModelImportBackendPreference
+    {
+        PreferNativeThenAssimp,
+        AssimpOnly,
+    }
+
+    public enum UnitTestFbxLogVerbosity
+    {
+        UseEnvironment,
+        Off,
+        Errors,
+        Warnings,
+        Info,
+        Verbose,
+    }
+
     public enum UnitTestWorldKind
     {
         Default,
@@ -90,6 +106,7 @@ public static partial class EditorUnitTests
         public bool UltralightWebView = false; //Adds an Ultralight web view component to the scene for testing web page rendering.
         public string UltralightWebViewUrl { get; set; } = "https://blackjaxvr.com"; //Page URL used by the Ultralight web view test component.
         public bool EnableProfilerLogging = true; //Enables Engine.Profiler frame logging even without Dear ImGui.
+        public UnitTestFbxLogVerbosity FbxLogVerbosity { get; set; } = UnitTestFbxLogVerbosity.UseEnvironment; //Controls native FBX importer/exporter trace verbosity. UseEnvironment defers to XRE_FBX_LOG and routes enabled traces to the Assets log category.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
         public bool GPURenderDispatch = false; //Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
         public bool StartInPlayModeWithoutTransitions = false; //Starts in play mode immediately without the edit->play transition.
@@ -149,6 +166,15 @@ public static partial class EditorUnitTests
             /// Materials without alpha stay in the deferred pipeline.
             /// </summary>
             public bool UseForwardForTransparent { get; set; } = false;
+
+            /// <summary>
+            /// Selects how this model import chooses between native format-specific importers
+            /// and Assimp fallback. PreferNativeThenAssimp uses a native importer when the
+            /// format has one available and falls back to Assimp otherwise. Today the native
+            /// path exists only for FBX.
+            /// </summary>
+            public ModelImportBackendPreference ImporterBackend { get; set; } = ModelImportBackendPreference.PreferNativeThenAssimp;
+
             public string Path { get; set; } = string.Empty;
             public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
             public float Scale { get; set; } = 1.0f;

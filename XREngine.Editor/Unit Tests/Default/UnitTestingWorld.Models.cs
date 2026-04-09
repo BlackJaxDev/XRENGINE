@@ -84,14 +84,31 @@ public static partial class EditorUnitTests
             return transform == Matrix4x4.Identity ? null : transform;
         }
 
-        private static ModelImportOptions? CreateImportOptions(Settings.ModelImportSettings model)
+        private static FbxImportBackend ResolveFbxBackend(Settings.ModelImportSettings model)
+            => model.ImporterBackend switch
+            {
+                ModelImportBackendPreference.AssimpOnly => FbxImportBackend.AssimpLegacy,
+                _ => FbxImportBackend.Auto,
+            };
+
+        internal static ModelImportOptions? CreateImportOptions(Settings.ModelImportSettings model)
         {
-            if (!model.GenerateCoacdCollidersPerSubmesh && !model.SplitSubmeshesIntoSeparateModelComponents)
+            bool splitSubmeshes = model.SplitSubmeshesIntoSeparateModelComponents
+                || (model.Kind is UnitTestModelImportKind.Static && model.GenerateCoacdCollidersPerSubmesh);
+
+            bool needsImportOptions = splitSubmeshes
+                || model.ImporterBackend is ModelImportBackendPreference.AssimpOnly;
+
+            if (!needsImportOptions)
                 return null;
 
             return new ModelImportOptions
             {
-                SplitSubmeshesIntoSeparateModelComponents = model.SplitSubmeshesIntoSeparateModelComponents,
+                LegacyPostProcessSteps = model.ImportFlags,
+                ScaleConversion = model.Scale,
+                ZUp = model.ZUp,
+                FbxBackend = ResolveFbxBackend(model),
+                SplitSubmeshesIntoSeparateModelComponents = splitSubmeshes,
             };
         }
 
@@ -166,9 +183,11 @@ public static partial class EditorUnitTests
                     {
                         SceneNode? ImportAnimated()
                         {
+                            ModelImportOptions? importOptions = CreateImportOptions(model);
                             using var importer = new ModelImporter(resolvedPath, null, null);
                             importer.MakeMaterialAction = ResolveMakeMaterialAction(model);
                             importer.MakeTextureAction = CreateHardcodedTexture;
+                            importer.ImportOptions = importOptions;
                             var node = importer.Import(
                                 model.ImportFlags,
                                 preservePivots: true,

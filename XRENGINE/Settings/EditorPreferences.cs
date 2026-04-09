@@ -750,6 +750,7 @@ namespace XREngine
 
         // Console log category colors
         private ColorF4 _consoleGeneralColor = new ColorF4(0.9f, 0.9f, 0.9f, 1.0f);    // White/Gray
+        private ColorF4 _consoleAssetsColor = new ColorF4(0.95f, 0.72f, 0.35f, 1.0f);   // Amber
         private ColorF4 _consoleRenderingColor = new ColorF4(0.4f, 0.8f, 1.0f, 1.0f);  // Light Blue
         private ColorF4 _consoleOpenGLColor = new ColorF4(0.4f, 1.0f, 0.4f, 1.0f);     // Light Green
         private ColorF4 _consolePhysicsColor = new ColorF4(1.0f, 0.8f, 0.4f, 1.0f);    // Orange
@@ -883,6 +884,15 @@ namespace XREngine
         }
 
         [Category("Console Colors")]
+        [DisplayName("Console Assets Color")]
+        [Description("The color used for Assets log entries in the console.")]
+        public ColorF4 ConsoleAssetsColor
+        {
+            get => _consoleAssetsColor;
+            set => SetField(ref _consoleAssetsColor, value);
+        }
+
+        [Category("Console Colors")]
         [DisplayName("Console Rendering Color")]
         [Description("The color used for Rendering log entries in the console.")]
         public ColorF4 ConsoleRenderingColor
@@ -946,6 +956,7 @@ namespace XREngine
             TransformLineColor = source.TransformLineColor;
             TransformCapsuleColor = source.TransformCapsuleColor;
             ConsoleGeneralColor = source.ConsoleGeneralColor;
+            ConsoleAssetsColor = source.ConsoleAssetsColor;
             ConsoleRenderingColor = source.ConsoleRenderingColor;
             ConsoleOpenGLColor = source.ConsoleOpenGLColor;
             ConsolePhysicsColor = source.ConsolePhysicsColor;
@@ -999,6 +1010,9 @@ namespace XREngine
 
             if (overrides.ConsoleGeneralColorOverride is { HasOverride: true } cgOverride)
                 ConsoleGeneralColor = cgOverride.Value;
+
+            if (overrides.ConsoleAssetsColorOverride is { HasOverride: true } casOverride)
+                ConsoleAssetsColor = casOverride.Value;
 
             if (overrides.ConsoleRenderingColorOverride is { HasOverride: true } crOverride)
                 ConsoleRenderingColor = crOverride.Value;

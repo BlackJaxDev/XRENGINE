@@ -1,6 +1,7 @@
 #version 450
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "DepthUtils"
 
 const float PI = 3.14159265359f;
 const float HALF_PI = 1.57079632679f;
@@ -19,7 +20,6 @@ uniform int StepsPerSlice = 6;
 uniform float FalloffStartRatio = 0.4f;
 uniform float ThicknessHeuristic = 1.0f; // 0 = disabled, 1 = full thin-occluder correction
 uniform bool UseInputNormals = true;
-uniform int DepthMode;
 
 uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
@@ -32,14 +32,16 @@ bool AOIsFarDepth(float depth)
     return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
 }
 
-vec3 ViewPosFromDepth(float depth, vec2 uv)
+// Fast polynomial acos approximation (max error ~0.02 rad)
+float FastAcos(float x)
 {
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
-    return viewSpacePosition.xyz / max(viewSpacePosition.w, 1e-5f);
+    float ax = abs(x);
+    float r = (-0.0187293f * ax + 0.0742610f) * ax - 0.2121144f;
+    r = (r * ax + 1.5707288f) * sqrt(max(1.0f - ax, 0.0f));
+    return x < 0.0f ? PI - r : r;
 }
 
-vec3 GetViewNormal(vec2 uv, vec3 centerPos)
+vec3 GetViewNormal(vec2 uv, vec3 centerPos, float invProjX, float invProjY, float projZScale, float projZBias)
 {
     if (UseInputNormals)
     {
@@ -54,8 +56,8 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos)
     float depthY = texture(DepthView, uvY).r;
     if (AOIsFarDepth(depthX) || AOIsFarDepth(depthY))
         return vec3(0.0f, 0.0f, 1.0f);
-    vec3 posX = ViewPosFromDepth(depthX, uvX);
-    vec3 posY = ViewPosFromDepth(depthY, uvY);
+    vec3 posX = XRENGINE_ViewPosFromDepthFast(depthX, uvX, invProjX, invProjY, projZScale, projZBias);
+    vec3 posY = XRENGINE_ViewPosFromDepthFast(depthY, uvY, invProjX, invProjY, projZScale, projZBias);
     return normalize(cross(posX - centerPos, posY - centerPos));
 }
 
@@ -71,9 +73,6 @@ float InterleavedGradientNoise(vec2 pixel)
 }
 
 // Canonical IntegrateArc from Jimenez et al. 2016 (Eq. 10)
-// Evaluates: integral_0^h sin(theta) * cos(theta - n) d_theta
-// h = horizon angle from view direction (0 = fully occluded, pi/2 = unoccluded)
-// n = projected normal angle from view direction (signed)
 float IntegrateArc(float h, float n)
 {
     float hClamped = clamp(h, 0.0f, HALF_PI);
@@ -88,14 +87,20 @@ void main()
         discard;
     uv = uv * 0.5f + 0.5f;
 
+    // Precompute fast reconstruction constants once per pixel
+    float invProjX = 1.0f / ProjMatrix[0][0];
+    float invProjY = 1.0f / ProjMatrix[1][1];
+    float projZScale = InverseProjMatrix[2][2];
+    float projZBias  = InverseProjMatrix[3][2];
+
     float depth = texture(DepthView, uv).r;
     if (AOIsFarDepth(depth))
     {
         OutIntensity = 1.0f;
         return;
     }
-    vec3 centerPos = ViewPosFromDepth(depth, uv);
-    vec3 centerNormal = GetViewNormal(uv, centerPos);
+    vec3 centerPos = XRENGINE_ViewPosFromDepthFast(depth, uv, invProjX, invProjY, projZScale, projZBias);
+    vec3 centerNormal = GetViewNormal(uv, centerPos, invProjX, invProjY, projZScale, projZBias);
     vec3 viewDir = normalize(-centerPos);
 
     float radiusVS = max(Radius, 0.001f);
@@ -108,10 +113,6 @@ void main()
     int stepCount = clamp(StepsPerSlice, 1, 16);
     float baseAngle = (InterleavedGradientNoise(floor(gl_FragCoord.xy)) - 0.5f) * (PI / float(sliceCount));
     float stepJitter = InterleavedGradientNoise(floor(gl_FragCoord.xy) + vec2(17.0f, 43.0f));
-
-    // Inverse projection scale for deriving view-space tangent analytically
-    float invProjX = 1.0f / ProjMatrix[0][0];
-    float invProjY = 1.0f / ProjMatrix[1][1];
 
     float visibility = 0.0f;
 
@@ -155,7 +156,7 @@ void main()
                 float fDepth = texture(DepthView, fUV).r;
                 if (!AOIsFarDepth(fDepth))
                 {
-                    vec3 fPos = ViewPosFromDepth(fDepth, fUV);
+                    vec3 fPos = XRENGINE_ViewPosFromDepthFast(fDepth, fUV, invProjX, invProjY, projZScale, projZBias);
                     vec3 delta = fPos - centerPos;
                     float dist = length(delta);
 
@@ -169,14 +170,12 @@ void main()
                         if (projLen > 1e-5f)
                         {
                             projDelta /= projLen;
-                            float candidateH = acos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
+                            float candidateH = FastAcos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
 
                             // Falloff attenuation (Jimenez et al. Section 7)
                             float falloff = 1.0f - smoothstep(falloffStart, radiusVS, dist);
 
-                            // Thickness heuristic (Jimenez et al. Section 4.1):
-                            // Reduce contribution of samples significantly behind the surface
-                            // to prevent thin occluders from casting excessive occlusion.
+                            // Thickness heuristic (Jimenez et al. Section 4.1)
                             float depthBehind = max(0.0f, -dot(delta, viewDir));
                             if (thicknessLimit > 0.0f)
                                 falloff *= 1.0f - smoothstep(0.0f, thicknessLimit, depthBehind);
@@ -196,7 +195,7 @@ void main()
                 float bDepth = texture(DepthView, bUV).r;
                 if (!AOIsFarDepth(bDepth))
                 {
-                    vec3 bPos = ViewPosFromDepth(bDepth, bUV);
+                    vec3 bPos = XRENGINE_ViewPosFromDepthFast(bDepth, bUV, invProjX, invProjY, projZScale, projZBias);
                     vec3 delta = bPos - centerPos;
                     float dist = length(delta);
 
@@ -209,7 +208,7 @@ void main()
                         if (projLen > 1e-5f)
                         {
                             projDelta /= projLen;
-                            float candidateH = acos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
+                            float candidateH = FastAcos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
 
                             float falloff = 1.0f - smoothstep(falloffStart, radiusVS, dist);
 

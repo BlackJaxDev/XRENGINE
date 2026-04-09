@@ -7,6 +7,21 @@ Model imports have two separate runtime policies:
 - Assimp `PostProcessSteps` flags still apply to non-FBX imports and the `AssimpLegacy` FBX mode, but the default native FBX path uses explicit FBX-native settings such as `FbxPivotPolicy` instead.
 - `CollapseGeneratedFbxHelperNodes` only affects the legacy Assimp FBX path; the native FBX importer preserves the authored FBX model hierarchy directly.
 
+The unit-testing world exposes the same policy per startup import through `ModelsToImport[*].ImporterBackend` in `Assets/UnitTestingWorldSettings.jsonc`:
+
+- `PreferNativeThenAssimp` uses a native importer when the format has one available and falls back to Assimp otherwise.
+- `AssimpOnly` forces the older Assimp compatibility path for that import.
+
+Today the native format-specific path exists only for FBX, so non-FBX imports still land on Assimp in either mode unless and until native importers are added for those formats.
+
+For importer/exporter tracing, set `XRE_FBX_LOG` before launching the editor, tests, or tools:
+
+- `XRE_FBX_LOG=info` for stage-level summaries
+- `XRE_FBX_LOG=verbose` (or `1`) for detailed per-stage and per-asset trace lines
+- `XRE_FBX_LOG=warn` or `error` to log only problems
+
+Enabled FBX trace lines flow through the engine `Assets` log category, so they appear in the editor console's `Assets` tab and in `Build/Logs/.../log_assets.txt` when file logging is enabled.
+
 - `ProcessMeshesAsynchronously`: runs mesh conversion work on background jobs instead of finishing the whole import inline.
 - `GenerateMeshRenderersAsync`: leaves `XRMeshRenderer.GenerateAsync` off by default globally, but allows imported model renderers to opt into async renderer generation.
 - `SplitSubmeshesIntoSeparateModelComponents`: creates one `ModelComponent` per imported submesh instead of grouping a source node's submeshes into one model component.

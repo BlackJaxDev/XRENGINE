@@ -18,6 +18,22 @@ public enum ModelImportMaterialMode
     Uber,
 }
 
+public enum ModelImportBackendPreference
+{
+    PreferNativeThenAssimp,
+    AssimpOnly,
+}
+
+public enum UnitTestFbxLogVerbosity
+{
+    UseEnvironment,
+    Off,
+    Errors,
+    Warnings,
+    Info,
+    Verbose,
+}
+
 public enum UnitTestWorldKind
 {
     Default,
@@ -78,6 +94,7 @@ public class UnitTestingWorldSettings
     public bool UltralightWebView = false;
     public string UltralightWebViewUrl { get; set; } = "https://blackjaxvr.com";
     public bool EnableProfilerLogging = true;
+    public UnitTestFbxLogVerbosity FbxLogVerbosity { get; set; } = UnitTestFbxLogVerbosity.UseEnvironment;
     public bool RiveUI = false;
     public bool GPURenderDispatch = false;
     public bool StartInPlayModeWithoutTransitions = false;
@@ -129,6 +146,13 @@ public class UnitTestingWorldSettings
         /// Materials without alpha stay in the deferred pipeline.
         /// </summary>
         public bool UseForwardForTransparent { get; set; } = false;
+        /// <summary>
+        /// Selects how this model import chooses between native format-specific importers
+        /// and Assimp fallback. PreferNativeThenAssimp uses a native importer when the
+        /// format has one available and falls back to Assimp otherwise. Today the native
+        /// path exists only for FBX.
+        /// </summary>
+        public ModelImportBackendPreference ImporterBackend { get; set; } = ModelImportBackendPreference.PreferNativeThenAssimp;
         public string Path { get; set; } = string.Empty;
         public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
         public float Scale { get; set; } = 1.0f;

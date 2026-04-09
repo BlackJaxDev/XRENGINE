@@ -46,6 +46,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             public bool ResourcesDirty = true;
             public int LastWidth;
             public int LastHeight;
+            public int LastResolutionDivisor;
             public XRTexture? RawAoTexture;
             public XRTexture? HorizontalBlurTexture;
             public XRTexture? FinalAoTexture;
@@ -141,7 +142,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!forceRebuild)
                 forceRebuild = !instance.TryGetFBO(GenerationFBOName, out _);
 
-            if (!forceRebuild && width == state.LastWidth && height == state.LastHeight)
+            int resDivisor = (int)(GetCurrentSettings()?.GTAOResolution
+                ?? GroundTruthAmbientOcclusionSettings.EResolution.Half);
+            if (resDivisor < 1) resDivisor = 1;
+
+            if (!forceRebuild && width == state.LastWidth && height == state.LastHeight && resDivisor == state.LastResolutionDivisor)
                 return;
 
             RegenerateFBOs(
@@ -154,7 +159,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 transformIdTex,
                 depthStencilTex,
                 width,
-                height);
+                height,
+                resDivisor);
         }
 
         private void RegenerateFBOs(
@@ -167,10 +173,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture transformIdTex,
             XRTexture depthStencilTex,
             int width,
-            int height)
+            int height,
+            int resDivisor)
         {
             state.LastWidth = width;
             state.LastHeight = height;
+            state.LastResolutionDivisor = resDivisor;
+
+            // AO gen and blur intermediate textures run at reduced resolution;
+            // the final output stays at full res for the GBuffer composite.
+            int aoWidth = Math.Max(width / resDivisor, 1);
+            int aoHeight = Math.Max(height / resDivisor, 1);
             state.NormalTexture = normalTex;
             state.DepthViewTexture = depthViewTex;
             state.AlbedoTexture = albedoTex;
@@ -182,8 +195,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.HorizontalBlurTexture?.Destroy();
             state.FinalAoTexture?.Destroy();
 
-            state.RawAoTexture = CreateAoTexture(width, height, RawIntensityTextureName, InputSamplerName);
-            state.HorizontalBlurTexture = CreateAoTexture(width, height, IntermediateIntensityTextureName, InputSamplerName);
+            state.RawAoTexture = CreateAoTexture(aoWidth, aoHeight, RawIntensityTextureName, InputSamplerName);
+            state.HorizontalBlurTexture = CreateAoTexture(aoWidth, aoHeight, IntermediateIntensityTextureName, InputSamplerName, bilinear: resDivisor > 1);
             state.FinalAoTexture = CreateAoTexture(width, height, FinalIntensityTextureName, FinalIntensityTextureName);
 
             instance.SetTexture(state.RawAoTexture);
@@ -268,8 +281,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             instance.SetFBO(outputFbo);
         }
 
-        private XRTexture CreateAoTexture(int width, int height, string textureName, string samplerName)
+        private XRTexture CreateAoTexture(int width, int height, string textureName, string samplerName, bool bilinear = false)
         {
+            var minFilter = bilinear ? ETexMinFilter.Linear : ETexMinFilter.Nearest;
+            var magFilter = bilinear ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
+
             if (Stereo)
             {
                 var texture = XRTexture2DArray.CreateFrameBufferTexture(
@@ -285,8 +301,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 texture.OVRMultiViewParameters = new(0, 2u);
                 texture.Name = textureName;
                 texture.SamplerName = samplerName;
-                texture.MinFilter = ETexMinFilter.Nearest;
-                texture.MagFilter = ETexMagFilter.Nearest;
+                texture.MinFilter = minFilter;
+                texture.MagFilter = magFilter;
                 texture.UWrap = ETexWrapMode.ClampToEdge;
                 texture.VWrap = ETexWrapMode.ClampToEdge;
                 return texture;
@@ -301,8 +317,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 EFrameBufferAttachment.ColorAttachment0);
             aoTexture.Name = textureName;
             aoTexture.SamplerName = samplerName;
-            aoTexture.MinFilter = ETexMinFilter.Nearest;
-            aoTexture.MagFilter = ETexMagFilter.Nearest;
+            aoTexture.MinFilter = minFilter;
+            aoTexture.MagFilter = magFilter;
             aoTexture.UWrap = ETexWrapMode.ClampToEdge;
             aoTexture.VWrap = ETexWrapMode.ClampToEdge;
             return aoTexture;
@@ -349,6 +365,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("DenoiseSharpness", settings?.GTAODenoiseSharpness is > 0.0f ? settings.GTAODenoiseSharpness : 4.0f);
             program.Uniform("DenoiseEnabled", settings?.GTAODenoiseEnabled ?? true);
             program.Uniform("UseInputNormals", settings?.GTAOUseInputNormals ?? true);
+            program.Uniform("UseNormalWeightedBlur", settings?.GTAOUseNormalWeightedBlur ?? true);
         }
 
         private AmbientOcclusionSettings? GetCurrentSettings()
@@ -384,18 +401,19 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
         {
-            if (_instanceStates.TryGetValue(instance, out var state))
-            {
-                state.ResourcesDirty = true;
-                state.RawAoTexture?.Destroy();
-                state.RawAoTexture = null;
-                state.HorizontalBlurTexture?.Destroy();
-                state.HorizontalBlurTexture = null;
-                state.FinalAoTexture?.Destroy();
-                state.FinalAoTexture = null;
-                state.LastWidth = 0;
-                state.LastHeight = 0;
-            }
+            if (!_instanceStates.TryGetValue(instance, out var state))
+                return;
+            
+            state.ResourcesDirty = true;
+            state.RawAoTexture?.Destroy();
+            state.RawAoTexture = null;
+            state.HorizontalBlurTexture?.Destroy();
+            state.HorizontalBlurTexture = null;
+            state.FinalAoTexture?.Destroy();
+            state.FinalAoTexture = null;
+            state.LastWidth = 0;
+            state.LastHeight = 0;
+            state.LastResolutionDivisor = 0;
         }
     }
 }

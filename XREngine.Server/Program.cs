@@ -12,6 +12,7 @@ using XREngine.Server.Instances;
 using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Fbx;
 using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -90,9 +91,32 @@ namespace XREngine.Networking
             var settings = UnitTestingWorldSettingsStore.Load(false);
             UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
             UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
+            ConfigureFbxTraceLogging(settings);
             XRWorld targetWorld = BootstrapWorldFactory.CreateServerDefaultWorld();
 
             Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
+        }
+
+        private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
+        {
+            FbxTrace.LogSink = static message => Debug.Assets(message);
+
+            if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
+                FbxTrace.RefreshFromEnvironment();
+            else
+            {
+                FbxTrace.Verbosity = settings.FbxLogVerbosity switch
+                {
+                    UnitTestFbxLogVerbosity.Off => FbxLogVerbosity.Off,
+                    UnitTestFbxLogVerbosity.Errors => FbxLogVerbosity.Errors,
+                    UnitTestFbxLogVerbosity.Warnings => FbxLogVerbosity.Warnings,
+                    UnitTestFbxLogVerbosity.Info => FbxLogVerbosity.Info,
+                    UnitTestFbxLogVerbosity.Verbose => FbxLogVerbosity.Verbose,
+                    _ => FbxLogVerbosity.Off,
+                };
+            }
+
+            Debug.Out($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.");
         }
 
         private static Task BuildWebApi()

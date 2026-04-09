@@ -33,17 +33,29 @@ public static class FbxStructuralParser
         if (!fileInfo.Exists)
             throw new FileNotFoundException($"FBX file '{path}' does not exist.", path);
 
-        FbxSourceBuffer source = fileInfo.Length >= 256L * 1024L * 1024L
-            ? new MemoryMappedFbxSourceBuffer(path)
-            : new ManagedFbxSourceBuffer(File.ReadAllBytes(path));
-        return Parse(source, options);
+        string bufferStrategy = fileInfo.Length >= 256L * 1024L * 1024L ? "memory-mapped" : "managed";
+        return FbxTrace.TraceOperation(
+            "StructuralParser",
+            $"Parsing file '{path}' ({fileInfo.Length:N0} bytes, buffer={bufferStrategy}).",
+            document => $"Parsed file '{path}': {DescribeHeader(document.Header)}, nodes={document.Nodes.Count:N0}, properties={document.Properties.Count:N0}, arrays={document.ArrayWorkItems.Count:N0}, maxDepth={document.MaxDepth}",
+            () =>
+            {
+                FbxSourceBuffer source = fileInfo.Length >= 256L * 1024L * 1024L
+                    ? new MemoryMappedFbxSourceBuffer(path)
+                    : new ManagedFbxSourceBuffer(File.ReadAllBytes(path));
+                return Parse(source, options);
+            });
     }
 
     public static FbxStructuralDocument Parse(byte[] source, FbxReaderOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(source);
 
-        return Parse(new ManagedFbxSourceBuffer(source), options);
+        return FbxTrace.TraceOperation(
+            "StructuralParser",
+            $"Parsing in-memory FBX source ({source.Length:N0} bytes).",
+            document => $"Parsed in-memory source: {DescribeHeader(document.Header)}, nodes={document.Nodes.Count:N0}, properties={document.Properties.Count:N0}, arrays={document.ArrayWorkItems.Count:N0}, maxDepth={document.MaxDepth}",
+            () => Parse(new ManagedFbxSourceBuffer(source), options));
     }
 
     private static FbxStructuralDocument Parse(FbxSourceBuffer source, FbxReaderOptions? options)
@@ -54,6 +66,7 @@ public static class FbxStructuralParser
         {
             options ??= FbxReaderOptions.Strict;
             FbxTransportEncoding encoding = DetectEncoding(source.Span);
+            FbxTrace.Info("StructuralParser", $"Detected {encoding} transport encoding (strictness={options.Strictness}, skippedNodeNames={options.SkippedNodeNames.Count:N0}).");
             return encoding switch
             {
                 FbxTransportEncoding.Binary => ParseBinary(source, options),
@@ -190,6 +203,15 @@ public static class FbxStructuralParser
         => IsAsciiIdentifierStart(value)
             || (value >= (byte)'0' && value <= (byte)'9')
             || value is (byte)'_' or (byte)'-';
+
+    private static string DescribeHeader(FbxHeaderInfo header)
+    {
+        string version = header.BinaryVersion?.ToString() ?? header.VersionText ?? "unknown";
+        string endianness = header.Encoding == FbxTransportEncoding.Binary
+            ? (header.IsBigEndian ? "big-endian" : "little-endian")
+            : "n/a";
+        return $"encoding={header.Encoding}, version={version}, endianness={endianness}, headerLength={header.HeaderLength}";
+    }
 
     private enum AsciiTokenKind
     {
