@@ -36,6 +36,7 @@ uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 uniform bool LightHasShadowMap = true; // Added
 uniform int ShadowSamples = 4;
+uniform int ShadowVogelTapCount = 5;
 uniform float ShadowFilterRadius = 0.0012f;
 uniform int SoftShadowMode = 1;
 uniform float LightSourceRadius = 0.01f;
@@ -172,8 +173,11 @@ float SampleShadowMapCHSSLocal(in sampler2D shadowMap, in vec3 shadowCoord, in f
 	return SampleShadowMapSoftLocal(shadowMap, shadowCoord, bias, sampleCount, penumbra);
 }
 
-float SampleShadowMapFilteredLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int requestedSamples, in float filterRadius, in int softMode, in float lightSourceRadius)
+float SampleShadowMapFilteredLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int requestedSamples, in float filterRadius, in int softMode, in float lightSourceRadius, in int vogelTapCount)
 {
+	if (softMode == 3)
+		return XRENGINE_SampleShadowMapVogel(shadowMap, shadowCoord, bias, vogelTapCount, filterRadius);
+
 	int sampleCount = clamp(requestedSamples, 1, 16);
 	if (sampleCount <= 1)
 		return SampleShadowMapSimpleLocal(shadowMap, shadowCoord, bias);
@@ -236,7 +240,8 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 		ShadowSamples,
 		ShadowFilterRadius,
 		SoftShadowMode,
-		LightSourceRadius) * contact;
+		LightSourceRadius,
+		ShadowVogelTapCount) * contact;
 
 	// Write debug state for visualisation (single center sample)
 	if (ShadowDebugMode != 0)

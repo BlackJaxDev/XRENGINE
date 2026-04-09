@@ -39,7 +39,10 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform bool EnableContactShadows = true;");
         source.ShouldContain("uniform float ContactShadowDistance = 0.1;");
         source.ShouldContain("uniform int ShadowSamples = 4;");
+        source.ShouldContain("uniform int ShadowVogelTapCount = 5;");
         source.ShouldContain("uniform int ContactShadowSamples = 4;");
+        source.ShouldContain("uniform int PointLightShadowVogelTapCount[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
+        source.ShouldContain("uniform int SpotLightShadowVogelTapCount[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
         source.ShouldContain("int XRENGINE_GetPrimaryDirLightCascadeIndex(vec3 fragPosWS)");
         source.ShouldContain("DirectionalLights[0].CascadeMatrices[cascadeIndex]");
         source.ShouldContain("XRENGINE_SampleContactShadowArray(");
@@ -49,9 +52,25 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("XRENGINE_SampleShadowCubeFiltered(");
         source.ShouldContain("XRENGINE_ResolveContactShadowSampleCount(");
         source.ShouldContain("vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;");
+        source.ShouldContain("ShadowVogelTapCount");
+        source.ShouldContain("PointLightShadowVogelTapCount[lightIndex]");
+        source.ShouldContain("SpotLightShadowVogelTapCount[lightIndex]");
         source.ShouldContain("SpotLightShadowMaps[shadowSlot],");
         source.ShouldContain("light.Base.Base.WorldToLightSpaceProjMatrix,");
         source.ShouldContain("SpotLightShadowBiasMax[lightIndex],");
+    }
+
+    [Test]
+    public void ShadowSamplingSnippet_DeclaresVogelDiskHelpers()
+    {
+        string source = LoadShaderSource("Snippets/ShadowSampling.glsl");
+
+        source.ShouldContain("const int XRENGINE_MaxVogelShadowTaps = 32;");
+        source.ShouldContain("vec2 XRENGINE_GetVogelDiskTap(int tapIndex, int tapCount)");
+        source.ShouldContain("float XRENGINE_SampleShadowMapVogel(");
+        source.ShouldContain("float XRENGINE_SampleShadowMapArrayVogel(");
+        source.ShouldContain("float XRENGINE_SampleShadowCubeVogel(");
+        source.ShouldContain("if (softShadowMode == 3) // VogelDisk");
     }
 
     [Test]
@@ -160,6 +179,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform bool EnableContactShadows = true;");
         source.ShouldContain("uniform float ContactShadowDistance = 0.1f;");
         source.ShouldContain("uniform int ShadowSamples = 4;");
+        source.ShouldContain("uniform int ShadowVogelTapCount = 5;");
         source.ShouldContain("uniform int ContactShadowSamples = 4;");
         source.ShouldContain("XRENGINE_SampleContactShadow2D(");
         source.ShouldContain("XRENGINE_SampleContactShadowArray(");
@@ -181,6 +201,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
 
         source.ShouldNotContain("MinFade");
         source.ShouldNotContain("MaxFade");
+        source.ShouldContain("uniform int ShadowVogelTapCount = 5;");
         source.ShouldContain("uniform vec2 ScreenOrigin;");
         source.ShouldContain("vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;");
     }
@@ -251,6 +272,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform bool EnableContactShadows = true;");
         source.ShouldContain("uniform float ContactShadowDistance = 0.1f;");
         source.ShouldContain("uniform int ContactShadowSamples = 4;");
+        source.ShouldContain("uniform int ShadowVogelTapCount = 5;");
         source.ShouldContain("uniform vec2 ScreenOrigin;");
         source.ShouldContain("vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;");
         source.ShouldContain("XRENGINE_SampleContactShadow2D(");
@@ -268,12 +290,15 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     {
         string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Materials", "Options", "EUniformRequirements.cs"));
 
-        source.ShouldContain("[\"ForwardPlusEnabled\"] = EUniformRequirements.Lights,");
-        source.ShouldContain("[\"ProbeGridDims\"] = EUniformRequirements.Lights,");
-        source.ShouldContain("[\"ShadowMapEnabled\"] = EUniformRequirements.Lights,");
-        source.ShouldContain("[\"PointLightShadowNearPlanes\"] = EUniformRequirements.Lights,");
-        source.ShouldContain("[\"PointLightShadowDebugModes\"] = EUniformRequirements.Lights,");
-        source.ShouldContain("[\"SpotLightShadowDebugModes\"] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.ForwardPlusEnabled] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.ProbeGridDims] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.ShadowMapEnabled] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.ShadowVogelTapCount] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.PointLightShadowNearPlanes] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.PointLightShadowVogelTapCount] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.PointLightShadowDebugModes] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.SpotLightShadowVogelTapCount] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.SpotLightShadowDebugModes] = EUniformRequirements.Lights,");
     }
 
     [Test]
@@ -285,6 +310,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         lightComponentSource.ShouldContain("private float _shadowExponent = 1.221f;");
         lightComponentSource.ShouldContain("private float _shadowExponentBase = 0.035f;");
         lightComponentSource.ShouldContain("private int _samples = 4;");
+        lightComponentSource.ShouldContain("private int _vogelTapCount = 5;");
         lightComponentSource.ShouldContain("private float _filterRadius = 0.0012f;");
         lightComponentSource.ShouldContain("private bool _enableContactShadows = true;");
         lightComponentSource.ShouldContain("private float _contactShadowDistance = 0.1f;");

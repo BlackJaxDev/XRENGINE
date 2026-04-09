@@ -195,6 +195,7 @@ namespace XREngine.Scene
                 program.Uniform("ShadowBiasMin", firstDirLight.ShadowMinBias);
                 program.Uniform("ShadowBiasMax", firstDirLight.ShadowMaxBias);
                 program.Uniform("ShadowSamples", firstDirLight.Samples);
+                program.Uniform("ShadowVogelTapCount", firstDirLight.VogelTapCount);
                 program.Uniform("ShadowFilterRadius", firstDirLight.FilterRadius);
                 program.Uniform("SoftShadowMode", (int)firstDirLight.SoftShadowMode);
                 program.Uniform("LightSourceRadius", firstDirLight.LightSourceRadius);
@@ -276,6 +277,7 @@ namespace XREngine.Scene
             float[] pointShadowBiasMin = new float[16];
             float[] pointShadowBiasMax = new float[16];
             int[] pointShadowSamples = new int[16];
+            int[] pointShadowVogelTapCount = new int[16];
             float[] pointShadowFilterRadius = new float[16];
             int[] pointShadowSoftShadowMode = new int[16];
             float[] pointShadowLightSourceRadius = new float[16];
@@ -291,6 +293,7 @@ namespace XREngine.Scene
                 pointShadowBiasMin[i] = light.ShadowMinBias;
                 pointShadowBiasMax[i] = light.ShadowMaxBias;
                 pointShadowSamples[i] = light.Samples;
+                pointShadowVogelTapCount[i] = light.VogelTapCount;
                 pointShadowFilterRadius[i] = light.FilterRadius;
                 pointShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
                 pointShadowLightSourceRadius[i] = light.LightSourceRadius;
@@ -315,6 +318,7 @@ namespace XREngine.Scene
             float[] spotShadowBiasMin = new float[16];
             float[] spotShadowBiasMax = new float[16];
             int[] spotShadowSamples = new int[16];
+            int[] spotShadowVogelTapCount = new int[16];
             float[] spotShadowFilterRadius = new float[16];
             int[] spotShadowSoftShadowMode = new int[16];
             float[] spotShadowLightSourceRadius = new float[16];
@@ -328,6 +332,7 @@ namespace XREngine.Scene
                 spotShadowBiasMin[i] = light.ShadowMinBias;
                 spotShadowBiasMax[i] = light.ShadowMaxBias;
                 spotShadowSamples[i] = light.Samples;
+                spotShadowVogelTapCount[i] = light.VogelTapCount;
                 spotShadowFilterRadius[i] = light.FilterRadius;
                 spotShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
                 spotShadowLightSourceRadius[i] = light.LightSourceRadius;
@@ -354,6 +359,7 @@ namespace XREngine.Scene
             program.Uniform("PointLightShadowBiasMin", pointShadowBiasMin);
             program.Uniform("PointLightShadowBiasMax", pointShadowBiasMax);
             program.Uniform("PointLightShadowSamples", pointShadowSamples);
+            program.Uniform("PointLightShadowVogelTapCount", pointShadowVogelTapCount);
             program.Uniform("PointLightShadowFilterRadius", pointShadowFilterRadius);
             program.Uniform("PointLightShadowSoftShadowMode", pointShadowSoftShadowMode);
             program.Uniform("PointLightShadowLightSourceRadius", pointShadowLightSourceRadius);
@@ -365,6 +371,7 @@ namespace XREngine.Scene
             program.Uniform("SpotLightShadowBiasMin", spotShadowBiasMin);
             program.Uniform("SpotLightShadowBiasMax", spotShadowBiasMax);
             program.Uniform("SpotLightShadowSamples", spotShadowSamples);
+            program.Uniform("SpotLightShadowVogelTapCount", spotShadowVogelTapCount);
             program.Uniform("SpotLightShadowFilterRadius", spotShadowFilterRadius);
             program.Uniform("SpotLightShadowSoftShadowMode", spotShadowSoftShadowMode);
             program.Uniform("SpotLightShadowLightSourceRadius", spotShadowLightSourceRadius);

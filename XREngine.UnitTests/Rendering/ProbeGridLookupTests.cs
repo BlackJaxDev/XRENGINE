@@ -91,9 +91,9 @@ public sealed class ProbeGridLookupTests
         var preferred = new List<int> { 1, 2 };
         var result = DefaultRenderPipeline.ComputeProbeGridFallbackIndices(Vector3.Zero, positions, preferred);
 
-        // Should only contain the preferred probes since we pass a non-empty preferred list
-        result.X.ShouldBe(2); // dist 30
-        result.Y.ShouldBe(1); // dist 50
+        // Preferred probes should remain cell-local when they are available.
+        result.X.ShouldBe(2); // preferred, dist 30
+        result.Y.ShouldBe(1); // preferred, dist 50
         result.Z.ShouldBe(-1);
         result.W.ShouldBe(-1);
     }
@@ -216,13 +216,114 @@ public sealed class ProbeGridLookupTests
     }
 
     [Test]
-    public void DeferredLightCombine_HasGlobalAmbientFallbackWhenNoProbesExist()
+    public void DeferredLightCombine_FallsBackToFirstProbeWhenResolvedWeightsAreZero()
     {
         string source = ReadShaderFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
 
-        source.ShouldContain("if (ProbeCount <= 0)");
-        source.ShouldContain("vec3 ambient = kD * (GlobalAmbient * albedoColor) * diffuseAO;");
-        source.ShouldContain("OutLo = vec4(ambient + InLo + emissiveIntensity * albedoColor, albedoOpacity.a);");
+        source.ShouldContain("else if (ProbeCount > 0)");
+        source.ShouldContain("irradianceColor = XRENGINE_SampleOctaArray(IrradianceArray, normal, 0.0f);");
+        source.ShouldContain("prefilteredColor = XRENGINE_SampleOctaArrayLod(PrefilterArray, normal, 0.0f, clampedLod);");
+    }
+
+    [Test]
+    public void ProbePacking_SphereRadiiAreStoredInWComponents()
+    {
+        string source = ReadCSharpFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+
+        source.ShouldContain("InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius)");
+        source.ShouldContain("InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius)");
+    }
+
+    [Test]
+    public void ForwardLighting_SphereInfluenceUsesPackedWRadius()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl");
+
+        source.ShouldContain("float inner = p.InfluenceInner.w;");
+        source.ShouldContain("float outer = max(p.InfluenceOuter.w, inner + 0.0001);");
+    }
+
+    [Test]
+    public void DeferredLightCombine_SphereInfluenceUsesPackedWRadius()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
+
+        source.ShouldContain("float inner = p.InfluenceInner.w;");
+        source.ShouldContain("float outer = max(p.InfluenceOuter.w, inner + 0.0001f);");
+    }
+
+    [Test]
+    public void ForwardLighting_GridPathUsesCellTetrahedra()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl");
+
+        source.ShouldContain("int CellTetraIndices[];");
+        source.ShouldContain("int tetraIndex = CellTetraIndices[offsetCount.x + i];");
+        source.ShouldContain("ivec4 idx = ivec4(TetraIndices[tetraIndex]);");
+        source.ShouldContain("if (XRENGINE_ComputeBarycentric(worldPos, ProbePositions[idx.x].xyz, ProbePositions[idx.y].xyz, ProbePositions[idx.z].xyz, ProbePositions[idx.w].xyz, bary))");
+    }
+
+    [Test]
+    public void ForwardLighting_BarycentricWeightsMatchProbeIndexOrder()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl");
+
+        source.ShouldContain("bary = vec4(w, uvw);");
+        source.ShouldNotContain("bary = vec4(uvw, w);");
+    }
+
+    [Test]
+    public void ForwardLighting_BarycentricPathDoesNotApplyInfluenceFalloff()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl");
+
+        source.ShouldContain("bool isBarycentric = false;");
+        source.ShouldContain("XRENGINE_ResolveProbeWeightsGrid(fragPos, probeWeights, probeIndices, isBarycentric);");
+        source.ShouldContain("float weight = isBarycentric");
+        source.ShouldContain("? probeWeights[i]");
+        source.ShouldContain(": probeWeights[i] * XRENGINE_ComputeInfluenceWeight(probeIndices[i], fragPos);");
+    }
+
+    [Test]
+    public void DeferredLightCombine_GridPathUsesCellTetrahedra()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
+
+        source.ShouldContain("int CellTetraIndices[];");
+        source.ShouldContain("int tetraIndex = CellTetraIndices[offset + i];");
+        source.ShouldContain("ivec4 idx = ivec4(TetraIndices[tetraIndex]);");
+        source.ShouldContain("if (ComputeBarycentric(worldPos, a, b, c, d, bary))");
+    }
+
+    [Test]
+    public void DeferredLightCombine_BarycentricWeightsMatchProbeIndexOrder()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
+
+        source.ShouldContain("bary = vec4(w, uvw);");
+        source.ShouldNotContain("bary = vec4(uvw, w);");
+    }
+
+    [Test]
+    public void DeferredLightCombine_BarycentricPathDoesNotApplyInfluenceFalloff()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
+
+        source.ShouldContain("bool isBarycentric = false;");
+        source.ShouldContain("ResolveProbeWeightsGrid(fragPosWS, probeWeights, probeIndices, isBarycentric);");
+        source.ShouldContain("float w = isBarycentric");
+        source.ShouldContain("? probeWeights[i]");
+        source.ShouldContain(": probeWeights[i] * ComputeInfluenceWeight(probeIndices[i], fragPosWS);");
+    }
+
+    [Test]
+    public void Pipeline_GridBuildUpgradesFromFallbackOnlyToCellTetraCandidates()
+    {
+        string source = ReadCSharpFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+
+        source.ShouldContain("BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);");
+        source.ShouldContain("BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, tetraList);");
+        source.ShouldContain("cellLists[flat].Add(tetraIndex);");
     }
 
     [Test]

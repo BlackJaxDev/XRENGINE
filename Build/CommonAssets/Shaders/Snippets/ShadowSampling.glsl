@@ -99,6 +99,24 @@ const vec2 XRENGINE_ShadowPoissonDisk[16] = vec2[](
     vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790)
 );
 
+const int XRENGINE_MaxVogelShadowTaps = 32;
+const float XRENGINE_VogelGoldenAngle = 2.39996323;
+
+vec2 XRENGINE_GetVogelDiskTap(int tapIndex, int tapCount)
+{
+    float sampleIndex = float(tapIndex) + 0.5;
+    float radius = sqrt(sampleIndex / float(max(tapCount, 1)));
+    float angle = sampleIndex * XRENGINE_VogelGoldenAngle;
+    return radius * vec2(cos(angle), sin(angle));
+}
+
+void XRENGINE_BuildOrthonormalBasis(vec3 normal, out vec3 tangent, out vec3 bitangent)
+{
+    vec3 up = abs(normal.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+    tangent = normalize(cross(up, normal));
+    bitangent = cross(normal, tangent);
+}
+
 float XRENGINE_SampleShadowMapSoft(sampler2D shadowMap, vec3 shadowCoord, float bias, int sampleCount, float filterRadius)
 {
     int clampedSamples = clamp(sampleCount, 1, 16);
@@ -117,6 +135,32 @@ float XRENGINE_SampleShadowMapSoft(sampler2D shadowMap, vec3 shadowCoord, float 
     }
 
     return lit / float(clampedSamples);
+}
+
+float XRENGINE_SampleShadowMapVogel(sampler2D shadowMap, vec3 shadowCoord, float bias, int tapCount, float filterRadius)
+{
+    int clampedTaps = clamp(tapCount, 1, XRENGINE_MaxVogelShadowTaps);
+    if (clampedTaps <= 1)
+    {
+        float depth = texture(shadowMap, shadowCoord.xy).r;
+        return (shadowCoord.z - bias) > depth ? 0.0 : 1.0;
+    }
+
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    float radius = max(filterRadius, max(texelSize.x, texelSize.y));
+    float lit = 0.0;
+
+    for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
+    {
+        if (i >= clampedTaps)
+            break;
+
+        vec2 sampleUv = shadowCoord.xy + XRENGINE_GetVogelDiskTap(i, clampedTaps) * radius;
+        float sampleDepth = texture(shadowMap, sampleUv).r;
+        lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+    }
+
+    return lit / float(clampedTaps);
 }
 
 float XRENGINE_SampleShadowMapTent4(sampler2D shadowMap, vec3 shadowCoord, float bias, float filterRadius)
@@ -165,6 +209,29 @@ float XRENGINE_SampleShadowMapArraySoft(sampler2DArray shadowMap, vec3 shadowCoo
     }
 
     return lit / float(clampedSamples);
+}
+
+float XRENGINE_SampleShadowMapArrayVogel(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias, int tapCount, float filterRadius)
+{
+    int clampedTaps = clamp(tapCount, 1, XRENGINE_MaxVogelShadowTaps);
+    if (clampedTaps <= 1)
+        return XRENGINE_SampleShadowMapArraySimple(shadowMap, shadowCoord, layer, bias);
+
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0).xy);
+    float radius = max(filterRadius, max(texelSize.x, texelSize.y));
+    float lit = 0.0;
+
+    for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
+    {
+        if (i >= clampedTaps)
+            break;
+
+        vec2 sampleUv = shadowCoord.xy + XRENGINE_GetVogelDiskTap(i, clampedTaps) * radius;
+        float sampleDepth = texture(shadowMap, vec3(sampleUv, layer)).r;
+        lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+    }
+
+    return lit / float(clampedTaps);
 }
 
 float XRENGINE_SampleContactShadow2D(
@@ -338,6 +405,32 @@ float XRENGINE_SampleShadowCubeSoft(samplerCube shadowMap, vec3 shadowDir, float
     return lit / float(clampedSamples);
 }
 
+float XRENGINE_SampleShadowCubeVogel(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist, float sampleRadius, int tapCount)
+{
+    int clampedTaps = clamp(tapCount, 1, XRENGINE_MaxVogelShadowTaps);
+    if (clampedTaps <= 1)
+        return XRENGINE_SampleShadowCubeSimple(shadowMap, shadowDir, compareDepth, bias, farPlaneDist);
+
+    vec3 baseDir = normalize(shadowDir);
+    vec3 tangent;
+    vec3 bitangent;
+    XRENGINE_BuildOrthonormalBasis(baseDir, tangent, bitangent);
+    float lit = 0.0;
+
+    for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
+    {
+        if (i >= clampedTaps)
+            break;
+
+        vec2 diskTap = XRENGINE_GetVogelDiskTap(i, clampedTaps) * sampleRadius;
+        vec3 sampleDir = normalize(baseDir + tangent * diskTap.x + bitangent * diskTap.y);
+        float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
+        lit += (compareDepth - bias) <= sampleDepth ? 1.0 : 0.0;
+    }
+
+    return lit / float(clampedTaps);
+}
+
 // --- Contact-Hardening Soft Shadows (CHSS) ---
 // Two-pass technique: blocker search estimates average occluder depth,
 // then the penumbra width is derived from the receiver-to-blocker ratio
@@ -483,8 +576,11 @@ float XRENGINE_SampleShadowMapSimpleAddBias(sampler2D shadowMap, vec3 shadowCoor
     return (shadowCoord.z + bias) <= depth ? 1.0 : 0.0;
 }
 
-float XRENGINE_SampleShadowMapFiltered(sampler2D shadowMap, vec3 shadowCoord, float bias, int requestedSamples, float filterRadius, int softShadowMode, float lightSourceRadius)
+float XRENGINE_SampleShadowMapFiltered(sampler2D shadowMap, vec3 shadowCoord, float bias, int requestedSamples, float filterRadius, int softShadowMode, float lightSourceRadius, int vogelTapCount)
 {
+    if (softShadowMode == 3) // VogelDisk
+        return XRENGINE_SampleShadowMapVogel(shadowMap, shadowCoord, bias, vogelTapCount, filterRadius);
+
     int sampleCount = clamp(requestedSamples, 1, 16);
     if (sampleCount <= 1)
         return XRENGINE_SampleShadowMapSimple(shadowMap, shadowCoord, bias);
@@ -501,8 +597,11 @@ float XRENGINE_SampleShadowMapFiltered(sampler2D shadowMap, vec3 shadowCoord, fl
     return XRENGINE_SampleShadowMapPCF(shadowMap, shadowCoord, bias, 3);
 }
 
-float XRENGINE_SampleShadowMapArrayFiltered(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias, int requestedSamples, float filterRadius, int softShadowMode, float lightSourceRadius)
+float XRENGINE_SampleShadowMapArrayFiltered(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias, int requestedSamples, float filterRadius, int softShadowMode, float lightSourceRadius, int vogelTapCount)
 {
+    if (softShadowMode == 3) // VogelDisk
+        return XRENGINE_SampleShadowMapArrayVogel(shadowMap, shadowCoord, layer, bias, vogelTapCount, filterRadius);
+
     int sampleCount = clamp(requestedSamples, 1, 16);
     if (sampleCount <= 1)
         return XRENGINE_SampleShadowMapArraySimple(shadowMap, shadowCoord, layer, bias);
@@ -519,8 +618,11 @@ float XRENGINE_SampleShadowMapArrayFiltered(sampler2DArray shadowMap, vec3 shado
     return XRENGINE_SampleShadowMapArrayPCF(shadowMap, shadowCoord, layer, bias, 3);
 }
 
-float XRENGINE_SampleShadowCubeFiltered(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist, float sampleRadius, int requestedSamples, int softShadowMode, float lightSourceRadius)
+float XRENGINE_SampleShadowCubeFiltered(samplerCube shadowMap, vec3 shadowDir, float compareDepth, float bias, float farPlaneDist, float sampleRadius, int requestedSamples, int softShadowMode, float lightSourceRadius, int vogelTapCount)
 {
+    if (softShadowMode == 3) // VogelDisk
+        return XRENGINE_SampleShadowCubeVogel(shadowMap, shadowDir, compareDepth, bias, farPlaneDist, sampleRadius, vogelTapCount);
+
     int sampleCount = clamp(requestedSamples, 1, 20);
     if (sampleCount <= 1)
         return XRENGINE_SampleShadowCubeSimple(shadowMap, shadowDir, compareDepth, bias, farPlaneDist);

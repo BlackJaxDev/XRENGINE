@@ -77,7 +77,7 @@ layout(std430, binding = 3) buffer LightProbeGridCells
 
 layout(std430, binding = 4) buffer LightProbeGridIndices
 {
-        int CellProbeIndices[];
+        int CellTetraIndices[];
 };
 
 uniform int ProbeCount;
@@ -136,8 +136,8 @@ float ComputeInfluenceWeight(int probeIndex, vec3 worldPos)
         vec3 center = ProbePositions[probeIndex].xyz + p.InfluenceOffsetShape.xyz;
         if (shape == 0)
         {
-                float inner = p.InfluenceInner.x;
-                float outer = max(p.InfluenceOuter.x, inner + 0.0001f);
+                float inner = p.InfluenceInner.w;
+                float outer = max(p.InfluenceOuter.w, inner + 0.0001f);
                 float dist = length(worldPos - center);
                 float ndf = clamp((dist - inner) / (outer - inner), 0.0f, 1.0f);
                 return 1.0f - ndf;
@@ -182,17 +182,17 @@ uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
-#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
 bool ComputeBarycentric(vec3 p, vec3 a, vec3 b, vec3 c, vec3 d, out vec4 bary)
 {
         mat3 m = mat3(b - a, c - a, d - a);
         vec3 v = p - a;
         vec3 uvw = inverse(m) * v;
         float w = 1.0f - uvw.x - uvw.y - uvw.z;
-        bary = vec4(uvw, w);
+        bary = vec4(w, uvw);
         return bary.x >= -0.0001f && bary.y >= -0.0001f && bary.z >= -0.0001f && bary.w >= -0.0001f;
 }
 
+#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
 void ResolveProbeWeights(vec3 worldPos, out vec4 weights, out ivec4 indices)
 {
         weights = vec4(0.0f);
@@ -261,10 +261,11 @@ void ResolveProbeWeights(vec3 worldPos, out vec4 weights, out ivec4 indices)
 }
 #endif // XRENGINE_PROBE_DEBUG_FALLBACK
 
-void ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices)
+void ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices, out bool isBarycentric)
 {
         weights = vec4(0.0f);
         indices = ivec4(-1);
+        isBarycentric = false;
 
         if (ProbeGridDims.x <= 0 || ProbeGridDims.y <= 0 || ProbeGridDims.z <= 0 || ProbeGridCellSize <= 0.0f)
                 return;
@@ -277,75 +278,34 @@ void ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices)
         ivec2 oc = cellData.OffsetCount.xy;
         int offset = oc.x;
         int count = oc.y;
-        if (count <= 0)
+        if (count > 0)
         {
-                float sum = 0.0f;
-                for (int k = 0; k < 4; ++k)
+                for (int i = 0; i < count; ++i)
                 {
-                        int probeIndex = cellData.FallbackIndices[k];
-                        if (probeIndex < 0 || probeIndex >= ProbeCount)
+                        int tetraIndex = CellTetraIndices[offset + i];
+                        if (tetraIndex < 0 || tetraIndex >= TetraCount)
                                 continue;
 
-                        float d = length(worldPos - ProbePositions[probeIndex].xyz);
-                        float w = 1.0f / max(d, 0.0001f);
-                        weights[k] = w;
-                        indices[k] = probeIndex;
-                        sum += w;
-                }
+                        ivec4 idx = ivec4(TetraIndices[tetraIndex]);
+                        if (idx.x < 0 || idx.w < 0 || idx.x >= ProbeCount || idx.y >= ProbeCount || idx.z >= ProbeCount || idx.w >= ProbeCount)
+                                continue;
 
-                if (sum > 0.0f)
-                        weights /= sum;
-                return;
-        }
-
-        float bestDistances[4];
-        int bestIndices[4];
-        for (int k = 0; k < 4; ++k)
-        {
-                bestDistances[k] = 1e20f;
-                bestIndices[k] = -1;
-        }
-
-        for (int i = 0; i < count; ++i)
-        {
-                int probeIndex = CellProbeIndices[offset + i];
-                if (probeIndex < 0 || probeIndex >= ProbeCount)
-                        continue;
-                float d = length(worldPos - ProbePositions[probeIndex].xyz);
-                for (int k = 0; k < 4; ++k)
-                {
-                        if (d < bestDistances[k])
+                        vec4 bary;
+                        vec3 a = ProbePositions[idx.x].xyz;
+                        vec3 b = ProbePositions[idx.y].xyz;
+                        vec3 c = ProbePositions[idx.z].xyz;
+                        vec3 d = ProbePositions[idx.w].xyz;
+                        if (ComputeBarycentric(worldPos, a, b, c, d, bary))
                         {
-                                for (int s = 3; s > k; --s)
-                                {
-                                        bestDistances[s] = bestDistances[s - 1];
-                                        bestIndices[s] = bestIndices[s - 1];
-                                }
-                                bestDistances[k] = d;
-                                bestIndices[k] = probeIndex;
-                                break;
+                                weights = bary;
+                                indices = idx;
+                                isBarycentric = true;
+                                return;
                         }
                 }
         }
 
         float sum = 0.0f;
-        for (int k = 0; k < 4; ++k)
-        {
-                if (bestIndices[k] >= 0)
-                {
-                        float w = 1.0f / max(bestDistances[k], 0.0001f);
-                        weights[k] = w;
-                        indices[k] = bestIndices[k];
-                        sum += w;
-                }
-        }
-        if (sum > 0.0f)
-        {
-                weights /= sum;
-                return;
-        }
-
-        sum = 0.0f;
         for (int k = 0; k < 4; ++k)
         {
                 int probeIndex = cellData.FallbackIndices[k];
@@ -425,10 +385,11 @@ void main()
 	vec3 kD = (1.0f - kS) * (1.0f - metallic);
         vec3 R = reflect(-V, normal);
 
-        vec4 probeWeights; 
-        ivec4 probeIndices; 
+        vec4 probeWeights = vec4(0.0f);
+        ivec4 probeIndices = ivec4(-1);
+        bool isBarycentric = false;
         if (UseProbeGrid)
-                ResolveProbeWeightsGrid(fragPosWS, probeWeights, probeIndices);
+                ResolveProbeWeightsGrid(fragPosWS, probeWeights, probeIndices, isBarycentric);
 #ifdef XRENGINE_PROBE_DEBUG_FALLBACK
         else
                 ResolveProbeWeights(fragPosWS, probeWeights, probeIndices);
@@ -441,9 +402,14 @@ void main()
         for (int i = 0; i < 4; ++i) 
         { 
                 if (probeIndices[i] < 0) 
-                        continue; 
-                float influence = ComputeInfluenceWeight(probeIndices[i], fragPosWS);
-                float w = probeWeights[i] * influence;
+                        continue;
+                // Barycentric tetra weights are already mathematically continuous.
+                // Multiplying by per-probe influence would create hard edges at
+                // influence-sphere boundaries, so we only apply influence for the
+                // distance-weighted fallback path.
+                float w = isBarycentric
+                        ? probeWeights[i]
+                        : probeWeights[i] * ComputeInfluenceWeight(probeIndices[i], fragPosWS);
                 if (w <= 0.0f)
                         continue;
                 vec3 parallaxDir = ApplyParallax(probeIndices[i], normal, fragPosWS);

@@ -39,16 +39,17 @@ vec3 XRENGINE_ViewPosFromDepth(float depth, vec2 uv, mat4 invProj)
 // Fast view-space position reconstruction for symmetric projections.
 // Avoids the full mat4 × vec4 multiply by exploiting the diagonal structure
 // of a symmetric projection matrix. Requires precomputed constants:
-//   invProjX = 1.0 / ProjMatrix[0][0]
-//   invProjY = 1.0 / ProjMatrix[1][1]
-//   projZScale = InverseProjMatrix[2][2]
-//   projZBias  = InverseProjMatrix[3][2]
-vec3 XRENGINE_ViewPosFromDepthFast(float depth, vec2 uv, float invProjX, float invProjY, float projZScale, float projZBias)
+//   invProjX  = 1.0 / ProjMatrix[0][0]
+//   invProjY  = 1.0 / ProjMatrix[1][1]
+//   projWScale = InverseProjMatrix[2][3]   (perspective-divide row, ndcZ coefficient)
+//   projWBias  = InverseProjMatrix[3][3]   (perspective-divide row, constant term)
+vec3 XRENGINE_ViewPosFromDepthFast(float depth, vec2 uv, float invProjX, float invProjY, float projWScale, float projWBias)
 {
     float ndcZ = depth * 2.0 - 1.0;
-    float viewZ = projZBias / max(ndcZ - projZScale, 1e-7);
+    float w = projWScale * ndcZ + projWBias;
+    float recipW = 1.0 / max(abs(w), 1e-7) * sign(w);
     vec2 ndcXY = uv * 2.0 - 1.0;
-    return vec3(ndcXY.x * invProjX * viewZ, ndcXY.y * invProjY * viewZ, viewZ);
+    return vec3(ndcXY.x * invProjX * recipW, ndcXY.y * invProjY * recipW, -recipW);
 }
 
 // Overload accepting a projection matrix directly (extracts constants internally).
@@ -58,8 +59,8 @@ vec3 XRENGINE_ViewPosFromDepthFast(float depth, vec2 uv, mat4 projMatrix, mat4 i
         depth, uv,
         1.0 / projMatrix[0][0],
         1.0 / projMatrix[1][1],
-        inverseProjMatrix[2][2],
-        inverseProjMatrix[3][2]);
+        inverseProjMatrix[2][3],
+        inverseProjMatrix[3][3]);
 }
 
 float XRENGINE_LinearizeDepth(float depth, float nearZ, float farZ)

@@ -14,6 +14,7 @@
 //
 
 using System.Numerics;
+using System.Runtime.InteropServices;
 using XREngine.Data.Geometry;
 
 // TODO: handle merge/split when LEAF_OBJ_MAX > 1 and objects move
@@ -142,6 +143,113 @@ namespace SimpleScene.Util.ssBVH
                     gobjects = [] // it's a leaf, so give it an empty object list
                 };
             }
+        }
+
+        /// <summary>
+        /// A flattened representation of a single BVH node, stored in DFS pre-order
+        /// for compact serialization.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct FlatBvhNode
+        {
+            public float MinX, MinY, MinZ;
+            public float MaxX, MaxY, MaxZ;
+            /// <summary>
+            /// &gt;= 0 for leaf nodes (index into the object list), -1 for internal nodes.
+            /// </summary>
+            public int ObjectIndex;
+        }
+
+        /// <summary>
+        /// Flatten the BVH tree into a DFS pre-order array suitable for disk serialization.
+        /// </summary>
+        public FlatBvhNode[] ToFlatNodes(Func<GO, int> objectIndexer)
+        {
+            int count = CountBVHNodes();
+            var flat = new FlatBvhNode[count];
+            int writeIndex = 0;
+            WriteFlatNode(_rootBVH, flat, ref writeIndex, objectIndexer);
+            return flat;
+        }
+
+        private static void WriteFlatNode(BVHNode<GO>? node, FlatBvhNode[] flat, ref int writeIndex, Func<GO, int> objectIndexer)
+        {
+            if (node is null)
+                return;
+
+            ref FlatBvhNode fn = ref flat[writeIndex++];
+            fn.MinX = node.box.Min.X;
+            fn.MinY = node.box.Min.Y;
+            fn.MinZ = node.box.Min.Z;
+            fn.MaxX = node.box.Max.X;
+            fn.MaxY = node.box.Max.Y;
+            fn.MaxZ = node.box.Max.Z;
+
+            if (node.IsLeaf && node.gobjects is { Count: > 0 })
+            {
+                fn.ObjectIndex = objectIndexer(node.gobjects[0]);
+            }
+            else
+            {
+                fn.ObjectIndex = -1;
+                WriteFlatNode(node.left, flat, ref writeIndex, objectIndexer);
+                WriteFlatNode(node.right, flat, ref writeIndex, objectIndexer);
+            }
+        }
+
+        /// <summary>
+        /// Reconstruct a BVH from a flattened DFS pre-order node array loaded from disk.
+        /// The <paramref name="objects"/> list must match the indexing used during serialization.
+        /// </summary>
+        public static BVH<GO> FromFlatNodes(ISSBVHNodeAdaptor<GO> adaptor, List<GO> objects, ReadOnlySpan<FlatBvhNode> flatNodes)
+        {
+            var bvh = new BVH<GO>(adaptor, [], 1);
+            if (flatNodes.Length == 0)
+                return bvh;
+
+            int readIndex = 0;
+            bvh._rootBVH = ReadFlatNode(bvh, adaptor, null, objects, flatNodes, ref readIndex, 0);
+            bvh._nodeCount = flatNodes.Length;
+            return bvh;
+        }
+
+        private static BVHNode<GO> ReadFlatNode(
+            BVH<GO> bvh,
+            ISSBVHNodeAdaptor<GO> adaptor,
+            BVHNode<GO>? parent,
+            List<GO> objects,
+            ReadOnlySpan<FlatBvhNode> flat,
+            ref int readIndex,
+            int depth)
+        {
+            ref readonly FlatBvhNode fn = ref flat[readIndex++];
+            var node = new BVHNode<GO>(bvh)
+            {
+                box = new AABB(
+                    new Vector3(fn.MinX, fn.MinY, fn.MinZ),
+                    new Vector3(fn.MaxX, fn.MaxY, fn.MaxZ)),
+                parent = parent,
+                depth = depth,
+            };
+
+            if (fn.ObjectIndex >= 0)
+            {
+                // Leaf node
+                node.gobjects = [objects[fn.ObjectIndex]];
+                adaptor.MapObjectToBVHLeaf(objects[fn.ObjectIndex], node);
+            }
+            else
+            {
+                // Internal node — children follow in DFS pre-order.
+                node.gobjects = null;
+                node.left = ReadFlatNode(bvh, adaptor, node, objects, flat, ref readIndex, depth + 1);
+                node.right = ReadFlatNode(bvh, adaptor, node, objects, flat, ref readIndex, depth + 1);
+            }
+
+            if (bvh._maxDepth < depth)
+                bvh._maxDepth = depth;
+
+            return node;
         }
     }
 }

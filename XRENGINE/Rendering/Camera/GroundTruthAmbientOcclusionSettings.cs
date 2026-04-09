@@ -20,7 +20,7 @@ namespace XREngine.Rendering
         private bool _denoiseEnabled = true;
         private int _denoiseRadius = 4;
         private float _denoiseSharpness = 4.0f;
-        private bool _useInputNormals = true;
+        private bool _useInputNormals = false;
         private float _falloffStartRatio = 0.4f;
         private float _thicknessHeuristic = 1.0f;
         private bool _multiBounceEnabled = true;

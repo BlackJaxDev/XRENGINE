@@ -17,6 +17,12 @@ namespace XREngine.Components.Capture.Lights
         PCSS = 1,
 
         /// <summary>
+        /// Fixed-radius Vogel-disk soft shadows with a configurable tap count.
+        /// Produces a more even low-sample distribution than the legacy Poisson disk path.
+        /// </summary>
+        VogelDisk = 3,
+
+        /// <summary>
         /// Contact-hardening soft shadows with blocker-search-based variable penumbra.
         /// Shadows are sharp near contact points and soften with distance from the occluder,
         /// producing physically plausible penumbrae.

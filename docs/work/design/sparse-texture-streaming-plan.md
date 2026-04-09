@@ -29,6 +29,8 @@ Phases 5 and 6 now extend that baseline with runtime view-aware inputs and parti
 
 - `RenderableMesh` supplies projected pixel span, approximate screen coverage, cached UV-density hints, and normalized UV bounds for imported texture usage.
 - `ImportedTextureStreamingManager` ranks textures by projected on-screen importance, applies sampler-role multipliers, preserves short visibility grace windows, and gives each asset group a fair first promotion slot before filling the remaining frame budget.
+- Streaming usage is recorded only from the main non-shadow view so reflections, scene captures, and probe passes do not prevent off-screen demotion or steal first-promotion slots from textures directly in view.
+- Higher-detail promotions apply a short transient lod-bias fade so new mip residency sharpens in over a few frames instead of popping immediately.
 - Sparse imported textures can keep only the page-aligned regions touched by the visible submesh UV bounds for high-detail mips, while the sparse mip tail remains fully committed.
 - The first shipping page-level implementation slices page-sized upload regions directly out of the existing cooked mip blobs, so it does not require a separate page-table asset format.
 

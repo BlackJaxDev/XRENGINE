@@ -11,37 +11,44 @@ namespace XREngine.Runtime.Bootstrap;
 
 public static class BootstrapLightingBuilder
 {
-    public static void AddConfiguredLightProbes(SceneNode rootNode)
+    public static Action? AddConfiguredLightProbes(SceneNode rootNode, bool deferStartupCapture = false)
     {
         var settings = RuntimeBootstrapState.Settings;
+        bool shouldDeferStartupCapture = deferStartupCapture && settings.LightProbeCapture == LightProbeCaptureMode.Startup;
+        LightProbeCaptureMode captureMode = shouldDeferStartupCapture
+            ? LightProbeCaptureMode.None
+            : settings.LightProbeCapture;
+
         switch (settings.LightProbe)
         {
             case LightProbeMode.Off:
-                return;
+                return null;
             case LightProbeMode.Single:
                 Vector3 singlePosition = ToVector3(settings.LightProbeSinglePosition);
-                AddLightProbes(rootNode, 1, 1, 1, 1.0f, 1.0f, 1.0f, singlePosition);
-                return;
+                IReadOnlyList<LightProbeComponent> probes = AddLightProbes(rootNode, 1, 1, 1, 1.0f, 1.0f, 1.0f, singlePosition, captureMode);
+                return shouldDeferStartupCapture ? () => QueueProbeCaptures(probes) : null;
             case LightProbeMode.Grid:
             case LightProbeMode.ModelGrid:
                 var counts = ClampProbeCounts(settings.LightProbeGridCounts);
-                AddInteractiveLightProbeGrid(
+                LightProbeGridSpawnerComponent spawner = AddInteractiveLightProbeGrid(
                     rootNode,
                     counts.X,
                     counts.Y,
                     counts.Z,
                     ToVector3(settings.LightProbeGridSpacing),
                     ToVector3(settings.LightProbeGridCenter),
-                    settings.LightProbe == LightProbeMode.ModelGrid);
-                return;
+                    settings.LightProbe == LightProbeMode.ModelGrid,
+                    captureMode);
+                return shouldDeferStartupCapture ? spawner.BeginSequentialCapture : null;
             default:
                 throw new ArgumentOutOfRangeException();
         }
     }
 
-    public static LightProbeGridSpawnerComponent AddInteractiveLightProbeGrid(SceneNode rootNode, int widthCount, int heightCount, int depthCount, Vector3 spacing, Vector3 center, bool usePlacementBoundsModels)
+    public static LightProbeGridSpawnerComponent AddInteractiveLightProbeGrid(SceneNode rootNode, int widthCount, int heightCount, int depthCount, Vector3 spacing, Vector3 center, bool usePlacementBoundsModels, LightProbeCaptureMode? captureModeOverride = null)
     {
         var settings = RuntimeBootstrapState.Settings;
+        LightProbeCaptureMode captureMode = captureModeOverride ?? settings.LightProbeCapture;
 
         // Create the node detached so that OnBeginPlay does NOT fire during AddComponent.
         // This ensures all property setters run before SpawnGrid(), preventing the default
@@ -61,7 +68,7 @@ public static class BootstrapLightingBuilder
         spawner.PushOutPadding = 0.1f;
         spawner.MaxPushOutDistance = 8.0f;
         spawner.MaxPushOutSteps = 24;
-        ApplyCaptureSettings(spawner, settings);
+        ApplyCaptureSettings(spawner, settings, captureMode);
 
         var customUi = probeRoot.AddComponent<CustomUIComponent>()!;
         customUi.Name = "Light Probe Grid Controls";
@@ -101,10 +108,12 @@ public static class BootstrapLightingBuilder
         return spawner;
     }
 
-    public static void AddLightProbes(SceneNode rootNode, int heightCount, int widthCount, int depthCount, float height, float width, float depth, Vector3 center)
+    public static IReadOnlyList<LightProbeComponent> AddLightProbes(SceneNode rootNode, int heightCount, int widthCount, int depthCount, float height, float width, float depth, Vector3 center, LightProbeCaptureMode? captureModeOverride = null)
     {
         var settings = RuntimeBootstrapState.Settings;
+        LightProbeCaptureMode captureMode = captureModeOverride ?? settings.LightProbeCapture;
         var probeRoot = new SceneNode(rootNode) { Name = "LightProbeRoot" };
+        List<LightProbeComponent> probes = [];
 
         float halfWidth = width * 0.5f;
         float halfDepth = depth * 0.5f;
@@ -127,20 +136,26 @@ public static class BootstrapLightingBuilder
                     probeComp!.Name = "TestLightProbe";
                     probeComp.SetCaptureResolution(settings.LightProbeResolution, false);
                     probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
-                    ApplyCaptureSettings(probeComp, settings);
+                    ApplyCaptureSettings(probeComp, settings, captureMode);
+                    probes.Add(probeComp);
                 }
             }
         }
+
+        return probes;
     }
 
     private static void ApplyCaptureSettings(LightProbeComponent probe, UnitTestingWorldSettings settings)
+        => ApplyCaptureSettings(probe, settings, settings.LightProbeCapture);
+
+    private static void ApplyCaptureSettings(LightProbeComponent probe, UnitTestingWorldSettings settings, LightProbeCaptureMode captureMode)
     {
         probe.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(settings.LightProbeCaptureMs);
-        probe.StopRealtimeCaptureAfter = settings.LightProbeCapture == LightProbeCaptureMode.Realtime && settings.StopRealtimeCaptureSec is not null
+        probe.StopRealtimeCaptureAfter = captureMode == LightProbeCaptureMode.Realtime && settings.StopRealtimeCaptureSec is not null
             ? TimeSpan.FromSeconds(settings.StopRealtimeCaptureSec.Value)
             : null;
 
-        switch (settings.LightProbeCapture)
+        switch (captureMode)
         {
             case LightProbeCaptureMode.None:
                 probe.RealtimeCapture = false;
@@ -160,13 +175,16 @@ public static class BootstrapLightingBuilder
     }
 
     private static void ApplyCaptureSettings(LightProbeGridSpawnerComponent spawner, UnitTestingWorldSettings settings)
+        => ApplyCaptureSettings(spawner, settings, settings.LightProbeCapture);
+
+    private static void ApplyCaptureSettings(LightProbeGridSpawnerComponent spawner, UnitTestingWorldSettings settings, LightProbeCaptureMode captureMode)
     {
         spawner.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(settings.LightProbeCaptureMs);
-        spawner.StopRealtimeCaptureAfter = settings.LightProbeCapture == LightProbeCaptureMode.Realtime && settings.StopRealtimeCaptureSec is not null
+        spawner.StopRealtimeCaptureAfter = captureMode == LightProbeCaptureMode.Realtime && settings.StopRealtimeCaptureSec is not null
             ? TimeSpan.FromSeconds(settings.StopRealtimeCaptureSec.Value)
             : null;
 
-        switch (settings.LightProbeCapture)
+        switch (captureMode)
         {
             case LightProbeCaptureMode.None:
                 spawner.RealtimeCapture = false;
@@ -186,6 +204,12 @@ public static class BootstrapLightingBuilder
             default:
                 throw new ArgumentOutOfRangeException();
         }
+    }
+
+    private static void QueueProbeCaptures(IReadOnlyList<LightProbeComponent> probes)
+    {
+        for (int i = 0; i < probes.Count; i++)
+            probes[i].QueueCapture();
     }
 
     private static UnitTestingWorldSettings.ProbeGridCounts ClampProbeCounts(UnitTestingWorldSettings.ProbeGridCounts counts)

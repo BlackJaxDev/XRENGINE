@@ -1130,6 +1130,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private readonly Dictionary<Guid, Vector3> _cachedProbePositions = new();
     private readonly Dictionary<Guid, (XRTexture2D Irradiance, XRTexture2D Prefilter)> _cachedProbeTextures = new();
     private readonly Dictionary<Guid, uint> _observedProbeCaptureVersions = new();
+    private ProbePositionData[] _cachedProbePositionData = [];
+    private ProbeParamData[] _cachedProbeParamData = [];
     private volatile bool _pendingProbeRefresh;
     private bool _pendingProbeRefreshContentOnly;
     private ulong _probeRefreshEarliestFrameId;
@@ -1392,7 +1394,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         }
     }
 
-    private void BuildProbeGrid(List<ProbePositionData> positions, List<ProbeParamData> parameters)
+    private void BuildProbeGrid(IReadOnlyList<ProbePositionData> positions, IReadOnlyList<ProbeParamData> parameters, IReadOnlyList<ProbeTetraData>? tetraData = null)
     {
         _probeGridCellBuffer?.Dispose();
         _probeGridCellBuffer = null;
@@ -1435,17 +1437,26 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         for (int i = 0; i < cellCount; ++i)
             cellLists[i] = new List<int>(4);
 
-        for (int i = 0; i < positions.Count; ++i)
+        if (tetraData is { Count: > 0 })
         {
-            GetProbeGridCellRange(positions[i], parameters[i], dimsI, out IVector3 minCell, out IVector3 maxCell);
-            for (int z = minCell.Z; z <= maxCell.Z; ++z)
+            float cellPadding = _probeGridCellSize * 0.5f;
+            Vector3 tetraPadding = new(cellPadding);
+
+            for (int tetraIndex = 0; tetraIndex < tetraData.Count; ++tetraIndex)
             {
-                for (int y = minCell.Y; y <= maxCell.Y; ++y)
+                if (!TryGetTetraBounds(tetraData[tetraIndex], positions, out Vector3 tetraMin, out Vector3 tetraMax))
+                    continue;
+
+                GetProbeGridCellRange(tetraMin - tetraPadding, tetraMax + tetraPadding, dimsI, out IVector3 minCell, out IVector3 maxCell);
+                for (int z = minCell.Z; z <= maxCell.Z; ++z)
                 {
-                    for (int x = minCell.X; x <= maxCell.X; ++x)
+                    for (int y = minCell.Y; y <= maxCell.Y; ++y)
                     {
-                        int flat = x + y * dimsI.X + z * dimsI.X * dimsI.Y;
-                        cellLists[flat].Add(i);
+                        for (int x = minCell.X; x <= maxCell.X; ++x)
+                        {
+                            int flat = x + y * dimsI.X + z * dimsI.X * dimsI.Y;
+                            cellLists[flat].Add(tetraIndex);
+                        }
                     }
                 }
             }
@@ -1463,7 +1474,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             int cellY = (c / dimsI.X) % dimsI.Y;
             int cellZ = c / (dimsI.X * dimsI.Y);
             Vector3 cellCenter = _probeGridOrigin + new Vector3(cellX + 0.5f, cellY + 0.5f, cellZ + 0.5f) * _probeGridCellSize;
-            IVector4 fallbackIndices = ComputeProbeGridFallbackIndices(cellCenter, positions, list.Count > 0 ? list : null);
+            List<int>? preferredIndices = CollectPreferredProbeIndices(list, tetraData, positions.Count);
+            IVector4 fallbackIndices = ComputeProbeGridFallbackIndices(cellCenter, positions, preferredIndices);
 
             offsets.Add(new ProbeGridCell
             {
@@ -1506,6 +1518,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private void GetProbeGridCellRange(ProbePositionData position, ProbeParamData parameters, IVector3 dims, out IVector3 minCell, out IVector3 maxCell)
     {
         GetProbeInfluenceBounds(position, parameters, out Vector3 minWorld, out Vector3 maxWorld);
+        GetProbeGridCellRange(minWorld, maxWorld, dims, out minCell, out maxCell);
+    }
+
+    private void GetProbeGridCellRange(Vector3 minWorld, Vector3 maxWorld, IVector3 dims, out IVector3 minCell, out IVector3 maxCell)
+    {
         Vector3 minRel = (minWorld - _probeGridOrigin) / _probeGridCellSize;
         Vector3 maxRel = (maxWorld - _probeGridOrigin) / _probeGridCellSize;
         minCell = new IVector3(
@@ -1518,6 +1535,68 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             Math.Clamp((int)MathF.Floor(maxRel.Z), 0, dims.Z - 1));
     }
 
+    private static bool TryGetTetraBounds(ProbeTetraData tetra, IReadOnlyList<ProbePositionData> positions, out Vector3 min, out Vector3 max)
+    {
+        Vector4 indices = tetra.Indices;
+        int index0 = (int)indices.X;
+        int index1 = (int)indices.Y;
+        int index2 = (int)indices.Z;
+        int index3 = (int)indices.W;
+        if ((uint)index0 >= positions.Count ||
+            (uint)index1 >= positions.Count ||
+            (uint)index2 >= positions.Count ||
+            (uint)index3 >= positions.Count)
+        {
+            min = Vector3.Zero;
+            max = Vector3.Zero;
+            return false;
+        }
+
+        Vector4 position0 = positions[index0].Position;
+        Vector4 position1 = positions[index1].Position;
+        Vector4 position2 = positions[index2].Position;
+        Vector4 position3 = positions[index3].Position;
+
+        Vector3 p0 = new(position0.X, position0.Y, position0.Z);
+        Vector3 p1 = new(position1.X, position1.Y, position1.Z);
+        Vector3 p2 = new(position2.X, position2.Y, position2.Z);
+        Vector3 p3 = new(position3.X, position3.Y, position3.Z);
+
+        min = Vector3.Min(Vector3.Min(p0, p1), Vector3.Min(p2, p3));
+        max = Vector3.Max(Vector3.Max(p0, p1), Vector3.Max(p2, p3));
+        return true;
+    }
+
+    private static List<int>? CollectPreferredProbeIndices(List<int> tetraIndices, IReadOnlyList<ProbeTetraData>? tetraData, int probeCount)
+    {
+        if (tetraData is null || tetraIndices.Count == 0 || probeCount <= 0)
+            return null;
+
+        var preferred = new List<int>(Math.Min(probeCount, tetraIndices.Count * 4));
+        var seen = new HashSet<int>();
+        foreach (int tetraIndex in tetraIndices)
+        {
+            if ((uint)tetraIndex >= tetraData.Count)
+                continue;
+
+            Vector4 probeIndices = tetraData[tetraIndex].Indices;
+            AddPreferredProbeIndex((int)probeIndices.X, probeCount, seen, preferred);
+            AddPreferredProbeIndex((int)probeIndices.Y, probeCount, seen, preferred);
+            AddPreferredProbeIndex((int)probeIndices.Z, probeCount, seen, preferred);
+            AddPreferredProbeIndex((int)probeIndices.W, probeCount, seen, preferred);
+        }
+
+        return preferred.Count > 0 ? preferred : null;
+    }
+
+    private static void AddPreferredProbeIndex(int probeIndex, int probeCount, HashSet<int> seen, List<int> preferred)
+    {
+        if ((uint)probeIndex >= probeCount || !seen.Add(probeIndex))
+            return;
+
+        preferred.Add(probeIndex);
+    }
+
     internal static IVector4 ComputeProbeGridFallbackIndices(Vector3 cellCenter, IReadOnlyList<ProbePositionData> positions, List<int>? preferredIndices)
     {
         Span<float> bestDistances = stackalloc float[4] { float.MaxValue, float.MaxValue, float.MaxValue, float.MaxValue };
@@ -1526,9 +1605,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (preferredIndices is not null && preferredIndices.Count > 0)
         {
             foreach (int probeIndex in preferredIndices)
-                ConsiderProbe(probeIndex, cellCenter, positions, bestDistances, bestIndices);
-
-            for (int probeIndex = 0; probeIndex < positions.Count; ++probeIndex)
                 ConsiderProbe(probeIndex, cellCenter, positions, bestDistances, bestIndices);
         }
         else
@@ -1662,6 +1738,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _cachedProbePositions.Clear();
         _cachedProbeTextures.Clear();
         _observedProbeCaptureVersions.Clear();
+        _cachedProbePositionData = [];
+        _cachedProbeParamData = [];
         _lastProbeCount = 0;
         _pendingProbeRefresh = false;
         _pendingProbeRefreshContentOnly = false;
@@ -1761,8 +1839,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _probeParamBuffer.SetDataRaw<ProbeParamData>(parameters);
         _probeParamBuffer.PushData();
 
+        _cachedProbePositionData = [.. positions];
+        _cachedProbeParamData = [.. parameters];
+
         if (_useProbeGridAcceleration)
-            BuildProbeGrid(positions, parameters);
+            BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);
 
         _lastProbeCount = positions.Count;
         _pendingProbeRefresh = false;
@@ -1864,10 +1945,12 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         {
             _probeTetraBuffer = null;
             _probeTetraProbeCount = 0;
+            if (_useProbeGridAcceleration && _cachedProbePositionData.Length == probeCount && _cachedProbeParamData.Length == probeCount)
+                BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);
             return;
         }
 
-        var tetraList = tetraData as IList<ProbeTetraData> ?? [.. tetraData];
+        List<ProbeTetraData> tetraList = tetraData as List<ProbeTetraData> ?? [.. tetraData];
 
         _probeTetraBuffer = new XRDataBuffer("LightProbeTetra", EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
         {
@@ -1876,6 +1959,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _probeTetraBuffer.SetDataRaw(tetraList);
         _probeTetraBuffer.PushData();
         _probeTetraProbeCount = probeCount;
+
+        if (_useProbeGridAcceleration && _cachedProbePositionData.Length == probeCount && _cachedProbeParamData.Length == probeCount)
+            BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, tetraList);
     }
 
 

@@ -35,6 +35,7 @@ uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 uniform bool LightHasShadowMap = true; // Added
 uniform int ShadowSamples = 4;
+uniform int ShadowVogelTapCount = 5;
 uniform float ShadowFilterRadius = 0.0012f;
 uniform int SoftShadowMode = 1;
 uniform float LightSourceRadius = 0.01f;
@@ -120,8 +121,11 @@ float BlockerSearchCubeLocal(in samplerCube shadowMap, in vec3 shadowDir, in flo
 	return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0f;
 }
 
-float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir, in float biasedLightDist, in float farPlaneDist, in float sampleRadius, in int requestedSamples, in int softMode, in float lightSourceRadius)
+float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir, in float biasedLightDist, in float farPlaneDist, in float sampleRadius, in int requestedSamples, in int softMode, in float lightSourceRadius, in int vogelTapCount)
 {
+	if (softMode == 3)
+		return XRENGINE_SampleShadowCubeVogel(shadowMap, shadowDir, biasedLightDist, 0.0f, farPlaneDist, sampleRadius, vogelTapCount);
+
 	int sampleCount = clamp(requestedSamples, 1, 20);
 	if (sampleCount <= 1)
 	{
@@ -234,7 +238,8 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 		sampleRadius,
 		ShadowSamples,
 		SoftShadowMode,
-		LightSourceRadius);
+		LightSourceRadius,
+		ShadowVogelTapCount);
 
 	// Write debug state for visualisation (single center sample)
 	if (ShadowDebugMode != 0)

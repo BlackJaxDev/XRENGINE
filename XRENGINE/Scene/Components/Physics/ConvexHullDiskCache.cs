@@ -146,7 +146,7 @@ internal static class ConvexHullDiskCache
         return true;
     }
 
-    private static string? ResolveCacheRoot()
+    internal static string? ResolveCacheRoot()
     {
         if (!string.IsNullOrWhiteSpace(CacheRootOverride))
             return CacheRootOverride;
