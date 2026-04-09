@@ -67,6 +67,8 @@ public interface IRuntimeRenderingHostServices
     Vector3 DefaultLuminance { get; }
     double RenderDeltaSeconds { get; }
     long LastRenderTimestampTicks { get; }
+    long TrackedVramBytes { get; }
+    long TrackedVramBudgetBytes { get; }
     ETwoPlayerPreference TwoPlayerViewportPreference { get; }
     EThreePlayerPreference ThreePlayerViewportPreference { get; }
     RuntimeGraphicsApiKind CurrentRenderBackend { get; }
@@ -76,6 +78,8 @@ public interface IRuntimeRenderingHostServices
     void LogException(Exception ex, string? context = null);
     void RecordMissingAsset(string assetPath, string category, string? context = null);
     byte[] ReadAllBytes(string filePath);
+    string ResolveTextureStreamingAuthorityPath(string filePath);
+    SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format);
     EnumeratorJob ScheduleEnumeratorJob(
         Func<IEnumerable> routineFactory,
         JobPriority priority = JobPriority.Normal,
@@ -172,6 +176,8 @@ public static class RuntimeRenderingHostServices
         public Vector3 DefaultLuminance => new(0.2126f, 0.7152f, 0.0722f);
         public double RenderDeltaSeconds => 0.0;
         public long LastRenderTimestampTicks => 0L;
+        public long TrackedVramBytes => 0L;
+        public long TrackedVramBudgetBytes => long.MaxValue;
         public ETwoPlayerPreference TwoPlayerViewportPreference => ETwoPlayerPreference.SplitHorizontally;
         public EThreePlayerPreference ThreePlayerViewportPreference => EThreePlayerPreference.PreferFirstPlayer;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;
@@ -197,6 +203,12 @@ public static class RuntimeRenderingHostServices
 
         public byte[] ReadAllBytes(string filePath)
             => File.ReadAllBytes(filePath);
+
+        public string ResolveTextureStreamingAuthorityPath(string filePath)
+            => string.IsNullOrWhiteSpace(filePath) ? filePath : Path.GetFullPath(filePath);
+
+        public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
+            => SparseTextureStreamingSupport.Unsupported("No renderer-specific sparse texture capability service is configured.");
 
         public EnumeratorJob ScheduleEnumeratorJob(
             Func<IEnumerable> routineFactory,

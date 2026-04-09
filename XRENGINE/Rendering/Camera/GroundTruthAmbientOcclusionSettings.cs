@@ -4,6 +4,17 @@ namespace XREngine.Rendering
 {
     public sealed class GroundTruthAmbientOcclusionSettings : AmbientOcclusionModeSettings
     {
+        /// <summary>
+        /// Controls the resolution at which the GTAO generation pass runs.
+        /// Lower resolutions are significantly faster but lose fine detail.
+        /// </summary>
+        public enum EResolution
+        {
+            Full = 1,
+            Half = 2,
+            Quarter = 4,
+        }
+
         private int _sliceCount = 3;
         private int _stepsPerSlice = 6;
         private bool _denoiseEnabled = true;
@@ -14,6 +25,8 @@ namespace XREngine.Rendering
         private float _thicknessHeuristic = 1.0f;
         private bool _multiBounceEnabled = true;
         private bool _specularOcclusionEnabled = true;
+        private EResolution _resolution = EResolution.Half;
+        private bool _useNormalWeightedBlur = true;
 
         public GroundTruthAmbientOcclusionSettings(AmbientOcclusionSettings owner)
             : base(owner, nameof(AmbientOcclusionSettings.GroundTruth))
@@ -78,6 +91,25 @@ namespace XREngine.Rendering
         {
             get => _specularOcclusionEnabled;
             set => SetValue(ref _specularOcclusionEnabled, value, nameof(AmbientOcclusionSettings.GTAOSpecularOcclusionEnabled));
+        }
+
+        /// <summary>
+        /// Resolution at which the AO generation pass runs. Half is recommended for most scenes.
+        /// </summary>
+        public EResolution Resolution
+        {
+            get => _resolution;
+            set => SetValue(ref _resolution, value, nameof(AmbientOcclusionSettings.GTAOResolution));
+        }
+
+        /// <summary>
+        /// When true the bilateral blur reads and weights by G-buffer normals (higher quality, more bandwidth).
+        /// When false only depth-weighted blur is used (faster, slightly softer edges).
+        /// </summary>
+        public bool UseNormalWeightedBlur
+        {
+            get => _useNormalWeightedBlur;
+            set => SetValue(ref _useNormalWeightedBlur, value, nameof(AmbientOcclusionSettings.GTAOUseNormalWeightedBlur));
         }
 
         public override void ApplyUniforms(XRRenderProgram program)

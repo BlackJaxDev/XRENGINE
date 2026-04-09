@@ -339,12 +339,12 @@ namespace XREngine
             {
                 Name = textureName,
                 MagFilter = ETexMagFilter.Linear,
-                MinFilter = ETexMinFilter.LinearMipmapLinear,
+                MinFilter = ETexMinFilter.Linear,
                 UWrap = ETexWrapMode.Repeat,
                 VWrap = ETexWrapMode.Repeat,
                 AlphaAsTransparency = true,
-                AutoGenerateMipmaps = true,
-                Resizable = true,
+                AutoGenerateMipmaps = false,
+                Resizable = false,
                 FilePath = path
             };
 
@@ -357,17 +357,15 @@ namespace XREngine
                 Debug.LogWarning($"Failed to assign filler texture for '{path}'. {ex.Message}");
             }
 
-            XRTexture2D.ScheduleLoadJob(
+            XRTexture2D.ScheduleImportedTexturePreviewJob(
                 path,
                 placeholder,
                 onFinished: tex =>
                 {
                     tex.MagFilter = ETexMagFilter.Linear;
-                    tex.MinFilter = ETexMinFilter.LinearMipmapLinear;
                     tex.UWrap = ETexWrapMode.Repeat;
                     tex.VWrap = ETexWrapMode.Repeat;
                     tex.AlphaAsTransparency = true;
-                    tex.AutoGenerateMipmaps = true;
                     tex.Resizable = false;
                     tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
                 },
@@ -522,12 +520,12 @@ namespace XREngine
                     Name = Path.GetFileNameWithoutExtension(key.path),
                     SamplerName = key.samplerName,
                     MagFilter = ETexMagFilter.Linear,
-                    MinFilter = ETexMinFilter.LinearMipmapLinear,
+                    MinFilter = ETexMinFilter.Linear,
                     UWrap = ETexWrapMode.Repeat,
                     VWrap = ETexWrapMode.Repeat,
                     AlphaAsTransparency = true,
-                    AutoGenerateMipmaps = true,
-                    Resizable = true,
+                    AutoGenerateMipmaps = false,
+                    Resizable = false,
                 };
 
                 try
@@ -539,17 +537,15 @@ namespace XREngine
                     Debug.LogWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
                 }
 
-                XRTexture2D.ScheduleLoadJob(
+                XRTexture2D.ScheduleImportedTexturePreviewJob(
                     key.path,
                     tex,
                     onFinished: _ =>
                     {
                         tex.MagFilter = ETexMagFilter.Linear;
-                        tex.MinFilter = ETexMinFilter.LinearMipmapLinear;
                         tex.UWrap = ETexWrapMode.Repeat;
                         tex.VWrap = ETexWrapMode.Repeat;
                         tex.AlphaAsTransparency = true;
-                        tex.AutoGenerateMipmaps = true;
                         tex.Resizable = false;
                         tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
                     },
@@ -1334,6 +1330,8 @@ namespace XREngine
             Action<float>? onProgress = null,
             Matrix4x4? rootTransformMatrix = null)
         {
+            using var importedTextureStreamingScope = XRTexture2D.EnterImportedTextureStreamingScope();
+
             ModelImportOptions effectiveImportOptions = ResolveEffectiveImportOptions(
                 options,
                 preservePivots,

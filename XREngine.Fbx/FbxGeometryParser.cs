@@ -12,21 +12,36 @@ public static class FbxGeometryParser
         ArgumentNullException.ThrowIfNull(structural);
         ArgumentNullException.ThrowIfNull(semantic);
 
-        int[][] childrenByNode = BuildChildrenByNode(structural.Nodes);
-        Dictionary<int, FbxArrayWorkItem> arrayWorkItemsByPropertyIndex = new(structural.ArrayWorkItems.Count);
-        foreach (FbxArrayWorkItem workItem in structural.ArrayWorkItems)
-            arrayWorkItemsByPropertyIndex[workItem.PropertyIndex] = workItem;
+        return FbxTrace.TraceOperation(
+            "GeometryParser",
+            $"Parsing geometry for {semantic.IntermediateScene.Meshes.Count:N0} intermediate mesh entries.",
+            document => $"Parsed geometry: meshes={document.MeshesByObjectId.Count:N0}, controlPoints={document.MeshesByObjectId.Values.Sum(static mesh => mesh.ControlPoints.Count):N0}, polygonVertexIndices={document.MeshesByObjectId.Values.Sum(static mesh => mesh.PolygonVertexIndices.Count):N0}",
+            () =>
+            {
+                int[][] childrenByNode = BuildChildrenByNode(structural.Nodes);
+                Dictionary<int, FbxArrayWorkItem> arrayWorkItemsByPropertyIndex = new(structural.ArrayWorkItems.Count);
+                foreach (FbxArrayWorkItem workItem in structural.ArrayWorkItems)
+                    arrayWorkItemsByPropertyIndex[workItem.PropertyIndex] = workItem;
 
-        Dictionary<long, FbxMeshGeometry> meshesByObjectId = new();
-        foreach (FbxIntermediateMesh mesh in semantic.IntermediateScene.Meshes)
-        {
-            if (!semantic.TryGetObject(mesh.ObjectId, out FbxSceneObject sceneObject))
-                continue;
+                Dictionary<long, FbxMeshGeometry> meshesByObjectId = new();
+                foreach (FbxIntermediateMesh mesh in semantic.IntermediateScene.Meshes)
+                {
+                    if (!semantic.TryGetObject(mesh.ObjectId, out FbxSceneObject sceneObject))
+                        continue;
 
-            meshesByObjectId[mesh.ObjectId] = ParseMeshGeometry(structural, sceneObject, childrenByNode, arrayWorkItemsByPropertyIndex);
-        }
+                    FbxMeshGeometry parsedGeometry = ParseMeshGeometry(structural, sceneObject, childrenByNode, arrayWorkItemsByPropertyIndex);
+                    meshesByObjectId[mesh.ObjectId] = parsedGeometry;
 
-        return new FbxGeometryDocument(meshesByObjectId);
+                    if (FbxTrace.IsEnabled(FbxLogVerbosity.Verbose))
+                    {
+                        FbxTrace.Verbose(
+                            "GeometryParser",
+                            $"Mesh '{parsedGeometry.Name}' (objectId={parsedGeometry.ObjectId}) parsed with controlPoints={parsedGeometry.ControlPoints.Count:N0}, polygonVertexIndices={parsedGeometry.PolygonVertexIndices.Count:N0}, normalLayers={parsedGeometry.Normals.Count}, tangentLayers={parsedGeometry.Tangents.Count}, uvLayers={parsedGeometry.TextureCoordinates.Count}, colorLayers={parsedGeometry.Colors.Count}, hasMaterialLayer={parsedGeometry.Materials is not null}.");
+                    }
+                }
+
+                return new FbxGeometryDocument(meshesByObjectId);
+            });
     }
 
     private static FbxMeshGeometry ParseMeshGeometry(

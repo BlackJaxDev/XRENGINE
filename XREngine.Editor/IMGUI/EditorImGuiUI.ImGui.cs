@@ -231,7 +231,8 @@ public static partial class EditorImGuiUI
             bool Networking,
             bool AnimationClipEditor,
             bool ShaderGraph,
-            bool ArchiveInspector);
+            bool ArchiveInspector,
+            bool TextureStreaming);
 
 
 
@@ -606,6 +607,7 @@ public static partial class EditorImGuiUI
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
             DrawArchiveInspectorPanel();
+            DrawTextureStreamingPanel();
             DrawClosePromptDialog();
 
             PersistEditorSceneHierarchyToUserSettingsIfChanged();
@@ -1208,6 +1210,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.MenuItem("Networking", null, ref _showNetworking);
                 ImGui.MenuItem("Animation Clip Editor", null, ref _showAnimationClipEditor);
+                ImGui.MenuItem("Texture Streaming", null, ref _showTextureStreaming);
                 ImGui.Separator();
                 if (ImGui.MenuItem("Reset Layout"))
                     ResetDockingLayout();
@@ -1932,7 +1935,8 @@ public static partial class EditorImGuiUI
                 Networking: _showNetworking,
                 AnimationClipEditor: _showAnimationClipEditor,
                 ShaderGraph: _showShaderGraphPanel,
-                ArchiveInspector: _showArchiveInspector);
+                ArchiveInspector: _showArchiveInspector,
+                TextureStreaming: _showTextureStreaming);
 
         private static bool TryParseIniBoolean(string valueText, out bool value)
         {
@@ -2002,6 +2006,9 @@ public static partial class EditorImGuiUI
                 case "ArchiveInspector":
                     _showArchiveInspector = value;
                     break;
+                case "TextureStreaming":
+                    _showTextureStreaming = value;
+                    break;
             }
         }
 
@@ -2027,6 +2034,7 @@ public static partial class EditorImGuiUI
             builder.AppendLine($"AnimationClipEditor={FormatIniBoolean(state.AnimationClipEditor)}");
             builder.AppendLine($"ShaderGraph={FormatIniBoolean(state.ShaderGraph)}");
             builder.AppendLine($"ArchiveInspector={FormatIniBoolean(state.ArchiveInspector)}");
+            builder.AppendLine($"TextureStreaming={FormatIniBoolean(state.TextureStreaming)}");
             return builder.ToString();
         }
 

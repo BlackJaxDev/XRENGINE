@@ -77,6 +77,11 @@
       "type": "boolean",
       "description": "Enables Engine.Profiler frame logging even without Dear ImGui."
     },
+    "FbxLogVerbosity": {
+      "$ref": "#/definitions/UnitTestFbxLogVerbosity",
+      "description": "Controls native FBX importer/exporter trace verbosity. UseEnvironment defers to XRE_FBX_LOG and routes enabled traces to the Assets log category.",
+      "markdownDescription": "Supported values: `UseEnvironment`, `Off`, `Errors`, `Warnings`, `Info`, `Verbose`."
+    },
     "RiveUI": {
       "type": "boolean",
       "description": "Adds a Rive UI component to the scene for testing Rive animations."
@@ -445,6 +450,18 @@
       ],
       "markdownDescription": "Supported values: `Screen`, `World`, `Camera`, `WorldOffscreen`, `CameraOffscreen`."
     },
+    "UnitTestFbxLogVerbosity": {
+      "type": "string",
+      "enum": [
+        "UseEnvironment",
+        "Off",
+        "Errors",
+        "Warnings",
+        "Info",
+        "Verbose"
+      ],
+      "markdownDescription": "Supported values: `UseEnvironment`, `Off`, `Errors`, `Warnings`, `Info`, `Verbose`."
+    },
     "LightProbeMode": {
       "type": "string",
       "enum": [
@@ -521,6 +538,11 @@
         "UseForwardForTransparent": {
           "type": "boolean",
           "description": "When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline."
+        },
+        "ImporterBackend": {
+          "$ref": "#/definitions/ModelImportBackendPreference",
+          "description": "Selects how this model import chooses between native format-specific importers and Assimp fallback. PreferNativeThenAssimp uses a native importer when the format has one available and falls back to Assimp otherwise. Today the native path exists only for FBX.",
+          "markdownDescription": "Supported values: `PreferNativeThenAssimp`, `AssimpOnly`."
         },
         "Path": {
           "type": "string",
@@ -608,6 +630,14 @@
         "Uber"
       ],
       "markdownDescription": "Supported values: `Deferred`, `Forward`, `Uber`."
+    },
+    "ModelImportBackendPreference": {
+      "type": "string",
+      "enum": [
+        "PreferNativeThenAssimp",
+        "AssimpOnly"
+      ],
+      "markdownDescription": "Supported values: `PreferNativeThenAssimp`, `AssimpOnly`."
     },
     "YawPitchRollDegrees": {
       "type": "object",

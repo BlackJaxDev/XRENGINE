@@ -15,6 +15,7 @@ uniform int DenoiseRadius = 4;
 uniform float DenoiseSharpness = 4.0f;
 uniform bool DenoiseEnabled = true;
 uniform bool UseInputNormals = true;
+uniform bool UseNormalWeightedBlur = true;
 uniform int DepthMode;
 
 bool AOIsFarDepth(float depth)
@@ -44,30 +45,36 @@ void main()
         OutIntensity = 1.0f;
         return;
     }
-    vec3 centerNormal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
+
+    bool useNormals = UseNormalWeightedBlur && UseInputNormals;
+    vec3 centerNormal = vec3(0.0f);
+    if (useNormals)
+        centerNormal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
+
     float sigma = max(float(DenoiseRadius) * 0.5f, 1.0f);
     float sharpness = max(DenoiseSharpness, 0.001f);
 
     float result = 0.0f;
     float weightSum = 0.0f;
 
-    for (int offset = -16; offset <= 16; ++offset)
+    int radius = clamp(DenoiseRadius, 1, 16);
+    for (int offset = -radius; offset <= radius; ++offset)
     {
-        if (abs(offset) > DenoiseRadius)
-            continue;
-
         vec2 sampleUV = clamp(uv + BlurDirection * texelSize * float(offset), vec2(0.0f), vec2(1.0f));
         float sampleAO = texture(GTAOInputTexture, vec3(sampleUV, gl_ViewID_OVR)).r;
         float sampleDepth = texture(DepthView, vec3(sampleUV, gl_ViewID_OVR)).r;
         if (AOIsFarDepth(sampleDepth))
             continue;
-        vec3 sampleNormal = XRENGINE_ReadNormal(Normal, vec3(sampleUV, gl_ViewID_OVR));
 
         float spatialWeight = exp(-0.5f * float(offset * offset) / (sigma * sigma));
         float depthWeight = exp(-abs(sampleDepth - centerDepth) * (24.0f * sharpness));
-        float normalWeight = UseInputNormals
-            ? pow(max(dot(sampleNormal, centerNormal), 0.0f), 1.0f + sharpness * 2.0f)
-            : 1.0f;
+
+        float normalWeight = 1.0f;
+        if (useNormals)
+        {
+            vec3 sampleNormal = XRENGINE_ReadNormal(Normal, vec3(sampleUV, gl_ViewID_OVR));
+            normalWeight = pow(max(dot(sampleNormal, centerNormal), 0.0f), 1.0f + sharpness * 2.0f);
+        }
 
         float weight = spatialWeight * depthWeight * normalWeight;
         result += sampleAO * weight;

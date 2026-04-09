@@ -83,6 +83,7 @@ namespace XREngine.Rendering.OpenGL
 
             Data.Resized -= DataResized;
             Data.PushMipLevelRequested -= PushPreparedMipLevel;
+            Data.SparseTextureStreamingTransitionRequested -= ApplySparseTextureStreamingTransition;
             Mipmaps = [];
         }
         protected override void LinkData()
@@ -91,6 +92,7 @@ namespace XREngine.Rendering.OpenGL
 
             Data.Resized += DataResized;
             Data.PushMipLevelRequested += PushPreparedMipLevel;
+            Data.SparseTextureStreamingTransitionRequested += ApplySparseTextureStreamingTransition;
             UpdateMipmaps();
         }
 
@@ -99,6 +101,12 @@ namespace XREngine.Rendering.OpenGL
             bool wasImmutable = !Data.Resizable && StorageSet;
             StorageSet = false;
             _allocatedLevels = 0;
+            _sparseStorageAllocated = false;
+            _sparseLogicalWidth = 0;
+            _sparseLogicalHeight = 0;
+            _sparseLogicalMipCount = 0;
+            _sparseNumSparseLevels = 0;
+            Data.ClearSparseTextureStreamingState();
             Mipmaps.ForEach(m =>
             {
                 m.NeedsFullPush = true;
@@ -143,8 +151,11 @@ namespace XREngine.Rendering.OpenGL
                     PushMipmap(glTarget, 0, null, internalFormatForce);
                 else
                 {
+                    int mipLevelOffset = Data.SparseTextureStreamingEnabled
+                        ? Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel)
+                        : 0;
                     for (int i = 0; i < Mipmaps.Length; ++i)
-                        PushMipmap(glTarget, i, Mipmaps[i], internalFormatForce);
+                        PushMipmap(glTarget, i + mipLevelOffset, Mipmaps[i], internalFormatForce);
                 }
 
                 int minLOD = -1000;
@@ -259,6 +270,16 @@ namespace XREngine.Rendering.OpenGL
             if (IsMultisampleTarget)
                 return baseLevel;
 
+            if (Data.SparseTextureStreamingEnabled && Data.SparseTextureStreamingLogicalMipCount > 0)
+            {
+                int configuredMaxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
+                int logicalMaxLevel = Math.Max(baseLevel, Data.SparseTextureStreamingLogicalMipCount - 1);
+                int allocatedMaxLevel = _allocatedLevels > 0
+                    ? Math.Max(baseLevel, (int)_allocatedLevels - 1)
+                    : logicalMaxLevel;
+                return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, Math.Max(configuredMaxLevel, logicalMaxLevel)));
+            }
+
             int configuredMaxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
             int naturalMaxLevel = Data.SmallestMipmapLevel;
             int allocatedMaxLevel = _allocatedLevels > 0
@@ -355,7 +376,10 @@ namespace XREngine.Rendering.OpenGL
                 Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
 
                 EPixelInternalFormat? internalFormatForce = EnsureStorageAllocated();
-                PushMipmap(ToGLEnum(TextureTarget), mipIndex, Mipmaps[mipIndex], internalFormatForce);
+                int actualMipIndex = Data.SparseTextureStreamingEnabled
+                    ? mipIndex + Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel)
+                    : mipIndex;
+                PushMipmap(ToGLEnum(TextureTarget), actualMipIndex, Mipmaps[mipIndex], internalFormatForce);
 
                 SetParameters();
                 IsInvalidated = false;
@@ -583,6 +607,12 @@ namespace XREngine.Rendering.OpenGL
                 => m.NeedsFullPush = true;
             Mipmaps.ForEach(SetFullPush);
             StorageSet = false;
+            _sparseStorageAllocated = false;
+            _sparseLogicalWidth = 0;
+            _sparseLogicalHeight = 0;
+            _sparseLogicalMipCount = 0;
+            _sparseNumSparseLevels = 0;
+            Data.ClearSparseTextureStreamingState();
             base.PostGenerated();
         }
         protected internal override void PostDeleted()
@@ -600,6 +630,12 @@ namespace XREngine.Rendering.OpenGL
                 _allocatedVRAMBytes = 0;
             }
             StorageSet = false;
+            _sparseStorageAllocated = false;
+            _sparseLogicalWidth = 0;
+            _sparseLogicalHeight = 0;
+            _sparseLogicalMipCount = 0;
+            _sparseNumSparseLevels = 0;
+            Data.ClearSparseTextureStreamingState();
             base.PostDeleted();
         }
 

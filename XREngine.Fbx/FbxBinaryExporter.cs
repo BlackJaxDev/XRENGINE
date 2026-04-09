@@ -13,9 +13,17 @@ public static class FbxBinaryExporter
     {
         ArgumentNullException.ThrowIfNull(semantic);
 
-        FbxBinaryExportOptions resolvedOptions = ResolveOptions(semantic, options);
-        IReadOnlyList<FbxBinaryNode> nodes = BuildDocumentNodes(semantic, geometry, deformers, animations, resolvedOptions);
-        return FbxBinaryWriter.WriteToArray(nodes, resolvedOptions);
+        IReadOnlyList<FbxBinaryNode>? nodes = null;
+        return FbxTrace.TraceOperation(
+            "BinaryExporter",
+            $"Exporting FBX document ({DescribeInputs(semantic, geometry, deformers, animations)}).",
+            payload => $"Exported binary FBX payload with {payload.Length:N0} bytes, rootNodes={nodes?.Count ?? 0:N0}, options={DescribeOptions(ResolveOptions(semantic, options))}",
+            () =>
+            {
+                FbxBinaryExportOptions resolvedOptions = ResolveOptions(semantic, options);
+                nodes = BuildDocumentNodes(semantic, geometry, deformers, animations, resolvedOptions);
+                return FbxBinaryWriter.WriteToArray(nodes, resolvedOptions);
+            });
     }
 
     public static void Write(
@@ -29,9 +37,17 @@ public static class FbxBinaryExporter
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(semantic);
 
-        FbxBinaryExportOptions resolvedOptions = ResolveOptions(semantic, options);
-        IReadOnlyList<FbxBinaryNode> nodes = BuildDocumentNodes(semantic, geometry, deformers, animations, resolvedOptions);
-        FbxBinaryWriter.Write(stream, nodes, resolvedOptions);
+        IReadOnlyList<FbxBinaryNode>? nodes = null;
+        FbxTrace.TraceOperation(
+            "BinaryExporter",
+            $"Writing FBX document to stream ({DescribeInputs(semantic, geometry, deformers, animations)}).",
+            () =>
+            {
+                FbxBinaryExportOptions resolvedOptions = ResolveOptions(semantic, options);
+                nodes = BuildDocumentNodes(semantic, geometry, deformers, animations, resolvedOptions);
+                FbxBinaryWriter.Write(stream, nodes, resolvedOptions);
+            },
+            () => $"Wrote FBX stream with rootNodes={nodes?.Count ?? 0:N0}, streamPosition={(stream.CanSeek ? stream.Position.ToString("N0") : "n/a")}, options={DescribeOptions(ResolveOptions(semantic, options))}");
     }
 
     private static FbxBinaryExportOptions ResolveOptions(FbxSemanticDocument semantic, FbxBinaryExportOptions? options)
@@ -71,6 +87,16 @@ public static class FbxBinaryExporter
 
         return documentNodes;
     }
+
+    private static string DescribeInputs(
+        FbxSemanticDocument semantic,
+        FbxGeometryDocument? geometry,
+        FbxDeformerDocument? deformers,
+        FbxAnimationDocument? animations)
+        => $"objects={semantic.Objects.Count:N0}, connections={semantic.Connections.Count:N0}, meshes={geometry?.MeshesByObjectId.Count ?? 0:N0}, skins={deformers?.SkinsByGeometryObjectId.Count ?? 0:N0}, blendShapeSets={deformers?.BlendShapeChannelsByGeometryObjectId.Count ?? 0:N0}, animationStacks={animations?.Stacks.Count ?? 0:N0}";
+
+    private static string DescribeOptions(FbxBinaryExportOptions options)
+        => $"version={options.BinaryVersion}, bigEndian={options.BigEndian}, footer={options.IncludeFooter}, arrayEncoding={options.ArrayEncodingMode}, includeGlobalSettings={options.IncludeGlobalSettings}, includeDefinitions={options.IncludeDefinitions}, includeTakes={options.IncludeTakes}";
 
     private static FbxBinaryNode BuildFbxHeaderExtensionNode(FbxBinaryExportOptions options)
     {

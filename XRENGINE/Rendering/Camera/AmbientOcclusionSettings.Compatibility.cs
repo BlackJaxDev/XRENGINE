@@ -266,6 +266,18 @@ namespace XREngine.Rendering
             set => GroundTruth.SpecularOcclusionEnabled = value;
         }
 
+        public GroundTruthAmbientOcclusionSettings.EResolution GTAOResolution
+        {
+            get => GroundTruth.Resolution;
+            set => GroundTruth.Resolution = value;
+        }
+
+        public bool GTAOUseNormalWeightedBlur
+        {
+            get => GroundTruth.UseNormalWeightedBlur;
+            set => GroundTruth.UseNormalWeightedBlur = value;
+        }
+
         public int VXAOVoxelGridResolution
         {
             get => Voxel.VoxelGridResolution;

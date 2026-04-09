@@ -1,4 +1,5 @@
 using System.Collections;
+using System.IO;
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
@@ -82,9 +83,31 @@ public sealed class RuntimeRenderingHostServicesTests
         services.ViewportCollectUnsubscribeCount.ShouldBe(1);
     }
 
+    [Test]
+    public void TextureAuthorityPathResolution_UsesRuntimeRenderingHostServicesResolver()
+    {
+        string sourcePath = Path.Combine(Path.GetTempPath(), "TextureAuthoritySource.png");
+        string cachePath = Path.Combine(Path.GetTempPath(), "TextureAuthorityCache.asset");
+
+        TestRuntimeRenderingHostServices services = new()
+        {
+            ResolvedTextureStreamingAuthorityPath = cachePath,
+        };
+        RuntimeRenderingHostServices.Current = services;
+
+        string resolvedPath = XRTexture2D.ResolveTextureStreamingAuthorityPathInternal(sourcePath, out string? originalSourcePath);
+
+        resolvedPath.ShouldBe(Path.GetFullPath(cachePath));
+        originalSourcePath.ShouldBe(Path.GetFullPath(sourcePath));
+    }
+
     private sealed class TestRuntimeRenderingHostServices : IRuntimeRenderingHostServices
     {
         public RenderPipeline? DefaultPipeline { get; set; }
+
+        public string? ResolvedTextureStreamingAuthorityPath { get; set; }
+
+        public SparseTextureStreamingSupport SparseTextureStreamingSupport { get; set; } = SparseTextureStreamingSupport.Unsupported();
 
         public int CreateDefaultRenderPipelineCallCount { get; private set; }
 
@@ -122,6 +145,8 @@ public sealed class RuntimeRenderingHostServicesTests
         public Vector3 DefaultLuminance => Vector3.One;
         public double RenderDeltaSeconds => 0.0;
         public long LastRenderTimestampTicks => 0L;
+        public long TrackedVramBytes => 0L;
+        public long TrackedVramBudgetBytes => long.MaxValue;
         public ETwoPlayerPreference TwoPlayerViewportPreference => ETwoPlayerPreference.SplitHorizontally;
         public EThreePlayerPreference ThreePlayerViewportPreference => EThreePlayerPreference.PreferFirstPlayer;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;
@@ -154,6 +179,12 @@ public sealed class RuntimeRenderingHostServicesTests
 
         public byte[] ReadAllBytes(string filePath)
             => Array.Empty<byte>();
+
+        public string ResolveTextureStreamingAuthorityPath(string filePath)
+            => ResolvedTextureStreamingAuthorityPath ?? filePath;
+
+        public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
+            => SparseTextureStreamingSupport;
 
         public EnumeratorJob ScheduleEnumeratorJob(
             Func<IEnumerable> routineFactory,

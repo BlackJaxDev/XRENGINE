@@ -52,6 +52,19 @@ namespace XREngine.Rendering
         }
         public override bool Load3rdParty(string filePath)
         {
+            string authorityPath = ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
+            return Load3rdPartyCore(authorityPath, originalSourcePath);
+        }
+
+        public override bool Load3rdParty(string filePath, AssetImportContext context)
+            => Load3rdPartyCore(filePath);
+
+        private bool Load3rdPartyCore(string filePath, string? originalSourcePath = null)
+        {
+            FilePath = string.IsNullOrWhiteSpace(filePath) ? filePath : Path.GetFullPath(filePath);
+            if (!string.IsNullOrWhiteSpace(originalSourcePath))
+                OriginalPath ??= Path.GetFullPath(originalSourcePath);
+
             if (HasAssetExtension(filePath))
             {
                 if (TryLoadTextureAsset(filePath, this, deepCopy: true))
@@ -70,7 +83,7 @@ namespace XREngine.Rendering
             try
             {
                 byte[] fileBytes = RuntimeRenderingHostServices.Current.ReadAllBytes(filePath);
-                var sourceImage = new MagickImage(fileBytes);
+                using var sourceImage = new MagickImage(fileBytes);
                 Mipmaps = GetMipmapsFromImage(sourceImage);
                 AutoGenerateMipmaps = false;
                 Resizable = false;
@@ -85,7 +98,7 @@ namespace XREngine.Rendering
 
         public override bool Import3rdParty(string filePath, object? importOptions)
         {
-            bool ok = Load3rdParty(filePath);
+            bool ok = Load3rdPartyCore(filePath);
             if (!ok)
                 return false;
 
@@ -133,17 +146,21 @@ namespace XREngine.Rendering
             for (int i = 0; i < entries.Length; i++)
             {
                 var (filePath, target) = entries[i];
+                string resolvedPath = ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
+                target.FilePath = resolvedPath;
+                if (!string.IsNullOrWhiteSpace(originalSourcePath))
+                    target.OriginalPath ??= originalSourcePath;
                 cancellationToken.ThrowIfCancellationRequested();
-                if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath) || HasAssetExtension(filePath))
+                if (string.IsNullOrWhiteSpace(resolvedPath) || !File.Exists(resolvedPath) || HasAssetExtension(resolvedPath))
                 {
-                    target.Load3rdParty(filePath);
+                    target.Load3rdParty(resolvedPath);
                     continue;
                 }
 
                 byte[]? data = null;
                 try
                 {
-                    data = RuntimeRenderingHostServices.Current.ReadAllBytes(filePath);
+                    data = RuntimeRenderingHostServices.Current.ReadAllBytes(resolvedPath);
                 }
                 catch
                 {
@@ -152,7 +169,7 @@ namespace XREngine.Rendering
                 if (data is { Length: > 0 } && target.Load3rdPartyFromData(data))
                     continue;
 
-                target.Load3rdParty(filePath);
+                target.Load3rdParty(resolvedPath);
             }
         }
 
@@ -170,13 +187,14 @@ namespace XREngine.Rendering
                 throw new ArgumentException("File path must be provided.", nameof(filePath));
 
             XRTexture2D target = texture ?? new XRTexture2D();
-            target.FilePath ??= filePath;
+            ApplyTextureStreamingAuthorityPath(target, filePath);
             if (string.IsNullOrWhiteSpace(target.Name))
                 target.Name = Path.GetFileNameWithoutExtension(filePath);
 
             // IMPORTANT: Do not rely on the host job scheduler to *start* the disk load.
             // We kick off the IO immediately on the thread pool and only use the scheduler
             // as an optional tracker.
+            string resolvedPath = target.FilePath ?? filePath;
             Task loadTask = Task.Run(() =>
             {
                 try
@@ -187,9 +205,9 @@ namespace XREngine.Rendering
                         return;
                     }
 
-                    bool loadSuccess = target.Load3rdParty(filePath);
+                    bool loadSuccess = target.Load3rdParty(resolvedPath);
                     if (!loadSuccess)
-                        RuntimeRenderingHostServices.Current.LogWarning($"[TextureLoadJob] Failed to load texture from disk: {filePath}");
+                        RuntimeRenderingHostServices.Current.LogWarning($"[TextureLoadJob] Failed to load texture from disk: {resolvedPath}");
                     onProgress?.Invoke(0.5f);
 
                     if (cancellationToken.IsCancellationRequested)
@@ -246,10 +264,11 @@ namespace XREngine.Rendering
                 throw new ArgumentException("File path must be provided.", nameof(filePath));
 
             XRTexture2D target = texture ?? new XRTexture2D();
-            target.FilePath ??= filePath;
+            ApplyTextureStreamingAuthorityPath(target, filePath);
             if (string.IsNullOrWhiteSpace(target.Name))
                 target.Name = Path.GetFileNameWithoutExtension(filePath);
 
+            string resolvedPath = target.FilePath ?? filePath;
             Task previewTask = Task.Run(() =>
             {
                 try
@@ -261,17 +280,17 @@ namespace XREngine.Rendering
                     }
 
                     bool hasPreview = false;
-                    bool isAssetFile = HasAssetExtension(filePath);
-                    bool looksLikeTextureAsset = isAssetFile && LooksLikeTextureAssetFile(filePath);
+                    bool isAssetFile = HasAssetExtension(resolvedPath);
+                    bool looksLikeTextureAsset = isAssetFile && LooksLikeTextureAssetFile(resolvedPath);
 
                     if (looksLikeTextureAsset)
-                        hasPreview = TryLoadPreviewFromTextureAsset(filePath, target, maxPreviewSize);
+                        hasPreview = TryLoadPreviewFromTextureAsset(resolvedPath, target, maxPreviewSize);
 
                     if (!hasPreview)
                     {
                         if (!isAssetFile)
                         {
-                            LoadPreviewFrom3rdParty(filePath, target, maxPreviewSize);
+                            LoadPreviewFrom3rdParty(resolvedPath, target, maxPreviewSize);
                             hasPreview = true;
                         }
                         else
@@ -698,8 +717,24 @@ namespace XREngine.Rendering
         }
 
         private static bool TryLoadPreviewFromTextureAsset(string filePath, XRTexture2D target, uint maxPreviewSize)
-            => TryLoadTextureAsset(filePath, target, deepCopy: false)
+        {
+            try
+            {
+                byte[] assetBytes = RuntimeRenderingHostServices.Current.ReadAllBytes(filePath);
+                if (TryReadResidentDataFromTextureAssetFileBytes(assetBytes, maxPreviewSize, includeMipChain: false, out TextureStreamingResidentData residentData))
+                {
+                    ApplyResidentData(target, residentData, includeMipChain: false);
+                    return true;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                RuntimeRenderingHostServices.Current.LogOutput($"Failed to read preview resident data from texture asset '{filePath}'. {ex.Message}");
+            }
+
+            return TryLoadTextureAsset(filePath, target, deepCopy: false)
                 && TryPreparePreviewFromLoadedTexture(target, maxPreviewSize);
+        }
 
         private static bool TryLoadTextureAsset(string filePath, XRTexture2D target, bool deepCopy)
         {
@@ -1591,54 +1626,12 @@ namespace XREngine.Rendering
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
         private static void WriteMipmaps(CookedBinaryWriter writer, Mipmap2D[] mipmaps)
-        {
-            writer.WriteValue(mipmaps?.Length ?? 0);
-            if (mipmaps is null)
-                return;
-
-            foreach (var mip in mipmaps)
-            {
-                writer.WriteValue(mip.Width);
-                writer.WriteValue(mip.Height);
-                writer.WriteValue(mip.InternalFormat);
-                writer.WriteValue(mip.PixelFormat);
-                writer.WriteValue(mip.PixelType);
-                writer.WriteValue(mip.Data is null ? null : mip.Data.GetBytes());
-            }
-        }
+            => WriteStreamableMipmaps(writer, mipmaps);
 
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
         private static Mipmap2D[] ReadMipmaps(CookedBinaryReader reader)
-        {
-            int mipCount = ReadStructOrDefault(reader, 0);
-            if (mipCount <= 0)
-                return [];
-
-            Mipmap2D[] mipmaps = new Mipmap2D[mipCount];
-            for (int i = 0; i < mipCount; i++)
-            {
-                uint width = ReadStructOrDefault(reader, 0u);
-                uint height = ReadStructOrDefault(reader, 0u);
-                var internalFormat = ReadStructOrDefault(reader, EPixelInternalFormat.Rgba8);
-                var pixelFormat = ReadStructOrDefault(reader, EPixelFormat.Rgba);
-                var pixelType = ReadStructOrDefault(reader, EPixelType.UnsignedByte);
-                byte[]? bytes = reader.ReadValue<byte[]>();
-
-                Mipmap2D mip = new()
-                {
-                    Width = width,
-                    Height = height,
-                    InternalFormat = internalFormat,
-                    PixelFormat = pixelFormat,
-                    PixelType = pixelType,
-                    Data = bytes is null ? null : new DataSource(bytes)
-                };
-                mipmaps[i] = mip;
-            }
-
-            return mipmaps;
-        }
+            => ReadMipmaps(reader, TextureMipmapReadRequest.Full, out _, out _);
 
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
@@ -1705,24 +1698,6 @@ namespace XREngine.Rendering
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
         private static long CalculateMipmapSize(Mipmap2D[] mipmaps)
-        {
-            long size = CookedBinarySerializer.CalculateSize(mipmaps?.Length ?? 0);
-            if (mipmaps is null)
-                return size;
-
-            foreach (var mip in mipmaps)
-            {
-                size += CookedBinarySerializer.CalculateSize(mip.Width);
-                size += CookedBinarySerializer.CalculateSize(mip.Height);
-                size += CookedBinarySerializer.CalculateSize(mip.InternalFormat);
-                size += CookedBinarySerializer.CalculateSize(mip.PixelFormat);
-                size += CookedBinarySerializer.CalculateSize(mip.PixelType);
-
-                byte[]? bytes = mip.Data is null ? null : mip.Data.GetBytes();
-                size += CookedBinarySerializer.CalculateSize(bytes);
-            }
-
-            return size;
-        }
+            => CalculateStreamableMipmapSize(mipmaps);
     }
 }
