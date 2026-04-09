@@ -50,12 +50,17 @@ internal readonly struct VulkanUpscaleBridgeDispatchParameters
     public uint OutputHeight { get; init; }
     public uint FrameIndex { get; init; }
     public bool ResetHistory { get; init; }
+    public bool OutputHdr { get; init; }
     public bool ReverseDepth { get; init; }
     public bool IsOrthographic { get; init; }
+    public bool HasExposureTexture { get; init; }
     public EDlssQualityMode DlssQuality { get; init; }
     public EXessQualityMode XessQuality { get; init; }
     public float DlssSharpness { get; init; }
     public float XessSharpness { get; init; }
+    public float ExposureScale { get; init; }
+    public float MotionVectorScaleX { get; init; }
+    public float MotionVectorScaleY { get; init; }
     public float JitterOffsetX { get; init; }
     public float JitterOffsetY { get; init; }
     public Matrix4x4 CameraViewToClip { get; init; }
@@ -88,6 +93,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
     private VulkanUpscaleBridgeSidecar? _sidecar;
     private VulkanUpscaleBridgeFrameSlot[] _frameSlots = [];
     private int _frameSlotIndex = -1;
+    private uint _resourceGeneration;
 
     public VulkanUpscaleBridge(XRViewport viewport)
     {
@@ -106,6 +112,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
     public string? LastStateReason => _lastStateReason;
     public string? PendingRecreateReason => _pendingRecreateReason;
     public bool SidecarDeviceOwned { get; private set; }
+    internal uint ResourceGeneration => _resourceGeneration;
     internal bool HasInteropResources => _sidecar is not null && _frameSlots.Length > 0;
     internal VulkanUpscaleBridgeFrameSlot? CurrentFrameSlot
         => _frameSlotIndex >= 0 && _frameSlotIndex < _frameSlots.Length
@@ -358,6 +365,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
         XRFrameBuffer sourceColorFbo,
         XRFrameBuffer sourceDepthFbo,
         XRFrameBuffer sourceMotionFbo,
+        XRFrameBuffer? sourceExposureFbo,
         in VulkanUpscaleBridgeDispatchParameters parameters,
         out XRTexture? outputTexture,
         out TimeSpan dispatchDuration,
@@ -406,6 +414,18 @@ public sealed class VulkanUpscaleBridge : IDisposable
                 stencilBit: false,
                 linearFilter: false);
 
+            if (parameters.HasExposureTexture && sourceExposureFbo is not null)
+            {
+                renderer.BlitFBOToFBO(
+                    sourceExposureFbo,
+                    slot.ExposureFrameBuffer,
+                    EReadBufferMode.ColorAttachment0,
+                    colorBit: true,
+                    depthBit: false,
+                    stencilBit: false,
+                    linearFilter: false);
+            }
+
             if (!TryGetGlTextureBinding(renderer, slot.SourceColorTexture, out uint sourceColorTextureId)
                 || !TryGetGlTextureBinding(renderer, slot.SourceDepthTexture, out uint sourceDepthTextureId)
                 || !TryGetGlTextureBinding(renderer, slot.SourceMotionTexture, out uint sourceMotionTextureId)
@@ -415,23 +435,36 @@ public sealed class VulkanUpscaleBridge : IDisposable
                 return false;
             }
 
-            Span<uint> readyTextureIds = stackalloc uint[3]
+            uint exposureTextureId = 0u;
+            if (parameters.HasExposureTexture && (!TryGetGlTextureBinding(renderer, slot.ExposureTexture, out exposureTextureId) || exposureTextureId == 0u))
             {
-                sourceColorTextureId,
-                sourceDepthTextureId,
-                sourceMotionTextureId,
-            };
-            Span<Silk.NET.OpenGLES.TextureLayout> readyLayouts = stackalloc Silk.NET.OpenGLES.TextureLayout[3]
-            {
-                Silk.NET.OpenGLES.TextureLayout.GeneralExt,
-                Silk.NET.OpenGLES.TextureLayout.GeneralExt,
-                Silk.NET.OpenGLES.TextureLayout.GeneralExt,
-            };
+                failureReason = "failed to resolve the OpenGL bridge exposure texture handle";
+                return false;
+            }
 
-            renderer.SignalExternalTextureSemaphore(slot.GlReadySemaphore, readyTextureIds, readyLayouts);
+            Span<uint> readyTextureIds = stackalloc uint[4];
+            Span<Silk.NET.OpenGLES.TextureLayout> readyLayouts = stackalloc Silk.NET.OpenGLES.TextureLayout[4];
+            readyTextureIds[0] = sourceColorTextureId;
+            readyLayouts[0] = Silk.NET.OpenGLES.TextureLayout.GeneralExt;
+            readyTextureIds[1] = sourceDepthTextureId;
+            readyLayouts[1] = Silk.NET.OpenGLES.TextureLayout.GeneralExt;
+            readyTextureIds[2] = sourceMotionTextureId;
+            readyLayouts[2] = Silk.NET.OpenGLES.TextureLayout.GeneralExt;
+
+            int readyCount = 3;
+            if (parameters.HasExposureTexture)
+            {
+                readyTextureIds[readyCount] = exposureTextureId;
+                readyLayouts[readyCount] = Silk.NET.OpenGLES.TextureLayout.GeneralExt;
+                readyCount++;
+            }
+
+            renderer.SignalExternalTextureSemaphore(slot.GlReadySemaphore, readyTextureIds[..readyCount], readyLayouts[..readyCount]);
             slot.SourceColor.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
             slot.SourceDepth.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
             slot.SourceMotion.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
+            if (parameters.HasExposureTexture)
+                slot.Exposure.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
             slot.OutputColor.CurrentLayout = Silk.NET.Vulkan.ImageLayout.General;
 
             Stopwatch dispatchStopwatch = Stopwatch.StartNew();
@@ -654,6 +687,10 @@ public sealed class VulkanUpscaleBridge : IDisposable
         _sidecar = new VulkanUpscaleBridgeSidecar(snapshot.OpenGlVendor, snapshot.OpenGlRenderer, in frameResources);
         _frameSlots = _sidecar.CreateFrameSlots(renderer, frameResources, SanitizeLabel(DescribeViewport()));
         _frameSlotIndex = _frameSlots.Length > 0 ? 0 : -1;
+        unchecked
+        {
+            _resourceGeneration++;
+        }
 
         if (_frameSlots.Length == 0)
             throw new InvalidOperationException("The Vulkan upscale bridge sidecar did not create any interop frame slots.");

@@ -26,11 +26,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string? DepthStencilTextureName { get; set; }
         public string? MotionTextureName { get; set; }
         public string? MotionFrameBufferName { get; set; }
+        public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
 
         private static bool _reportedDlssFailure;
         private static bool _reportedXessFailure;
         private static bool _reportedXessApiMismatch;
         private static bool _reportedDlssApiMismatch;
+        private static bool _reportedDlssUnavailable;
+        private static bool _reportedXessUnavailable;
         private static bool _reportedXessFrameGenUnavailable;
 
         private XRMaterial? _fallbackMaterial;
@@ -42,8 +45,24 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRTexture? _bridgeDepthTexture;
         private XRFrameBuffer? _bridgeMotionTextureFbo;
         private XRTexture? _bridgeMotionTexture;
+        private XRFrameBuffer? _bridgeExposureTextureFbo;
+        private XRTexture? _bridgeExposureTexture;
         private bool _bridgeVendorHistoryValid;
         private EVulkanUpscaleBridgeVendor _lastBridgeVendor;
+        private bool _fallbackApplySharpen;
+        private float _fallbackSharpenStrength;
+        private bool _bridgeDispatchHistoryValid;
+        private XRCamera? _lastBridgeCamera;
+        private object? _lastBridgeScene;
+        private uint _lastBridgeGeneration;
+        private bool _lastBridgeOutputHdr;
+        private bool _lastBridgeReverseDepth;
+        private uint _lastBridgeInputWidth;
+        private uint _lastBridgeInputHeight;
+        private uint _lastBridgeOutputWidth;
+        private uint _lastBridgeOutputHeight;
+        private Vector3 _lastBridgeCameraPosition;
+        private Vector3 _lastBridgeCameraForward;
 
         private const string FallbackShaderCode = """
 #version 450
@@ -52,6 +71,8 @@ layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D SourceTexture;
+uniform bool ApplySharpen;
+uniform float SharpenStrength;
 
 void main()
 {
@@ -60,7 +81,19 @@ void main()
         discard;
 
     vec2 uv = clipXY * 0.5 + 0.5;
-    OutColor = texture(SourceTexture, uv);
+    vec4 source = texture(SourceTexture, uv);
+    if (ApplySharpen && SharpenStrength > 0.0)
+    {
+        vec2 texelSize = 1.0 / vec2(textureSize(SourceTexture, 0));
+        vec3 north = texture(SourceTexture, uv + vec2(0.0, texelSize.y)).rgb;
+        vec3 south = texture(SourceTexture, uv - vec2(0.0, texelSize.y)).rgb;
+        vec3 east = texture(SourceTexture, uv + vec2(texelSize.x, 0.0)).rgb;
+        vec3 west = texture(SourceTexture, uv - vec2(texelSize.x, 0.0)).rgb;
+        vec3 sharpened = source.rgb * (1.0 + 4.0 * SharpenStrength) - (north + south + east + west) * SharpenStrength;
+        source.rgb = max(sharpened, vec3(0.0));
+    }
+
+    OutColor = source;
 }
 """;
 
@@ -103,14 +136,23 @@ void main()
             DestroyBridgeHelperFrameBuffer(ref _bridgeSourceTextureFbo, ref _bridgeSourceTexture);
             DestroyBridgeHelperFrameBuffer(ref _bridgeDepthTextureFbo, ref _bridgeDepthTexture);
             DestroyBridgeHelperFrameBuffer(ref _bridgeMotionTextureFbo, ref _bridgeMotionTexture);
+            DestroyBridgeHelperFrameBuffer(ref _bridgeExposureTextureFbo, ref _bridgeExposureTexture);
             _bridgeVendorHistoryValid = false;
             _lastBridgeVendor = default;
+            _bridgeDispatchHistoryValid = false;
+            _lastBridgeCamera = null;
+            _lastBridgeScene = null;
+            _fallbackApplySharpen = false;
+            _fallbackSharpenStrength = 0.0f;
 
             base.ReleaseContainerResources(instance);
         }
 
         protected override void Execute()
         {
+            _fallbackApplySharpen = false;
+            _fallbackSharpenStrength = 0.0f;
+
             XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport;
             XRFrameBuffer? sourceFrameBuffer = FrameBufferName is not null
                 ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(FrameBufferName)
@@ -131,6 +173,8 @@ void main()
 
                 if (TryRunDlss())
                     return;
+
+                ReportNativeFallback();
             }
             else if (viewport?.Window?.Renderer is OpenGLRenderer openGlRenderer &&
                 IsBridgePathRequested() &&
@@ -208,6 +252,8 @@ void main()
                     Debug.Log(ELogCategory.Rendering, $"[VendorUpscaleDiag] FallbackBlit path. Source='{FrameBufferName}' Target='{TargetFrameBufferName ?? "<current>"}' Texture='{colorTexture.Name ?? colorTexture.SamplerName ?? "<unnamed>"}'");
 
                 _fallbackSourceTexture = colorTexture;
+                _fallbackApplySharpen = false;
+                _fallbackSharpenStrength = 0.0f;
                 _fallbackQuad?.Render(
                     TargetFrameBufferName is not null
                         ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
@@ -236,6 +282,8 @@ void main()
                 return;
 
             _fallbackSourceTexture = colorTexture;
+            _fallbackApplySharpen = false;
+            _fallbackSharpenStrength = 0.0f;
             _fallbackQuad.Render(
                 TargetFrameBufferName is not null
                     ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
@@ -245,7 +293,12 @@ void main()
         private void FallbackSettingUniforms(XRRenderProgram program)
         {
             if (_fallbackSourceTexture is not null)
+            {
                 program.Sampler("SourceTexture", _fallbackSourceTexture, 0);
+            }
+
+            program.Uniform("ApplySharpen", _fallbackApplySharpen);
+            program.Uniform("SharpenStrength", _fallbackSharpenStrength);
         }
 
         private bool TryRunBridge(
@@ -287,6 +340,19 @@ void main()
                 return false;
             }
 
+            if (!TryResolveBridgeCamera(out XRCamera? camera, out string cameraFailure) || camera is null)
+            {
+                failureReason = cameraFailure;
+                return false;
+            }
+
+            ColorGradingSettings? colorGrading = ResolveBridgeColorGradingSettings(camera);
+            if (!TryResolveBridgeExposureSource(renderer, colorGrading, out XRFrameBuffer? sourceExposureFbo, out string exposureFailure))
+            {
+                failureReason = exposureFailure;
+                return false;
+            }
+
             if (!ValidateBridgeInputSizes(sourceColorFbo, sourceDepthFbo, sourceMotionFbo, slot, out string sizeFailure))
             {
                 failureReason = sizeFailure;
@@ -299,7 +365,17 @@ void main()
                 return false;
             }
 
-            if (!TryCreateBridgeDispatchParameters(renderer, viewport, bridge, vendor, out VulkanUpscaleBridgeDispatchParameters dispatchParameters, out string dispatchFailure))
+            if (!TryCreateBridgeDispatchParameters(
+                    renderer,
+                    viewport,
+                    bridge,
+                    vendor,
+                    camera,
+                    colorGrading,
+                    sourceColorFbo,
+                    sourceExposureFbo,
+                    out VulkanUpscaleBridgeDispatchParameters dispatchParameters,
+                    out string dispatchFailure))
             {
                 failureReason = dispatchFailure;
                 return false;
@@ -310,6 +386,7 @@ void main()
                 sourceColorFbo,
                 sourceDepthFbo,
                 sourceMotionFbo,
+                sourceExposureFbo,
                 in dispatchParameters,
                 out XRTexture? bridgeOutput,
                 out TimeSpan dispatchDuration,
@@ -317,6 +394,9 @@ void main()
 
             if (!ok || bridgeOutput is null)
             {
+                bridge.MarkNeedsRecreate(string.IsNullOrWhiteSpace(bridgeFailure)
+                    ? $"{vendor} bridge dispatch failed"
+                    : bridgeFailure);
                 failureReason = string.IsNullOrWhiteSpace(bridgeFailure)
                     ? $"bridge {vendor} submission failed"
                     : bridgeFailure;
@@ -331,8 +411,13 @@ void main()
             }
 
             _fallbackSourceTexture = bridgeOutput;
+            _fallbackApplySharpen = vendor == EVulkanUpscaleBridgeVendor.Xess && Engine.Rendering.Settings.XessSharpness > 0.0f;
+            _fallbackSharpenStrength = _fallbackApplySharpen
+                ? Math.Clamp(Engine.Rendering.Settings.XessSharpness, 0.0f, 1.0f) * 0.35f
+                : 0.0f;
             _lastBridgeVendor = vendor;
             _bridgeVendorHistoryValid = true;
+            RememberBridgeDispatch(camera, bridge, dispatchParameters);
             _fallbackQuad?.Render(
                 TargetFrameBufferName is not null
                     ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
@@ -392,29 +477,23 @@ void main()
             XRViewport viewport,
             VulkanUpscaleBridge bridge,
             EVulkanUpscaleBridgeVendor vendor,
+            XRCamera camera,
+            ColorGradingSettings? colorGrading,
+            XRFrameBuffer sourceColorFbo,
+            XRFrameBuffer? sourceExposureFbo,
             out VulkanUpscaleBridgeDispatchParameters parameters,
             out string failureReason)
         {
             parameters = default;
             failureReason = string.Empty;
 
-            XRCamera? camera = ActivePipelineInstance.RenderState.SceneCamera
-                ?? ActivePipelineInstance.RenderState.RenderingCamera
-                ?? ActivePipelineInstance.LastSceneCamera
-                ?? ActivePipelineInstance.LastRenderingCamera;
-            if (camera is null)
-            {
-                failureReason = "Bridge vendor upscale requires an active scene camera.";
-                return false;
-            }
-
             Matrix4x4 cameraViewToClip = camera.ProjectionMatrixUnjittered;
             Matrix4x4 clipToCameraView = camera.InverseProjectionMatrixUnjittered;
             Matrix4x4 currentViewProjectionUnjittered = camera.ViewProjectionMatrixUnjittered;
             Matrix4x4 previousViewProjectionUnjittered = currentViewProjectionUnjittered;
             Vector2 jitter = Vector2.Zero;
-            bool resetHistory = true;
             bool vendorChanged = _bridgeVendorHistoryValid && _lastBridgeVendor != vendor;
+            bool resetHistory = !_bridgeDispatchHistoryValid || vendorChanged;
 
             if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
             {
@@ -423,7 +502,11 @@ void main()
                     ? temporalData.PrevViewProjectionUnjittered
                     : temporalData.CurrViewProjectionUnjittered;
                 jitter = temporalData.CurrentJitter;
-                resetHistory = !temporalData.HistoryReady || vendorChanged;
+                resetHistory |= !temporalData.HistoryReady;
+            }
+            else
+            {
+                resetHistory = true;
             }
 
             if (!Matrix4x4.Invert(currentViewProjectionUnjittered, out Matrix4x4 currentInverseViewProjectionUnjittered))
@@ -444,6 +527,15 @@ void main()
             if (!float.IsFinite(verticalFovRadians) || verticalFovRadians <= 0.0f)
                 verticalFovRadians = 60.0f * (MathF.PI / 180.0f);
 
+            bool outputHdr = ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? bridge.CurrentFrameResources.OutputHdr;
+            float exposureScale = ResolveBridgeExposureScale(colorGrading);
+            bool hasExposureTexture = sourceExposureFbo is not null;
+            resetHistory |= ShouldResetBridgeHistory(
+                camera,
+                bridge,
+                sourceColorFbo,
+                outputHdr);
+
             parameters = new VulkanUpscaleBridgeDispatchParameters
             {
                 Vendor = vendor,
@@ -455,12 +547,17 @@ void main()
                 ResetHistory = resetHistory,
                 ReverseDepth = camera.IsReversedDepth,
                 IsOrthographic = camera.Parameters is XROrthographicCameraParameters,
+                OutputHdr = outputHdr,
                 DlssQuality = frameResources.DlssQuality,
                 XessQuality = frameResources.XessQuality,
                 DlssSharpness = Engine.Rendering.Settings.DlssSharpness,
                 XessSharpness = Engine.Rendering.Settings.XessSharpness,
                 JitterOffsetX = jitter.X,
                 JitterOffsetY = jitter.Y,
+                HasExposureTexture = hasExposureTexture,
+                ExposureScale = exposureScale,
+                MotionVectorScaleX = 0.5f,
+                MotionVectorScaleY = 0.5f,
                 CameraViewToClip = cameraViewToClip,
                 ClipToCameraView = clipToCameraView,
                 ClipToPrevClip = currentInverseViewProjectionUnjittered * previousViewProjectionUnjittered,
@@ -476,6 +573,158 @@ void main()
             };
 
             return true;
+        }
+
+        private bool TryResolveBridgeCamera(out XRCamera? camera, out string failureReason)
+        {
+            camera = ActivePipelineInstance.RenderState.SceneCamera
+                ?? ActivePipelineInstance.RenderState.RenderingCamera
+                ?? ActivePipelineInstance.LastSceneCamera
+                ?? ActivePipelineInstance.LastRenderingCamera;
+            if (camera is not null)
+            {
+                failureReason = string.Empty;
+                return true;
+            }
+
+            failureReason = "Bridge vendor upscale requires an active scene camera.";
+            return false;
+        }
+
+        private static ColorGradingSettings? ResolveBridgeColorGradingSettings(XRCamera camera)
+        {
+            var stage = camera.GetPostProcessStageState<ColorGradingSettings>();
+            if (stage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
+                return grading;
+
+            return null;
+        }
+
+        private bool TryResolveBridgeExposureSource(
+            OpenGLRenderer renderer,
+            ColorGradingSettings? colorGrading,
+            out XRFrameBuffer? bridgeExposureFbo,
+            out string failureReason)
+        {
+            bridgeExposureFbo = null;
+            failureReason = string.Empty;
+
+            if (colorGrading is null || !colorGrading.UseGpuAutoExposureThisFrame || string.IsNullOrWhiteSpace(AutoExposureTextureName))
+                return true;
+
+            XRTexture? exposureTexture = ActivePipelineInstance.GetTexture<XRTexture>(AutoExposureTextureName);
+            if (exposureTexture is null)
+                return true;
+
+            return TryEnsureBridgeHelperFrameBuffer(
+                renderer,
+                exposureTexture,
+                EFrameBufferAttachment.ColorAttachment0,
+                "VendorUpscale.Bridge.ExposureSourceFBO",
+                ref _bridgeExposureTextureFbo,
+                ref _bridgeExposureTexture,
+                out bridgeExposureFbo,
+                out failureReason);
+        }
+
+        private static float ResolveBridgeExposureScale(ColorGradingSettings? colorGrading)
+        {
+            if (colorGrading is null)
+                return 1.0f;
+
+            float exposure = colorGrading.Exposure;
+            bool useGpuExposure = colorGrading.UseGpuAutoExposureThisFrame;
+            if (colorGrading.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical)
+            {
+                float physicalBase = colorGrading.ComputePhysicalExposureMultiplier();
+                if (!colorGrading.AutoExposure || useGpuExposure)
+                    exposure = physicalBase;
+            }
+
+            if (!float.IsFinite(exposure) || exposure <= 0.0f)
+                return 1.0f;
+
+            return exposure;
+        }
+
+        private bool ShouldResetBridgeHistory(
+            XRCamera camera,
+            VulkanUpscaleBridge bridge,
+            XRFrameBuffer sourceColorFbo,
+            bool outputHdr)
+        {
+            if (!_bridgeDispatchHistoryValid)
+                return true;
+
+            if (!ReferenceEquals(_lastBridgeCamera, camera)
+                || !ReferenceEquals(_lastBridgeScene, ActivePipelineInstance.RenderState.Scene)
+                || _lastBridgeGeneration != bridge.ResourceGeneration
+                || _lastBridgeOutputHdr != outputHdr
+                || _lastBridgeReverseDepth != camera.IsReversedDepth
+                || _lastBridgeInputWidth != (uint)Math.Max(1, sourceColorFbo.Width)
+                || _lastBridgeInputHeight != (uint)Math.Max(1, sourceColorFbo.Height)
+                || _lastBridgeOutputWidth != (uint)Math.Max(1, bridge.CurrentFrameResources.DisplayWidth)
+                || _lastBridgeOutputHeight != (uint)Math.Max(1, bridge.CurrentFrameResources.DisplayHeight))
+            {
+                return true;
+            }
+
+            if (IsLikelyCameraCut(camera))
+                return true;
+
+            return false;
+        }
+
+        private bool IsLikelyCameraCut(XRCamera camera)
+        {
+            Vector3 position = camera.Transform?.RenderTranslation ?? Vector3.Zero;
+            Vector3 forward = NormalizeSafe(camera.Transform?.RenderForward ?? -Vector3.UnitZ, -Vector3.UnitZ);
+            float positionDelta = Vector3.DistanceSquared(position, _lastBridgeCameraPosition);
+            float forwardDot = Vector3.Dot(forward, _lastBridgeCameraForward);
+            return positionDelta > 25.0f || forwardDot < 0.9f;
+        }
+
+        private void RememberBridgeDispatch(
+            XRCamera camera,
+            VulkanUpscaleBridge bridge,
+            in VulkanUpscaleBridgeDispatchParameters dispatchParameters)
+        {
+            _bridgeDispatchHistoryValid = true;
+            _lastBridgeCamera = camera;
+            _lastBridgeScene = ActivePipelineInstance.RenderState.Scene;
+            _lastBridgeGeneration = bridge.ResourceGeneration;
+            _lastBridgeOutputHdr = dispatchParameters.OutputHdr;
+            _lastBridgeReverseDepth = dispatchParameters.ReverseDepth;
+            _lastBridgeInputWidth = dispatchParameters.InputWidth;
+            _lastBridgeInputHeight = dispatchParameters.InputHeight;
+            _lastBridgeOutputWidth = dispatchParameters.OutputWidth;
+            _lastBridgeOutputHeight = dispatchParameters.OutputHeight;
+            _lastBridgeCameraPosition = camera.Transform?.RenderTranslation ?? Vector3.Zero;
+            _lastBridgeCameraForward = NormalizeSafe(camera.Transform?.RenderForward ?? -Vector3.UnitZ, -Vector3.UnitZ);
+        }
+
+        private static Vector3 NormalizeSafe(Vector3 value, Vector3 fallback)
+            => value.LengthSquared() > 1.0e-8f ? Vector3.Normalize(value) : fallback;
+
+        private static void ReportNativeFallback()
+        {
+            if (Engine.EffectiveSettings.EnableIntelXess && !IntelXessManager.IsSupported && !_reportedXessUnavailable)
+            {
+                _reportedXessUnavailable = true;
+                string reason = string.IsNullOrWhiteSpace(IntelXessManager.LastError)
+                    ? "runtime unavailable"
+                    : IntelXessManager.LastError!;
+                Debug.LogWarning($"Intel XeSS is enabled but unavailable ({reason}). Falling back to standard blit.");
+            }
+
+            if (Engine.EffectiveSettings.EnableNvidiaDlss && !NvidiaDlssManager.IsSupported && !_reportedDlssUnavailable)
+            {
+                _reportedDlssUnavailable = true;
+                string reason = string.IsNullOrWhiteSpace(NvidiaDlssManager.LastError)
+                    ? "runtime unavailable"
+                    : NvidiaDlssManager.LastError!;
+                Debug.LogWarning($"NVIDIA DLSS is enabled but unavailable ({reason}). Falling back to standard blit.");
+            }
         }
 
         private void ReportBridgeFallback(XRViewport viewport, string failureReason)

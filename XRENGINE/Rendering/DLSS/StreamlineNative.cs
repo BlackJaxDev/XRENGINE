@@ -17,6 +17,7 @@ namespace XREngine.Rendering.DLSS
             private const uint BufferTypeMotionVectors = 1;
             private const uint BufferTypeScalingInputColor = 3;
             private const uint BufferTypeScalingOutputColor = 4;
+            private const uint BufferTypeExposure = 13;
 
             private static readonly object Sync = new();
 
@@ -447,6 +448,9 @@ namespace XREngine.Rendering.DLSS
                     StreamlineResource colorOutput = CreateResource(slot.OutputColor, parameters.OutputWidth, parameters.OutputHeight);
                     StreamlineResource depth = CreateResource(slot.SourceDepth, parameters.InputWidth, parameters.InputHeight);
                     StreamlineResource motion = CreateResource(slot.SourceMotion, parameters.InputWidth, parameters.InputHeight);
+                    StreamlineResource exposure = parameters.HasExposureTexture
+                        ? CreateResource(slot.Exposure, 1, 1)
+                        : default;
 
                     StreamlineExtent inputExtent = new()
                     {
@@ -462,14 +466,24 @@ namespace XREngine.Rendering.DLSS
                         Width = parameters.OutputWidth,
                         Height = parameters.OutputHeight,
                     };
+                    StreamlineExtent exposureExtent = new()
+                    {
+                        Top = 0,
+                        Left = 0,
+                        Width = 1,
+                        Height = 1,
+                    };
 
-                    StreamlineResourceTag* tags = stackalloc StreamlineResourceTag[4];
+                    StreamlineResourceTag* tags = stackalloc StreamlineResourceTag[5];
                     tags[0] = CreateResourceTag(&colorInput, BufferTypeScalingInputColor, StreamlineResourceLifecycle.OnlyValidNow, inputExtent);
                     tags[1] = CreateResourceTag(&colorOutput, BufferTypeScalingOutputColor, StreamlineResourceLifecycle.OnlyValidNow, outputExtent);
                     tags[2] = CreateResourceTag(&depth, BufferTypeDepth, StreamlineResourceLifecycle.OnlyValidNow, inputExtent);
                     tags[3] = CreateResourceTag(&motion, BufferTypeMotionVectors, StreamlineResourceLifecycle.OnlyValidNow, inputExtent);
+                    uint tagCount = 4;
+                    if (parameters.HasExposureTexture)
+                        tags[tagCount++] = CreateResourceTag(&exposure, BufferTypeExposure, StreamlineResourceLifecycle.OnlyValidNow, exposureExtent);
 
-                    StreamlineResult tagResult = _setTagForFrame(frameToken, ref viewport, (IntPtr)tags, 4, commandBuffer);
+                    StreamlineResult tagResult = _setTagForFrame(frameToken, ref viewport, (IntPtr)tags, tagCount, commandBuffer);
                     if (tagResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slSetTagForFrame failed with {tagResult}.";
@@ -497,6 +511,8 @@ namespace XREngine.Rendering.DLSS
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceMotion, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    if (parameters.HasExposureTexture)
+                        _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.Exposure, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.OutputColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
 
                     _firstDispatch = false;
@@ -522,6 +538,10 @@ namespace XREngine.Rendering.DLSS
 
                 private static StreamlineDlssOptions CreateDlssOptions(in VulkanUpscaleBridgeDispatchParameters parameters)
                 {
+                    float preExposure = parameters.HasExposureTexture
+                        ? 1.0f
+                        : MathF.Max(parameters.ExposureScale, 0.0001f);
+
                     return new StreamlineDlssOptions
                     {
                         Base = CreateBase(DlssOptionsStructType, 3),
@@ -529,9 +549,9 @@ namespace XREngine.Rendering.DLSS
                         OutputWidth = parameters.OutputWidth,
                         OutputHeight = parameters.OutputHeight,
                         Sharpness = parameters.DlssSharpness,
-                        PreExposure = 1.0f,
+                        PreExposure = preExposure,
                         ExposureScale = 1.0f,
-                        ColorBuffersHdr = StreamlineBoolean.False,
+                        ColorBuffersHdr = parameters.OutputHdr ? StreamlineBoolean.True : StreamlineBoolean.False,
                         IndicatorInvertAxisX = StreamlineBoolean.False,
                         IndicatorInvertAxisY = StreamlineBoolean.False,
                         DlaaPreset = StreamlineDlssPreset.Default,
@@ -540,7 +560,7 @@ namespace XREngine.Rendering.DLSS
                         PerformancePreset = StreamlineDlssPreset.Default,
                         UltraPerformancePreset = StreamlineDlssPreset.Default,
                         UltraQualityPreset = StreamlineDlssPreset.Default,
-                            UseAutoExposure = StreamlineBoolean.True,
+                        UseAutoExposure = StreamlineBoolean.False,
                         AlphaUpscalingEnabled = StreamlineBoolean.False,
                     };
                 }
@@ -583,7 +603,7 @@ namespace XREngine.Rendering.DLSS
                         ClipToPrevClip = ToFloat4x4(parameters.ClipToPrevClip),
                         PrevClipToClip = ToFloat4x4(parameters.PrevClipToClip),
                         JitterOffset = new StreamlineFloat2(parameters.JitterOffsetX, parameters.JitterOffsetY),
-                        MotionVectorScale = new StreamlineFloat2(1.0f, 1.0f),
+                        MotionVectorScale = new StreamlineFloat2(parameters.MotionVectorScaleX, parameters.MotionVectorScaleY),
                         CameraPinholeOffset = new StreamlineFloat2(float.MaxValue, float.MaxValue),
                         CameraPosition = new StreamlineFloat3(parameters.CameraPosition.X, parameters.CameraPosition.Y, parameters.CameraPosition.Z),
                         CameraUp = new StreamlineFloat3(parameters.CameraUp.X, parameters.CameraUp.Y, parameters.CameraUp.Z),

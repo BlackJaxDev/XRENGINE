@@ -80,6 +80,16 @@ public interface IRuntimeRenderingHostServices
     byte[] ReadAllBytes(string filePath);
     string ResolveTextureStreamingAuthorityPath(string filePath);
     SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format);
+    bool TryScheduleSparseTextureStreamingTransitionAsync(
+        XRTexture2D texture,
+        SparseTextureStreamingTransitionRequest request,
+        CancellationToken cancellationToken,
+        Action<SparseTextureStreamingTransitionResult> onCompleted,
+        Action<Exception>? onError = null);
+    SparseTextureStreamingFinalizeResult FinalizeSparseTextureStreamingTransition(
+        XRTexture2D texture,
+        SparseTextureStreamingTransitionRequest request,
+        SparseTextureStreamingTransitionResult transitionResult);
     EnumeratorJob ScheduleEnumeratorJob(
         Func<IEnumerable> routineFactory,
         JobPriority priority = JobPriority.Normal,
@@ -209,6 +219,20 @@ public static class RuntimeRenderingHostServices
 
         public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
             => SparseTextureStreamingSupport.Unsupported("No renderer-specific sparse texture capability service is configured.");
+
+        public bool TryScheduleSparseTextureStreamingTransitionAsync(
+            XRTexture2D texture,
+            SparseTextureStreamingTransitionRequest request,
+            CancellationToken cancellationToken,
+            Action<SparseTextureStreamingTransitionResult> onCompleted,
+            Action<Exception>? onError = null)
+            => false;
+
+        public SparseTextureStreamingFinalizeResult FinalizeSparseTextureStreamingTransition(
+            XRTexture2D texture,
+            SparseTextureStreamingTransitionRequest request,
+            SparseTextureStreamingTransitionResult transitionResult)
+            => SparseTextureStreamingFinalizeResult.Failed("RuntimeRenderingHostServices.Current has not been configured for sparse texture finalization.");
 
         public EnumeratorJob ScheduleEnumeratorJob(
             Func<IEnumerable> routineFactory,

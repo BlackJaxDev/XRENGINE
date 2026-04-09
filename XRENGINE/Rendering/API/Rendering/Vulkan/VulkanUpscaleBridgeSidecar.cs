@@ -20,6 +20,7 @@ internal enum EVulkanUpscaleBridgeSurfaceKind
     SourceColor,
     SourceDepth,
     SourceMotion,
+    Exposure,
     OutputColor,
 }
 
@@ -133,6 +134,7 @@ internal sealed unsafe class VulkanUpscaleBridgeFrameSlot : IDisposable
         VulkanUpscaleBridgeSharedImage sourceColor,
         VulkanUpscaleBridgeSharedImage sourceDepth,
         VulkanUpscaleBridgeSharedImage sourceMotion,
+        VulkanUpscaleBridgeSharedImage exposure,
         VulkanUpscaleBridgeSharedImage outputColor,
         VulkanUpscaleBridgeSharedSemaphore readySemaphore,
         VulkanUpscaleBridgeSharedSemaphore completeSemaphore,
@@ -143,6 +145,7 @@ internal sealed unsafe class VulkanUpscaleBridgeFrameSlot : IDisposable
         SourceColor = sourceColor;
         SourceDepth = sourceDepth;
         SourceMotion = sourceMotion;
+        Exposure = exposure;
         OutputColor = outputColor;
         ReadySemaphore = readySemaphore;
         CompleteSemaphore = completeSemaphore;
@@ -154,6 +157,7 @@ internal sealed unsafe class VulkanUpscaleBridgeFrameSlot : IDisposable
     public VulkanUpscaleBridgeSharedImage SourceColor { get; }
     public VulkanUpscaleBridgeSharedImage SourceDepth { get; }
     public VulkanUpscaleBridgeSharedImage SourceMotion { get; }
+    public VulkanUpscaleBridgeSharedImage Exposure { get; }
     public VulkanUpscaleBridgeSharedImage OutputColor { get; }
     public VulkanUpscaleBridgeSharedSemaphore ReadySemaphore { get; }
     public VulkanUpscaleBridgeSharedSemaphore CompleteSemaphore { get; }
@@ -163,11 +167,13 @@ internal sealed unsafe class VulkanUpscaleBridgeFrameSlot : IDisposable
     public XRTexture2D SourceColorTexture => SourceColor.Texture;
     public XRTexture2D SourceDepthTexture => SourceDepth.Texture;
     public XRTexture2D SourceMotionTexture => SourceMotion.Texture;
+    public XRTexture2D ExposureTexture => Exposure.Texture;
     public XRTexture2D OutputColorTexture => OutputColor.Texture;
 
     public XRFrameBuffer SourceColorFrameBuffer => SourceColor.FrameBuffer;
     public XRFrameBuffer SourceDepthFrameBuffer => SourceDepth.FrameBuffer;
     public XRFrameBuffer SourceMotionFrameBuffer => SourceMotion.FrameBuffer;
+    public XRFrameBuffer ExposureFrameBuffer => Exposure.FrameBuffer;
     public XRFrameBuffer OutputColorFrameBuffer => OutputColor.FrameBuffer;
 
     public uint GlReadySemaphore => ReadySemaphore.GlSemaphore;
@@ -181,6 +187,7 @@ internal sealed unsafe class VulkanUpscaleBridgeFrameSlot : IDisposable
         CompleteSemaphore.DestroyVulkanResources(api, device);
         ReadySemaphore.DestroyVulkanResources(api, device);
         OutputColor.DestroyVulkanResources(api, device);
+        Exposure.DestroyVulkanResources(api, device);
         SourceMotion.DestroyVulkanResources(api, device);
         SourceDepth.DestroyVulkanResources(api, device);
         SourceColor.DestroyVulkanResources(api, device);
@@ -195,6 +202,7 @@ internal sealed unsafe class VulkanUpscaleBridgeFrameSlot : IDisposable
         CompleteSemaphore.Dispose();
         ReadySemaphore.Dispose();
         OutputColor.Dispose();
+        Exposure.Dispose();
         SourceMotion.Dispose();
         SourceDepth.Dispose();
         SourceColor.Dispose();
@@ -326,6 +334,22 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
                 ImageAspectFlags.ColorBit,
                 linearFilter: false);
 
+            VulkanUpscaleBridgeSharedImage exposure = CreateSharedImage(
+                renderer,
+                slotTag,
+                EVulkanUpscaleBridgeSurfaceKind.Exposure,
+                1u,
+                1u,
+                EPixelInternalFormat.R32f,
+                EPixelFormat.Red,
+                EPixelType.Float,
+                ESizedInternalFormat.R32f,
+                EFrameBufferAttachment.ColorAttachment0,
+                ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit | ImageUsageFlags.ColorAttachmentBit,
+                ImageAspectFlags.ColorBit,
+                ImageAspectFlags.ColorBit,
+                linearFilter: false);
+
             bool outputHdr = frameResources.OutputHdr;
             VulkanUpscaleBridgeSharedImage outputColor = CreateSharedImage(
                 renderer,
@@ -351,6 +375,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
                 sourceColor,
                 sourceDepth,
                 sourceMotion,
+                exposure,
                 outputColor,
                 readySemaphore,
                 completeSemaphore,
@@ -540,6 +565,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         if (!recorded)
         {
             _api.EndCommandBuffer(slot.CommandBuffer);
+            ResetVendorSession(parameters.Vendor);
             failureReason = string.IsNullOrWhiteSpace(failureReason)
                 ? $"Failed to record {parameters.Vendor} bridge commands."
                 : failureReason;
@@ -548,6 +574,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
         if (_api.EndCommandBuffer(slot.CommandBuffer) != Result.Success)
         {
+            ResetVendorSession(parameters.Vendor);
             failureReason = $"Failed to end bridge vendor command buffer for slot {slot.SlotIndex}.";
             return false;
         }
@@ -571,6 +598,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
         if (_api.QueueSubmit(_graphicsQueue, 1, &submitInfo, slot.SubmitFence) != Result.Success)
         {
+            ResetVendorSession(parameters.Vendor);
             failureReason = $"Failed to submit bridge {parameters.Vendor} dispatch for slot {slot.SlotIndex}.";
             return false;
         }
@@ -618,6 +646,21 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         }
 
         return true;
+    }
+
+    private void ResetVendorSession(EVulkanUpscaleBridgeVendor vendor)
+    {
+        switch (vendor)
+        {
+            case EVulkanUpscaleBridgeVendor.Dlss:
+                _dlssSession?.Dispose();
+                _dlssSession = null;
+                break;
+            case EVulkanUpscaleBridgeVendor.Xess:
+                _xessSession?.Dispose();
+                _xessSession = null;
+                break;
+        }
     }
 
     public void Dispose()
@@ -1054,6 +1097,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             EPixelInternalFormat.Rgba16f => Format.R16G16B16A16Sfloat,
             EPixelInternalFormat.Rgba8 => Format.R8G8B8A8Unorm,
             EPixelInternalFormat.RG16f => Format.R16G16Sfloat,
+            EPixelInternalFormat.R32f => Format.R32Sfloat,
             EPixelInternalFormat.Depth24Stencil8 => Format.D24UnormS8Uint,
             _ => throw new NotSupportedException($"Vulkan upscale bridge does not yet map GL format '{internalFormat}'."),
         };

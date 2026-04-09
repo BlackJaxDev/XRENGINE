@@ -48,6 +48,10 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         private long _allocatedVRAMBytes = 0;
         private uint _allocatedLevels = 0;
+        private uint _allocatedWidth = 0;
+        private uint _allocatedHeight = 0;
+        private ESizedInternalFormat _allocatedInternalFormat;
+        private volatile bool _pendingImmutableStorageRecreate;
         private uint _externalMemoryObject;
 
         protected override void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -56,16 +60,36 @@ namespace XREngine.Rendering.OpenGL
             switch (e.PropertyName)
             {
                 case nameof(XRTexture2D.Mipmaps):
-                    {
-                        UpdateMipmaps();
-                        break;
-                    }
+                    UpdateMipmaps();
+                    break;
+                case nameof(XRTexture2D.SizedInternalFormat):
+                    // Immutable storage format must match; destroy the GL handle when it changes.
+                    if (StorageSet && Data.SizedInternalFormat != _allocatedInternalFormat)
+                        DataResized();
+                    break;
             }
         }
 
         private void UpdateMipmaps()
         {
             Mipmap2D[] sourceMipmaps = Data.Mipmaps.Where(static mip => mip is not null).ToArray();
+
+            // If immutable storage was already allocated at different dimensions or with
+            // fewer mip levels, the GL name must be destroyed so EnsureStorageAllocated
+            // creates fresh storage.  Without this, TexSubImage2D would receive
+            // width/height that exceed the allocated storage and produce GL_INVALID_VALUE,
+            // or mip levels beyond the allocated count would fail with
+            // "Invalid texture format".
+            if (StorageSet && sourceMipmaps.Length > 0)
+            {
+                uint newWidth = sourceMipmaps[0].Width;
+                uint newHeight = sourceMipmaps[0].Height;
+                if (newWidth != _allocatedWidth
+                    || newHeight != _allocatedHeight
+                    || (uint)sourceMipmaps.Length > _allocatedLevels)
+                    DataResized();
+            }
+
             Mipmaps = new MipmapInfo[sourceMipmaps.Length];
             for (int i = 0; i < sourceMipmaps.Length; ++i)
                 Mipmaps[i] = new MipmapInfo(this, sourceMipmaps[i]);
@@ -98,9 +122,12 @@ namespace XREngine.Rendering.OpenGL
 
         private void DataResized()
         {
-            bool wasImmutable = !Data.Resizable && StorageSet;
+            bool requiresImmutableRecreate = !Data.Resizable && (StorageSet || _pendingImmutableStorageRecreate);
             StorageSet = false;
             _allocatedLevels = 0;
+            _allocatedWidth = 0;
+            _allocatedHeight = 0;
+            _allocatedInternalFormat = default;
             _sparseStorageAllocated = false;
             _sparseLogicalWidth = 0;
             _sparseLogicalHeight = 0;
@@ -114,12 +141,34 @@ namespace XREngine.Rendering.OpenGL
             });
 
             // Immutable storage (glTextureStorage2D) cannot be re-allocated on the same
-            // GL name. Destroy the GL handle so it is regenerated with fresh storage at
-            // the new dimensions on the next bind.
-            if (wasImmutable)
-                Destroy();
+            // GL name. If this resize arrives off the render thread, defer the destroy
+            // until the next upload entry point to avoid racing with a bind that still
+            // targets the old immutable texture object.
+            if (requiresImmutableRecreate)
+            {
+                if (Engine.IsRenderThread)
+                {
+                    _pendingImmutableStorageRecreate = false;
+                    Destroy();
+                }
+                else
+                {
+                    _pendingImmutableStorageRecreate = true;
+                    Invalidate();
+                }
+            }
             else
                 Invalidate();
+        }
+
+        private void ApplyPendingImmutableStorageRecreate()
+        {
+            if (!_pendingImmutableStorageRecreate || !Engine.IsRenderThread)
+                return;
+
+            _pendingImmutableStorageRecreate = false;
+            if (IsGenerated)
+                Destroy();
         }
 
         public override unsafe void PushData()
@@ -139,6 +188,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                ApplyPendingImmutableStorageRecreate();
                 Bind();
 
                 var glTarget = ToGLEnum(TextureTarget);
@@ -257,6 +307,9 @@ namespace XREngine.Rendering.OpenGL
                 internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
                 StorageSet = true;
                 _allocatedLevels = levels;
+                _allocatedWidth = w;
+                _allocatedHeight = h;
+                _allocatedInternalFormat = Data.SizedInternalFormat;
 
                 _allocatedVRAMBytes = CalculateTextureVRAMSize(w, h, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
                 Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
@@ -272,12 +325,12 @@ namespace XREngine.Rendering.OpenGL
 
             if (Data.SparseTextureStreamingEnabled && Data.SparseTextureStreamingLogicalMipCount > 0)
             {
-                int configuredMaxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
+                int sparseConfiguredMaxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
                 int logicalMaxLevel = Math.Max(baseLevel, Data.SparseTextureStreamingLogicalMipCount - 1);
-                int allocatedMaxLevel = _allocatedLevels > 0
+                int sparseAllocatedMaxLevel = _allocatedLevels > 0
                     ? Math.Max(baseLevel, (int)_allocatedLevels - 1)
                     : logicalMaxLevel;
-                return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, Math.Max(configuredMaxLevel, logicalMaxLevel)));
+                return Math.Max(baseLevel, Math.Min(sparseAllocatedMaxLevel, Math.Max(sparseConfiguredMaxLevel, logicalMaxLevel)));
             }
 
             int configuredMaxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
@@ -363,6 +416,7 @@ namespace XREngine.Rendering.OpenGL
             if (mipIndex < 0 || mipIndex >= Mipmaps.Length)
                 return;
 
+            ApplyPendingImmutableStorageRecreate();
             Generate();
 
             var previousTexture = Renderer.BoundTexture;

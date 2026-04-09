@@ -112,6 +112,32 @@ public sealed class FbxPhase1StructuralParserTests
         Should.Throw<FbxParseException>(() => FbxStructuralParser.Parse(data)).Message.ShouldContain("Unexpected end of FBX data");
     }
 
+    [TestCase(7400, false)]
+    [TestCase(7500, true)]
+    public void BinaryReader_AllowsBoundaryTerminatedLeafNodes_WithoutChildSentinel(int version, bool bigEndian)
+    {
+        byte[] data = FbxBinaryFixtureBuilder.CreateBinaryNestedLeafWithoutSentinel(version, bigEndian);
+
+        using FbxStructuralDocument document = FbxStructuralParser.Parse(data);
+
+        document.Header.Encoding.ShouldBe(FbxTransportEncoding.Binary);
+        document.Header.BinaryVersion.ShouldBe(version);
+        document.Header.IsBigEndian.ShouldBe(bigEndian);
+        document.Nodes.Count.ShouldBe(2);
+
+        FbxNodeRecord root = document.Nodes[0];
+        FbxNodeRecord leaf = document.Nodes[1];
+        document.GetNodeName(root).ShouldBe("Root");
+        document.GetNodeName(leaf).ShouldBe("Leaf");
+        leaf.ParentIndex.ShouldBe(root.Index);
+
+        FbxPropertyRecord property = document.Properties[leaf.FirstPropertyIndex];
+        if (bigEndian)
+            BinaryPrimitives.ReadInt32BigEndian(document.GetPropertyData(property)).ShouldBe(123);
+        else
+            BinaryPrimitives.ReadInt32LittleEndian(document.GetPropertyData(property)).ShouldBe(123);
+    }
+
     [Test]
     public void AsciiReader_ParsesObservedGrammarVariants()
     {
@@ -246,6 +272,16 @@ public sealed class FbxPhase1StructuralParserTests
             return BuildDocument([root], version: 7400, bigEndian: false, includeFooter: false);
         }
 
+        public static byte[] CreateBinaryNestedLeafWithoutSentinel(int version, bool bigEndian)
+        {
+            BinaryNodeSpec root = new(
+                "Root",
+                [],
+                [new BinaryNodeSpec("Leaf", [BinaryPropertySpec.Int32(123)], [], IncludeSentinel: false)]);
+
+            return BuildDocument([root], version, bigEndian, includeFooter: false);
+        }
+
         private static byte[] BuildDocument(IReadOnlyList<BinaryNodeSpec> roots, int version, bool bigEndian, bool includeFooter)
         {
             using MemoryStream stream = new();
@@ -296,7 +332,9 @@ public sealed class FbxPhase1StructuralParserTests
             foreach (BinaryNodeSpec child in node.Children)
                 WriteNode(stream, child, ref childAbsoluteOffset, version, bigEndian);
 
-            WriteSentinel(stream, version);
+            if (node.IncludeSentinel)
+                WriteSentinel(stream, version);
+
             absoluteOffset = checked((long)endOffset);
         }
 
@@ -376,14 +414,15 @@ public sealed class FbxPhase1StructuralParserTests
             stream.Write(buffer);
         }
 
-        private sealed record BinaryNodeSpec(string Name, IReadOnlyList<BinaryPropertySpec> Properties, IReadOnlyList<BinaryNodeSpec> Children)
+        private sealed record BinaryNodeSpec(string Name, IReadOnlyList<BinaryPropertySpec> Properties, IReadOnlyList<BinaryNodeSpec> Children, bool IncludeSentinel = true)
         {
             public long GetSerializedSize(int version)
             {
                 int nameLength = Encoding.ASCII.GetByteCount(Name);
                 long propertyBytes = Properties.Sum(static property => property.GetSerializedSize());
                 long childBytes = Children.Sum(child => child.GetSerializedSize(version));
-                return GetNodeHeaderSize(version) + nameLength + propertyBytes + childBytes + GetNodeHeaderSize(version);
+                long sentinelBytes = IncludeSentinel ? GetNodeHeaderSize(version) : 0;
+                return GetNodeHeaderSize(version) + nameLength + propertyBytes + childBytes + sentinelBytes;
             }
         }
 

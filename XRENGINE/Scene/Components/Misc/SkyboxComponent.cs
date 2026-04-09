@@ -862,6 +862,18 @@ uniform float SkyMoonDiscSize = 0.99965;
 
 const float PI = 3.14159265359;
 
+vec2 SafeNormalize2(vec2 v)
+{
+    float lenSq = dot(v, v);
+    return lenSq > 1e-8 ? v * inversesqrt(lenSq) : vec2(0.0, 1.0);
+}
+
+vec3 SafeNormalize3(vec3 v)
+{
+    float lenSq = dot(v, v);
+    return lenSq > 1e-8 ? v * inversesqrt(lenSq) : vec3(0.0, 1.0, 0.0);
+}
+
 float Hash(vec2 p)
 {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -893,14 +905,14 @@ vec3 NightSky(vec3 dir, float nightFactor)
 {
     float horizonFade = smoothstep(-0.1, 0.35, dir.y);
     vec3 nightGradient = mix(vec3(0.01, 0.015, 0.03), vec3(0.005, 0.007, 0.015), horizonFade);
-    vec2 st = normalize(dir.xz) * 256.0 + vec2(dir.y * 73.0, dir.x * 41.0);
+    vec2 st = SafeNormalize2(dir.xz) * 256.0 + vec2(dir.y * 73.0, dir.x * 41.0);
     float stars = step(0.9975, Hash(floor(st))) * nightFactor;
     return nightGradient + stars * vec3(1.0, 0.96, 0.9) * SkyStarIntensity;
 }
 
 void main()
 {
-    vec3 dir = normalize(FragWorldDir);
+    vec3 dir = SafeNormalize3(FragWorldDir);
 
     float angle = SkyTimeOfDay * PI * 2.0;
     vec3 sunDir = normalize(vec3(cos(angle), sin(angle), 0.2));
@@ -929,7 +941,7 @@ void main()
     float horizon = 1.0 - clamp(abs(dir.y), 0.0, 1.0);
     color += vec3(0.22, 0.19, 0.15) * pow(horizon, 2.2) * SkyHorizonHaze * duskFactor;
 
-    vec2 cloudUv = normalize(max(abs(dir.y), 0.06) * dir.xz) * SkyCloudScale;
+    vec2 cloudUv = SafeNormalize2(max(abs(dir.y), 0.06) * dir.xz) * SkyCloudScale;
     cloudUv += vec2(SkyCloudSpeed * SkyTimeOfDay * 240.0, SkyCloudSpeed * SkyTimeOfDay * 120.0);
     float cloud = Fbm(cloudUv);
     cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloud, SkyCloudSharpness));
@@ -946,7 +958,12 @@ void main()
     float moonGlow = pow(max(dot(dir, moonDir), 0.0), 48.0);
     color += vec3(0.74, 0.79, 0.94) * (moonDisc * 2.8 + moonGlow * 0.35) * nightFactor;
 
-    color = mix(NightSky(dir, nightFactor), color, dayFactor + duskFactor * 0.35);
+    float skyBlend = clamp(dayFactor + duskFactor * 0.35, 0.0, 1.0);
+    vec3 fallbackColor = mix(NightSky(dir, nightFactor), skyBase, skyBlend);
+    color = mix(NightSky(dir, nightFactor), color, skyBlend);
+    if (any(isnan(color)) || any(isinf(color)))
+        color = fallbackColor;
+
     OutColor = max(color, vec3(0.0)) * SkyboxIntensity;
 }
 ";

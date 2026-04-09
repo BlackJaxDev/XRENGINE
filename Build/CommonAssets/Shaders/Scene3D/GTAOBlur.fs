@@ -16,6 +16,7 @@ uniform bool DenoiseEnabled = true;
 uniform bool UseInputNormals = true;
 uniform bool UseNormalWeightedBlur = true;
 uniform int DepthMode;
+uniform vec2 TexelSize = vec2(0.0f); // Set from C#; when zero, falls back to input texture size
 
 bool AOIsFarDepth(float depth)
 {
@@ -37,7 +38,9 @@ void main()
         return;
     }
 
-    vec2 texelSize = 1.0f / vec2(textureSize(GTAOInputTexture, 0));
+    // Use C#-provided texel size when available; it matches the output resolution
+    // so the blur kernel covers the correct number of screen pixels even when upscaling.
+    vec2 texelSize = TexelSize.x > 0.0f ? TexelSize : 1.0f / vec2(textureSize(GTAOInputTexture, 0));
     float centerDepth = texture(DepthView, uv).r;
     if (AOIsFarDepth(centerDepth))
     {

@@ -71,6 +71,63 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             ? glRenderer.GetSparseTextureStreamingSupport(format)
             : SparseTextureStreamingSupport.Unsupported("Sparse texture streaming currently requires the OpenGL renderer.");
 
+    public bool TryScheduleSparseTextureStreamingTransitionAsync(
+        XRTexture2D texture,
+        SparseTextureStreamingTransitionRequest request,
+        CancellationToken cancellationToken,
+        Action<SparseTextureStreamingTransitionResult> onCompleted,
+        Action<Exception>? onError = null)
+    {
+        OpenGLRenderer? glRenderer = GetPrimaryOpenGlRenderer();
+        if (glRenderer is null)
+            return false;
+
+        Engine.EnqueueRenderThreadTask(() =>
+        {
+            try
+            {
+                OpenGLRenderer? renderThreadRenderer = GetPrimaryOpenGlRenderer();
+                if (renderThreadRenderer is null)
+                {
+                    onCompleted(SparseTextureStreamingTransitionResult.Unsupported("OpenGL renderer is unavailable for sparse texture streaming."));
+                    return;
+                }
+
+                GLTexture2D? glTexture = renderThreadRenderer.GetOrCreateAPIRenderObject(texture, generateNow: false) as GLTexture2D;
+                if (glTexture is null)
+                {
+                    onCompleted(SparseTextureStreamingTransitionResult.Unsupported("OpenGL texture wrapper is unavailable for sparse texture streaming."));
+                    return;
+                }
+
+                if (!glTexture.TryScheduleSparseTextureStreamingTransitionAsync(request, cancellationToken, onCompleted, onError))
+                    onCompleted(texture.ApplySparseTextureStreamingTransition(request));
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(ex);
+            }
+        });
+
+        return true;
+    }
+
+    public SparseTextureStreamingFinalizeResult FinalizeSparseTextureStreamingTransition(
+        XRTexture2D texture,
+        SparseTextureStreamingTransitionRequest request,
+        SparseTextureStreamingTransitionResult transitionResult)
+    {
+        OpenGLRenderer? glRenderer = GetPrimaryOpenGlRenderer();
+        if (glRenderer is null)
+            return SparseTextureStreamingFinalizeResult.Failed("OpenGL renderer is unavailable for sparse texture finalization.");
+
+        GLTexture2D? glTexture = glRenderer.GetOrCreateAPIRenderObject(texture, generateNow: false) as GLTexture2D;
+        if (glTexture is null)
+            return SparseTextureStreamingFinalizeResult.Failed("OpenGL texture wrapper is unavailable for sparse texture finalization.");
+
+        return glTexture.FinalizeSparseTextureStreamingTransition(request, transitionResult);
+    }
+
     public EnumeratorJob ScheduleEnumeratorJob(
         Func<IEnumerable> routineFactory,
         JobPriority priority = JobPriority.Normal,
@@ -230,6 +287,20 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public int GetBytesPerPixel(ERenderBufferStorage storage)
         => Engine.Rendering.Stats.GetBytesPerPixel(storage);
+
+    private static OpenGLRenderer? GetPrimaryOpenGlRenderer()
+    {
+        if (AbstractRenderer.Current is OpenGLRenderer currentRenderer)
+            return currentRenderer;
+
+        for (int i = 0; i < Engine.Windows.Count; i++)
+        {
+            if (Engine.Windows[i].Renderer is OpenGLRenderer renderer)
+                return renderer;
+        }
+
+        return null;
+    }
 
     public void AddFrameBufferBandwidth(long totalBytes)
         => Engine.Rendering.Stats.AddFBOBandwidth(totalBytes);

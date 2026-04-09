@@ -688,6 +688,8 @@ namespace XREngine.Rendering.OpenGL
         private GLProgramBinaryUploadQueue? _programBinaryUploadQueue;
         private GLProgramCompileLinkQueue? _programCompileLinkQueue;
 
+        internal bool HasSharedContext => _sharedContext is { IsRunning: true };
+
         /// <summary>
         /// Gets the async program binary upload queue, or <c>null</c> if the shared context
         /// could not be created or async uploads are disabled.
@@ -700,6 +702,15 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         public GLProgramCompileLinkQueue? ProgramCompileLinkQueue => _programCompileLinkQueue;
 
+        internal bool TryEnqueueSharedContextJob(Action<GL> job)
+        {
+            if (_sharedContext is not { IsRunning: true } sharedContext)
+                return false;
+
+            sharedContext.Enqueue(job);
+            return true;
+        }
+
         /// <summary>
         /// Creates a shared GL context and the async queues for program binary upload
         /// and compile+link. Must be called from the main render thread after the
@@ -710,8 +721,9 @@ namespace XREngine.Rendering.OpenGL
             bool wantBinaryUpload = Engine.Rendering.Settings.AsyncProgramBinaryUpload
                                  && Engine.Rendering.Settings.AllowBinaryProgramCaching;
             bool wantCompileLink = Engine.Rendering.Settings.AsyncProgramCompilation;
+            bool wantSparseTextureUploads = GetSparseTextureStreamingSupport(ESizedInternalFormat.Rgba8).IsAvailable;
 
-            if (!wantBinaryUpload && !wantCompileLink)
+            if (!wantBinaryUpload && !wantCompileLink && !wantSparseTextureUploads)
                 return;
 
             var sharedCtx = new GLSharedContext();
@@ -730,6 +742,9 @@ namespace XREngine.Rendering.OpenGL
                     _programCompileLinkQueue = new GLProgramCompileLinkQueue(sharedCtx);
                     Debug.OpenGL("[ShaderCache] Async program compile+link enabled via shared GL context.");
                 }
+
+                if (wantSparseTextureUploads)
+                    Debug.OpenGL("Sparse texture streaming shared GL context enabled for async texture uploads.");
             }
             else
             {

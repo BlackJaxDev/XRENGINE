@@ -124,7 +124,7 @@ public static partial class EditorImGuiUI
             ImGuiTableFlags.SizingStretchProp;
 
         float tableHeight = ImGui.GetContentRegionAvail().Y - ImGui.GetTextLineHeightWithSpacing();
-        if (!ImGui.BeginTable("TextureStreamingTable", 9, flags, new Vector2(0, tableHeight)))
+        if (!ImGui.BeginTable("TextureStreamingTable", 12, flags, new Vector2(0, tableHeight)))
             return;
 
         ImGui.TableSetupScrollFreeze(0, 1);
@@ -134,6 +134,9 @@ public static partial class EditorImGuiUI
         ImGui.TableSetupColumn("Desired",      ImGuiTableColumnFlags.None,       60f);
         ImGui.TableSetupColumn("Pending",      ImGuiTableColumnFlags.None,       60f);
         ImGui.TableSetupColumn("Committed",    ImGuiTableColumnFlags.None,       70f);
+        ImGui.TableSetupColumn("PxSpan",       ImGuiTableColumnFlags.None,       65f);
+        ImGui.TableSetupColumn("Pages",        ImGuiTableColumnFlags.None,       70f);
+        ImGui.TableSetupColumn("UV",           ImGuiTableColumnFlags.None,       45f);
         ImGui.TableSetupColumn("Distance",     ImGuiTableColumnFlags.None,       60f);
         ImGui.TableSetupColumn("Visibility",   ImGuiTableColumnFlags.None,       80f);
         ImGui.TableSetupColumn("Preview",      ImGuiTableColumnFlags.None,       55f);
@@ -153,8 +156,13 @@ public static partial class EditorImGuiUI
             ImGui.TableSetColumnIndex(0);
             string displayName = !string.IsNullOrWhiteSpace(tex.TextureName) ? tex.TextureName! : "(unnamed)";
             ImGui.TextUnformatted(displayName);
-            if (ImGui.IsItemHovered() && !string.IsNullOrWhiteSpace(tex.FilePath))
-                ImGui.SetTooltip(tex.FilePath);
+            if (ImGui.IsItemHovered())
+            {
+                string tooltip = !string.IsNullOrWhiteSpace(tex.FilePath) ? tex.FilePath! : displayName;
+                if (!string.IsNullOrWhiteSpace(tex.SamplerName))
+                    tooltip = $"{tooltip}\nSampler: {tex.SamplerName}\nScreen: {tex.MaxScreenCoverage * 100.0f:F1}%";
+                ImGui.SetTooltip(tooltip);
+            }
 
             // Source size
             ImGui.TableSetColumnIndex(1);
@@ -193,8 +201,26 @@ public static partial class EditorImGuiUI
             float committedKB = tex.CurrentCommittedBytes / 1024f;
             ImGui.Text(committedKB >= 1024f ? $"{committedKB / 1024f:F1} MB" : $"{committedKB:F0} KB");
 
-            // Distance
+            // Projected pixel span
             ImGui.TableSetColumnIndex(6);
+            if (tex.MaxProjectedPixelSpan <= 0.0f)
+                ImGui.TextDisabled("-");
+            else
+                ImGui.Text($"{tex.MaxProjectedPixelSpan:F0}");
+
+            // Page coverage
+            ImGui.TableSetColumnIndex(7);
+            string pageText = $"{tex.CurrentPageCoverage * 100.0f:F0}%";
+            if (MathF.Abs(tex.DesiredPageCoverage - tex.CurrentPageCoverage) > 0.01f)
+                pageText = $"{pageText}->{tex.DesiredPageCoverage * 100.0f:F0}%";
+            ImGui.Text(pageText);
+
+            // UV density hint
+            ImGui.TableSetColumnIndex(8);
+            ImGui.Text($"{tex.UvDensityHint:F2}");
+
+            // Distance
+            ImGui.TableSetColumnIndex(9);
             if (!visibleThisFrame)
                 ImGui.TextDisabled("-");
             else if (float.IsInfinity(tex.MinVisibleDistance))
@@ -203,7 +229,7 @@ public static partial class EditorImGuiUI
                 ImGui.Text($"{tex.MinVisibleDistance:F1}");
 
             // Visibility
-            ImGui.TableSetColumnIndex(7);
+            ImGui.TableSetColumnIndex(10);
             if (visibleThisFrame)
                 ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "visible");
             else if (framesSinceVisible <= 12)
@@ -212,7 +238,7 @@ public static partial class EditorImGuiUI
                 ImGui.TextDisabled("hidden");
 
             // Preview ready
-            ImGui.TableSetColumnIndex(8);
+            ImGui.TableSetColumnIndex(11);
             if (tex.PreviewReady)
                 ImGui.TextColored(new Vector4(0.5f, 0.9f, 0.5f, 1.0f), "ready");
             else

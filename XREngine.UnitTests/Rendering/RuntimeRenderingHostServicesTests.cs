@@ -186,6 +186,20 @@ public sealed class RuntimeRenderingHostServicesTests
         public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
             => SparseTextureStreamingSupport;
 
+        public bool TryScheduleSparseTextureStreamingTransitionAsync(
+            XRTexture2D texture,
+            SparseTextureStreamingTransitionRequest request,
+            CancellationToken cancellationToken,
+            Action<SparseTextureStreamingTransitionResult> onCompleted,
+            Action<Exception>? onError = null)
+            => false;
+
+        public SparseTextureStreamingFinalizeResult FinalizeSparseTextureStreamingTransition(
+            XRTexture2D texture,
+            SparseTextureStreamingTransitionRequest request,
+            SparseTextureStreamingTransitionResult transitionResult)
+            => SparseTextureStreamingFinalizeResult.Failed();
+
         public EnumeratorJob ScheduleEnumeratorJob(
             Func<IEnumerable> routineFactory,
             JobPriority priority = JobPriority.Normal,

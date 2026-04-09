@@ -19,6 +19,7 @@ namespace XREngine.Audio.Steam;
 public sealed class SteamAudioBaker
 {
     private readonly IPLContext _context;
+    private static readonly IPLProgressCallback NoOpProgressCallback = static (_, _) => { };
 
     internal SteamAudioBaker(IPLContext context)
     {
@@ -79,7 +80,7 @@ public sealed class SteamAudioBaker
             bakeBatchSize = 1,
         };
 
-        IPLProgressCallback? nativeCallback = null;
+        IPLProgressCallback nativeCallback = NoOpProgressCallback;
         if (progress is not null)
             nativeCallback = (p, _) => progress(p);
 
@@ -140,7 +141,7 @@ public sealed class SteamAudioBaker
             numThreads = settings.NumThreads,
         };
 
-        IPLProgressCallback? nativeCallback = null;
+        IPLProgressCallback nativeCallback = NoOpProgressCallback;
         if (progress is not null)
             nativeCallback = (p, _) => progress(p);
 

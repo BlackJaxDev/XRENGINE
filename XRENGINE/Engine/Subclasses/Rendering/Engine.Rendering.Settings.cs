@@ -1450,7 +1450,8 @@ namespace XREngine
                 }
 
                 if (applyAll || propertyName == nameof(EngineSettings.EnableIntelXess)
-                    || propertyName == nameof(EngineSettings.XessQuality))
+                    || propertyName == nameof(EngineSettings.XessQuality)
+                    || propertyName == nameof(EngineSettings.XessCustomScale))
                 {
                     Engine.Rendering.ApplyIntelXessPreference();
                 }

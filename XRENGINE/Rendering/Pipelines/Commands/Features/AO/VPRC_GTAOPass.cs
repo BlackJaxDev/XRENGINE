@@ -346,11 +346,24 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void GTAOHorizontalBlur_SetUniforms(XRRenderProgram program)
         {
             SetBlurUniforms(program, new Vector2(1.0f, 0.0f));
+            // Horizontal blur runs entirely at reduced resolution;
+            // input and output texel grids match, so pass reduced-res texel size.
+            var state = GetInstanceState(ActivePipelineInstance);
+            int aoWidth = Math.Max(state.LastWidth / Math.Max(state.LastResolutionDivisor, 1), 1);
+            int aoHeight = Math.Max(state.LastHeight / Math.Max(state.LastResolutionDivisor, 1), 1);
+            program.Uniform("TexelSize", new Vector2(1.0f / aoWidth, 1.0f / aoHeight));
         }
 
         private void GTAOVerticalBlur_SetUniforms(XRRenderProgram program)
         {
             SetBlurUniforms(program, new Vector2(0.0f, 1.0f));
+            // Vertical blur upscales to full output resolution;
+            // pass full-res texel size so the blur kernel spans the correct
+            // number of screen pixels instead of stretching by the divisor.
+            var state = GetInstanceState(ActivePipelineInstance);
+            int fullWidth = Math.Max(state.LastWidth, 1);
+            int fullHeight = Math.Max(state.LastHeight, 1);
+            program.Uniform("TexelSize", new Vector2(1.0f / fullWidth, 1.0f / fullHeight));
         }
 
         private void SetBlurUniforms(XRRenderProgram program, Vector2 direction)
