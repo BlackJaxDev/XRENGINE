@@ -474,9 +474,24 @@ namespace XREngine.Core.Files
         public virtual void SerializeTo(string filePath, ISerializer defaultSerializer)
         {
             EnsureDirectoryExists(filePath);
-            using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-            using var writer = new StreamWriter(fs, Encoding.UTF8);
-            defaultSerializer.Serialize(writer, this, GetType());
+            string tempPath = CreateTempWritePath(filePath);
+
+            try
+            {
+                using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                using (var writer = new StreamWriter(fs, Encoding.UTF8))
+                {
+                    defaultSerializer.Serialize(writer, this, GetType());
+                    writer.Flush();
+                    fs.Flush(true);
+                }
+
+                ReplaceSerializedAssetFile(tempPath, filePath);
+            }
+            finally
+            {
+                TryDeleteTempWritePath(tempPath);
+            }
         }
 
         /// <summary>
@@ -492,10 +507,25 @@ namespace XREngine.Core.Files
         public virtual async Task SerializeToAsync(string filePath, ISerializer defaultSerializer)
         {
             EnsureDirectoryExists(filePath);
+            string tempPath = CreateTempWritePath(filePath);
             string yaml = defaultSerializer.Serialize(this, GetType());
-            using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-            using var writer = new StreamWriter(fs, Encoding.UTF8);
-            await writer.WriteAsync(yaml).ConfigureAwait(false);
+
+            try
+            {
+                using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                using (var writer = new StreamWriter(fs, Encoding.UTF8))
+                {
+                    await writer.WriteAsync(yaml).ConfigureAwait(false);
+                    await writer.FlushAsync().ConfigureAwait(false);
+                    fs.Flush(true);
+                }
+
+                ReplaceSerializedAssetFile(tempPath, filePath);
+            }
+            finally
+            {
+                TryDeleteTempWritePath(tempPath);
+            }
         }
 
         #endregion
@@ -528,6 +558,29 @@ namespace XREngine.Core.Files
             string? directory = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
+        }
+
+        private static string CreateTempWritePath(string filePath)
+            => $"{filePath}.{Guid.NewGuid():N}.tmp";
+
+        private static void ReplaceSerializedAssetFile(string tempPath, string filePath)
+        {
+            if (File.Exists(filePath))
+                File.Replace(tempPath, filePath, destinationBackupFileName: null, ignoreMetadataErrors: true);
+            else
+                File.Move(tempPath, filePath);
+        }
+
+        private static void TryDeleteTempWritePath(string tempPath)
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
+            catch
+            {
+            }
         }
 
         #endregion

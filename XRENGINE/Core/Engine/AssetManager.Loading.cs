@@ -583,7 +583,51 @@ namespace XREngine
         }
 
         internal string ResolveTextureStreamingAuthorityPath(string filePath)
-            => ResolveThirdPartyCacheAuthorityPath<XRTexture2D>(filePath);
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                return filePath;
+
+            string normalizedPath = Path.GetFullPath(filePath);
+            if (string.Equals(Path.GetExtension(normalizedPath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                return normalizedPath;
+
+            if (!File.Exists(normalizedPath))
+                return normalizedPath;
+
+            if (!TryResolveCachePath(normalizedPath, typeof(XRTexture2D), cacheVariantKey: null, out string cachePath))
+                return normalizedPath;
+
+            if (IsCacheAssetFresh(cachePath, normalizedPath, typeof(XRTexture2D)))
+                return cachePath;
+
+            QueueTextureStreamingCacheImport(normalizedPath, cachePath);
+            return normalizedPath;
+        }
+
+        private void QueueTextureStreamingCacheImport(string sourcePath, string cachePath)
+        {
+            if (!_pendingTextureStreamingCacheImports.TryAdd(sourcePath, 0))
+                return;
+
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    if (IsCacheAssetFresh(cachePath, sourcePath, typeof(XRTexture2D)))
+                        return;
+
+                    _ = TryImportThirdPartyCacheAsset(sourcePath, typeof(XRTexture2D), importOptions: null, cacheVariantKey: null, cachePath);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Failed to warm texture cache for '{sourcePath}'. {ex.Message}");
+                }
+                finally
+                {
+                    _pendingTextureStreamingCacheImports.TryRemove(sourcePath, out _);
+                }
+            });
+        }
 
         internal string ResolveThirdPartyCacheAuthorityPath<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(
             string filePath,
@@ -750,6 +794,9 @@ namespace XREngine
         private bool IsCacheAssetFresh(string cachePath, string sourcePath, Type assetType)
         {
             if (!File.Exists(cachePath))
+                return false;
+
+            if (assetType == typeof(XRTexture2D) && !XRTexture2D.IsTextureStreamingAssetUsable(cachePath))
                 return false;
 
             DateTime cacheTimestampUtc = File.GetLastWriteTimeUtc(cachePath);

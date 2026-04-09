@@ -17,6 +17,7 @@ uniform bool DenoiseEnabled = true;
 uniform bool UseInputNormals = true;
 uniform bool UseNormalWeightedBlur = true;
 uniform int DepthMode;
+uniform vec2 TexelSize = vec2(0.0f); // Set from C#; when zero, falls back to input texture size
 
 bool AOIsFarDepth(float depth)
 {
@@ -38,7 +39,7 @@ void main()
         return;
     }
 
-    vec2 texelSize = 1.0f / textureSize(GTAOInputTexture, 0).xy;
+    vec2 texelSize = TexelSize.x > 0.0f ? TexelSize : 1.0f / textureSize(GTAOInputTexture, 0).xy;
     float centerDepth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
     if (AOIsFarDepth(centerDepth))
     {

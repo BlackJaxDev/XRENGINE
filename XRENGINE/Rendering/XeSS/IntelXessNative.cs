@@ -31,6 +31,7 @@ namespace XREngine.Rendering.XeSS
             private static XessVkBuildPipelinesDelegate? _buildPipelines;
             private static XessVkInitDelegate? _initialize;
             private static XessVkExecuteDelegate? _execute;
+            private static XessSetVelocityScaleDelegate? _setVelocityScale;
             private static XessDestroyContextDelegate? _destroyContext;
 
             internal static bool IsAvailable
@@ -265,6 +266,7 @@ namespace XREngine.Rendering.XeSS
                 }
 
                 TryLoadExport("xessVKBuildPipelines", out _buildPipelines, required: false);
+                TryLoadExport("xessSetVelocityScale", out _setVelocityScale, required: false);
                 return true;
             }
 
@@ -318,6 +320,7 @@ namespace XREngine.Rendering.XeSS
                 _buildPipelines = null;
                 _initialize = null;
                 _execute = null;
+                _setVelocityScale = null;
                 _destroyContext = null;
             }
 
@@ -338,9 +341,13 @@ namespace XREngine.Rendering.XeSS
 
             private static uint ResolveInitFlags(in VulkanUpscaleBridgeDispatchParameters parameters)
             {
-                    uint flags = (uint)XessInitFlags.UseNdcVelocity | (uint)XessInitFlags.LdrInputColor | (uint)XessInitFlags.EnableAutoExposure;
+                uint flags = (uint)XessInitFlags.UseNdcVelocity;
+                if (!parameters.OutputHdr)
+                    flags |= (uint)XessInitFlags.LdrInputColor;
                 if (parameters.ReverseDepth)
                     flags |= (uint)XessInitFlags.InvertedDepth;
+                if (parameters.HasExposureTexture)
+                    flags |= (uint)XessInitFlags.ExposureScaleTexture;
                 return flags;
             }
 
@@ -417,19 +424,31 @@ namespace XREngine.Rendering.XeSS
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceMotion, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
+                    if (parameters.HasExposureTexture)
+                        _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.Exposure, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.OutputColor, ImageLayout.General, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit);
+
+                    if (_setVelocityScale is not null)
+                    {
+                        XessResult velocityScaleResult = _setVelocityScale(_context, parameters.MotionVectorScaleX, parameters.MotionVectorScaleY);
+                        if (velocityScaleResult != XessResult.Success)
+                        {
+                            failureReason = $"xessSetVelocityScale failed with {velocityScaleResult}.";
+                            return false;
+                        }
+                    }
 
                     XessVkExecuteParams executeParams = new()
                     {
                         ColorTexture = CreateImageViewInfo(slot.SourceColor),
                         VelocityTexture = CreateImageViewInfo(slot.SourceMotion),
                         DepthTexture = CreateImageViewInfo(slot.SourceDepth),
-                        ExposureScaleTexture = default,
+                        ExposureScaleTexture = parameters.HasExposureTexture ? CreateImageViewInfo(slot.Exposure) : default,
                         ResponsivePixelMaskTexture = default,
                         OutputTexture = CreateImageViewInfo(slot.OutputColor),
                         JitterOffsetX = parameters.JitterOffsetX,
                         JitterOffsetY = parameters.JitterOffsetY,
-                        ExposureScale = 1.0f,
+                        ExposureScale = parameters.HasExposureTexture ? 1.0f : parameters.ExposureScale,
                         ResetHistory = _firstDispatch || parameters.ResetHistory ? 1u : 0u,
                         InputWidth = parameters.InputWidth,
                         InputHeight = parameters.InputHeight,
@@ -451,6 +470,8 @@ namespace XREngine.Rendering.XeSS
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceMotion, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    if (parameters.HasExposureTexture)
+                        _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.Exposure, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.OutputColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
 
                     _firstDispatch = false;
@@ -512,6 +533,9 @@ namespace XREngine.Rendering.XeSS
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
             private delegate XessResult XessVkExecuteDelegate(IntPtr context, CommandBuffer commandBuffer, ref XessVkExecuteParams executeParams);
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate XessResult XessSetVelocityScaleDelegate(IntPtr context, float x, float y);
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
             private delegate XessResult XessDestroyContextDelegate(IntPtr context);

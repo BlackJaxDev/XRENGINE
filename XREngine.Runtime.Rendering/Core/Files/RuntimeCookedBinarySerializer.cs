@@ -1,10 +1,14 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.IO;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
+using XREngine.Data;
 using XREngine.Data.Core;
+using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 
 namespace XREngine.Core.Files;
 
@@ -288,6 +292,7 @@ public static class RuntimeCookedBinarySerializer
     internal const string ReflectionWarningMessage = "Runtime cooked binary serialization relies on reflection and cannot be statically analyzed for trimming or AOT";
 
     private static readonly AsyncLocal<int> RecursionDepth = new();
+    private static readonly DataSourceYamlTypeConverter YamlPayloadConverter = new();
     private static readonly PropertyInfo? XRObjectIdProperty = typeof(XRObjectBase)
         .GetProperty(nameof(XRObjectBase.ID), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
@@ -315,6 +320,47 @@ public static class RuntimeCookedBinarySerializer
     {
         ArgumentNullException.ThrowIfNull(expectedType);
 
+        if (data.IsEmpty)
+            throw new ArgumentException("Runtime cooked data is empty.", nameof(data));
+
+        if (!HasValidLeadingMarker(data))
+        {
+            if (TryExtractYamlCookedPayload(data, out byte[]? yamlPayload))
+                return DeserializeCore(expectedType, yamlPayload);
+
+            if (IsLikelyTextPayload(data))
+            {
+                throw new NotSupportedException(
+                    $"Input for '{expectedType}' appears to be UTF-8 text/YAML rather than runtime cooked binary. " +
+                    "If this is an asset YAML file, deserialize it through the asset serializer or extract its cooked Payload bytes first.");
+            }
+        }
+
+        try
+        {
+            return DeserializeCore(expectedType, data);
+        }
+        catch (Exception ex) when (ex is NotSupportedException or InvalidCastException or EndOfStreamException or FormatException or InvalidOperationException)
+        {
+            if (TryExtractYamlCookedPayload(data, out byte[]? yamlPayload))
+                return DeserializeCore(expectedType, yamlPayload);
+
+            if (IsLikelyTextPayload(data))
+            {
+                throw new NotSupportedException(
+                    $"Input for '{expectedType}' appears to be UTF-8 text/YAML rather than runtime cooked binary. " +
+                    "If this is an asset YAML file, deserialize it through the asset serializer or extract its cooked Payload bytes first.",
+                    ex);
+            }
+
+            throw;
+        }
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static unsafe object? DeserializeCore(Type expectedType, ReadOnlySpan<byte> data)
+    {
         fixed (byte* ptr = data)
         {
             using RuntimeCookedBinaryReader reader = new(ptr, data.Length);
@@ -813,9 +859,178 @@ public static class RuntimeCookedBinarySerializer
         if (targetType.IsEnum)
             return Enum.ToObject(targetType, Convert.ToInt64(value, CultureInfo.InvariantCulture));
 
-        if (targetType == typeof(Guid) && value is byte[] bytes && bytes.Length == 16)
-            return new Guid(bytes);
+        if (targetType == typeof(Guid))
+        {
+            if (value is byte[] bytes && bytes.Length == 16)
+                return new Guid(bytes);
+            if (value is string guidText && Guid.TryParse(guidText, out Guid parsedGuid))
+                return parsedGuid;
+            // A full custom object was serialized where only an asset-reference Guid is expected.
+            if (value is XRObjectBase obj)
+                return obj.ID;
+        }
 
-        return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+        if (targetType.IsArray && value is Array sourceArray)
+        {
+            Type? elementType = targetType.GetElementType();
+            if (elementType is not null && targetType.GetArrayRank() == 1 && sourceArray.Rank == 1)
+            {
+                Array convertedArray = Array.CreateInstance(elementType, sourceArray.Length);
+                for (int i = 0; i < sourceArray.Length; i++)
+                    convertedArray.SetValue(ConvertValue(sourceArray.GetValue(i), elementType), i);
+                return convertedArray;
+            }
+        }
+
+        try
+        {
+            return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+        }
+        catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException)
+        {
+            throw new InvalidCastException(
+                $"Runtime cooked value of type '{valueType}' cannot be converted to '{targetType}'.",
+                ex);
+        }
+    }
+
+    private static bool TryExtractYamlCookedPayload(ReadOnlySpan<byte> data, out byte[]? payload)
+    {
+        payload = null;
+        if (!IsLikelyTextPayload(data))
+            return false;
+
+        ReadOnlySpan<byte> utf8 = StripUtf8Bom(data);
+
+        string yamlText;
+        try
+        {
+            yamlText = Encoding.UTF8.GetString(utf8);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(yamlText))
+            return false;
+
+        try
+        {
+            Parser parser = new(new StringReader(yamlText));
+            ConsumeYamlDocumentStart(parser);
+
+            if (!parser.TryConsume<MappingStart>(out _))
+                return false;
+
+            string? format = null;
+            DataSource? envelopePayload = null;
+            while (!parser.TryConsume<MappingEnd>(out _))
+            {
+                if (!parser.TryConsume<Scalar>(out Scalar? keyScalar))
+                    return false;
+
+                string key = keyScalar.Value ?? string.Empty;
+                switch (key)
+                {
+                    case "Format":
+                        if (!parser.TryConsume<Scalar>(out Scalar? formatScalar))
+                            return false;
+                        format = formatScalar.Value;
+                        break;
+                    case "Payload":
+                        envelopePayload = YamlPayloadConverter.ReadYaml(parser, typeof(DataSource), static _ => null) as DataSource;
+                        break;
+                    default:
+                        SkipYamlNode(parser);
+                        break;
+                }
+            }
+
+            if (!IsSupportedYamlCookedFormat(format)
+                || envelopePayload is null
+                || envelopePayload.Length == 0)
+            {
+                return false;
+            }
+
+            payload = envelopePayload.GetBytes();
+            return payload.Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsLikelyTextPayload(ReadOnlySpan<byte> data)
+    {
+        ReadOnlySpan<byte> utf8 = StripUtf8Bom(data);
+        if (utf8.IsEmpty)
+            return false;
+
+        for (int i = 0; i < utf8.Length && i < 64; i++)
+        {
+            byte current = utf8[i];
+            if (current == 0)
+                return false;
+
+            if (current is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')
+                continue;
+
+            return current >= 0x20 && current <= 0x7E;
+        }
+
+        return false;
+    }
+
+    private static bool HasValidLeadingMarker(ReadOnlySpan<byte> data)
+        => !data.IsEmpty && data[0] <= (byte)RuntimeCookedBinaryTypeMarker.CustomObject;
+
+    private static ReadOnlySpan<byte> StripUtf8Bom(ReadOnlySpan<byte> data)
+        => data.StartsWith(Encoding.UTF8.Preamble) ? data[Encoding.UTF8.Preamble.Length..] : data;
+
+    private static bool IsSupportedYamlCookedFormat(string? format)
+        => string.Equals(format, "CookedBinary", StringComparison.Ordinal)
+            || string.Equals(format, "RuntimeCookedBinary", StringComparison.Ordinal)
+            || string.Equals(format, "RuntimeBinary", StringComparison.Ordinal);
+
+    private static void ConsumeYamlDocumentStart(Parser parser)
+    {
+        if (parser.TryConsume<StreamStart>(out _))
+        {
+        }
+
+        if (parser.TryConsume<DocumentStart>(out _))
+        {
+        }
+    }
+
+    private static void SkipYamlNode(Parser parser)
+    {
+        if (parser.TryConsume<Scalar>(out _))
+            return;
+
+        if (parser.TryConsume<AnchorAlias>(out _))
+            return;
+
+        if (parser.TryConsume<SequenceStart>(out _))
+        {
+            while (!parser.TryConsume<SequenceEnd>(out _))
+                SkipYamlNode(parser);
+            return;
+        }
+
+        if (parser.TryConsume<MappingStart>(out _))
+        {
+            while (!parser.TryConsume<MappingEnd>(out _))
+            {
+                SkipYamlNode(parser);
+                SkipYamlNode(parser);
+            }
+            return;
+        }
+
+        throw new YamlException("Unsupported YAML node encountered while skipping a value.");
     }
 }

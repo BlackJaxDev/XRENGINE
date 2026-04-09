@@ -2,6 +2,7 @@ using System;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Rendering;
+using XREngine.Serialization;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;

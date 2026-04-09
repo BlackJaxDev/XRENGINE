@@ -102,6 +102,18 @@ public partial class XRTexture2D
         set => SetField(ref _sparseTextureStreamingCommittedBytes, value);
     }
 
+    [YamlIgnore]
+    [MemoryPackIgnore]
+    private SparseTextureStreamingPageSelection _sparseTextureStreamingResidentPageSelection = SparseTextureStreamingPageSelection.Full;
+
+    [YamlIgnore]
+    [MemoryPackIgnore]
+    public SparseTextureStreamingPageSelection SparseTextureStreamingResidentPageSelection
+    {
+        get => _sparseTextureStreamingResidentPageSelection;
+        set => SetField(ref _sparseTextureStreamingResidentPageSelection, value.Normalize());
+    }
+
     [field: MemoryPackIgnore]
     public event Func<SparseTextureStreamingTransitionRequest, SparseTextureStreamingTransitionResult>? SparseTextureStreamingTransitionRequested;
 
@@ -119,6 +131,7 @@ public partial class XRTexture2D
         SparseTextureStreamingCommittedBaseMipLevel = int.MaxValue;
         SparseTextureStreamingNumSparseLevels = 0;
         SparseTextureStreamingCommittedBytes = 0L;
+        SparseTextureStreamingResidentPageSelection = SparseTextureStreamingPageSelection.Full;
     }
 
     internal static int GetLogicalMipCount(uint sourceWidth, uint sourceHeight)
@@ -139,6 +152,111 @@ public partial class XRTexture2D
         }
 
         return mipLevel;
+    }
+
+    internal static int ResolveSparseCommittedBaseMipLevel(int requestedBaseMipLevel, int numSparseLevels, int logicalMipCount)
+    {
+        if (logicalMipCount <= 0)
+            return 0;
+
+        int tailFirstMipLevel = Math.Min(Math.Max(0, numSparseLevels), logicalMipCount);
+        if (tailFirstMipLevel >= logicalMipCount)
+            return Math.Clamp(requestedBaseMipLevel, 0, logicalMipCount - 1);
+
+        return Math.Min(Math.Clamp(requestedBaseMipLevel, 0, logicalMipCount - 1), tailFirstMipLevel);
+    }
+
+    internal static bool TryResolveSparsePageRegion(
+        SparseTextureStreamingSupport support,
+        SparseTextureStreamingPageSelection selection,
+        uint logicalWidth,
+        uint logicalHeight,
+        int mipLevel,
+        out SparseTextureStreamingPageRegion region)
+    {
+        region = default;
+        if (!support.IsAvailable)
+            return false;
+
+        uint mipWidth = Math.Max(1u, logicalWidth >> mipLevel);
+        uint mipHeight = Math.Max(1u, logicalHeight >> mipLevel);
+        SparseTextureStreamingPageSelection normalized = selection.Normalize();
+        if (!normalized.IsPartial)
+        {
+            region = new SparseTextureStreamingPageRegion(mipLevel, 0, 0, mipWidth, mipHeight);
+            return true;
+        }
+
+        int x0 = Math.Clamp((int)Math.Floor(normalized.MinU * mipWidth), 0, Math.Max(0, (int)mipWidth - 1));
+        int y0 = Math.Clamp((int)Math.Floor(normalized.MinV * mipHeight), 0, Math.Max(0, (int)mipHeight - 1));
+        int x1 = Math.Clamp((int)Math.Ceiling(normalized.MaxU * mipWidth), x0 + 1, (int)mipWidth);
+        int y1 = Math.Clamp((int)Math.Ceiling(normalized.MaxV * mipHeight), y0 + 1, (int)mipHeight);
+
+        uint pageWidth = Math.Max(1u, support.VirtualPageSizeX);
+        uint pageHeight = Math.Max(1u, support.VirtualPageSizeY);
+        int committedX0 = (int)((uint)x0 / pageWidth * pageWidth);
+        int committedY0 = (int)((uint)y0 / pageHeight * pageHeight);
+        int committedX1 = (int)Math.Min(mipWidth, AlignUp((uint)x1, pageWidth));
+        int committedY1 = (int)Math.Min(mipHeight, AlignUp((uint)y1, pageHeight));
+        if (committedX1 <= committedX0 || committedY1 <= committedY0)
+            return false;
+
+        region = new SparseTextureStreamingPageRegion(
+            mipLevel,
+            committedX0,
+            committedY0,
+            (uint)(committedX1 - committedX0),
+            (uint)(committedY1 - committedY0));
+        return true;
+    }
+
+    internal static long EstimateSparsePageSelectionBytes(
+        uint sourceWidth,
+        uint sourceHeight,
+        int requestedBaseMipLevel,
+        int logicalMipCount,
+        int numSparseLevels,
+        SparseTextureStreamingSupport support,
+        SparseTextureStreamingPageSelection selection,
+        ESizedInternalFormat format = ESizedInternalFormat.Rgba8)
+    {
+        if (logicalMipCount <= 0)
+            return 0L;
+
+        int committedBaseMipLevel = ResolveSparseCommittedBaseMipLevel(requestedBaseMipLevel, numSparseLevels, logicalMipCount);
+        int tailFirstMipLevel = Math.Min(Math.Max(0, numSparseLevels), logicalMipCount);
+        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.Current.GetBytesPerPixel(format));
+        SparseTextureStreamingPageSelection normalizedSelection = selection.Normalize();
+        bool usePartialPages = normalizedSelection.IsPartial && support.IsAvailable && committedBaseMipLevel < tailFirstMipLevel;
+
+        long totalBytes = 0L;
+        int individualMipEndExclusive = usePartialPages ? tailFirstMipLevel : logicalMipCount;
+        for (int mipLevel = committedBaseMipLevel; mipLevel < individualMipEndExclusive; mipLevel++)
+        {
+            if (usePartialPages
+                && TryResolveSparsePageRegion(support, normalizedSelection, sourceWidth, sourceHeight, mipLevel, out SparseTextureStreamingPageRegion region)
+                && region.HasArea)
+            {
+                totalBytes += (long)region.Width * region.Height * bytesPerPixel;
+                continue;
+            }
+
+            uint mipWidth = Math.Max(1u, sourceWidth >> mipLevel);
+            uint mipHeight = Math.Max(1u, sourceHeight >> mipLevel);
+            totalBytes += (long)mipWidth * mipHeight * bytesPerPixel;
+        }
+
+        if (!usePartialPages)
+            return totalBytes;
+
+        for (int mipLevel = Math.Max(committedBaseMipLevel, tailFirstMipLevel); mipLevel < logicalMipCount; mipLevel++)
+        {
+            uint mipWidth = Math.Max(1u, sourceWidth >> mipLevel);
+            uint mipHeight = Math.Max(1u, sourceHeight >> mipLevel);
+            totalBytes += (long)mipWidth * mipHeight * bytesPerPixel;
+        }
+
+        return totalBytes;
     }
 
     internal static long EstimateMipRangeBytes(
@@ -163,5 +281,16 @@ public partial class XRTexture2D
         }
 
         return totalBytes;
+    }
+
+    private static uint AlignUp(uint value, uint alignment)
+    {
+        if (alignment <= 1u)
+            return value;
+
+        uint remainder = value % alignment;
+        return remainder == 0u
+            ? value
+            : value + alignment - remainder;
     }
 }

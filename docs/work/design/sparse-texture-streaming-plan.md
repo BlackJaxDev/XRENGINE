@@ -8,9 +8,9 @@
 | 1 | Separate policy from physical residency | Complete |
 | 2 | Cooked mip-addressable texture assets | Complete |
 | 3 | Sparse mip residency for OpenGL | Implemented (render-thread path) |
-| 4 | Move uploads off the main render path | Not started |
-| 5 | Improve residency heuristics | Not started |
-| 6 | Optional page-level sparse residency | Not started |
+| 4 | Move uploads off the main render path | Implemented (shared-context sparse promotion path) |
+| 5 | Improve residency heuristics | Implemented |
+| 6 | Optional page-level sparse residency | Implemented (UV-bounds-driven page regions) |
 
 ---
 
@@ -23,9 +23,16 @@ Phases 0–2 are substantially complete. The system now has:
 - A dedicated `ImportedTextureStreamingManager` owning all streaming policy, separate from `XRTexture2D`.
 - A pluggable `ITextureResidencyBackend` interface with a fully implemented `GLTieredTextureResidencyBackend` fallback.
 - A cooked `XRTexture2D` streaming payload format (`XRTexture2D.StreamingPayload.cs`) with per-mip offset metadata and an explicit preview mip index, enabling mip reads without full PNG decode.
-- Per-frame promotion and demotion throttling, per-texture telemetry, and unit tests covering budget fitting and visibility-based tier selection.
+- Per-frame promotion and demotion throttling, per-texture telemetry, and unit tests covering budget fitting, projected-importance heuristics, and sparse page-byte accounting.
 
-Two Phase 0 items remain incomplete: the streaming state queue does not yet recompact dead `WeakReference` entries, and byte estimation is still hardcoded to RGBA8 rather than reading the actual resident format.
+Phases 5 and 6 now extend that baseline with runtime view-aware inputs and partial sparse page commits:
+
+- `RenderableMesh` supplies projected pixel span, approximate screen coverage, cached UV-density hints, and normalized UV bounds for imported texture usage.
+- `ImportedTextureStreamingManager` ranks textures by projected on-screen importance, applies sampler-role multipliers, preserves short visibility grace windows, and gives each asset group a fair first promotion slot before filling the remaining frame budget.
+- Sparse imported textures can keep only the page-aligned regions touched by the visible submesh UV bounds for high-detail mips, while the sparse mip tail remains fully committed.
+- The first shipping page-level implementation slices page-sized upload regions directly out of the existing cooked mip blobs, so it does not require a separate page-table asset format.
+
+The remaining Phase 0 cleanup items are complete: the streaming state queue recompacts dead `WeakReference` entries, and resident-byte estimation is format-aware.
 
 The long-term target remains a stable full-size logical texture object whose mip residency changes over time under a streaming budget. In OpenGL terms, this means a sparse residency path when supported, with a robust fallback when it is not.
 
@@ -43,7 +50,7 @@ Sparse residency solves the first problem. It does not by itself solve the secon
 - Large FBX imports can overlap mesh construction, PNG decode, mip generation, and GPU upload in the same startup window. *(Mitigated by phases 0–2: preview-only uploads during import, promotions gated until import completes.)*
 - The current OpenGL texture path allocates storage from the requested width, height, and mip count, so a normal full-size texture object still consumes the full chain even if sampling is temporarily clamped to lower-detail mips. *(Remains true — requires Phase 3 sparse residency.)*
 - PNG decode is expensive and monolithic. Reaching a higher resident tier can still require decoding the entire source image on CPU. *(Resolved by Phase 2 cooked streaming payload format.)*
-- Upload work is still constrained by OpenGL context ownership. Even when decode happens off-thread, residency transitions still need a GPU context and can stall presentation if not scheduled carefully. *(Requires Phase 4.)*
+- Upload work is still constrained by OpenGL context ownership. Even when decode happens off-thread, residency transitions still need a GPU context and can stall presentation if not scheduled carefully. *(Phase 4 now routes sparse promotions through the shared GL context with fence-gated exposure; initial sparse allocations and demotions remain render-thread work.)*
 - The current first-pass streaming model replaces resident texture content with different-size allocations. That saves VRAM, but it does not preserve a stable logical full-size texture representation. *(Remains true — requires Phase 3 sparse residency.)*
 
 ## 2.2 Why the first pass is not the final answer
@@ -131,7 +138,7 @@ Runtime objects — implemented names in parentheses:
 - `TextureStreamingRecord` → inner `ImportedTextureStreamingRecord` on manager *(implemented)*
 - `TextureStreamingSource` → `ITextureStreamingSource` with `AssetTextureStreamingSource` and `ThirdPartyTextureStreamingSource` *(implemented)*
 - `ITextureResidencyBackend` *(implemented)*
-- `GLSparseTextureResidencyBackend` *(not yet implemented — Phase 3)*
+- `GLSparseTextureResidencyBackend` *(implemented)*
 - `GLTieredTextureResidencyBackend` *(implemented)*
 
 The streaming manager decides what should be resident. The backend decides how that residency becomes real GPU storage.
@@ -487,8 +494,8 @@ Purpose:
 
 Status note:
 
-- Implemented on the current render-thread submission path. Sparse textures now probe capability/page size at OpenGL startup, choose sparse vs tiered residency per imported texture, allocate sparse storage with `GL_TEXTURE_SPARSE_ARB` before immutable storage, query `GL_NUM_SPARSE_LEVELS_ARB`, commit preview/detail mip ranges with mip-tail handling, and account only committed bytes toward texture VRAM stats.
-- Phase 4 still owns the secondary-context upload path and cross-context fence handoff. Phase 3 keeps all sparse commit/upload transitions on the current GL context so `GL_TEXTURE_BASE_LEVEL` safety is preserved without cross-context synchronization yet.
+- Implemented. Sparse textures now probe capability/page size at OpenGL startup, choose sparse vs tiered residency per imported texture, allocate sparse storage with `GL_TEXTURE_SPARSE_ARB` before immutable storage, query `GL_NUM_SPARSE_LEVELS_ARB`, commit preview/detail mip ranges with mip-tail handling, and account only committed bytes toward texture VRAM stats.
+- Phase 4 adds the shared-context upload path and cross-context fence handoff for sparse promotions. Preview bootstrap allocations and demotions still run on the render thread by design, but newly committed detail mips are not exposed until the render thread observes a signaled fence.
 
 Work:
 
@@ -497,7 +504,7 @@ Work:
 - [x] Implement `GLSparseTextureResidencyBackend`. Storage allocation must follow the strict ordering: set `GL_TEXTURE_SPARSE_ARB = GL_TRUE`, then call `glTextureStorage2D`. This is a structural change from the existing `EnsureStorageAllocated` path and cannot be bolted onto it.
 - [x] After sparse storage allocation, query `GL_NUM_SPARSE_LEVELS_ARB` and store the result on the record. Treat all mip levels at and above this index as the mip tail; commit and uncommit the tail as an atomic unit.
 - [x] Commit only preview-equivalent low-detail mips during import. For mip tail levels that fall within the preview range, commit the tail as a unit.
-- [ ] Support promoting by raising the committed range and then lowering `GL_TEXTURE_BASE_LEVEL` only after the cross-context fence signals (see Phase 4).
+- [x] Support promoting by raising the committed range and then lowering `GL_TEXTURE_BASE_LEVEL` only after the cross-context fence signals (see Phase 4).
 - [x] Support demoting by raising `GL_TEXTURE_BASE_LEVEL` first, then uncommitting the now-inaccessible high-detail mips.
 - [x] Never lower `GL_TEXTURE_BASE_LEVEL` to expose a mip that has not yet been committed and uploaded. This is a correctness invariant, not a best-effort guard — sampling uncommitted sparse pages is undefined behavior.
 - [x] Update VRAM accounting to use committed bytes (committed mip range × format bytes per texel), not logical full-chain bytes.
@@ -514,12 +521,12 @@ Purpose:
 
 Work:
 
-- [ ] Route sparse upload jobs through the secondary shared GPU context when available.
-- [ ] After each upload on the secondary context, insert `glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)` and store the sync object on the `TextureStreamingRecord`.
-- [ ] On the render thread, poll pending fence objects each frame. Only after a fence signals: lower `GL_TEXTURE_BASE_LEVEL` on the texture to expose newly resident mips and discard the fence object. Never lower `GL_TEXTURE_BASE_LEVEL` before the corresponding fence signals.
-- [ ] Add upload queue budgets per frame.
-- [ ] Add cancellation and coalescing so stale promotion requests do not waste bandwidth.
-- [ ] Add explicit back-pressure when decode or upload queues run too deep.
+- [x] Route sparse promotion upload jobs through the shared GPU context when available, with synchronous render-thread fallback when async offload is unavailable or unsafe.
+- [x] After each shared-context sparse upload, insert `glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)` and store the sync object on the `TextureStreamingRecord`.
+- [x] On the render thread, poll pending fence objects each frame. Only after a fence signals: lower `GL_TEXTURE_BASE_LEVEL` on the texture to expose newly resident mips and discard the fence object. Never lower `GL_TEXTURE_BASE_LEVEL` before the corresponding fence signals.
+- [x] Keep upload pressure bounded with the existing per-frame promotion-byte cap plus an explicit in-flight shared-upload limit.
+- [x] Add cancellation and coalescing so stale promotion requests do not waste bandwidth.
+- [x] Add explicit back-pressure when decode or upload queues run too deep.
 
 Deliverable:
 
@@ -533,11 +540,11 @@ Purpose:
 
 Work:
 
-- [ ] Replace pure distance buckets with projected screen-space importance.
-- [ ] Add visibility grace periods and promotion cooldowns.
-- [ ] Add per-texture-role importance multipliers.
-- [ ] Add optional UV-density hints where mesh import can provide them.
-- [ ] Add scene-level fairness so one asset pack cannot starve everything else.
+- [x] Replace pure distance buckets with projected screen-space importance.
+- [x] Add visibility grace periods and promotion cooldowns.
+- [x] Add per-texture-role importance multipliers.
+- [x] Add optional UV-density hints where mesh import can provide them.
+- [x] Add scene-level fairness so one asset pack cannot starve everything else.
 
 Deliverable:
 
@@ -551,10 +558,10 @@ Purpose:
 
 Work:
 
-- [ ] Add page table metadata to cooked assets.
-- [ ] Add page request tracking and page-level residency maps.
-- [ ] Promote visible pages inside partially visible high-detail mips.
-- [ ] Add debug visualization for page residency.
+- [x] Add runtime page request tracking and page-level residency state on sparse imported textures.
+- [x] Promote only the page-aligned regions touched by the visible submesh UV bounds inside partially visible high-detail mips.
+- [x] Surface page-coverage telemetry in the texture streaming debug panel.
+- [x] Reuse the existing cooked mip blobs by slicing page-sized upload regions on demand; dedicated asset-side page tables remain optional future work rather than a blocker for page-level sparse residency.
 
 Deliverable:
 
@@ -589,28 +596,35 @@ Deliverable:
 - [x] Implement `GLSparseTextureResidencyBackend`. Storage allocation must set `GL_TEXTURE_SPARSE_ARB = GL_TRUE` before calling `glTextureStorage2D`. This cannot use the existing `EnsureStorageAllocated` code path.
 - [x] After sparse storage allocation, query `GL_NUM_SPARSE_LEVELS_ARB` and store the result on the record. Treat all mip levels at and above this index as the mip tail; commit and uncommit the tail as an atomic unit.
 - [x] Support committing preview mip ranges only during import, including the mip tail if preview mips overlap it.
-- [ ] Support promoting by raising the committed range and then lowering `GL_TEXTURE_BASE_LEVEL` only after the cross-context fence signals.
+- [x] Support promoting by raising the committed range and then lowering `GL_TEXTURE_BASE_LEVEL` only after the cross-context fence signals.
 - [x] Support demoting by raising `GL_TEXTURE_BASE_LEVEL` first, then uncommitting the now-inaccessible high-detail mips.
 - [x] Never lower `GL_TEXTURE_BASE_LEVEL` to expose a mip that has not yet been committed and uploaded. Treat this as a correctness invariant, not a best-effort guard.
 - [x] Track committed bytes accurately in rendering stats. Use committed mip range × format bytes per texel, not logical full-chain size.
 
 ## 10.4 Upload TODOs
 
-- [ ] Route texture upload jobs through the secondary GPU context when possible.
-- [ ] After each sparse upload on the secondary context, insert `glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)` and store the sync object on the `TextureStreamingRecord`.
-- [ ] On the render thread, poll pending fence objects each frame. Lower `GL_TEXTURE_BASE_LEVEL` only after the associated fence signals. Discard fence objects once they have signaled.
-- [ ] Add per-frame upload-byte limits for promotions.
-- [ ] Add queue coalescing so repeated requests for the same texture collapse into one latest request.
-- [ ] Add cancellation for stale background decode work.
+- [x] Route texture upload jobs through the secondary GPU context when possible.
+- [x] After each sparse upload on the secondary context, insert `glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)` and store the sync object on the `TextureStreamingRecord`.
+- [x] On the render thread, poll pending fence objects each frame. Lower `GL_TEXTURE_BASE_LEVEL` only after the associated fence signals. Discard fence objects once they have signaled.
+- [x] Keep the existing per-frame promotion-byte limits and add an explicit in-flight shared-upload cap.
+- [x] Add queue coalescing so repeated requests for the same texture collapse into one latest request.
+- [x] Add cancellation for stale background decode work.
 - [ ] Add telemetry for decode queue depth and GPU upload queue depth.
 
 ## 10.5 Heuristics TODOs
 
-- [ ] Replace raw distance thresholds with projected screen importance.
-- [ ] Add visibility grace windows and promotion cooldowns.
-- [ ] Add texture-role priority multipliers.
-- [ ] Add optional mesh-import UV-density hints.
+- [x] Replace raw distance thresholds with projected screen importance.
+- [x] Add visibility grace windows and promotion cooldowns.
+- [x] Add texture-role priority multipliers.
+- [x] Add optional mesh-import UV-density hints.
 - [ ] Add configurable minimum resident detail for hero assets.
+
+## 10.5.1 Page-Level Sparse Residency TODOs
+
+- [x] Track normalized UV-bounds-derived page requests per sparse imported texture.
+- [x] Commit and uncommit page-aligned sparse regions for partially visible high-detail mips.
+- [x] Slice page-region uploads out of the existing cooked mip payloads.
+- [ ] Add optional cooked page-table metadata or pre-sliced page blobs if profiling shows row-slicing overhead is material.
 
 ## 10.6 Validation TODOs
 

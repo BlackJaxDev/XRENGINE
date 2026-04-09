@@ -1,6 +1,6 @@
 ﻿# Dependency Inventory
 
-Generated: 2026-03-22T18:08:59-07:00
+Generated: 2026-04-08T18:37:43-07:00
 Commit: (not a git repo)
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, and native/managed binaries that are referenced or shipped.
@@ -44,9 +44,9 @@ Notes:
 | JoltPhysicsSharp | 2.20.1 | amerkoleci | [MIT](licenses/nuget/JoltPhysicsSharp-2.20.1-MIT.txt) | XREngine.csproj |
 | K4os.Compression.LZ4 | 1.3.8 | MiloszKrajewski | [MIT](licenses/nuget/K4os.Compression.LZ4-1.3.8-MIT.txt) | XREngine.Data.csproj |
 | LZMA-SDK | 22.1.1 | monemihir | [MIT](licenses/nuget/LZMA-SDK-22.1.1-MIT.txt) | XREngine.csproj, XREngine.Data.csproj |
-| Magick.NET.Core | 14.11.0 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET.Core-14.11.0.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
+| Magick.NET.Core | 14.11.1 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET.Core-14.11.1.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
 | Magick.NET.SystemDrawing | 8.0.16 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET.SystemDrawing-8.0.16.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
-| Magick.NET-Q16-HDRI-AnyCPU | 14.11.0 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET-Q16-HDRI-AnyCPU-14.11.0.txt) | XREngine.Animation.csproj, XREngine.Extensions.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
+| Magick.NET-Q16-HDRI-AnyCPU | 14.11.1 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET-Q16-HDRI-AnyCPU-14.11.1.txt) | XREngine.Animation.csproj, XREngine.Extensions.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
 | MagicPhysX | 1.0.0 | Cysharp | [MIT](licenses/nuget/MagicPhysX-1.0.0-MIT.txt) | XREngine.csproj |
 | MathNet.Numerics | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj |
 | MathNet.Numerics.Providers.CUDA | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics.Providers.CUDA-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj |
@@ -94,7 +94,7 @@ Notes:
 | Silk.NET.OpenAL.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenAL.Extensions.EXT-2.23.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj |
 | Silk.NET.OpenAL.Extensions.Soft | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenAL.Extensions.Soft-2.23.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj |
 | Silk.NET.OpenAL.Soft.Native | 1.23.1 | kcat | [LGPL-2.0-or-later](licenses/nuget/Silk.NET.OpenAL.Soft.Native-1.23.1-LGPL-2.0-or-later.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj |
-| Silk.NET.OpenGL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Rendering.csproj, XREngine.UnitTests.csproj |
+| Silk.NET.OpenGL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL-2.23.0-MIT.txt) | XREngine.Benchmarks.csproj, XREngine.csproj, XREngine.Editor.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Rendering.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.OpenGL.Extensions.AMD | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.AMD-2.23.0-MIT.txt) | XREngine.csproj |
 | Silk.NET.OpenGL.Extensions.ARB | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.ARB-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj |
 | Silk.NET.OpenGL.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.EXT-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj |
@@ -128,7 +128,7 @@ Notes:
 | Silk.NET.Vulkan.Extensions.VALVE | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.VALVE-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj |
 | Silk.NET.Vulkan.Loader.Native | 2025.9.12 | KhronosGroup | [Apache-2.0](licenses/nuget/Silk.NET.Vulkan.Loader.Native-2025.9.12-Apache-2.0.txt) | XREngine.csproj, XREngine.Editor.csproj |
 | Silk.NET.WGL.Extensions.ARB | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.WGL.Extensions.ARB-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj |
-| Silk.NET.Windowing | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.Profiler.csproj, XREngine.UnitTests.csproj |
+| Silk.NET.Windowing | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing-2.23.0-MIT.txt) | XREngine.Benchmarks.csproj, XREngine.csproj, XREngine.Editor.csproj, XREngine.Profiler.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.Windowing.Common | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Common-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj |
 | Silk.NET.Windowing.Extensions | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Extensions-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj |
 | Silk.NET.Windowing.Glfw | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Glfw-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj |
@@ -160,6 +160,7 @@ Notes:
 | XREngine.Input.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
 | XREngine.Runtime.Core.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
 | XREngine.Runtime.InputIntegration.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
+| XREngine.UnitTests.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
 | XREngine.VRClient.csproj | OpenVR.NET, Version=0.8.5.0, Culture=neutral, PublicKeyToken=null | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
 
 ## Referenced binaries via project items (dll/exe)

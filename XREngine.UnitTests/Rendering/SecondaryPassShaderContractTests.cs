@@ -47,24 +47,58 @@ public sealed class SecondaryPassShaderContractTests
     public void SkyboxFragments_ConsumeInterpolatedWorldDirection(string shaderRelativePath)
     {
         string source = LoadShaderSource(shaderRelativePath);
+        bool normalizesWorldDirection =
+            source.Contains("vec3 dir = normalize(FragWorldDir);", StringComparison.Ordinal)
+            || source.Contains("vec3 dir = SafeNormalize3(FragWorldDir);", StringComparison.Ordinal);
 
         source.ShouldContain("layout (location = 1) in vec3 FragWorldDir;");
-        source.ShouldContain("vec3 dir = normalize(FragWorldDir);");
+        normalizesWorldDirection.ShouldBeTrue();
         source.ShouldNotContain("GetWorldDirection(");
         source.ShouldNotContain("uniform mat4 InverseProjMatrix;");
         source.ShouldNotContain("uniform mat4 InverseViewMatrix;");
     }
 
     [Test]
+    public void SkyboxDynamic_AvoidsZeroVectorNormalization()
+    {
+        string source = LoadShaderSource(Path.Combine("Scene3D", "SkyboxDynamic.fs"));
+
+        source.ShouldContain("vec2 SafeNormalize2(vec2 v)");
+        source.ShouldContain("vec3 SafeNormalize3(vec3 v)");
+        source.ShouldContain("vec3 dir = SafeNormalize3(FragWorldDir);");
+        source.ShouldContain("SafeNormalize2(dir.xz)");
+        source.ShouldContain("SafeNormalize2(max(abs(dir.y), 0.06) * dir.xz)");
+        source.ShouldNotContain("vec2 st = normalize(dir.xz)");
+        source.ShouldNotContain("vec2 cloudUv = normalize(max(abs(dir.y), 0.06) * dir.xz)");
+    }
+
+    [Test]
     public void SkyboxComponent_FallbackSources_MatchVertexDirectionContract()
     {
         string source = ReadWorkspaceFile(Path.Combine("XRENGINE", "Scene", "Components", "Misc", "SkyboxComponent.cs"));
+        bool normalizesWorldDirection =
+            source.Contains("vec3 dir = normalize(FragWorldDir);", StringComparison.Ordinal)
+            || source.Contains("vec3 dir = SafeNormalize3(FragWorldDir);", StringComparison.Ordinal);
 
         source.ShouldContain("Skybox shaders reconstruct and rotate view rays in the vertex stage");
         source.ShouldContain("layout(location = 1) out vec3 FragWorldDir;");
         source.ShouldContain("FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));");
         source.ShouldContain("layout (location = 1) in vec3 FragWorldDir;");
-        source.ShouldContain("vec3 dir = normalize(FragWorldDir);");
+        normalizesWorldDirection.ShouldBeTrue();
+    }
+
+    [Test]
+    public void SkyboxComponent_FallbackDynamicSource_AvoidsZeroVectorNormalization()
+    {
+        string source = ReadWorkspaceFile(Path.Combine("XRENGINE", "Scene", "Components", "Misc", "SkyboxComponent.cs"));
+
+        source.ShouldContain("vec2 SafeNormalize2(vec2 v)");
+        source.ShouldContain("vec3 SafeNormalize3(vec3 v)");
+        source.ShouldContain("vec3 dir = SafeNormalize3(FragWorldDir);");
+        source.ShouldContain("SafeNormalize2(dir.xz)");
+        source.ShouldContain("SafeNormalize2(max(abs(dir.y), 0.06) * dir.xz)");
+        source.ShouldNotContain("vec2 st = normalize(dir.xz)");
+        source.ShouldNotContain("vec2 cloudUv = normalize(max(abs(dir.y), 0.06) * dir.xz)");
     }
 
     private static string LoadShaderSource(string shaderRelativePath)

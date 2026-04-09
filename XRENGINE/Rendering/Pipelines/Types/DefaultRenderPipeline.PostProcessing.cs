@@ -883,6 +883,21 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.Resolution)),
+            PostProcessParameterKind.Int,
+            (int)GroundTruthAmbientOcclusionSettings.EResolution.Half,
+            displayName: "Resolution",
+            enumOptions: BuildEnumOptions<GroundTruthAmbientOcclusionSettings.EResolution>(),
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.UseNormalWeightedBlur)),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Normal-Weighted Blur",
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.Voxel), nameof(VoxelAmbientOcclusionSettings.VoxelGridResolution)),
             PostProcessParameterKind.Int,
             128,

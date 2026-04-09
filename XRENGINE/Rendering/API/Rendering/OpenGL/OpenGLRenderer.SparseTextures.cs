@@ -11,6 +11,9 @@ public partial class OpenGLRenderer
 {
     private const string SparseTextureExtension = "GL_ARB_sparse_texture";
     private const string SparseTexture2Extension = "GL_ARB_sparse_texture2";
+    private const GLEnum NumVirtualPageSizesArb = (GLEnum)0x91A8;
+    private const GLEnum VirtualPageSizeXArb = (GLEnum)0x9195;
+    private const GLEnum VirtualPageSizeYArb = (GLEnum)0x9196;
 
     private readonly Dictionary<ESizedInternalFormat, SparseTextureStreamingSupport> _sparseTextureSupportByFormat = [];
 
@@ -80,8 +83,8 @@ public partial class OpenGLRenderer
             int numVirtualPageSizes = 0;
             _glGetInternalformativ(
                 GLEnum.Texture2D,
-                ToGLEnum(format),
-                GLEnum.NumVirtualPageSizesArb,
+                GLObjectBase.ToGLEnum(format),
+                NumVirtualPageSizesArb,
                 1,
                 &numVirtualPageSizes);
 
@@ -98,14 +101,14 @@ public partial class OpenGLRenderer
             {
                 _glGetInternalformativ(
                     GLEnum.Texture2D,
-                    ToGLEnum(format),
-                    GLEnum.VirtualPageSizeXArb,
+                    GLObjectBase.ToGLEnum(format),
+                    VirtualPageSizeXArb,
                     (uint)numVirtualPageSizes,
                     pageSizeXsPtr);
                 _glGetInternalformativ(
                     GLEnum.Texture2D,
-                    ToGLEnum(format),
-                    GLEnum.VirtualPageSizeYArb,
+                    GLObjectBase.ToGLEnum(format),
+                    VirtualPageSizeYArb,
                     (uint)numVirtualPageSizes,
                     pageSizeYsPtr);
             }
@@ -165,6 +168,16 @@ public partial class OpenGLRenderer
         uint width,
         uint height,
         bool commit)
+        => TryCommitSparseTexturePages(target, level, 0, 0, width, height, commit);
+
+    internal bool TryCommitSparseTexturePages(
+        GLEnum target,
+        int level,
+        int xoffset,
+        int yoffset,
+        uint width,
+        uint height,
+        bool commit)
     {
         unsafe
         {
@@ -174,8 +187,8 @@ public partial class OpenGLRenderer
             _glTexPageCommitmentArb(
                 target,
                 level,
-                0,
-                0,
+                xoffset,
+                yoffset,
                 0,
                 Math.Max(1u, width),
                 Math.Max(1u, height),

@@ -463,6 +463,15 @@ public static class FbxStructuralParser
         {
             while (true)
             {
+                if (expectedEndOffset.HasValue)
+                {
+                    if (reader.Position == expectedEndOffset.Value)
+                        return;
+
+                    if (reader.Position > expectedEndOffset.Value)
+                        throw new FbxParseException("Binary FBX child list overran the declared endOffset", reader.Position);
+                }
+
                 int headerOffset = reader.Position;
                 BinaryNodeHeader header = ReadNodeHeader(ref reader, builder.Header.BinaryVersion ?? 0);
                 if (header.IsSentinel)

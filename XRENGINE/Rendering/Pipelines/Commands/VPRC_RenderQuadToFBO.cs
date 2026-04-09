@@ -18,11 +18,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public string? SourceQuadFBOName { get; set; }
         public string? DestinationFBOName { get; set; } = null;
+        public bool MatchDestinationRenderArea { get; set; }
 
-        public void SetTargets(string sourceQuadFBOName, string? destinationFBOName = null)
+        public void SetTargets(string sourceQuadFBOName, string? destinationFBOName = null, bool matchDestinationRenderArea = false)
         {
             SourceQuadFBOName = sourceQuadFBOName;
             DestinationFBOName = destinationFBOName;
+            MatchDestinationRenderArea = matchDestinationRenderArea;
         }
 
         protected override void Execute()
@@ -78,6 +80,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 bool hasTargets = destFBO?.Targets is { Length: > 0 };
                 Debug.Log(ELogCategory.Rendering, $"[QuadBlitDiag] Rendering '{SourceQuadFBOName}' → '{DestinationFBOName ?? "<current>"}' (dest has targets: {hasTargets}, dest type: {destFBO?.GetType().Name ?? "null"})");
             }
+
+            using var renderAreaScope = MatchDestinationRenderArea && destFBO is { Width: > 0, Height: > 0 }
+                ? ActivePipelineInstance.RenderState.PushRenderArea((int)destFBO.Width, (int)destFBO.Height)
+                : default;
 
             sourceFBO.Render(destFBO);
         }

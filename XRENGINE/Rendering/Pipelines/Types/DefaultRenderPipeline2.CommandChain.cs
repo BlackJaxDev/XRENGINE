@@ -1407,9 +1407,9 @@ public partial class DefaultRenderPipeline2
         {
             BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
         };
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(GTAOBlurIntermediateFBOName, GBufferFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName, matchDestinationRenderArea: true);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName, matchDestinationRenderArea: true);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(GTAOBlurIntermediateFBOName, GBufferFBOName, matchDestinationRenderArea: true);
         return container;
     }
 

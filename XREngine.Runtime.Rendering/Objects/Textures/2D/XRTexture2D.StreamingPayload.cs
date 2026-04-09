@@ -4,11 +4,13 @@ using System.IO;
 using System.Text;
 using XREngine.Data;
 using XREngine.Data.Rendering;
-using YamlDotNet.Serialization;
+using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 using CookedBinaryReader = XREngine.Core.Files.RuntimeCookedBinaryReader;
 using CookedBinarySerializer = XREngine.Core.Files.RuntimeCookedBinarySerializer;
 using CookedBinaryWriter = XREngine.Core.Files.RuntimeCookedBinaryWriter;
 using ICookedBinarySerializable = XREngine.Core.Files.IRuntimeCookedBinarySerializable;
+using RuntimeCookedBinaryTypeMarker = XREngine.Core.Files.RuntimeCookedBinaryTypeMarker;
 
 namespace XREngine.Rendering;
 
@@ -18,6 +20,7 @@ public partial class XRTexture2D
     private const int StreamableMipSectionVersion = 1;
     private const int StreamableMipDescriptorSize =
         sizeof(uint) + sizeof(uint) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(long) + sizeof(int);
+    private static readonly DataSourceYamlTypeConverter TextureYamlPayloadConverter = new();
 
     private readonly record struct TextureMipmapReadRequest(bool LoadAll, uint MaxResidentDimension, bool IncludeMipChain)
     {
@@ -79,32 +82,48 @@ public partial class XRTexture2D
         if (payload.IsEmpty)
             return false;
 
-        unsafe
+        // Reject non-binary payloads early (e.g. BOM-prefixed YAML asset bytes)
+        // to avoid throwing/catching NotSupportedException as control flow.
+        if (payload[0] > (byte)RuntimeCookedBinaryTypeMarker.CustomObject)
+            return false;
+
+        try
         {
-            fixed (byte* ptr = payload)
+            unsafe
             {
-                using CookedBinaryReader reader = new(ptr, payload.Length);
-                XRTexture2D scratch = new();
-                scratch.ReadTextureAssetBase(reader);
-                scratch.ReadTextureStreamingSettings(reader);
-                scratch.GrabPass = ReadGrabPass(reader, scratch);
+                fixed (byte* ptr = payload)
+                {
+                    using CookedBinaryReader reader = new(ptr, payload.Length);
+                    if (!TryEnterTexturePayloadBody(reader))
+                        return false;
 
-                Mipmap2D[] mipmaps = ReadMipmaps(
-                    reader,
-                    TextureMipmapReadRequest.Resident(maxResidentDimension, includeMipChain),
-                    out uint sourceWidth,
-                    out uint sourceHeight);
-                uint residentMaxDimension = mipmaps.Length > 0
-                    ? Math.Max(mipmaps[0].Width, mipmaps[0].Height)
-                    : 0u;
+                    XRTexture2D scratch = new();
+                    scratch.ReadTextureAssetBase(reader);
+                    scratch.ReadTextureStreamingSettings(reader);
+                    scratch.GrabPass = ReadGrabPass(reader, scratch);
 
-                residentData = new TextureStreamingResidentData(
-                    mipmaps,
-                    sourceWidth,
-                    sourceHeight,
-                    residentMaxDimension);
-                return true;
+                    Mipmap2D[] mipmaps = ReadMipmaps(
+                        reader,
+                        TextureMipmapReadRequest.Resident(maxResidentDimension, includeMipChain),
+                        out uint sourceWidth,
+                        out uint sourceHeight);
+                    uint residentMaxDimension = mipmaps.Length > 0
+                        ? Math.Max(mipmaps[0].Width, mipmaps[0].Height)
+                        : 0u;
+
+                    residentData = new TextureStreamingResidentData(
+                        mipmaps,
+                        sourceWidth,
+                        sourceHeight,
+                        residentMaxDimension);
+                    return true;
+                }
             }
+        }
+        catch (Exception ex) when (ex is EndOfStreamException or InvalidCastException or InvalidOperationException or NotSupportedException or FormatException)
+        {
+            residentData = default;
+            return false;
         }
     }
 
@@ -140,7 +159,54 @@ public partial class XRTexture2D
         if (!TryExtractTextureStreamingPayloadFromYamlAsset(assetYaml, out byte[]? payload))
             return false;
 
-        return TryReadResidentDataFromTextureStreamingPayload(payload, maxResidentDimension, includeMipChain, out residentData);
+        try
+        {
+            if (TryReadResidentDataFromTextureStreamingPayload(payload, maxResidentDimension, includeMipChain, out residentData))
+                return true;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            XRTexture2D? texture = CookedBinarySerializer.Deserialize(typeof(XRTexture2D), payload) as XRTexture2D;
+            if (texture is null)
+                return false;
+
+            residentData = BuildResidentDataFromLoadedTexture(texture, maxResidentDimension, includeMipChain);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal static bool IsTextureStreamingAssetUsable(string assetPath)
+    {
+        if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
+            return false;
+
+        byte[] assetBytes;
+        try
+        {
+            FileInfo assetInfo = new(assetPath);
+            if (assetInfo.Length <= 0)
+                return false;
+
+            assetBytes = File.ReadAllBytes(assetPath);
+        }
+        catch
+        {
+            return false;
+        }
+
+        return TryReadResidentDataFromTextureAssetFileBytes(
+            assetBytes,
+            ImportedPreviewMaxDimensionInternal,
+            includeMipChain: false,
+            out _);
     }
 
     private static bool TryExtractTextureStreamingPayloadFromYamlAsset(string assetYaml, out byte[]? payload)
@@ -151,21 +217,126 @@ public partial class XRTexture2D
 
         try
         {
-            TextureYamlEnvelope? envelope = AssetManager.Deserializer.Deserialize<TextureYamlEnvelope>(new StringReader(assetYaml));
-            if (!string.Equals(envelope?.Format, "CookedBinary", StringComparison.Ordinal)
-                || envelope.Payload is null
-                || envelope.Payload.Length == 0)
+            Parser parser = new(new StringReader(assetYaml));
+            ConsumeDocumentStart(parser);
+
+            if (!parser.TryConsume<MappingStart>(out _))
+                return false;
+
+            string? format = null;
+            DataSource? envelopePayload = null;
+            while (!parser.TryConsume<MappingEnd>(out _))
+            {
+                if (!parser.TryConsume<Scalar>(out Scalar? keyScalar))
+                    return false;
+
+                string key = keyScalar.Value ?? string.Empty;
+                switch (key)
+                {
+                    case "Format":
+                        if (!parser.TryConsume<Scalar>(out Scalar? formatScalar))
+                            return false;
+                        format = formatScalar.Value;
+                        break;
+                    case "Payload":
+                        envelopePayload = TextureYamlPayloadConverter.ReadYaml(parser, typeof(DataSource), static _ => null) as DataSource;
+                        break;
+                    default:
+                        SkipYamlNode(parser);
+                        break;
+                }
+            }
+
+            if (!string.Equals(format, "CookedBinary", StringComparison.Ordinal)
+                || envelopePayload is null
+                || envelopePayload.Length == 0)
             {
                 return false;
             }
 
-            payload = envelope.Payload.GetBytes();
+            payload = envelopePayload.GetBytes();
             return payload.Length > 0;
         }
         catch
         {
             return false;
         }
+    }
+
+    private static void ConsumeDocumentStart(Parser parser)
+    {
+        if (parser.TryConsume<StreamStart>(out _))
+        {
+        }
+
+        if (parser.TryConsume<DocumentStart>(out _))
+        {
+        }
+    }
+
+    private static void SkipYamlNode(Parser parser)
+    {
+        if (parser.TryConsume<Scalar>(out _))
+            return;
+
+        if (parser.TryConsume<AnchorAlias>(out _))
+            return;
+
+        if (parser.TryConsume<SequenceStart>(out _))
+        {
+            while (!parser.TryConsume<SequenceEnd>(out _))
+                SkipYamlNode(parser);
+            return;
+        }
+
+        if (parser.TryConsume<MappingStart>(out _))
+        {
+            while (!parser.TryConsume<MappingEnd>(out _))
+            {
+                SkipYamlNode(parser);
+                SkipYamlNode(parser);
+            }
+            return;
+        }
+
+        throw new YamlException("Unsupported YAML node encountered while skipping a value.");
+    }
+
+    private static bool TryEnterTexturePayloadBody(CookedBinaryReader reader)
+    {
+        long start = reader.Position;
+        if (reader.Remaining <= 0)
+            return false;
+
+        RuntimeCookedBinaryTypeMarker marker = (RuntimeCookedBinaryTypeMarker)reader.ReadByte();
+        if (marker != RuntimeCookedBinaryTypeMarker.CustomObject)
+        {
+            reader.Position = start;
+            return true;
+        }
+
+        string typeName = reader.ReadString();
+        Type? payloadType = ResolveTexturePayloadType(typeName);
+        return payloadType is not null && typeof(XRTexture2D).IsAssignableFrom(payloadType);
+    }
+
+    private static Type? ResolveTexturePayloadType(string? typeName)
+    {
+        if (string.IsNullOrWhiteSpace(typeName))
+            return null;
+
+        Type? resolved = Type.GetType(typeName, throwOnError: false, ignoreCase: false);
+        if (resolved is not null)
+            return resolved;
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            resolved = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
+            if (resolved is not null)
+                return resolved;
+        }
+
+        return null;
     }
 
     private void ReadTextureStreamingSettings(CookedBinaryReader reader)
@@ -412,15 +583,4 @@ public partial class XRTexture2D
         return descriptors.Length - 1;
     }
 
-    private sealed class TextureYamlEnvelope
-    {
-        [YamlMember(Alias = "__assetType", Order = -100)]
-        public string? AssetType { get; set; }
-
-        public string Format { get; set; } = "CookedBinary";
-
-        public int Version { get; set; } = 1;
-
-        public DataSource? Payload { get; set; }
-    }
 }

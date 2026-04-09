@@ -1,4 +1,4 @@
-﻿License text could not be resolved locally for NuGet package 'Magick.NET-Q16-HDRI-AnyCPU' (14.11.0).
+﻿License text could not be resolved locally for NuGet package 'Magick.NET-Q16-HDRI-AnyCPU' (14.11.1).
 
 Resolved license: Apache-2.0
 RepositoryUrl: https://github.com/dlemstra/Magick.NET

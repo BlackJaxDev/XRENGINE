@@ -34,6 +34,9 @@ public partial class XRTexture2D
     public static void RecordImportedTextureStreamingUsage(XRMaterial? material, float distanceFromCamera)
         => ImportedTextureStreamingManager.Instance.RecordUsage(material, distanceFromCamera);
 
+    public static void RecordImportedTextureStreamingUsage(XRMaterial? material, ImportedTextureStreamingUsage usage)
+        => ImportedTextureStreamingManager.Instance.RecordUsage(material, usage);
+
     public static ImportedTextureStreamingTelemetry GetImportedTextureStreamingTelemetry()
         => ImportedTextureStreamingManager.Instance.GetTelemetry();
 
