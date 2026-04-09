@@ -723,6 +723,15 @@ public class LightProbeGridSpawnerComponent : XRComponent
                 if (ReferenceEquals(model.SceneNode, SceneNode))
                     continue;
 
+                // Pre-trigger async BVH builds so they're likely ready by the
+                // time MoveProbeOutOfGeometry needs them.
+                foreach (RenderableMesh rm in model.Meshes)
+                {
+                    var renderer = rm.GetCurrentOrFirstLodRenderer();
+                    if (renderer?.Mesh is { } m)
+                        _ = m.BVHTree;
+                }
+
                 model.SceneNode.TryGetComponent(out StaticRigidBodyComponent? rigidBody);
                 occluders.Add(new ProbeOccluder(model, rigidBody));
             }
@@ -842,9 +851,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
                     continue;
                 }
 
-                if (occluder.StaticRigidBody is not null)
-                    continue;
-
+                // Collider failed or not present — always attempt BVH mesh fallback.
                 if (TryResolveAgainstModelBvh(occluder.Model, adjustedWorld, out Vector3 bvhAdjusted))
                 {
                     adjustedWorld = bvhAdjusted;
@@ -1015,12 +1022,15 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
         bool skinned = renderable.IsSkinned;
         SimpleScene.Util.ssBVH.BVH<Triangle>? bvh = skinned ? renderable.GetSkinnedBvh() : mesh.BVHTree;
-        if (bvh is null)
+        if (bvh is null && !skinned)
         {
-            if (!skinned)
-                _ = mesh.BVHTree;
-            return false;
+            // BVHTree property fires an async build; generate synchronously so
+            // probe displacement doesn't silently skip this mesh.
+            mesh.GenerateBVH();
+            bvh = mesh.BVHTree;
         }
+        if (bvh is null)
+            return false;
 
         Matrix4x4 worldToLocal;
         if (skinned)
@@ -1048,7 +1058,12 @@ public class LightProbeGridSpawnerComponent : XRComponent
         if ((hitCount & 1) == 0 || nearestHitDistance <= 1e-4f)
             return false;
 
-        adjustedPosition = worldPosition + normalizedDirection * (nearestHitDistance + PushOutPadding);
+        // nearestHitDistance is in LOCAL space — transform the hit point back to
+        // world space so scaling is handled correctly.
+        Vector3 localHitPoint = localStart + localDirection * nearestHitDistance;
+        Matrix4x4.Invert(worldToLocal, out Matrix4x4 localToWorld);
+        Vector3 worldHitPoint = Vector3.Transform(localHitPoint, localToWorld);
+        adjustedPosition = worldHitPoint + normalizedDirection * PushOutPadding;
         return true;
     }
 

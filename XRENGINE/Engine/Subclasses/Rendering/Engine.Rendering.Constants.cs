@@ -19,6 +19,7 @@
                 public const string EngineFontsCommonFolderName = "Fonts";
 
                 public const string ShadowSamples = "ShadowSamples";
+                public const string ShadowVogelTapCount = "ShadowVogelTapCount";
                 public const string ShadowFilterRadius = "ShadowFilterRadius";
                 public const string SoftShadowMode = "SoftShadowMode";
                 public const string LightSourceRadius = "LightSourceRadius";

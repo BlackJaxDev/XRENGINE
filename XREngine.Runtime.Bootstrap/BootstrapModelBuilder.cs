@@ -23,11 +23,11 @@ public static class BootstrapModelBuilder
         importBridge.ImportModels(desktopDir, rootNode, characterParentNode);
     }
 
-    public static void AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)
+    public static SkyboxComponent? AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)
     {
         var skybox = new SceneNode(rootNode) { Name = "TestSkyboxNode" };
         if (!skybox.TryAddComponent<SkyboxComponent>(out var skyboxComp))
-            return;
+            return null;
 
         skyboxComp!.Name = "TestSkybox";
         skyboxComp.Intensity = 1.0f;
@@ -42,5 +42,7 @@ public static class BootstrapModelBuilder
             skyboxComp.Projection = ESkyboxProjection.Equirectangular;
             skyboxComp.Texture = skyEquirect;
         }
+
+        return skyboxComp;
     }
 }

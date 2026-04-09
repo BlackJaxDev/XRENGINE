@@ -40,6 +40,7 @@ public static class EngineShaderBindingNames
         public const string ShadowBiasMin = "ShadowBiasMin";
         public const string ShadowBiasMax = "ShadowBiasMax";
         public const string ShadowSamples = "ShadowSamples";
+        public const string ShadowVogelTapCount = "ShadowVogelTapCount";
         public const string ShadowFilterRadius = "ShadowFilterRadius";
         public const string SoftShadowMode = "SoftShadowMode";
         public const string LightSourceRadius = "LightSourceRadius";
@@ -63,6 +64,7 @@ public static class EngineShaderBindingNames
         public const string PointLightShadowBiasMin = "PointLightShadowBiasMin";
         public const string PointLightShadowBiasMax = "PointLightShadowBiasMax";
         public const string PointLightShadowSamples = "PointLightShadowSamples";
+        public const string PointLightShadowVogelTapCount = "PointLightShadowVogelTapCount";
         public const string PointLightShadowFilterRadius = "PointLightShadowFilterRadius";
         public const string PointLightShadowSoftShadowMode = "PointLightShadowSoftShadowMode";
         public const string PointLightShadowLightSourceRadius = "PointLightShadowLightSourceRadius";
@@ -73,6 +75,7 @@ public static class EngineShaderBindingNames
         public const string SpotLightShadowBiasMin = "SpotLightShadowBiasMin";
         public const string SpotLightShadowBiasMax = "SpotLightShadowBiasMax";
         public const string SpotLightShadowSamples = "SpotLightShadowSamples";
+        public const string SpotLightShadowVogelTapCount = "SpotLightShadowVogelTapCount";
         public const string SpotLightShadowFilterRadius = "SpotLightShadowFilterRadius";
         public const string SpotLightShadowSoftShadowMode = "SpotLightShadowSoftShadowMode";
         public const string SpotLightShadowLightSourceRadius = "SpotLightShadowLightSourceRadius";

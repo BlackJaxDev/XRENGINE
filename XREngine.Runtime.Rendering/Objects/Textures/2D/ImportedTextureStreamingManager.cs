@@ -824,6 +824,7 @@ internal sealed class ImportedTextureStreamingManager
     private const int MaxResidentTransitionsPerFrame = 4;
     private const int MaxPromotionTransitionsPerFrame = 2;
     private const int MinTransitionCooldownFrames = 2;
+    private const int PromotionFadeFrames = 10;
     private const long MaxPromotionBytesPerFrame = 24L * 1024L * 1024L;
     private const int RecordRefCompactionIntervalFrames = 600;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
@@ -911,6 +912,11 @@ internal sealed class ImportedTextureStreamingManager
         public SparseTextureStreamingTransitionRequest PendingSparseTransitionRequest;
         public SparseTextureStreamingTransitionResult? PendingSparseTransitionResult;
         public long LastTransitionFrameId = long.MinValue;
+        public float BaseLodBias;
+        public float CurrentStreamingLodBias;
+        public float PromotionFadeStartBias;
+        public long PromotionFadeStartFrameId = long.MinValue;
+        public long PromotionFadeEndFrameId = long.MinValue;
     }
 
     private readonly record struct ImportedTextureStreamingSnapshot(
@@ -1200,6 +1206,16 @@ internal sealed class ImportedTextureStreamingManager
         return minimumResidentSize;
     }
 
+    internal static float CalculatePromotionFadeBias(uint sourceWidth, uint sourceHeight, uint previousResidentSize, uint nextResidentSize)
+    {
+        if (previousResidentSize == 0 || nextResidentSize == 0 || nextResidentSize <= previousResidentSize)
+            return 0.0f;
+
+        int previousBaseMipLevel = XRTexture2D.ResolveResidentBaseMipLevel(sourceWidth, sourceHeight, previousResidentSize);
+        int nextBaseMipLevel = XRTexture2D.ResolveResidentBaseMipLevel(sourceWidth, sourceHeight, nextResidentSize);
+        return Math.Max(0, previousBaseMipLevel - nextBaseMipLevel);
+    }
+
     internal uint FitResidentSizeToBudget(
         ImportedTextureStreamingBudgetInput input,
         uint desiredResidentSize,
@@ -1352,6 +1368,7 @@ internal sealed class ImportedTextureStreamingManager
             return;
 
         FinalizePendingSparseTransitions(frameId);
+        UpdatePromotionFades(frameId);
         Evaluate(frameId);
 
         // Advance for the next collection phase.  Every viewport that runs
@@ -1435,6 +1452,50 @@ internal sealed class ImportedTextureStreamingManager
         }
 
         return record;
+    }
+
+    private void UpdatePromotionFades(long frameId)
+    {
+        WeakReference<ImportedTextureStreamingRecord>[] refs = s_recordRefs.ToArray();
+        for (int i = 0; i < refs.Length; i++)
+        {
+            if (!refs[i].TryGetTarget(out ImportedTextureStreamingRecord? record)
+                || !record.Texture.TryGetTarget(out XRTexture2D? texture))
+            {
+                continue;
+            }
+
+            float targetLodBias;
+            bool shouldApply;
+            lock (record.Sync)
+            {
+                if (record.PromotionFadeEndFrameId == long.MinValue)
+                {
+                    record.BaseLodBias = texture.LodBias;
+                    record.CurrentStreamingLodBias = 0.0f;
+                    continue;
+                }
+
+                if (frameId >= record.PromotionFadeEndFrameId)
+                {
+                    ClearPromotionFadeState(record);
+                    targetLodBias = record.BaseLodBias;
+                    shouldApply = true;
+                }
+                else
+                {
+                    long fadeDurationFrames = Math.Max(1L, record.PromotionFadeEndFrameId - record.PromotionFadeStartFrameId);
+                    float t = Math.Clamp((frameId - record.PromotionFadeStartFrameId) / (float)fadeDurationFrames, 0.0f, 1.0f);
+                    float streamingLodBias = record.PromotionFadeStartBias * (1.0f - t);
+                    record.CurrentStreamingLodBias = streamingLodBias;
+                    targetLodBias = record.BaseLodBias + streamingLodBias;
+                    shouldApply = true;
+                }
+            }
+
+            if (shouldApply && !NearlyEquals(texture.LodBias, targetLodBias))
+                texture.LodBias = targetLodBias;
+        }
     }
 
     private void CompactRecordRefs(long frameId)
@@ -1908,6 +1969,8 @@ internal sealed class ImportedTextureStreamingManager
         uint completedResidentSize,
         long frameId)
     {
+        float targetLodBias = 0.0f;
+        bool shouldApplyLodBias = false;
         lock (record.Sync)
         {
             if (!ReferenceEquals(record.PendingLoadCts, cts))
@@ -1917,7 +1980,46 @@ internal sealed class ImportedTextureStreamingManager
             }
 
             if (completedResidentSize > 0)
+            {
+                uint previousResidentSize = record.ResidentMaxDimension;
                 record.ResidentMaxDimension = completedResidentSize;
+
+                if (texture is not null)
+                {
+                    float currentStreamingLodBias = Math.Max(0.0f, record.CurrentStreamingLodBias);
+                    record.BaseLodBias = texture.LodBias - currentStreamingLodBias;
+                    if (completedResidentSize > previousResidentSize)
+                    {
+                        float promotionFadeBias = CalculatePromotionFadeBias(
+                            record.SourceWidth,
+                            record.SourceHeight,
+                            previousResidentSize,
+                            completedResidentSize);
+                        float startBias = currentStreamingLodBias + promotionFadeBias;
+                        if (startBias > 0.0f)
+                        {
+                            record.CurrentStreamingLodBias = startBias;
+                            record.PromotionFadeStartBias = startBias;
+                            record.PromotionFadeStartFrameId = frameId;
+                            record.PromotionFadeEndFrameId = frameId + PromotionFadeFrames;
+                            targetLodBias = record.BaseLodBias + startBias;
+                            shouldApplyLodBias = true;
+                        }
+                        else
+                        {
+                            ClearPromotionFadeState(record);
+                            targetLodBias = record.BaseLodBias;
+                            shouldApplyLodBias = true;
+                        }
+                    }
+                    else
+                    {
+                        ClearPromotionFadeState(record);
+                        targetLodBias = record.BaseLodBias;
+                        shouldApplyLodBias = true;
+                    }
+                }
+            }
 
             if (texture is not null)
                 record.SparseNumLevels = texture.SparseTextureStreamingNumSparseLevels;
@@ -1930,6 +2032,20 @@ internal sealed class ImportedTextureStreamingManager
             record.LastTransitionFrameId = frameId;
         }
 
+        if (texture is not null && shouldApplyLodBias && !NearlyEquals(texture.LodBias, targetLodBias))
+            texture.LodBias = targetLodBias;
+
         cts.Dispose();
     }
+
+    private static void ClearPromotionFadeState(ImportedTextureStreamingRecord record)
+    {
+        record.CurrentStreamingLodBias = 0.0f;
+        record.PromotionFadeStartBias = 0.0f;
+        record.PromotionFadeStartFrameId = long.MinValue;
+        record.PromotionFadeEndFrameId = long.MinValue;
+    }
+
+    private static bool NearlyEquals(float left, float right, float epsilon = 0.001f)
+        => MathF.Abs(left - right) <= epsilon;
 }

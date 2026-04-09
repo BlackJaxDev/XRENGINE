@@ -352,15 +352,16 @@ namespace XREngine.Components.Scene.Mesh
             var mat = rend?.Material;
             if (mat is not null)
             {
-                // Skip streaming usage for shadow passes — shadow cameras have no
-                // viewports so projected pixel span would always be 0.
-                if (!passes.IsShadowPass)
+                if (ShouldRecordImportedTextureStreamingUsage(passes.IsShadowPass, Engine.Rendering.State.IsMainPass))
                     XRTexture2D.RecordImportedTextureStreamingUsage(mat, BuildImportedTextureStreamingUsage(rend?.Mesh, camera, distance));
                 _rc.RenderPass = mat.RenderPass;
             }
 
             return true;
         }
+
+        internal static bool ShouldRecordImportedTextureStreamingUsage(bool isShadowPass, bool isMainPass)
+            => !isShadowPass && isMainPass;
 
         private ImportedTextureStreamingUsage BuildImportedTextureStreamingUsage(XRMesh? mesh, XRCamera? camera, float distanceFromCamera)
         {

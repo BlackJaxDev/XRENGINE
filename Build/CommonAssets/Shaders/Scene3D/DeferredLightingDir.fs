@@ -52,6 +52,7 @@ uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 uniform int ShadowSamples = 4;
+uniform int ShadowVogelTapCount = 5;
 uniform float ShadowFilterRadius = 0.0012f;
 uniform int SoftShadowMode = 1;
 uniform float LightSourceRadius = 0.01f;
@@ -277,8 +278,11 @@ float SampleShadowMapArrayCHSSLocal(in sampler2DArray shadowMap, in vec3 shadowC
 	return SampleShadowMapArraySoftLocal(shadowMap, shadowCoord, layer, bias, sampleCount, penumbra);
 }
 
-float SampleShadowMapFilteredLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int requestedSamples, in float filterRadius, in int softMode, in float lightSourceRadius)
+float SampleShadowMapFilteredLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int requestedSamples, in float filterRadius, in int softMode, in float lightSourceRadius, in int vogelTapCount)
 {
+	if (softMode == 3)
+		return XRENGINE_SampleShadowMapVogel(shadowMap, shadowCoord, bias, vogelTapCount, filterRadius);
+
 	int sampleCount = clamp(requestedSamples, 1, 16);
 	if (sampleCount <= 1)
 		return SampleShadowMapSimpleLocal(shadowMap, shadowCoord, bias);
@@ -291,8 +295,11 @@ float SampleShadowMapFilteredLocal(in sampler2D shadowMap, in vec3 shadowCoord, 
 	return SampleShadowMapPCFLocal(shadowMap, shadowCoord, bias, 3);
 }
 
-float SampleShadowMapArrayFilteredLocal(in sampler2DArray shadowMap, in vec3 shadowCoord, in float layer, in float bias, in int requestedSamples, in float filterRadius, in int softMode, in float lightSourceRadius)
+float SampleShadowMapArrayFilteredLocal(in sampler2DArray shadowMap, in vec3 shadowCoord, in float layer, in float bias, in int requestedSamples, in float filterRadius, in int softMode, in float lightSourceRadius, in int vogelTapCount)
 {
+	if (softMode == 3)
+		return XRENGINE_SampleShadowMapArrayVogel(shadowMap, shadowCoord, layer, bias, vogelTapCount, filterRadius);
+
 	int sampleCount = clamp(requestedSamples, 1, 16);
 	if (sampleCount <= 1)
 		return SampleShadowMapArraySimpleLocal(shadowMap, shadowCoord, layer, bias);
@@ -375,7 +382,8 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 			ShadowSamples,
 			ShadowFilterRadius,
 			SoftShadowMode,
-			LightSourceRadius) * contact;
+			LightSourceRadius,
+			ShadowVogelTapCount) * contact;
 }
 
 float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int cascadeIndex)
@@ -421,7 +429,8 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int ca
 			ShadowSamples,
 			filterRadius,
 			SoftShadowMode,
-			LightSourceRadius) * contact;
+			LightSourceRadius,
+			ShadowVogelTapCount) * contact;
 }
 vec3 CalcColor(
 in float NoL,

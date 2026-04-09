@@ -5,6 +5,7 @@ using XREngine.Components.Animation;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
@@ -68,23 +69,18 @@ public static class BootstrapWorldFactory
         {
             bool addLightProbe = settings.LightProbe != LightProbeMode.Off;
             bool addSkybox = settings.Skybox;
-            string[] names = ["warm_restaurant_4k"];
+            string[] names = ["klippad_sunrise_2_4k", "warm_restaurant_4k", "overcast_soil_puresky_4k", "satara_night_4k", "studio_small_09_4k"];
             Random random = new();
             string skyTextureName = $"{names[random.Next(0, names.Length)]}.exr";
+            Action? deferredStartupProbeCapture = null;
 
-            Action setupEnvironment = () =>
-            {
-                XRTexture2D? skyEquirect = addSkybox || addLightProbe
-                    ? Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", skyTextureName)
-                    : null;
+            if (addLightProbe)
+                deferredStartupProbeCapture = BootstrapLightingBuilder.AddConfiguredLightProbes(
+                    rootNode,
+                    deferStartupCapture: addSkybox && settings.LightProbeCapture == LightProbeCaptureMode.Startup);
 
-                if (addLightProbe)
-                    BootstrapLightingBuilder.AddConfiguredLightProbes(rootNode);
-                if (addSkybox)
-                    BootstrapModelBuilder.AddSkybox(rootNode, skyEquirect);
-            };
-
-            setupEnvironment();
+            if (addSkybox)
+                AddSkyboxEnvironment(rootNode, skyTextureName, deferredStartupProbeCapture);
         }
 
         if (settings.Mirror)
@@ -161,6 +157,47 @@ public static class BootstrapWorldFactory
     {
         BootstrapNetworkingWorldProfiles.ApplyNetworkingPoseProfile();
         return CreateUnitTestWorld(setUI, isServer);
+    }
+
+    private static void AddSkyboxEnvironment(SceneNode rootNode, string skyTextureName, Action? onSkyReady)
+    {
+        SkyboxComponent? skyboxComp = BootstrapModelBuilder.AddSkybox(rootNode, null);
+        if (skyboxComp is null)
+            return;
+
+        string skyTexturePath = Engine.Assets.ResolveEngineAssetPath("Textures", skyTextureName);
+        void StartSkyTextureLoad()
+        {
+            XRTexture2D.ScheduleLoadJob(
+                skyTexturePath,
+                onFinished: loadedTexture => Engine.EnqueueAppThreadTask(() =>
+                {
+                    skyboxComp.Projection = ESkyboxProjection.Equirectangular;
+                    skyboxComp.Texture = loadedTexture;
+                    skyboxComp.Mode = ESkyboxMode.Texture;
+                    onSkyReady?.Invoke();
+                }),
+                onError: exception => Engine.EnqueueAppThreadTask(() =>
+                {
+                    Debug.LogWarning($"[BootstrapWorldFactory] Failed to load sky texture '{skyTexturePath}'. {exception.Message}");
+                    onSkyReady?.Invoke();
+                }),
+                priority: JobPriority.Low);
+        }
+
+        if (Engine.Windows.Count > 0 && !Engine.StartingUp)
+        {
+            Engine.EnqueueAppThreadTask(StartSkyTextureLoad, "BootstrapWorldFactory.StartSkyTextureLoad");
+            return;
+        }
+
+        void AfterWindowsCreated(GameStartupSettings _, GameState __)
+        {
+            Engine.AfterCreateWindows -= AfterWindowsCreated;
+            Engine.EnqueueAppThreadTask(StartSkyTextureLoad, "BootstrapWorldFactory.StartSkyTextureLoad");
+        }
+
+        Engine.AfterCreateWindows += AfterWindowsCreated;
     }
 
     private static void AddMirror(SceneNode rootNode)

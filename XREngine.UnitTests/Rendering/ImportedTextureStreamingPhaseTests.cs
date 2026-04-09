@@ -5,6 +5,7 @@ using System.Text;
 using NUnit.Framework;
 using Shouldly;
 using XREngine;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering;
 
 namespace XREngine.UnitTests.Rendering;
@@ -90,6 +91,33 @@ public sealed class ImportedTextureStreamingPhaseTests
         albedoDesired.ShouldBeGreaterThan(roughnessDesired);
         albedoDesired.ShouldBe(2048u);
         roughnessDesired.ShouldBe(1024u);
+    }
+
+    [Test]
+    public void CalculatePromotionFadeBias_UsesPromotedMipDelta()
+    {
+        float lodBias = ImportedTextureStreamingManager.CalculatePromotionFadeBias(
+            sourceWidth: 4096u,
+            sourceHeight: 4096u,
+            previousResidentSize: 256u,
+            nextResidentSize: 1024u);
+
+        lodBias.ShouldBe(2.0f);
+    }
+
+    [Test]
+    public void CalculatePromotionFadeBias_DemotionOrNoChange_ReturnsZero()
+    {
+        ImportedTextureStreamingManager.CalculatePromotionFadeBias(4096u, 4096u, 1024u, 1024u).ShouldBe(0.0f);
+        ImportedTextureStreamingManager.CalculatePromotionFadeBias(4096u, 4096u, 1024u, 256u).ShouldBe(0.0f);
+    }
+
+    [Test]
+    public void ShouldRecordImportedTextureStreamingUsage_OnlyAllowsMainNonShadowPass()
+    {
+        RenderableMesh.ShouldRecordImportedTextureStreamingUsage(isShadowPass: false, isMainPass: true).ShouldBeTrue();
+        RenderableMesh.ShouldRecordImportedTextureStreamingUsage(isShadowPass: true, isMainPass: true).ShouldBeFalse();
+        RenderableMesh.ShouldRecordImportedTextureStreamingUsage(isShadowPass: false, isMainPass: false).ShouldBeFalse();
     }
 
     [Test]

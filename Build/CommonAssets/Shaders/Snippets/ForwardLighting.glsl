@@ -64,7 +64,7 @@ layout(std430, binding = 3) readonly buffer LightProbeGridCells
 
 layout(std430, binding = 4) readonly buffer LightProbeGridIndices
 {
-    int CellProbeIndices[];
+    int CellTetraIndices[];
 };
 
 uniform int ProbeCount;
@@ -88,6 +88,7 @@ uniform float ShadowMult = 1.221;
 uniform float ShadowBiasMin = 0.00001;
 uniform float ShadowBiasMax = 0.004;
 uniform int ShadowSamples = 4;
+uniform int ShadowVogelTapCount = 5;
 uniform float ShadowFilterRadius = 0.0012;
 uniform int SoftShadowMode = 1;
 uniform float LightSourceRadius = 0.01;
@@ -120,6 +121,7 @@ uniform float PointLightShadowExponent[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowBiasMin[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int PointLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform int PointLightShadowVogelTapCount[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int PointLightShadowSoftShadowMode[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowLightSourceRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
@@ -131,6 +133,7 @@ uniform float SpotLightShadowExponent[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float SpotLightShadowBiasMin[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float SpotLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int SpotLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform int SpotLightShadowVogelTapCount[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float SpotLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int SpotLightShadowSoftShadowMode[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float SpotLightShadowLightSourceRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
@@ -313,8 +316,8 @@ float XRENGINE_ComputeInfluenceWeight(int probeIndex, vec3 worldPos)
     vec3 center = ProbePositions[probeIndex].xyz + p.InfluenceOffsetShape.xyz;
     if (shape == 0)
     {
-        float inner = p.InfluenceInner.x;
-        float outer = max(p.InfluenceOuter.x, inner + 0.0001);
+        float inner = p.InfluenceInner.w;
+        float outer = max(p.InfluenceOuter.w, inner + 0.0001);
         float dist = length(worldPos - center);
         return smoothstep(outer, inner, dist);
     }
@@ -357,17 +360,17 @@ vec3 XRENGINE_ApplyParallax(int probeIndex, vec3 dirWS, vec3 worldPos)
     return normalize(hitWS - ProbePositions[probeIndex].xyz);
 }
 
-#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
 bool XRENGINE_ComputeBarycentric(vec3 p, vec3 a, vec3 b, vec3 c, vec3 d, out vec4 bary)
 {
     mat3 m = mat3(b - a, c - a, d - a);
     vec3 v = p - a;
     vec3 uvw = inverse(m) * v;
     float w = 1.0 - uvw.x - uvw.y - uvw.z;
-    bary = vec4(uvw, w);
+    bary = vec4(w, uvw);
     return bary.x >= -0.0001 && bary.y >= -0.0001 && bary.z >= -0.0001 && bary.w >= -0.0001;
 }
 
+#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
 void XRENGINE_ResolveProbeWeights(vec3 worldPos, out vec4 weights, out ivec4 indices)
 {
     weights = vec4(0.0);
@@ -426,10 +429,11 @@ void XRENGINE_ResolveProbeWeights(vec3 worldPos, out vec4 weights, out ivec4 ind
 }
 #endif // XRENGINE_PROBE_DEBUG_FALLBACK
 
-void XRENGINE_ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices)
+void XRENGINE_ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices, out bool isBarycentric)
 {
     weights = vec4(0.0);
     indices = ivec4(-1);
+    isBarycentric = false;
 
     if (ProbeGridDims.x <= 0 || ProbeGridDims.y <= 0 || ProbeGridDims.z <= 0 || ProbeGridCellSize <= 0.0)
         return;
@@ -440,72 +444,30 @@ void XRENGINE_ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4
     ProbeGridCell cellData = GridCells[flatIndex];
     ivec2 offsetCount = cellData.OffsetCount.xy;
 
-    if (offsetCount.y <= 0)
+    if (offsetCount.y > 0)
     {
-        float sum = 0.0;
-        for (int k = 0; k < 4; ++k)
+        for (int i = 0; i < offsetCount.y; ++i)
         {
-            int probeIndex = cellData.FallbackIndices[k];
-            if (probeIndex < 0 || probeIndex >= ProbeCount)
+            int tetraIndex = CellTetraIndices[offsetCount.x + i];
+            if (tetraIndex < 0 || tetraIndex >= TetraCount)
                 continue;
 
-            float dist = length(worldPos - ProbePositions[probeIndex].xyz);
-            float weight = 1.0 / max(dist, 0.0001);
-            weights[k] = weight;
-            indices[k] = probeIndex;
-            sum += weight;
-        }
+            ivec4 idx = ivec4(TetraIndices[tetraIndex]);
+            if (idx.x < 0 || idx.w < 0 || idx.x >= ProbeCount || idx.y >= ProbeCount || idx.z >= ProbeCount || idx.w >= ProbeCount)
+                continue;
 
-        if (sum > 0.0)
-            weights /= sum;
-
-        return;
-    }
-
-    float bestDistances[4] = float[](1e20, 1e20, 1e20, 1e20);
-    int bestIndices[4] = int[](-1, -1, -1, -1);
-    for (int i = 0; i < offsetCount.y; ++i)
-    {
-        int probeIndex = CellProbeIndices[offsetCount.x + i];
-        if (probeIndex < 0 || probeIndex >= ProbeCount)
-            continue;
-
-        float dist = length(worldPos - ProbePositions[probeIndex].xyz);
-        for (int k = 0; k < 4; ++k)
-        {
-            if (dist < bestDistances[k])
+            vec4 bary;
+            if (XRENGINE_ComputeBarycentric(worldPos, ProbePositions[idx.x].xyz, ProbePositions[idx.y].xyz, ProbePositions[idx.z].xyz, ProbePositions[idx.w].xyz, bary))
             {
-                for (int s = 3; s > k; --s)
-                {
-                    bestDistances[s] = bestDistances[s - 1];
-                    bestIndices[s] = bestIndices[s - 1];
-                }
-                bestDistances[k] = dist;
-                bestIndices[k] = probeIndex;
-                break;
+                weights = bary;
+                indices = idx;
+                isBarycentric = true;
+                return;
             }
         }
     }
 
     float sum = 0.0;
-    for (int k = 0; k < 4; ++k)
-    {
-        if (bestIndices[k] >= 0)
-        {
-            float weight = 1.0 / max(bestDistances[k], 0.0001);
-            weights[k] = weight;
-            indices[k] = bestIndices[k];
-            sum += weight;
-        }
-    }
-
-    if (sum > 0.0)
-    {
-        weights /= sum;
-        return;
-    }
-
-    sum = 0.0;
     for (int k = 0; k < 4; ++k)
     {
         int probeIndex = cellData.FallbackIndices[k];
@@ -543,10 +505,11 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
     if (!ForwardPbrResourcesEnabled || ProbeCount <= 0)
         return GlobalAmbient * albedo * diffuseAO;
 
-    vec4 probeWeights;
-    ivec4 probeIndices;
+    vec4 probeWeights = vec4(0.0);
+    ivec4 probeIndices = ivec4(-1);
+    bool isBarycentric = false;
     if (UseProbeGrid)
-        XRENGINE_ResolveProbeWeightsGrid(fragPos, probeWeights, probeIndices);
+        XRENGINE_ResolveProbeWeightsGrid(fragPos, probeWeights, probeIndices, isBarycentric);
 #ifdef XRENGINE_PROBE_DEBUG_FALLBACK
     else
         XRENGINE_ResolveProbeWeights(fragPos, probeWeights, probeIndices);
@@ -562,8 +525,13 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
         if (probeIndices[i] < 0)
             continue;
 
-        float influence = XRENGINE_ComputeInfluenceWeight(probeIndices[i], fragPos);
-        float weight = probeWeights[i] * influence;
+        // Barycentric tetra weights are already mathematically continuous.
+        // Multiplying by per-probe influence would create hard edges at
+        // influence-sphere boundaries, so we only apply influence for the
+        // distance-weighted fallback path.
+        float weight = isBarycentric
+            ? probeWeights[i]
+            : probeWeights[i] * XRENGINE_ComputeInfluenceWeight(probeIndices[i], fragPos);
         if (weight <= 0.0)
             continue;
 
@@ -578,45 +546,13 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
         totalWeight += weight;
     }
 
-    if (totalWeight > 0.0)
+    if (totalWeight <= 0.0)
     {
-        irradianceColor /= totalWeight;
-        prefilteredColor /= totalWeight;
+        return GlobalAmbient * albedo * diffuseAO;
     }
-    else
-    {
-        // All resolved probes had zero influence at this fragment.
-        // Fall back to distance-only weighting to avoid black gaps between probe influence volumes.
-        for (int i = 0; i < 4; ++i)
-        {
-            if (probeIndices[i] < 0)
-                continue;
 
-            float weight = probeWeights[i];
-            if (weight <= 0.0)
-                continue;
-
-            vec3 diffuseDir = XRENGINE_ApplyParallax(probeIndices[i], normal, fragPos);
-            vec3 specDir = XRENGINE_ApplyParallax(probeIndices[i], reflectionDir, fragPos);
-            float normalizationScale = max(ProbeParams[probeIndices[i]].ProxyHalfExtents.w, 0.0001);
-            float maxMipFb = float(textureQueryLevels(PrefilterArray) - 1);
-            float clampedLodFb = min(roughness * MAX_REFLECTION_LOD, maxMipFb);
-
-            irradianceColor += weight * normalizationScale * XRENGINE_SampleOctaArray(IrradianceArray, diffuseDir, probeIndices[i]);
-            prefilteredColor += weight * normalizationScale * XRENGINE_SampleOctaArrayLod(PrefilterArray, specDir, probeIndices[i], clampedLodFb);
-            totalWeight += weight;
-        }
-
-        if (totalWeight > 0.0)
-        {
-            irradianceColor /= totalWeight;
-            prefilteredColor /= totalWeight;
-        }
-        else
-        {
-            return GlobalAmbient * albedo * diffuseAO;
-        }
-    }
+    irradianceColor /= totalWeight;
+    prefilteredColor /= totalWeight;
 
     vec2 brdfValue = texture(BRDF, vec2(NoV, roughness)).rg;
     vec3 diffuse = irradianceColor * albedo;
@@ -693,7 +629,8 @@ float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseF
         ShadowSamples,
         filterRadius,
         SoftShadowMode,
-        LightSourceRadius) * contact;
+        LightSourceRadius,
+        ShadowVogelTapCount) * contact;
 }
 
 // Shadow map reading for primary directional light (uses standalone ShadowMap sampler)
@@ -743,7 +680,8 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
         ShadowSamples,
         ShadowFilterRadius,
         SoftShadowMode,
-        LightSourceRadius) * contact;
+        LightSourceRadius,
+        ShadowVogelTapCount) * contact;
 }
 
 vec3 XRENGINE_CalculateDirectPbrLight(vec3 lightColor, float diffuseIntensity, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0, float attenuation)
@@ -830,7 +768,8 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
         sampleRadius,
         PointLightShadowSamples[lightIndex],
         PointLightShadowSoftShadowMode[lightIndex],
-        PointLightShadowLightSourceRadius[lightIndex]);
+        PointLightShadowLightSourceRadius[lightIndex],
+        PointLightShadowVogelTapCount[lightIndex]);
 
     if (debugMode != 0)
     {
@@ -891,7 +830,8 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
         SpotLightShadowSamples[lightIndex],
         SpotLightShadowFilterRadius[lightIndex],
         SpotLightShadowSoftShadowMode[lightIndex],
-        SpotLightShadowLightSourceRadius[lightIndex]) * contact;
+        SpotLightShadowLightSourceRadius[lightIndex],
+        SpotLightShadowVogelTapCount[lightIndex]) * contact;
 
     if (debugMode != 0)
     {

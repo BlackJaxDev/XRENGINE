@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using XREngine.Audio;
+using XREngine.Components.Physics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Trees;
@@ -236,6 +237,7 @@ namespace XREngine
             RuntimeRenderObjectServices.Current = new EngineRuntimeRenderObjectServices();
             RuntimeShaderServices.Current = new EngineRuntimeShaderServices();
             RuntimeRenderingHostServices.Current = new EngineRuntimeRenderingHostServices();
+            RuntimeRenderingHostServices.GameCachePath = ConvexHullDiskCache.ResolveCacheRoot();
             RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
             RuntimePlayerControllerServices.Current = new EngineRuntimePlayerControllerServices();
 

@@ -158,6 +158,13 @@ public static class RuntimeRenderingHostServices
         set => _current = value ?? new DefaultRuntimeRenderingHostServices();
     }
 
+    /// <summary>
+    /// Absolute path to the game-level cache directory.  Set by the host engine
+    /// during initialization.  Used by <c>BvhDiskCache</c> and similar caches
+    /// that live in the rendering layer.
+    /// </summary>
+    public static string? GameCachePath { get; set; }
+
     private sealed class DefaultRuntimeRenderingHostServices : IRuntimeRenderingHostServices
     {
         public IDisposable? StartProfileScope(string? scopeName)

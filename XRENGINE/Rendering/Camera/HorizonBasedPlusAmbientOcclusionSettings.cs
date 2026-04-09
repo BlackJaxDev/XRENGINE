@@ -8,7 +8,7 @@ namespace XREngine.Rendering
         private bool _blurEnabled = true;
         private int _blurRadius = 8;
         private float _blurSharpness = 4.0f;
-        private bool _useInputNormals = true;
+        private bool _useInputNormals = false;
         private float _metersToViewSpaceUnits = 1.0f;
 
         public HorizonBasedPlusAmbientOcclusionSettings(AmbientOcclusionSettings owner)

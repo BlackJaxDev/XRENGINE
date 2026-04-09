@@ -13,6 +13,8 @@ namespace XREngine.Components.Capture.Lights.Types
 {
     public abstract class LightComponent : XRComponent, IRenderable
     {
+        public const int MaxVogelTapCount = 32;
+
         public readonly record struct FrustumIntersectionAabb(int FrustumIndex, Vector3 Min, Vector3 Max);
 
         protected ColorF3 _color = new(1.0f, 1.0f, 1.0f);
@@ -31,6 +33,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private bool _previewBoundingVolume = false;
         private XRWorldInstance? _registeredDynamicWorld;
         private int _samples = 4;
+        private int _vogelTapCount = 5;
         private float _filterRadius = 0.0012f;
         private ESoftShadowMode _softShadowMode = ESoftShadowMode.PCSS;
         private float _lightSourceRadius = 0.01f;
@@ -307,6 +310,16 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _samples, Math.Max(1, value));
         }
 
+        /// <summary>
+        /// Tap count used by <see cref="ESoftShadowMode.VogelDisk"/>.
+        /// </summary>
+        [Category("Shadows")]
+        public int VogelTapCount
+        {
+            get => _vogelTapCount;
+            set => SetField(ref _vogelTapCount, Math.Clamp(value, 1, MaxVogelTapCount));
+        }
+
         public float FilterRadius
         {
             get => _filterRadius;
@@ -315,7 +328,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         /// <summary>
         /// Selects the soft shadow technique: Hard (PCF fallback), PCSS (fixed-radius Poisson disk),
-        /// or ContactHardening (blocker-search variable penumbra).
+        /// VogelDisk (fixed-radius Vogel disk), or ContactHardening (blocker-search variable penumbra).
         /// </summary>
         public ESoftShadowMode SoftShadowMode
         {
@@ -378,6 +391,7 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform(Engine.Rendering.Constants.ShadowBiasMaxUniform, ShadowMaxBias);
 
             program.Uniform(Engine.Rendering.Constants.ShadowSamples, Samples);
+            program.Uniform(Engine.Rendering.Constants.ShadowVogelTapCount, VogelTapCount);
             program.Uniform(Engine.Rendering.Constants.ShadowFilterRadius, FilterRadius);
             program.Uniform(Engine.Rendering.Constants.SoftShadowMode, (int)SoftShadowMode);
             program.Uniform(Engine.Rendering.Constants.LightSourceRadius, LightSourceRadius);

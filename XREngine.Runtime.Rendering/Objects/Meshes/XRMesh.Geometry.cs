@@ -139,18 +139,35 @@ public partial class XRMesh
                 return;
 
             List<Triangle> triangles = new(Triangles.Count);
-            Dictionary<Triangle, (IndexTriangle Indices, int FaceIndex)> triangleLookup = new(Triangles.Count);
+            List<IndexTriangle> indexTriangles = new(Triangles.Count);
 
             for (int i = 0; i < Triangles.Count; i++)
             {
                 IndexTriangle indices = Triangles[i];
                 Triangle triangle = GetTriangle(indices);
                 triangles.Add(triangle);
-                triangleLookup[triangle] = (indices, i);
+                indexTriangles.Add(indices);
             }
+
+            // Try loading a previously cached BVH from disk.
+            if (BvhDiskCache.TryLoad(triangles, indexTriangles, out BVH<Triangle>? cachedBvh, out var cachedLookup)
+                && cachedBvh is not null && cachedLookup is not null)
+            {
+                TriangleLookup = cachedLookup;
+                _bvhTree = cachedBvh;
+                return;
+            }
+
+            // Cache miss — build the BVH from scratch.
+            Dictionary<Triangle, (IndexTriangle Indices, int FaceIndex)> triangleLookup = new(Triangles.Count);
+            for (int i = 0; i < triangles.Count; i++)
+                triangleLookup[triangles[i]] = (indexTriangles[i], i);
 
             TriangleLookup = triangleLookup;
             _bvhTree = new(new TriangleAdapter(), triangles);
+
+            // Store the freshly built BVH to disk for next time.
+            BvhDiskCache.TryStore(triangles, triangleLookup, _bvhTree);
         }
         catch (Exception ex)
         {

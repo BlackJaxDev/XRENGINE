@@ -132,19 +132,31 @@ internal static class LightComponentEditorShared
             light.ShadowExponent = MathF.Max(0.0f, exp);
 
         int softMode = (int)light.SoftShadowMode;
-        if (ImGui.Combo("Soft Shadow Mode", ref softMode, "Hard\0PCSS\0Contact Hardening\0"))
-            light.SoftShadowMode = (ESoftShadowMode)Math.Clamp(softMode, 0, 2);
+        if (ImGui.Combo("Soft Shadow Mode", ref softMode, "Hard\0PCSS\0Contact Hardening\0Vogel Disk\0"))
+            light.SoftShadowMode = (ESoftShadowMode)Math.Clamp(softMode, 0, 3);
 
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Hard = PCF fallback, PCSS = fixed-radius Poisson disk, Contact Hardening = blocker-search variable penumbra (CHSS).");
+            ImGui.SetTooltip("Hard = PCF fallback, PCSS = fixed-radius Poisson disk, Contact Hardening = blocker-search variable penumbra (CHSS), Vogel Disk = configurable X-tap Vogel disk filter.");
 
         if (light is not PointLightComponent || light.SoftShadowMode != ESoftShadowMode.Hard)
         {
             ImGui.Indent();
 
-            int samples = light.Samples;
-            if (ImGui.InputInt("Samples", ref samples))
-                light.Samples = Math.Max(1, samples);
+            if (light.SoftShadowMode == ESoftShadowMode.VogelDisk)
+            {
+                int vogelTapCount = light.VogelTapCount;
+                if (ImGui.InputInt("Vogel Tap Count", ref vogelTapCount))
+                    light.VogelTapCount = Math.Clamp(vogelTapCount, 1, LightComponent.MaxVogelTapCount);
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Number of taps used by the Vogel-disk shadow filter.");
+            }
+            else
+            {
+                int samples = light.Samples;
+                if (ImGui.InputInt("Samples", ref samples))
+                    light.Samples = Math.Max(1, samples);
+            }
 
             float filter = light.FilterRadius;
             if (ImGui.DragFloat("Filter Radius", ref filter, 0.0001f, 0.0f, 1.0f, "%.6f"))
