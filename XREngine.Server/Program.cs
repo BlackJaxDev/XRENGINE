@@ -116,7 +116,7 @@ namespace XREngine.Networking
                 };
             }
 
-            Debug.Out($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.");
+            Debug.Assets($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.");
         }
 
         private static Task BuildWebApi()

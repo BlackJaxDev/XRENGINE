@@ -157,8 +157,14 @@ public static class FbxDeformerParser
 
         Matrix4x4 transformMatrix = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "Transform") ?? Matrix4x4.Identity;
         Matrix4x4 transformLinkMatrix = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "TransformLink") ?? Matrix4x4.Identity;
+
+        // FBX stores matrices in row-major column-vector convention. Reading them directly
+        // into System.Numerics (row-major, row-vector) yields the transpose.  The FBX
+        // column-vector inverse-bind is  inverse(TransformLink) * Transform.  Transposing
+        // the product reverses the order:  transpose(A*B) = transpose(B)*transpose(A),
+        // giving us  Transform_loaded * inverse(TransformLink_loaded)  for row-vector use.
         Matrix4x4 inverseBindMatrix = Matrix4x4.Invert(transformLinkMatrix, out Matrix4x4 inverseLink)
-            ? inverseLink * transformMatrix
+            ? transformMatrix * inverseLink
             : Matrix4x4.Identity;
 
         Dictionary<int, float> controlPointWeights = new(indices.Length);

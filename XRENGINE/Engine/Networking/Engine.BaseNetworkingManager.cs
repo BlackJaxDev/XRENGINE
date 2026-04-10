@@ -574,6 +574,8 @@ namespace XREngine
             private MemoryStream _compStreamOut = new();
             private MemoryStream _decompStreamIn = new();
             private MemoryStream _decompStreamOut = new();
+            private readonly object _compressionStateSync = new();
+            private readonly object _decompressionStateSync = new();
 
             /// <summary>
             /// Sends a broadcast packet to send over the established UDP connection.
@@ -614,7 +616,9 @@ namespace XREngine
                     byte[] uncompData = new byte[GuidLen + uncompDataLen];
                     int offset = 0;
                     SetGuidAndData(id, data, uncompData, ref offset);
-                    byte[] compData = Compression.Compress(uncompData, ref _encoder, ref _compStreamIn, ref _compStreamOut);
+                    byte[] compData;
+                    lock (_compressionStateSync)
+                        compData = Compression.Compress(uncompData, ref _encoder, ref _compStreamIn, ref _compStreamOut);
 
                     //Then, create the full packet with header
                     int compDataLen = compData.Length;
@@ -894,7 +898,9 @@ namespace XREngine
 
             private void ReadCompressed(EBroadcastType type, byte[] inBuf, byte[] decompBuffer, int dataOffset, int dataLength, IPEndPoint? sender)
             {
-                int decompLen = Compression.Decompress(inBuf, dataOffset, dataLength, decompBuffer, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
+                int decompLen;
+                lock (_decompressionStateSync)
+                    decompLen = Compression.Decompress(inBuf, dataOffset, dataLength, decompBuffer, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
                 Propogate(
                     new Guid([.. decompBuffer.Take(GuidLen)]),
                     type,

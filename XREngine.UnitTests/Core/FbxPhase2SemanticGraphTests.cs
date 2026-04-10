@@ -215,6 +215,80 @@ public sealed class FbxPhase2SemanticGraphTests
         zUp.IntermediateScene.Nodes.Any(node => node.Subclass == "Mesh").ShouldBeTrue();
     }
 
+    [Test]
+    public void SemanticParser_ExcludesShapeGeometryFromIntermediateMeshes()
+    {
+        byte[] data = Encoding.UTF8.GetBytes(
+            """
+            ; FBX 7.4.0 project file
+            Objects:  {
+                Model: 1000, "Model::Root", "Null" {
+                }
+                Model: 1001, "Model::MeshNode", "Mesh" {
+                }
+                Geometry: 2000, "Geometry::BaseMesh", "Mesh" {
+                }
+                Geometry: 2001, "Geometry::SmileShape", "Shape" {
+                }
+                Deformer: 3000, "Deformer::BlendShape", "BlendShape" {
+                }
+                Deformer: 3001, "Deformer::Smile", "BlendShapeChannel" {
+                }
+            }
+            Connections:  {
+                C: "OO",1001,1000
+                C: "OO",2000,1001
+                C: "OO",3000,2000
+                C: "OO",3001,3000
+                C: "OO",2001,3001
+            }
+            """);
+
+        FbxSemanticDocument document = FbxSemanticParser.Parse(data);
+
+        document.IntermediateScene.Meshes.Count.ShouldBe(1);
+        document.IntermediateScene.Meshes[0].ObjectId.ShouldBe(2000L);
+        document.IntermediateScene.Meshes[0].GeometryType.ShouldBe("Mesh");
+        document.IntermediateScene.BlendShapes.Count.ShouldBe(2);
+        document.TryGetObject(2001, out FbxSceneObject shapeGeometry).ShouldBeTrue();
+        shapeGeometry.Subclass.ShouldBe("Shape");
+    }
+
+    [Test]
+    public void SemanticParser_NormalizesBinaryObjectNameSuffixes()
+    {
+        FbxBinaryNode objects = new("Objects");
+        objects.Children.Add(CreateBinaryObjectNode("Model", 1000, $"Root\0\u0001Model", "Null"));
+        objects.Children.Add(CreateBinaryObjectNode("Model", 1001, $"Meshes\0\u0001Model", "Mesh"));
+        objects.Children.Add(CreateBinaryObjectNode("Geometry", 2000, $"BaseMesh\0\u0001Geometry", "Mesh"));
+        objects.Children.Add(CreateBinaryObjectNode("Geometry", 2001, $"SmileShape\0\u0001Geometry", "Shape"));
+        objects.Children.Add(CreateBinaryObjectNode("Deformer", 3000, $"BlendShape\0\u0001Deformer", "BlendShape"));
+        objects.Children.Add(CreateBinaryObjectNode("Deformer", 3001, $"Smile\0\u0001SubDeformer", "BlendShapeChannel"));
+
+        FbxBinaryNode connections = new("Connections");
+        connections.Children.Add(CreateBinaryConnectionNode(1001, 1000));
+        connections.Children.Add(CreateBinaryConnectionNode(2000, 1001));
+        connections.Children.Add(CreateBinaryConnectionNode(3000, 2000));
+        connections.Children.Add(CreateBinaryConnectionNode(3001, 3000));
+        connections.Children.Add(CreateBinaryConnectionNode(2001, 3001));
+
+        byte[] data = FbxBinaryWriter.WriteToArray([objects, connections]);
+
+        FbxSemanticDocument document = FbxSemanticParser.Parse(data);
+
+        document.TryGetObject(1001, out FbxSceneObject meshNodeObject).ShouldBeTrue();
+        meshNodeObject.QualifiedName.ShouldBe("Model::Meshes");
+        meshNodeObject.DisplayName.ShouldBe("Meshes");
+
+        document.TryGetObject(3001, out FbxSceneObject blendShapeChannelObject).ShouldBeTrue();
+        blendShapeChannelObject.QualifiedName.ShouldBe("SubDeformer::Smile");
+        blendShapeChannelObject.DisplayName.ShouldBe("Smile");
+
+        document.IntermediateScene.Nodes.Count.ShouldBe(2);
+        document.IntermediateScene.Nodes[1].Name.ShouldBe("Meshes");
+        document.IntermediateScene.BlendShapes.Single(entry => entry.ObjectId == 3001L).Name.ShouldBe("Smile");
+    }
+
     private static string ResolveWorkspaceRoot()
     {
         DirectoryInfo? directory = new(TestContext.CurrentContext.TestDirectory);
@@ -227,5 +301,23 @@ public sealed class FbxPhase2SemanticGraphTests
         }
 
         throw new DirectoryNotFoundException("Could not locate the workspace root for the FBX phase 2 tests.");
+    }
+
+    private static FbxBinaryNode CreateBinaryObjectNode(string className, long objectId, string qualifiedName, string subtype)
+    {
+        FbxBinaryNode node = new(className);
+        node.Properties.Add(FbxBinaryProperty.Int64(objectId));
+        node.Properties.Add(FbxBinaryProperty.String(qualifiedName));
+        node.Properties.Add(FbxBinaryProperty.String(subtype));
+        return node;
+    }
+
+    private static FbxBinaryNode CreateBinaryConnectionNode(long sourceObjectId, long destinationObjectId)
+    {
+        FbxBinaryNode node = new("C");
+        node.Properties.Add(FbxBinaryProperty.String("OO"));
+        node.Properties.Add(FbxBinaryProperty.Int64(sourceObjectId));
+        node.Properties.Add(FbxBinaryProperty.Int64(destinationObjectId));
+        return node;
     }
 }

@@ -232,6 +232,7 @@ internal static class NativeFbxSceneImporter
                 Dictionary<long, FbxIntermediateNode> intermediateNodesByObjectId = BuildIntermediateNodesByObjectId(semantic);
                 FbxIntermediateMesh[] meshes = [.. semantic.IntermediateScene.Meshes];
                 Array.Sort(meshes, static (left, right) => left.ObjectIndex.CompareTo(right.ObjectIndex));
+                bool flipUvY = importOptions?.PostProcessSteps.HasFlag(PostProcessSteps.FlipUVs) ?? true;
 
                 List<MeshBuildWorkItem> workItems = [];
                 for (int meshIndex = 0; meshIndex < meshes.Length; meshIndex++)
@@ -245,10 +246,7 @@ internal static class NativeFbxSceneImporter
                         continue;
                     }
 
-                    IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint =
-                        deformers.TryGetSkinBinding(mesh.ObjectId, out FbxSkinBinding skinBinding)
-                            ? BuildSkinWeightsByControlPoint(skinBinding, nodesByObjectId)
-                            : null;
+                    bool hasSkinBinding = deformers.TryGetSkinBinding(mesh.ObjectId, out FbxSkinBinding skinBinding);
                     IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels = deformers.GetBlendShapeChannels(mesh.ObjectId);
 
                     for (int modelIndex = 0; modelIndex < mesh.ModelObjectIds.Count; modelIndex++)
@@ -260,20 +258,27 @@ internal static class NativeFbxSceneImporter
                             XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Skipping mesh '{mesh.Name}' model link to objectId={modelObjectId} because no scene node was created for it.");
                             continue;
                         }
-                        if (!semantic.TryGetObject(modelObjectId, out FbxSceneObject nodeObject))
+                        if (!semantic.TryGetObject(modelObjectId, out _))
                         {
                             XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Skipping mesh '{mesh.Name}' model link to objectId={modelObjectId} because the semantic object is missing.");
                             continue;
                         }
-                        if (!intermediateNodesByObjectId.TryGetValue(modelObjectId, out FbxIntermediateNode intermediateNode))
+                        if (!intermediateNodesByObjectId.TryGetValue(modelObjectId, out FbxIntermediateNode? intermediateNode)
+                            || intermediateNode is null)
                         {
                             XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Skipping mesh '{mesh.Name}' model link to objectId={modelObjectId} because the intermediate node is missing.");
                             continue;
                         }
 
                         IReadOnlyList<FbxIntermediateMaterial> nodeMaterials = materialsByModelObjectId.TryGetValue(modelObjectId, out FbxIntermediateMaterial[]? resolvedNodeMaterials)
+                            && resolvedNodeMaterials is not null
                             ? resolvedNodeMaterials
                             : Array.Empty<FbxIntermediateMaterial>();
+
+                        IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint =
+                            hasSkinBinding
+                                ? BuildSkinWeightsByControlPoint(skinBinding, sceneNode.Transform.WorldMatrix, nodesByObjectId)
+                                : null;
 
                         workItems.Add(new MeshBuildWorkItem(
                             workItems.Count,
@@ -318,6 +323,7 @@ internal static class NativeFbxSceneImporter
                             materialCache,
                             materialCacheSync,
                             createdAssetsSync,
+                            flipUvY,
                             cancellationToken,
                             rootNode.Transform,
                             generateMeshRenderersAsync);
@@ -483,6 +489,7 @@ internal static class NativeFbxSceneImporter
         Dictionary<long, XRMaterial> materialCache,
         object materialCacheSync,
         object createdAssetsSync,
+        bool flipUvY,
         CancellationToken cancellationToken,
         TransformBase rootTransform,
         bool generateMeshRenderersAsync)
@@ -519,6 +526,7 @@ internal static class NativeFbxSceneImporter
                         polygonIndex,
                         normalLayer,
                         tangentLayer,
+                        flipUvY,
                         skinWeightsByControlPoint,
                         blendShapeChannels);
                     polygonVertexIndex++;
@@ -636,6 +644,7 @@ internal static class NativeFbxSceneImporter
         int polygonIndex,
         FbxLayerElement<Vector3>? normalLayer,
         FbxLayerElement<Vector3>? tangentLayer,
+        bool flipUvY,
         IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint,
         IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels)
     {
@@ -669,7 +678,12 @@ internal static class NativeFbxSceneImporter
         {
             List<Vector2> textureCoordinateSets = new(meshGeometry.TextureCoordinates.Count);
             foreach (FbxLayerElement<Vector2> layer in meshGeometry.TextureCoordinates)
-                textureCoordinateSets.Add(ResolveLayerValue(layer, controlPointIndex, polygonVertexIndex, polygonIndex, Vector2.Zero));
+            {
+                Vector2 textureCoordinate = ResolveLayerValue(layer, controlPointIndex, polygonVertexIndex, polygonIndex, Vector2.Zero);
+                if (flipUvY)
+                    textureCoordinate.Y = 1.0f - textureCoordinate.Y;
+                textureCoordinateSets.Add(textureCoordinate);
+            }
             vertex.TextureCoordinateSets = textureCoordinateSets;
         }
 
@@ -722,6 +736,7 @@ internal static class NativeFbxSceneImporter
 
     private static Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> BuildSkinWeightsByControlPoint(
         FbxSkinBinding skinBinding,
+        Matrix4x4 meshWorldMatrix,
         IReadOnlyDictionary<long, SceneNode> nodesByObjectId)
     {
         Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> weightsByControlPoint = new();
@@ -731,6 +746,9 @@ internal static class NativeFbxSceneImporter
                 continue;
 
             TransformBase boneTransform = boneNode.Transform;
+            Matrix4x4 bindInvWorldMatrix = Matrix4x4.Invert(boneTransform.WorldMatrix, out Matrix4x4 inverseBoneWorld)
+                ? meshWorldMatrix * inverseBoneWorld
+                : cluster.InverseBindMatrix;
             foreach ((int controlPointIndex, float weight) in cluster.ControlPointWeights)
             {
                 if (controlPointIndex < 0 || weight <= 0.0f)
@@ -745,7 +763,7 @@ internal static class NativeFbxSceneImporter
                 if (controlPointWeights.TryGetValue(boneTransform, out (float weight, Matrix4x4 bindInvWorldMatrix) existing))
                     controlPointWeights[boneTransform] = (existing.weight + weight, existing.bindInvWorldMatrix);
                 else
-                    controlPointWeights[boneTransform] = (weight, cluster.InverseBindMatrix);
+                    controlPointWeights[boneTransform] = (weight, bindInvWorldMatrix);
             }
         }
 

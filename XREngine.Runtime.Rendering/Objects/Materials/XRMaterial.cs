@@ -709,8 +709,12 @@ namespace XREngine.Rendering
             if (!anySourceParsed)
                 return;
 
-            if (RenderOptions.RequiredEngineUniforms != flags)
-                RenderOptions.RequiredEngineUniforms = flags;
+            // Merge: auto-detection adds flags but never removes ones set explicitly
+            // (e.g., by the model importer or the user). This prevents #include-hidden
+            // uniforms from losing their Lights/Camera flags after ShadersChanged().
+            var merged = RenderOptions.RequiredEngineUniforms | flags;
+            if (RenderOptions.RequiredEngineUniforms != merged)
+                RenderOptions.RequiredEngineUniforms = merged;
         }
 
         public static XRMaterial CreateUnlitAlphaTextureMaterialForward(XRTexture2D texture)

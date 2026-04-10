@@ -176,7 +176,7 @@ public static class FbxSemanticParser
                 continue;
 
             long objectId = GetNodePropertyInteger(structural, child, 0);
-            string qualifiedName = GetNodePropertyString(structural, child, 1) ?? string.Empty;
+            string qualifiedName = NormalizeQualifiedName(GetNodePropertyString(structural, child, 1) ?? string.Empty);
             string subtype = GetNodePropertyString(structural, child, 2) ?? string.Empty;
             Dictionary<string, FbxPropertyEntry> properties = ParseProperties70Block(structural, childrenByNode, childIndex);
             Dictionary<string, FbxSemanticValue> inlineAttributes = ParseInlineScalarChildren(structural, childrenByNode, childIndex);
@@ -358,7 +358,7 @@ public static class FbxSemanticParser
 
             switch (sceneObject.Category)
             {
-                case FbxObjectCategory.Geometry:
+                case FbxObjectCategory.Geometry when sceneObject.Subclass.Equals("Mesh", StringComparison.OrdinalIgnoreCase):
                     meshes.Add(new FbxIntermediateMesh(sceneObject.Id, sceneObject.DisplayName, sceneObject.Subclass, objectIndex, outboundIds.Where(id => objectIndexById.TryGetValue(id, out int connectedIndex) && objects[connectedIndex].Category == FbxObjectCategory.Model).ToArray()));
                     break;
 
@@ -548,8 +548,51 @@ public static class FbxSemanticParser
 
     private static string GetDisplayName(string qualifiedName)
     {
+        qualifiedName = NormalizeQualifiedName(qualifiedName);
         int separator = qualifiedName.LastIndexOf("::", StringComparison.Ordinal);
         return separator >= 0 ? qualifiedName[(separator + 2)..] : qualifiedName;
+    }
+
+    private static string NormalizeQualifiedName(string qualifiedName)
+    {
+        if (string.IsNullOrEmpty(qualifiedName))
+            return string.Empty;
+
+        int binarySeparator = qualifiedName.IndexOf('\0');
+        if (binarySeparator < 0)
+            return qualifiedName;
+
+        string displayName = TrimControlCharacters(qualifiedName[..binarySeparator]);
+        int familyStart = binarySeparator + 1;
+        while (familyStart < qualifiedName.Length && char.IsControl(qualifiedName[familyStart]))
+            familyStart++;
+
+        string familyName = familyStart < qualifiedName.Length
+            ? TrimControlCharacters(qualifiedName[familyStart..])
+            : string.Empty;
+
+        if (string.IsNullOrEmpty(familyName))
+            return displayName;
+        if (string.IsNullOrEmpty(displayName))
+            return familyName;
+
+        return $"{familyName}::{displayName}";
+    }
+
+    private static string TrimControlCharacters(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        int start = 0;
+        while (start < value.Length && char.IsControl(value[start]))
+            start++;
+
+        int end = value.Length - 1;
+        while (end >= start && char.IsControl(value[end]))
+            end--;
+
+        return start > end ? string.Empty : value[start..(end + 1)];
     }
 
     private static FbxObjectReference GetNodeObjectReference(FbxStructuralDocument structural, FbxNodeRecord node, int propertyIndex)

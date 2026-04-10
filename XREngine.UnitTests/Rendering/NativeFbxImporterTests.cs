@@ -1,7 +1,9 @@
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Reflection;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 using Assimp;
 using NUnit.Framework;
 using Shouldly;
@@ -14,7 +16,9 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Shaders.Generator;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
 namespace XREngine.UnitTests.Rendering;
@@ -143,6 +147,99 @@ public sealed class NativeFbxImporterTests
     }
 
     [Test]
+    public void Import_NativeFbxBackend_HonorsFlipUvsPostProcessSetting()
+    {
+        string tempDirectory = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"fbx-native-flipuv-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        string fbxPath = Path.Combine(tempDirectory, "quad-uvs.fbx");
+        File.WriteAllText(fbxPath, CreateSyntheticFbx("albedo.png"));
+
+        try
+        {
+            static XRMesh ImportMesh(string sourcePath, ModelImportOptions options)
+            {
+                using var importer = new ModelImporter(sourcePath, onCompleted: null, materialFactory: null)
+                {
+                    ImportOptions = options,
+                };
+
+                SceneNode? rootNode = importer.Import(PostProcessSteps.None, onProgress: null);
+                rootNode.ShouldNotBeNull();
+
+                ModelComponent? component = rootNode!.FindDescendantByName("MeshNode")?.GetComponent<ModelComponent>();
+                component.ShouldNotBeNull();
+                component!.Model.ShouldNotBeNull();
+                return component.Model!.Meshes[0].LODs.Min!.Mesh!;
+            }
+
+            XRMesh flippedMesh = ImportMesh(fbxPath, new ModelImportOptions
+            {
+                GenerateMeshRenderersAsync = false,
+            });
+
+            flippedMesh.Vertices[0].TextureCoordinateSets.ShouldNotBeNull();
+            flippedMesh.Vertices[0].TextureCoordinateSets![0].X.ShouldBe(0.0f, 0.0001f);
+            flippedMesh.Vertices[0].TextureCoordinateSets![0].Y.ShouldBe(1.0f, 0.0001f);
+            flippedMesh.Vertices[2].TextureCoordinateSets![0].X.ShouldBe(1.0f, 0.0001f);
+            flippedMesh.Vertices[2].TextureCoordinateSets![0].Y.ShouldBe(0.0f, 0.0001f);
+
+            XRMesh unflippedMesh = ImportMesh(fbxPath, new ModelImportOptions
+            {
+                GenerateMeshRenderersAsync = false,
+                LegacyPostProcessSteps = PostProcessSteps.None,
+            });
+
+            unflippedMesh.Vertices[0].TextureCoordinateSets.ShouldNotBeNull();
+            unflippedMesh.Vertices[0].TextureCoordinateSets![0].X.ShouldBe(0.0f, 0.0001f);
+            unflippedMesh.Vertices[0].TextureCoordinateSets![0].Y.ShouldBe(0.0f, 0.0001f);
+            unflippedMesh.Vertices[2].TextureCoordinateSets![0].X.ShouldBe(1.0f, 0.0001f);
+            unflippedMesh.Vertices[2].TextureCoordinateSets![0].Y.ShouldBe(1.0f, 0.0001f);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Import_NativeFbxBackend_MissingTexturePaths_DoNotRequirePreviewJobScheduling()
+    {
+        string tempDirectory = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"fbx-native-missing-texture-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        string fbxPath = Path.Combine(tempDirectory, "quad-missing-texture.fbx");
+        File.WriteAllText(fbxPath, CreateSyntheticFbx("missing-albedo.png"));
+
+        try
+        {
+            using var importer = new ModelImporter(fbxPath, onCompleted: null, materialFactory: null)
+            {
+                ImportOptions = new ModelImportOptions
+                {
+                    GenerateMeshRenderersAsync = false,
+                },
+            };
+
+            SceneNode? rootNode = null;
+            Should.NotThrow(() => rootNode = importer.Import(PostProcessSteps.None, onProgress: null));
+
+            rootNode.ShouldNotBeNull();
+            ModelComponent? component = rootNode!.FindDescendantByName("MeshNode")?.GetComponent<ModelComponent>();
+            component.ShouldNotBeNull();
+
+            XRMaterial material = component!.Model!.Meshes[0].LODs.Min!.Material!;
+            material.Textures.Count.ShouldBe(1);
+            XRTexture2D placeholder = material.Textures[0].ShouldBeOfType<XRTexture2D>();
+            placeholder.FilePath.ShouldEndWith("missing-albedo.png");
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
     public void Import_NativeFbxBackend_ImportsSkinningBlendshapesAndAnimation()
     {
         string tempDirectory = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"fbx-native-phase4-{Guid.NewGuid():N}");
@@ -228,6 +325,49 @@ public sealed class NativeFbxImporterTests
     }
 
     [Test]
+    public void XRMesh_RebuildBlendshapeBuffersFromVertices_AllowsSparsePerVertexBlendshapeLists()
+    {
+        Vertex[] vertices =
+        [
+            new Vertex(new Vector3(0.0f, 0.0f, 0.0f))
+            {
+                Blendshapes =
+                [
+                    ("Smile", new VertexData
+                    {
+                        Position = new Vector3(0.0f, 0.10f, 0.0f),
+                    })
+                ]
+            },
+            new Vertex(new Vector3(1.0f, 0.0f, 0.0f))
+            {
+                Blendshapes =
+                [
+                    ("Blink", new VertexData
+                    {
+                        Position = new Vector3(1.0f, 0.20f, 0.0f),
+                    })
+                ]
+            },
+            new Vertex(new Vector3(0.0f, 1.0f, 0.0f)),
+        ];
+
+        XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 })
+        {
+            BlendshapeNames = ["Smile", "Blink"],
+        };
+
+        Should.NotThrow(() => mesh.RebuildBlendshapeBuffersFromVertices());
+        mesh.HasBlendshapes.ShouldBeTrue();
+        mesh.BlendshapeCounts.ShouldNotBeNull();
+        mesh.BlendshapeCounts!.ElementCount.ShouldBe((uint)vertices.Length);
+        mesh.BlendshapeIndices.ShouldNotBeNull();
+        mesh.BlendshapeIndices!.ElementCount.ShouldBe(2u);
+        mesh.BlendshapeDeltas.ShouldNotBeNull();
+        mesh.BlendshapeDeltas!.ElementCount.ShouldBe(3u);
+    }
+
+    [Test]
     public void ModelImportOptions_LegacyFbxYamlAliases_MapToNativeProperties()
     {
         const string yaml = """
@@ -243,6 +383,112 @@ public sealed class NativeFbxImporterTests
 
         options.FbxPivotPolicy.ShouldBe(FbxPivotImportPolicy.BakeIntoLocalTransform);
         options.CollapseGeneratedFbxHelperNodes.ShouldBeFalse();
+    }
+
+    [Test]
+    public void NativeFbxSkinWeights_UseImportedMeshBindPoseInsteadOfClusterTransformMatrix()
+    {
+        SceneNode rootNode = new("Root");
+        SceneNode meshNode = new(rootNode, "MeshNode");
+        SceneNode boneNode = new(rootNode, "Bone");
+
+        SetLocalMatrix(meshNode, Matrix4x4.CreateRotationZ(0.35f) * Matrix4x4.CreateTranslation(3.0f, -2.0f, 1.0f));
+        SetLocalMatrix(boneNode, Matrix4x4.CreateRotationX(-0.5f) * Matrix4x4.CreateTranslation(6.0f, 4.0f, -3.0f));
+
+        const long boneObjectId = 2001;
+        Matrix4x4 importedMeshWorld = meshNode.Transform.WorldMatrix;
+        Matrix4x4 importedBoneWorld = boneNode.Transform.WorldMatrix;
+        Matrix4x4 inverseBoneWorld = Matrix4x4.Invert(importedBoneWorld, out Matrix4x4 boneWorldInverse)
+            ? boneWorldInverse
+            : Matrix4x4.Identity;
+        Matrix4x4 clusterTransformMatrix = Matrix4x4.CreateTranslation(-7.0f, 5.0f, 9.0f);
+
+        FbxClusterBinding cluster = new(
+            ClusterObjectId: 1001,
+            BoneModelObjectId: boneObjectId,
+            BoneName: "Bone",
+            TransformMatrix: clusterTransformMatrix,
+            TransformLinkMatrix: importedBoneWorld,
+            InverseBindMatrix: clusterTransformMatrix * inverseBoneWorld,
+            ControlPointWeights: new Dictionary<int, float> { [0] = 1.0f });
+        FbxSkinBinding skinBinding = new(
+            GeometryObjectId: 3001,
+            SkinObjectId: 3002,
+            Name: "Skin",
+            Clusters: new[] { cluster });
+
+        Dictionary<long, SceneNode> nodesByObjectId = new()
+        {
+            [boneObjectId] = boneNode,
+        };
+
+        Type importerType = typeof(ModelImporter).Assembly.GetType("XREngine.NativeFbxSceneImporter", throwOnError: true)!;
+        MethodInfo method = importerType.GetMethod("BuildSkinWeightsByControlPoint", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var result = (Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>)method.Invoke(
+            obj: null,
+            parameters: new object[] { skinBinding, importedMeshWorld, nodesByObjectId })!;
+
+        result.ShouldContainKey(0);
+        result[0].ShouldContainKey(boneNode.Transform);
+
+        (float weight, Matrix4x4 bindInvWorldMatrix) weightData = result[0][boneNode.Transform];
+        weightData.weight.ShouldBe(1.0f, 0.0001f);
+
+        Matrix4x4 expectedInvBind = importedMeshWorld * inverseBoneWorld;
+        MatrixShouldBe(weightData.bindInvWorldMatrix, expectedInvBind, 0.0001f);
+
+        Vector3 meshLocalPosition = new(1.0f, 2.0f, -0.5f);
+        Vector3 expectedWorldPosition = Vector3.Transform(meshLocalPosition, importedMeshWorld);
+        Vector3 skinnedWorldPosition = Vector3.Transform(meshLocalPosition, weightData.bindInvWorldMatrix * importedBoneWorld);
+        Vector3.Distance(skinnedWorldPosition, expectedWorldPosition).ShouldBeLessThan(0.0001f);
+    }
+
+    [Test]
+    public void DefaultVertexShaderGenerator_SkinningUsesRowVectorMultiplication()
+    {
+        SceneNode boneNode = new("Bone");
+
+        Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> CreateWeights()
+            => new()
+            {
+                [boneNode.Transform] = (1.0f, Matrix4x4.Identity),
+            };
+
+        Vertex[] vertices =
+        [
+            new Vertex(new Vector3(0.0f, 0.0f, 0.0f))
+            {
+                Normal = Vector3.UnitZ,
+                Tangent = Vector3.UnitX,
+                Weights = CreateWeights(),
+            },
+            new Vertex(new Vector3(1.0f, 0.0f, 0.0f))
+            {
+                Normal = Vector3.UnitZ,
+                Tangent = Vector3.UnitX,
+                Weights = CreateWeights(),
+            },
+            new Vertex(new Vector3(0.0f, 1.0f, 0.0f))
+            {
+                Normal = Vector3.UnitZ,
+                Tangent = Vector3.UnitX,
+                Weights = CreateWeights(),
+            },
+        ];
+
+        XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices();
+
+        string source = new DefaultVertexShaderGenerator(mesh).Generate();
+
+        source.ShouldContain("layout(row_major, std430, binding = 0) buffer BoneMatricesBuffer");
+        source.ShouldContain("layout(row_major, std430, binding = 1) buffer BoneInvBindMatricesBuffer");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalPositionName} += (vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f) * boneMatrix) * weight;");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalNormalName} += ({DefaultVertexShaderGenerator.BaseNormalName} * boneMatrix3) * weight;");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalTangentName} += ({DefaultVertexShaderGenerator.BaseTangentName} * boneMatrix3) * weight;");
+        source.ShouldNotContain($"boneMatrix * vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f)");
+        source.ShouldNotContain($"boneMatrix3 * {DefaultVertexShaderGenerator.BaseNormalName}");
+        source.ShouldNotContain($"boneMatrix3 * {DefaultVertexShaderGenerator.BaseTangentName}");
     }
 
     private static string CreateSyntheticFbx(string relativeTexturePath)
@@ -506,6 +752,34 @@ public sealed class NativeFbxImporterTests
                 : $"{candidate.MemberType}:{candidate.MemberName}"));
         child.ShouldNotBeNull($"Expected child '{memberType}:{memberName}' under '{parent.MemberName}'. Available children: {availableChildren}");
         return child!;
+    }
+
+    private static void SetLocalMatrix(SceneNode sceneNode, Matrix4x4 localMatrix)
+    {
+        Transform transform = sceneNode.GetTransformAs<Transform>(true)!;
+        transform.DeriveLocalMatrix(localMatrix);
+        transform.RecalculateMatrices(true, false);
+        transform.SaveBindState();
+    }
+
+    private static void MatrixShouldBe(in Matrix4x4 actual, in Matrix4x4 expected, float tolerance)
+    {
+        actual.M11.ShouldBe(expected.M11, tolerance);
+        actual.M12.ShouldBe(expected.M12, tolerance);
+        actual.M13.ShouldBe(expected.M13, tolerance);
+        actual.M14.ShouldBe(expected.M14, tolerance);
+        actual.M21.ShouldBe(expected.M21, tolerance);
+        actual.M22.ShouldBe(expected.M22, tolerance);
+        actual.M23.ShouldBe(expected.M23, tolerance);
+        actual.M24.ShouldBe(expected.M24, tolerance);
+        actual.M31.ShouldBe(expected.M31, tolerance);
+        actual.M32.ShouldBe(expected.M32, tolerance);
+        actual.M33.ShouldBe(expected.M33, tolerance);
+        actual.M34.ShouldBe(expected.M34, tolerance);
+        actual.M41.ShouldBe(expected.M41, tolerance);
+        actual.M42.ShouldBe(expected.M42, tolerance);
+        actual.M43.ShouldBe(expected.M43, tolerance);
+        actual.M44.ShouldBe(expected.M44, tolerance);
     }
 
     private sealed class TestRuntimeShaderServices : IRuntimeShaderServices

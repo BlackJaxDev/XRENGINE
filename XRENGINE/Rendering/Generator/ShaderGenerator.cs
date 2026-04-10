@@ -173,10 +173,11 @@ namespace XREngine.Rendering.Shaders.Generator
         public void WriteUniform(EShaderVarType type, string name, int defaultValue, bool array = false)
             => Line($"{(_inBlock ? string.Empty : "uniform ")}{type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
 
-        public StateObject StartShaderStorageBufferBlock(string bufferName, int binding)
+        public StateObject StartShaderStorageBufferBlock(string bufferName, int binding, bool rowMajor = false)
         {
             _inBlock = true;
-            Line($"layout(std430, binding = {binding}) buffer {bufferName}");
+            string rowMajorQualifier = rowMajor ? "row_major, " : string.Empty;
+            Line($"layout({rowMajorQualifier}std430, binding = {binding}) buffer {bufferName}");
             OpenBracket();
             return StateObject.New(EndBufferBlock);
         }

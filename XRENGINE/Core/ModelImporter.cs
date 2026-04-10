@@ -46,7 +46,22 @@ namespace XREngine
             }
         }
 
+        private sealed class ImportSourceScope(string? previousSourceFilePath) : IDisposable
+        {
+            private readonly string? _previousSourceFilePath = previousSourceFilePath;
+
+            public void Dispose() => _currentImportSourceFilePath.Value = _previousSourceFilePath;
+
+            public static ImportSourceScope Push(string? sourceFilePath)
+            {
+                string? previousSourceFilePath = _currentImportSourceFilePath.Value;
+                _currentImportSourceFilePath.Value = sourceFilePath;
+                return new ImportSourceScope(previousSourceFilePath);
+            }
+        }
+
         private static readonly AsyncLocal<ModelImportOptions?> _currentImportOptions = new();
+        private static readonly AsyncLocal<string?> _currentImportSourceFilePath = new();
 
         public readonly record struct ModelImporterResult(
             SceneNode? RootNode,
@@ -246,13 +261,15 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(path))
                 return;
 
-            path = ResolveTextureFilePath(modelFilePath, path);
-            textureList[i] = _texturePathCache.GetOrAdd(path, MakeTextureAction);
+            path = ResolveTextureFilePath(modelFilePath, path, out bool textureExists);
+            textureList[i] = textureExists
+                ? _texturePathCache.GetOrAdd(path, MakeTextureAction)
+                : _texturePathCache.GetOrAdd(path, static missingPath => TextureFactoryInternal(missingPath, schedulePreviewLoad: false));
         }
 
         private readonly ConcurrentDictionary<string, bool> _missingTexturePathWarnings = new();
 
-        private string ResolveTextureFilePath(string modelFilePath, string rawPath)
+        private string ResolveTextureFilePath(string modelFilePath, string rawPath, out bool exists)
         {
             static string Normalize(string p)
             {
@@ -273,9 +290,24 @@ namespace XREngine
                 return string.IsNullOrWhiteSpace(fileName) ? null : fileName;
             }
 
+            static string CanonicalizePath(string path)
+            {
+                try
+                {
+                    return Path.GetFullPath(path);
+                }
+                catch
+                {
+                    return path;
+                }
+            }
+
             string normalized = Normalize(rawPath);
             if (string.IsNullOrWhiteSpace(normalized))
+            {
+                exists = false;
                 return rawPath;
+            }
 
             string? modelDir = Path.GetDirectoryName(modelFilePath);
 
@@ -283,7 +315,10 @@ namespace XREngine
             if (Path.IsPathRooted(normalized))
             {
                 if (File.Exists(normalized))
+                {
+                    exists = true;
                     return normalized;
+                }
 
                 if (!string.IsNullOrWhiteSpace(modelDir))
                 {
@@ -292,22 +327,34 @@ namespace XREngine
                     {
                         string rootedRelativeCandidate = Path.Combine(modelDir, relativeTexturePath);
                         if (File.Exists(rootedRelativeCandidate))
+                        {
+                            exists = true;
                             return rootedRelativeCandidate;
+                        }
 
                         string rootedTexturesCandidate = Path.Combine(modelDir, "textures", Path.GetFileName(relativeTexturePath));
                         if (File.Exists(rootedTexturesCandidate))
+                        {
+                            exists = true;
                             return rootedTexturesCandidate;
+                        }
                     }
                 }
             }
 
             if (string.IsNullOrWhiteSpace(modelDir))
+            {
+                exists = false;
                 return normalized;
+            }
 
             // 2) Relative to model file.
             string candidate = Path.Combine(modelDir, normalized);
             if (File.Exists(candidate))
+            {
+                exists = true;
                 return candidate;
+            }
 
             // 3) Common OBJ/MTL pattern: everything lives under a "textures" folder.
             string fileName = Path.GetFileName(normalized);
@@ -315,24 +362,34 @@ namespace XREngine
             {
                 string texturesDirCandidate = Path.Combine(modelDir, "textures", fileName);
                 if (File.Exists(texturesDirCandidate))
+                {
+                    exists = true;
                     return texturesDirCandidate;
+                }
 
                 string modelDirCandidate = Path.Combine(modelDir, fileName);
                 if (File.Exists(modelDirCandidate))
+                {
+                    exists = true;
                     return modelDirCandidate;
+                }
             }
+
+            candidate = CanonicalizePath(candidate);
 
             if (_missingTexturePathWarnings.TryAdd(candidate, true))
-            {
-                Debug.LogWarning($"[ModelImporter] Texture path not found: '{candidate}' (from '{rawPath}', model='{modelFilePath}')");
-            }
+                LogImportExpectedWarning(modelFilePath, $"[ModelImporter] Texture path not found: '{candidate}' (from '{rawPath}', model='{modelFilePath}')");
 
+            exists = false;
             return candidate;
         }
 
         public Func<string, XRTexture2D> MakeTextureAction { get; set; } = TextureFactoryInternal;
 
         private static XRTexture2D TextureFactoryInternal(string path)
+            => TextureFactoryInternal(path, schedulePreviewLoad: true);
+
+        private static XRTexture2D TextureFactoryInternal(string path, bool schedulePreviewLoad)
         {
             string textureName = Path.GetFileNameWithoutExtension(path);
             XRTexture2D placeholder = new()
@@ -354,28 +411,83 @@ namespace XREngine
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to assign filler texture for '{path}'. {ex.Message}");
+                LogImportWarning($"Failed to assign filler texture for '{path}'. {ex.Message}");
             }
 
-            XRTexture2D.ScheduleImportedTexturePreviewJob(
-                path,
-                placeholder,
-                onFinished: tex =>
-                {
-                    tex.MagFilter = ETexMagFilter.Linear;
-                    tex.UWrap = ETexWrapMode.Repeat;
-                    tex.VWrap = ETexWrapMode.Repeat;
-                    tex.AlphaAsTransparency = true;
-                    tex.Resizable = false;
-                    tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-                },
-                onError: ex => Debug.LogException(ex, $"[TextureFactory] Texture import job FAILED for '{path}'."),
-                priority: JobPriority.Low);
+            if (schedulePreviewLoad)
+            {
+                XRTexture2D.ScheduleImportedTexturePreviewJob(
+                    path,
+                    placeholder,
+                    onFinished: tex =>
+                    {
+                        tex.MagFilter = ETexMagFilter.Linear;
+                        tex.UWrap = ETexWrapMode.Repeat;
+                        tex.VWrap = ETexWrapMode.Repeat;
+                        tex.AlphaAsTransparency = true;
+                        tex.Resizable = false;
+                        tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+                    },
+                    onError: ex => LogImportException(ex, $"[TextureFactory] Texture import job FAILED for '{path}'."),
+                    priority: JobPriority.Low);
+            }
 
             return placeholder;
         }
 
         public string SourceFilePath => _path;
+
+        private static bool IsFbxPath(string? path)
+            => !string.IsNullOrWhiteSpace(path)
+                && Path.GetExtension(path).Equals(".fbx", StringComparison.OrdinalIgnoreCase);
+
+        private static void LogImportDiagnostic(string message, params object[] args)
+            => LogImportDiagnostic(_currentImportSourceFilePath.Value, message, args);
+
+        private static void LogImportDiagnostic(string? sourceFilePath, string message, params object[] args)
+        {
+            if (IsFbxPath(sourceFilePath))
+                Debug.Assets(message, args);
+            else
+                Debug.Out(message, args);
+        }
+
+        private static void LogImportWarning(string message, params object[] args)
+            => LogImportWarning(_currentImportSourceFilePath.Value, message, args);
+
+        private static void LogImportExpectedWarning(string message, params object[] args)
+            => LogImportExpectedWarning(_currentImportSourceFilePath.Value, message, args);
+
+        private static void LogImportWarning(string? sourceFilePath, string message, params object[] args)
+        {
+            if (IsFbxPath(sourceFilePath))
+                Debug.AssetsWarning(message, args);
+            else
+            {
+                if (args.Length > 0)
+                    message = string.Format(message, args);
+                Debug.LogWarning(message);
+            }
+        }
+
+        private static void LogImportExpectedWarning(string? sourceFilePath, string message, params object[] args)
+        {
+            if (args.Length > 0)
+                message = string.Format(message, args);
+
+            if (IsFbxPath(sourceFilePath))
+                Debug.Log(ELogCategory.Assets, EOutputVerbosity.Normal, false, $"[WARN] {message}");
+            else
+                Debug.Log(ELogCategory.General, EOutputVerbosity.Normal, false, $"[WARN] {message}");
+        }
+
+        private static void LogImportException(Exception ex, string? message = null)
+        {
+            if (IsFbxPath(_currentImportSourceFilePath.Value))
+                Debug.AssetsException(ex, message);
+            else
+                Debug.LogException(ex, message);
+        }
 
         private readonly AssimpContext _assimp;
         private readonly string _path;
@@ -534,7 +646,7 @@ namespace XREngine
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
+                    LogImportWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
                 }
 
                 XRTexture2D.ScheduleImportedTexturePreviewJob(
@@ -549,7 +661,7 @@ namespace XREngine
                         tex.Resizable = false;
                         tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
                     },
-                    onError: ex => Debug.LogException(ex, $"Uber sampler texture import job failed for '{key.path}'."),
+                    onError: ex => LogImportException(ex, $"Uber sampler texture import job failed for '{key.path}'."),
                     priority: JobPriority.Low);
 
                 return tex;
@@ -685,7 +797,7 @@ namespace XREngine
                 }
                 sb.Append($" ] resolved: diffuse={diffuseIndex}:{diffuse?.Name ?? "NULL"} normal={normalIndex}:{normal?.Name ?? "NULL"}(heightMap={usesHeightMap}) spec={specularIndex}:{specular?.Name ?? "NULL"} alpha={alphaMaskIndex}:{alphaMask?.Name ?? "NULL"} metal={metallicIndex}:{metallic?.Name ?? "NULL"} rough={roughnessIndex}:{roughness?.Name ?? "NULL"} emis={emissiveIndex}:{emissive?.Name ?? "NULL"}");
                 sb.Append($" flags: N={hasNormal} S={hasSpecular} A={hasAlphaMask} M={hasMetallic} R={hasRoughness} E={hasEmissive}");
-                Debug.Out(sb.ToString());
+                LogImportDiagnostic(sb.ToString());
             }
             // ── End diagnostic dump ────────────────────────────────────
 
@@ -847,7 +959,7 @@ namespace XREngine
             {
                 string shader = mat.Shaders.Count > 0 ? mat.Shaders[0]?.Name ?? "(null)" : "(none)";
                 string texNames = string.Join(", ", (mat.Textures ?? []).Select((t, i) => $"[{i}]={t?.Name ?? "NULL"}"));
-                Debug.Out($"[MakeMaterialDeferred] '{name}' → shader={shader} textures=({texNames}) pass={mat.RenderPass}");
+                LogImportDiagnostic($"[MakeMaterialDeferred] '{name}' → shader={shader} textures=({texNames}) pass={mat.RenderPass}");
             }
             // ── End diagnostic dump ────────────────────────────────────
 
@@ -1343,6 +1455,7 @@ namespace XREngine
                 batchSubmeshAddsDuringAsyncImport);
 
             using var _ = ImportOptionsScope.Push(effectiveImportOptions);
+            using var __ = ImportSourceScope.Push(SourceFilePath);
 
             if (ShouldUseNativeFbxBackend(effectiveImportOptions))
             {
@@ -1375,7 +1488,7 @@ namespace XREngine
 
             if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
             {
-                Debug.LogWarning($"[ModelImporter.Import] Assimp returned null/incomplete scene for '{SourceFilePath}'. scene={scene != null}, flags={scene?.SceneFlags}, rootNode={scene?.RootNode != null}");
+                LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Assimp returned null/incomplete scene for '{SourceFilePath}'. scene={scene != null}, flags={scene?.SceneFlags}, rootNode={scene?.RootNode != null}");
                 return null;
             }
 
@@ -1507,13 +1620,13 @@ namespace XREngine
                             finalize();
 
                         if (Volatile.Read(ref faulted) != 0 || Volatile.Read(ref canceled) != 0)
-                            Debug.LogWarning($"[ModelImporter] Mesh processing completed with partial failures for '{SourceFilePath}'. faulted={faulted}, canceled={canceled}");
+                            LogImportWarning(SourceFilePath, $"[ModelImporter] Mesh processing completed with partial failures for '{SourceFilePath}'. faulted={faulted}, canceled={canceled}");
 
                         _onCompleted?.Invoke();
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogException(ex, $"Mesh finalize failed for '{SourceFilePath}'.");
+                        LogImportException(ex, $"Mesh finalize failed for '{SourceFilePath}'.");
                     }
                 });
             }
@@ -1556,7 +1669,7 @@ namespace XREngine
                         }
 
                         Interlocked.Increment(ref faulted);
-                        Debug.LogException(ex, $"Mesh processing batch failed after retry for '{SourceFilePath}' (batch {batchIndex}, routines {start}-{endExclusive - 1}).");
+                        LogImportException(ex, $"Mesh processing batch failed after retry for '{SourceFilePath}' (batch {batchIndex}, routines {start}-{endExclusive - 1}).");
                         TryFinalize();
                     },
                     canceled: () =>

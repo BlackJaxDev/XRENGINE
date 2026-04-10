@@ -27,6 +27,7 @@ public partial class XRMesh
         using var _ = RuntimeRenderingHostServices.Current.StartProfileScope(null);
 
         bool intVarType = RuntimeRenderingHostServices.Current.UseIntegerUniformsInShaders;
+        string[] blendshapeNames = BlendshapeNames ?? [];
 
         BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceList.Length,
             intVarType ? EComponentType.Int : EComponentType.Float, 2, false, intVarType);
@@ -48,7 +49,7 @@ public partial class XRMesh
             int activeBlendshapeCountForThisVertex = 0;
             var vtx = sourceList[i];
 
-            if (vtx.Blendshapes is null)
+            if (vtx.Blendshapes is null || vtx.Blendshapes.Count == 0)
             {
                 if (intVarType)
                 {
@@ -69,7 +70,9 @@ public partial class XRMesh
 
             for (int bsInd = 0; bsInd < blendshapeCount; bsInd++)
             {
-                var (_, bsData) = vtx.Blendshapes[bsInd];
+                if (!TryGetBlendshapeDataForVertex(vtx.Blendshapes, blendshapeNames, bsInd, out VertexData bsData))
+                    continue;
+
                 bool anyData = false;
                 int posInd = 0, nrmInd = 0, tanInd = 0;
 
@@ -128,6 +131,47 @@ public partial class XRMesh
             PopulateRemappedBlendshapeDeltas(intVarType, deltas, blendshapeIndices);
         else
             PopulateBlendshapeDeltas(intVarType, deltas, blendshapeIndices);
+    }
+
+    private static bool TryGetBlendshapeDataForVertex(List<(string name, VertexData data)> blendshapes, string[] blendshapeNames, int blendshapeIndex, out VertexData blendshapeData)
+    {
+        if ((uint)blendshapeIndex >= (uint)blendshapeNames.Length)
+        {
+            blendshapeData = null!;
+            return false;
+        }
+
+        string expectedBlendshapeName = blendshapeNames[blendshapeIndex];
+        if (string.IsNullOrEmpty(expectedBlendshapeName))
+        {
+            blendshapeData = null!;
+            return false;
+        }
+
+        if ((uint)blendshapeIndex < (uint)blendshapes.Count)
+        {
+            (string name, VertexData data) directEntry = blendshapes[blendshapeIndex];
+            if (string.Equals(directEntry.name, expectedBlendshapeName, StringComparison.Ordinal) && directEntry.data is not null)
+            {
+                blendshapeData = directEntry.data;
+                return true;
+            }
+        }
+
+        for (int entryIndex = 0; entryIndex < blendshapes.Count; entryIndex++)
+        {
+            (string name, VertexData data) entry = blendshapes[entryIndex];
+            if (entry.data is null)
+                continue;
+            if (!string.Equals(entry.name, expectedBlendshapeName, StringComparison.Ordinal))
+                continue;
+
+            blendshapeData = entry.data;
+            return true;
+        }
+
+        blendshapeData = null!;
+        return false;
     }
 
     private unsafe void PopulateBlendshapeDeltas(bool intVarType, List<Vector3> deltas, List<IVector4> blendshapeIndices)

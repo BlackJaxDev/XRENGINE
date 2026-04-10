@@ -632,7 +632,7 @@ namespace SimpleScene.Util.ssBVH
         internal int CountBVHNodes()
             => gobjects != null 
                 ? 1 
-                : (left?.CountBVHNodes() ?? 0) + (right?.CountBVHNodes() ?? 0);
+                : 1 + (left?.CountBVHNodes() ?? 0) + (right?.CountBVHNodes() ?? 0);
 
         internal void RemoveObject(ISSBVHNodeAdaptor<GO> nAda, GO newOb)
         {

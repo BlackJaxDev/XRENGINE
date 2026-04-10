@@ -221,6 +221,7 @@ internal class Program
         }
         XREngine.TraceListener.GlobalMessageCallback = PrintTraceToGeneralLog;
         XREngine.TraceListener.InstallGlobalListener();
+        FbxTrace.LogSink = static message => EngineDebug.Assets(message);
         //ConsoleHelper.EnsureConsoleAttached();
     }
 
@@ -243,7 +244,9 @@ internal class Program
             };
         }
 
-        WriteBootstrapTrace($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.");
+        string message = $"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.";
+        EngineDebug.Assets(message);
+        WriteBootstrapTrace(message);
     }
 
     private static void WriteBootstrapTrace(string message)
