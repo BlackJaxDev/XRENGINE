@@ -92,8 +92,8 @@ The format rules below are the minimum container-level ground truth the native i
 | Node name | Read `nameLen` raw bytes immediately after the node header. Higher layers can sanitize or decode strings later. |
 | Offsets | Treat `endOffset` as an absolute file offset and assert the read cursor lands there after the child list is parsed. |
 | Sentinel | Use strict all-zero header detection for sentinels. The sentinel size must match the version split: 13 bytes before 7500, 25 bytes at or after 7500. |
-| Footer | Binary reader should tolerate missing or truncated footer data in lenient mode, but binary writer should emit the commonly observed footer layout: 16-byte footer ID, 4 zero bytes, padding to the next 16-byte boundary (write 16 bytes if already aligned), `u32 version`, 120 zero bytes, then the 16-byte terminal magic. Strict validation should flag header/footer version mismatches. |
-| Footer ID constant | `FA BC AB 09 D0 C8 D4 66 B1 76 FB 83 1C F7 26 7E` (confirmed by Blender `_FOOT_ID` and ImHex pattern). |
+| Footer | Binary reader should tolerate missing or truncated footer data in lenient mode, and in strict mode validate the observed footer layout after the top-level sentinel: 16 opaque bytes, 4 zero bytes, padding to the next 16-byte boundary (write 16 bytes if already aligned), `u32 version`, 120 zero bytes, then the 16-byte terminal magic. Binary writer can emit a deterministic 16-byte prefix, but the reader should not require a single universal value there because checked real-world 7400 files vary. Strict validation should still flag header/footer version mismatches. |
+| Writer footer prefix | `FA BC AB 09 D0 C8 D4 66 B1 76 FB 83 1C F7 26 7E` is the deterministic prefix currently emitted by the writer. Treat the leading 16 footer bytes as opaque when reading. |
 | Terminal magic constant | `F8 5A 8C 6A DE F5 D9 7E EC E9 0C E3 75 8F 29 0B` (confirmed by Blender writer, ImHex pattern, and FbxWriter). |
 | Footer alignment detail | The padding between the footer ID block and the version word is computed as: write 4 zero bytes, then write 1–16 zero bytes to reach the next 16-byte boundary (if already aligned, write a full 16 bytes). Some writers (e.g., FbxWriter) simplify this to a constant 20 bytes, which only matches when computed padding is 16; treat constant-20 as non-portable. |
 
@@ -385,6 +385,7 @@ Phase 7 hardening slice currently landed:
 - `XREngine.UnitTests/Core/FbxPhase7HardeningTests.cs` now covers malformed binary array encodings, decoded-length mismatch failure behavior, and repeated parallel full-roundtrip validation over the checked-in performance-baseline corpus.
 - `XREngine.Benchmarks/FbxPhase7RegressionHarness.cs` now emits `Build/Reports/fbx-phase7-regression.json` and fails conservatively when the checked-in baseline fixtures exceed per-asset wall-time or allocation budgets.
 - The parser allocation sweep removed an extra compressed-payload copy by streaming zlib decode from `FbxSourceSliceStream`, and the geometry parser now decodes typed numeric arrays directly into their final buffers via `FbxArrayDecodeHelper` instead of materializing an intermediate byte array first.
+- `XREngine.Fbx/FbxSemanticParser.cs` now normalizes observed binary object-name strings from the `Name\0\u0001Family` form into canonical `Family::Name` before building semantic/intermediate objects, so imported scene nodes and blendshape channels no longer surface control-byte artifacts like `??Model` or `??SubDeformer` in their names.
 
 Current validation note:
 

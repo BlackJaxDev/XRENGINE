@@ -45,6 +45,26 @@ public sealed class FbxPhase1StructuralParserTests
     }
 
     [Test]
+    public void BinaryReader_AcceptsObservedOpaqueFooterPrefixVariants()
+    {
+        byte[] data = FbxBinaryFixtureBuilder.CreateBinary7400CompressedArrayDocument(
+            footerPrefix:
+            [
+                0xFA, 0xBC, 0xAE, 0x0B, 0xD7, 0xC8, 0xD0, 0x64,
+                0xB6, 0x70, 0xFC, 0x8C, 0x11, 0xFB, 0x2D, 0x72,
+            ]);
+
+        using FbxStructuralDocument document = FbxStructuralParser.Parse(data);
+
+        document.Header.Encoding.ShouldBe(FbxTransportEncoding.Binary);
+        document.Header.BinaryVersion.ShouldBe(7400);
+        document.Footer.ShouldNotBeNull();
+        document.Footer!.Value.Version.ShouldBe(7400);
+        document.Footer.Value.VersionMatchesHeader.ShouldBeTrue();
+        document.Nodes.Count.ShouldBe(1);
+    }
+
+    [Test]
     public void Binary7500_BigEndian_UsesWideNodeHeaders()
     {
         byte[] data = FbxBinaryFixtureBuilder.CreateBinary7500BigEndianDocument();
@@ -233,7 +253,7 @@ public sealed class FbxPhase1StructuralParserTests
     {
         public const int NodeHeaderSize7400 = 13;
 
-        public static byte[] CreateBinary7400CompressedArrayDocument(bool includeFooter = true)
+        public static byte[] CreateBinary7400CompressedArrayDocument(bool includeFooter = true, byte[]? footerPrefix = null)
         {
             BinaryNodeSpec root = new(
                 "Root",
@@ -244,7 +264,7 @@ public sealed class FbxPhase1StructuralParserTests
                 ],
                 []);
 
-            return BuildDocument([root], version: 7400, bigEndian: false, includeFooter);
+            return BuildDocument([root], version: 7400, bigEndian: false, includeFooter, footerPrefix);
         }
 
         public static byte[] CreateBinary7500BigEndianDocument()
@@ -282,7 +302,7 @@ public sealed class FbxPhase1StructuralParserTests
             return BuildDocument([root], version, bigEndian, includeFooter: false);
         }
 
-        private static byte[] BuildDocument(IReadOnlyList<BinaryNodeSpec> roots, int version, bool bigEndian, bool includeFooter)
+        private static byte[] BuildDocument(IReadOnlyList<BinaryNodeSpec> roots, int version, bool bigEndian, bool includeFooter, byte[]? footerPrefix = null)
         {
             using MemoryStream stream = new();
             WriteHeader(stream, version, bigEndian);
@@ -297,7 +317,7 @@ public sealed class FbxPhase1StructuralParserTests
             absoluteOffset += GetNodeHeaderSize(version);
 
             if (includeFooter)
-                WriteFooter(stream, version, bigEndian);
+                WriteFooter(stream, version, bigEndian, footerPrefix);
 
             return stream.ToArray();
         }
@@ -362,9 +382,9 @@ public sealed class FbxPhase1StructuralParserTests
             stream.Write(zeros);
         }
 
-        private static void WriteFooter(Stream stream, int version, bool bigEndian)
+        private static void WriteFooter(Stream stream, int version, bool bigEndian, byte[]? footerPrefix)
         {
-            byte[] footerId =
+            byte[] footerId = footerPrefix ??
             [
                 0xFA, 0xBC, 0xAB, 0x09, 0xD0, 0xC8, 0xD4, 0x66,
                 0xB1, 0x76, 0xFB, 0x83, 0x1C, 0xF7, 0x26, 0x7E,

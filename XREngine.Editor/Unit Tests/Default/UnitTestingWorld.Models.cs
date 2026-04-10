@@ -678,9 +678,17 @@ public static partial class EditorUnitTests
                     {
                         clip.Looped = Toggles.AnimLooped;
 
+                        bool runPoseAudit = Toggles.HumanoidPoseAuditEnabled || !string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditReferencePath);
+                        bool suppressHumanoidAutoplay = clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle && !runPoseAudit;
+
                         var anim = rootNode.AddComponent<AnimationClipComponent>()!;
-                        anim.StartOnActivate = true;
+                        anim.StartOnActivate = !suppressHumanoidAutoplay;
                         anim.Animation = clip;
+
+                        if (suppressHumanoidAutoplay)
+                        {
+                            Debug.LogWarning($"[UnitTestingWorld] Loaded Unity humanoid clip '{clip.Name}' but left it paused. Raw .anim humanoid curves do not yet match Unity HumanPose semantics; enable HumanoidPoseAudit* settings or start the clip manually if you need to inspect that playback path.");
+                        }
 
                         if (clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle
                             && rootNode.TryGetComponent<HumanoidIKSolverComponent>(out var humanoidIK)
@@ -690,7 +698,6 @@ public static partial class EditorUnitTests
                             Debug.Out($"[UnitTestingWorld] Disabled HumanoidIKSolverComponent for humanoid clip '{clip.Name}' to inspect raw muscle playback.");
                         }
 
-                        bool runPoseAudit = Toggles.HumanoidPoseAuditEnabled || !string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditReferencePath);
                         if (runPoseAudit)
                         {
                             var audit = rootNode.AddComponent<HumanoidPoseAuditComponent>()!;

@@ -61,6 +61,8 @@ When enabled, the unit-test world attaches `HumanoidPoseAuditComponent` to the i
 3. writes the XRENGINE export JSON
 4. optionally compares it against the Unity reference JSON and writes a comparison report
 
+Outside pose-audit runs, the unit-test world now loads Unity humanoid `.anim` clips in a paused state instead of auto-starting them. That path currently replays the raw `.anim` humanoid float channels, and for `Sexy Walk.anim` those raw values are known not to match Unity's sampled `HumanPose.muscles`. Use the audit workflow or start the clip manually when you want to inspect that unresolved playback path.
+
 If you want runtime muscle playback to use Unity's neutral humanoid base pose, populate `HumanoidNeutralPosePresets` from the Unity export script output and apply the desired `HumanoidComponent.NeutralPosePreset`. The component resolves Unity HumanBodyBones-style names onto the mapped avatar bones and stores per-bone neutral bind-relative rotations in `HumanoidSettings.NeutralPoseBoneRotations`. Subsequent muscle application composes muscle deltas on top of those neutral rotations instead of directly on top of bind pose.
 
 ## Typical loop

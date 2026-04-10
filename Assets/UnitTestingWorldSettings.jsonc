@@ -40,7 +40,7 @@
   "EnableProfilerLogging": true,
   // Controls native FBX importer/exporter trace verbosity. UseEnvironment defers to XRE_FBX_LOG and routes enabled traces to the Assets log category.
   // FbxLogVerbosity: UseEnvironment, Off, Errors, Warnings, Info, Verbose
-  "FbxLogVerbosity": "UseEnvironment",
+  "FbxLogVerbosity": "Verbose",
   // Adds a Rive UI component to the scene for testing Rive animations.
   "RiveUI": false,
   // Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
@@ -187,7 +187,7 @@
     },
     {
       // Enables or disables Enabled.
-      "Enabled": true,
+      "Enabled": false,
       // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Static",

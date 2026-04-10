@@ -13,11 +13,7 @@ public static class FbxStructuralParser
         (byte)'r', (byte)'y', (byte)' ', (byte)' ', 0x00, 0x1A,
     ];
 
-    private static readonly byte[] FooterIdMagic =
-    [
-        0xFA, 0xBC, 0xAB, 0x09, 0xD0, 0xC8, 0xD4, 0x66,
-        0xB1, 0x76, 0xFB, 0x83, 0x1C, 0xF7, 0x26, 0x7E,
-    ];
+    private const int FooterOpaquePrefixLength = 16;
 
     private static readonly byte[] FooterTerminalMagic =
     [
@@ -619,21 +615,13 @@ public static class FbxStructuralParser
                 return null;
             }
 
-            if (!footer[..FooterIdMagic.Length].SequenceEqual(FooterIdMagic))
-            {
-                if (_options.Strictness == FbxReaderStrictness.Strict)
-                    throw new FbxParseException("Binary FBX footer ID block is invalid", reader.Position);
-
-                return null;
-            }
-
-            ReadOnlySpan<byte> reserved = footer.Slice(FooterIdMagic.Length, sizeof(int));
+            ReadOnlySpan<byte> reserved = footer.Slice(FooterOpaquePrefixLength, sizeof(int));
             for (int index = 0; index < reserved.Length; index++)
             {
                 if (reserved[index] != 0)
                 {
                     if (_options.Strictness == FbxReaderStrictness.Strict)
-                        throw new FbxParseException("Binary FBX footer reserved zero bytes are invalid", reader.Position + FooterIdMagic.Length + index);
+                        throw new FbxParseException("Binary FBX footer reserved zero bytes are invalid", reader.Position + FooterOpaquePrefixLength + index);
 
                     return null;
                 }

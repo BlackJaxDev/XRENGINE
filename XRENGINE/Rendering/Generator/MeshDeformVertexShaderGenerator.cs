@@ -344,11 +344,11 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line($"{FragNormName} = vec3(0.0f, 0.0f, 1.0f);");
 
             if (_colorsUsed != 0)
-                for (int i = 0; i < _colorsUsed; ++i)
+                for (int i = 0; i < _colorsUsed.ClampMax(8); ++i)
                     Line($"{string.Format(FragColorName, i)} = {ECommonBufferType.Color}{i};");
 
             if (_texCoordsUsed != 0)
-                for (int i = 0; i < _texCoordsUsed; ++i)
+                for (int i = 0; i < _texCoordsUsed.ClampMax(8); ++i)
                     Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
 
             if (EmitTransformId)

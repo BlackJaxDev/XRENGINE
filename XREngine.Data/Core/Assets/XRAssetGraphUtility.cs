@@ -219,6 +219,11 @@ public static class XRAssetGraphUtility
         if (type == typeof(string) || type == typeof(Type))
             return true;
 
+        // Vertex/VertexData are pure geometry data holders that can never reference XRAsset.
+        // They live in XREngine.Runtime.Rendering (cross-assembly, so checked by name).
+        if (type.Name is "Vertex" or "VertexData" && type.Namespace == "XREngine.Data.Rendering")
+            return true;
+
         // Skip system/runtime types that can't contain XRAsset references
         string? ns = type.Namespace;
         if (ns is not null && (ns.StartsWith("System", StringComparison.Ordinal) || ns.StartsWith("Microsoft", StringComparison.Ordinal)))

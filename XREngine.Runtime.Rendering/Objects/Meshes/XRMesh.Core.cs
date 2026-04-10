@@ -51,6 +51,7 @@ public partial class XRMesh : XRAsset
 
     public int VertexCount { get; internal set; }
 
+    [YamlIgnore]
     private Vertex[] _vertices = [];
     [Browsable(false)]
     [YamlIgnore]

@@ -306,14 +306,17 @@ namespace XREngine.Data
             inStreamObject ??= new();
             outStreamObject ??= new();
 
-            if (inStreamObject.Length < arr.Length)
-                inStreamObject.SetLength(arr.Length);
+            if (inStreamObject.Capacity < arr.Length)
+                inStreamObject.Capacity = arr.Length;
+            inStreamObject.SetLength(0);
             inStreamObject.Seek(0, SeekOrigin.Begin);
             inStreamObject.Write(arr, 0, arr.Length);
             inStreamObject.Seek(0, SeekOrigin.Begin);
 
-            if (outStreamObject.Length < arr.Length)
-                outStreamObject.SetLength(arr.Length); // Set the length of the output stream to the size of the input stream, will be smaller after compression
+            int minimumHeaderLength = 9;
+            if (outStreamObject.Capacity < minimumHeaderLength)
+                outStreamObject.Capacity = minimumHeaderLength;
+            outStreamObject.SetLength(0);
             outStreamObject.Seek(0, SeekOrigin.Begin);
 
             encoder.WriteCoderProperties(outStreamObject);
@@ -354,14 +357,18 @@ namespace XREngine.Data
             inStreamObject ??= new();
             outStreamObject ??= new();
 
-            if (inStreamObject.Length < inLength)
-                inStreamObject.SetLength(inLength);
+            if (inStreamObject.Capacity < inLength)
+                inStreamObject.Capacity = inLength;
+            inStreamObject.SetLength(0);
             inStreamObject.Seek(0, SeekOrigin.Begin);
             inStreamObject.Write(inBuf, inOffset, inLength);
             inStreamObject.Seek(0, SeekOrigin.Begin);
 
-            //if (outStreamObject.Length < outBuf.Length - outOffset)
-            //outStreamObject.SetLength(outBuf.Length - outOffset);
+            int maxWritableLength = outBuf.Length - outOffset;
+            if (maxWritableLength < 0)
+                throw new ArgumentOutOfRangeException(nameof(outOffset));
+            if (outStreamObject.Capacity < maxWritableLength)
+                outStreamObject.Capacity = maxWritableLength;
             outStreamObject.SetLength(0);
             outStreamObject.Seek(0, SeekOrigin.Begin);
 
@@ -372,6 +379,8 @@ namespace XREngine.Data
 
             decoder.SetDecoderProperties(properties);
             int len = BitConverter.ToInt32(lengthBytes, 0);
+            if (len < 0 || len > maxWritableLength)
+                throw new InvalidDataException($"Decoded LZMA length {len} exceeds destination buffer capacity {maxWritableLength}.");
 
             decoder.Code(inStreamObject, outStreamObject, inStreamObject.Length - 9, len, null);
 

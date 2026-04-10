@@ -280,11 +280,11 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line($"{FragNormName} = vec3(0.0f, 0.0f, 1.0f);");
 
             if (_colorsUsed != 0)
-                for (int i = 0; i < _colorsUsed; ++i)
+                for (int i = 0; i < _colorsUsed.ClampMax(8); ++i)
                     Line($"{string.Format(FragColorName, i)} = {ECommonBufferType.Color}{i};");
 
             if (_texCoordsUsed != 0)
-                for (int i = 0; i < _texCoordsUsed; ++i)
+                for (int i = 0; i < _texCoordsUsed.ClampMax(8); ++i)
                     Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
 
             // Default CPU draw path has gl_BaseInstance == 0; GPU-indirect path uses it as the draw/command index.
@@ -368,10 +368,10 @@ namespace XREngine.Rendering.Shaders.Generator
             bool skinning = Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
             if (skinning)
             {
-                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrices}Buffer", binding++))
+                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrices}Buffer", binding++, rowMajor: true))
                     WriteUniform(EShaderVarType._mat4, ECommonBufferType.BoneMatrices.ToString(), true);
 
-                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneInvBindMatrices}Buffer", binding++))
+                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneInvBindMatrices}Buffer", binding++, rowMajor: true))
                     WriteUniform(EShaderVarType._mat4, ECommonBufferType.BoneInvBindMatrices.ToString(), true);
 
                 bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
@@ -555,12 +555,12 @@ namespace XREngine.Rendering.Shaders.Generator
                         Line("continue;");
                     Line("uint paletteIndex = boneMatrixBase + uint(boneIndex);");
                     Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];"); // * {EEngineUniform.RootInvModelMatrix}
-                    Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
+                    Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
                     Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
                     if (hasNormals)
-                        Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
+                        Line($"{FinalNormalName} += ({BaseNormalName} * boneMatrix3) * weight;");
                     if (hasTangents)
-                        Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
+                        Line($"{FinalTangentName} += ({BaseTangentName} * boneMatrix3) * weight;");
                 }
             }
             else
@@ -576,12 +576,12 @@ namespace XREngine.Rendering.Shaders.Generator
                         Line("continue;");
                     Line("uint paletteIndex = boneMatrixBase + uint(boneIndex);");
                     Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];"); // * {EEngineUniform.RootInvModelMatrix}
-                    Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
+                    Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
                     Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
                     if (hasNormals)
-                        Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
+                        Line($"{FinalNormalName} += ({BaseNormalName} * boneMatrix3) * weight;");
                     if (hasTangents)
-                        Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
+                        Line($"{FinalTangentName} += ({BaseTangentName} * boneMatrix3) * weight;");
                 }
             }
 

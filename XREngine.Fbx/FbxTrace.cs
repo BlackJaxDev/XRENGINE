@@ -119,7 +119,6 @@ public static class FbxTrace
             // Fall back to Trace/Console if the host sink fails.
         }
 
-        Trace.WriteLine(line);
         Console.WriteLine(line);
     }
 

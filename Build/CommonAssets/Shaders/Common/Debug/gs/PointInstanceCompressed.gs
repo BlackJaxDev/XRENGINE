@@ -16,6 +16,7 @@ layout(std430, binding = 0) buffer PointsBuffer
 #include "Common/Debug/helper/DebugPerVertex.glsl"
 
 uniform mat4 ViewProjectionMatrix;
+uniform mat4 InverseViewMatrix;
 uniform float PointSize = 0.01f;
 
 #include "Common/Debug/helper/DebugPointQuad.glsl"
