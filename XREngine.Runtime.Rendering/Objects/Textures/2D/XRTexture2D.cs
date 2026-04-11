@@ -519,7 +519,7 @@ namespace XREngine.Rendering
             int originalSmallestAllowedLevel = texture.SmallestAllowedMipmapLevel;
             int nextMipToUpload = smallestResidentMip;
 
-            RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(() =>
+            bool UploadProgressive()
             {
                 try
                 {
@@ -589,7 +589,8 @@ namespace XREngine.Rendering
                     onCompleted?.Invoke();
                     return true;
                 }
-            });
+            }
+            RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(UploadProgressive);
         }
 
         private static long GetProgressiveUploadBytesScheduledThisFrame()

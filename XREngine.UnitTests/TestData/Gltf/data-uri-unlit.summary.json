@@ -1,0 +1,22 @@
+{
+  "assetId": "data-uri-unlit",
+  "importSucceeded": true,
+  "container": "Gltf",
+  "fileSizeBytes": 3992,
+  "nodeCount": 2,
+  "meshCount": 1,
+  "materialCount": 1,
+  "animationCount": 0,
+  "skinCount": 0,
+  "boneCount": 0,
+  "morphTargetCount": 0,
+  "totalVertices": 4,
+  "totalTriangles": 2,
+  "maxHierarchyDepth": 1,
+  "textureCount": 1,
+  "usedExtensions": [
+    "KHR_materials_unlit",
+    "KHR_texture_transform"
+  ],
+  "notes": "Covers data URI resource ownership, unlit material handling, and the supported KHR_texture_transform texCoord-override subset."
+}

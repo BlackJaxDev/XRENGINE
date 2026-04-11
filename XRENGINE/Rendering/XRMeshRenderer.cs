@@ -1181,6 +1181,12 @@ namespace XREngine.Rendering
             _dirtyBoneFlags = new bool[boneCount + 1];
             _dirtyBoneMatrices = new Matrix4x4[boneCount + 1];
             _gpuDrivenBoneRefCounts = new int[boneCount + 1];
+
+            // Vertices live in root-local space (from geometryTransform), but InverseBindMatrix
+            // maps from world space to bone-local space. Pre-multiply by the root's BindMatrix
+            // so InvBind correctly maps: root-local → world → bone-local.
+            Matrix4x4 rootBindMtx = Mesh!.BindRootMatrix ?? Matrix4x4.Identity;
+
             for (int i = 0; i < _bones.Length; i++)
             {
                 var (tfm, invBindWorldMtx) = Mesh!.UtilizedBones[i];
@@ -1192,7 +1198,7 @@ namespace XREngine.Rendering
                 _bones[i] = rb;
 
                 BoneMatricesBuffer.Set(boneIndex, tfm.WorldMatrix);
-                BoneInvBindMatricesBuffer.Set(boneIndex, invBindWorldMtx);
+                BoneInvBindMatricesBuffer.Set(boneIndex, rootBindMtx * invBindWorldMtx);
             }
 
             Buffers.Add(BoneMatricesBuffer.AttributeName, BoneMatricesBuffer);
@@ -1242,6 +1248,9 @@ namespace XREngine.Rendering
             if (_dirtyBoneIndices.Count == 0)
                 return;
 
+            if (_skinningDiagnosticsEnabled && _bones is not null)
+                LogDirtyBoneDiagnostics();
+
             foreach (var index in _dirtyBoneIndices)
             {
                 int i = (int)index;
@@ -1251,6 +1260,66 @@ namespace XREngine.Rendering
 
             PushDirtyBoneRanges(BoneMatricesBuffer, _dirtyBoneIndices);
             _dirtyBoneIndices.Clear();
+        }
+
+        /// <summary>
+        /// When true, logs diagnostic info about bone matrices every time dirty bones are pushed to the GPU.
+        /// Enable via <see cref="EnableSkinningDiagnostics"/>.
+        /// </summary>
+        private bool _skinningDiagnosticsEnabled = false;
+        private int _skinningDiagLogCount = 0;
+        private const int SkinningDiagMaxLogs = 5;
+
+        /// <summary>
+        /// Enables one-shot skinning diagnostics that log bone matrix info the next few frames bones are dirty.
+        /// Call from editor or debugger to diagnose skinning issues.
+        /// </summary>
+        public void EnableSkinningDiagnostics()
+        {
+            _skinningDiagnosticsEnabled = true;
+            _skinningDiagLogCount = 0;
+            Debug.Out("[SkinDiag] Skinning diagnostics enabled. Will log next " + SkinningDiagMaxLogs + " dirty pushes.");
+        }
+
+        private void LogDirtyBoneDiagnostics()
+        {
+            if (_skinningDiagLogCount >= SkinningDiagMaxLogs)
+            {
+                _skinningDiagnosticsEnabled = false;
+                Debug.Out("[SkinDiag] Max log count reached, disabling diagnostics.");
+                return;
+            }
+            _skinningDiagLogCount++;
+
+            Debug.Out($"[SkinDiag] Frame push #{_skinningDiagLogCount}: {_dirtyBoneIndices!.Count} dirty bone(s) for mesh '{Mesh?.Name}'");
+
+            int logged = 0;
+            foreach (var index in _dirtyBoneIndices!)
+            {
+                if (logged >= 3) { Debug.Out($"  ... ({_dirtyBoneIndices.Count - logged} more)"); break; }
+                int i = (int)index;
+                Matrix4x4 current = _dirtyBoneMatrices![i];
+
+                // Find the matching RenderBone to get invBind
+                RenderBone? rb = (i > 0 && i <= _bones!.Length) ? _bones[i - 1] : null;
+                if (rb is null) { Debug.Out($"  Bone[{index}]: no RenderBone found!"); logged++; continue; }
+
+                Matrix4x4 invBind = rb.InvBindMatrix;
+                // C# row-vector: delta = InvBind * Current
+                Matrix4x4 delta = invBind * current;
+                Vector3 deltaT = delta.Translation;
+                float traceRot = delta.M11 + delta.M22 + delta.M33; // trace of rotation part; ~3.0 at identity
+
+                bool hasNaN = float.IsNaN(current.M11) || float.IsNaN(current.M41) || float.IsNaN(invBind.M11) || float.IsNaN(delta.M11);
+                bool largeTranslation = deltaT.Length() > 100f;
+                string flag = hasNaN ? " *** NaN ***" : largeTranslation ? " *** LARGE ***" : "";
+
+                Debug.Out($"  Bone[{index}] '{rb.Transform.SceneNode?.Name ?? "?"}'{flag}:");
+                Debug.Out($"    Current  T=({current.M41:F3},{current.M42:F3},{current.M43:F3})");
+                Debug.Out($"    InvBind  T=({invBind.M41:F3},{invBind.M42:F3},{invBind.M43:F3})");
+                Debug.Out($"    Delta    T=({deltaT.X:F3},{deltaT.Y:F3},{deltaT.Z:F3}) rotTrace={traceRot:F3}");
+                logged++;
+            }
         }
 
         private static void PushDirtyBoneRanges(XRDataBuffer buffer, List<uint> dirtyBoneIndices)

@@ -100,6 +100,7 @@ namespace XREngine.Networking
         private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
         {
             FbxTrace.LogSink = static message => Debug.Assets(message);
+            FbxTrace.ProfilerScopeFactory = static scopeName => Engine.Profiler.Start(scopeName);
 
             if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
                 FbxTrace.RefreshFromEnvironment();

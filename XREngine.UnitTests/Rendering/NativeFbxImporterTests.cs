@@ -478,17 +478,69 @@ public sealed class NativeFbxImporterTests
 
         XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
         mesh.RebuildSkinningBuffersFromVertices();
+        mesh.SkinningShaderConvention.ShouldBe(ESkinningShaderConvention.ExplicitRowMajorRowVector);
 
         string source = new DefaultVertexShaderGenerator(mesh).Generate();
 
         source.ShouldContain("layout(row_major, std430, binding = 0) buffer BoneMatricesBuffer");
         source.ShouldContain("layout(row_major, std430, binding = 1) buffer BoneInvBindMatricesBuffer");
+        source.ShouldContain($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
         source.ShouldContain($"{DefaultVertexShaderGenerator.FinalPositionName} += (vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f) * boneMatrix) * weight;");
         source.ShouldContain($"{DefaultVertexShaderGenerator.FinalNormalName} += ({DefaultVertexShaderGenerator.BaseNormalName} * boneMatrix3) * weight;");
         source.ShouldContain($"{DefaultVertexShaderGenerator.FinalTangentName} += ({DefaultVertexShaderGenerator.BaseTangentName} * boneMatrix3) * weight;");
         source.ShouldNotContain($"boneMatrix * vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f)");
         source.ShouldNotContain($"boneMatrix3 * {DefaultVertexShaderGenerator.BaseNormalName}");
         source.ShouldNotContain($"boneMatrix3 * {DefaultVertexShaderGenerator.BaseTangentName}");
+    }
+
+    [Test]
+    public void DefaultVertexShaderGenerator_LegacySkinningUsesCompatibilityContract()
+    {
+        SceneNode boneNode = new("Bone");
+
+        Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> CreateWeights()
+            => new()
+            {
+                [boneNode.Transform] = (1.0f, Matrix4x4.Identity),
+            };
+
+        Vertex[] vertices =
+        [
+            new Vertex(new Vector3(0.0f, 0.0f, 0.0f))
+            {
+                Normal = Vector3.UnitZ,
+                Tangent = Vector3.UnitX,
+                Weights = CreateWeights(),
+            },
+            new Vertex(new Vector3(1.0f, 0.0f, 0.0f))
+            {
+                Normal = Vector3.UnitZ,
+                Tangent = Vector3.UnitX,
+                Weights = CreateWeights(),
+            },
+            new Vertex(new Vector3(0.0f, 1.0f, 0.0f))
+            {
+                Normal = Vector3.UnitZ,
+                Tangent = Vector3.UnitX,
+                Weights = CreateWeights(),
+            },
+        ];
+
+        XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.SkinningShaderConvention = ESkinningShaderConvention.LegacyImplicitTranspose;
+
+        string source = new DefaultVertexShaderGenerator(mesh).Generate();
+
+        source.ShouldContain("layout(std430, binding = 0) buffer BoneMatricesBuffer");
+        source.ShouldContain("layout(std430, binding = 1) buffer BoneInvBindMatricesBuffer");
+        source.ShouldNotContain("layout(row_major, std430, binding = 0) buffer BoneMatricesBuffer");
+        source.ShouldNotContain("layout(row_major, std430, binding = 1) buffer BoneInvBindMatricesBuffer");
+        source.ShouldContain($"mat4 boneMatrix = {ECommonBufferType.BoneMatrices}[paletteIndex] * {ECommonBufferType.BoneInvBindMatrices}[paletteIndex];");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalPositionName} += (boneMatrix * vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f)) * weight;");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalNormalName} += (boneMatrix3 * {DefaultVertexShaderGenerator.BaseNormalName}) * weight;");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalTangentName} += (boneMatrix3 * {DefaultVertexShaderGenerator.BaseTangentName}) * weight;");
+        source.ShouldNotContain($"{DefaultVertexShaderGenerator.FinalPositionName} += (vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f) * boneMatrix) * weight;");
     }
 
     private static string CreateSyntheticFbx(string relativeTexturePath)

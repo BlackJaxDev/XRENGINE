@@ -28,6 +28,8 @@ public partial class XRMesh
         Vertex[] triangles;
         ConcurrentDictionary<int, DelVertexAction> vertexActions = [];
 
+        SkinningShaderConvention = ESkinningShaderConvention.LegacyImplicitTranspose;
+
         int maxColorCount = 0, maxTexCoordCount = 0;
 
         _bounds = new(Vector3.Zero, Vector3.Zero);

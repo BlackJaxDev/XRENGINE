@@ -7,6 +7,8 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
+using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -69,6 +71,35 @@ public class XRMeshRendererTests
         renderer.Submeshes = new EventList<XRMeshRenderer.SubMesh>();
 
         renderer.GenerateCombinedIndexBuffer().ShouldBeNull();
+    }
+
+    [Test]
+    public void PushBoneMatricesToGpu_UsesRenderMatricesForSkinnedBones()
+    {
+        SceneNode root = new("SkinnedMeshRoot");
+        Transform bone = root.SetTransform<Transform>();
+        bone.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        XRMesh mesh = CreateSingleTriangleMesh();
+        mesh.UtilizedBones =
+        [
+            (bone, Matrix4x4.Identity)
+        ];
+
+        XRMeshRenderer renderer = new()
+        {
+            Mesh = mesh
+        };
+
+        renderer.EnsureSkinningBuffers().ShouldBeTrue();
+        renderer.BoneMatricesBuffer.ShouldNotBeNull();
+
+        Matrix4x4 renderMatrix = Matrix4x4.CreateTranslation(new Vector3(7.0f, 8.0f, 9.0f));
+        bone.SetRenderMatrix(renderMatrix, recalcAllChildRenderMatrices: false).Wait();
+
+        renderer.PushBoneMatricesToGPU();
+
+        renderer.BoneMatricesBuffer!.GetDataRawAtIndex<Matrix4x4>(1u).ShouldBe(renderMatrix);
     }
 
     [Test]

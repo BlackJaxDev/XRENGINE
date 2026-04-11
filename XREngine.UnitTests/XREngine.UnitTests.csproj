@@ -33,6 +33,7 @@
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Fbx\XREngine.Fbx.csproj" />
+    <ProjectReference Include="..\XREngine.Gltf\XREngine.Gltf.csproj" />
     <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
     <ProjectReference Include="..\XREngine.Editor\XREngine.Editor.csproj" />
   </ItemGroup>

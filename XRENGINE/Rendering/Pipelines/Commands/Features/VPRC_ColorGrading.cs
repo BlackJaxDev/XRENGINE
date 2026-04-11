@@ -66,6 +66,18 @@ vec3 HSVtoRGB(vec3 c)
     return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
+vec3 ApplyHsvColorGrade(vec3 sceneColor)
+{
+    if (ColorGrade.Hue == 1.0 && ColorGrade.Saturation == 1.0 && ColorGrade.Brightness == 1.0)
+        return sceneColor;
+
+    vec3 hsv = RGBtoHSV(max(sceneColor, vec3(0.0)));
+    hsv.x = fract(hsv.x * ColorGrade.Hue);
+    hsv.y = clamp(hsv.y * ColorGrade.Saturation, 0.0, 1.0);
+    hsv.z = max(hsv.z * ColorGrade.Brightness, 0.0);
+    return HSVtoRGB(hsv);
+}
+
 void main()
 {
     vec2 uv = FragPos.xy;
@@ -74,14 +86,7 @@ void main()
 
     sceneColor *= ColorGrade.Tint;
 
-    if (!OutputHDR && (ColorGrade.Hue != 1.0 || ColorGrade.Saturation != 1.0 || ColorGrade.Brightness != 1.0))
-    {
-        vec3 hsv = RGBtoHSV(clamp(sceneColor, vec3(0.0), vec3(1.0)));
-        hsv.x = fract(hsv.x * ColorGrade.Hue);
-        hsv.y = clamp(hsv.y * ColorGrade.Saturation, 0.0, 1.0);
-        hsv.z = max(hsv.z * ColorGrade.Brightness, 0.0);
-        sceneColor = HSVtoRGB(hsv);
-    }
+    sceneColor = ApplyHsvColorGrade(sceneColor);
 
     sceneColor = (sceneColor - 0.5) * ColorGrade.Contrast + 0.5;
 

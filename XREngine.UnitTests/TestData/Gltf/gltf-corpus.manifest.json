@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "description": "Committed synthetic glTF/glb corpus covering the native fastgltf bridge, managed JSON layer, compatibility fallback, and performance baselines.",
+  "entries": [
+    {
+      "id": "external-static-scene",
+      "description": "Static .gltf scene with external buffer, external PNG image, TRS transforms, multiple UV/color sets, and deterministic material names.",
+      "availability": "CheckedIn",
+      "relativePath": "XREngine.UnitTests/TestData/Gltf/external-static-scene.gltf",
+      "expectedImportSuccess": true,
+      "container": "Gltf",
+      "includeInPerformanceBaseline": true,
+      "expectedSummaryPath": "external-static-scene.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "ExternalBuffers",
+        "ExternalImages",
+        "MultipleUvSets",
+        "MultipleColorSets",
+        "CompatibilityFallback"
+      ],
+      "notes": "Baseline native import regression asset for static scene routing, remap seeding, and compatibility fallback tests."
+    },
+    {
+      "id": "data-uri-unlit",
+      "description": "Static .gltf scene with data URI buffer/image payloads, KHR_materials_unlit, and KHR_texture_transform texCoord override-only usage.",
+      "availability": "CheckedIn",
+      "relativePath": "XREngine.UnitTests/TestData/Gltf/data-uri-unlit.gltf",
+      "expectedImportSuccess": true,
+      "container": "Gltf",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": "data-uri-unlit.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "DataUris",
+        "MultipleUvSets"
+      ],
+      "notes": "Covers data URI resource ownership, unlit material handling, and the supported KHR_texture_transform texCoord-override subset."
+    },
+    {
+      "id": "skinned-morph-animated",
+      "description": "Animated .gltf scene with skinning, default-scene selection, and translation/rotation animation channels.",
+      "availability": "CheckedIn",
+      "relativePath": "XREngine.UnitTests/TestData/Gltf/skinned-morph-animated.gltf",
+      "expectedImportSuccess": true,
+      "container": "Gltf",
+      "includeInPerformanceBaseline": true,
+      "expectedSummaryPath": "skinned-morph-animated.summary.json",
+      "scenarios": [
+        "SkinnedCharacter",
+        "Animation",
+        "DefaultSceneSelection"
+      ],
+      "notes": "Primary native regression asset for scene/default-scene selection, skinning, and transform animation coverage."
+    },
+    {
+      "id": "morph-sparse-extras",
+      "description": "Static .gltf scene with sparse colors, morph targets, default-scene selection, extras, and unknown material extension payloads.",
+      "availability": "CheckedIn",
+      "relativePath": "XREngine.UnitTests/TestData/Gltf/morph-sparse-extras.gltf",
+      "expectedImportSuccess": true,
+      "container": "Gltf",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": "morph-sparse-extras.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "SparseAccessors",
+        "MorphTargets",
+        "DefaultSceneSelection",
+        "ExtrasAndUnknownExtensions"
+      ],
+      "notes": "Dedicated regression asset for sparse-accessor decode, morph target import, retained extras, and unknown extension payload preservation."
+    },
+    {
+      "id": "embedded-buffer-view-scene",
+      "description": "Compact .glb scene with an embedded BIN chunk, buffer-view-backed PNG image, default-scene selection, and a matrix-authored mesh node.",
+      "availability": "CheckedIn",
+      "relativePath": "XREngine.UnitTests/TestData/Gltf/embedded-buffer-view-scene.glb",
+      "expectedImportSuccess": true,
+      "container": "Glb",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": "embedded-buffer-view-scene.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "EmbeddedBinaryChunk",
+        "BufferViewImages",
+        "DefaultSceneSelection"
+      ],
+      "notes": "Dedicated embedded-container fixture for GLB parsing, BIN chunk ownership, buffer-view image reads, and baked matrix transforms."
+    },
+    {
+      "id": "large-production-scene",
+      "description": "Large synthetic .gltf scene with a shared grid mesh, many instance nodes, and external resources used for performance and parallel-scaling measurements.",
+      "availability": "CheckedIn",
+      "relativePath": "XREngine.UnitTests/TestData/Gltf/large-production-scene.gltf",
+      "expectedImportSuccess": true,
+      "container": "Gltf",
+      "includeInPerformanceBaseline": true,
+      "expectedSummaryPath": "large-production-scene.summary.json",
+      "scenarios": [
+        "StaticScene",
+        "ExternalBuffers",
+        "ExternalImages",
+        "LargeScene"
+      ],
+      "notes": "Representative production-style workload for native vs Assimp wall-time, allocation, and parallel import comparison."
+    },
+    {
+      "id": "malformed-truncated-glb",
+      "description": "Malformed .glb file with an out-of-bounds JSON chunk length.",
+      "availability": "SyntheticMalformed",
+      "relativePath": "XREngine.UnitTests/TestData/Gltf/malformed/truncated-json-chunk.glb",
+      "expectedImportSuccess": false,
+      "container": "Glb",
+      "includeInPerformanceBaseline": false,
+      "expectedSummaryPath": null,
+      "scenarios": [
+        "Malformed"
+      ],
+      "notes": "Exercises deterministic GLB bounds validation before the native bridge is opened."
+    }
+  ]
+}

@@ -24,6 +24,7 @@ public static class FbxStructuralParser
     public static FbxStructuralDocument ParseFile(string path, FbxReaderOptions? options = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("StructuralParser");
 
         FileInfo fileInfo = new(path);
         if (!fileInfo.Exists)
@@ -46,6 +47,7 @@ public static class FbxStructuralParser
     public static FbxStructuralDocument Parse(byte[] source, FbxReaderOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(source);
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("StructuralParser");
 
         return FbxTrace.TraceOperation(
             "StructuralParser",
@@ -57,6 +59,7 @@ public static class FbxStructuralParser
     private static FbxStructuralDocument Parse(FbxSourceBuffer source, FbxReaderOptions? options)
     {
         ArgumentNullException.ThrowIfNull(source);
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("StructuralParser");
 
         try
         {
@@ -79,6 +82,8 @@ public static class FbxStructuralParser
 
     public static int DecodeArrayPayload(FbxStructuralDocument document, FbxArrayWorkItem workItem, Span<byte> destination)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("StructuralParser");
+
         if (destination.Length < workItem.ExpectedDecodedLength)
             throw new ArgumentException("Destination span is too small for the decoded FBX array payload.", nameof(destination));
 
@@ -159,12 +164,14 @@ public static class FbxStructuralParser
 
     private static FbxStructuralDocument ParseBinary(FbxSourceBuffer source, FbxReaderOptions options)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("StructuralParser");
         BinaryParser parser = new(source, options);
         return parser.Parse();
     }
 
     private static FbxStructuralDocument ParseAscii(FbxSourceBuffer source, FbxReaderOptions options)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("StructuralParser");
         AsciiParser parser = new(source, options);
         return parser.Parse();
     }

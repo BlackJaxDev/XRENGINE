@@ -1,0 +1,41 @@
+{
+  "generatedUtc": "2026-04-10T21:47:01.1464502Z",
+  "iterations": 1,
+  "workloads": [
+    {
+      "assetId": "external-static-scene",
+      "nativeAverageMilliseconds": 5.0591,
+      "assimpAverageMilliseconds": 2.627,
+      "nativeAllocatedBytesPerIteration": 166408,
+      "assimpAllocatedBytesPerIteration": 146528,
+      "nativePeakWorkingSetBytes": 312877056,
+      "assimpPeakWorkingSetBytes": 312725504,
+      "nativeSpeedupVsAssimp": 0.5192623193848708
+    },
+    {
+      "assetId": "large-production-scene",
+      "nativeAverageMilliseconds": 1651.1586,
+      "assimpAverageMilliseconds": 1862.2986,
+      "nativeAllocatedBytesPerIteration": 301527712,
+      "assimpAllocatedBytesPerIteration": 350272824,
+      "nativePeakWorkingSetBytes": 599310336,
+      "assimpPeakWorkingSetBytes": 779182080,
+      "nativeSpeedupVsAssimp": 1.127873845674183
+    },
+    {
+      "assetId": "skinned-morph-animated",
+      "nativeAverageMilliseconds": 3.9841,
+      "assimpAverageMilliseconds": 2.813,
+      "nativeAllocatedBytesPerIteration": 254160,
+      "assimpAllocatedBytesPerIteration": 193544,
+      "nativePeakWorkingSetBytes": 884109312,
+      "assimpPeakWorkingSetBytes": 884387840,
+      "nativeSpeedupVsAssimp": 0.7060565748851686
+    }
+  ],
+  "parallel": {
+    "sequentialMilliseconds": 1392.433,
+    "parallelMilliseconds": 2265.454,
+    "speedup": 0.6146375075371205
+  }
+}

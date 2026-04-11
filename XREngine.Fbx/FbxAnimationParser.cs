@@ -7,6 +7,7 @@ public static class FbxAnimationParser
         ArgumentNullException.ThrowIfNull(structural);
         ArgumentNullException.ThrowIfNull(semantic);
         ArgumentNullException.ThrowIfNull(deformers);
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("AnimationParser");
 
         return FbxTrace.TraceOperation(
             "AnimationParser",
@@ -61,6 +62,7 @@ public static class FbxAnimationParser
 
     private static Dictionary<long, FbxScalarCurve> ParseCurves(FbxStructuralValueReader reader, FbxSemanticDocument semantic)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("AnimationParser");
         Dictionary<long, FbxScalarCurve> curvesByObjectId = new();
         foreach (FbxSceneObject curveObject in semantic.Objects.Where(static sceneObject => sceneObject.Category == FbxObjectCategory.AnimationCurve))
         {
@@ -88,6 +90,7 @@ public static class FbxAnimationParser
 
     private static HashSet<long> CollectCurveNodeIdsForStack(FbxSemanticDocument semantic, long stackObjectId)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("AnimationParser");
         HashSet<long> curveNodeIds = [];
         Stack<long> pending = new();
         HashSet<long> visited = [];
@@ -127,6 +130,7 @@ public static class FbxAnimationParser
         IDictionary<long, NodeAnimationAccumulator> nodeAnimations,
         IDictionary<long, BlendShapeAnimationAccumulator> blendShapeAnimations)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("AnimationParser");
         if (!semantic.TryGetObject(curveNodeId, out FbxSceneObject curveNodeObject))
             return;
         if (!semantic.ObjectIndexById.TryGetValue(curveNodeId, out int curveNodeObjectIndex))

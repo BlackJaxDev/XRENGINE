@@ -825,6 +825,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private const string TonemappingStageKey = "tonemapping";
     private const string ColorGradingStageKey = "colorGrading";
+    private const string VignetteStageKey = "vignette";
     private const string BloomStageKey = "bloom";
     private const string AmbientOcclusionStageKey = "ambientOcclusion";
     private const int AmbientOcclusionDisabledMode = -1;
@@ -2921,19 +2922,21 @@ public partial class DefaultRenderPipeline : RenderPipeline
         }
 
         IReadOnlyList<LightProbeComponent> probes = world.Lights.LightProbes;
-        var readyProbes = GetReadyProbes(probes, _cachedReadyProbes);
-        if (readyProbes.Count == 0)
+        GetReadyProbes(probes, _cachedReadyProbes);
+        if (_cachedReadyProbes.Count == 0)
         {
+            /*
             Debug.RenderingEvery("ProbeGI.NoReady", TimeSpan.FromSeconds(5),
                 "[ProbeGI] No ready probes. Total={0}, Ready=0 (need IrradianceTexture+PrefilterTexture)", probes.Count);
+            */
             ClearProbeResources();
             return;
         }
 
-        switch (ProbeConfigurationChanged(readyProbes))
+        switch (ProbeConfigurationChanged(_cachedReadyProbes))
         {
             case EProbeRefreshKind.Immediate:
-                BuildProbeResources(readyProbes);
+                BuildProbeResources(_cachedReadyProbes);
                 break;
             case EProbeRefreshKind.DeferredContentOnly:
                 ScheduleDeferredProbeRefresh();
@@ -2943,9 +2946,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
         if (_pendingProbeRefresh && frameId >= _probeRefreshEarliestFrameId)
         {
             if (_pendingProbeRefreshContentOnly && _probeIrradianceArray is not null)
-                RefreshProbeTextureContent(readyProbes);
+                RefreshProbeTextureContent(_cachedReadyProbes);
             else
-                BuildProbeResources(readyProbes);
+                BuildProbeResources(_cachedReadyProbes);
         }
 
         _probeBindingResourcesEnabled = brdfTexture is not null
@@ -2966,13 +2969,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         _probeBindingProbeCount = (int)_probePositionBuffer!.ElementCount;
         _probeBindingUseGrid = _useProbeGridAcceleration && _probeGridCellBuffer is not null && _probeGridIndexBuffer is not null;
-        _probeBindingTetraCount = _probeTetraBuffer != null && _probeTetraProbeCount == readyProbes.Count
+        _probeBindingTetraCount = _probeTetraBuffer != null && _probeTetraProbeCount == _cachedReadyProbes.Count
             ? (int)_probeTetraBuffer.ElementCount
             : 0;
 
+        /*
         Debug.RenderingEvery("ProbeGI.Bound", TimeSpan.FromSeconds(10),
             "[ProbeGI] Probes bound successfully. Ready={0}, ProbeCount={1}",
-            readyProbes.Count, _probeBindingProbeCount);
+            _cachedReadyProbes.Count, _probeBindingProbeCount);
+        */
     }
 
     private bool ShouldUseAmbientOcclusion()
@@ -3309,16 +3314,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
         }
     }
 
-    private static List<LightProbeComponent> GetReadyProbes(IReadOnlyList<LightProbeComponent> probes, List<LightProbeComponent> target)
+    private static void GetReadyProbes(IReadOnlyList<LightProbeComponent> probes, List<LightProbeComponent> target)
     {
         target.Clear();
         foreach (var probe in probes)
-        {
             if (probe.IrradianceTexture != null && probe.PrefilterTexture != null)
                 target.Add(probe);
-        }
-
-        return target;
     }
 
     private enum EProbeRefreshKind : byte

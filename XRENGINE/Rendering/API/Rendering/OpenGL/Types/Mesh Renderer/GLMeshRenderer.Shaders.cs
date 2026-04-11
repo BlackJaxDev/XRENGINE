@@ -327,7 +327,7 @@ namespace XREngine.Rendering.OpenGL
                 program.PropertyChanged -= CheckProgramLinked;
 
                 if (MeshRenderer.GenerateAsync)
-                    Engine.EnqueueMainThreadTask(() => BindBuffers(program));
+                    Engine.EnqueueMainThreadTask(() => BindBuffers(program), "GLMeshRenderer.BindBuffers");
                 else
                     BindBuffers(program);
             }

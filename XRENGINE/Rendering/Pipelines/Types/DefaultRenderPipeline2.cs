@@ -829,6 +829,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private const string TonemappingStageKey = "tonemapping";
     private const string ColorGradingStageKey = "colorGrading";
+    private const string VignetteStageKey = "vignette";
     private const string BloomStageKey = "bloom";
     private const string AmbientOcclusionStageKey = "ambientOcclusion";
     private const int AmbientOcclusionDisabledMode = -1;

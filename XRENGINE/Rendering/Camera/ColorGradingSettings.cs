@@ -258,7 +258,7 @@ namespace XREngine.Rendering
         public float Gamma
         {
             get => _gamma;
-            set => SetField(ref _gamma, value);
+            set => SetField(ref _gamma, MathF.Max(0.1f, value));
         }
         public float Hue
         {

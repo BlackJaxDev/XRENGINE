@@ -1,0 +1,8 @@
+﻿Resolved license summary for referenced binary item.
+
+Project: XREngine.Gltf.csproj
+Path: runtimes\win-x64\native\FastGltfBridge.Native.dll
+Owner: Sean Apeler (fastgltf) / simdjson authors
+License: MIT (fastgltf) + Apache-2.0 (simdjson)
+
+If this binary is built from multiple vendored-source dependencies, see the matching vendored-source entries in docs/DEPENDENCIES.md for the upstream license texts copied from the vendor snapshot.

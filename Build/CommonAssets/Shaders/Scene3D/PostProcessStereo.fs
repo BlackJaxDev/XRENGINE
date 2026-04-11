@@ -48,6 +48,14 @@ struct ColorGradeStruct
 };
 uniform ColorGradeStruct ColorGrade;
 
+struct VignetteStruct
+{
+    vec3 Color;
+    float Intensity;
+    float Power;
+};
+uniform VignetteStruct Vignette;
+
 vec3 RGBtoHSV(vec3 c)
 {
     vec4 K = vec4(0.0f, -1.0f / 3.0f, 2.0f / 3.0f, -1.0f);
@@ -63,6 +71,18 @@ vec3 HSVtoRGB(vec3 c)
     vec4 K = vec4(1.0f, 2.0f / 3.0f, 1.0f / 3.0f, 3.0f);
     vec3 p = abs(fract(c.xxx + K.xyz) * 6.0f - K.www);
     return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0f, 1.0f), c.y);
+}
+
+vec3 ApplyHsvColorGrade(vec3 sceneColor)
+{
+    if (ColorGrade.Hue == 1.0f && ColorGrade.Saturation == 1.0f && ColorGrade.Brightness == 1.0f)
+        return sceneColor;
+
+    vec3 hsv = RGBtoHSV(max(sceneColor, vec3(0.0f)));
+    hsv.x = fract(hsv.x * ColorGrade.Hue);
+    hsv.y = clamp(hsv.y * ColorGrade.Saturation, 0.0f, 1.0f);
+    hsv.z = max(hsv.z * ColorGrade.Brightness, 0.0f);
+    return HSVtoRGB(hsv);
 }
 
 float GetExposure()
@@ -158,6 +178,17 @@ float rand(vec2 coord)
     return fract(sin(dot(coord, vec2(12.9898f, 78.233f))) * 43758.5453f);
 }
 
+vec3 ApplyVignette(vec3 sceneColor, vec2 uv)
+{
+    if (Vignette.Intensity <= 0.0f)
+        return sceneColor;
+
+    vec2 centeredUv = (uv - LensDistortionCenter) * 2.0f;
+    float radius = clamp(length(centeredUv) * 0.70710678f, 0.0f, 1.0f);
+    float vignetteFactor = pow(radius, max(Vignette.Power, 0.0001f)) * clamp(Vignette.Intensity, 0.0f, 1.0f);
+    return mix(sceneColor, Vignette.Color, vignetteFactor);
+}
+
 void main()
 {
     vec2 uv = FragPos.xy;
@@ -208,19 +239,13 @@ void main()
     // Color grading (LDR)
     ldrSceneColor *= ColorGrade.Tint;
 
-    if (ColorGrade.Hue != 1.0f || ColorGrade.Saturation != 1.0f || ColorGrade.Brightness != 1.0f)
-    {
-        vec3 hsv = RGBtoHSV(clamp(ldrSceneColor, vec3(0.0f), vec3(1.0f)));
-        hsv.x = fract(hsv.x * ColorGrade.Hue);
-        hsv.y = clamp(hsv.y * ColorGrade.Saturation, 0.0f, 1.0f);
-        hsv.z = max(hsv.z * ColorGrade.Brightness, 0.0f);
-        ldrSceneColor = HSVtoRGB(hsv);
-    }
+    ldrSceneColor = ApplyHsvColorGrade(ldrSceneColor);
 
     ldrSceneColor = (ldrSceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
+    ldrSceneColor = ApplyVignette(ldrSceneColor, uv);
 
     // Gamma-correct
-    ldrSceneColor = pow(ldrSceneColor, vec3(1.0 / ColorGrade.Gamma));
+    ldrSceneColor = pow(max(ldrSceneColor, vec3(0.0f)), vec3(1.0 / max(ColorGrade.Gamma, 0.0001f)));
     // Fix subtle banding by applying fine noise
     ldrSceneColor += mix(-0.5 / 255.0, 0.5 / 255.0, rand(uv));
 

@@ -8,6 +8,7 @@ public static class FbxDeformerParser
     {
         ArgumentNullException.ThrowIfNull(structural);
         ArgumentNullException.ThrowIfNull(semantic);
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("DeformerParser");
 
         return FbxTrace.TraceOperation(
             "DeformerParser",
@@ -140,6 +141,7 @@ public static class FbxDeformerParser
 
     private static FbxClusterBinding? ParseClusterBinding(FbxStructuralValueReader reader, FbxSemanticDocument semantic, long clusterObjectId)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("DeformerParser");
         if (!semantic.TryGetObject(clusterObjectId, out FbxSceneObject clusterObject))
             return null;
 
@@ -158,13 +160,17 @@ public static class FbxDeformerParser
         Matrix4x4 transformMatrix = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "Transform") ?? Matrix4x4.Identity;
         Matrix4x4 transformLinkMatrix = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "TransformLink") ?? Matrix4x4.Identity;
 
-        // FBX stores matrices in row-major column-vector convention. Reading them directly
-        // into System.Numerics (row-major, row-vector) yields the transpose.  The FBX
-        // column-vector inverse-bind is  inverse(TransformLink) * Transform.  Transposing
-        // the product reverses the order:  transpose(A*B) = transpose(B)*transpose(A),
-        // giving us  Transform_loaded * inverse(TransformLink_loaded)  for row-vector use.
+        // FBX stores matrices in row-major column-vector convention.  Reading them directly
+        // into System.Numerics (row-major, row-vector) preserves the raw bytes, so the
+        // loaded values are the column-vector matrices as-is (NOT their transposes).
+        //
+        // The column-vector inverse-bind is:  invBind_CV = inverse(TransformLink) * Transform
+        // The row-vector equivalent is:       invBind_RV = transpose(invBind_CV)
+        //
+        // We compute invBind_CV first, then transpose, because the engine and the vertex
+        // shader (row_major SSBOs + row-vector multiplication) expect row-vector matrices.
         Matrix4x4 inverseBindMatrix = Matrix4x4.Invert(transformLinkMatrix, out Matrix4x4 inverseLink)
-            ? transformMatrix * inverseLink
+            ? Matrix4x4.Transpose(inverseLink * transformMatrix)
             : Matrix4x4.Identity;
 
         Dictionary<int, float> controlPointWeights = new(indices.Length);
@@ -202,6 +208,7 @@ public static class FbxDeformerParser
         FbxSceneObject channelObject,
         long shapeGeometryObjectId)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("DeformerParser");
         if (!semantic.TryGetObject(shapeGeometryObjectId, out FbxSceneObject shapeGeometryObject))
             return null;
 

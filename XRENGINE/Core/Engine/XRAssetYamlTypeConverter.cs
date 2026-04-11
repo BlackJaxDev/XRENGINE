@@ -515,7 +515,7 @@ namespace XREngine
             _skipConverter = true;
             try
             {
-                serializer(value);
+                serializer(value, value?.GetType() ?? type);
             }
             finally
             {

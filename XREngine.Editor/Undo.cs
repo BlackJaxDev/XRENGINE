@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -92,6 +93,14 @@ public static class Undo
     /// property changes are not recorded (used during undo/redo application).
     /// </summary>
     private static int _suppressRecordingCount;
+
+    /// <summary>
+    /// Cached lookup for properties marked <c>[Browsable(false)]</c>.
+    /// These are excluded from undo recording because they represent
+    /// transient state (e.g., input flags) rather than persistent scene data.
+    /// Key is (DeclaringType, PropertyName); value is <c>true</c> when non-browsable.
+    /// </summary>
+    private static readonly ConcurrentDictionary<(Type, string), bool> _nonBrowsableCache = new();
 
     /// <summary>
     /// Indicates whether <see cref="Initialize"/> has been called.
@@ -815,6 +824,11 @@ public static class Undo
         if (Equals(previousValue, newValue))
             return;
 
+        // Skip properties marked [Browsable(false)] — they represent transient
+        // state (e.g., input flags like LeftClickPressed) not meaningful for undo.
+        if (IsNonBrowsableProperty(target.GetType(), propertyName))
+            return;
+
         bool addedImmediate = false;
         lock (_sync)
         {
@@ -1042,6 +1056,25 @@ public static class Undo
     /// </summary>
     /// <value><c>true</c> if user interaction count is greater than zero; otherwise, <c>false</c>.</value>
     private static bool UserInteractionActive => Volatile.Read(ref _activeUserInteractionCount) > 0;
+
+    /// <summary>
+    /// Returns <c>true</c> when the given property is marked <c>[Browsable(false)]</c>,
+    /// indicating transient state that should not participate in undo/redo.
+    /// Results are cached per (type, propertyName) pair for performance.
+    /// </summary>
+    private static bool IsNonBrowsableProperty(Type type, string propertyName)
+    {
+        var key = (type, propertyName);
+        return _nonBrowsableCache.GetOrAdd(key, static k =>
+        {
+            var prop = k.Item1.GetProperty(k.Item2, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy);
+            if (prop is null)
+                return false;
+
+            var attr = prop.GetCustomAttribute<BrowsableAttribute>();
+            return attr is not null && !attr.Browsable;
+        });
+    }
 
     /// <summary>
     /// RAII-style scope that suppresses property change recording while active.

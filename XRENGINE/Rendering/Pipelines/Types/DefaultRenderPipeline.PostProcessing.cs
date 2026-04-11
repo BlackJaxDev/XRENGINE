@@ -52,8 +52,9 @@ public partial class DefaultRenderPipeline
 
     protected override void DescribePostProcessSchema(RenderPipelinePostProcessSchemaBuilder builder)
     {
-        DescribeTonemappingStage(builder.Stage(TonemappingStageKey, "Tonemapping"));
+        DescribeTonemappingStage(builder.Stage(TonemappingStageKey, "Tonemapping").BackedBy<TonemappingSettings>());
         DescribeColorGradingStage(builder.Stage(ColorGradingStageKey, "Color Grading").BackedBy<ColorGradingSettings>());
+        DescribeVignetteStage(builder.Stage(VignetteStageKey, "Vignette").BackedBy<VignetteSettings>());
         DescribeBloomStage(builder.Stage(BloomStageKey, "Bloom").BackedBy<BloomSettings>());
         DescribeAmbientOcclusionStage(builder.Stage(AmbientOcclusionStageKey, "Ambient Occlusion").BackedBy<AmbientOcclusionSettings>());
         DescribeTemporalAntiAliasingStage(builder.Stage(TemporalAntiAliasingStageKey, "Temporal AA"));
@@ -65,7 +66,7 @@ public partial class DefaultRenderPipeline
         DescribeVolumetricFogStage(builder.Stage(VolumetricFogStageKey, "Volumetric Fog").BackedBy<VolumetricFogSettings>());
 
         builder.Category("imaging", "Imaging")
-            .IncludeStages(TonemappingStageKey, ColorGradingStageKey);
+            .IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);
 
         builder.Category("bloom", "Bloom")
             .IncludeStage(BloomStageKey);
@@ -88,12 +89,24 @@ public partial class DefaultRenderPipeline
 
     private static void DescribeTonemappingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
+        bool IsMobius(object o) => ((TonemappingSettings)o).Tonemapping == ETonemappingType.Mobius;
+
         stage.AddParameter(
             PostProcessParameterNames.TonemappingOperator,
             PostProcessParameterKind.Int,
             (int)ETonemappingType.Mobius,
             displayName: "Operator",
             enumOptions: BuildEnumOptions<ETonemappingType>());
+
+        stage.AddParameter(
+            PostProcessParameterNames.MobiusTransition,
+            PostProcessParameterKind.Float,
+            TonemappingSettings.DefaultMobiusTransition,
+            displayName: "Mobius Transition",
+            min: TonemappingSettings.MinMobiusTransition,
+            max: TonemappingSettings.MaxMobiusTransition,
+            step: 0.01f,
+            visibilityCondition: IsMobius);
     }
 
     private static void DescribeColorGradingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -355,6 +368,45 @@ public partial class DefaultRenderPipeline
             min: 0.0f,
             max: 2.0f,
             step: 0.01f);
+    }
+
+    private static void DescribeVignetteStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(VignetteSettings.Enabled),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Enabled");
+
+        bool IsEnabled(object o) => ((VignetteSettings)o).Enabled;
+
+        stage.AddParameter(
+            nameof(VignetteSettings.Color),
+            PostProcessParameterKind.Vector3,
+            Vector3.Zero,
+            displayName: "Color",
+            isColor: true,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(VignetteSettings.Intensity),
+            PostProcessParameterKind.Float,
+            0.35f,
+            displayName: "Intensity",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(VignetteSettings.Power),
+            PostProcessParameterKind.Float,
+            2.0f,
+            displayName: "Power",
+            min: 0.01f,
+            max: 8.0f,
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
     }
 
     private static void DescribeBloomStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -1539,10 +1591,8 @@ public partial class DefaultRenderPipeline
         var bloom = GetSettings<BloomSettings>(state);
         (bloom ?? new BloomSettings()).SetCombineUniforms(program);
 
-        var tonemapStage = state?.FindStageByParameter(PostProcessParameterNames.TonemappingOperator);
-        int tonemap = tonemapStage?.GetValue<int>(PostProcessParameterNames.TonemappingOperator, (int)ETonemappingType.Reinhard)
-            ?? (int)ETonemappingType.Reinhard;
-        program.Uniform("TonemapType", tonemap);
+        var tonemapping = GetSettings<TonemappingSettings>(state);
+        (tonemapping ?? new TonemappingSettings()).SetUniforms(program);
     }
 
     private void PostProcessFBO_SettingUniforms(XRRenderProgram materialProgram)
