@@ -150,7 +150,7 @@ public class UnitTestingWorldSettings
         /// Selects how this model import chooses between native format-specific importers
         /// and Assimp fallback. PreferNativeThenAssimp uses a native importer when the
         /// format has one available and falls back to Assimp otherwise. Today the native
-        /// path exists only for FBX.
+        /// path exists for FBX and glTF.
         /// </summary>
         public ModelImportBackendPreference ImporterBackend { get; set; } = ModelImportBackendPreference.PreferNativeThenAssimp;
         public string Path { get; set; } = string.Empty;

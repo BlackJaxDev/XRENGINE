@@ -115,6 +115,10 @@ namespace XREngine
             if (label.Equals("Invoke:UISvgComponent.Rasterize", StringComparison.Ordinal))
                 return true;
 
+            // Progressive mipmap upload coroutine — GPU texture work.
+            if (label.Contains("StartProgressiveCoroutine", StringComparison.Ordinal))
+                return true;
+
             ReadOnlySpan<string> gpuTokens =
             [
                 "OpenGL",

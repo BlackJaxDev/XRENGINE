@@ -21,6 +21,8 @@ vec3 XRENGINE_ApplyExposureLinear(vec3 color, float exposureMultiplier)
 // Individual Tonemapping Operators
 // ============================================================================
 
+const float XRENGINE_MOBIUS_DEFAULT_TRANSITION = 0.6;
+
 // Linear - no tonemapping, just exposure
 vec3 XRENGINE_LinearToneMap(vec3 hdr, float exposure)
 {
@@ -30,7 +32,7 @@ vec3 XRENGINE_LinearToneMap(vec3 hdr, float exposure)
 // Gamma only - applies gamma correction without compression
 vec3 XRENGINE_GammaToneMap(vec3 hdr, float exposure, float gamma)
 {
-    return pow(hdr * exposure, vec3(1.0 / gamma));
+    return pow(max(hdr * exposure, vec3(0.0)), vec3(1.0 / max(gamma, 0.0001)));
 }
 
 // Clip - simple clamp after exposure
@@ -67,11 +69,16 @@ vec3 XRENGINE_HableToneMap(vec3 hdr, float exposure)
 }
 
 // Mobius - simple and fast with good highlight rolloff
-vec3 XRENGINE_MobiusToneMap(vec3 hdr, float exposure)
+vec3 XRENGINE_MobiusToneMap(vec3 hdr, float exposure, float transition)
 {
-    float a = 0.6;
+    float a = max(transition, 0.0001);
     vec3 x = hdr * exposure;
     return (x * (a + 1.0)) / (x + a);
+}
+
+vec3 XRENGINE_MobiusToneMap(vec3 hdr, float exposure)
+{
+    return XRENGINE_MobiusToneMap(hdr, exposure, XRENGINE_MOBIUS_DEFAULT_TRANSITION);
 }
 
 // ACES Filmic - industry standard cinematic look
@@ -99,11 +106,11 @@ vec3 XRENGINE_NeutralToneMap(vec3 hdr, float exposure)
     return (x * (x + 0.0245786)) / (x * (0.983729 * x + 0.432951) + 0.238081);
 }
 
-// Filmic - alternative filmic response (same formula as Neutral in PostProcess.fs)
+// Filmic - classic ALU-friendly filmic response
 vec3 XRENGINE_FilmicToneMap(vec3 hdr, float exposure)
 {
-    vec3 x = hdr * exposure;
-    return (x * (x + 0.0245786)) / (x * (0.983729 * x + 0.432951) + 0.238081);
+    vec3 x = max(hdr * exposure - vec3(0.004), vec3(0.0));
+    return (x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06);
 }
 
 // ============================================================================
@@ -121,8 +128,8 @@ vec3 XRENGINE_FilmicToneMap(vec3 hdr, float exposure)
 #define XRENGINE_TONEMAP_NEUTRAL  7
 #define XRENGINE_TONEMAP_FILMIC   8
 
-// Apply tonemapping by type index with exposure and gamma
-vec3 XRENGINE_ApplyToneMap(vec3 hdr, int tonemapType, float exposure, float gamma)
+// Apply tonemapping by type index with exposure, gamma, and Mobius transition control
+vec3 XRENGINE_ApplyToneMap(vec3 hdr, int tonemapType, float exposure, float gamma, float mobiusTransition)
 {
     switch (tonemapType)
     {
@@ -131,7 +138,7 @@ vec3 XRENGINE_ApplyToneMap(vec3 hdr, int tonemapType, float exposure, float gamm
         case XRENGINE_TONEMAP_CLIP:     return XRENGINE_ClipToneMap(hdr, exposure);
         case XRENGINE_TONEMAP_REINHARD: return XRENGINE_ReinhardToneMapExposed(hdr, exposure);
         case XRENGINE_TONEMAP_HABLE:    return XRENGINE_HableToneMap(hdr, exposure);
-        case XRENGINE_TONEMAP_MOBIUS:   return XRENGINE_MobiusToneMap(hdr, exposure);
+        case XRENGINE_TONEMAP_MOBIUS:   return XRENGINE_MobiusToneMap(hdr, exposure, mobiusTransition);
         case XRENGINE_TONEMAP_ACES:     return XRENGINE_ACESToneMap(hdr, exposure);
         case XRENGINE_TONEMAP_NEUTRAL:  return XRENGINE_NeutralToneMap(hdr, exposure);
         case XRENGINE_TONEMAP_FILMIC:   return XRENGINE_FilmicToneMap(hdr, exposure);
@@ -139,10 +146,15 @@ vec3 XRENGINE_ApplyToneMap(vec3 hdr, int tonemapType, float exposure, float gamm
     }
 }
 
+vec3 XRENGINE_ApplyToneMap(vec3 hdr, int tonemapType, float exposure, float gamma)
+{
+    return XRENGINE_ApplyToneMap(hdr, tonemapType, exposure, gamma, XRENGINE_MOBIUS_DEFAULT_TRANSITION);
+}
+
 // Simplified version with default gamma of 2.2
 vec3 XRENGINE_ApplyToneMapSimple(vec3 hdr, int tonemapType, float exposure)
 {
-    return XRENGINE_ApplyToneMap(hdr, tonemapType, exposure, 2.2);
+    return XRENGINE_ApplyToneMap(hdr, tonemapType, exposure, 2.2, XRENGINE_MOBIUS_DEFAULT_TRANSITION);
 }
 
 // ============================================================================

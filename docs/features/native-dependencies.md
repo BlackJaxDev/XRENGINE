@@ -54,6 +54,29 @@ There is also a legacy fetch script if you want prebuilt vendor binaries instead
 pwsh Tools/Dependencies/Get-CoACD.ps1
 ```
 
+### FastGltfBridge
+
+Used for the native `.gltf` and `.glb` import path.
+
+- Native project: `Build/Native/FastGltfBridge/FastGltfBridge.vcxproj`
+- Runtime DLL: `FastGltfBridge.Native.dll`
+- Managed staging location: `XREngine.Gltf/runtimes/win-x64/native`
+- Vendored source snapshot:
+	- `Build/Native/FastGltfBridge/vendor/fastgltf` (`fastgltf` v0.9.0, MIT)
+	- `Build/Native/FastGltfBridge/vendor/simdjson` (`simdjson` v3.12.3, Apache-2.0)
+
+The bridge is built automatically on Windows as part of `XREngine.Gltf.csproj` before managed build output is prepared. It keeps container parsing, local external-buffer loading, and coarse accessor-copy APIs native, while managed code keeps image decode, JSON `extras` retention, and engine-facing scene assembly on the existing paths.
+
+To rebuild it directly:
+
+```powershell
+dotnet build .\XREngine.Gltf\XREngine.Gltf.csproj
+```
+
+Or build the native project itself with Visual Studio MSBuild if you are working on the bridge implementation.
+
+Export smoke coverage lives in `XREngine.UnitTests/Rendering/NativeInteropSmokeTests.cs` and should be kept green whenever the bridge ABI changes.
+
 ### MagicPhysX
 
 Used for the current PhysX integration.
@@ -184,6 +207,8 @@ That updates:
 
 - `docs/DEPENDENCIES.md`
 - `docs/licenses/`
+
+This includes vendored native-source changes such as fastgltf or simdjson snapshot updates inside `Build/Native/FastGltfBridge/vendor/`.
 
 Review the results for unknown or incompatible licenses before merging.
 

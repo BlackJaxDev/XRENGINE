@@ -1,26 +1,60 @@
 # Model Import
 
-Model imports have two separate runtime policies:
+Model imports can route through a native format-specific importer or the older Assimp compatibility path.
 
-- `.fbx` files now route through the native `XREngine.Fbx` importer by default via `ModelImporter`'s format-specific dispatch. Non-FBX formats still import through Assimp.
-- `ModelImportOptions.FbxBackend = AssimpLegacy` is the explicit compatibility override if a particular FBX still needs the older Assimp path.
-- Assimp `PostProcessSteps` flags still apply to non-FBX imports and the `AssimpLegacy` FBX mode, but the default native FBX path uses explicit FBX-native settings such as `FbxPivotPolicy` instead.
-- `CollapseGeneratedFbxHelperNodes` only affects the legacy Assimp FBX path; the native FBX importer preserves the authored FBX model hierarchy directly.
+## Default routing
 
-The unit-testing world exposes the same policy per startup import through `ModelsToImport[*].ImporterBackend` in `Assets/UnitTestingWorldSettings.jsonc`:
+- `.fbx` files route through the native `XREngine.Fbx` importer by default.
+- `.gltf` and `.glb` files route through the native fastgltf-backed path by default.
+- Other third-party model formats still import through Assimp.
 
-- `PreferNativeThenAssimp` uses a native importer when the format has one available and falls back to Assimp otherwise.
-- `AssimpOnly` forces the older Assimp compatibility path for that import.
+Compatibility overrides stay explicit and per format:
 
-Today the native format-specific path exists only for FBX, so non-FBX imports still land on Assimp in either mode unless and until native importers are added for those formats.
+- `ModelImportOptions.FbxBackend = AssimpLegacy` forces the older FBX path.
+- `ModelImportOptions.GltfBackend = AssimpLegacy` forces the older glTF path.
+- Assimp `PostProcessSteps` still apply to non-native formats and the explicit `AssimpLegacy` modes.
+- `FbxPivotPolicy` and `CollapseGeneratedFbxHelperNodes` remain FBX-specific controls.
 
-For importer/exporter tracing, set `XRE_FBX_LOG` before launching the editor, tests, or tools:
+The unit-testing world exposes the same high-level policy per startup import through `ModelsToImport[*].ImporterBackend` in `Assets/UnitTestingWorldSettings.jsonc`:
+
+- `PreferNativeThenAssimp` uses a native importer when the format has one available and falls back to Assimp before scene publication if the native path rejects the asset.
+- `AssimpOnly` forces the compatibility path for both FBX and glTF startup imports.
+- Today the native format-specific path exists for FBX, glTF, and GLB.
+
+## Native glTF path
+
+The glTF path uses the native `FastGltfBridge.Native.dll` bridge for container parsing, coarse accessor and buffer-view copies, and local external-buffer loading, while scene, material, texture, and publication orchestration stays in managed code.
+
+Supported V1 subset:
+
+- scene hierarchy, default-scene selection, and TRS or baked-matrix node transforms
+- meshes with multiple primitives, multiple UV/color sets, sparse accessors, normalized integer conversion, and generated indices when primitives omit them
+- skinning, inverse bind matrices, morph targets, default weights, and translation, rotation, scale, and weight animation channels
+- external buffers, embedded GLB BIN chunks, data URIs, URI-backed images, and buffer-view-backed images
+- extras and unknown extension payload retention in the managed document layer
+- existing texture and material remap seeding and replacement workflows
+
+Extension support:
+
+- supported: `KHR_materials_unlit`, `KHR_mesh_quantization`, `EXT_meshopt_compression`, `EXT_texture_webp`
+- partial: `KHR_texture_transform` texCoord override only
+- unsupported with a diagnostic that points to `AssimpLegacy`: `KHR_draco_mesh_compression`, `KHR_texture_basisu`, and `KHR_texture_transform` offset, scale, and rotation
+
+Resource and fallback rules:
+
+- native glTF accepts only local relative URIs and data URIs; network and other non-local URIs are rejected deterministically
+- `GltfBackend = Auto` falls back cleanly to Assimp if the native path fails or rejects the asset
+- `GltfBackend = AssimpLegacy` skips the native path entirely
+
+For importer and exporter tracing, set `XRE_FBX_LOG` before launching the editor, tests, or tools:
 
 - `XRE_FBX_LOG=info` for stage-level summaries
 - `XRE_FBX_LOG=verbose` (or `1`) for detailed per-stage and per-asset trace lines
 - `XRE_FBX_LOG=warn` or `error` to log only problems
 
-Enabled FBX trace lines flow through the engine `Assets` log category, so they appear in the editor console's `Assets` tab and in `Build/Logs/.../log_assets.txt` when file logging is enabled.
+Enabled FBX trace lines flow through the engine `Assets` log category, so they appear in the editor console's `Assets` tab and in `Build/Logs/.../log_assets.txt` when file logging is enabled. There is no separate glTF trace env var today; native glTF warnings, unsupported-extension diagnostics, and Auto-to-Assimp fallback messages also surface through the normal asset-import logging path.
+
+The remaining import settings apply across native and compatibility paths unless noted otherwise:
 
 - `ProcessMeshesAsynchronously`: runs mesh conversion work on background jobs instead of finishing the whole import inline.
 - `GenerateMeshRenderersAsync`: leaves `XRMeshRenderer.GenerateAsync` off by default globally, but allows imported model renderers to opt into async renderer generation.

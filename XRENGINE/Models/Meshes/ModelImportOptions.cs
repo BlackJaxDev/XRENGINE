@@ -30,6 +30,14 @@ public enum FbxImportBackend
     Assimp = AssimpLegacy,
 }
 
+public enum GltfImportBackend
+{
+    Auto,
+    Native,
+    AssimpLegacy,
+    Assimp = AssimpLegacy,
+}
+
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions
 {
     /// <summary>
@@ -128,6 +136,12 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     /// while AssimpLegacy preserves the older compatibility path.
     /// </summary>
     public FbxImportBackend FbxBackend { get; set; } = FbxImportBackend.Auto;
+
+    /// <summary>
+    /// Selects how .gltf and .glb files are imported. Auto uses the native importer by default,
+    /// while AssimpLegacy preserves the older compatibility path.
+    /// </summary>
+    public GltfImportBackend GltfBackend { get; set; } = GltfImportBackend.Auto;
 
     /// <summary>
     /// Controls whether FBX pivots stay explicit in the imported transform semantics

@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="runtimes\win-x64\native\FastGltfBridge.Native.dll" Condition="Exists('runtimes\win-x64\native\FastGltfBridge.Native.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="runtimes\win-x64\native\FastGltfBridge.Native.pdb" Condition="Exists('runtimes\win-x64\native\FastGltfBridge.Native.pdb')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <Target Name="BuildFastGltfBridge" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('..\Build\Native\FastGltfBridge\FastGltfBridge.vcxproj')">
+    <PropertyGroup>
+      <VsWhereExe>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</VsWhereExe>
+      <FastGltfBridgeMsBuildPathFile>$(BaseIntermediateOutputPath)fastgltf-msbuild-path.txt</FastGltfBridgeMsBuildPathFile>
+    </PropertyGroup>
+
+    <Error Condition="!Exists('$(VsWhereExe)')" Text="vswhere.exe was not found; cannot locate Visual Studio MSBuild.exe to build FastGltfBridge.vcxproj." />
+    <MakeDir Directories="$(BaseIntermediateOutputPath)" />
+    <Exec Command="&quot;$(VsWhereExe)&quot; -latest -requires Microsoft.Component.MSBuild -find &quot;MSBuild\**\Bin\MSBuild.exe&quot; &gt; &quot;$(FastGltfBridgeMsBuildPathFile)&quot;" />
+    <ReadLinesFromFile File="$(FastGltfBridgeMsBuildPathFile)">
+      <Output TaskParameter="Lines" PropertyName="FastGltfBridgeMsBuildPath" />
+    </ReadLinesFromFile>
+    <Error Condition="'$(FastGltfBridgeMsBuildPath)' == ''" Text="Could not locate Visual Studio MSBuild.exe required to build FastGltfBridge.vcxproj." />
+
+    <Exec Command="&quot;$(FastGltfBridgeMsBuildPath)&quot; &quot;..\Build\Native\FastGltfBridge\FastGltfBridge.vcxproj&quot; /m /nologo /p:Configuration=$(Configuration);Platform=x64" />
+  </Target>
+
+</Project>

@@ -11,6 +11,7 @@ public static class FbxGeometryParser
     {
         ArgumentNullException.ThrowIfNull(structural);
         ArgumentNullException.ThrowIfNull(semantic);
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("GeometryParser");
 
         return FbxTrace.TraceOperation(
             "GeometryParser",
@@ -50,6 +51,7 @@ public static class FbxGeometryParser
         int[][] childrenByNode,
         IReadOnlyDictionary<int, FbxArrayWorkItem> arrayWorkItemsByPropertyIndex)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("GeometryParser");
         int nodeIndex = sceneObject.NodeIndex;
 
         Vector3[] controlPoints = ReadVector3ArrayChild(structural, childrenByNode, arrayWorkItemsByPropertyIndex, nodeIndex, "Vertices");

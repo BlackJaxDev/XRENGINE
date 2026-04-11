@@ -228,6 +228,7 @@ internal class Program
     private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
     {
         FbxTrace.LogSink = static message => EngineDebug.Assets(message);
+        FbxTrace.ProfilerScopeFactory = static scopeName => Engine.Profiler.Start(scopeName);
 
         if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
             FbxTrace.RefreshFromEnvironment();

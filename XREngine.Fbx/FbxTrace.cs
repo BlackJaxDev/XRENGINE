@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace XREngine.Fbx;
 
@@ -14,6 +15,8 @@ public enum FbxLogVerbosity
 public static class FbxTrace
 {
     public static Action<string>? LogSink { get; set; }
+
+    public static Func<string, IDisposable?>? ProfilerScopeFactory { get; set; }
 
     public static FbxLogVerbosity Verbosity { get; set; } = ReadVerbosityFromEnvironment();
 
@@ -34,6 +37,12 @@ public static class FbxTrace
 
     public static void Verbose(string component, string message)
         => Write(FbxLogVerbosity.Verbose, component, message);
+
+    public static IDisposable? StartProfilerScope(string component, [CallerMemberName] string? methodName = null)
+        => StartProfilerScopeCore(component, methodName);
+
+    public static IDisposable? StartProfilerScopeNamed(string component, string scopeName)
+        => StartProfilerScopeCore(component, scopeName);
 
     public static T TraceOperation<T>(
         string component,
@@ -105,7 +114,7 @@ public static class FbxTrace
         if (!IsEnabled(verbosity))
             return;
 
-        string line = $"[FBX][{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}][{verbosity}][{component}] {message}";
+        string line = $"[FBX][{verbosity}][{component}] {message}";
         try
         {
             if (LogSink is not null)
@@ -124,6 +133,26 @@ public static class FbxTrace
 
     private static string FormatElapsed(Stopwatch? stopwatch)
         => stopwatch is null ? "n/a" : $"{stopwatch.Elapsed.TotalMilliseconds:0.###} ms";
+
+    private static IDisposable? StartProfilerScopeCore(string component, string? scopeName)
+    {
+        if (ProfilerScopeFactory is null)
+            return null;
+
+        try
+        {
+            return ProfilerScopeFactory(BuildProfilerScopeName(component, scopeName));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string BuildProfilerScopeName(string component, string? scopeName)
+        => string.IsNullOrWhiteSpace(scopeName)
+            ? $"FBX.{component}"
+            : $"FBX.{component}.{scopeName}";
 
     private static FbxLogVerbosity ReadVerbosityFromEnvironment()
     {

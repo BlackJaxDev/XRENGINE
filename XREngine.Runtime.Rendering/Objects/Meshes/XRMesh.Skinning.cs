@@ -12,6 +12,7 @@ public partial class XRMesh
     public void RebuildSkinningBuffersFromVertices()
     {
         ClearSkinningBuffers();
+        SkinningShaderConvention = ESkinningShaderConvention.ExplicitRowMajorRowVector;
 
         if (Vertices is not { Length: > 0 })
         {

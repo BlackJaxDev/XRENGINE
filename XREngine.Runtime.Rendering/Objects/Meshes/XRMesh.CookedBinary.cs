@@ -76,6 +76,7 @@ public partial class XRMesh : ICookedBinarySerializable
             PrimitiveType = Type,
             BoundsMin = Bounds.Min,
             BoundsMax = Bounds.Max,
+            SkinningShaderConvention = SkinningShaderConvention,
             InterleavedLayout = Interleaved,
             InterleavedStride = InterleavedStride,
             PositionOffset = PositionOffset,
@@ -214,6 +215,7 @@ public partial class XRMesh : ICookedBinarySerializable
         VertexCount = metadata.VertexCount;
         Type = metadata.PrimitiveType;
         Bounds = new AABB(metadata.BoundsMin, metadata.BoundsMax);
+        SkinningShaderConvention = metadata.SkinningShaderConvention;
 
         Buffers?.Clear();
         InitMeshBuffers(metadata.HasNormals, metadata.HasTangents, metadata.ColorChannels, metadata.TexCoordChannels, metadata.InterleavedLayout);
@@ -228,12 +230,59 @@ public partial class XRMesh : ICookedBinarySerializable
 
     private MeshMetadata ReadMetadata(CookedBinaryReader reader)
     {
+        long startPosition = reader.Position;
+
+        if (TryReadMetadata(reader, startPosition, includeSkinningConvention: true, out MeshMetadata metadata))
+            return metadata;
+
+        if (TryReadMetadata(reader, startPosition, includeSkinningConvention: false, out metadata))
+            return metadata;
+
+        throw new InvalidOperationException("Unable to read cooked mesh metadata.");
+    }
+
+    private bool TryReadMetadata(CookedBinaryReader reader, long startPosition, bool includeSkinningConvention, out MeshMetadata metadata)
+    {
+        metadata = default;
+        reader.Position = startPosition;
+
+        try
+        {
+            metadata = ReadMetadataCore(reader, includeSkinningConvention);
+            if (!IsPlausibleMetadata(metadata))
+                return false;
+
+            long positionAfterMetadata = reader.Position;
+            if (!TrySkipRemainingPayload(reader, metadata))
+                return false;
+
+            reader.Position = positionAfterMetadata;
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is EndOfStreamException or
+            InvalidOperationException or
+            ArgumentOutOfRangeException or
+            FormatException or
+            NotSupportedException or
+            OverflowException)
+        {
+            reader.Position = startPosition;
+            return false;
+        }
+    }
+
+    private static MeshMetadata ReadMetadataCore(CookedBinaryReader reader, bool includeSkinningConvention)
+    {
         MeshMetadata metadata = new()
         {
             VertexCount = reader.ReadInt32(),
             PrimitiveType = (EPrimitiveType)reader.ReadInt32(),
             BoundsMin = ReadVector3(reader),
             BoundsMax = ReadVector3(reader),
+            SkinningShaderConvention = includeSkinningConvention
+                ? (ESkinningShaderConvention)reader.ReadByte()
+                : ESkinningShaderConvention.LegacyImplicitTranspose,
             InterleavedLayout = reader.ReadBoolean(),
             InterleavedStride = reader.ReadUInt32(),
             PositionOffset = reader.ReadUInt32()
@@ -256,12 +305,220 @@ public partial class XRMesh : ICookedBinarySerializable
         return metadata;
     }
 
+    private static bool IsPlausibleMetadata(MeshMetadata metadata)
+    {
+        if (metadata.VertexCount < 0)
+            return false;
+
+        if (!Enum.IsDefined(typeof(EPrimitiveType), metadata.PrimitiveType))
+            return false;
+
+        if (!Enum.IsDefined(typeof(ESkinningShaderConvention), metadata.SkinningShaderConvention))
+            return false;
+
+        if (metadata.ColorChannels is < 0 or > 8 || metadata.TexCoordChannels is < 0 or > 8)
+            return false;
+
+        if (metadata.InterleavedLayout)
+        {
+            if (metadata.InterleavedStride == 0 || metadata.InterleavedStride > 4096)
+                return false;
+            if (!IsOffsetWithinStride(metadata.PositionOffset, metadata.InterleavedStride)
+                || !IsOffsetWithinStride(metadata.NormalOffset, metadata.InterleavedStride)
+                || !IsOffsetWithinStride(metadata.TangentOffset, metadata.InterleavedStride)
+                || !IsOffsetWithinStride(metadata.ColorOffset, metadata.InterleavedStride)
+                || !IsOffsetWithinStride(metadata.TexCoordOffset, metadata.InterleavedStride))
+            {
+                return false;
+            }
+        }
+
+        if (!metadata.HasNormals && metadata.NormalOffset.HasValue)
+            return false;
+        if (!metadata.HasTangents && metadata.TangentOffset.HasValue)
+            return false;
+        if (metadata.ColorChannels == 0 && metadata.ColorOffset.HasValue)
+            return false;
+        if (metadata.TexCoordChannels == 0 && metadata.TexCoordOffset.HasValue)
+            return false;
+
+        return true;
+    }
+
+    private static bool IsOffsetWithinStride(uint? offset, uint stride)
+        => !offset.HasValue || offset.Value < stride;
+
+    private static bool TrySkipRemainingPayload(CookedBinaryReader reader, MeshMetadata metadata)
+    {
+        return TrySkipIndexedData(reader, 3)
+            && TrySkipIndexedData(reader, 2)
+            && TrySkipPointData(reader)
+            && TrySkipVertexBuffers(reader, metadata)
+            && TrySkipSkinningData(reader)
+            && TrySkipBlendshapeData(reader)
+            && reader.Position == reader.Length;
+    }
+
+    private static bool TrySkipIndexedData(CookedBinaryReader reader, int indicesPerElement)
+    {
+        int count = reader.ReadInt32();
+        if (count < 0)
+            return false;
+
+        long bytesToSkip = (long)count * indicesPerElement * sizeof(int);
+        return TrySkipBytes(reader, bytesToSkip);
+    }
+
+    private static bool TrySkipPointData(CookedBinaryReader reader)
+    {
+        int count = reader.ReadInt32();
+        if (count < 0)
+            return false;
+
+        return TrySkipBytes(reader, (long)count * sizeof(int));
+    }
+
+    private static bool TrySkipVertexBuffers(CookedBinaryReader reader, MeshMetadata metadata)
+    {
+        if (metadata.InterleavedLayout)
+            return TrySkipBufferData(reader, allowMetadata: false);
+
+        if (!TrySkipBufferData(reader, allowMetadata: false))
+            return false;
+        if (metadata.HasNormals && !TrySkipBufferData(reader, allowMetadata: false))
+            return false;
+        if (metadata.HasTangents && !TrySkipBufferData(reader, allowMetadata: false))
+            return false;
+
+        for (int i = 0; i < metadata.ColorChannels; i++)
+        {
+            if (!TrySkipBufferData(reader, allowMetadata: false))
+                return false;
+        }
+
+        for (int i = 0; i < metadata.TexCoordChannels; i++)
+        {
+            if (!TrySkipBufferData(reader, allowMetadata: false))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool TrySkipBufferData(CookedBinaryReader reader, bool allowMetadata)
+    {
+        bool hasMetadata = reader.ReadBoolean();
+        if (hasMetadata)
+        {
+            if (!allowMetadata)
+                return false;
+            if (!TrySkipBufferMetadata(reader))
+                return false;
+        }
+
+        MeshBufferEncoding encoding = (MeshBufferEncoding)reader.ReadByte();
+        if (!Enum.IsDefined(typeof(MeshBufferEncoding), encoding))
+            return false;
+
+        uint decodedLength = reader.ReadUInt32();
+        if (encoding == MeshBufferEncoding.Raw)
+            return TrySkipBytes(reader, decodedLength);
+
+        uint encodedLength = reader.ReadUInt32();
+        reader.ReadBoolean();
+        return TrySkipBytes(reader, encodedLength);
+    }
+
+    private static bool TrySkipBufferMetadata(CookedBinaryReader reader)
+    {
+        return TrySkipString(reader)
+            && TrySkipBytes(reader, sizeof(int) * 2L)
+            && TrySkipBytes(reader, sizeof(uint) * 2L)
+            && TrySkipBytes(reader, sizeof(bool) * 3L);
+    }
+
+    private static bool TrySkipSkinningData(CookedBinaryReader reader)
+    {
+        bool hasSkinning = reader.ReadBoolean();
+        if (!hasSkinning)
+            return true;
+
+        int boneCount = reader.ReadInt32();
+        if (boneCount < 0)
+            return false;
+
+        for (int i = 0; i < boneCount; i++)
+        {
+            if (!TrySkipBytes(reader, 16)
+                || !TrySkipString(reader)
+                || !TrySkipBytes(reader, sizeof(int))
+                || !TrySkipBytes(reader, sizeof(float) * 16L * 2L))
+            {
+                return false;
+            }
+        }
+
+        reader.ReadInt32();
+        return TrySkipBufferData(reader, allowMetadata: true)
+            && TrySkipBufferData(reader, allowMetadata: true)
+            && TrySkipBufferData(reader, allowMetadata: true)
+            && TrySkipBufferData(reader, allowMetadata: true);
+    }
+
+    private static bool TrySkipBlendshapeData(CookedBinaryReader reader)
+    {
+        bool hasBlendshapes = reader.ReadBoolean();
+        if (!hasBlendshapes)
+            return true;
+
+        int nameCount = reader.ReadInt32();
+        if (nameCount < 0)
+            return false;
+
+        for (int i = 0; i < nameCount; i++)
+        {
+            if (!TrySkipString(reader))
+                return false;
+        }
+
+        return TrySkipBufferData(reader, allowMetadata: true)
+            && TrySkipBufferData(reader, allowMetadata: true)
+            && TrySkipBufferData(reader, allowMetadata: true);
+    }
+
+    private static bool TrySkipString(CookedBinaryReader reader)
+    {
+        int length = reader.Read7BitEncodedInt();
+        if (length < 0)
+            return false;
+
+        return TrySkipBytes(reader, length);
+    }
+
+    private static bool TrySkipBytes(CookedBinaryReader reader, long byteCount)
+    {
+        if (byteCount < 0 || reader.Position + byteCount > reader.Length)
+            return false;
+
+        while (byteCount > int.MaxValue)
+        {
+            reader.SkipBytes(int.MaxValue);
+            byteCount -= int.MaxValue;
+        }
+
+        if (byteCount > 0)
+            reader.SkipBytes((int)byteCount);
+
+        return true;
+    }
+
     private static void WriteMetadata(CookedBinaryWriter writer, MeshMetadata metadata)
     {
         writer.Write(metadata.VertexCount);
         writer.Write((int)metadata.PrimitiveType);
         WriteVector3(writer, metadata.BoundsMin);
         WriteVector3(writer, metadata.BoundsMax);
+        writer.Write((byte)metadata.SkinningShaderConvention);
         writer.Write(metadata.InterleavedLayout);
         writer.Write(metadata.InterleavedStride);
         writer.Write(metadata.PositionOffset);
@@ -294,6 +551,7 @@ public partial class XRMesh : ICookedBinarySerializable
         size += sizeof(int); // vertex count
         size += sizeof(int); // primitive type
         size += sizeof(float) * 3 * 2; // bounds
+        size += sizeof(byte); // skinning shader convention
         size += sizeof(bool); // interleaved
         size += sizeof(uint); // stride
         size += sizeof(uint); // position offset
@@ -987,6 +1245,7 @@ public partial class XRMesh : ICookedBinarySerializable
         public EPrimitiveType PrimitiveType;
         public Vector3 BoundsMin;
         public Vector3 BoundsMax;
+        public ESkinningShaderConvention SkinningShaderConvention;
         public bool InterleavedLayout;
         public uint InterleavedStride;
         public uint PositionOffset;

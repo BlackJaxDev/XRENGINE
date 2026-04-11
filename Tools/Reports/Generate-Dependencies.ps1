@@ -923,6 +923,7 @@ function Get-BinaryOwner([string]$fileOrPath) {
     $name = [System.IO.Path]::GetFileName($fileOrPath)
 
     switch -Regex ($name) {
+        '^FastGltfBridge\.Native\.dll$' { return 'Sean Apeler (fastgltf) / simdjson authors' }
         '^openvr_api\.dll$' { return 'Valve (OpenVR/SteamVR)' }
         '^openxr_loader\.dll$' { return 'Valve (SteamVR) / Khronos (OpenXR loader)' }
         '^OVRLipSync\.dll$' { return 'Meta/Oculus (OVR LipSync)' }
@@ -951,6 +952,7 @@ function Get-BinaryLicense([string]$fileOrPath) {
     $name = [System.IO.Path]::GetFileName($fileOrPath)
 
     switch -Regex ($name) {
+        '^FastGltfBridge\.Native\.dll$' { return 'MIT (fastgltf) + Apache-2.0 (simdjson)' }
         '^sl\.nis\.dll$' { return 'MIT (see XRENGINE/nis.license.txt)' }
         '^nvngx_.*\.dll$' { return 'NVIDIA RTX SDKs License (see XRENGINE/nvngx_dlss.license.txt)' }
         '^NvLowLatencyVk\.dll$' { return 'NVIDIA SDK License Agreement (see XRENGINE/reflex.license.txt)' }
@@ -1165,7 +1167,7 @@ foreach ($s in $submodules) {
     }
 }
 
-# Nested submodules / fetched-from-upstream dependencies referenced by build scripts.
+# Nested submodules / vendored-source / fetched-from-upstream dependencies referenced by build scripts or native bridges.
 $nested = New-Object System.Collections.Generic.List[object]
 try {
     $buildCoacd = Join-Path $root 'Tools\Dependencies\Build-CoACD.ps1'
@@ -1180,6 +1182,32 @@ try {
                 License = '(unknown)'
             })
         }
+    }
+
+    $fastGltfVendorDir = Join-Path $root 'Build\Native\FastGltfBridge\vendor\fastgltf'
+    if (Test-Path $fastGltfVendorDir) {
+        $fastGltfLicenseInfo = Get-SubmoduleLicenseInfo -fullPath $fastGltfVendorDir
+        $nested.Add([pscustomobject]@{
+            Name = 'fastgltf v0.9.0'
+            UsedBy = 'FastGltfBridge'
+            Owner = 'Sean Apeler'
+            Url = 'https://github.com/spnda/fastgltf/tree/v0.9.0'
+            License = if ($fastGltfLicenseInfo -and $fastGltfLicenseInfo.License) { $fastGltfLicenseInfo.License } else { '(unknown)' }
+            LicenseSourcePath = if ($fastGltfLicenseInfo) { $fastGltfLicenseInfo.SourcePath } else { $null }
+        })
+    }
+
+    $simdJsonVendorDir = Join-Path $root 'Build\Native\FastGltfBridge\vendor\simdjson'
+    if (Test-Path $simdJsonVendorDir) {
+        $simdJsonLicenseInfo = Get-SubmoduleLicenseInfo -fullPath $simdJsonVendorDir
+        $nested.Add([pscustomobject]@{
+            Name = 'simdjson v3.12.3'
+            UsedBy = 'FastGltfBridge'
+            Owner = 'simdjson authors'
+            Url = 'https://github.com/simdjson/simdjson/tree/v3.12.3'
+            License = if ($simdJsonLicenseInfo -and $simdJsonLicenseInfo.License) { $simdJsonLicenseInfo.License } else { '(unknown)' }
+            LicenseSourcePath = if ($simdJsonLicenseInfo) { $simdJsonLicenseInfo.SourcePath } else { $null }
+        })
     }
 } catch {
 }
@@ -1246,7 +1274,7 @@ $lines.Add('')
 $lines.Add(("Generated: {0}" -f $generatedAt))
 $lines.Add(("Commit: {0}" -f $commitText))
 $lines.Add('')
-$lines.Add('Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, and native/managed binaries that are referenced or shipped.')
+$lines.Add('Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.')
 $lines.Add('')
 $lines.Add('Notes:')
 $lines.Add('- `Owner` is derived from a GitHub repository URL when available, otherwise from the NuGet nuspec `authors` field (best-effort).')
@@ -1295,7 +1323,7 @@ foreach ($s in $submodules) {
 $lines.Add('')
 
 if ($nested.Count -gt 0) {
-    $lines.Add('## Nested / fetched dependencies (build scripts)')
+    $lines.Add('## Nested / fetched / vendored-source dependencies')
     $lines.Add('| Name | Used by | Owner | License (best-effort) | URL |')
     $lines.Add('|---|---|---|---|---|')
     foreach ($n in ($nested | Sort-Object Name, UsedBy)) {
@@ -1308,7 +1336,12 @@ if ($nested.Count -gt 0) {
         $licText = $resolved.License
         $licLink = $resolved.LicenseLink
 
-        if ($n.Url) {
+        if ($n.PSObject.Properties.Match('LicenseSourcePath').Count -gt 0 -and $n.LicenseSourcePath) {
+            $ext = [System.IO.Path]::GetExtension($n.LicenseSourcePath)
+            if (-not $ext) { $ext = '.txt' }
+            $dstRel = ('nested/{0}-{1}{2}' -f (To-SafeFileName $n.Name), (To-SafeFileName $licText), $ext)
+            $licLink = Copy-LicenseFile -relativePathFromDocsLicenses $dstRel -sourcePath $n.LicenseSourcePath
+        } elseif ($n.Url) {
             $t = Get-GitHubLicenseTextFromRepoUrl -url $n.Url
             if ($t) {
                 $dstRel = ('github/{0}-{1}.txt' -f (To-SafeFileName $n.Name), (To-SafeFileName $licText))
@@ -1442,8 +1475,13 @@ foreach ($b in ($binaries | Sort-Object Project, Path)) {
 
     if (-not $licLink) {
         $binaryFileName = [System.IO.Path]::GetFileName($b.Path)
-        $dstRel = ('unknown/binary-item-{0}-{1}.txt' -f (To-SafeFileName $b.Project), (To-SafeFileName $binaryFileName))
-        $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License file not detected for referenced binary item.`r`n`r`nProject: {0}`r`nPath: {1}`r`n" -f $b.Project, $pathText)
+        if (-not (Is-LicenseUnknown -licenseText $licText)) {
+            $dstRel = ('notes/binary-item-{0}-{1}.txt' -f (To-SafeFileName $b.Project), (To-SafeFileName $binaryFileName))
+            $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("Resolved license summary for referenced binary item.`r`n`r`nProject: {0}`r`nPath: {1}`r`nOwner: {2}`r`nLicense: {3}`r`n`r`nIf this binary is built from multiple vendored-source dependencies, see the matching vendored-source entries in docs/DEPENDENCIES.md for the upstream license texts copied from the vendor snapshot." -f $b.Project, $pathText, $ownerText, $licText)
+        } else {
+            $dstRel = ('unknown/binary-item-{0}-{1}.txt' -f (To-SafeFileName $b.Project), (To-SafeFileName $binaryFileName))
+            $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License file not detected for referenced binary item.`r`n`r`nProject: {0}`r`nPath: {1}`r`n" -f $b.Project, $pathText)
+        }
     }
     $licLink = Materialize-LicenseLink -licLink $licLink -entityName $pathText -licSafe (To-SafeFileName $licText)
     $lic = Format-LicenseCell -licenseText $licText -licenseLink $licLink

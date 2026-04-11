@@ -91,6 +91,13 @@ public static partial class EditorUnitTests
                 _ => FbxImportBackend.Auto,
             };
 
+        private static GltfImportBackend ResolveGltfBackend(Settings.ModelImportSettings model)
+            => model.ImporterBackend switch
+            {
+                ModelImportBackendPreference.AssimpOnly => GltfImportBackend.AssimpLegacy,
+                _ => GltfImportBackend.Auto,
+            };
+
         internal static ModelImportOptions? CreateImportOptions(Settings.ModelImportSettings model)
         {
             bool splitSubmeshes = model.SplitSubmeshesIntoSeparateModelComponents
@@ -108,6 +115,7 @@ public static partial class EditorUnitTests
                 ScaleConversion = model.Scale,
                 ZUp = model.ZUp,
                 FbxBackend = ResolveFbxBackend(model),
+                GltfBackend = ResolveGltfBackend(model),
                 SplitSubmeshesIntoSeparateModelComponents = splitSubmeshes,
             };
         }

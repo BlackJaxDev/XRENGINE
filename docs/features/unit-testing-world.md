@@ -104,9 +104,11 @@ Use `ModelsToImport` to add one or more assets at startup. Each entry can choose
 - import flags
 - scale and transform offsets
 
-`ImporterBackend` defaults to `PreferNativeThenAssimp`, which uses a native importer when the format has one available and falls back to Assimp otherwise. Today that native path exists only for FBX. Set `ImporterBackend` to `AssimpOnly` if you need to force the older FBX compatibility path for a specific startup import.
+`ImporterBackend` defaults to `PreferNativeThenAssimp`, which uses a native importer when the format has one available and falls back to Assimp otherwise. That native path now covers FBX, glTF, and GLB startup imports. Set `ImporterBackend` to `AssimpOnly` if you need to force the older compatibility path for a specific FBX or glTF startup import.
 
-`FbxLogVerbosity` controls how much native FBX importer/exporter trace output is emitted while the unit-testing world boots. When enabled, those lines go through the engine `Assets` log category, so they show up in the editor console `Assets` tab and in `Build/Logs/.../log_assets.txt` when file logging is enabled.
+For glTF validation work, the checked-in corpus under `XREngine.UnitTests/TestData/Gltf/` is the fastest repeatable source of startup assets. It covers external resources, data URIs, embedded GLB BIN chunks, sparse accessors, skins, morph targets, animations, and malformed-container regression cases.
+
+`FbxLogVerbosity` controls how much native FBX importer/exporter trace output is emitted while the unit-testing world boots. When enabled, those lines go through the engine `Assets` log category, so they show up in the editor console `Assets` tab and in `Build/Logs/.../log_assets.txt` when file logging is enabled. glTF does not currently expose a separate verbosity toggle; native glTF warnings and fallback diagnostics also flow through the normal asset-import logging path.
 
 This is the fastest way to spin up repeatable import tests without hand-building the scene each time.
 

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Hashing;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SimpleScene.Util.ssBVH;
 using XREngine.Data.Geometry;
@@ -74,7 +75,7 @@ internal static class BvhDiskCache
             }
 
             // Read flat BVH nodes.
-            int nodeByteCount = nodeCount * Marshal.SizeOf<BVH<Triangle>.FlatBvhNode>();
+            int nodeByteCount = nodeCount * Unsafe.SizeOf<BVH<Triangle>.FlatBvhNode>();
             byte[] nodeBytes = reader.ReadBytes(nodeByteCount);
             if (nodeBytes.Length != nodeByteCount)
                 return false;

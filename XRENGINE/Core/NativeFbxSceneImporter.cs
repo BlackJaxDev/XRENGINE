@@ -199,6 +199,8 @@ internal static class NativeFbxSceneImporter
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFilePath);
 
         XREngine.Fbx.FbxTrace.LogSink ??= static message => Debug.Assets(message);
+        XREngine.Fbx.FbxTrace.ProfilerScopeFactory ??= static scopeName => Engine.Profiler.Start(scopeName);
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
 
         return XREngine.Fbx.FbxTrace.TraceOperation(
             "NativeImporter",
@@ -211,15 +213,24 @@ internal static class NativeFbxSceneImporter
                     importOptions?.FbxPivotPolicy ?? FbxSceneSemanticsPolicy.Default.PivotImportPolicy,
                     FbxModelHierarchyPolicy.PreserveAuthoredNodes);
 
-                FbxSemanticDocument semantic = FbxSemanticParser.Parse(structural, policy);
-                FbxGeometryDocument geometry = FbxGeometryParser.Parse(structural, semantic);
-                FbxDeformerDocument deformers = FbxDeformerParser.Parse(structural, semantic);
-                FbxAnimationDocument animations = FbxAnimationParser.Parse(structural, semantic, deformers);
+                FbxSemanticDocument semantic;
+                FbxGeometryDocument geometry;
+                FbxDeformerDocument deformers;
+                FbxAnimationDocument animations;
+                using (IDisposable? parseDocumentsScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.ParseDocuments"))
+                {
+                    semantic = FbxSemanticParser.Parse(structural, policy);
+                    geometry = FbxGeometryParser.Parse(structural, semantic);
+                    deformers = FbxDeformerParser.Parse(structural, semantic);
+                    animations = FbxAnimationParser.Parse(structural, semantic, deformers);
+                }
 
                 SceneNode rootNode = new(Path.GetFileNameWithoutExtension(sourceFilePath)) { Layer = importLayer };
                 ApplyLocalMatrix(rootNode, CreateImportRootMatrix(scaleConversion, zUp, rootTransformMatrix));
 
-                Dictionary<long, SceneNode> nodesByObjectId = BuildSceneNodes(rootNode, semantic, importLayer, cancellationToken);
+                Dictionary<long, SceneNode> nodesByObjectId;
+                using (IDisposable? buildSceneGraphScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.BuildSceneGraph"))
+                    nodesByObjectId = BuildSceneNodes(rootNode, semantic, importLayer, cancellationToken);
                 XREngine.Fbx.FbxTrace.Info("NativeImporter", $"Created {nodesByObjectId.Count:N0} authored scene node(s) beneath imported root '{rootNode.Name}'.");
 
                 List<XRMaterial> createdMaterials = [];
@@ -228,68 +239,76 @@ internal static class NativeFbxSceneImporter
                 object materialCacheSync = new();
                 object createdAssetsSync = new();
 
-                Dictionary<long, FbxIntermediateMaterial[]> materialsByModelObjectId = BuildMaterialsByModelObjectId(semantic);
-                Dictionary<long, FbxIntermediateNode> intermediateNodesByObjectId = BuildIntermediateNodesByObjectId(semantic);
+                Dictionary<long, FbxIntermediateMaterial[]> materialsByModelObjectId;
+                Dictionary<long, FbxIntermediateNode> intermediateNodesByObjectId;
+                using (IDisposable? buildLookupScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.BuildLookupTables"))
+                {
+                    materialsByModelObjectId = BuildMaterialsByModelObjectId(semantic);
+                    intermediateNodesByObjectId = BuildIntermediateNodesByObjectId(semantic);
+                }
                 FbxIntermediateMesh[] meshes = [.. semantic.IntermediateScene.Meshes];
                 Array.Sort(meshes, static (left, right) => left.ObjectIndex.CompareTo(right.ObjectIndex));
                 bool flipUvY = importOptions?.PostProcessSteps.HasFlag(PostProcessSteps.FlipUVs) ?? true;
 
                 List<MeshBuildWorkItem> workItems = [];
-                for (int meshIndex = 0; meshIndex < meshes.Length; meshIndex++)
+                using (IDisposable? buildWorkItemsScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.BuildWorkItems"))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    FbxIntermediateMesh mesh = meshes[meshIndex];
-                    if (!geometry.TryGetMeshGeometry(mesh.ObjectId, out FbxMeshGeometry meshGeometry))
-                    {
-                        XREngine.Fbx.FbxTrace.Warning("NativeImporter", $"Skipping intermediate mesh '{mesh.Name}' (objectId={mesh.ObjectId}) because no parsed geometry was found.");
-                        continue;
-                    }
-
-                    bool hasSkinBinding = deformers.TryGetSkinBinding(mesh.ObjectId, out FbxSkinBinding skinBinding);
-                    IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels = deformers.GetBlendShapeChannels(mesh.ObjectId);
-
-                    for (int modelIndex = 0; modelIndex < mesh.ModelObjectIds.Count; modelIndex++)
+                    for (int meshIndex = 0; meshIndex < meshes.Length; meshIndex++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        long modelObjectId = mesh.ModelObjectIds[modelIndex];
-                        if (!nodesByObjectId.TryGetValue(modelObjectId, out SceneNode? sceneNode))
+
+                        FbxIntermediateMesh mesh = meshes[meshIndex];
+                        if (!geometry.TryGetMeshGeometry(mesh.ObjectId, out FbxMeshGeometry meshGeometry))
                         {
-                            XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Skipping mesh '{mesh.Name}' model link to objectId={modelObjectId} because no scene node was created for it.");
-                            continue;
-                        }
-                        if (!semantic.TryGetObject(modelObjectId, out _))
-                        {
-                            XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Skipping mesh '{mesh.Name}' model link to objectId={modelObjectId} because the semantic object is missing.");
-                            continue;
-                        }
-                        if (!intermediateNodesByObjectId.TryGetValue(modelObjectId, out FbxIntermediateNode? intermediateNode)
-                            || intermediateNode is null)
-                        {
-                            XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Skipping mesh '{mesh.Name}' model link to objectId={modelObjectId} because the intermediate node is missing.");
+                            XREngine.Fbx.FbxTrace.Warning("NativeImporter", $"Skipping intermediate mesh '{mesh.Name}' (objectId={mesh.ObjectId}) because no parsed geometry was found.");
                             continue;
                         }
 
-                        IReadOnlyList<FbxIntermediateMaterial> nodeMaterials = materialsByModelObjectId.TryGetValue(modelObjectId, out FbxIntermediateMaterial[]? resolvedNodeMaterials)
-                            && resolvedNodeMaterials is not null
-                            ? resolvedNodeMaterials
-                            : Array.Empty<FbxIntermediateMaterial>();
+                        bool hasSkinBinding = deformers.TryGetSkinBinding(mesh.ObjectId, out FbxSkinBinding skinBinding);
+                        IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels = deformers.GetBlendShapeChannels(mesh.ObjectId);
 
-                        IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint =
-                            hasSkinBinding
-                                ? BuildSkinWeightsByControlPoint(skinBinding, sceneNode.Transform.WorldMatrix, nodesByObjectId)
-                                : null;
+                        for (int modelIndex = 0; modelIndex < mesh.ModelObjectIds.Count; modelIndex++)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            long modelObjectId = mesh.ModelObjectIds[modelIndex];
+                            if (!nodesByObjectId.TryGetValue(modelObjectId, out SceneNode? sceneNode))
+                            {
+                                XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Skipping mesh '{mesh.Name}' model link to objectId={modelObjectId} because no scene node was created for it.");
+                                continue;
+                            }
+                            if (!semantic.TryGetObject(modelObjectId, out _))
+                            {
+                                XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Skipping mesh '{mesh.Name}' model link to objectId={modelObjectId} because the semantic object is missing.");
+                                continue;
+                            }
+                            if (!intermediateNodesByObjectId.TryGetValue(modelObjectId, out FbxIntermediateNode? intermediateNode)
+                                || intermediateNode is null)
+                            {
+                                XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Skipping mesh '{mesh.Name}' model link to objectId={modelObjectId} because the intermediate node is missing.");
+                                continue;
+                            }
 
-                        workItems.Add(new MeshBuildWorkItem(
-                            workItems.Count,
-                            modelObjectId,
-                            sceneNode,
-                            mesh,
-                            meshGeometry,
-                            intermediateNode,
-                            nodeMaterials,
-                            skinWeightsByControlPoint,
-                            blendShapeChannels));
+                            IReadOnlyList<FbxIntermediateMaterial> nodeMaterials = materialsByModelObjectId.TryGetValue(modelObjectId, out FbxIntermediateMaterial[]? resolvedNodeMaterials)
+                                && resolvedNodeMaterials is not null
+                                ? resolvedNodeMaterials
+                                : Array.Empty<FbxIntermediateMaterial>();
+
+                            IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint =
+                                hasSkinBinding
+                                    ? BuildSkinWeightsByControlPoint(skinBinding, sceneNode.Transform.WorldMatrix, nodesByObjectId)
+                                    : null;
+
+                            workItems.Add(new MeshBuildWorkItem(
+                                workItems.Count,
+                                modelObjectId,
+                                sceneNode,
+                                mesh,
+                                meshGeometry,
+                                intermediateNode,
+                                nodeMaterials,
+                                skinWeightsByControlPoint,
+                                blendShapeChannels));
+                        }
                     }
                 }
 
@@ -298,67 +317,75 @@ internal static class NativeFbxSceneImporter
 
                 if (workItems.Count > 0)
                 {
-                    int completedWorkItems = 0;
-                    ParallelOptions parallelOptions = new()
+                    using (IDisposable? executeMeshBuildScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.ExecuteMeshBuilds"))
                     {
-                        CancellationToken = cancellationToken,
-                        MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1),
-                    };
+                        int completedWorkItems = 0;
+                        ParallelOptions parallelOptions = new()
+                        {
+                            CancellationToken = cancellationToken,
+                            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1),
+                        };
 
-                    Parallel.For(0, workItems.Count, parallelOptions, workItemIndex =>
-                    {
-                        MeshBuildWorkItem workItem = workItems[workItemIndex];
-                        List<SubMesh> subMeshes = BuildSubMeshesForNode(
-                            importer,
-                            sourceFilePath,
-                            semantic,
-                            workItem.Mesh,
-                            workItem.MeshGeometry,
-                            workItem.IntermediateNode,
-                            workItem.NodeMaterials,
-                            workItem.SkinWeightsByControlPoint,
-                            workItem.BlendShapeChannels,
-                            createdMaterials,
-                            createdMeshes,
-                            materialCache,
-                            materialCacheSync,
-                            createdAssetsSync,
-                            flipUvY,
-                            cancellationToken,
-                            rootNode.Transform,
-                            generateMeshRenderersAsync);
+                        Parallel.For(0, workItems.Count, parallelOptions, workItemIndex =>
+                        {
+                            MeshBuildWorkItem workItem = workItems[workItemIndex];
+                            List<SubMesh> subMeshes = BuildSubMeshesForNode(
+                                importer,
+                                sourceFilePath,
+                                semantic,
+                                workItem.Mesh,
+                                workItem.MeshGeometry,
+                                workItem.IntermediateNode,
+                                workItem.NodeMaterials,
+                                workItem.SkinWeightsByControlPoint,
+                                workItem.BlendShapeChannels,
+                                createdMaterials,
+                                createdMeshes,
+                                materialCache,
+                                materialCacheSync,
+                                createdAssetsSync,
+                                flipUvY,
+                                cancellationToken,
+                                rootNode.Transform,
+                                generateMeshRenderersAsync);
 
-                        buildResults[workItemIndex] = new MeshBuildResult(
-                            workItem.ModelObjectId,
-                            workItem.SceneNode,
-                            workItem.Mesh.Name,
-                            subMeshes,
-                            workItem.BlendShapeChannels);
+                            buildResults[workItemIndex] = new MeshBuildResult(
+                                workItem.ModelObjectId,
+                                workItem.SceneNode,
+                                workItem.Mesh.Name,
+                                subMeshes,
+                                workItem.BlendShapeChannels);
 
-                        int completed = Interlocked.Increment(ref completedWorkItems);
-                        onProgress?.Invoke(completed / (float)workItems.Count);
-                    });
-                }
-
-                for (int resultIndex = 0; resultIndex < buildResults.Length; resultIndex++)
-                {
-                    if (buildResults[resultIndex] is not MeshBuildResult result)
-                        continue;
-
-                    if (result.SubMeshes.Count == 0)
-                    {
-                        XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Mesh '{result.MeshName}' produced no submeshes for node '{result.SceneNode.Name}' (objectId={result.ModelObjectId}).");
-                        continue;
+                            int completed = Interlocked.Increment(ref completedWorkItems);
+                            onProgress?.Invoke(completed / (float)workItems.Count);
+                        });
                     }
-
-                    AttachSubMeshesToNode(result.SceneNode, result.SubMeshes, result.MeshName, importOptions, result.BlendShapeChannels);
-
-                    XREngine.Fbx.FbxTrace.Verbose(
-                        "NativeImporter",
-                        $"Attached {result.SubMeshes.Count:N0} submesh(es) from mesh '{result.MeshName}' to node '{result.SceneNode.Name}' with blendShapeChannels={result.BlendShapeChannels.Count:N0}.");
                 }
 
-                int attachedAnimationClipCount = AttachAnimationClips(rootNode, semantic, animations, nodesByObjectId);
+                using (IDisposable? attachBuiltMeshesScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.AttachBuiltMeshes"))
+                {
+                    for (int resultIndex = 0; resultIndex < buildResults.Length; resultIndex++)
+                    {
+                        if (buildResults[resultIndex] is not MeshBuildResult result)
+                            continue;
+
+                        if (result.SubMeshes.Count == 0)
+                        {
+                            XREngine.Fbx.FbxTrace.Verbose("NativeImporter", $"Mesh '{result.MeshName}' produced no submeshes for node '{result.SceneNode.Name}' (objectId={result.ModelObjectId}).");
+                            continue;
+                        }
+
+                        AttachSubMeshesToNode(result.SceneNode, result.SubMeshes, result.MeshName, importOptions, result.BlendShapeChannels);
+
+                        XREngine.Fbx.FbxTrace.Verbose(
+                            "NativeImporter",
+                            $"Attached {result.SubMeshes.Count:N0} submesh(es) from mesh '{result.MeshName}' to node '{result.SceneNode.Name}' with blendShapeChannels={result.BlendShapeChannels.Count:N0}.");
+                    }
+                }
+
+                int attachedAnimationClipCount;
+                using (IDisposable? attachAnimationScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.AttachAnimationClips"))
+                    attachedAnimationClipCount = AttachAnimationClips(rootNode, semantic, animations, nodesByObjectId);
                 XREngine.Fbx.FbxTrace.Info("NativeImporter", $"Attached {attachedAnimationClipCount:N0} animation clip(s) to imported root '{rootNode.Name}'.");
 
                 return new ImportResult(rootNode, createdMaterials, createdMeshes);
@@ -382,6 +409,7 @@ internal static class NativeFbxSceneImporter
 
     private static Dictionary<long, FbxIntermediateMaterial[]> BuildMaterialsByModelObjectId(FbxSemanticDocument semantic)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         Dictionary<long, List<FbxIntermediateMaterial>> materialsByModelObjectId = new();
         IReadOnlyList<FbxIntermediateMaterial> materials = semantic.IntermediateScene.Materials;
         for (int materialIndex = 0; materialIndex < materials.Count; materialIndex++)
@@ -412,6 +440,7 @@ internal static class NativeFbxSceneImporter
 
     private static Dictionary<long, FbxIntermediateNode> BuildIntermediateNodesByObjectId(FbxSemanticDocument semantic)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         Dictionary<long, FbxIntermediateNode> nodesByObjectId = new(semantic.IntermediateScene.Nodes.Count);
         IReadOnlyList<FbxIntermediateNode> nodes = semantic.IntermediateScene.Nodes;
         for (int nodeIndex = 0; nodeIndex < nodes.Count; nodeIndex++)
@@ -425,6 +454,7 @@ internal static class NativeFbxSceneImporter
 
     private static Dictionary<long, SceneNode> BuildSceneNodes(SceneNode rootNode, FbxSemanticDocument semantic, int importLayer, CancellationToken cancellationToken)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         Dictionary<long, SceneNode> nodesByObjectId = new(semantic.IntermediateScene.Nodes.Count);
         foreach (FbxIntermediateNode node in semantic.IntermediateScene.Nodes)
         {
@@ -449,6 +479,7 @@ internal static class NativeFbxSceneImporter
         ModelImportOptions? importOptions,
         IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         bool splitSubmeshesIntoSeparateModelComponents = importOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false;
         if (splitSubmeshesIntoSeparateModelComponents)
         {
@@ -494,6 +525,7 @@ internal static class NativeFbxSceneImporter
         TransformBase rootTransform,
         bool generateMeshRenderersAsync)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         int materialSlotCount = Math.Max(1, nodeMaterials.Count);
         List<MeshChunkBuilder>?[] buildersByMaterialSlot = new List<MeshChunkBuilder>?[materialSlotCount];
         IReadOnlyList<int> polygonVertexIndices = meshGeometry.PolygonVertexIndices;
@@ -503,97 +535,103 @@ internal static class NativeFbxSceneImporter
 
         int polygonVertexStart = 0;
         int polygonIndex = 0;
-        while (polygonVertexStart < polygonVertexIndices.Count)
+        using (IDisposable? polygonTraversalScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "BuildSubMeshesForNode.PolygonTraversal"))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            int polygonVertexCount = CountPolygonVertexCount(polygonVertexIndices, polygonVertexStart);
-            Vertex[] rentedPolygonVertices = ArrayPool<Vertex>.Shared.Rent(polygonVertexCount);
-            int polygonVertexIndex = polygonVertexStart;
-            int localPolygonVertexIndex = 0;
-            try
+            while (polygonVertexStart < polygonVertexIndices.Count)
             {
-                while (polygonVertexIndex < polygonVertexIndices.Count)
+                cancellationToken.ThrowIfCancellationRequested();
+
+                int polygonVertexCount = CountPolygonVertexCount(polygonVertexIndices, polygonVertexStart);
+                Vertex[] rentedPolygonVertices = ArrayPool<Vertex>.Shared.Rent(polygonVertexCount);
+                int polygonVertexIndex = polygonVertexStart;
+                int localPolygonVertexIndex = 0;
+                try
                 {
-                    int encodedControlPointIndex = polygonVertexIndices[polygonVertexIndex];
-                    bool endOfPolygon = encodedControlPointIndex < 0;
-                    int controlPointIndex = endOfPolygon ? ~encodedControlPointIndex : encodedControlPointIndex;
-                    rentedPolygonVertices[localPolygonVertexIndex++] = CreateVertex(
-                        meshGeometry,
-                        intermediateNode.GeometryTransform,
-                        controlPointIndex,
-                        polygonVertexIndex,
-                        polygonIndex,
-                        normalLayer,
-                        tangentLayer,
-                        flipUvY,
-                        skinWeightsByControlPoint,
-                        blendShapeChannels);
-                    polygonVertexIndex++;
-                    if (endOfPolygon)
-                        break;
+                    while (polygonVertexIndex < polygonVertexIndices.Count)
+                    {
+                        int encodedControlPointIndex = polygonVertexIndices[polygonVertexIndex];
+                        bool endOfPolygon = encodedControlPointIndex < 0;
+                        int controlPointIndex = endOfPolygon ? ~encodedControlPointIndex : encodedControlPointIndex;
+                        rentedPolygonVertices[localPolygonVertexIndex++] = CreateVertex(
+                            meshGeometry,
+                            intermediateNode.GeometryTransform,
+                            controlPointIndex,
+                            polygonVertexIndex,
+                            polygonIndex,
+                            normalLayer,
+                            tangentLayer,
+                            flipUvY,
+                            skinWeightsByControlPoint,
+                            blendShapeChannels);
+                        polygonVertexIndex++;
+                        if (endOfPolygon)
+                            break;
+                    }
+
+                    int materialSlot = ResolveMaterialSlot(meshGeometry.Materials, polygonIndex, polygonVertexStart, nodeMaterials.Count);
+                    List<MeshChunkBuilder> chunks = buildersByMaterialSlot[materialSlot] ??= [];
+                    MeshChunkBuilder chunk = chunks.Count > 0 && chunks[^1].CanAppendPolygon(localPolygonVertexIndex)
+                        ? chunks[^1]
+                        : CreateChunk(chunks, materialSlot, polygonVertexIndices.Count - polygonVertexStart, localPolygonVertexIndex);
+                    chunk.AppendPolygon(rentedPolygonVertices.AsSpan(0, localPolygonVertexIndex));
+
+                    polygonVertexStart = polygonVertexIndex;
+                    polygonIndex++;
                 }
-
-                int materialSlot = ResolveMaterialSlot(meshGeometry.Materials, polygonIndex, polygonVertexStart, nodeMaterials.Count);
-                List<MeshChunkBuilder> chunks = buildersByMaterialSlot[materialSlot] ??= [];
-                MeshChunkBuilder chunk = chunks.Count > 0 && chunks[^1].CanAppendPolygon(localPolygonVertexIndex)
-                    ? chunks[^1]
-                    : CreateChunk(chunks, materialSlot, polygonVertexIndices.Count - polygonVertexStart, localPolygonVertexIndex);
-                chunk.AppendPolygon(rentedPolygonVertices.AsSpan(0, localPolygonVertexIndex));
-
-                polygonVertexStart = polygonVertexIndex;
-                polygonIndex++;
-            }
-            finally
-            {
-                ArrayPool<Vertex>.Shared.Return(rentedPolygonVertices, clearArray: true);
+                finally
+                {
+                    ArrayPool<Vertex>.Shared.Return(rentedPolygonVertices, clearArray: true);
+                }
             }
         }
 
         List<SubMesh> subMeshes = [];
-        for (int materialSlot = 0; materialSlot < buildersByMaterialSlot.Length; materialSlot++)
+        using (IDisposable? materializeSubMeshesScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "BuildSubMeshesForNode.MaterializeSubMeshes"))
         {
-            List<MeshChunkBuilder>? chunks = buildersByMaterialSlot[materialSlot];
-            if (chunks is null || chunks.Count == 0)
-                continue;
-
-            XRMaterial material = ResolveMaterial(
-                importer,
-                sourceFilePath,
-                semantic,
-                nodeMaterials,
-                materialSlot,
-                materialCache,
-                createdMaterials,
-                materialCacheSync);
-
-            for (int chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
+            for (int materialSlot = 0; materialSlot < buildersByMaterialSlot.Length; materialSlot++)
             {
-                MeshChunkBuilder chunk = chunks[chunkIndex];
-                if (chunk.Vertices.Count == 0 || chunk.Indices.Count == 0)
+                List<MeshChunkBuilder>? chunks = buildersByMaterialSlot[materialSlot];
+                if (chunks is null || chunks.Count == 0)
                     continue;
 
-                XRMesh xrMesh = new(chunk.Vertices, chunk.Indices);
-                if (skinWeightsByControlPoint is not null && skinWeightsByControlPoint.Count > 0)
-                    xrMesh.RebuildSkinningBuffersFromVertices();
-                if (blendShapeNames is not null)
+                XRMaterial material = ResolveMaterial(
+                    importer,
+                    sourceFilePath,
+                    semantic,
+                    nodeMaterials,
+                    materialSlot,
+                    materialCache,
+                    createdMaterials,
+                    materialCacheSync);
+
+                for (int chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
                 {
-                    xrMesh.BlendshapeNames = blendShapeNames;
-                    xrMesh.RebuildBlendshapeBuffersFromVertices();
+                    MeshChunkBuilder chunk = chunks[chunkIndex];
+                    if (chunk.Vertices.Count == 0 || chunk.Indices.Count == 0)
+                        continue;
+
+                    XRMesh xrMesh = new(chunk.Vertices, chunk.Indices);
+                    if (skinWeightsByControlPoint is not null && skinWeightsByControlPoint.Count > 0)
+                        xrMesh.RebuildSkinningBuffersFromVertices();
+                    if (blendShapeNames is not null)
+                    {
+                        xrMesh.BlendshapeNames = blendShapeNames;
+                        xrMesh.RebuildBlendshapeBuffersFromVertices();
+                    }
+                    lock (createdAssetsSync)
+                        createdMeshes.Add(xrMesh);
+
+                    SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
+                    {
+                        GenerateAsync = generateMeshRenderersAsync,
+                    })
+                    {
+                        Name = chunks.Count == 1 ? mesh.Name : $"{mesh.Name} {chunkIndex}",
+                        RootTransform = rootTransform,
+                    };
+
+                    subMeshes.Add(subMesh);
                 }
-                lock (createdAssetsSync)
-                    createdMeshes.Add(xrMesh);
-
-                SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
-                {
-                    GenerateAsync = generateMeshRenderersAsync,
-                })
-                {
-                    Name = chunks.Count == 1 ? mesh.Name : $"{mesh.Name} {chunkIndex}",
-                    RootTransform = rootTransform,
-                };
-
-                subMeshes.Add(subMesh);
             }
         }
 
@@ -739,6 +777,7 @@ internal static class NativeFbxSceneImporter
         Matrix4x4 meshWorldMatrix,
         IReadOnlyDictionary<long, SceneNode> nodesByObjectId)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> weightsByControlPoint = new();
         foreach (FbxClusterBinding cluster in skinBinding.Clusters)
         {
@@ -814,6 +853,7 @@ internal static class NativeFbxSceneImporter
         FbxAnimationDocument animations,
         IReadOnlyDictionary<long, SceneNode> nodesByObjectId)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         if (animations.Stacks.Count == 0)
             return 0;
 
@@ -1065,6 +1105,7 @@ internal static class NativeFbxSceneImporter
         List<XRMaterial> createdMaterials,
         object materialCacheSync)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         long materialCacheKey = DefaultMaterialCacheKey;
         FbxIntermediateMaterial? intermediateMaterial = null;
         if (materialSlot >= 0 && materialSlot < nodeMaterials.Count)
@@ -1102,6 +1143,7 @@ internal static class NativeFbxSceneImporter
 
     private static List<TextureSlot> BuildTextureSlots(FbxSemanticDocument semantic, long materialObjectId, bool transparentBlendHint)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         List<TextureSlot> textureSlots = [];
         foreach (FbxConnection connection in semantic.Connections)
         {
@@ -1124,6 +1166,7 @@ internal static class NativeFbxSceneImporter
 
     private static string? ResolveTextureFilePath(FbxSemanticDocument semantic, FbxSceneObject textureObject)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         string? path = GetInlineAttribute(textureObject, "RelativeFilename")
             ?? GetInlineAttribute(textureObject, "FileName")
             ?? GetInlineAttribute(textureObject, "Filename")
@@ -1277,6 +1320,7 @@ internal static class NativeFbxSceneImporter
 
     private static void ApplyLocalMatrix(SceneNode sceneNode, Matrix4x4 localMatrix)
     {
+        using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         Transform transform = sceneNode.GetTransformAs<Transform>(true)!;
         transform.DeriveLocalMatrix(localMatrix);
         transform.RecalculateMatrices(true, false);

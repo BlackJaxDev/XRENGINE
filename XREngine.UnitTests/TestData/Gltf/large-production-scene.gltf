@@ -1,0 +1,658 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "GitHub Copilot synthetic glTF corpus"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "ProductionScene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "ProductionRoot",
+      "children": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49
+      ]
+    },
+    {
+      "name": "Instance_00",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Instance_01",
+      "mesh": 0,
+      "translation": [
+        12.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Instance_02",
+      "mesh": 0,
+      "translation": [
+        24.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Instance_03",
+      "mesh": 0,
+      "translation": [
+        36.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Instance_04",
+      "mesh": 0,
+      "translation": [
+        48.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Instance_05",
+      "mesh": 0,
+      "translation": [
+        60.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Instance_06",
+      "mesh": 0,
+      "translation": [
+        72.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Instance_07",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "name": "Instance_08",
+      "mesh": 0,
+      "translation": [
+        12.0,
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "name": "Instance_09",
+      "mesh": 0,
+      "translation": [
+        24.0,
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "name": "Instance_10",
+      "mesh": 0,
+      "translation": [
+        36.0,
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "name": "Instance_11",
+      "mesh": 0,
+      "translation": [
+        48.0,
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "name": "Instance_12",
+      "mesh": 0,
+      "translation": [
+        60.0,
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "name": "Instance_13",
+      "mesh": 0,
+      "translation": [
+        72.0,
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "name": "Instance_14",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        0.0,
+        24.0
+      ]
+    },
+    {
+      "name": "Instance_15",
+      "mesh": 0,
+      "translation": [
+        12.0,
+        0.0,
+        24.0
+      ]
+    },
+    {
+      "name": "Instance_16",
+      "mesh": 0,
+      "translation": [
+        24.0,
+        0.0,
+        24.0
+      ]
+    },
+    {
+      "name": "Instance_17",
+      "mesh": 0,
+      "translation": [
+        36.0,
+        0.0,
+        24.0
+      ]
+    },
+    {
+      "name": "Instance_18",
+      "mesh": 0,
+      "translation": [
+        48.0,
+        0.0,
+        24.0
+      ]
+    },
+    {
+      "name": "Instance_19",
+      "mesh": 0,
+      "translation": [
+        60.0,
+        0.0,
+        24.0
+      ]
+    },
+    {
+      "name": "Instance_20",
+      "mesh": 0,
+      "translation": [
+        72.0,
+        0.0,
+        24.0
+      ]
+    },
+    {
+      "name": "Instance_21",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        0.0,
+        36.0
+      ]
+    },
+    {
+      "name": "Instance_22",
+      "mesh": 0,
+      "translation": [
+        12.0,
+        0.0,
+        36.0
+      ]
+    },
+    {
+      "name": "Instance_23",
+      "mesh": 0,
+      "translation": [
+        24.0,
+        0.0,
+        36.0
+      ]
+    },
+    {
+      "name": "Instance_24",
+      "mesh": 0,
+      "translation": [
+        36.0,
+        0.0,
+        36.0
+      ]
+    },
+    {
+      "name": "Instance_25",
+      "mesh": 0,
+      "translation": [
+        48.0,
+        0.0,
+        36.0
+      ]
+    },
+    {
+      "name": "Instance_26",
+      "mesh": 0,
+      "translation": [
+        60.0,
+        0.0,
+        36.0
+      ]
+    },
+    {
+      "name": "Instance_27",
+      "mesh": 0,
+      "translation": [
+        72.0,
+        0.0,
+        36.0
+      ]
+    },
+    {
+      "name": "Instance_28",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        0.0,
+        48.0
+      ]
+    },
+    {
+      "name": "Instance_29",
+      "mesh": 0,
+      "translation": [
+        12.0,
+        0.0,
+        48.0
+      ]
+    },
+    {
+      "name": "Instance_30",
+      "mesh": 0,
+      "translation": [
+        24.0,
+        0.0,
+        48.0
+      ]
+    },
+    {
+      "name": "Instance_31",
+      "mesh": 0,
+      "translation": [
+        36.0,
+        0.0,
+        48.0
+      ]
+    },
+    {
+      "name": "Instance_32",
+      "mesh": 0,
+      "translation": [
+        48.0,
+        0.0,
+        48.0
+      ]
+    },
+    {
+      "name": "Instance_33",
+      "mesh": 0,
+      "translation": [
+        60.0,
+        0.0,
+        48.0
+      ]
+    },
+    {
+      "name": "Instance_34",
+      "mesh": 0,
+      "translation": [
+        72.0,
+        0.0,
+        48.0
+      ]
+    },
+    {
+      "name": "Instance_35",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        0.0,
+        60.0
+      ]
+    },
+    {
+      "name": "Instance_36",
+      "mesh": 0,
+      "translation": [
+        12.0,
+        0.0,
+        60.0
+      ]
+    },
+    {
+      "name": "Instance_37",
+      "mesh": 0,
+      "translation": [
+        24.0,
+        0.0,
+        60.0
+      ]
+    },
+    {
+      "name": "Instance_38",
+      "mesh": 0,
+      "translation": [
+        36.0,
+        0.0,
+        60.0
+      ]
+    },
+    {
+      "name": "Instance_39",
+      "mesh": 0,
+      "translation": [
+        48.0,
+        0.0,
+        60.0
+      ]
+    },
+    {
+      "name": "Instance_40",
+      "mesh": 0,
+      "translation": [
+        60.0,
+        0.0,
+        60.0
+      ]
+    },
+    {
+      "name": "Instance_41",
+      "mesh": 0,
+      "translation": [
+        72.0,
+        0.0,
+        60.0
+      ]
+    },
+    {
+      "name": "Instance_42",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        0.0,
+        72.0
+      ]
+    },
+    {
+      "name": "Instance_43",
+      "mesh": 0,
+      "translation": [
+        12.0,
+        0.0,
+        72.0
+      ]
+    },
+    {
+      "name": "Instance_44",
+      "mesh": 0,
+      "translation": [
+        24.0,
+        0.0,
+        72.0
+      ]
+    },
+    {
+      "name": "Instance_45",
+      "mesh": 0,
+      "translation": [
+        36.0,
+        0.0,
+        72.0
+      ]
+    },
+    {
+      "name": "Instance_46",
+      "mesh": 0,
+      "translation": [
+        48.0,
+        0.0,
+        72.0
+      ]
+    },
+    {
+      "name": "Instance_47",
+      "mesh": 0,
+      "translation": [
+        60.0,
+        0.0,
+        72.0
+      ]
+    },
+    {
+      "name": "Instance_48",
+      "mesh": 0,
+      "translation": [
+        72.0,
+        0.0,
+        72.0
+      ]
+    }
+  ],
+  "meshes": [
+    {
+      "name": "SharedGridMesh",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Large Material",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0,
+          "texCoord": 0
+        },
+        "metallicFactor": 0.0,
+        "roughnessFactor": 1.0
+      }
+    }
+  ],
+  "textures": [
+    {
+      "name": "Large Base Color",
+      "sampler": 0,
+      "source": 0
+    }
+  ],
+  "samplers": [
+    {
+      "wrapS": 10497,
+      "wrapT": 10497,
+      "minFilter": 9729,
+      "magFilter": 9729
+    }
+  ],
+  "images": [
+    {
+      "name": "LargeChecker",
+      "uri": "checker.png"
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "large-production-scene.bin",
+      "byteLength": 104480
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 28812,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 28812,
+      "byteLength": 28812,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 57624,
+      "byteLength": 19208,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 76832,
+      "byteLength": 27648,
+      "target": 34963
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 2401,
+      "type": "VEC3",
+      "min": [
+        -5.0,
+        -0.06418934283028846,
+        -5.0
+      ],
+      "max": [
+        5.0,
+        0.1299554609500519,
+        5.0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 2401,
+      "type": "VEC3",
+      "min": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "max": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 2401,
+      "type": "VEC2",
+      "min": [
+        0.0,
+        0.0
+      ],
+      "max": [
+        6.0,
+        6.0
+      ]
+    },
+    {
+      "bufferView": 3,
+      "byteOffset": 0,
+      "componentType": 5123,
+      "count": 13824,
+      "type": "SCALAR",
+      "min": [
+        0
+      ],
+      "max": [
+        2400
+      ]
+    }
+  ]
+}

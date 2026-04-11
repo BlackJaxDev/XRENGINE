@@ -1,0 +1,19 @@
+{
+  "assetId": "large-production-scene",
+  "importSucceeded": true,
+  "container": "Gltf",
+  "fileSizeBytes": 10296,
+  "nodeCount": 51,
+  "meshCount": 49,
+  "materialCount": 1,
+  "animationCount": 0,
+  "skinCount": 0,
+  "boneCount": 0,
+  "morphTargetCount": 0,
+  "totalVertices": 117649,
+  "totalTriangles": 225792,
+  "maxHierarchyDepth": 2,
+  "textureCount": 1,
+  "usedExtensions": [],
+  "notes": "Representative production-style workload for native vs Assimp wall-time, allocation, and parallel import comparison."
+}

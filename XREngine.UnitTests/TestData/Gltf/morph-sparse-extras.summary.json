@@ -1,0 +1,19 @@
+{
+  "assetId": "morph-sparse-extras",
+  "importSucceeded": true,
+  "container": "Gltf",
+  "fileSizeBytes": 4334,
+  "nodeCount": 3,
+  "meshCount": 1,
+  "materialCount": 1,
+  "animationCount": 0,
+  "skinCount": 0,
+  "boneCount": 0,
+  "morphTargetCount": 1,
+  "totalVertices": 4,
+  "totalTriangles": 2,
+  "maxHierarchyDepth": 2,
+  "textureCount": 1,
+  "usedExtensions": [],
+  "notes": "Dedicated regression asset for sparse-accessor decode, morph target import, retained extras, and unknown extension payload preservation."
+}

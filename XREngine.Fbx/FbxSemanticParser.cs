@@ -7,12 +7,14 @@ public static class FbxSemanticParser
 {
     public static FbxSemanticDocument ParseFile(string path, FbxSceneSemanticsPolicy? policy = null, FbxReaderOptions? readerOptions = null)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         using FbxStructuralDocument structural = FbxStructuralParser.ParseFile(path, readerOptions);
         return Parse(structural, policy);
     }
 
     public static FbxSemanticDocument Parse(byte[] source, FbxSceneSemanticsPolicy? policy = null, FbxReaderOptions? readerOptions = null)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         using FbxStructuralDocument structural = FbxStructuralParser.Parse(source, readerOptions);
         return Parse(structural, policy);
     }
@@ -20,6 +22,7 @@ public static class FbxSemanticParser
     public static FbxSemanticDocument Parse(FbxStructuralDocument structural, FbxSceneSemanticsPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(structural);
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
 
         return FbxTrace.TraceOperation(
             "SemanticParser",
@@ -77,6 +80,7 @@ public static class FbxSemanticParser
 
     private static int[][] BuildChildrenByNode(IReadOnlyList<FbxNodeRecord> nodes)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         List<int>[] children = new List<int>[nodes.Count];
         for (int index = 0; index < nodes.Count; index++)
         {
@@ -108,6 +112,7 @@ public static class FbxSemanticParser
 
     private static FbxGlobalSettings ParseGlobalSettings(FbxStructuralDocument structural, int[][] childrenByNode, int nodeIndex)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         Dictionary<string, FbxPropertyEntry> properties = ParseProperties70Block(structural, childrenByNode, nodeIndex);
 
         FbxAxisSystem axisSystem = new(
@@ -129,6 +134,7 @@ public static class FbxSemanticParser
 
     private static FbxDefinitionType[] ParseDefinitions(FbxStructuralDocument structural, int[][] childrenByNode, int nodeIndex)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         List<FbxDefinitionType> definitions = [];
         foreach (int childIndex in childrenByNode[nodeIndex])
         {
@@ -167,6 +173,7 @@ public static class FbxSemanticParser
 
     private static FbxSceneObject[] ParseObjects(FbxStructuralDocument structural, int[][] childrenByNode, int nodeIndex)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         List<FbxSceneObject> objects = [];
         foreach (int childIndex in childrenByNode[nodeIndex])
         {
@@ -199,6 +206,7 @@ public static class FbxSemanticParser
 
     private static FbxConnection[] ParseConnections(FbxStructuralDocument structural, int[][] childrenByNode, int nodeIndex)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         List<FbxConnection> connections = [];
         foreach (int childIndex in childrenByNode[nodeIndex])
         {
@@ -219,6 +227,7 @@ public static class FbxSemanticParser
 
     private static FbxTake[] ParseTakes(FbxStructuralDocument structural, int[][] childrenByNode, int nodeIndex)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         string? currentTakeName = null;
         List<FbxTake> takes = [];
 
@@ -266,6 +275,7 @@ public static class FbxSemanticParser
 
     private static (int[][] outbound, int[][] inbound) BuildConnectionIndices(FbxSceneObject[] objects, FbxConnection[] connections, Dictionary<long, int> objectIndexById)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         List<int>[] outboundLists = new List<int>[objects.Length];
         List<int>[] inboundLists = new List<int>[objects.Length];
         for (int connectionIndex = 0; connectionIndex < connections.Length; connectionIndex++)
@@ -291,6 +301,7 @@ public static class FbxSemanticParser
 
     private static FbxIntermediateScene BuildIntermediateScene(FbxSceneSemanticsPolicy policy, FbxSceneObject[] objects, FbxConnection[] connections, Dictionary<long, int> objectIndexById, int[][] outbound, int[][] inbound)
     {
+        using IDisposable? profilerScope = FbxTrace.StartProfilerScope("SemanticParser");
         Dictionary<long, List<long>> outboundObjectIds = BuildConnectedObjectMap(connections, sourceToDestination: true);
         Dictionary<long, List<long>> inboundObjectIds = BuildConnectedObjectMap(connections, sourceToDestination: false);
 

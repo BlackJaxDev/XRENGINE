@@ -1,0 +1,19 @@
+{
+  "assetId": "skinned-morph-animated",
+  "importSucceeded": true,
+  "container": "Gltf",
+  "fileSizeBytes": 5545,
+  "nodeCount": 4,
+  "meshCount": 1,
+  "materialCount": 1,
+  "animationCount": 1,
+  "skinCount": 1,
+  "boneCount": 2,
+  "morphTargetCount": 0,
+  "totalVertices": 4,
+  "totalTriangles": 2,
+  "maxHierarchyDepth": 2,
+  "textureCount": 1,
+  "usedExtensions": [],
+  "notes": "Primary native regression asset for scene/default-scene selection, skinning, and transform animation coverage."
+}

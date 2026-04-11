@@ -15,6 +15,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Fbx;
+using XREngine.Gltf;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
@@ -1457,6 +1458,36 @@ namespace XREngine
             using var _ = ImportOptionsScope.Push(effectiveImportOptions);
             using var __ = ImportSourceScope.Push(SourceFilePath);
 
+            if (ShouldUseNativeGltfBackend(effectiveImportOptions))
+            {
+                bool allowAssimpFallback = effectiveImportOptions.GltfBackend == GltfImportBackend.Auto;
+
+                try
+                {
+                    NativeGltfSceneImporter.ImportResult result = NativeGltfSceneImporter.Import(
+                        this,
+                        SourceFilePath,
+                        effectiveImportOptions,
+                        effectiveImportOptions.ScaleConversion,
+                        effectiveImportOptions.ZUp,
+                        _importLayer,
+                        cancellationToken,
+                        onProgress,
+                        rootTransformMatrix);
+
+                    foreach (XRMaterial material in result.Materials)
+                        _materials.Add(material);
+                    foreach (XRMesh mesh in result.Meshes)
+                        _meshes.Add(mesh);
+
+                    return result.RootNode;
+                }
+                catch (Exception ex) when (allowAssimpFallback)
+                {
+                    LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Native glTF import failed for '{SourceFilePath}'. Falling back to Assimp. {ex.Message}");
+                }
+            }
+
             if (ShouldUseNativeFbxBackend(effectiveImportOptions))
             {
                 NativeFbxSceneImporter.ImportResult result = NativeFbxSceneImporter.Import(
@@ -1537,6 +1568,7 @@ namespace XREngine
                 ZUp = zUp,
                 MultiThread = multiThread,
                 ProcessMeshesAsynchronously = processMeshesAsynchronously,
+                GltfBackend = GltfImportBackend.Auto,
             };
 
             if (batchSubmeshAddsDuringAsyncImport.HasValue)
@@ -1549,6 +1581,14 @@ namespace XREngine
         private bool ShouldUseNativeFbxBackend(ModelImportOptions effectiveImportOptions)
             => Path.GetExtension(SourceFilePath).Equals(".fbx", StringComparison.OrdinalIgnoreCase)
                 && effectiveImportOptions.FbxBackend is not FbxImportBackend.AssimpLegacy;
+
+        private bool ShouldUseNativeGltfBackend(ModelImportOptions effectiveImportOptions)
+        {
+            string extension = Path.GetExtension(SourceFilePath);
+            return (extension.Equals(".gltf", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".glb", StringComparison.OrdinalIgnoreCase))
+                && effectiveImportOptions.GltfBackend is not GltfImportBackend.AssimpLegacy;
+        }
 
         private void SetAssimpConfig(ModelImportOptions importOptions)
         {
@@ -1971,6 +2011,7 @@ namespace XREngine
 
                 Mesh mesh = scene.Meshes[meshIndex];
                 (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform, cancellationToken);
+                xrMesh.BindRootMatrix = rootTransform.BindMatrix;
                 _meshes.Add(xrMesh);
                 _materials.Add(xrMaterial);
 

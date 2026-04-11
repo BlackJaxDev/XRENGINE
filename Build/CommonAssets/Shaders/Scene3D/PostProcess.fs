@@ -165,6 +165,17 @@ vec3 HSVtoRGB(vec3 c)
     vec3 p = abs(fract(c.xxx + K.xyz) * 6.0f - K.www);
     return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0f, 1.0f), c.y);
 }
+vec3 ApplyHsvColorGrade(vec3 sceneColor)
+{
+  if (ColorGrade.Hue == 1.0f && ColorGrade.Saturation == 1.0f && ColorGrade.Brightness == 1.0f)
+    return sceneColor;
+
+  vec3 hsv = RGBtoHSV(max(sceneColor, vec3(0.0f)));
+  hsv.x = fract(hsv.x * ColorGrade.Hue);
+  hsv.y = clamp(hsv.y * ColorGrade.Saturation, 0.0f, 1.0f);
+  hsv.z = max(hsv.z * ColorGrade.Brightness, 0.0f);
+  return HSVtoRGB(hsv);
+}
 float rand(vec2 coord)
 {
     return fract(sin(dot(coord, vec2(12.9898f, 78.233f))) * 43758.5453f);
@@ -176,6 +187,16 @@ float interleavedGradientNoise(vec2 pixelCoord)
 float saturate(float value)
 {
   return clamp(value, 0.0f, 1.0f);
+}
+vec3 ApplyVignette(vec3 sceneColor, vec2 uv)
+{
+  if (Vignette.Intensity <= 0.0f)
+    return sceneColor;
+
+  vec2 centeredUv = (uv - LensDistortionCenter) * 2.0f;
+  float radius = saturate(length(centeredUv) * 0.70710678f);
+  float vignetteFactor = pow(radius, max(Vignette.Power, 0.0001f)) * saturate(Vignette.Intensity);
+  return mix(sceneColor, Vignette.Color, vignetteFactor);
 }
 float hash13(vec3 p)
 {
@@ -469,53 +490,11 @@ float GetStencilHighlightIntensity(vec2 uv)
     return clamp(float(diff), 0.0f, 1.0f);
 }
 
-// Tonemapping selector
-uniform int TonemapType = 3; //Default to Reinhard
+// Tonemapping selector and shared tonemap operators
+#include "../Snippets/ToneMapping.glsl"
 
-vec3 LinearTM(vec3 c)
-{
-  return c * GetExposure();
-}
-vec3 GammaTM(vec3 c)
-{
-  return pow(c * GetExposure(), vec3(1.0 / ColorGrade.Gamma));
-}
-vec3 ClipTM(vec3 c)
-{
-  return clamp(c * GetExposure(), 0.0, 1.0);
-}
-vec3 ReinhardTM(vec3 c)
-{
-  vec3 x = c * GetExposure();
-  return x / (x + vec3(1.0));
-}
-vec3 HableTM(vec3 c)
-{
-  const float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;
-  vec3 x = max(c * GetExposure() - E, vec3(0.0));
-  return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
-}
-vec3 MobiusTM(vec3 c)
-{
-  float a = 0.6;
-  vec3 x = c * GetExposure();
-  return (x * (a + 1.0)) / (x + a);
-}
-vec3 ACESTM(vec3 c)
-{
-  vec3 x = c * GetExposure();
-  return (x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f);
-}
-vec3 FilmicTM(vec3 c)
-{
-  vec3 x = c * GetExposure();
-  return (x * (x + 0.0245786f)) / (x * (0.983729f * x + 0.432951f) + 0.238081f);
-}
-vec3 NeutralTM(vec3 c)
-{
-  vec3 x = c * GetExposure();
-  return (x * (x + 0.0245786f)) / (x * (0.983729f * x + 0.432951f) + 0.238081f);
-}
+uniform int TonemapType = XRENGINE_TONEMAP_MOBIUS;
+uniform float MobiusTransition = 0.6f;
 
 vec2 ApplyLensDistortion(vec2 uv, float intensity, vec2 center)
 {
@@ -589,12 +568,12 @@ vec2 ApplyLensDistortionByMode(vec2 uv)
             // Convert UV [0,1] to view position using view extents
             // PaniniViewExtents contains (tan(fov/2) * aspect, tan(fov/2))
             // PaniniCrop is the scale factor for crop-to-fit
-      vec2 view_pos = (2.0 * uvCentered - 1.0) * PaniniViewExtents * PaniniCrop;
+            vec2 view_pos = (2.0 * uvCentered - 1.0) * PaniniViewExtents * PaniniCrop;
             vec2 proj_pos = ApplyPaniniProjection(view_pos, PaniniDistance);
             // Convert back to UV
             vec2 proj_ndc = proj_pos / PaniniViewExtents;
-      vec2 outCentered = proj_ndc * 0.5 + 0.5;
-      return outCentered - vec2(0.5) + LensDistortionCenter;
+            vec2 outCentered = proj_ndc * 0.5 + 0.5;
+            return outCentered - vec2(0.5) + LensDistortionCenter;
         }
     }
     else if (LensDistortionMode == 4)
@@ -674,19 +653,7 @@ void main()
   }
   else
   {
-      switch (TonemapType)
-      {
-          case 0:  sceneColor = LinearTM(hdrSceneColor);   break;
-          case 1:  sceneColor = GammaTM(hdrSceneColor);    break;
-          case 2:  sceneColor = ClipTM(hdrSceneColor);     break;
-          case 3:  sceneColor = ReinhardTM(hdrSceneColor); break;
-          case 4:  sceneColor = HableTM(hdrSceneColor);    break;
-          case 5:  sceneColor = MobiusTM(hdrSceneColor);   break;
-          case 6:  sceneColor = ACESTM(hdrSceneColor);     break;
-          case 7:  sceneColor = FilmicTM(hdrSceneColor);   break;
-          case 8:  sceneColor = NeutralTM(hdrSceneColor);  break;
-          default: sceneColor = ReinhardTM(hdrSceneColor); break;
-      }
+      sceneColor = XRENGINE_ApplyToneMap(hdrSceneColor, TonemapType, GetExposure(), ColorGrade.Gamma, MobiusTransition);
   }
 
   //Apply depth-based fog
@@ -700,15 +667,7 @@ void main()
 	//Color grading
 	sceneColor *= ColorGrade.Tint;
 
-  // Hue/Saturation/Brightness grading is only well-defined in the LDR path.
-  if (!OutputHDR && (ColorGrade.Hue != 1.0f || ColorGrade.Saturation != 1.0f || ColorGrade.Brightness != 1.0f))
-  {
-      vec3 hsv = RGBtoHSV(clamp(sceneColor, vec3(0.0f), vec3(1.0f)));
-      hsv.x = fract(hsv.x * ColorGrade.Hue);
-      hsv.y = clamp(hsv.y * ColorGrade.Saturation, 0.0f, 1.0f);
-      hsv.z = max(hsv.z * ColorGrade.Brightness, 0.0f);
-      sceneColor = HSVtoRGB(hsv);
-  }
+	sceneColor = ApplyHsvColorGrade(sceneColor);
 	sceneColor = (sceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
   //Apply highlight color to selected objects
@@ -719,15 +678,12 @@ void main()
   // uint rawStencil = texture(StencilView, uv).r;
   // if ((rawStencil & 1) != 0) sceneColor = vec3(1.0, 0.0, 0.0); // Red where stencil bit 0 is set
 
-	//Vignette
-  //vec2 center = vec2(0.5f);
-  //float vignetteFactor = pow(clamp(length(uv - center) / (0.5f * Vignette.Intensity), 0.0f, 1.0f), Vignette.Power);
-  //ldrSceneColor = mix(ldrSceneColor, Vignette.Color, vignetteFactor);
+	sceneColor = ApplyVignette(sceneColor, uv);
 
   if (!OutputHDR)
   {
 	  //Gamma-correct
-	  sceneColor = pow(sceneColor, vec3(1.0f / ColorGrade.Gamma));
+	  sceneColor = pow(max(sceneColor, vec3(0.0f)), vec3(1.0f / max(ColorGrade.Gamma, 0.0001f)));
 
     //Fix subtle banding by applying fine noise
     sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, rand(uv));

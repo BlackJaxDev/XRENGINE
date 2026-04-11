@@ -95,6 +95,32 @@ public class NativeInteropSmokeTests
         }
     }
 
+    [Test]
+    public void FastGltfBridgeLibrary_ExportsExpectedSymbols()
+    {
+        if (!TryFindNative("FastGltfBridge.Native.dll", out string? path))
+            Assert.Inconclusive("FastGltfBridge.Native.dll was not found. Build the native glTF bridge and ensure it is copied next to the test runtime.");
+
+        string resolvedPath = path ?? throw new AssertionException("Expected FastGltfBridge.Native.dll path to be resolved.");
+
+        if (!NativeLibrary.TryLoad(resolvedPath, out nint handle))
+            Assert.Fail($"FastGltfBridge.Native.dll located at '{resolvedPath}' could not be loaded. Likely wrong architecture or missing dependencies.");
+
+        try
+        {
+            Assert.That(TryGetExport(handle, "xre_fastgltf_open_asset_utf8", out _), Is.True, "FastGltfBridge.Native.dll is missing xre_fastgltf_open_asset_utf8.");
+            Assert.That(TryGetExport(handle, "xre_fastgltf_close_asset", out _), Is.True, "FastGltfBridge.Native.dll is missing xre_fastgltf_close_asset.");
+            Assert.That(TryGetExport(handle, "xre_fastgltf_copy_last_error_utf8", out _), Is.True, "FastGltfBridge.Native.dll is missing xre_fastgltf_copy_last_error_utf8.");
+            Assert.That(TryGetExport(handle, "xre_fastgltf_get_buffer_view_byte_length", out _), Is.True, "FastGltfBridge.Native.dll is missing xre_fastgltf_get_buffer_view_byte_length.");
+            Assert.That(TryGetExport(handle, "xre_fastgltf_copy_buffer_view_bytes", out _), Is.True, "FastGltfBridge.Native.dll is missing xre_fastgltf_copy_buffer_view_bytes.");
+            Assert.That(TryGetExport(handle, "xre_fastgltf_copy_accessor", out _), Is.True, "FastGltfBridge.Native.dll is missing xre_fastgltf_copy_accessor.");
+        }
+        finally
+        {
+            NativeLibrary.Free(handle);
+        }
+    }
+
     private static bool TryFindNative(string fileName, out string? path)
     {
         string? current = TestContext.CurrentContext.TestDirectory;

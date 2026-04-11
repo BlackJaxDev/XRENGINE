@@ -21,6 +21,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
 | Physics-chain performance | Active | [todo/physics-chain-speed-update-todo.md](todo/physics-chain-speed-update-todo.md) | Prior compatibility notes were merged into the active TODO. |
 | Native FBX import/export | Active | [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md) | Assimp replacement roadmap for a low-allocation native FBX path. |
+| fastgltf glTF import | Stable doc | [../features/model-import.md](../features/model-import.md) | Native glTF import shipped; the completed checklist remains in [todo/fastgltf-gltf-import-todo.md](todo/fastgltf-gltf-import-todo.md). |
 | USD import/export | Active | [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md) | Managed-fast-path plus OpenUSD-fallback roadmap for USD scene/model support. |
 | Non-HBAO AO | Active | [todo/non-hbao-ambient-occlusion-remediation.md](todo/non-hbao-ambient-occlusion-remediation.md) | Prior audit and remediation notes are consolidated here. |
 | HBAO / HBAO+ | Active | [todo/hbao-hbao-plus-implementation-todo.md](todo/hbao-hbao-plus-implementation-todo.md) | Active implementation tracker. |

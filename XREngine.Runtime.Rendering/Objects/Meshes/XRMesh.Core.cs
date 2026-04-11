@@ -13,6 +13,12 @@ using Matrix4x4 = System.Numerics.Matrix4x4;
 
 namespace XREngine.Rendering;
 
+public enum ESkinningShaderConvention : byte
+{
+    LegacyImplicitTranspose = 0,
+    ExplicitRowMajorRowVector = 1,
+}
+
 [MemoryPackable(GenerateType.NoGenerate)]
 public partial class XRMesh : XRAsset
 {
@@ -137,6 +143,23 @@ public partial class XRMesh : XRAsset
         get => _utilizedBones;
         set => SetField(ref _utilizedBones, value);
     }
+
+    private ESkinningShaderConvention _skinningShaderConvention = ESkinningShaderConvention.LegacyImplicitTranspose;
+    public ESkinningShaderConvention SkinningShaderConvention
+    {
+        get => _skinningShaderConvention;
+        set => SetField(ref _skinningShaderConvention, value);
+    }
+
+    /// <summary>
+    /// The import-root's BindMatrix at the time this mesh was created.
+    /// Used by the renderer to convert InverseBindMatrices from world-space to
+    /// root-local-space so they match the vertex coordinate frame produced by geometryTransform.
+    /// Null means the root was at the world origin (Identity).
+    /// </summary>
+    [MemoryPackIgnore]
+    public Matrix4x4? BindRootMatrix { get; set; }
+
     public bool HasSkinning => _utilizedBones is { Length: > 0 };
     public bool IsSingleBound => UtilizedBones.Length == 1;
     public bool IsUnskinned => UtilizedBones.Length == 0;

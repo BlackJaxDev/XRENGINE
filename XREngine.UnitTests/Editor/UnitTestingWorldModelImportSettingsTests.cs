@@ -58,7 +58,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
     }
 
     [Test]
-    public void CreateImportOptions_AssimpOnlyForcesLegacyFbxBackend_AndPreservesImportSettings()
+    public void CreateImportOptions_AssimpOnlyForcesLegacyNativeBackends_AndPreservesImportSettings()
     {
         var model = new EditorUnitTests.Settings.ModelImportSettings
         {
@@ -73,6 +73,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
 
         options.ShouldNotBeNull();
         options!.FbxBackend.ShouldBe(FbxImportBackend.AssimpLegacy);
+        options.GltfBackend.ShouldBe(GltfImportBackend.AssimpLegacy);
         options.PostProcessSteps.ShouldBe(model.ImportFlags);
         options.ScaleConversion.ShouldBe(model.Scale);
         options.ZUp.ShouldBeTrue();
@@ -92,5 +93,6 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         options.ShouldNotBeNull();
         options!.SplitSubmeshesIntoSeparateModelComponents.ShouldBeTrue();
         options.FbxBackend.ShouldBe(FbxImportBackend.Auto);
+        options.GltfBackend.ShouldBe(GltfImportBackend.Auto);
     }
 }

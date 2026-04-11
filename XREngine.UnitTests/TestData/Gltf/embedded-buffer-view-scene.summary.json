@@ -1,0 +1,19 @@
+{
+  "assetId": "embedded-buffer-view-scene",
+  "importSucceeded": true,
+  "container": "Glb",
+  "fileSizeBytes": 1916,
+  "nodeCount": 3,
+  "meshCount": 1,
+  "materialCount": 1,
+  "animationCount": 0,
+  "skinCount": 0,
+  "boneCount": 0,
+  "morphTargetCount": 0,
+  "totalVertices": 4,
+  "totalTriangles": 2,
+  "maxHierarchyDepth": 2,
+  "textureCount": 1,
+  "usedExtensions": [],
+  "notes": "Dedicated embedded-container fixture for GLB parsing, BIN chunk ownership, buffer-view image reads, and baked matrix transforms."
+}

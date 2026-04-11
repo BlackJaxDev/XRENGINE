@@ -244,6 +244,7 @@ namespace XREngine.Rendering.Shaders.Generator
         private bool UseComputeSkinning => Engine.Rendering.Settings.CalculateSkinningInComputeShader && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
         private bool UseComputeBlendshapes => Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Mesh.BlendshapeCount > 0 && Engine.Rendering.Settings.AllowBlendshapes;
         private bool UseComputeDeformation => UseComputeSkinning || UseComputeBlendshapes;
+        private bool UseExplicitRowVectorSkinningConvention => Mesh.SkinningShaderConvention == ESkinningShaderConvention.ExplicitRowMajorRowVector;
 
         private const int ComputeInterleavedBinding = 9;
         private const int ComputePositionBinding = 11;
@@ -368,10 +369,10 @@ namespace XREngine.Rendering.Shaders.Generator
             bool skinning = Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
             if (skinning)
             {
-                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrices}Buffer", binding++, rowMajor: true))
+                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrices}Buffer", binding++, rowMajor: UseExplicitRowVectorSkinningConvention))
                     WriteUniform(EShaderVarType._mat4, ECommonBufferType.BoneMatrices.ToString(), true);
 
-                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneInvBindMatrices}Buffer", binding++, rowMajor: true))
+                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneInvBindMatrices}Buffer", binding++, rowMajor: UseExplicitRowVectorSkinningConvention))
                     WriteUniform(EShaderVarType._mat4, ECommonBufferType.BoneInvBindMatrices.ToString(), true);
 
                 bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
@@ -541,6 +542,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
             bool hasNormals = _useNormals;
             bool hasTangents = _useTangents;
+            bool explicitRowVector = UseExplicitRowVectorSkinningConvention;
 
             bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
             if (optimizeTo4Weights)
@@ -554,13 +556,34 @@ namespace XREngine.Rendering.Shaders.Generator
                     using (OpenBracketState())
                         Line("continue;");
                     Line("uint paletteIndex = boneMatrixBase + uint(boneIndex);");
-                    Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];"); // * {EEngineUniform.RootInvModelMatrix}
-                    Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
+                    // ExplicitRowVector: row_major SSBO so GLSL sees the C# matrix as-is.
+                    //   boneMatrix = InvBind * World;  pos * boneMatrix ≡ pos * InvBind * World  ✔
+                    // Legacy: no row_major so GLSL sees C# matrices transposed.
+                    //   boneMatrix = World^T * InvBind^T = (InvBind * World)^T;
+                    //   boneMatrix * pos ≡ pos * InvBind * World  ✔
+                    if (explicitRowVector)
+                        Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
+                    else
+                        Line($"mat4 boneMatrix = {ECommonBufferType.BoneMatrices}[paletteIndex] * {ECommonBufferType.BoneInvBindMatrices}[paletteIndex];");
+                    if (explicitRowVector)
+                        Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
+                    else
+                        Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
                     Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
                     if (hasNormals)
-                        Line($"{FinalNormalName} += ({BaseNormalName} * boneMatrix3) * weight;");
+                    {
+                        if (explicitRowVector)
+                            Line($"{FinalNormalName} += ({BaseNormalName} * boneMatrix3) * weight;");
+                        else
+                            Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
+                    }
                     if (hasTangents)
-                        Line($"{FinalTangentName} += ({BaseTangentName} * boneMatrix3) * weight;");
+                    {
+                        if (explicitRowVector)
+                            Line($"{FinalTangentName} += ({BaseTangentName} * boneMatrix3) * weight;");
+                        else
+                            Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
+                    }
                 }
             }
             else
@@ -575,13 +598,29 @@ namespace XREngine.Rendering.Shaders.Generator
                     using (OpenBracketState())
                         Line("continue;");
                     Line("uint paletteIndex = boneMatrixBase + uint(boneIndex);");
-                    Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];"); // * {EEngineUniform.RootInvModelMatrix}
-                    Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
+                    if (explicitRowVector)
+                        Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
+                    else
+                        Line($"mat4 boneMatrix = {ECommonBufferType.BoneMatrices}[paletteIndex] * {ECommonBufferType.BoneInvBindMatrices}[paletteIndex];");
+                    if (explicitRowVector)
+                        Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
+                    else
+                        Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
                     Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
                     if (hasNormals)
-                        Line($"{FinalNormalName} += ({BaseNormalName} * boneMatrix3) * weight;");
+                    {
+                        if (explicitRowVector)
+                            Line($"{FinalNormalName} += ({BaseNormalName} * boneMatrix3) * weight;");
+                        else
+                            Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
+                    }
                     if (hasTangents)
-                        Line($"{FinalTangentName} += ({BaseTangentName} * boneMatrix3) * weight;");
+                    {
+                        if (explicitRowVector)
+                            Line($"{FinalTangentName} += ({BaseTangentName} * boneMatrix3) * weight;");
+                        else
+                            Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
+                    }
                 }
             }
 

@@ -7,6 +7,7 @@ using Assimp;
 using XREngine.Data;
 using XREngine.Core.Files;
 using XREngine.Fbx;
+using XREngine.Gltf;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
@@ -168,6 +169,22 @@ namespace XREngine.Scene.Prefabs
                 {
                     materialRemap.Add(name, null);
                     importOptionsChanged = true;
+                }
+            }
+
+            if (GltfImportKeyUtilities.IsGltfPath(filePath))
+            {
+                try
+                {
+                    GltfRoot gltfDocument = GltfJsonLoader.Load(filePath);
+                    foreach (string textureKey in GltfImportKeyUtilities.EnumerateReferencedTextureKeys(gltfDocument))
+                        TrackTextureKey(textureKey);
+                    foreach (string materialKey in GltfImportKeyUtilities.GetMaterialKeys(gltfDocument))
+                        TrackMaterialKey(materialKey);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[XRPrefabSource] Failed to pre-seed glTF remap keys for '{filePath}'. {ex.Message}");
                 }
             }
 
