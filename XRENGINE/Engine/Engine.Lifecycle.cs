@@ -68,6 +68,7 @@ namespace XREngine
             try
             {
                 StartingUp = true;
+                ShuttingDown = false;
                 RenderThreadId = Environment.CurrentManagedThreadId;
                 GameSettings = startupSettings;
                 UserSettings = GameSettings.DefaultUserSettings?.DeepClone() ?? new UserSettings();
@@ -167,6 +168,11 @@ namespace XREngine
         /// </remarks>
         internal static void Cleanup()
         {
+            if (ShuttingDown)
+                return;
+
+            ShuttingDown = true;
+
             // Stop profiler sender before tearing down subsystems it reads from
 #if !XRE_PUBLISHED
             UdpProfilerSender.Stop();
