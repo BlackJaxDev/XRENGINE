@@ -196,7 +196,7 @@ public static partial class EditorUnitTests
                             importer.MakeMaterialAction = ResolveMakeMaterialAction(model);
                             importer.MakeTextureAction = CreateHardcodedTexture;
                             importer.ImportOptions = importOptions;
-                            var node = importer.Import(
+                                return importer.Import(
                                 model.ImportFlags,
                                 preservePivots: true,
                                 removeAssimpFBXNodes: true,
@@ -204,12 +204,31 @@ public static partial class EditorUnitTests
                                 zUp: model.ZUp,
                                 multiThread: true,
                                 rootTransformMatrix: GetOptionalRootTransformMatrix(model));
-                            if (characterParentNode != null && node != null)
-                                characterParentNode.Transform.AddChild(node.Transform, false, EParentAssignmentMode.Immediate);
-                            return node;
                         }
 
-                        Task.Run(ImportAnimated).ContinueWith(nodeTask => OnFinishedImportingAvatar(nodeTask.Result, characterParentNode));
+                            Task.Run(ImportAnimated).ContinueWith(nodeTask =>
+                            {
+                                if (nodeTask.IsCanceled)
+                                {
+                                    Debug.LogWarning($"[AnimatedModel] Import was canceled: {resolvedPath}");
+                                    return;
+                                }
+
+                                if (nodeTask.IsFaulted)
+                                {
+                                    Debug.LogException(nodeTask.Exception?.GetBaseException() ?? new InvalidOperationException("Animated model import failed without an exception."), $"[AnimatedModel] Failed to import animated model: {resolvedPath}");
+                                    return;
+                                }
+
+                                SceneNode? importedNode = nodeTask.Result;
+                                _ = Engine.InvokeOnMainThread(() =>
+                                {
+                                    if (characterParentNode != null && importedNode != null && importedNode.Transform.Parent != characterParentNode.Transform)
+                                        characterParentNode.Transform.AddChild(importedNode.Transform, false, EParentAssignmentMode.Immediate);
+
+                                    OnFinishedImportingAvatar(importedNode, characterParentNode);
+                                }, $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyMainThread: true);
+                            });
                         break;
                     }
                     case UnitTestModelImportKind.Static:
@@ -445,10 +464,55 @@ public static partial class EditorUnitTests
             (SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes) = task.Result;
             OnFinishedImportingAvatar(rootNode);
         }
+
+        private sealed class AvatarStartupClipLoadResult
+        {
+            public AnimationClip? VmdClip { get; init; }
+            public AnimationClip? AnimClip { get; init; }
+            public string? AnimClipPath { get; init; }
+            public bool AnimClipFileExists { get; init; }
+            public bool RunPoseAudit { get; init; }
+        }
+
         public static void OnFinishedImportingAvatar(SceneNode? rootNode)
             => OnFinishedImportingAvatar(rootNode, characterParentNode: null);
 
+        private static AvatarStartupClipLoadResult? LoadAvatarStartupClips()
+        {
+            if (!Toggles.AnimationClipVMD && !Toggles.AnimationClipAnim)
+                return null;
+
+            var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+
+            AnimationClip? vmdClip = null;
+            if (Toggles.AnimationClipVMD)
+                vmdClip = Engine.Assets.Load<AnimationClip>(Path.Combine(desktopDir, "test.vmd"));
+
+            string? animClipPath = null;
+            bool animClipFileExists = false;
+            AnimationClip? animClip = null;
+            if (Toggles.AnimationClipAnim)
+            {
+                animClipPath = ResolveUnitTestAssetPath(desktopDir, Toggles.AnimClipPath);
+                animClipFileExists = File.Exists(animClipPath);
+                if (animClipFileExists)
+                    animClip = Engine.Assets.Load<AnimationClip>(animClipPath);
+            }
+
+            return new AvatarStartupClipLoadResult
+            {
+                VmdClip = vmdClip,
+                AnimClip = animClip,
+                AnimClipPath = animClipPath,
+                AnimClipFileExists = animClipFileExists,
+                RunPoseAudit = Toggles.HumanoidPoseAuditEnabled || !string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditReferencePath),
+            };
+        }
+
         public static void OnFinishedImportingAvatar(SceneNode? rootNode, SceneNode? characterParentNode)
+            => OnFinishedImportingAvatar(rootNode, characterParentNode, startupClips: null);
+
+        private static void OnFinishedImportingAvatar(SceneNode? rootNode, SceneNode? characterParentNode, AvatarStartupClipLoadResult? startupClips)
         {
             if (rootNode is null)
                 return;
@@ -657,75 +721,6 @@ public static partial class EditorUnitTests
                 glasses?.IsActiveSelf = false;
             }
 
-            if (Toggles.AnimationClipVMD)
-            {
-                var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                var clip = Engine.Assets.Load<AnimationClip>(Path.Combine(desktopDir, "test.vmd"));
-                if (clip is not null)
-                {
-                    clip.Looped = true;
-
-                    var anim = rootNode.AddComponent<AnimationClipComponent>()!;
-                    anim.StartOnActivate = true;
-                    anim.Animation = clip;
-                }
-            }
-
-            if (Toggles.AnimationClipAnim)
-            {
-                var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                string resolvedPath = ResolveUnitTestAssetPath(desktopDir, Toggles.AnimClipPath);
-                if (!File.Exists(resolvedPath))
-                {
-                    Debug.LogWarning($"[UnitTestingWorld] .anim clip not found at '{resolvedPath}' (raw='{Toggles.AnimClipPath}')");
-                }
-                else
-                {
-                    var clip = Engine.Assets.Load<AnimationClip>(resolvedPath);
-                    if (clip is not null)
-                    {
-                        clip.Looped = Toggles.AnimLooped;
-
-                        bool runPoseAudit = Toggles.HumanoidPoseAuditEnabled || !string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditReferencePath);
-                        bool suppressHumanoidAutoplay = clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle && !runPoseAudit;
-
-                        var anim = rootNode.AddComponent<AnimationClipComponent>()!;
-                        anim.StartOnActivate = !suppressHumanoidAutoplay;
-                        anim.Animation = clip;
-
-                        if (suppressHumanoidAutoplay)
-                        {
-                            Debug.LogWarning($"[UnitTestingWorld] Loaded Unity humanoid clip '{clip.Name}' but left it paused. Raw .anim humanoid curves do not yet match Unity HumanPose semantics; enable HumanoidPoseAudit* settings or start the clip manually if you need to inspect that playback path.");
-                        }
-
-                        if (clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle
-                            && rootNode.TryGetComponent<HumanoidIKSolverComponent>(out var humanoidIK)
-                            && humanoidIK is not null)
-                        {
-                            humanoidIK.IsActive = false;
-                            Debug.Out($"[UnitTestingWorld] Disabled HumanoidIKSolverComponent for humanoid clip '{clip.Name}' to inspect raw muscle playback.");
-                        }
-
-                        if (runPoseAudit)
-                        {
-                            var audit = rootNode.AddComponent<HumanoidPoseAuditComponent>()!;
-                            audit.TargetClipComponent = anim;
-                            audit.TargetHumanoid = humanComp;
-                            audit.OutputPath = ResolveUnitTestArtifactPath(Toggles.HumanoidPoseAuditOutputPath);
-                            audit.ReferencePath = string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditReferencePath)
-                                ? null
-                                : ResolveUnitTestAssetPath(desktopDir, Toggles.HumanoidPoseAuditReferencePath);
-                            audit.ComparisonOutputPath = string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditComparisonOutputPath)
-                                ? null
-                                : ResolveUnitTestArtifactPath(Toggles.HumanoidPoseAuditComparisonOutputPath);
-                            audit.SampleRateOverride = Toggles.HumanoidPoseAuditSampleRateOverride ?? 0;
-
-                            Debug.Out($"[UnitTestingWorld] Enabled humanoid pose audit export for clip '{clip.Name}' -> '{audit.OutputPath}'.");
-                        }
-                    }
-                }
-            }
-
             OVRLipSyncComponent? lipSync = null;
             if (Toggles.AttachMicToAnimatedModel)
             {
@@ -755,6 +750,108 @@ public static partial class EditorUnitTests
                     }
                 }
             }
+
+            if (startupClips is not null)
+                AttachAvatarStartupClips(rootNode, humanComp, startupClips);
+            else
+                QueueAvatarStartupClipAttachment(rootNode);
+        }
+
+        private static void QueueAvatarStartupClipAttachment(SceneNode rootNode)
+        {
+            if (!Toggles.AnimationClipVMD && !Toggles.AnimationClipAnim)
+                return;
+
+            Task.Run(LoadAvatarStartupClips).ContinueWith(loadTask =>
+            {
+                if (loadTask.IsCanceled)
+                {
+                    Debug.LogWarning("[UnitTestingWorld] Avatar startup clip load was canceled.");
+                    return;
+                }
+
+                if (loadTask.IsFaulted)
+                {
+                    Debug.LogException(loadTask.Exception?.GetBaseException() ?? new InvalidOperationException("Avatar startup clip load failed without an exception."), "[UnitTestingWorld] Failed to load avatar startup clips.");
+                    return;
+                }
+
+                AvatarStartupClipLoadResult? startupClips = loadTask.Result;
+                if (startupClips is null)
+                    return;
+
+                _ = Engine.InvokeOnMainThread(() =>
+                {
+                    if (!rootNode.TryGetComponent<HumanoidComponent>(out var humanComp) || humanComp is null)
+                        return;
+
+                    AttachAvatarStartupClips(rootNode, humanComp, startupClips);
+                }, $"UnitTestingWorld: Attach startup clips to '{rootNode.Name}'", executeNowIfAlreadyMainThread: true);
+            });
+        }
+
+        private static void AttachAvatarStartupClips(SceneNode rootNode, HumanoidComponent humanComp, AvatarStartupClipLoadResult startupClips)
+        {
+            if (startupClips.VmdClip is AnimationClip vmdClip)
+            {
+                vmdClip.Looped = true;
+
+                var anim = rootNode.AddComponent<AnimationClipComponent>()!;
+                anim.StartOnActivate = true;
+                anim.Animation = vmdClip;
+            }
+
+            if (!Toggles.AnimationClipAnim)
+                return;
+
+            if (!startupClips.AnimClipFileExists)
+            {
+                string resolvedPath = startupClips.AnimClipPath ?? Toggles.AnimClipPath;
+                Debug.LogWarning($"[UnitTestingWorld] .anim clip not found at '{resolvedPath}' (raw='{Toggles.AnimClipPath}')");
+                return;
+            }
+
+            if (startupClips.AnimClip is not AnimationClip clip)
+                return;
+
+            clip.Looped = Toggles.AnimLooped;
+
+            bool runPoseAudit = startupClips.RunPoseAudit;
+
+            var animClipComponent = rootNode.AddComponent<AnimationClipComponent>()!;
+            animClipComponent.StartOnActivate = true;
+            animClipComponent.Animation = clip;
+
+            if (clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle && !runPoseAudit)
+            {
+                Debug.LogWarning($"[UnitTestingWorld] Loaded Unity humanoid clip '{clip.Name}' and started playback. Raw .anim humanoid curves still do not fully match Unity HumanPose semantics; enable HumanoidPoseAudit* settings if you need to compare that path precisely.");
+            }
+
+            if (clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle
+                && rootNode.TryGetComponent<HumanoidIKSolverComponent>(out var humanoidIK)
+                && humanoidIK is not null)
+            {
+                humanoidIK.IsActive = false;
+                Debug.Out($"[UnitTestingWorld] Disabled HumanoidIKSolverComponent for humanoid clip '{clip.Name}' to inspect raw muscle playback.");
+            }
+
+            if (!runPoseAudit)
+                return;
+
+            var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            var audit = rootNode.AddComponent<HumanoidPoseAuditComponent>()!;
+            audit.TargetClipComponent = animClipComponent;
+            audit.TargetHumanoid = humanComp;
+            audit.OutputPath = ResolveUnitTestArtifactPath(Toggles.HumanoidPoseAuditOutputPath);
+            audit.ReferencePath = string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditReferencePath)
+                ? null
+                : ResolveUnitTestAssetPath(desktopDir, Toggles.HumanoidPoseAuditReferencePath);
+            audit.ComparisonOutputPath = string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditComparisonOutputPath)
+                ? null
+                : ResolveUnitTestArtifactPath(Toggles.HumanoidPoseAuditComparisonOutputPath);
+            audit.SampleRateOverride = Toggles.HumanoidPoseAuditSampleRateOverride ?? 0;
+
+            Debug.Out($"[UnitTestingWorld] Enabled humanoid pose audit export for clip '{clip.Name}' -> '{audit.OutputPath}'.");
         }
 
         private static void TryScaleAvatarToFitDesktopCapsule(

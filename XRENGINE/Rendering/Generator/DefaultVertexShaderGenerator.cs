@@ -559,12 +559,13 @@ namespace XREngine.Rendering.Shaders.Generator
                     // ExplicitRowVector: row_major SSBO so GLSL sees the C# matrix as-is.
                     //   boneMatrix = InvBind * World;  pos * boneMatrix ≡ pos * InvBind * World  ✔
                     // Legacy: no row_major so GLSL sees C# matrices transposed.
-                    //   boneMatrix = World^T * InvBind^T = (InvBind * World)^T;
-                    //   boneMatrix * pos ≡ pos * InvBind * World  ✔
+                        //   boneMatrix = InvBind^T * World^T = (World * InvBind)^T;
+                        //   boneMatrix * pos ≡ pos * World * InvBind
+                        //   Skinning output is root-local; ModelMatrix transforms to world.
                     if (explicitRowVector)
                         Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
                     else
-                        Line($"mat4 boneMatrix = {ECommonBufferType.BoneMatrices}[paletteIndex] * {ECommonBufferType.BoneInvBindMatrices}[paletteIndex];");
+                            Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
                     if (explicitRowVector)
                         Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
                     else
@@ -601,7 +602,7 @@ namespace XREngine.Rendering.Shaders.Generator
                     if (explicitRowVector)
                         Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
                     else
-                        Line($"mat4 boneMatrix = {ECommonBufferType.BoneMatrices}[paletteIndex] * {ECommonBufferType.BoneInvBindMatrices}[paletteIndex];");
+                            Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
                     if (explicitRowVector)
                         Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
                     else

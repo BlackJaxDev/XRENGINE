@@ -2011,7 +2011,10 @@ namespace XREngine
 
                 Mesh mesh = scene.Meshes[meshIndex];
                 (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform, cancellationToken);
-                xrMesh.BindRootMatrix = rootTransform.BindMatrix;
+                    // BindRootMatrix is not set for the Assimp/legacy path:
+                    // The legacy GLSL convention outputs root-local positions (via implicit transpose),
+                    // and ModelMatrix correctly transforms root-local to world. Pre-multiplying rootBind
+                    // would produce world-space skinning output, causing double-transformation with ModelMatrix.
                 _meshes.Add(xrMesh);
                 _materials.Add(xrMaterial);
 
