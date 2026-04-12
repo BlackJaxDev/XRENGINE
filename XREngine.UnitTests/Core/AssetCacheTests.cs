@@ -3,6 +3,7 @@ using Shouldly;
 using System;
 using System.IO;
 using XREngine;
+using XREngine.Animation;
 using XREngine.Core.Files;
 using XREngine.Data;
 using TestContext = NUnit.Framework.TestContext;
@@ -49,6 +50,41 @@ public sealed class AssetCacheTests
             thirdLoad.ShouldNotBeNull();
             thirdLoad.Payload.ShouldBe("updated");
             StubThirdPartyAsset.LoadCount.ShouldBe(2, "modified sources must trigger re-imports");
+        }
+        finally
+        {
+            manager.Dispose();
+        }
+    }
+
+    [Test]
+    public void LoadAnimationClip_DoesNotGenerateThirdPartyCacheAsset()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        var manager = new AssetManager();
+        manager.MonitorGameAssetsForChanges = false;
+        try
+        {
+            manager.GameAssetsPath = sandbox.AssetsPath;
+            manager.GameCachePath = sandbox.CachePath;
+
+            string sourcePath = Path.Combine(sandbox.AssetsPath, "walk.anim");
+            File.WriteAllText(sourcePath, """
+AnimationClip:
+  m_Name: CacheBypassClip
+  m_SampleRate: 60
+  m_AnimationClipSettings:
+    m_StartTime: 0
+    m_StopTime: 1
+    m_LoopTime: 0
+  m_FloatCurves: []
+""");
+
+            AnimationClip? clip = manager.Load<AnimationClip>(sourcePath);
+            clip.ShouldNotBeNull();
+            clip.LengthInSeconds.ShouldBe(1.0f);
+
+            Directory.EnumerateFiles(sandbox.CachePath, "*", SearchOption.AllDirectories).ShouldBeEmpty();
         }
         finally
         {

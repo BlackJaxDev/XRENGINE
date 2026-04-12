@@ -1258,7 +1258,7 @@ namespace XREngine.Rendering
                 _dirtyBoneFlags[i] = false;
             }
 
-            PushDirtyBoneRanges(BoneMatricesBuffer, _dirtyBoneIndices);
+                BoneMatricesBuffer.PushSubData();
             _dirtyBoneIndices.Clear();
         }
 
@@ -1320,43 +1320,6 @@ namespace XREngine.Rendering
                 Debug.Out($"    Delta    T=({deltaT.X:F3},{deltaT.Y:F3},{deltaT.Z:F3}) rotTrace={traceRot:F3}");
                 logged++;
             }
-        }
-
-        private static void PushDirtyBoneRanges(XRDataBuffer buffer, List<uint> dirtyBoneIndices)
-        {
-            uint elementSize = buffer.ElementSize;
-            if (elementSize == 0)
-            {
-                buffer.PushSubData();
-                return;
-            }
-
-            dirtyBoneIndices.Sort();
-
-            uint rangeStart = dirtyBoneIndices[0];
-            uint previous = rangeStart;
-            for (int i = 1; i < dirtyBoneIndices.Count; ++i)
-            {
-                uint current = dirtyBoneIndices[i];
-                if (current == previous + 1u)
-                {
-                    previous = current;
-                    continue;
-                }
-
-                PushDirtyBoneRange(buffer, rangeStart, previous, elementSize);
-                rangeStart = current;
-                previous = current;
-            }
-
-            PushDirtyBoneRange(buffer, rangeStart, previous, elementSize);
-        }
-
-        private static void PushDirtyBoneRange(XRDataBuffer buffer, uint startIndex, uint endIndex, uint elementSize)
-        {
-            int byteOffset = checked((int)(startIndex * elementSize));
-            uint byteLength = checked((endIndex - startIndex + 1u) * elementSize);
-            buffer.PushSubData(byteOffset, byteLength);
         }
 
         internal void RegisterGpuDrivenBoneIndices(IReadOnlyList<uint> boneIndices)

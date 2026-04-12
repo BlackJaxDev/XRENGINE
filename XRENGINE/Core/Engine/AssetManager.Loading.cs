@@ -16,6 +16,7 @@ using XREngine.Data.Core;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Serialization;
+using XREngine.Animation;
 
 namespace XREngine
 {
@@ -502,8 +503,10 @@ namespace XREngine
 
         private T? Load3rdPartyWithCache<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
+            bool useCache = ShouldUseThirdPartyCache(typeof(T));
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
-            bool hasCachePath = TryResolveCachePath(filePath, typeof(T), cacheVariantKey: null, out string cachePath);
+            string cachePath = string.Empty;
+            bool hasCachePath = useCache && TryResolveCachePath(filePath, typeof(T), cacheVariantKey: null, out cachePath);
 
             if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
             {
@@ -526,8 +529,10 @@ namespace XREngine
 
         private XRAsset? Load3rdPartyWithCache(string filePath, string ext, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type)
         {
+            bool useCache = ShouldUseThirdPartyCache(type);
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
-            bool hasCachePath = TryResolveCachePath(filePath, type, cacheVariantKey: null, out string cachePath);
+            string cachePath = string.Empty;
+            bool hasCachePath = useCache && TryResolveCachePath(filePath, type, cacheVariantKey: null, out cachePath);
 
             if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, type, out XRAsset? cachedAsset))
             {
@@ -550,8 +555,10 @@ namespace XREngine
 
         private async Task<T?> Load3rdPartyWithCacheAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
+            bool useCache = ShouldUseThirdPartyCache(typeof(T));
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
-            bool hasCachePath = TryResolveCachePath(filePath, typeof(T), cacheVariantKey: null, out string cachePath);
+            string cachePath = string.Empty;
+            bool hasCachePath = useCache && TryResolveCachePath(filePath, typeof(T), cacheVariantKey: null, out cachePath);
 
             if (hasTimestamp && hasCachePath)
             {
@@ -641,6 +648,9 @@ namespace XREngine
             if (string.Equals(Path.GetExtension(normalizedPath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
                 return normalizedPath;
 
+            if (!ShouldUseThirdPartyCache(typeof(T)))
+                return normalizedPath;
+
             if (!File.Exists(normalizedPath))
                 return normalizedPath;
 
@@ -670,10 +680,12 @@ namespace XREngine
             if (!TryGetSourceTimestamp(filePath, out DateTime timestampUtc))
                 return null;
 
-            if (!TryResolveCachePath(filePath, typeof(T), cacheVariantKey, out string cachePath))
+            bool useCache = ShouldUseThirdPartyCache(typeof(T));
+            string cachePath = string.Empty;
+            if (useCache && !TryResolveCachePath(filePath, typeof(T), cacheVariantKey, out cachePath))
                 return null;
 
-            if (TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
+            if (useCache && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
             {
                 cachedAsset!.FilePath = filePath;
                 cachedAsset.OriginalPath = filePath;
@@ -692,7 +704,8 @@ namespace XREngine
             if (!asset.Load3rdParty(filePath, importOptions, context))
                 return null;
 
-            TryWriteCacheAsset(cachePath, asset);
+            if (useCache)
+                TryWriteCacheAsset(cachePath, asset);
             return asset;
         }
 
@@ -703,6 +716,9 @@ namespace XREngine
             string? cacheVariantKey,
             string cachePath)
         {
+            if (!ShouldUseThirdPartyCache(assetType))
+                return false;
+
             if (!TryGetSourceTimestamp(filePath, out DateTime timestampUtc))
                 return false;
 
@@ -818,6 +834,14 @@ namespace XREngine
             }
 
             return true;
+        }
+
+        private static bool ShouldUseThirdPartyCache(Type assetType)
+        {
+            // Unity .anim clips parse quickly, but the current AnimationClip cache serializer is
+            // expensive enough to dominate the synchronous load path and leave import waiting on
+            // cache generation. Until clip caches have a cheaper format, load them directly.
+            return assetType != typeof(AnimationClip);
         }
 
         private static string GetExternalCacheDirectoryName(string normalizedSource)
