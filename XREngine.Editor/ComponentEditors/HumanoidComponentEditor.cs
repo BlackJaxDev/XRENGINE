@@ -37,6 +37,13 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         ("Foot Up-Down", EHumanoidValue.LeftFootUpDown, EHumanoidValue.RightFootUpDown),
         ("Toes Up-Down", EHumanoidValue.LeftToesUpDown, EHumanoidValue.RightToesUpDown),
     ];
+    private static readonly EHumanoidPosePreviewMode[] PosePreviewModes = Enum.GetValues<EHumanoidPosePreviewMode>();
+    private static readonly string[] PosePreviewModeLabels = Array.ConvertAll(PosePreviewModes, static mode => mode.ToString());
+    private static readonly EHumanoidNeutralPosePreset[] NeutralPosePresets = Enum.GetValues<EHumanoidNeutralPosePreset>();
+    private static readonly string[] NeutralPosePresetLabels = Array.ConvertAll(NeutralPosePresets, static preset => preset.ToString());
+    private static readonly string[] IKGoalPolicyNames = Enum.GetNames<EHumanoidIKGoalPolicy>();
+    private static readonly EHumanoidValue[] HumanoidValues = Enum.GetValues<EHumanoidValue>();
+    private static readonly string[] HumanoidValueLabels = Array.ConvertAll(HumanoidValues, static value => value.ToString());
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
@@ -54,16 +61,20 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         }
 
         DrawActionButtons(humanoid);
-        ImGui.SeparatorText("General");
-        DrawGeneralSection(humanoid);
-        ImGui.SeparatorText("Bone Mapping");
-        DrawBoneMappingSection(humanoid);
-        ImGui.SeparatorText("Per-Muscle Settings");
-        DrawPerMuscleSettingsSection(humanoid);
-        ImGui.SeparatorText("Muscle Debug Overrides");
-        DrawMuscleDebugSection(humanoid);
-        ImGui.SeparatorText("Muscle Values");
-        DrawMuscleValuesSection(humanoid);
+        if (ImGui.CollapsingHeader("General", ImGuiTreeNodeFlags.DefaultOpen))
+            DrawGeneralSection(humanoid);
+
+        if (ImGui.CollapsingHeader("Bone Mapping", ImGuiTreeNodeFlags.DefaultOpen))
+            DrawBoneMappingSection(humanoid);
+
+        if (ImGui.CollapsingHeader("Per-Muscle Settings"))
+            DrawPerMuscleSettingsSection(humanoid);
+
+        if (ImGui.CollapsingHeader("Muscle Debug Overrides"))
+            DrawMuscleDebugSection(humanoid);
+
+        if (ImGui.CollapsingHeader("Muscle Values"))
+            DrawMuscleValuesSection(humanoid);
 
         ComponentEditorLayout.DrawActivePreviewDialog();
     }
@@ -95,12 +106,13 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
     private static void DrawGeneralSection(HumanoidComponent humanoid)
     {
         var previewMode = humanoid.PosePreviewMode;
-        if (ImGui.BeginCombo("Pose Preview", previewMode.ToString()))
+        if (ImGui.BeginCombo("Pose Preview", PosePreviewModeLabels[(int)previewMode]))
         {
-            foreach (EHumanoidPosePreviewMode mode in Enum.GetValues<EHumanoidPosePreviewMode>())
+            for (int i = 0; i < PosePreviewModes.Length; i++)
             {
+                EHumanoidPosePreviewMode mode = PosePreviewModes[i];
                 bool selected = previewMode == mode;
-                if (ImGui.Selectable(mode.ToString(), selected))
+                if (ImGui.Selectable(PosePreviewModeLabels[i], selected))
                 {
                     using var _ = Undo.TrackChange("Change Pose Preview", humanoid);
                     EnqueueSceneEdit(() => humanoid.PosePreviewMode = mode);
@@ -114,12 +126,13 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         }
 
         var neutralPreset = humanoid.NeutralPosePreset;
-        if (ImGui.BeginCombo("Neutral Pose Preset", neutralPreset.ToString()))
+        if (ImGui.BeginCombo("Neutral Pose Preset", NeutralPosePresetLabels[(int)neutralPreset]))
         {
-            foreach (EHumanoidNeutralPosePreset preset in Enum.GetValues<EHumanoidNeutralPosePreset>())
+            for (int i = 0; i < NeutralPosePresets.Length; i++)
             {
+                EHumanoidNeutralPosePreset preset = NeutralPosePresets[i];
                 bool selected = neutralPreset == preset;
-                if (ImGui.Selectable(preset.ToString(), selected))
+                if (ImGui.Selectable(NeutralPosePresetLabels[i], selected))
                 {
                     using var _ = Undo.TrackChange("Change Neutral Pose Preset", humanoid);
                     EnqueueSceneEdit(() => humanoid.NeutralPosePreset = preset);
@@ -152,7 +165,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
     {
         DrawBoneGroup("Core", [("Hips", humanoid.Hips), ("Spine", humanoid.Spine), ("Chest", humanoid.Chest), ("Neck", humanoid.Neck), ("Head", humanoid.Head), ("Jaw", humanoid.Jaw)]);
 
-        if (ImGui.TreeNodeEx("Eyes", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.TreeNode("Eyes"))
         {
             DrawBoneDef("Eyes Target", humanoid.EyesTarget);
             DrawBoneDef("Left Eye", humanoid.Left.Eye);
@@ -320,10 +333,9 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         ImGui.Separator();
         ImGui.Spacing();
 
-        var policyNames = Enum.GetNames<EHumanoidIKGoalPolicy>();
         int policyIndex = (int)s.IKGoalPolicy;
         ImGui.SetNextItemWidth(180f);
-        if (ImGui.Combo("IK Goal Policy", ref policyIndex, policyNames, policyNames.Length))
+        if (ImGui.Combo("IK Goal Policy", ref policyIndex, IKGoalPolicyNames, IKGoalPolicyNames.Length))
         {
             using var _ = Undo.TrackChange("IK Goal Policy", s);
             s.IKGoalPolicy = (EHumanoidIKGoalPolicy)policyIndex;
@@ -591,20 +603,47 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.3f);
         ImGui.TableHeadersRow();
 
-        foreach (EHumanoidValue value in Enum.GetValues<EHumanoidValue>())
+        if (showZeroes)
         {
-            float amount = humanoid.TryGetMuscleValue(value, out var v) ? v : 0.0f;
-            if (!showZeroes && MathF.Abs(amount) < 0.0001f)
-                continue;
+            unsafe
+            {
+                var clipper = new ImGuiListClipper();
+                ImGuiNative.ImGuiListClipper_Begin(&clipper, HumanoidValues.Length, ImGui.GetTextLineHeightWithSpacing());
+                while (ImGuiNative.ImGuiListClipper_Step(&clipper) != 0)
+                {
+                    for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
+                    {
+                        EHumanoidValue value = HumanoidValues[i];
+                        float amount = humanoid.TryGetMuscleValue(value, out var current) ? current : 0.0f;
+                        DrawMuscleValueRow(HumanoidValueLabels[i], amount);
+                    }
+                }
+                ImGuiNative.ImGuiListClipper_End(&clipper);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < HumanoidValues.Length; i++)
+            {
+                EHumanoidValue value = HumanoidValues[i];
+                float amount = humanoid.TryGetMuscleValue(value, out var current) ? current : 0.0f;
+                if (MathF.Abs(amount) < 0.0001f)
+                    continue;
 
-            ImGui.TableNextRow();
-            ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted(value.ToString());
-            ImGui.TableSetColumnIndex(1);
-            ImGui.TextUnformatted($"{amount:0.###}");
+                DrawMuscleValueRow(HumanoidValueLabels[i], amount);
+            }
         }
 
         ImGui.EndTable();
+    }
+
+    private static void DrawMuscleValueRow(string label, float amount)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableSetColumnIndex(0);
+        ImGui.TextUnformatted(label);
+        ImGui.TableSetColumnIndex(1);
+        ImGui.TextUnformatted($"{amount:0.###}");
     }
 
     private static void DrawBoneGroup(string label, (string name, HumanoidComponent.BoneDef def)[] bones)
@@ -664,7 +703,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawBodySide(string label, HumanoidComponent.BodySide side)
     {
-        if (!ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.TreeNode(label))
             return;
 
         DrawBoneDef("Shoulder", side.Shoulder);
@@ -676,7 +715,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         DrawBoneDef("Foot", side.Foot);
         DrawBoneDef("Toes", side.Toes);
 
-        if (ImGui.TreeNodeEx("Fingers", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.TreeNode("Fingers"))
         {
             DrawFinger("Thumb", side.Hand.Thumb);
             DrawFinger("Index", side.Hand.Index);
@@ -691,7 +730,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawFinger(string label, HumanoidComponent.BodySide.Fingers.Finger finger)
     {
-        if (!ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.TreeNode(label))
             return;
 
         DrawBoneDef("Proximal", finger.Proximal);

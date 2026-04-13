@@ -338,9 +338,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion);
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), region.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), 0.0f);
         }
 
         private void GTAOHorizontalBlur_SetUniforms(XRRenderProgram program)
@@ -370,7 +370,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             var camera = GetCurrentCamera();
             if (camera is not null)
-                program.Uniform(EEngineUniform.DepthMode.ToString(), (int)camera.DepthMode);
+                program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)camera.DepthMode);
 
             var settings = GetCurrentSettings();
             program.Uniform("BlurDirection", direction);

@@ -36,9 +36,18 @@ public static partial class EditorImGuiUI
         private static readonly Dictionary<string, AssetTypeDescriptor?> _assetExplorerAssetTypeCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, HashSet<string>> _assetExplorerYamlKeyCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly AssetExplorerDirectorySnapshot _emptyAssetExplorerDirectorySnapshot = new([], []);
+        private static int _assetExplorerFilterRevision;
         // (Removed) Reflection-based AssetManager.Load lookup. Use the strongly-typed overload instead.
 
         private static bool _assetExplorerDeletePopupRequested;
+
+        private static void InvalidateAssetExplorerFilteredViews()
+        {
+            unchecked
+            {
+                _assetExplorerFilterRevision++;
+            }
+        }
 
         private static partial void DrawAssetExplorerPanel()
         {
@@ -91,7 +100,10 @@ public static partial class EditorImGuiUI
             ImGui.SameLine(0f, 6f);
             ImGui.SetNextItemWidth(240.0f);
             if (ImGui.InputTextWithHint("##AssetExplorerSearch", "Search...", ref _assetExplorerSearchTerm, 256u))
+            {
                 _assetExplorerSearchTerm = _assetExplorerSearchTerm.Trim();
+                InvalidateAssetExplorerFilteredViews();
+            }
 
             ImGui.SameLine(0f, 6f);
             ImGui.SetNextItemWidth(160.0f);
@@ -117,7 +129,10 @@ public static partial class EditorImGuiUI
             ImGui.SameLine(0f, 6f);
             bool matchCase = _assetExplorerSearchCaseSensitive;
             if (ImGui.Checkbox("Match Case", ref matchCase))
+            {
                 _assetExplorerSearchCaseSensitive = matchCase;
+                InvalidateAssetExplorerFilteredViews();
+            }
 
             ImGui.SameLine(0f, 6f);
             ImGui.SetNextItemWidth(180.0f);
@@ -125,6 +140,7 @@ public static partial class EditorImGuiUI
             {
                 _assetExplorerExtensionFilter = _assetExplorerExtensionFilter.Trim();
                 UpdateAssetExplorerExtensionFilterSet();
+                InvalidateAssetExplorerFilteredViews();
             }
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Filter files by extension. Separate values with commas or semicolons. Use '*' for all extensions.");
@@ -164,7 +180,10 @@ public static partial class EditorImGuiUI
                 }
 
                 if (changed)
+                {
                     UpdateAssetExplorerCategoryFilterLabel();
+                    InvalidateAssetExplorerFilteredViews();
+                }
 
                 ImGui.EndCombo();
             }
@@ -174,12 +193,18 @@ public static partial class EditorImGuiUI
             ImGui.SameLine(0f, 6f);
             bool showFiles = _assetExplorerShowFiles;
             if (ImGui.Checkbox("Files", ref showFiles))
+            {
                 _assetExplorerShowFiles = showFiles;
+                InvalidateAssetExplorerFilteredViews();
+            }
 
             ImGui.SameLine(0f, 6f);
             bool showDirectories = _assetExplorerShowDirectories;
             if (ImGui.Checkbox("Directories", ref showDirectories))
+            {
                 _assetExplorerShowDirectories = showDirectories;
+                InvalidateAssetExplorerFilteredViews();
+            }
 
             ImGui.SameLine(0f, 6f);
             ImGui.TextDisabled("Filters apply to the current directory.");
@@ -350,46 +375,13 @@ public static partial class EditorImGuiUI
 
             ImGui.Separator();
 
-            _assetExplorerScratchEntries.Clear();
             bool descriptorNeeded = AssetExplorerFiltersNeedDescriptor();
-            AssetExplorerDirectorySnapshot snapshot;
+            IReadOnlyList<AssetExplorerEntry> filteredEntries;
 
             try
             {
-                snapshot = GetAssetExplorerDirectorySnapshot(state, directory);
-                foreach (var entry in snapshot.Entries)
-                {
-                    if (entry.IsDirectory)
-                    {
-                        if (!_assetExplorerShowDirectories)
-                            continue;
-
-                        if (!MatchesAssetExplorerSearch(entry.Path, entry.Name, true, null))
-                            continue;
-
-                        if (!MatchesAssetExplorerFilters(entry.Path, true, null))
-                            continue;
-
-                        _assetExplorerScratchEntries.Add(entry);
-                        continue;
-                    }
-
-                    if (!_assetExplorerShowFiles)
-                        continue;
-
-                    AssetTypeDescriptor? descriptor = descriptorNeeded ? ResolveAssetTypeForPath(entry.Path) : null;
-
-                    if (!MatchesAssetExplorerSearch(entry.Path, entry.Name, false, descriptor))
-                        continue;
-
-                    if (!ShouldIncludeFileByExtension(entry.Path))
-                        continue;
-
-                    if (!MatchesAssetExplorerFilters(entry.Path, false, descriptor))
-                        continue;
-
-                    _assetExplorerScratchEntries.Add(entry);
-                }
+                AssetExplorerDirectorySnapshot snapshot = GetAssetExplorerDirectorySnapshot(state, directory);
+                filteredEntries = GetFilteredAssetExplorerEntries(state, directory, snapshot, descriptorNeeded);
             }
             catch (Exception ex)
             {
@@ -397,15 +389,15 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            if (_assetExplorerScratchEntries.Count == 0)
+            if (filteredEntries.Count == 0)
             {
                 ImGui.TextDisabled(string.IsNullOrWhiteSpace(_assetExplorerSearchTerm) ? "Folder is empty." : "No entries match the current filter.");
                 return;
             }
 
             bool changedViaView = state.UseTileView
-                ? DrawAssetExplorerTileView(state)
-                : DrawAssetExplorerTableView(state);
+                ? DrawAssetExplorerTileView(state, filteredEntries)
+                : DrawAssetExplorerTableView(state, filteredEntries);
 
             if (changedViaView)
                 return;
@@ -426,7 +418,60 @@ public static partial class EditorImGuiUI
             }
         }
 
-        private static bool DrawAssetExplorerTableView(AssetExplorerTabState state)
+        private static IReadOnlyList<AssetExplorerEntry> GetFilteredAssetExplorerEntries(AssetExplorerTabState state, string directory, AssetExplorerDirectorySnapshot snapshot, bool descriptorNeeded)
+        {
+            string normalizedDirectory = NormalizeAssetExplorerPath(directory);
+            if (ReferenceEquals(state.FilteredSnapshot, snapshot)
+                && state.FilteredRevision == _assetExplorerFilterRevision
+                && string.Equals(state.FilteredDirectory, normalizedDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                return state.FilteredEntries;
+            }
+
+            List<AssetExplorerEntry> filteredEntries = state.FilteredEntries;
+            filteredEntries.Clear();
+
+            foreach (AssetExplorerEntry entry in snapshot.Entries)
+            {
+                if (entry.IsDirectory)
+                {
+                    if (!_assetExplorerShowDirectories)
+                        continue;
+
+                    if (!MatchesAssetExplorerSearch(entry.Path, entry.Name, true, null))
+                        continue;
+
+                    if (!MatchesAssetExplorerFilters(entry.Path, true, null))
+                        continue;
+
+                    filteredEntries.Add(entry);
+                    continue;
+                }
+
+                if (!_assetExplorerShowFiles)
+                    continue;
+
+                AssetTypeDescriptor? descriptor = descriptorNeeded ? ResolveAssetTypeForPath(entry.Path) : null;
+
+                if (!MatchesAssetExplorerSearch(entry.Path, entry.Name, false, descriptor))
+                    continue;
+
+                if (!ShouldIncludeFileByExtension(entry.Extension))
+                    continue;
+
+                if (!MatchesAssetExplorerFilters(entry.Path, false, descriptor))
+                    continue;
+
+                filteredEntries.Add(entry);
+            }
+
+            state.FilteredDirectory = normalizedDirectory;
+            state.FilteredSnapshot = snapshot;
+            state.FilteredRevision = _assetExplorerFilterRevision;
+            return filteredEntries;
+        }
+
+        private static bool DrawAssetExplorerTableView(AssetExplorerTabState state, IReadOnlyList<AssetExplorerEntry> entries)
         {
             const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp
                 | ImGuiTableFlags.RowBg
@@ -446,14 +491,24 @@ public static partial class EditorImGuiUI
 
             bool directoryChanged = false;
 
-            foreach (var entry in _assetExplorerScratchEntries)
+            unsafe
             {
-                ImGui.TableNextRow();
-                if (DrawAssetExplorerTableRow(state, entry))
+                var clipper = new ImGuiListClipper();
+                ImGuiNative.ImGuiListClipper_Begin(&clipper, entries.Count, ImGui.GetTextLineHeightWithSpacing());
+                while (!directoryChanged && ImGuiNative.ImGuiListClipper_Step(&clipper) != 0)
                 {
-                    directoryChanged = true;
-                    break;
+                    for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
+                    {
+                        ImGui.TableNextRow();
+                        if (DrawAssetExplorerTableRow(state, entries[i]))
+                        {
+                            directoryChanged = true;
+                            break;
+                        }
+                    }
                 }
+
+                ImGuiNative.ImGuiListClipper_End(&clipper);
             }
 
             ImGui.EndTable();
@@ -473,18 +528,14 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                string extension = Path.GetExtension(entry.Name);
-                ImGui.TextUnformatted(string.IsNullOrEmpty(extension) ? "File" : extension.TrimStart('.').ToUpperInvariant());
+                ImGui.TextUnformatted(entry.TypeLabel);
             }
 
             ImGui.TableSetColumnIndex(2);
-            ImGui.TextUnformatted(entry.IsDirectory ? "—" : FormatFileSize(entry.Size));
+            ImGui.TextUnformatted(entry.SizeLabel);
 
             ImGui.TableSetColumnIndex(3);
-            if (entry.ModifiedUtc == DateTime.MinValue)
-                ImGui.TextUnformatted("—");
-            else
-                ImGui.TextUnformatted(entry.ModifiedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+            ImGui.TextUnformatted(entry.ModifiedLabel);
 
             return false;
         }
@@ -597,7 +648,7 @@ public static partial class EditorImGuiUI
             }
         }
 
-        private static bool DrawAssetExplorerTileView(AssetExplorerTabState state)
+        private static bool DrawAssetExplorerTileView(AssetExplorerTabState state, IReadOnlyList<AssetExplorerEntry> entries)
         {
             float scale = Math.Clamp(state.TileViewScale, 0.5f, 3.0f);
             if (Math.Abs(scale - state.TileViewScale) > float.Epsilon)
@@ -614,9 +665,9 @@ public static partial class EditorImGuiUI
             int columns = Math.Max(1, (int)MathF.Floor((availableWidth + spacing) / (tileWidth + spacing)));
 
             int columnIndex = 0;
-            for (int i = 0; i < _assetExplorerScratchEntries.Count; i++)
+            for (int i = 0; i < entries.Count; i++)
             {
-                var entry = _assetExplorerScratchEntries[i];
+                var entry = entries[i];
                 if (DrawAssetExplorerTile(state, entry, tileWidth, tileHeight, previewEdge, labelHeight, padding))
                     return true;
 
@@ -727,8 +778,7 @@ public static partial class EditorImGuiUI
                 {
                     uint fillColor = ImGui.GetColorU32(ImGuiCol.FrameBgActive);
                     drawList.AddRectFilled(previewPos, previewPos + previewSize, fillColor, 4f);
-                    string ext = Path.GetExtension(entry.Name);
-                    ext = string.IsNullOrEmpty(ext) ? "IMG" : ext.TrimStart('.').ToUpperInvariant();
+                    string ext = entry.Extension.Length == 0 ? "IMG" : entry.TypeLabel;
                     Vector2 textSize = ImGui.CalcTextSize(ext);
                     Vector2 textPos = previewPos + (previewSize - textSize) * 0.5f;
                     drawList.AddText(textPos, ImGui.GetColorU32(ImGuiCol.Text), ext);
@@ -738,8 +788,7 @@ public static partial class EditorImGuiUI
             {
                 uint fillColor = ImGui.GetColorU32(ImGuiCol.FrameBgActive);
                 drawList.AddRectFilled(previewPos, previewPos + previewSize, fillColor, 4f);
-                string ext = Path.GetExtension(entry.Name);
-                ext = string.IsNullOrEmpty(ext) ? "FILE" : ext.TrimStart('.').ToUpperInvariant();
+                string ext = entry.Extension.Length == 0 ? "FILE" : entry.TypeLabel;
                 Vector2 textSize = ImGui.CalcTextSize(ext);
                 Vector2 textPos = previewPos + (previewSize - textSize) * 0.5f;
                 drawList.AddText(textPos, ImGui.GetColorU32(ImGuiCol.Text), ext);
@@ -1515,7 +1564,7 @@ public static partial class EditorImGuiUI
             }
         }
 
-        private static bool ShouldIncludeFileByExtension(string path)
+        private static bool ShouldIncludeFileByExtension(string extension)
         {
             if (_assetExplorerExtensionFilterHasWildcard)
                 return true;
@@ -1523,11 +1572,10 @@ public static partial class EditorImGuiUI
             if (_assetExplorerExtensionFilterSet.Count == 0)
                 return true;
 
-            string extension = Path.GetExtension(path);
             if (string.IsNullOrEmpty(extension))
                 return false;
 
-            return _assetExplorerExtensionFilterSet.Contains(extension.ToLowerInvariant());
+            return _assetExplorerExtensionFilterSet.Contains(extension);
         }
 
         private static void EnsureAssetExplorerCategoryFilters()
@@ -1644,6 +1692,7 @@ public static partial class EditorImGuiUI
 
         private static void SetAssetExplorerSearchScopeFlag(AssetExplorerSearchScope scope, bool enabled)
         {
+            AssetExplorerSearchScope previous = _assetExplorerSearchScope;
             if (enabled)
                 _assetExplorerSearchScope |= scope;
             else
@@ -1651,6 +1700,9 @@ public static partial class EditorImGuiUI
 
             if (_assetExplorerSearchScope == 0)
                 _assetExplorerSearchScope = AssetExplorerSearchScope.Name;
+
+            if (previous != _assetExplorerSearchScope)
+                InvalidateAssetExplorerFilteredViews();
         }
 
         private static bool MatchesAssetExplorerSearch(string path, string name, bool isDirectory, AssetTypeDescriptor? descriptor)
@@ -1749,6 +1801,7 @@ public static partial class EditorImGuiUI
             _assetExplorerYamlKeyCache.Clear();
             _assetTypeCacheDirty = true;
             _assetExplorerCategoryFiltersDirty = true;
+            InvalidateAssetExplorerFilteredViews();
         }
 
         private static void DrawAssetExplorerDeleteConfirmation()
@@ -2866,13 +2919,24 @@ public static partial class EditorImGuiUI
                     modifiedUtc = DateTime.MinValue;
                 }
 
-                entries.Add(new AssetExplorerEntry(name, normalized, true, 0L, modifiedUtc));
+                entries.Add(new AssetExplorerEntry(
+                    name,
+                    normalized,
+                    true,
+                    0L,
+                    modifiedUtc,
+                    string.Empty,
+                    "Directory",
+                    "—",
+                    FormatAssetExplorerModifiedTime(modifiedUtc)));
             }
 
             foreach (var file in files)
             {
                 string normalized = NormalizeAssetExplorerPath(file);
                 string name = Path.GetFileName(normalized) ?? normalized;
+                string extension = Path.GetExtension(normalized);
+                string normalizedExtension = string.IsNullOrEmpty(extension) ? string.Empty : extension.ToLowerInvariant();
 
                 long size = 0L;
                 DateTime modifiedUtc;
@@ -2887,7 +2951,16 @@ public static partial class EditorImGuiUI
                     modifiedUtc = DateTime.MinValue;
                 }
 
-                entries.Add(new AssetExplorerEntry(name, normalized, false, size, modifiedUtc));
+                entries.Add(new AssetExplorerEntry(
+                    name,
+                    normalized,
+                    false,
+                    size,
+                    modifiedUtc,
+                    normalizedExtension,
+                    string.IsNullOrEmpty(extension) ? "File" : extension.TrimStart('.').ToUpperInvariant(),
+                    FormatFileSize(size),
+                    FormatAssetExplorerModifiedTime(modifiedUtc)));
             }
 
             entries.Sort(AssetExplorerEntryComparer.Instance);
@@ -2912,4 +2985,9 @@ public static partial class EditorImGuiUI
                 return string.Format(CultureInfo.InvariantCulture, "{0:0.##} KB", size / (double)KB);
             return string.Format(CultureInfo.InvariantCulture, "{0} B", size);
         }
+
+        private static string FormatAssetExplorerModifiedTime(DateTime modifiedUtc)
+            => modifiedUtc == DateTime.MinValue
+                ? "—"
+                : modifiedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
 }

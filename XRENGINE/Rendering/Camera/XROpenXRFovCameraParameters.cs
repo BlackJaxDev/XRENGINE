@@ -92,9 +92,9 @@ namespace XREngine.Rendering
             float vFov = float.RadiansToDegrees(_angleUp - _angleDown);
             float aspect = hFov <= float.Epsilon ? 1.0f : hFov / MathF.Max(float.Epsilon, vFov);
 
-            program.Uniform(EEngineUniform.CameraFovY.ToString(), vFov);
-            program.Uniform(EEngineUniform.CameraFovX.ToString(), hFov);
-            program.Uniform(EEngineUniform.CameraAspect.ToString(), aspect);
+            program.Uniform(EEngineUniform.CameraFovY.ToStringFast(), vFov);
+            program.Uniform(EEngineUniform.CameraFovX.ToStringFast(), hFov);
+            program.Uniform(EEngineUniform.CameraAspect.ToStringFast(), aspect);
         }
 
         public override string ToString()

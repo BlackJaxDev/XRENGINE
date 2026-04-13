@@ -10,7 +10,7 @@ The engine currently exposes seven user-facing ambient occlusion modes. Historic
 |------|-------------|-------------|---------|
 | `ScreenSpace` | SSAO from the depth buffer | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
 | `HorizonBasedPlus` | Enhanced HBAO+ algorithm | ⭐⭐⭐ | ⭐⭐⭐⭐ |
-| `GroundTruthAmbientOcclusion` | GTAO gather + denoise path | ⭐⭐⭐ | ⭐⭐⭐ |
+| `GroundTruthAmbientOcclusion` | GTAO gather + denoise path with optional visibility-bitmask slice mode | ⭐⭐⭐ | ⭐⭐⭐ |
 | `VoxelAmbientOcclusion` | Planned VXAO family slot; currently the only neutral no-op AO mode | ⭐ | ⭐ |
 | `MultiScaleVolumetricObscurance` | MSVO multi-scale obscurance path | ⭐⭐⭐ | ⭐⭐ |
 | `MultiViewAmbientOcclusion` | MVAO multi-view AO path | ⭐⭐⭐ | ⭐⭐⭐ |
@@ -83,7 +83,7 @@ aoSettings.Type = AmbientOcclusionSettings.EType.HorizonBasedPlus;
 
 ## Ground-Truth Ambient Occlusion (GTAO)
 
-GTAO now has a real slice-based horizon gather and edge-aware denoise path. It is exposed as a first-class selector entry, though it still merits validation against canonical GTAO expectations under motion, thin geometry, and screen-edge stress cases.
+GTAO now has a real slice-based horizon gather and edge-aware denoise path. It also exposes an optional visibility-bitmask gather variant inspired by horizon-based SSAO visibility sectors, which helps thin occluders and reduces some halo cases without changing the default path. This toggle currently applies only to GTAO.
 
 ```csharp
 aoSettings.Type = AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion;
@@ -96,7 +96,11 @@ aoSettings.GTAODenoiseEnabled = true;
 aoSettings.GTAODenoiseRadius = 4;
 aoSettings.GTAODenoiseSharpness = 4.0f;
 aoSettings.GTAOUseInputNormals = true;
+aoSettings.GTAOUseVisibilityBitmask = true;
+aoSettings.GTAOVisibilityBitmaskThickness = 0.15f;
 ```
+
+When visibility-bitmask mode is enabled, GTAO replaces the classic falloff-driven horizon accumulation with hemisphere sector coverage using a constant thickness value. `GTAOFalloffStartRatio` and `GTAOThicknessHeuristic` only affect the classic horizon mode.
 
 ## Voxel Ambient Occlusion (VXAO)
 

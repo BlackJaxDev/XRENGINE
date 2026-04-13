@@ -1,4 +1,4 @@
-using System.Linq;
+using System;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights.Types;
@@ -13,6 +13,54 @@ namespace XREngine.Scene
     public partial class Lights3DCollection
     {
         #region Forward Lighting
+
+        // Cached arrays for per-draw shadow metadata uploads.
+        // Reused every call to avoid 24 heap allocations per draw on the render thread.
+        // Safe because only the single render thread calls SetForwardLightingUniforms.
+        private static readonly int[] _pointShadowSlots = new int[16];
+        private static readonly float[] _pointShadowNearPlanes = new float[16];
+        private static readonly float[] _pointShadowFarPlanes = new float[16];
+        private static readonly float[] _pointShadowBase = new float[16];
+        private static readonly float[] _pointShadowExponent = new float[16];
+        private static readonly float[] _pointShadowBiasMin = new float[16];
+        private static readonly float[] _pointShadowBiasMax = new float[16];
+        private static readonly int[] _pointShadowSamples = new int[16];
+        private static readonly int[] _pointShadowVogelTapCount = new int[16];
+        private static readonly float[] _pointShadowFilterRadius = new float[16];
+        private static readonly int[] _pointShadowSoftShadowMode = new int[16];
+        private static readonly float[] _pointShadowLightSourceRadius = new float[16];
+        private static readonly int[] _pointShadowDebugModes = new int[16];
+
+        private static readonly int[] _spotShadowSlots = new int[16];
+        private static readonly float[] _spotShadowBase = new float[16];
+        private static readonly float[] _spotShadowExponent = new float[16];
+        private static readonly float[] _spotShadowBiasMin = new float[16];
+        private static readonly float[] _spotShadowBiasMax = new float[16];
+        private static readonly int[] _spotShadowSamples = new int[16];
+        private static readonly int[] _spotShadowVogelTapCount = new int[16];
+        private static readonly float[] _spotShadowFilterRadius = new float[16];
+        private static readonly int[] _spotShadowSoftShadowMode = new int[16];
+        private static readonly float[] _spotShadowLightSourceRadius = new float[16];
+        private static readonly int[] _spotShadowDebugModes = new int[16];
+
+        // Pre-computed uniform name strings for light array indices.
+        // Avoids per-draw string interpolation allocations on the render thread.
+        private static readonly string[] _dirLightGenNames = CreateIndexedNames("DirectionalLights", 16);
+        private static readonly string[] _dirLightLegacyNames = CreateIndexedNames("DirLightData", 16);
+        private static readonly string[] _spotLightGenNames = CreateIndexedNames("SpotLights", 16);
+        private static readonly string[] _spotLightLegacyNames = CreateIndexedNames("SpotLightData", 16);
+        private static readonly string[] _pointLightGenNames = CreateIndexedNames("PointLights", 16);
+        private static readonly string[] _pointLightLegacyNames = CreateIndexedNames("PointLightData", 16);
+        private static readonly string[] _pointShadowMapNames = CreateIndexedNames("PointLightShadowMaps", 4);
+        private static readonly string[] _spotShadowMapNames = CreateIndexedNames("SpotLightShadowMaps", 4);
+
+        private static string[] CreateIndexedNames(string prefix, int count)
+        {
+            var names = new string[count];
+            for (int i = 0; i < count; i++)
+                names[i] = $"{prefix}[{i}]";
+            return names;
+        }
 
         internal void SetForwardLightingUniforms(XRRenderProgram program)
         {
@@ -36,9 +84,9 @@ namespace XREngine.Scene
             program.Uniform("CameraPosition", Engine.Rendering.State.RenderingCamera?.Transform.RenderTranslation ?? Vector3.Zero);
 
             var area = Engine.Rendering.State.RenderArea;
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)area.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)area.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToString(), new Vector2(area.X, area.Y));
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
 
             program.Uniform("DirLightCount", DynamicDirectionalLights.Count);
             program.Uniform("PointLightCount", DynamicPointLights.Count);
@@ -57,18 +105,6 @@ namespace XREngine.Scene
                 program.BindBuffer(Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer!, 21u);
             }
             program.Uniform("ForwardPlusEyeCount", Engine.Rendering.State.IsStereoPass ? 2 : 1);
-
-            // Support both legacy uniform names (DirLightData/PointLightData/SpotLightData)
-            // and dynamically generated forward shader names (DirectionalLights/PointLights/SpotLights).
-            // NOTE: We intentionally do not rely on program.HasUniform(...) here because these bindings are
-            // part of the renderer's required forward-lighting contract rather than optional material features.
-            const string dirArrayGenerated = "DirectionalLights";
-            const string spotArrayGenerated = "SpotLights";
-            const string pointArrayGenerated = "PointLights";
-
-            const string dirArrayLegacy = "DirLightData";
-            const string spotArrayLegacy = "SpotLightData";
-            const string pointArrayLegacy = "PointLightData";
 
             const int forwardAmbientOcclusionUnit = 14;
             XRTexture? ambientOcclusionTexture = null;
@@ -255,127 +291,123 @@ namespace XREngine.Scene
 
             for (int i = 0; i < DynamicDirectionalLights.Count; ++i)
             {
-                DynamicDirectionalLights[i].SetUniforms(program, $"{dirArrayGenerated}[{i}]");
-                DynamicDirectionalLights[i].SetUniforms(program, $"{dirArrayLegacy}[{i}]");
+                DynamicDirectionalLights[i].SetUniforms(program, _dirLightGenNames[i]);
+                DynamicDirectionalLights[i].SetUniforms(program, _dirLightLegacyNames[i]);
             }
             for (int i = 0; i < DynamicSpotLights.Count; ++i)
             {
-                DynamicSpotLights[i].SetUniforms(program, $"{spotArrayGenerated}[{i}]");
-                DynamicSpotLights[i].SetUniforms(program, $"{spotArrayLegacy}[{i}]");
+                DynamicSpotLights[i].SetUniforms(program, _spotLightGenNames[i]);
+                DynamicSpotLights[i].SetUniforms(program, _spotLightLegacyNames[i]);
             }
             for (int i = 0; i < DynamicPointLights.Count; ++i)
             {
-                DynamicPointLights[i].SetUniforms(program, $"{pointArrayGenerated}[{i}]");
-                DynamicPointLights[i].SetUniforms(program, $"{pointArrayLegacy}[{i}]");
+                DynamicPointLights[i].SetUniforms(program, _pointLightGenNames[i]);
+                DynamicPointLights[i].SetUniforms(program, _pointLightLegacyNames[i]);
             }
 
-            int[] pointShadowSlots = Enumerable.Repeat(-1, 16).ToArray();
-            float[] pointShadowNearPlanes = new float[16];
-            float[] pointShadowFarPlanes = new float[16];
-            float[] pointShadowBase = new float[16];
-            float[] pointShadowExponent = new float[16];
-            float[] pointShadowBiasMin = new float[16];
-            float[] pointShadowBiasMax = new float[16];
-            int[] pointShadowSamples = new int[16];
-            int[] pointShadowVogelTapCount = new int[16];
-            float[] pointShadowFilterRadius = new float[16];
-            int[] pointShadowSoftShadowMode = new int[16];
-            float[] pointShadowLightSourceRadius = new float[16];
-            int[] pointShadowDebugModes = new int[16];
+            Array.Fill(_pointShadowSlots, -1);
+            Array.Clear(_pointShadowNearPlanes);
+            Array.Clear(_pointShadowFarPlanes);
+            Array.Clear(_pointShadowBase);
+            Array.Clear(_pointShadowExponent);
+            Array.Clear(_pointShadowBiasMin);
+            Array.Clear(_pointShadowBiasMax);
+            Array.Clear(_pointShadowSamples);
+            Array.Clear(_pointShadowVogelTapCount);
+            Array.Clear(_pointShadowFilterRadius);
+            Array.Clear(_pointShadowSoftShadowMode);
+            Array.Clear(_pointShadowLightSourceRadius);
+            Array.Clear(_pointShadowDebugModes);
             int pointShadowSlot = 0;
-            for (int i = 0; i < DynamicPointLights.Count && i < pointShadowSlots.Length; ++i)
+            for (int i = 0; i < DynamicPointLights.Count && i < _pointShadowSlots.Length; ++i)
             {
                 PointLightComponent light = DynamicPointLights[i];
-                pointShadowNearPlanes[i] = light.ShadowNearPlaneDistance;
-                pointShadowFarPlanes[i] = light.Radius;
-                pointShadowBase[i] = light.ShadowExponentBase;
-                pointShadowExponent[i] = light.ShadowExponent;
-                pointShadowBiasMin[i] = light.ShadowMinBias;
-                pointShadowBiasMax[i] = light.ShadowMaxBias;
-                pointShadowSamples[i] = light.Samples;
-                pointShadowVogelTapCount[i] = light.VogelTapCount;
-                pointShadowFilterRadius[i] = light.FilterRadius;
-                pointShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
-                pointShadowLightSourceRadius[i] = light.LightSourceRadius;
-                pointShadowDebugModes[i] = light.ShadowDebugMode;
+                _pointShadowNearPlanes[i] = light.ShadowNearPlaneDistance;
+                _pointShadowFarPlanes[i] = light.Radius;
+                _pointShadowBase[i] = light.ShadowExponentBase;
+                _pointShadowExponent[i] = light.ShadowExponent;
+                _pointShadowBiasMin[i] = light.ShadowMinBias;
+                _pointShadowBiasMax[i] = light.ShadowMaxBias;
+                _pointShadowSamples[i] = light.Samples;
+                _pointShadowVogelTapCount[i] = light.VogelTapCount;
+                _pointShadowFilterRadius[i] = light.FilterRadius;
+                _pointShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
+                _pointShadowLightSourceRadius[i] = light.LightSourceRadius;
+                _pointShadowDebugModes[i] = light.ShadowDebugMode;
 
-                XRTexture? shadowTexture = light.CastsShadows
-                    ? light.ShadowMap?.Material?.Textures.FirstOrDefault(x => x?.SamplerName == "ShadowMap")
-                    : null;
+                XRTexture? shadowTexture = FindShadowMapTexture(light);
                 if (shadowTexture is XRTextureCube shadowCube && pointShadowSlot < maxForwardShadowedPointLights)
                 {
-                    pointShadowSlots[i] = pointShadowSlot;
-                    program.Sampler($"PointLightShadowMaps[{pointShadowSlot}]", shadowCube, pointShadowStartUnit + pointShadowSlot);
+                    _pointShadowSlots[i] = pointShadowSlot;
+                    program.Sampler(_pointShadowMapNames[pointShadowSlot], shadowCube, pointShadowStartUnit + pointShadowSlot);
                     pointShadowSlot++;
                 }
             }
             for (; pointShadowSlot < maxForwardShadowedPointLights; ++pointShadowSlot)
-                program.Sampler($"PointLightShadowMaps[{pointShadowSlot}]", DummyPointShadowMap, pointShadowStartUnit + pointShadowSlot);
+                program.Sampler(_pointShadowMapNames[pointShadowSlot], DummyPointShadowMap, pointShadowStartUnit + pointShadowSlot);
 
-            int[] spotShadowSlots = Enumerable.Repeat(-1, 16).ToArray();
-            float[] spotShadowBase = new float[16];
-            float[] spotShadowExponent = new float[16];
-            float[] spotShadowBiasMin = new float[16];
-            float[] spotShadowBiasMax = new float[16];
-            int[] spotShadowSamples = new int[16];
-            int[] spotShadowVogelTapCount = new int[16];
-            float[] spotShadowFilterRadius = new float[16];
-            int[] spotShadowSoftShadowMode = new int[16];
-            float[] spotShadowLightSourceRadius = new float[16];
-            int[] spotShadowDebugModes = new int[16];
+            Array.Fill(_spotShadowSlots, -1);
+            Array.Clear(_spotShadowBase);
+            Array.Clear(_spotShadowExponent);
+            Array.Clear(_spotShadowBiasMin);
+            Array.Clear(_spotShadowBiasMax);
+            Array.Clear(_spotShadowSamples);
+            Array.Clear(_spotShadowVogelTapCount);
+            Array.Clear(_spotShadowFilterRadius);
+            Array.Clear(_spotShadowSoftShadowMode);
+            Array.Clear(_spotShadowLightSourceRadius);
+            Array.Clear(_spotShadowDebugModes);
             int spotShadowSlot = 0;
-            for (int i = 0; i < DynamicSpotLights.Count && i < spotShadowSlots.Length; ++i)
+            for (int i = 0; i < DynamicSpotLights.Count && i < _spotShadowSlots.Length; ++i)
             {
                 SpotLightComponent light = DynamicSpotLights[i];
-                spotShadowBase[i] = light.ShadowExponentBase;
-                spotShadowExponent[i] = light.ShadowExponent;
-                spotShadowBiasMin[i] = light.ShadowMinBias;
-                spotShadowBiasMax[i] = light.ShadowMaxBias;
-                spotShadowSamples[i] = light.Samples;
-                spotShadowVogelTapCount[i] = light.VogelTapCount;
-                spotShadowFilterRadius[i] = light.FilterRadius;
-                spotShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
-                spotShadowLightSourceRadius[i] = light.LightSourceRadius;
-                spotShadowDebugModes[i] = light.ShadowDebugMode;
+                _spotShadowBase[i] = light.ShadowExponentBase;
+                _spotShadowExponent[i] = light.ShadowExponent;
+                _spotShadowBiasMin[i] = light.ShadowMinBias;
+                _spotShadowBiasMax[i] = light.ShadowMaxBias;
+                _spotShadowSamples[i] = light.Samples;
+                _spotShadowVogelTapCount[i] = light.VogelTapCount;
+                _spotShadowFilterRadius[i] = light.FilterRadius;
+                _spotShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
+                _spotShadowLightSourceRadius[i] = light.LightSourceRadius;
+                _spotShadowDebugModes[i] = light.ShadowDebugMode;
 
-                XRTexture? shadowTexture = light.CastsShadows
-                    ? light.ShadowMap?.Material?.Textures.FirstOrDefault(x => x?.SamplerName == "ShadowMap")
-                    : null;
+                XRTexture? shadowTexture = FindShadowMapTexture(light);
                 if (shadowTexture is XRTexture2D shadowMap && spotShadowSlot < maxForwardShadowedSpotLights)
                 {
-                    spotShadowSlots[i] = spotShadowSlot;
-                    program.Sampler($"SpotLightShadowMaps[{spotShadowSlot}]", shadowMap, spotShadowStartUnit + spotShadowSlot);
+                    _spotShadowSlots[i] = spotShadowSlot;
+                    program.Sampler(_spotShadowMapNames[spotShadowSlot], shadowMap, spotShadowStartUnit + spotShadowSlot);
                     spotShadowSlot++;
                 }
             }
             for (; spotShadowSlot < maxForwardShadowedSpotLights; ++spotShadowSlot)
-                program.Sampler($"SpotLightShadowMaps[{spotShadowSlot}]", DummyShadowMap, spotShadowStartUnit + spotShadowSlot);
+                program.Sampler(_spotShadowMapNames[spotShadowSlot], DummyShadowMap, spotShadowStartUnit + spotShadowSlot);
 
-            program.Uniform("PointLightShadowSlots", pointShadowSlots);
-            program.Uniform("PointLightShadowNearPlanes", pointShadowNearPlanes);
-            program.Uniform("PointLightShadowFarPlanes", pointShadowFarPlanes);
-            program.Uniform("PointLightShadowBase", pointShadowBase);
-            program.Uniform("PointLightShadowExponent", pointShadowExponent);
-            program.Uniform("PointLightShadowBiasMin", pointShadowBiasMin);
-            program.Uniform("PointLightShadowBiasMax", pointShadowBiasMax);
-            program.Uniform("PointLightShadowSamples", pointShadowSamples);
-            program.Uniform("PointLightShadowVogelTapCount", pointShadowVogelTapCount);
-            program.Uniform("PointLightShadowFilterRadius", pointShadowFilterRadius);
-            program.Uniform("PointLightShadowSoftShadowMode", pointShadowSoftShadowMode);
-            program.Uniform("PointLightShadowLightSourceRadius", pointShadowLightSourceRadius);
-            program.Uniform("PointLightShadowDebugModes", pointShadowDebugModes);
+            program.Uniform("PointLightShadowSlots", _pointShadowSlots);
+            program.Uniform("PointLightShadowNearPlanes", _pointShadowNearPlanes);
+            program.Uniform("PointLightShadowFarPlanes", _pointShadowFarPlanes);
+            program.Uniform("PointLightShadowBase", _pointShadowBase);
+            program.Uniform("PointLightShadowExponent", _pointShadowExponent);
+            program.Uniform("PointLightShadowBiasMin", _pointShadowBiasMin);
+            program.Uniform("PointLightShadowBiasMax", _pointShadowBiasMax);
+            program.Uniform("PointLightShadowSamples", _pointShadowSamples);
+            program.Uniform("PointLightShadowVogelTapCount", _pointShadowVogelTapCount);
+            program.Uniform("PointLightShadowFilterRadius", _pointShadowFilterRadius);
+            program.Uniform("PointLightShadowSoftShadowMode", _pointShadowSoftShadowMode);
+            program.Uniform("PointLightShadowLightSourceRadius", _pointShadowLightSourceRadius);
+            program.Uniform("PointLightShadowDebugModes", _pointShadowDebugModes);
 
-            program.Uniform("SpotLightShadowSlots", spotShadowSlots);
-            program.Uniform("SpotLightShadowBase", spotShadowBase);
-            program.Uniform("SpotLightShadowExponent", spotShadowExponent);
-            program.Uniform("SpotLightShadowBiasMin", spotShadowBiasMin);
-            program.Uniform("SpotLightShadowBiasMax", spotShadowBiasMax);
-            program.Uniform("SpotLightShadowSamples", spotShadowSamples);
-            program.Uniform("SpotLightShadowVogelTapCount", spotShadowVogelTapCount);
-            program.Uniform("SpotLightShadowFilterRadius", spotShadowFilterRadius);
-            program.Uniform("SpotLightShadowSoftShadowMode", spotShadowSoftShadowMode);
-            program.Uniform("SpotLightShadowLightSourceRadius", spotShadowLightSourceRadius);
-            program.Uniform("SpotLightShadowDebugModes", spotShadowDebugModes);
+            program.Uniform("SpotLightShadowSlots", _spotShadowSlots);
+            program.Uniform("SpotLightShadowBase", _spotShadowBase);
+            program.Uniform("SpotLightShadowExponent", _spotShadowExponent);
+            program.Uniform("SpotLightShadowBiasMin", _spotShadowBiasMin);
+            program.Uniform("SpotLightShadowBiasMax", _spotShadowBiasMax);
+            program.Uniform("SpotLightShadowSamples", _spotShadowSamples);
+            program.Uniform("SpotLightShadowVogelTapCount", _spotShadowVogelTapCount);
+            program.Uniform("SpotLightShadowFilterRadius", _spotShadowFilterRadius);
+            program.Uniform("SpotLightShadowSoftShadowMode", _spotShadowSoftShadowMode);
+            program.Uniform("SpotLightShadowLightSourceRadius", _spotShadowLightSourceRadius);
+            program.Uniform("SpotLightShadowDebugModes", _spotShadowDebugModes);
 
             // Bind the actual shadow texture after per-light SetUniforms.
             // ALWAYS bind a texture to unit 15 - if no shadow map, use a 1x1 white dummy.
@@ -397,6 +429,22 @@ namespace XREngine.Scene
             program.Sampler("u_EnvironmentMap", envCubemap, envMapUnit);
             program.Uniform("u_EnvironmentMapMipLevels", envMipLevels);
             program.Sampler("_PBRReflCube", envCubemap, reflCubeUnit);
+        }
+
+        /// <summary>
+        /// Finds the "ShadowMap" texture in a light's shadow material without LINQ allocations.
+        /// </summary>
+        private static XRTexture? FindShadowMapTexture(LightComponent light)
+        {
+            if (!light.CastsShadows)
+                return null;
+            var textures = light.ShadowMap?.Material?.Textures;
+            if (textures is null)
+                return null;
+            for (int t = 0; t < textures.Count; t++)
+                if (textures[t]?.SamplerName == "ShadowMap")
+                    return textures[t];
+            return null;
         }
 
         #endregion

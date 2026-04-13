@@ -24,26 +24,18 @@ internal enum EVulkanUpscaleBridgeSurfaceKind
     OutputColor,
 }
 
-internal sealed unsafe class VulkanUpscaleBridgeSharedSemaphore : IDisposable
+internal sealed unsafe class VulkanUpscaleBridgeSharedSemaphore(
+    string name,
+    OpenGLRenderer renderer,
+    VkSemaphore vkSemaphore,
+    uint glSemaphore) : IDisposable
 {
-    private readonly OpenGLRenderer _renderer;
+    private readonly OpenGLRenderer _renderer = renderer;
     private bool _disposed;
 
-    public VulkanUpscaleBridgeSharedSemaphore(
-        string name,
-        OpenGLRenderer renderer,
-        VkSemaphore vkSemaphore,
-        uint glSemaphore)
-    {
-        Name = name;
-        _renderer = renderer;
-        VulkanSemaphore = vkSemaphore;
-        GlSemaphore = glSemaphore;
-    }
-
-    public string Name { get; }
-    public VkSemaphore VulkanSemaphore { get; }
-    public uint GlSemaphore { get; }
+    public string Name { get; } = name;
+    public VkSemaphore VulkanSemaphore { get; } = vkSemaphore;
+    public uint GlSemaphore { get; } = glSemaphore;
 
     internal void DestroyVulkanResources(Vk api, Device device)
     {
@@ -61,47 +53,32 @@ internal sealed unsafe class VulkanUpscaleBridgeSharedSemaphore : IDisposable
     }
 }
 
-internal sealed unsafe class VulkanUpscaleBridgeSharedImage : IDisposable
+internal sealed unsafe class VulkanUpscaleBridgeSharedImage(
+    string name,
+    EVulkanUpscaleBridgeSurfaceKind kind,
+    Image vkImage,
+    DeviceMemory vkMemory,
+    ImageView vkImageView,
+    Format vkFormat,
+    ImageAspectFlags aspectMask,
+    ImageAspectFlags viewAspectMask,
+    ImageUsageFlags usage,
+    XRTexture2D texture,
+    XRFrameBuffer frameBuffer) : IDisposable
 {
     private bool _disposed;
 
-    public VulkanUpscaleBridgeSharedImage(
-        string name,
-        EVulkanUpscaleBridgeSurfaceKind kind,
-        Image vkImage,
-        DeviceMemory vkMemory,
-        ImageView vkImageView,
-        Format vkFormat,
-        ImageAspectFlags aspectMask,
-        ImageAspectFlags viewAspectMask,
-        ImageUsageFlags usage,
-        XRTexture2D texture,
-        XRFrameBuffer frameBuffer)
-    {
-        Name = name;
-        Kind = kind;
-        VulkanImage = vkImage;
-        VulkanMemory = vkMemory;
-        VulkanImageView = vkImageView;
-        VulkanFormat = vkFormat;
-        AspectMask = aspectMask;
-        ViewAspectMask = viewAspectMask;
-        Usage = usage;
-        Texture = texture;
-        FrameBuffer = frameBuffer;
-    }
-
-    public string Name { get; }
-    public EVulkanUpscaleBridgeSurfaceKind Kind { get; }
-    public Image VulkanImage { get; }
-    public DeviceMemory VulkanMemory { get; }
-    public ImageView VulkanImageView { get; }
-    public Format VulkanFormat { get; }
-    public ImageAspectFlags AspectMask { get; }
-    public ImageAspectFlags ViewAspectMask { get; }
-    public ImageUsageFlags Usage { get; }
-    public XRTexture2D Texture { get; }
-    public XRFrameBuffer FrameBuffer { get; }
+    public string Name { get; } = name;
+    public EVulkanUpscaleBridgeSurfaceKind Kind { get; } = kind;
+    public Image VulkanImage { get; } = vkImage;
+    public DeviceMemory VulkanMemory { get; } = vkMemory;
+    public ImageView VulkanImageView { get; } = vkImageView;
+    public Format VulkanFormat { get; } = vkFormat;
+    public ImageAspectFlags AspectMask { get; } = aspectMask;
+    public ImageAspectFlags ViewAspectMask { get; } = viewAspectMask;
+    public ImageUsageFlags Usage { get; } = usage;
+    public XRTexture2D Texture { get; } = texture;
+    public XRFrameBuffer FrameBuffer { get; } = frameBuffer;
     public ImageLayout CurrentLayout { get; set; }
 
     internal void DestroyVulkanResources(Vk api, Device device)
@@ -125,44 +102,30 @@ internal sealed unsafe class VulkanUpscaleBridgeSharedImage : IDisposable
     }
 }
 
-internal sealed unsafe class VulkanUpscaleBridgeFrameSlot : IDisposable
+internal sealed unsafe class VulkanUpscaleBridgeFrameSlot(
+    int slotIndex,
+    VulkanUpscaleBridgeSharedImage sourceColor,
+    VulkanUpscaleBridgeSharedImage sourceDepth,
+    VulkanUpscaleBridgeSharedImage sourceMotion,
+    VulkanUpscaleBridgeSharedImage exposure,
+    VulkanUpscaleBridgeSharedImage outputColor,
+    VulkanUpscaleBridgeSharedSemaphore readySemaphore,
+    VulkanUpscaleBridgeSharedSemaphore completeSemaphore,
+    CommandBuffer commandBuffer,
+    Fence submitFence) : IDisposable
 {
     private bool _disposed;
 
-    public VulkanUpscaleBridgeFrameSlot(
-        int slotIndex,
-        VulkanUpscaleBridgeSharedImage sourceColor,
-        VulkanUpscaleBridgeSharedImage sourceDepth,
-        VulkanUpscaleBridgeSharedImage sourceMotion,
-        VulkanUpscaleBridgeSharedImage exposure,
-        VulkanUpscaleBridgeSharedImage outputColor,
-        VulkanUpscaleBridgeSharedSemaphore readySemaphore,
-        VulkanUpscaleBridgeSharedSemaphore completeSemaphore,
-        CommandBuffer commandBuffer,
-        Fence submitFence)
-    {
-        SlotIndex = slotIndex;
-        SourceColor = sourceColor;
-        SourceDepth = sourceDepth;
-        SourceMotion = sourceMotion;
-        Exposure = exposure;
-        OutputColor = outputColor;
-        ReadySemaphore = readySemaphore;
-        CompleteSemaphore = completeSemaphore;
-        CommandBuffer = commandBuffer;
-        SubmitFence = submitFence;
-    }
-
-    public int SlotIndex { get; }
-    public VulkanUpscaleBridgeSharedImage SourceColor { get; }
-    public VulkanUpscaleBridgeSharedImage SourceDepth { get; }
-    public VulkanUpscaleBridgeSharedImage SourceMotion { get; }
-    public VulkanUpscaleBridgeSharedImage Exposure { get; }
-    public VulkanUpscaleBridgeSharedImage OutputColor { get; }
-    public VulkanUpscaleBridgeSharedSemaphore ReadySemaphore { get; }
-    public VulkanUpscaleBridgeSharedSemaphore CompleteSemaphore { get; }
-    public CommandBuffer CommandBuffer { get; }
-    public Fence SubmitFence { get; }
+    public int SlotIndex { get; } = slotIndex;
+    public VulkanUpscaleBridgeSharedImage SourceColor { get; } = sourceColor;
+    public VulkanUpscaleBridgeSharedImage SourceDepth { get; } = sourceDepth;
+    public VulkanUpscaleBridgeSharedImage SourceMotion { get; } = sourceMotion;
+    public VulkanUpscaleBridgeSharedImage Exposure { get; } = exposure;
+    public VulkanUpscaleBridgeSharedImage OutputColor { get; } = outputColor;
+    public VulkanUpscaleBridgeSharedSemaphore ReadySemaphore { get; } = readySemaphore;
+    public VulkanUpscaleBridgeSharedSemaphore CompleteSemaphore { get; } = completeSemaphore;
+    public CommandBuffer CommandBuffer { get; } = commandBuffer;
+    public Fence SubmitFence { get; } = submitFence;
 
     public XRTexture2D SourceColorTexture => SourceColor.Texture;
     public XRTexture2D SourceDepthTexture => SourceDepth.Texture;

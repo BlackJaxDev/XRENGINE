@@ -405,9 +405,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                     region.Height,
                     Engine.Rendering.State.IsStereoPass,
                     Samples);
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), region.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), 0.0f);
         }
 
         private XRTexture2D GetOrCreateNoiseTexture(XRRenderPipelineInstance instance, InstanceState state)

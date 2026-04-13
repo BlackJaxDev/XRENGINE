@@ -179,7 +179,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
         private void AddUniforms()
         {
-            UniformNames.Add(EEngineUniform.ModelMatrix.ToString(), (EShaderVarType._mat4, false));
+            UniformNames.Add(EEngineUniform.ModelMatrix.ToStringFast(), (EShaderVarType._mat4, false));
 
             if (EmitTransformId)
                 UniformNames.Add("TransformId", (EShaderVarType._uint, false));
@@ -199,10 +199,10 @@ namespace XREngine.Rendering.Shaders.Generator
             }
 
             if (!UseOVRMultiView && !UseNVStereo)
-                UniformNames.Add(EEngineUniform.VRMode.ToString(), (EShaderVarType._bool, false));
+                UniformNames.Add(EEngineUniform.VRMode.ToStringFast(), (EShaderVarType._bool, false));
 
             if (Mesh.SupportsBillboarding)
-                UniformNames.Add(EEngineUniform.BillboardMode.ToString(), (EShaderVarType._int, false));
+                UniformNames.Add(EEngineUniform.BillboardMode.ToStringFast(), (EShaderVarType._int, false));
         }
 
         #region Constants
@@ -625,7 +625,7 @@ namespace XREngine.Rendering.Shaders.Generator
             if (UseOVRMultiView || UseNVStereo)
                 AssignCameraSpace();
             else
-                IfElse(EEngineUniform.VRMode.ToString(), AssignModelSpace, AssignCameraSpace);
+                IfElse(EEngineUniform.VRMode.ToStringFast(), AssignModelSpace, AssignCameraSpace);
         }
 
         private void AssignFragPosOut(string localInputPositionName)

@@ -278,6 +278,18 @@ namespace XREngine.Rendering
             set => GroundTruth.UseNormalWeightedBlur = value;
         }
 
+        public bool GTAOUseVisibilityBitmask
+        {
+            get => GroundTruth.UseVisibilityBitmask;
+            set => GroundTruth.UseVisibilityBitmask = value;
+        }
+
+        public float GTAOVisibilityBitmaskThickness
+        {
+            get => GroundTruth.VisibilityBitmaskThickness;
+            set => GroundTruth.VisibilityBitmaskThickness = value;
+        }
+
         public int VXAOVoxelGridResolution
         {
             get => Voxel.VoxelGridResolution;

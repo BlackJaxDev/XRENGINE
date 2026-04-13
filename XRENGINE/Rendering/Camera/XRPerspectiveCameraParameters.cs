@@ -104,9 +104,9 @@ namespace XREngine.Rendering
         public override void SetUniforms(XRRenderProgram program)
         {
             base.SetUniforms(program);
-            program.Uniform(EEngineUniform.CameraFovY.ToString(), VerticalFieldOfView);
-            program.Uniform(EEngineUniform.CameraFovX.ToString(), HorizontalFieldOfView);
-            program.Uniform(EEngineUniform.CameraAspect.ToString(), AspectRatio);
+            program.Uniform(EEngineUniform.CameraFovY.ToStringFast(), VerticalFieldOfView);
+            program.Uniform(EEngineUniform.CameraFovX.ToStringFast(), HorizontalFieldOfView);
+            program.Uniform(EEngineUniform.CameraAspect.ToStringFast(), AspectRatio);
         }
 
         public override Vector2 GetFrustumSizeAtDistance(float distance)

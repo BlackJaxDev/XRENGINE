@@ -177,7 +177,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
         private void AddUniforms()
         {
-            UniformNames.Add(EEngineUniform.ModelMatrix.ToString(), (EShaderVarType._mat4, false));
+            UniformNames.Add(EEngineUniform.ModelMatrix.ToStringFast(), (EShaderVarType._mat4, false));
 
             if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
                 UniformNames.Add("boneMatrixBase", (EShaderVarType._uint, false));
@@ -205,10 +205,10 @@ namespace XREngine.Rendering.Shaders.Generator
             }
 
             if (Mesh.SupportsBillboarding)
-                UniformNames.Add(EEngineUniform.BillboardMode.ToString(), (EShaderVarType._int, false));
+                UniformNames.Add(EEngineUniform.BillboardMode.ToStringFast(), (EShaderVarType._int, false));
 
             if (!UseOVRMultiView && !UseNVStereo) //Include toggle for manual stereo VR calculations in shader if not using OVR multi-view or NV stereo
-                UniformNames.Add(EEngineUniform.VRMode.ToString(), (EShaderVarType._bool, false));
+                UniformNames.Add(EEngineUniform.VRMode.ToStringFast(), (EShaderVarType._bool, false));
         }
 
         //Buffers leaving the vertex shader for each vertex
@@ -817,7 +817,7 @@ namespace XREngine.Rendering.Shaders.Generator
             if (UseOVRMultiView || UseNVStereo)
                 AssignCameraSpace(); //Multiply by view and projection right now - not in geometry shader
             else
-                IfElse(EEngineUniform.VRMode.ToString(), AssignModelSpace, AssignCameraSpace);
+                IfElse(EEngineUniform.VRMode.ToStringFast(), AssignModelSpace, AssignCameraSpace);
         }
 
         /// <summary>
@@ -845,7 +845,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 if (UseOVRMultiView || UseNVStereo)
                     AssignCameraSpace(); //Multiply by view and projection right now - not in geometry shader
                 else
-                    IfElse(EEngineUniform.VRMode.ToString(), AssignModelSpace, AssignCameraSpace);
+                    IfElse(EEngineUniform.VRMode.ToStringFast(), AssignModelSpace, AssignCameraSpace);
             }
 
             if (Mesh.SupportsBillboarding)
