@@ -166,7 +166,7 @@
       // Comma-separated PostProcessSteps flag names.
       "ImportFlags": "Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
       // Generated from Scale on ModelImportSettings.
-      "Scale": 1.0,
+      "Scale": 10.0,
       // Enables or disables ZUp.
       "ZUp": false,
       // Enables or disables GenerateCoacdCollidersPerSubmesh.

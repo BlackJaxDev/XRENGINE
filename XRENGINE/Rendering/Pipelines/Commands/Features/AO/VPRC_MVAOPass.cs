@@ -401,16 +401,16 @@ namespace XREngine.Rendering.Pipelines.Commands
                 region.Height,
                 Engine.Rendering.State.IsStereoPass,
                 _kernelSize);
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), region.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), 0.0f);
         }
 
         private void MVAOBlur_SetUniforms(XRRenderProgram program)
         {
             var camera = ActivePipelineInstance.RenderState.SceneCamera;
             if (camera is not null)
-                program.Uniform(EEngineUniform.DepthMode.ToString(), (int)camera.DepthMode);
+                program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)camera.DepthMode);
 
             Debug.RenderingEvery(
                 $"AO.MVAO.BlurUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",

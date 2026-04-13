@@ -131,13 +131,13 @@ namespace XREngine.Rendering
 
         public virtual void SetUniforms(XRRenderProgram program)
         {
-            program.Uniform(EEngineUniform.CameraNearZ.ToString(), NearZ);
-            program.Uniform(EEngineUniform.CameraFarZ.ToString(), FarZ);
+            program.Uniform(EEngineUniform.CameraNearZ.ToStringFast(), NearZ);
+            program.Uniform(EEngineUniform.CameraFarZ.ToStringFast(), FarZ);
 
             var area = Engine.Rendering.State.RenderArea;
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)area.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)area.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToString(), new Vector2(0.0f, 0.0f));
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(0.0f, 0.0f));
         }
 
         public abstract Vector2 GetFrustumSizeAtDistance(float drawDistance);

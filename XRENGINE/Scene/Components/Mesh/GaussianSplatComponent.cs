@@ -129,8 +129,8 @@ public class GaussianSplatComponent : ModelComponent
         if (viewport is null)
             return;
 
-        vertexProgram.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)viewport.Width);
-        vertexProgram.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)viewport.Height);
+        vertexProgram.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)viewport.Width);
+        vertexProgram.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)viewport.Height);
     }
 
     private sealed record GaussianMeshBuilder(GaussianSplatCloud Cloud, float RadiusScale)

@@ -188,12 +188,12 @@ namespace XREngine.Rendering
         public override void SetUniforms(XRRenderProgram program)
         {
             //base.SetUniforms(program);
-            program.Uniform(EEngineUniform.CameraNearZ.ToString(), NearZ);
-            program.Uniform(EEngineUniform.CameraFarZ.ToString(), FarZ);
+            program.Uniform(EEngineUniform.CameraNearZ.ToStringFast(), NearZ);
+            program.Uniform(EEngineUniform.CameraFarZ.ToStringFast(), FarZ);
 
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToString(), Origin);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Origin);
         }
 
         public BoundingRectangleF GetBounds()

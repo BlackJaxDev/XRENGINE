@@ -103,7 +103,6 @@ public static partial class EditorImGuiUI
         private static bool _assetExplorerSearchCaseSensitive;
         private static readonly AssetExplorerTabState _assetExplorerGameState = new("GameProject", "Game Assets");
         private static readonly AssetExplorerTabState _assetExplorerEngineState = new("EngineCommon", "Engine Assets");
-        private static readonly List<AssetExplorerEntry> _assetExplorerScratchEntries = new();
         private static readonly byte[] _assetExplorerRenameBuffer = new byte[256];
         private static bool _assetExplorerRenameFocusRequested;
         private static bool _assetExplorerContextPopupRequested;

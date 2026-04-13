@@ -655,6 +655,10 @@ public partial class DefaultRenderPipeline
 
         bool IsGTAO(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion;
 
+        bool UsesGtaoVisibilityBitmask(object o) => IsGTAO(o) && ((AmbientOcclusionSettings)o).GroundTruth.UseVisibilityBitmask;
+
+        bool UsesClassicGtaoHorizon(object o) => IsGTAO(o) && !((AmbientOcclusionSettings)o).GroundTruth.UseVisibilityBitmask;
+
         bool IsVXAO(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.VoxelAmbientOcclusion;
 
         bool IsMVAO(object o)
@@ -874,7 +878,7 @@ public partial class DefaultRenderPipeline
             min: 0.0f,
             max: 1.0f,
             step: 0.01f,
-            visibilityCondition: IsGTAO);
+            visibilityCondition: UsesClassicGtaoHorizon);
 
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.DenoiseEnabled)),
@@ -911,6 +915,23 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.UseVisibilityBitmask)),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Use Visibility Bitmask",
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.VisibilityBitmaskThickness)),
+            PostProcessParameterKind.Float,
+            0.15f,
+            displayName: "Visibility Bitmask Thickness",
+            min: 0.001f,
+            max: 2.0f,
+            step: 0.001f,
+            visibilityCondition: UsesGtaoVisibilityBitmask);
+
+        stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.ThicknessHeuristic)),
             PostProcessParameterKind.Float,
             1.0f,
@@ -918,7 +939,7 @@ public partial class DefaultRenderPipeline
             min: 0.0f,
             max: 1.0f,
             step: 0.01f,
-            visibilityCondition: IsGTAO);
+            visibilityCondition: UsesClassicGtaoHorizon);
 
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.MultiBounceEnabled)),

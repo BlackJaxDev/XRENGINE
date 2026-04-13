@@ -1518,39 +1518,39 @@ namespace XREngine.Rendering
             {
                 if (stereoLeftEye)
                 {
-                    program.Uniform(EEngineUniform.ViewMatrix.ToString(), viewMtx);
-                    program.Uniform(EEngineUniform.ViewProjectionMatrix.ToString(), viewProjMtx);
-                    program.Uniform(EEngineUniform.LeftEyeViewMatrix.ToString(), viewMtx);
-                    program.Uniform(EEngineUniform.LeftEyeInverseViewMatrix.ToString(), renderMtx);
-                    program.Uniform(EEngineUniform.LeftEyeInverseProjMatrix.ToString(), inverseProjMtx);
-                    program.Uniform(EEngineUniform.LeftEyeProjMatrix.ToString(), projMtx);
-                    program.Uniform(EEngineUniform.LeftEyeViewProjectionMatrix.ToString(), viewProjMtx);
+                    program.Uniform(EEngineUniform.ViewMatrix.ToStringFast(), viewMtx);
+                    program.Uniform(EEngineUniform.ViewProjectionMatrix.ToStringFast(), viewProjMtx);
+                    program.Uniform(EEngineUniform.LeftEyeViewMatrix.ToStringFast(), viewMtx);
+                    program.Uniform(EEngineUniform.LeftEyeInverseViewMatrix.ToStringFast(), renderMtx);
+                    program.Uniform(EEngineUniform.LeftEyeInverseProjMatrix.ToStringFast(), inverseProjMtx);
+                    program.Uniform(EEngineUniform.LeftEyeProjMatrix.ToStringFast(), projMtx);
+                    program.Uniform(EEngineUniform.LeftEyeViewProjectionMatrix.ToStringFast(), viewProjMtx);
                 }
                 else
                 {
-                    program.Uniform(EEngineUniform.ViewMatrix.ToString(), viewMtx);
-                    program.Uniform(EEngineUniform.ViewProjectionMatrix.ToString(), viewProjMtx);
-                    program.Uniform(EEngineUniform.RightEyeViewMatrix.ToString(), viewMtx);
-                    program.Uniform(EEngineUniform.RightEyeInverseViewMatrix.ToString(), renderMtx);
-                    program.Uniform(EEngineUniform.RightEyeInverseProjMatrix.ToString(), inverseProjMtx);
-                    program.Uniform(EEngineUniform.RightEyeProjMatrix.ToString(), projMtx);
-                    program.Uniform(EEngineUniform.RightEyeViewProjectionMatrix.ToString(), viewProjMtx);
+                    program.Uniform(EEngineUniform.ViewMatrix.ToStringFast(), viewMtx);
+                    program.Uniform(EEngineUniform.ViewProjectionMatrix.ToStringFast(), viewProjMtx);
+                    program.Uniform(EEngineUniform.RightEyeViewMatrix.ToStringFast(), viewMtx);
+                    program.Uniform(EEngineUniform.RightEyeInverseViewMatrix.ToStringFast(), renderMtx);
+                    program.Uniform(EEngineUniform.RightEyeInverseProjMatrix.ToStringFast(), inverseProjMtx);
+                    program.Uniform(EEngineUniform.RightEyeProjMatrix.ToStringFast(), projMtx);
+                    program.Uniform(EEngineUniform.RightEyeViewProjectionMatrix.ToStringFast(), viewProjMtx);
                 }
             }
             else
             {
-                program.Uniform(EEngineUniform.ViewMatrix.ToString(), viewMtx);
-                program.Uniform(EEngineUniform.InverseViewMatrix.ToString(), renderMtx);
-                program.Uniform(EEngineUniform.InverseProjMatrix.ToString(), inverseProjMtx);
-                program.Uniform(EEngineUniform.ProjMatrix.ToString(), projMtx);
-                program.Uniform(EEngineUniform.ViewProjectionMatrix.ToString(), viewProjMtx);
+                program.Uniform(EEngineUniform.ViewMatrix.ToStringFast(), viewMtx);
+                program.Uniform(EEngineUniform.InverseViewMatrix.ToStringFast(), renderMtx);
+                program.Uniform(EEngineUniform.InverseProjMatrix.ToStringFast(), inverseProjMtx);
+                program.Uniform(EEngineUniform.ProjMatrix.ToStringFast(), projMtx);
+                program.Uniform(EEngineUniform.ViewProjectionMatrix.ToStringFast(), viewProjMtx);
             }
 
-            program.Uniform(EEngineUniform.CameraPosition.ToString(), tfm.RenderTranslation);
-            program.Uniform(EEngineUniform.CameraForward.ToString(), tfm.RenderForward);
-            program.Uniform(EEngineUniform.CameraUp.ToString(), tfm.RenderUp);
-            program.Uniform(EEngineUniform.CameraRight.ToString(), tfm.RenderRight);
-            program.Uniform(EEngineUniform.DepthMode.ToString(), (int)DepthMode);
+            program.Uniform(EEngineUniform.CameraPosition.ToStringFast(), tfm.RenderTranslation);
+            program.Uniform(EEngineUniform.CameraForward.ToStringFast(), tfm.RenderForward);
+            program.Uniform(EEngineUniform.CameraUp.ToStringFast(), tfm.RenderUp);
+            program.Uniform(EEngineUniform.CameraRight.ToStringFast(), tfm.RenderRight);
+            program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)DepthMode);
 
             Parameters.SetUniforms(program);
         }

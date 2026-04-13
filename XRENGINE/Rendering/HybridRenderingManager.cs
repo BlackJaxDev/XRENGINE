@@ -451,8 +451,8 @@ namespace XREngine.Rendering
                     Warn(LogCategory.Draw, "No camera provided for uniforms!");
                 }
 
-                LogUniformMatrix(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
-                graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
+                LogUniformMatrix(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
+                graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
             }
             else
             {
@@ -989,7 +989,7 @@ namespace XREngine.Rendering
                 if (camera is not null)
                     renderer.SetEngineUniforms(graphicsProgram, camera);
                 // Legacy materials might still reference ModelMatrix; set a sensible default.
-                graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
+                graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
             }
 
             // Bind VAO
@@ -2908,7 +2908,7 @@ namespace XREngine.Rendering
             instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
             graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
             renderer.SetEngineUniforms(graphicsProgram, camera);
-            graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
+            graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
 
             var version = vaoRenderer?.GetDefaultVersion();
             renderer.BindVAOForRenderer(version);

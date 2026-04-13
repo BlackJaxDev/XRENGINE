@@ -14,6 +14,10 @@ public static partial class EditorImGuiUI
         public string? RenamingPath { get; set; }
         public bool RenamingIsDirectory { get; set; }
         public bool RenameFocusRequested { get; set; }
+        public string FilteredDirectory { get; set; } = string.Empty;
+        public int FilteredRevision { get; set; } = -1;
+        public AssetExplorerDirectorySnapshot? FilteredSnapshot { get; set; }
+        public List<AssetExplorerEntry> FilteredEntries { get; } = [];
         public Dictionary<string, AssetExplorerPreviewCacheEntry> PreviewCache { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, AssetExplorerDirectorySnapshot> DirectorySnapshots { get; } = new(StringComparer.OrdinalIgnoreCase);
         public FileSystemWatcher? Watcher { get; set; }

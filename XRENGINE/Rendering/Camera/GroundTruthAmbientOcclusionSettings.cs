@@ -2,7 +2,7 @@ using System;
 
 namespace XREngine.Rendering
 {
-    public sealed class GroundTruthAmbientOcclusionSettings : AmbientOcclusionModeSettings
+    public sealed class GroundTruthAmbientOcclusionSettings(AmbientOcclusionSettings owner) : AmbientOcclusionModeSettings(owner, nameof(AmbientOcclusionSettings.GroundTruth))
     {
         /// <summary>
         /// Controls the resolution at which the GTAO generation pass runs.
@@ -27,11 +27,8 @@ namespace XREngine.Rendering
         private bool _specularOcclusionEnabled = true;
         private EResolution _resolution = EResolution.Half;
         private bool _useNormalWeightedBlur = true;
-
-        public GroundTruthAmbientOcclusionSettings(AmbientOcclusionSettings owner)
-            : base(owner, nameof(AmbientOcclusionSettings.GroundTruth))
-        {
-        }
+        private bool _useVisibilityBitmask;
+        private float _visibilityBitmaskThickness = 0.15f;
 
         public int SliceCount
         {
@@ -112,6 +109,24 @@ namespace XREngine.Rendering
             set => SetValue(ref _useNormalWeightedBlur, value, nameof(AmbientOcclusionSettings.GTAOUseNormalWeightedBlur));
         }
 
+        /// <summary>
+        /// Switches the GTAO gather from horizon-angle integration to the visibility-bitmask variant.
+        /// </summary>
+        public bool UseVisibilityBitmask
+        {
+            get => _useVisibilityBitmask;
+            set => SetValue(ref _useVisibilityBitmask, value, nameof(AmbientOcclusionSettings.GTAOUseVisibilityBitmask));
+        }
+
+        /// <summary>
+        /// View-space thickness used by the visibility-bitmask gather to approximate back-face coverage.
+        /// </summary>
+        public float VisibilityBitmaskThickness
+        {
+            get => _visibilityBitmaskThickness;
+            set => SetValue(ref _visibilityBitmaskThickness, value, nameof(AmbientOcclusionSettings.GTAOVisibilityBitmaskThickness));
+        }
+
         public override void ApplyUniforms(XRRenderProgram program)
         {
             program.Uniform("Radius", PositiveOr(Owner.Radius, 2.0f));
@@ -125,6 +140,8 @@ namespace XREngine.Rendering
             program.Uniform("DenoiseRadius", Math.Clamp(DenoiseRadius, 0, 16));
             program.Uniform("DenoiseSharpness", PositiveOr(DenoiseSharpness, 4.0f));
             program.Uniform("UseInputNormals", UseInputNormals);
+            program.Uniform("UseVisibilityBitmask", UseVisibilityBitmask);
+            program.Uniform("VisibilityBitmaskThickness", PositiveOr(VisibilityBitmaskThickness, 0.15f));
         }
     }
 }

@@ -232,9 +232,9 @@ namespace XREngine.Rendering
             ResolveResolution(out float widthPx, out float heightPx);
             float aspect = widthPx / MathF.Max(1.0f, heightPx);
 
-            program.Uniform(EEngineUniform.CameraFovY.ToString(), VerticalFieldOfViewDegrees);
-            program.Uniform(EEngineUniform.CameraFovX.ToString(), HorizontalFieldOfViewDegrees);
-            program.Uniform(EEngineUniform.CameraAspect.ToString(), aspect);
+            program.Uniform(EEngineUniform.CameraFovY.ToStringFast(), VerticalFieldOfViewDegrees);
+            program.Uniform(EEngineUniform.CameraFovX.ToStringFast(), HorizontalFieldOfViewDegrees);
+            program.Uniform(EEngineUniform.CameraAspect.ToStringFast(), aspect);
         }
 
         public override Vector2 GetFrustumSizeAtDistance(float distance)

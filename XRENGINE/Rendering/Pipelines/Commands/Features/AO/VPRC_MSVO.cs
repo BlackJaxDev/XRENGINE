@@ -293,9 +293,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ActivePipelineInstance.RenderState.CurrentRenderRegion.Height,
                 Engine.Rendering.State.IsStereoPass,
                 ScaleFactors);
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), 0.0f);
         }
 
         private void InvalidateDependentFbos(XRRenderPipelineInstance instance)

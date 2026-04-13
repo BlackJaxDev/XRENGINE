@@ -124,16 +124,19 @@ public static partial class EditorImGuiUI
 
         if (targetWorld?.Scenes.Count > 0)
         {
-            // Filter out editor-only scenes from the hierarchy display
-            var sceneSnapshot = targetWorld.Scenes.Where(s => !s.IsEditorOnly).ToArray();
-            foreach (var scene in sceneSnapshot)
+            // Iterate scenes without LINQ/ToArray to avoid per-frame allocations.
+            var scenes = targetWorld.Scenes;
+            for (int i = 0; i < scenes.Count; i++)
             {
+                var scene = scenes[i];
+                if (scene is null || scene.IsEditorOnly)
+                    continue;
                 DrawSceneHierarchySection(scene, world);
                 drewAnySection = true;
                 ImGui.Spacing();
             }
 
-            var unassignedRoots = CollectUnassignedRoots(world, sceneSnapshot);
+            var unassignedRoots = CollectUnassignedRoots(world, scenes);
             if (unassignedRoots.Count > 0)
             {
                 ImGui.Spacing();
@@ -168,32 +171,33 @@ public static partial class EditorImGuiUI
         if (open)
         {
             ImGui.TextDisabled("Editor-only content (not saved with the world).");
-            var roots = editorScene.RootNodes.Where(r => r is not null).ToArray();
-            DrawSceneHierarchyNodes(roots, world, editorScene);
+            DrawSceneHierarchyNodes(editorScene.RootNodes, world, editorScene);
         }
         ImGui.PopID();
     }
 
-    private static void DrawSceneNodeTree(SceneNode node, XRWorldInstance world, XRScene? owningScene)
+    private static void DrawSceneNodeTree(SceneNode node, XRWorldInstance world, XRScene? owningScene, int depth = 0)
     {
         var transform = node.Transform;
         int childCount = transform.Children.Count;
-        string nodeLabel = node.Name ?? "<unnamed>";
-        if (childCount > 0)
-            nodeLabel += $" ({childCount})";
+        string nodeLabel = childCount > 0
+            ? $"{node.Name ?? "<unnamed>"} ({childCount})"
+            : node.Name ?? "<unnamed>";
         ImGuiTreeNodeFlags flags = childCount > 0
-            ? ImGuiTreeNodeFlags.DefaultOpen
+            ? (depth == 0 ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None)
             : ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen;
 
         bool nodeOpen = DrawSceneNodeEntry(node, world, nodeLabel, flags, owningScene);
 
         if (childCount > 0 && nodeOpen)
         {
-            var childSnapshot = transform.Children.ToArray();
-            foreach (var child in childSnapshot)
+            // Iterate children by index to avoid ToArray() allocation per node per frame.
+            var children = transform.Children;
+            int count = children.Count;
+            for (int i = 0; i < count; i++)
             {
-                if (child?.SceneNode is SceneNode childNode)
-                    DrawSceneNodeTree(childNode, world, owningScene);
+                if (children[i]?.SceneNode is SceneNode childNode)
+                    DrawSceneNodeTree(childNode, world, owningScene, depth + 1);
             }
             ImGui.TableSetColumnIndex(0);
             ImGui.TreePop();
@@ -205,7 +209,7 @@ public static partial class EditorImGuiUI
         bool isRenaming = ReferenceEquals(_nodePendingRename, node);
         bool isSelected = Selection.SceneNodes.Contains(node) || ReferenceEquals(Selection.LastSceneNode, node);
 
-        ImGui.PushID(node.ID.ToString());
+        ImGui.PushID(node.ID.GetHashCode());
 
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
@@ -1150,8 +1154,7 @@ public static partial class EditorImGuiUI
             if (!scene.IsVisible)
                 ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1.0f), "Scene is hidden");
 
-            var rootSnapshot = scene.RootNodes.Where(r => r is not null).ToArray();
-            DrawSceneHierarchyNodes(rootSnapshot, world, scene);
+            DrawSceneHierarchyNodes(scene.RootNodes, world, scene);
         }
 
         ImGui.PopID();
@@ -1181,8 +1184,12 @@ public static partial class EditorImGuiUI
             ImGui.TableSetupColumn("Active", ImGuiTableColumnFlags.WidthFixed, 72.0f);
             ImGui.TableHeadersRow();
 
-            foreach (var root in roots)
-                DrawSceneNodeTree(root, world, owningScene);
+            for (int i = 0; i < roots.Count; i++)
+            {
+                var root = roots[i];
+                if (root is not null)
+                    DrawSceneNodeTree(root, world, owningScene, depth: 0);
+            }
 
             ImGui.EndTable();
         }
@@ -1201,14 +1208,13 @@ public static partial class EditorImGuiUI
 
     private static bool DrawRuntimeHierarchy(XRWorldInstance world)
     {
-        var roots = world.RootNodes.ToArray();
-        if (roots.Length == 0)
+        if (world.RootNodes.Count == 0)
             return false;
 
         ImGui.PushID("RuntimeWorldNodes");
         bool open = ImGui.CollapsingHeader("World Nodes##RuntimeWorld", ImGuiTreeNodeFlags.DefaultOpen);
         if (open)
-            DrawSceneHierarchyNodes(roots, world, null);
+            DrawSceneHierarchyNodes(world.RootNodes, world, null);
         ImGui.PopID();
         return true;
     }
@@ -1229,8 +1235,12 @@ public static partial class EditorImGuiUI
         var targetWorld = world.TargetWorld;
         if (targetWorld is not null)
         {
-            foreach (var scene in targetWorld.Scenes.Where(s => s.IsEditorOnly))
+            var allScenes = targetWorld.Scenes;
+            for (int s = 0; s < allScenes.Count; s++)
             {
+                var scene = allScenes[s];
+                if (scene is null || !scene.IsEditorOnly)
+                    continue;
                 foreach (var root in scene.RootNodes)
                 {
                     if (root is not null)

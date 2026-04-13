@@ -93,6 +93,7 @@ public static partial class EditorImGuiUI
 
         private static readonly NullabilityInfoContext _nullabilityContext = new();
         private static readonly Dictionary<MemberInfo, string[]?> _stringOptionsCache = new();
+        private static readonly Dictionary<Type, CachedInspectorTypeLayout> _inspectorTypeLayoutCache = new();
 
         private static bool IsPropertyNullable(PropertyInfo property)
         {
@@ -307,137 +308,77 @@ public static partial class EditorImGuiUI
             object primary = targets.PrimaryTarget;
             Type type = targets.CommonType;
 
-            bool isXRAssetDerived = XRAssetType.IsAssignableFrom(type);
-
             string search = _inspectorPropertySearch ?? string.Empty;
             bool hasSearch = !string.IsNullOrWhiteSpace(search);
-            var propertyInfos = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-                .Select(p =>
+            CachedInspectorTypeLayout layout = GetCachedInspectorTypeLayout(type);
+
+            var propertyInfos = new List<SettingPropertyDescriptor>(layout.Properties.Count);
+            for (int i = 0; i < layout.Properties.Count; i++)
+            {
+                CachedInspectorProperty cached = layout.Properties[i];
+                if (!IsEditorBrowsable(cached.EditorBrowsableCondition, targets.Targets))
+                    continue;
+
+                object?[] values = new object?[targets.Targets.Count];
+                bool valueRetrievalFailed = false;
+                for (int targetIndex = 0; targetIndex < targets.Targets.Count; targetIndex++)
                 {
-                    if (!IsEditorBrowsable(p, targets.Targets))
-                        return null;
-
-                    var displayAttr = p.GetCustomAttribute<DisplayNameAttribute>();
-                    var descAttr = p.GetCustomAttribute<DescriptionAttribute>();
-                    var categoryAttr = p.GetCustomAttribute<CategoryAttribute>();
-                    var browsableAttr = p.GetCustomAttribute<BrowsableAttribute>();
-
-                    if (browsableAttr != null && !browsableAttr.Browsable)
-                        return null;
-
-                    // Hide XRAsset infrastructure members from the inspector.
-                    if (isXRAssetDerived && InspectorInfrastructureMembers.Contains(p.Name))
-                        return null;
-
-                    string displayName = displayAttr?.DisplayName ?? p.Name.SplitCamelCase();
-                    string? description = descAttr?.Description;
-                    string? category = categoryAttr?.Category;
-
-                    var values = new List<object?>();
-                    bool valueRetrievalFailed = false;
-                    foreach (var target in targets.Targets)
+                    try
                     {
-                        try
-                        {
-                            values.Add(p.GetValue(target));
-                        }
-                        catch
-                        {
-                            values.Add(null);
-                            valueRetrievalFailed = true;
-                        }
+                        values[targetIndex] = cached.Property.GetValue(targets.Targets[targetIndex]);
                     }
-
-                    bool isOverrideable = typeof(IOverrideableSetting).IsAssignableFrom(p.PropertyType);
-                    bool isSimple = isOverrideable || IsSimpleSettingType(p.PropertyType);
-
-                    // Expandable struct types need tree-node treatment with struct-aware writeback,
-                    // so treat them as complex even though IsSimpleSettingType returns true.
-                    if (isSimple && !isOverrideable && IsExpandableStructType(p.PropertyType))
-                        isSimple = false;
-
-                    return new SettingPropertyDescriptor
+                    catch
                     {
-                        Property = p,
-                        Values = values,
-                        ValueRetrievalFailed = valueRetrievalFailed,
-                        IsSimple = isSimple,
-                        Category = category,
-                        DisplayName = displayName,
-                        Description = description,
-                        IsOverrideable = isOverrideable
-                    };
-                })
-                .Where(x => x != null)
-                .Select(x => x!)
-                .DistinctBy(x => x.Property.Name)
-                .ToList();
+                        valueRetrievalFailed = true;
+                    }
+                }
 
-            var fieldInfos = type.GetFields(BindingFlags.Public | BindingFlags.Instance)
-                .Where(f => !f.IsStatic && !f.IsLiteral)
-                .Select(f =>
+                propertyInfos.Add(new SettingPropertyDescriptor
                 {
-                    if (!IsEditorBrowsable(f, targets.Targets))
-                        return null;
+                    Property = cached.Property,
+                    Values = values,
+                    ValueRetrievalFailed = valueRetrievalFailed,
+                    IsSimple = cached.IsSimple,
+                    Category = cached.Category,
+                    DisplayName = cached.DisplayName,
+                    Description = cached.Description,
+                    IsOverrideable = cached.IsOverrideable,
+                });
+            }
 
-                    var displayAttr = f.GetCustomAttribute<DisplayNameAttribute>();
-                    var descAttr = f.GetCustomAttribute<DescriptionAttribute>();
-                    var categoryAttr = f.GetCustomAttribute<CategoryAttribute>();
-                    var browsableAttr = f.GetCustomAttribute<BrowsableAttribute>();
+            var fieldInfos = new List<SettingFieldDescriptor>(layout.Fields.Count);
+            for (int i = 0; i < layout.Fields.Count; i++)
+            {
+                CachedInspectorField cached = layout.Fields[i];
+                if (!IsEditorBrowsable(cached.EditorBrowsableCondition, targets.Targets))
+                    continue;
 
-                    if (browsableAttr != null && !browsableAttr.Browsable)
-                        return null;
-
-                    // Support the engine's Unity-style attribute even if it's not used widely yet.
-                    if (f.GetCustomAttribute<HideInInspectorAttribute>() is not null)
-                        return null;
-
-                    // Hide XRAsset infrastructure fields from the inspector.
-                    if (isXRAssetDerived && InspectorInfrastructureMembers.Contains(f.Name))
-                        return null;
-
-                    string displayName = displayAttr?.DisplayName ?? f.Name.SplitCamelCase();
-                    string? description = descAttr?.Description;
-                    string? category = categoryAttr?.Category;
-
-                    var values = new List<object?>();
-                    bool valueRetrievalFailed = false;
-                    foreach (var target in targets.Targets)
+                object?[] values = new object?[targets.Targets.Count];
+                bool valueRetrievalFailed = false;
+                for (int targetIndex = 0; targetIndex < targets.Targets.Count; targetIndex++)
+                {
+                    try
                     {
-                        try
-                        {
-                            values.Add(f.GetValue(target));
-                        }
-                        catch
-                        {
-                            values.Add(null);
-                            valueRetrievalFailed = true;
-                        }
+                        values[targetIndex] = cached.Field.GetValue(targets.Targets[targetIndex]);
                     }
-
-                    bool isSimple = IsSimpleSettingType(f.FieldType);
-                    bool canWrite = !f.IsInitOnly;
-
-                    // Expandable struct types need tree-node treatment with struct-aware writeback.
-                    if (isSimple && IsExpandableStructType(f.FieldType))
-                        isSimple = false;
-
-                    return new SettingFieldDescriptor
+                    catch
                     {
-                        Field = f,
-                        Values = values,
-                        ValueRetrievalFailed = valueRetrievalFailed,
-                        IsSimple = isSimple,
-                        Category = category,
-                        DisplayName = displayName,
-                        Description = description,
-                        CanWrite = canWrite
-                    };
-                })
-                .Where(x => x != null)
-                .Select(x => x!)
-                .ToList();
+                        valueRetrievalFailed = true;
+                    }
+                }
+
+                fieldInfos.Add(new SettingFieldDescriptor
+                {
+                    Field = cached.Field,
+                    Values = values,
+                    ValueRetrievalFailed = valueRetrievalFailed,
+                    IsSimple = cached.IsSimple,
+                    Category = cached.Category,
+                    DisplayName = cached.DisplayName,
+                    Description = cached.Description,
+                    CanWrite = cached.CanWrite,
+                });
+            }
 
             // Pair overrideable settings with their base property (e.g., VSync + VSyncOverride)
             if (propertyInfos.Count > 0)
@@ -473,31 +414,37 @@ public static partial class EditorImGuiUI
                 }
             }
 
-            var allRows = new List<InspectorMemberRow>(propertyInfos.Count + fieldInfos.Count);
-            allRows.AddRange(propertyInfos.Select(p => new InspectorMemberRow(p)));
-            allRows.AddRange(fieldInfos.Select(f => new InspectorMemberRow(f)));
-
-            if (allRows.Count == 0)
+            int rowCapacity = propertyInfos.Count + fieldInfos.Count;
+            if (rowCapacity == 0)
             {
                 ImGui.TextDisabled("No properties or fields found.");
                 return;
             }
 
-            var orderedRows = allRows
-                .Where(row => !row.Hidden)
-                .Where(row =>
-                {
-                    if (!hasSearch)
-                        return true;
+            var orderedRows = new List<InspectorMemberRow>(rowCapacity);
+            for (int i = 0; i < propertyInfos.Count; i++)
+            {
+                var row = new InspectorMemberRow(propertyInfos[i]);
+                if (row.Hidden)
+                    continue;
 
-                    return row.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase)
-                        || row.MemberName.Contains(search, StringComparison.OrdinalIgnoreCase)
-                        || (row.Category?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false);
-                })
-                .OrderBy(row => string.IsNullOrWhiteSpace(row.Category) ? 0 : 1)
-                .ThenBy(row => row.Category, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(row => row.DisplayName, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+                if (hasSearch && !MatchesInspectorSearch(row, search))
+                    continue;
+
+                orderedRows.Add(row);
+            }
+
+            for (int i = 0; i < fieldInfos.Count; i++)
+            {
+                var row = new InspectorMemberRow(fieldInfos[i]);
+                if (row.Hidden)
+                    continue;
+
+                if (hasSearch && !MatchesInspectorSearch(row, search))
+                    continue;
+
+                orderedRows.Add(row);
+            }
 
             if (orderedRows.Count == 0)
             {
@@ -505,108 +452,253 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            var grouped = orderedRows
-                .GroupBy(row => row.Category, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            orderedRows.Sort(CompareInspectorRows);
 
-            bool showCategoryHeaders = grouped.Count > 1;
+            int categoryCount = 0;
+            string? previousCategory = null;
+            for (int i = 0; i < orderedRows.Count; i++)
+            {
+                string? category = orderedRows[i].Category;
+                if (i == 0 || !StringComparer.OrdinalIgnoreCase.Equals(previousCategory, category))
+                {
+                    categoryCount++;
+                    previousCategory = category;
+                }
+            }
 
+            bool showCategoryHeaders = categoryCount > 1;
             bool renderedCategoryHeader = false;
 
-            foreach (var group in grouped)
+            string? activeCategory = null;
+            bool activeCategoryOpen = true;
+            bool simpleTableOpen = false;
+
+            for (int i = 0; i < orderedRows.Count; i++)
             {
-                string categoryLabel = string.IsNullOrWhiteSpace(group.Key) ? "General" : group.Key;
+                InspectorMemberRow row = orderedRows[i];
 
-                var simpleRows = group.Where(row => row.IsSimple).ToList();
-                var complexRows = group.Where(row => !row.IsSimple).ToList();
-
-                if (showCategoryHeaders)
+                if (i == 0 || !StringComparer.OrdinalIgnoreCase.Equals(activeCategory, row.Category))
                 {
-                    if (renderedCategoryHeader)
-                        ImGui.Separator();
+                    if (simpleTableOpen)
+                    {
+                        ImGui.EndTable();
+                        simpleTableOpen = false;
+                    }
 
-                    // Collapse categories by default, but auto-expand while searching to show matches.
-                    ImGui.SetNextItemOpen(hasSearch, hasSearch ? ImGuiCond.Always : ImGuiCond.Once);
-                    bool categoryOpen = ImGui.CollapsingHeader($"{categoryLabel}##InspectorCategory_{group.Key}", ImGuiTreeNodeFlags.SpanAvailWidth);
-                    renderedCategoryHeader = true;
+                    activeCategory = row.Category;
+                    activeCategoryOpen = true;
 
-                    if (!categoryOpen)
-                        continue;
+                    if (showCategoryHeaders)
+                    {
+                        if (renderedCategoryHeader)
+                            ImGui.Separator();
+
+                        string categoryLabel = string.IsNullOrWhiteSpace(row.Category) ? "General" : row.Category;
+                        ImGui.SetNextItemOpen(hasSearch, hasSearch ? ImGuiCond.Always : ImGuiCond.Once);
+                        activeCategoryOpen = ImGui.CollapsingHeader($"{categoryLabel}##InspectorCategory_{row.Category}", ImGuiTreeNodeFlags.SpanAvailWidth);
+                        renderedCategoryHeader = true;
+                    }
                 }
 
-                if (simpleRows.Count > 0)
+                if (!activeCategoryOpen)
+                    continue;
+
+                if (row.IsSimple)
                 {
-                    string tableId = $"Properties_{primary.GetHashCode():X8}_{group.Key?.GetHashCode() ?? 0:X8}";
-                    if (ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                    if (!simpleTableOpen)
                     {
-                        // Prevent the name column from collapsing to a few pixels.
-                        // Without this, long value widgets can steal all width and labels get clipped to 1-2 chars.
+                        string tableId = $"Properties_{primary.GetHashCode():X8}_{row.Category?.GetHashCode() ?? 0:X8}";
+                        if (!ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                            continue;
+
                         ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 280.0f);
                         ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
-                        foreach (var row in simpleRows)
-                        {
-                            if (row.Property is not null)
-                                DrawSimplePropertyRow(targets, row.Property.Property, row.Property.Values, row.DisplayName, row.Description, row.Property.ValueRetrievalFailed);
-                            else if (row.Field is not null)
-                                DrawSimpleFieldRow(targets, row.Field.Field, row.Field.Values, row.DisplayName, row.Description, row.Field.ValueRetrievalFailed, row.Field.CanWrite);
-                        }
-                        ImGui.EndTable();
-                    }
-                }
-
-                foreach (var row in complexRows)
-                {
-                    if (row.ValueRetrievalFailed)
-                    {
-                        ImGui.TextUnformatted($"{row.DisplayName}: <error>");
-                        if (!string.IsNullOrEmpty(row.Description) && ImGui.IsItemHovered())
-                            ImGui.SetTooltip(row.Description);
-                        continue;
-                    }
-
-                    if (targets.HasMultipleTargets)
-                    {
-                        ImGui.TextDisabled($"{row.DisplayName}: <multiple values>");
-                        continue;
-                    }
-
-                    object? value = row.Values.FirstOrDefault();
-
-                    if (TryDrawXREventMember(primary, row, value, visited))
-                        continue;
-
-                    if (value is null)
-                    {
-                        if (row.Property is not null)
-                            DrawNullComplexProperty(primary, row.Property.Property, row.DisplayName, row.Description);
-                        else if (row.Field is not null)
-                            DrawNullComplexField(primary, row.Field.Field, row.DisplayName, row.Description, row.Field.CanWrite);
-                        continue;
+                        simpleTableOpen = true;
                     }
 
                     if (row.Property is not null)
-                    {
-                        if (TryDrawCollectionProperty(primary, row.Property.Property, row.DisplayName, row.Description, value, visited))
-                            continue;
-
-                        // Handle GL objects with their custom ImGui editors
-                        if (TryDrawGLObjectProperty(row.Property.Property, row.DisplayName, row.Description, value))
-                            continue;
-
-                        DrawComplexPropertyObject(primary, row.Property.Property, value, row.DisplayName, row.Description, visited);
-                    }
+                        DrawSimplePropertyRow(targets, row.Property.Property, row.Property.Values, row.DisplayName, row.Description, row.Property.ValueRetrievalFailed);
                     else if (row.Field is not null)
-                    {
-                        // Field fallback: just draw the object inspector for the field value.
-                        DrawComplexFieldObject(primary, row.Field.Field, value, row.DisplayName, row.Description, visited);
-                    }
+                        DrawSimpleFieldRow(targets, row.Field.Field, row.Field.Values, row.DisplayName, row.Description, row.Field.ValueRetrievalFailed, row.Field.CanWrite);
+
+                    continue;
+                }
+
+                if (simpleTableOpen)
+                {
+                    ImGui.EndTable();
+                    simpleTableOpen = false;
+                }
+
+                if (row.ValueRetrievalFailed)
+                {
+                    ImGui.TextUnformatted($"{row.DisplayName}: <error>");
+                    if (!string.IsNullOrEmpty(row.Description) && ImGui.IsItemHovered())
+                        ImGui.SetTooltip(row.Description);
+                    continue;
+                }
+
+                if (targets.HasMultipleTargets)
+                {
+                    ImGui.TextDisabled($"{row.DisplayName}: <multiple values>");
+                    continue;
+                }
+
+                object? value = row.Values.Count > 0 ? row.Values[0] : null;
+
+                if (TryDrawXREventMember(primary, row, value, visited))
+                    continue;
+
+                if (value is null)
+                {
+                    if (row.Property is not null)
+                        DrawNullComplexProperty(primary, row.Property.Property, row.DisplayName, row.Description);
+                    else if (row.Field is not null)
+                        DrawNullComplexField(primary, row.Field.Field, row.DisplayName, row.Description, row.Field.CanWrite);
+                    continue;
+                }
+
+                if (row.Property is not null)
+                {
+                    if (TryDrawCollectionProperty(primary, row.Property.Property, row.DisplayName, row.Description, value, visited))
+                        continue;
+
+                    if (TryDrawGLObjectProperty(row.Property.Property, row.DisplayName, row.Description, value))
+                        continue;
+
+                    DrawComplexPropertyObject(primary, row.Property.Property, value, row.DisplayName, row.Description, visited);
+                }
+                else if (row.Field is not null)
+                {
+                    DrawComplexFieldObject(primary, row.Field.Field, value, row.DisplayName, row.Description, visited);
                 }
             }
+
+            if (simpleTableOpen)
+                ImGui.EndTable();
         }
 
-        private static bool IsEditorBrowsable(MemberInfo member, IReadOnlyList<object> targets)
+        private static CachedInspectorTypeLayout GetCachedInspectorTypeLayout(Type type)
         {
-            if (member.GetCustomAttribute<EditorBrowsableIf>(true) is not EditorBrowsableIf condition)
+            if (_inspectorTypeLayoutCache.TryGetValue(type, out CachedInspectorTypeLayout? layout))
+                return layout;
+
+            bool isXRAssetDerived = XRAssetType.IsAssignableFrom(type);
+            var properties = new List<CachedInspectorProperty>();
+            var seenPropertyNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!property.CanRead || property.GetIndexParameters().Length != 0)
+                    continue;
+
+                BrowsableAttribute? browsableAttr = property.GetCustomAttribute<BrowsableAttribute>();
+                if (browsableAttr != null && !browsableAttr.Browsable)
+                    continue;
+
+                if (isXRAssetDerived && InspectorInfrastructureMembers.Contains(property.Name))
+                    continue;
+
+                if (!seenPropertyNames.Add(property.Name))
+                    continue;
+
+                DisplayNameAttribute? displayAttr = property.GetCustomAttribute<DisplayNameAttribute>();
+                DescriptionAttribute? descAttr = property.GetCustomAttribute<DescriptionAttribute>();
+                CategoryAttribute? categoryAttr = property.GetCustomAttribute<CategoryAttribute>();
+                bool isOverrideable = typeof(IOverrideableSetting).IsAssignableFrom(property.PropertyType);
+                bool isSimple = isOverrideable || IsSimpleSettingType(property.PropertyType);
+                if (isSimple && !isOverrideable && IsExpandableStructType(property.PropertyType))
+                    isSimple = false;
+
+                properties.Add(new CachedInspectorProperty
+                {
+                    Property = property,
+                    EditorBrowsableCondition = property.GetCustomAttribute<EditorBrowsableIf>(true),
+                    DisplayName = displayAttr?.DisplayName ?? property.Name.SplitCamelCase(),
+                    Description = descAttr?.Description,
+                    Category = categoryAttr?.Category,
+                    IsSimple = isSimple,
+                    IsOverrideable = isOverrideable,
+                });
+            }
+
+            var fields = new List<CachedInspectorField>();
+            foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (field.IsStatic || field.IsLiteral)
+                    continue;
+
+                BrowsableAttribute? browsableAttr = field.GetCustomAttribute<BrowsableAttribute>();
+                if (browsableAttr != null && !browsableAttr.Browsable)
+                    continue;
+
+                if (field.GetCustomAttribute<HideInInspectorAttribute>() is not null)
+                    continue;
+
+                if (isXRAssetDerived && InspectorInfrastructureMembers.Contains(field.Name))
+                    continue;
+
+                DisplayNameAttribute? displayAttr = field.GetCustomAttribute<DisplayNameAttribute>();
+                DescriptionAttribute? descAttr = field.GetCustomAttribute<DescriptionAttribute>();
+                CategoryAttribute? categoryAttr = field.GetCustomAttribute<CategoryAttribute>();
+                bool isSimple = IsSimpleSettingType(field.FieldType);
+                if (isSimple && IsExpandableStructType(field.FieldType))
+                    isSimple = false;
+
+                fields.Add(new CachedInspectorField
+                {
+                    Field = field,
+                    EditorBrowsableCondition = field.GetCustomAttribute<EditorBrowsableIf>(true),
+                    DisplayName = displayAttr?.DisplayName ?? field.Name.SplitCamelCase(),
+                    Description = descAttr?.Description,
+                    Category = categoryAttr?.Category,
+                    IsSimple = isSimple,
+                    CanWrite = !field.IsInitOnly,
+                });
+            }
+
+            layout = new CachedInspectorTypeLayout
+            {
+                Properties = properties,
+                Fields = fields,
+            };
+            _inspectorTypeLayoutCache[type] = layout;
+            return layout;
+        }
+
+        private static bool MatchesInspectorSearch(InspectorMemberRow row, string search)
+            => row.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || row.MemberName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || (row.Category?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false);
+
+        private static int CompareInspectorRows(InspectorMemberRow left, InspectorMemberRow right)
+        {
+            int categoryPresenceCompare = CompareCategoryPresence(left.Category, right.Category);
+            if (categoryPresenceCompare != 0)
+                return categoryPresenceCompare;
+
+            int categoryCompare = StringComparer.OrdinalIgnoreCase.Compare(left.Category, right.Category);
+            if (categoryCompare != 0)
+                return categoryCompare;
+
+            if (left.IsSimple != right.IsSimple)
+                return left.IsSimple ? -1 : 1;
+
+            return StringComparer.OrdinalIgnoreCase.Compare(left.DisplayName, right.DisplayName);
+        }
+
+        private static int CompareCategoryPresence(string? left, string? right)
+        {
+            bool leftHasCategory = !string.IsNullOrWhiteSpace(left);
+            bool rightHasCategory = !string.IsNullOrWhiteSpace(right);
+            if (leftHasCategory == rightHasCategory)
+                return 0;
+
+            return leftHasCategory ? 1 : -1;
+        }
+
+        private static bool IsEditorBrowsable(EditorBrowsableIf? condition, IReadOnlyList<object> targets)
+        {
+            if (condition is null)
                 return true;
 
             for (int i = 0; i < targets.Count; ++i)
@@ -664,6 +756,34 @@ public static partial class EditorImGuiUI
 
             public string MemberName
                 => Property?.Property.Name ?? Field?.Field.Name ?? string.Empty;
+        }
+
+        private sealed class CachedInspectorTypeLayout
+        {
+            public required IReadOnlyList<CachedInspectorProperty> Properties { get; init; }
+            public required IReadOnlyList<CachedInspectorField> Fields { get; init; }
+        }
+
+        private sealed class CachedInspectorProperty
+        {
+            public required PropertyInfo Property { get; init; }
+            public EditorBrowsableIf? EditorBrowsableCondition { get; init; }
+            public required string DisplayName { get; init; }
+            public string? Description { get; init; }
+            public string? Category { get; init; }
+            public bool IsSimple { get; init; }
+            public bool IsOverrideable { get; init; }
+        }
+
+        private sealed class CachedInspectorField
+        {
+            public required FieldInfo Field { get; init; }
+            public EditorBrowsableIf? EditorBrowsableCondition { get; init; }
+            public required string DisplayName { get; init; }
+            public string? Description { get; init; }
+            public string? Category { get; init; }
+            public bool IsSimple { get; init; }
+            public bool CanWrite { get; init; }
         }
 
         /// <summary>
@@ -6135,7 +6255,7 @@ public static partial class EditorImGuiUI
         private sealed class SettingFieldDescriptor
         {
             public required FieldInfo Field { get; init; }
-            public required List<object?> Values { get; init; }
+            public required IReadOnlyList<object?> Values { get; init; }
             public bool ValueRetrievalFailed { get; init; }
             public bool IsSimple { get; init; }
             public string? Category { get; init; }
