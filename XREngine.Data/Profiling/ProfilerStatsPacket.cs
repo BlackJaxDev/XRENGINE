@@ -79,16 +79,56 @@ public sealed partial class RenderStatsPacket
     // Render matrix
     public bool RenderMatrixStatsReady { get; set; }
     public int RenderMatrixApplied { get; set; }
+    public int RenderMatrixBatchCount { get; set; }
+    public int RenderMatrixMaxBatchSize { get; set; }
     public int RenderMatrixSetCalls { get; set; }
     public int RenderMatrixListenerInvocations { get; set; }
     public RenderMatrixListenerEntry[] RenderMatrixListenerCounts { get; set; } = [];
 
+    // Skinned bounds refresh
+    public bool SkinnedBoundsStatsReady { get; set; }
+    public int SkinnedBoundsDeferredScheduledCount { get; set; }
+    public int SkinnedBoundsDeferredCompletedCount { get; set; }
+    public int SkinnedBoundsDeferredFailedCount { get; set; }
+    public int SkinnedBoundsDeferredInFlightCount { get; set; }
+    public int SkinnedBoundsDeferredMaxInFlightCount { get; set; }
+    public double SkinnedBoundsDeferredQueueWaitMs { get; set; }
+    public double SkinnedBoundsDeferredCpuJobMs { get; set; }
+    public double SkinnedBoundsDeferredApplyMs { get; set; }
+    public double SkinnedBoundsDeferredMaxQueueWaitMs { get; set; }
+    public double SkinnedBoundsDeferredMaxCpuJobMs { get; set; }
+    public double SkinnedBoundsDeferredMaxApplyMs { get; set; }
+    public int SkinnedBoundsGpuCompletedCount { get; set; }
+    public double SkinnedBoundsGpuComputeMs { get; set; }
+    public double SkinnedBoundsGpuApplyMs { get; set; }
+    public double SkinnedBoundsGpuMaxComputeMs { get; set; }
+    public double SkinnedBoundsGpuMaxApplyMs { get; set; }
+
     // Octree
     public bool OctreeStatsReady { get; set; }
+    public int OctreeCollectCallCount { get; set; }
+    public int OctreeVisibleRenderableCount { get; set; }
+    public int OctreeEmittedCommandCount { get; set; }
+    public int OctreeMaxVisibleRenderablesPerCollect { get; set; }
+    public int OctreeMaxEmittedCommandsPerCollect { get; set; }
     public int OctreeAddCount { get; set; }
     public int OctreeMoveCount { get; set; }
     public int OctreeRemoveCount { get; set; }
     public int OctreeSkippedMoveCount { get; set; }
+    public int OctreeSwapDrainedCommandCount { get; set; }
+    public int OctreeSwapBufferedCommandCount { get; set; }
+    public int OctreeSwapExecutedCommandCount { get; set; }
+    public double OctreeSwapDrainMs { get; set; }
+    public double OctreeSwapExecuteMs { get; set; }
+    public double OctreeSwapMaxCommandMs { get; set; }
+    public string OctreeSwapMaxCommandKind { get; set; } = string.Empty;
+    public int OctreeRaycastProcessedCommandCount { get; set; }
+    public int OctreeRaycastDroppedCommandCount { get; set; }
+    public double OctreeRaycastTraversalMs { get; set; }
+    public double OctreeRaycastCallbackMs { get; set; }
+    public double OctreeRaycastMaxTraversalMs { get; set; }
+    public double OctreeRaycastMaxCallbackMs { get; set; }
+    public double OctreeRaycastMaxCommandMs { get; set; }
 
     // GPU render-pipeline command timings
     public bool GpuRenderPipelineProfilingEnabled { get; set; }

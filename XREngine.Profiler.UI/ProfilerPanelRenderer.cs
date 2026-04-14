@@ -622,6 +622,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         else
         {
             ImGui.Text($"  Applied (swap): {stats.RenderMatrixApplied:N0}");
+            ImGui.Text($"  Non-empty batches: {stats.RenderMatrixBatchCount:N0}");
+            ImGui.Text($"  Max batch size: {stats.RenderMatrixMaxBatchSize:N0}");
             ImGui.Text($"  SetRenderMatrix calls: {stats.RenderMatrixSetCalls:N0}");
             ImGui.Text($"  Listener invocations: {stats.RenderMatrixListenerInvocations:N0}");
 
@@ -661,10 +663,47 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         }
         else
         {
+            ImGui.Text($"  Collect calls: {stats.OctreeCollectCallCount:N0}");
+            ImGui.Text($"  Visible renderables: {stats.OctreeVisibleRenderableCount:N0}");
+            ImGui.Text($"  Emitted commands: {stats.OctreeEmittedCommandCount:N0}");
+            ImGui.Text($"  Max visible/collect: {stats.OctreeMaxVisibleRenderablesPerCollect:N0}");
+            ImGui.Text($"  Max commands/collect: {stats.OctreeMaxEmittedCommandsPerCollect:N0}");
             ImGui.Text($"  Add: {stats.OctreeAddCount:N0}");
             ImGui.Text($"  Move: {stats.OctreeMoveCount:N0}");
             ImGui.Text($"  Remove: {stats.OctreeRemoveCount:N0}");
             ImGui.Text($"  Skipped: {stats.OctreeSkippedMoveCount:N0}");
+            ImGui.Text($"  Swap drained/buffered/executed: {stats.OctreeSwapDrainedCommandCount:N0} / {stats.OctreeSwapBufferedCommandCount:N0} / {stats.OctreeSwapExecutedCommandCount:N0}");
+            ImGui.Text($"  Swap drain ms: {stats.OctreeSwapDrainMs:F3}");
+            ImGui.Text($"  Swap execute ms: {stats.OctreeSwapExecuteMs:F3}");
+            ImGui.Text($"  Swap max command: {stats.OctreeSwapMaxCommandMs:F3} ms ({stats.OctreeSwapMaxCommandKind})");
+            ImGui.Text($"  Raycasts processed/dropped: {stats.OctreeRaycastProcessedCommandCount:N0} / {stats.OctreeRaycastDroppedCommandCount:N0}");
+            ImGui.Text($"  Raycast traversal/callback ms: {stats.OctreeRaycastTraversalMs:F3} / {stats.OctreeRaycastCallbackMs:F3}");
+            ImGui.Text($"  Raycast max traversal/callback/command ms: {stats.OctreeRaycastMaxTraversalMs:F3} / {stats.OctreeRaycastMaxCallbackMs:F3} / {stats.OctreeRaycastMaxCommandMs:F3}");
+        }
+
+        ImGui.Separator();
+        ImGui.Text("Skinned Bounds Refresh:");
+        if (!stats.SkinnedBoundsStatsReady)
+        {
+            ImGui.TextDisabled("  Waiting for stats...");
+        }
+        else
+        {
+            int deferredFinished = stats.SkinnedBoundsDeferredCompletedCount + stats.SkinnedBoundsDeferredFailedCount;
+            double deferredAvgQueueMs = deferredFinished <= 0 ? 0.0 : stats.SkinnedBoundsDeferredQueueWaitMs / deferredFinished;
+            double deferredAvgCpuJobMs = deferredFinished <= 0 ? 0.0 : stats.SkinnedBoundsDeferredCpuJobMs / deferredFinished;
+            double deferredAvgApplyMs = deferredFinished <= 0 ? 0.0 : stats.SkinnedBoundsDeferredApplyMs / deferredFinished;
+            double gpuAvgComputeMs = stats.SkinnedBoundsGpuCompletedCount <= 0 ? 0.0 : stats.SkinnedBoundsGpuComputeMs / stats.SkinnedBoundsGpuCompletedCount;
+            double gpuAvgApplyMs = stats.SkinnedBoundsGpuCompletedCount <= 0 ? 0.0 : stats.SkinnedBoundsGpuApplyMs / stats.SkinnedBoundsGpuCompletedCount;
+
+            ImGui.Text($"  Deferred scheduled/completed/failed: {stats.SkinnedBoundsDeferredScheduledCount:N0} / {stats.SkinnedBoundsDeferredCompletedCount:N0} / {stats.SkinnedBoundsDeferredFailedCount:N0}");
+            ImGui.Text($"  Deferred in-flight: {stats.SkinnedBoundsDeferredInFlightCount:N0} (max {stats.SkinnedBoundsDeferredMaxInFlightCount:N0})");
+            ImGui.Text($"  Queue wait ms: total {stats.SkinnedBoundsDeferredQueueWaitMs:F3}, avg {deferredAvgQueueMs:F3}, max {stats.SkinnedBoundsDeferredMaxQueueWaitMs:F3}");
+            ImGui.Text($"  CPU job ms: total {stats.SkinnedBoundsDeferredCpuJobMs:F3}, avg {deferredAvgCpuJobMs:F3}, max {stats.SkinnedBoundsDeferredMaxCpuJobMs:F3}");
+            ImGui.Text($"  Apply ms: total {stats.SkinnedBoundsDeferredApplyMs:F3}, avg {deferredAvgApplyMs:F3}, max {stats.SkinnedBoundsDeferredMaxApplyMs:F3}");
+            ImGui.Text($"  GPU completed: {stats.SkinnedBoundsGpuCompletedCount:N0}");
+            ImGui.Text($"  GPU compute ms: total {stats.SkinnedBoundsGpuComputeMs:F3}, avg {gpuAvgComputeMs:F3}, max {stats.SkinnedBoundsGpuMaxComputeMs:F3}");
+            ImGui.Text($"  GPU apply ms: total {stats.SkinnedBoundsGpuApplyMs:F3}, avg {gpuAvgApplyMs:F3}, max {stats.SkinnedBoundsGpuMaxApplyMs:F3}");
         }
 
         ImGui.End();

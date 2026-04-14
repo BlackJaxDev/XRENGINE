@@ -22,44 +22,51 @@ namespace XREngine
 {
     public partial class AssetManager
     {
+        private object GetAssetLoadGate(string filePath)
+            => _assetLoadGates.GetOrAdd(filePath, static _ => new object());
+
         private T? LoadCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
         {
             T? file;
             filePath = Path.GetFullPath(filePath);
+            object loadGate = GetAssetLoadGate(filePath);
 #if !DEBUG
             try
             {
 #endif
-                if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
-                    return existingAsset is T tAsset ? tAsset : null;
-
-                string extension = Path.GetExtension(filePath);
-                if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
+                lock (loadGate)
                 {
-                    Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
-                    return null;
-                }
+                    if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
+                        return existingAsset is T tAsset ? tAsset : null;
 
-                string normalizedExtension = extension[1..].ToLowerInvariant();
+                    string extension = Path.GetExtension(filePath);
+                    if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
+                    {
+                        Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
+                        return null;
+                    }
+
+                    string normalizedExtension = extension[1..].ToLowerInvariant();
 
 #if XRE_PUBLISHED
-                if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, out T? publishedAsset))
-                {
-                    PostLoaded(filePath, publishedAsset);
-                    return publishedAsset;
-                }
+                    if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, out T? publishedAsset))
+                    {
+                        PostLoaded(filePath, publishedAsset);
+                        return publishedAsset;
+                    }
 #endif
 
-                if (!File.Exists(filePath))
-                {
-                    AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load)}");
-                    return null;
-                }
+                    if (!File.Exists(filePath))
+                    {
+                        AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load)}");
+                        return null;
+                    }
 
-                file = normalizedExtension == AssetExtension
-                    ? DeserializeAssetFile<T>(filePath)
-                    : Load3rdPartyWithCache<T>(filePath, normalizedExtension);
-                PostLoaded(filePath, file);
+                    file = normalizedExtension == AssetExtension
+                        ? DeserializeAssetFile<T>(filePath)
+                        : Load3rdPartyWithCache<T>(filePath, normalizedExtension);
+                    PostLoaded(filePath, file);
+                }
 #if !DEBUG
             }
             catch (Exception e)
@@ -75,40 +82,44 @@ namespace XREngine
         {
             XRAsset? file;
             filePath = Path.GetFullPath(filePath);
+            object loadGate = GetAssetLoadGate(filePath);
 #if !DEBUG
             try
             {
 #endif
-                if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
-                    return existingAsset.GetType().IsAssignableTo(type) ? existingAsset : null;
-
-                string extension = Path.GetExtension(filePath);
-                if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
+                lock (loadGate)
                 {
-                    Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
-                    return null;
-                }
+                    if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
+                        return existingAsset.GetType().IsAssignableTo(type) ? existingAsset : null;
 
-                string normalizedExtension = extension[1..].ToLowerInvariant();
+                    string extension = Path.GetExtension(filePath);
+                    if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
+                    {
+                        Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
+                        return null;
+                    }
+
+                    string normalizedExtension = extension[1..].ToLowerInvariant();
 
 #if XRE_PUBLISHED
-                if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, type, out XRAsset? publishedAsset))
-                {
-                    PostLoaded(filePath, publishedAsset);
-                    return publishedAsset;
-                }
+                    if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, type, out XRAsset? publishedAsset))
+                    {
+                        PostLoaded(filePath, publishedAsset);
+                        return publishedAsset;
+                    }
 #endif
 
-                if (!File.Exists(filePath))
-                {
-                    AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
-                    return null;
-                }
+                    if (!File.Exists(filePath))
+                    {
+                        AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
+                        return null;
+                    }
 
-                file = normalizedExtension == AssetExtension
-                    ? DeserializeAssetFile(filePath, type)
-                    : Load3rdPartyWithCache(filePath, normalizedExtension, type);
-                PostLoaded(filePath, file);
+                    file = normalizedExtension == AssetExtension
+                        ? DeserializeAssetFile(filePath, type)
+                        : Load3rdPartyWithCache(filePath, normalizedExtension, type);
+                    PostLoaded(filePath, file);
+                }
 #if !DEBUG
             }
             catch (Exception e)

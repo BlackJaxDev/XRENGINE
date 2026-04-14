@@ -27,6 +27,7 @@ public static class XRAssetGraphUtility
     private static readonly ConcurrentDictionary<Type, List<Func<object, object?>>> AccessorCache = new();
     private static readonly ConcurrentDictionary<Type, bool> LeafTypeCache = new();
     private static readonly ConcurrentDictionary<Type, bool> InspectMemberTypeCache = new();
+    private static readonly ConcurrentDictionary<(Type OwnerType, string MemberName), bool> SerializedMemberRefreshCache = new();
 
     private static readonly HashSet<string> InfrastructureMembers = new(StringComparer.Ordinal)
     {
@@ -43,8 +44,32 @@ public static class XRAssetGraphUtility
 
     private static readonly Type XRAssetType = typeof(XRAsset);
 
-    internal static bool ShouldRefreshForPropertyChange(object? previousValue, object? newValue)
-        => ContainsAssetCandidate(previousValue) || ContainsAssetCandidate(newValue);
+    internal static bool ShouldRefreshForPropertyChange(Type ownerType, string? propertyName, object? previousValue, object? newValue)
+    {
+        if (!string.IsNullOrWhiteSpace(propertyName) && !ShouldRefreshSerializedMember(ownerType, propertyName))
+            return false;
+
+        return ContainsAssetCandidate(previousValue) || ContainsAssetCandidate(newValue);
+    }
+
+    private static bool ShouldRefreshSerializedMember(Type ownerType, string memberName)
+        => SerializedMemberRefreshCache.GetOrAdd((ownerType, memberName), static key => IsSerializedMember(key.OwnerType, key.MemberName));
+
+    private static bool IsSerializedMember(Type ownerType, string memberName)
+    {
+        for (Type? current = ownerType; current is not null; current = current.BaseType)
+        {
+            PropertyInfo? property = current.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            if (property is not null)
+                return property.GetCustomAttribute<YamlIgnoreAttribute>() is null;
+
+            FieldInfo? field = current.GetField(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            if (field is not null)
+                return field.GetCustomAttribute<YamlIgnoreAttribute>() is null;
+        }
+
+        return true;
+    }
 
     public static void RefreshAssetGraph(XRAsset? root)
     {

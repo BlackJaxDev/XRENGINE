@@ -75,6 +75,9 @@ namespace XREngine
             LoadGlobalEditorPreferences();
             LoadProjectEditorPreferencesOverrides();
 
+            // Load project-specific game settings before user/build layers that further specialize them.
+            LoadProjectGameSettings();
+
             // Load project-specific user settings
             LoadProjectUserSettings();
 
@@ -112,6 +115,7 @@ namespace XREngine
 
             LoadGlobalEditorPreferences();
             LoadSandboxEditorPreferencesOverrides();
+            LoadSandboxGameSettings();
             LoadSandboxUserSettings();
             LoadSandboxBuildSettings();
 
@@ -166,10 +170,38 @@ namespace XREngine
             return configDir is null ? null : Path.Combine(configDir, XRProject.UserSettingsFileName);
         }
 
+        private static string? GetSandboxGameSettingsPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.GameSettingsFileName);
+        }
+
         private static string? GetSandboxBuildSettingsPath()
         {
             string? configDir = GetSandboxConfigDirectory();
             return configDir is null ? null : Path.Combine(configDir, XRProject.BuildSettingsFileName);
+        }
+
+        private static T? LoadFreshSettingsAsset<T>(string settingsPath) where T : XRAsset, new()
+        {
+            if (Assets is null || string.IsNullOrWhiteSpace(settingsPath))
+                return null;
+
+            settingsPath = Path.GetFullPath(settingsPath);
+
+            if (Assets.LoadedAssetsByPathInternal.TryRemove(settingsPath, out XRAsset? existing))
+            {
+                if (existing.ID != Guid.Empty)
+                {
+                    Assets.LoadedAssetsByIDInternal.TryRemove(existing.ID, out _);
+                    Assets.DirtyAssets.TryRemove(existing.ID, out _);
+                }
+
+                if (!string.IsNullOrWhiteSpace(existing.OriginalPath))
+                    Assets.LoadedAssetsByOriginalPathInternal.TryRemove(existing.OriginalPath, out _);
+            }
+
+            return Assets.Load<T>(settingsPath);
         }
 
         /// <summary>
@@ -186,7 +218,7 @@ namespace XREngine
 
             if (File.Exists(settingsPath))
             {
-                var settings = Assets.Load<EditorPreferences>(settingsPath);
+                var settings = LoadFreshSettingsAsset<EditorPreferences>(settingsPath);
                 if (settings is not null)
                 {
                     settings.FilePath = settingsPath;
@@ -223,7 +255,7 @@ namespace XREngine
 
             if (File.Exists(settingsPath))
             {
-                var settings = Assets.Load<EditorPreferencesOverrides>(settingsPath);
+                var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(settingsPath);
                 if (settings is not null)
                 {
                     settings.FilePath = settingsPath;
@@ -250,7 +282,7 @@ namespace XREngine
 
             if (File.Exists(settingsPath))
             {
-                var settings = Assets.Load<EditorPreferencesOverrides>(settingsPath);
+                var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(settingsPath);
                 if (settings is not null)
                 {
                     settings.FilePath = settingsPath;
@@ -267,6 +299,80 @@ namespace XREngine
             created.Name = "Editor Preferences Overrides";
             Assets.EnsureTracked(created);
             EditorPreferencesOverrides = created;
+        }
+
+        /// <summary>
+        /// Loads the game settings from the current project directory.
+        /// </summary>
+        private static void LoadProjectGameSettings()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.GameSettingsPath is null)
+            {
+                LoadSandboxGameSettings();
+                return;
+            }
+
+            string settingsPath = CurrentProject.GameSettingsPath;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<GameStartupSettings>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Game Settings";
+                    Assets.EnsureTracked(settings);
+                    GameSettings = settings;
+                    Debug.Out("Loaded project game settings.");
+                }
+                return;
+            }
+
+            var created = GameSettings ?? new GameStartupSettings();
+            created.FilePath = settingsPath;
+            created.Name = "Game Settings";
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(created);
+            GameSettings = created;
+        }
+
+        private static void LoadSandboxGameSettings()
+        {
+            string? settingsPath = GetSandboxGameSettingsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath) || Assets is null)
+                return;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<GameStartupSettings>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Game Settings";
+                    Assets.EnsureTracked(settings);
+                    GameSettings = settings;
+                    Debug.Out("Loaded sandbox game settings.");
+                }
+                return;
+            }
+
+            var created = GameSettings ?? new GameStartupSettings();
+            created.FilePath = settingsPath;
+            created.Name = "Game Settings";
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(created);
+            GameSettings = created;
         }
 
         /// <summary>
@@ -287,7 +393,7 @@ namespace XREngine
 
             if (File.Exists(userSettingsPath))
             {
-                var loadedSettings = Assets.Load<UserSettings>(userSettingsPath);
+                var loadedSettings = LoadFreshSettingsAsset<UserSettings>(userSettingsPath);
                 if (loadedSettings is not null)
                 {
                     loadedSettings.Name = "User Settings";
@@ -317,7 +423,7 @@ namespace XREngine
 
             if (File.Exists(userSettingsPath))
             {
-                var loadedSettings = Assets.Load<UserSettings>(userSettingsPath);
+                var loadedSettings = LoadFreshSettingsAsset<UserSettings>(userSettingsPath);
                 if (loadedSettings is not null)
                 {
                     loadedSettings.Name = "User Settings";
@@ -355,7 +461,7 @@ namespace XREngine
 
             if (File.Exists(CurrentProject.BuildSettingsPath))
             {
-                var settings = Assets.Load<BuildSettings>(CurrentProject.BuildSettingsPath);
+                var settings = LoadFreshSettingsAsset<BuildSettings>(CurrentProject.BuildSettingsPath);
                 if (settings is not null)
                 {
                     BuildSettings = settings;
@@ -374,7 +480,7 @@ namespace XREngine
 
             if (File.Exists(buildSettingsPath))
             {
-                var settings = Assets.Load<BuildSettings>(buildSettingsPath);
+                var settings = LoadFreshSettingsAsset<BuildSettings>(buildSettingsPath);
                 if (settings is not null)
                 {
                     settings.FilePath = buildSettingsPath;
@@ -531,11 +637,63 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Saves the game settings to the current project directory.
+        /// </summary>
+        public static void SaveProjectGameSettings()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                SaveSandboxGameSettings();
+                return;
+            }
+
+            if (CurrentProject.GameSettingsPath is null)
+                return;
+
+            string settingsPath = CurrentProject.GameSettingsPath;
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            GameSettings.FilePath = settingsPath;
+            GameSettings.Name = "Game Settings";
+            Assets.EnsureTracked(GameSettings);
+
+            Assets.Save(GameSettings);
+            Debug.Out("Saved project game settings.");
+        }
+
+        public static void SaveSandboxGameSettings()
+        {
+            if (Assets is null)
+                return;
+
+            string? settingsPath = GetSandboxGameSettingsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            GameSettings.FilePath = settingsPath;
+            GameSettings.Name = "Game Settings";
+            Assets.EnsureTracked(GameSettings);
+
+            Assets.Save(GameSettings);
+            Debug.Out("Saved sandbox game settings.");
+        }
+
+        /// <summary>
         /// Saves both engine and user settings to the current project directory.
         /// </summary>
         public static void SaveProjectSettings()
         {
             SaveProjectEditorPreferencesOverrides();
+            SaveProjectGameSettings();
             SaveProjectUserSettings();
             SaveProjectBuildSettings();
         }

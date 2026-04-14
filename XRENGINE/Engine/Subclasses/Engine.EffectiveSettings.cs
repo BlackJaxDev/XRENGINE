@@ -428,6 +428,24 @@ namespace XREngine
                     : Rendering.Settings.RecalcChildMatricesLoopType;
 
             /// <summary>
+            /// Gets the effective skinned mesh bounds recompute policy.
+            /// Resolved from: Project Override > Engine Default (not user-overridable)
+            /// </summary>
+            public static ESkinnedBoundsRecomputePolicy SkinnedBoundsRecomputePolicy
+                => GameSettings?.SkinnedBoundsRecomputePolicyOverride is { HasOverride: true } projectOverride
+                    ? projectOverride.Value
+                    : Rendering.Settings.SkinnedBoundsRecomputePolicy;
+
+            /// <summary>
+            /// Gets whether the Never skinned-bounds policy still allows one initial runtime build.
+            /// Resolved from: Project Override > Engine Default (not user-overridable)
+            /// </summary>
+            public static bool AllowInitialSkinnedBoundsBuildWhenNever
+                => GameSettings?.AllowInitialSkinnedBoundsBuildWhenNeverOverride is { HasOverride: true } projectOverride
+                    ? projectOverride.Value
+                    : Rendering.Settings.AllowInitialSkinnedBoundsBuildWhenNever;
+
+            /// <summary>
             /// Gets the effective compute shader skinning setting.
             /// Resolved from: Project Override > Engine Default (not user-overridable)
             /// </summary>

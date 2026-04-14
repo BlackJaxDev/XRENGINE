@@ -22,6 +22,8 @@ public class XRProjectTests
             string projectFile = Path.Combine(projectFolder, $"SampleProject.{XRProject.ProjectExtension}");
             File.Exists(projectFile).ShouldBeTrue();
 
+            project.GameSettingsPath.ShouldBe(Path.Combine(projectFolder, XRProject.ConfigDirectoryName, XRProject.GameSettingsFileName));
+
             Directory.Exists(Path.Combine(projectFolder, XRProject.AssetsDirectoryName)).ShouldBeTrue();
             Directory.Exists(Path.Combine(projectFolder, XRProject.IntermediateDirectoryName)).ShouldBeTrue();
             Directory.Exists(Path.Combine(projectFolder, XRProject.BuildDirectoryName)).ShouldBeTrue();

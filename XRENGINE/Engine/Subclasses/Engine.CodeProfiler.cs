@@ -127,15 +127,24 @@ namespace XREngine
                 set => SetField(ref _fpsDropMinDeltaMs, Math.Max(0.0f, value));
             }
 
+            private const int ProducerBufferHardMaxCapacity = 1 << 20;
+            private const int ProducerBufferAutoGrowthFactor = 8;
+
             private long SnapshotIntervalTicks => EngineTimer.SecondsToStopwatchTicks(SnapshotIntervalMs / 1000.0);
 
             private static int NormalizeProducerBufferCapacity(int value)
             {
-                int normalized = Math.Clamp(value, 2, 1 << 20);
+                int normalized = Math.Clamp(value, 2, ProducerBufferHardMaxCapacity);
                 int capacity = 1;
                 while (capacity < normalized)
                     capacity <<= 1;
                 return capacity;
+            }
+
+            private static int GetMaxAutoGrowthProducerBufferCapacity(int capacity)
+            {
+                long autoGrowthCapacity = (long)capacity * ProducerBufferAutoGrowthFactor;
+                return NormalizeProducerBufferCapacity((int)Math.Min(autoGrowthCapacity, ProducerBufferHardMaxCapacity));
             }
 
             private readonly object _statsThreadLock = new();
@@ -183,38 +192,94 @@ namespace XREngine
 
             internal sealed class ThreadProducerBuffer(int threadId, int capacity)
             {
-                private readonly CompletedScopeEvent[] _events = new CompletedScopeEvent[capacity];
-                private readonly int _mask = capacity - 1;
+                private readonly object _resizeLock = new();
+                private readonly int _maxAutoGrowCapacity = GetMaxAutoGrowthProducerBufferCapacity(capacity);
+                private CompletedScopeEvent[] _events = new CompletedScopeEvent[capacity];
+                private int _mask = capacity - 1;
                 private int _readSequence;
                 private int _writeSequence;
 
                 public int ThreadId { get; } = threadId;
 
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
                 public bool TryWrite(in CompletedScopeEvent evt)
                 {
                     int write = _writeSequence;
                     int read = Volatile.Read(ref _readSequence);
-                    if (write - read >= _events.Length)
-                        return false;
+                    CompletedScopeEvent[] events = _events;
+                    if (write - read >= events.Length)
+                    {
+                        if (!TryGrow(write, read))
+                            return false;
 
-                    _events[write & _mask] = evt;
+                        write = _writeSequence;
+                        read = Volatile.Read(ref _readSequence);
+                        events = _events;
+                        if (write - read >= events.Length)
+                            return false;
+                    }
+
+                    events[write & _mask] = evt;
                     Volatile.Write(ref _writeSequence, write + 1);
                     return true;
                 }
 
                 public int DrainTo(CodeProfiler profiler, int maxCount)
                 {
-                    int read = _readSequence;
-                    int write = Volatile.Read(ref _writeSequence);
-                    int count = Math.Min(write - read, maxCount);
+                    lock (_resizeLock)
+                    {
+                        int read = _readSequence;
+                        int write = Volatile.Read(ref _writeSequence);
+                        int count = Math.Min(write - read, maxCount);
+                        CompletedScopeEvent[] events = _events;
+                        int mask = _mask;
 
-                    for (int i = 0; i < count; i++)
-                        profiler.ProcessCompletedScopeEvent(_events[(read + i) & _mask]);
+                        for (int i = 0; i < count; i++)
+                            profiler.ProcessCompletedScopeEvent(events[(read + i) & mask]);
 
-                    if (count > 0)
-                        Volatile.Write(ref _readSequence, read + count);
+                        if (count > 0)
+                            Volatile.Write(ref _readSequence, read + count);
 
-                    return count;
+                        return count;
+                    }
+                }
+
+                [MethodImpl(MethodImplOptions.NoInlining)]
+                private bool TryGrow(int write, int read)
+                {
+                    if (_events.Length >= _maxAutoGrowCapacity)
+                        return false;
+
+                    lock (_resizeLock)
+                    {
+                        read = _readSequence;
+                        write = Volatile.Read(ref _writeSequence);
+
+                        int unreadCount = write - read;
+                        int currentCapacity = _events.Length;
+                        if (unreadCount < currentCapacity)
+                            return true;
+
+                        int targetCapacity = currentCapacity;
+                        while (targetCapacity < unreadCount + 1 && targetCapacity < _maxAutoGrowCapacity)
+                            targetCapacity <<= 1;
+
+                        if (targetCapacity > _maxAutoGrowCapacity)
+                            targetCapacity = _maxAutoGrowCapacity;
+
+                        if (targetCapacity <= currentCapacity)
+                            return false;
+
+                        var newEvents = new CompletedScopeEvent[targetCapacity];
+                        for (int i = 0; i < unreadCount; i++)
+                            newEvents[i] = _events[(read + i) & _mask];
+
+                        _events = newEvents;
+                        _mask = targetCapacity - 1;
+                        _readSequence = 0;
+                        Volatile.Write(ref _writeSequence, unreadCount);
+                        return true;
+                    }
                 }
             }
 
@@ -225,7 +290,7 @@ namespace XREngine
                 public string? MethodName { get; } = methodName;
             }
 
-            public struct ProfilerScope : IDisposable
+            public readonly struct ProfilerScope : IDisposable
             {
                 private readonly CodeProfiler? _profiler;
                 private readonly ThreadProducerState? _state;
@@ -248,12 +313,16 @@ namespace XREngine
                     if (_profiler is null || _state is null)
                         return;
 
-                    _state.Depth = Math.Max(0, _state.Depth - 1);
-                    if (!_profiler.EnableFrameLogging)
+                    int depth = _state.Depth;
+                    _state.Depth = depth > 0 ? depth - 1 : 0;
+                    if (!_profiler._enableFrameLogging)
                         return;
 
                     long endTicks = Time.Timer.TimeTicks();
-                    long elapsedTicks = Math.Max(0L, endTicks - _startTicks);
+                    long elapsedTicks = endTicks - _startTicks;
+                    if (elapsedTicks < 0L)
+                        elapsedTicks = 0L;
+
                     var completedEvent = new CompletedScopeEvent(
                         _state.ThreadId,
                         _depth,
@@ -376,11 +445,13 @@ namespace XREngine
                 StopStatsThread(waitForExit: false);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             private ThreadProducerState GetOrCreateThreadProducerState()
-            {
-                if (_tlsProducerState is not null)
-                    return _tlsProducerState;
+                => _tlsProducerState is { } state ? state : CreateThreadProducerStateSlow();
 
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            private ThreadProducerState CreateThreadProducerStateSlow()
+            {
                 int threadId = Environment.CurrentManagedThreadId;
                 var buffer = new ThreadProducerBuffer(threadId, ProducerBufferCapacity);
                 var state = new ThreadProducerState(threadId, buffer);
@@ -481,12 +552,12 @@ namespace XREngine
                     _producerDrainScratch.AddRange(_producerBuffers);
                 }
 
-                // Ring buffers are naturally bounded (ProducerBufferCapacity each), drain all available
+                // The hot path stays on grow-only array-backed producer buffers; drain all available events.
                 foreach (var buffer in _producerDrainScratch)
                     processed += buffer.DrainTo(this, int.MaxValue);
 
-                // Overflow is unbounded; drain up to a cap per cycle.
-                // If it's grown too large, discard the excess to prevent unbounded memory growth.
+                // Overflow is reserved for async roots and producers that hit their growth ceiling.
+                // Drain up to a cap per cycle, then discard stale overflow if it grows too large.
                 int overflowDrained = 0;
                 while (overflowDrained < MaxOverflowPerCycle && _overflowCompletedEvents.TryDequeue(out var overflowEvent))
                 {
@@ -701,6 +772,9 @@ namespace XREngine
                     AppendTopRootTimings(builder, thread.RootNodes, 5);
                     AppendTopFrameThreads(builder, frame.Threads, thread.ThreadId, 5);
                     AppendTopComponentTimings(builder, frame.ComponentTimings?.Components, 5);
+                    AppendRenderMatrixStatsSnapshot(builder);
+                    AppendSkinnedBoundsStatsSnapshot(builder);
+                    AppendOctreeStatsSnapshot(builder);
                     Debug.WriteAuxiliaryLog("profiler-fps-drops.log", builder.ToString());
                 }
             }
@@ -790,6 +864,86 @@ namespace XREngine
                         .Append(component.CallCount).Append(" calls")
                         .Append(" (TickMask=").Append(component.TickGroupMask).AppendLine(")");
                 }
+            }
+
+            private static void AppendRenderMatrixStatsSnapshot(StringBuilder builder)
+            {
+                if (!Rendering.Stats.RenderMatrixStatsReady)
+                    return;
+
+                builder.AppendLine("RenderMatrixStats:");
+                builder.Append("  Applied: ").Append(Rendering.Stats.RenderMatrixApplied.ToString("N0")).AppendLine();
+                builder.Append("  NonEmptyBatches: ").Append(Rendering.Stats.RenderMatrixBatchCount.ToString("N0")).AppendLine();
+                builder.Append("  MaxBatchSize: ").Append(Rendering.Stats.RenderMatrixMaxBatchSize.ToString("N0")).AppendLine();
+                builder.Append("  SetCalls: ").Append(Rendering.Stats.RenderMatrixSetCalls.ToString("N0")).AppendLine();
+                builder.Append("  ListenerInvocations: ").Append(Rendering.Stats.RenderMatrixListenerInvocations.ToString("N0")).AppendLine();
+            }
+
+            private static void AppendOctreeStatsSnapshot(StringBuilder builder)
+            {
+                if (!Rendering.Stats.OctreeStatsReady)
+                    return;
+
+                builder.AppendLine("OctreeStats:");
+                builder.Append("  CollectCalls: ").Append(Rendering.Stats.OctreeCollectCallCount.ToString("N0")).AppendLine();
+                builder.Append("  VisibleRenderables: ").Append(Rendering.Stats.OctreeVisibleRenderableCount.ToString("N0")).AppendLine();
+                builder.Append("  EmittedCommands: ").Append(Rendering.Stats.OctreeEmittedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  MaxVisiblePerCollect: ").Append(Rendering.Stats.OctreeMaxVisibleRenderablesPerCollect.ToString("N0")).AppendLine();
+                builder.Append("  MaxCommandsPerCollect: ").Append(Rendering.Stats.OctreeMaxEmittedCommandsPerCollect.ToString("N0")).AppendLine();
+                builder.Append("  Add: ").Append(Rendering.Stats.OctreeAddCount.ToString("N0")).AppendLine();
+                builder.Append("  Move: ").Append(Rendering.Stats.OctreeMoveCount.ToString("N0")).AppendLine();
+                builder.Append("  Remove: ").Append(Rendering.Stats.OctreeRemoveCount.ToString("N0")).AppendLine();
+                builder.Append("  SkippedMove: ").Append(Rendering.Stats.OctreeSkippedMoveCount.ToString("N0")).AppendLine();
+                builder.Append("  SwapDrainedCommands: ").Append(Rendering.Stats.OctreeSwapDrainedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  SwapBufferedCommands: ").Append(Rendering.Stats.OctreeSwapBufferedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  SwapExecutedCommands: ").Append(Rendering.Stats.OctreeSwapExecutedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  SwapDrainMs: ").Append(Rendering.Stats.OctreeSwapDrainMs.ToString("F3")).AppendLine();
+                builder.Append("  SwapExecuteMs: ").Append(Rendering.Stats.OctreeSwapExecuteMs.ToString("F3")).AppendLine();
+                builder.Append("  SwapMaxCommandMs: ").Append(Rendering.Stats.OctreeSwapMaxCommandMs.ToString("F3")).AppendLine();
+                builder.Append("  SwapMaxCommandKind: ").Append(Rendering.Stats.OctreeSwapMaxCommandKind).AppendLine();
+                builder.Append("  RaycastProcessedCommands: ").Append(Rendering.Stats.OctreeRaycastProcessedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  RaycastDroppedCommands: ").Append(Rendering.Stats.OctreeRaycastDroppedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  RaycastTraversalMs: ").Append(Rendering.Stats.OctreeRaycastTraversalMs.ToString("F3")).AppendLine();
+                builder.Append("  RaycastCallbackMs: ").Append(Rendering.Stats.OctreeRaycastCallbackMs.ToString("F3")).AppendLine();
+                builder.Append("  RaycastMaxTraversalMs: ").Append(Rendering.Stats.OctreeRaycastMaxTraversalMs.ToString("F3")).AppendLine();
+                builder.Append("  RaycastMaxCallbackMs: ").Append(Rendering.Stats.OctreeRaycastMaxCallbackMs.ToString("F3")).AppendLine();
+                builder.Append("  RaycastMaxCommandMs: ").Append(Rendering.Stats.OctreeRaycastMaxCommandMs.ToString("F3")).AppendLine();
+            }
+
+            private static void AppendSkinnedBoundsStatsSnapshot(StringBuilder builder)
+            {
+                if (!Rendering.Stats.SkinnedBoundsStatsReady)
+                    return;
+
+                int deferredFinished = Rendering.Stats.SkinnedBoundsDeferredCompletedCount + Rendering.Stats.SkinnedBoundsDeferredFailedCount;
+                double deferredAvgQueueMs = deferredFinished <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsDeferredQueueWaitMs / deferredFinished;
+                double deferredAvgCpuJobMs = deferredFinished <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsDeferredCpuJobMs / deferredFinished;
+                double deferredAvgApplyMs = deferredFinished <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsDeferredApplyMs / deferredFinished;
+                double gpuAvgComputeMs = Rendering.Stats.SkinnedBoundsGpuCompletedCount <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsGpuComputeMs / Rendering.Stats.SkinnedBoundsGpuCompletedCount;
+                double gpuAvgApplyMs = Rendering.Stats.SkinnedBoundsGpuCompletedCount <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsGpuApplyMs / Rendering.Stats.SkinnedBoundsGpuCompletedCount;
+
+                builder.AppendLine("SkinnedBoundsStats:");
+                builder.Append("  DeferredScheduled: ").Append(Rendering.Stats.SkinnedBoundsDeferredScheduledCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredCompleted: ").Append(Rendering.Stats.SkinnedBoundsDeferredCompletedCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredFailed: ").Append(Rendering.Stats.SkinnedBoundsDeferredFailedCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredInFlight: ").Append(Rendering.Stats.SkinnedBoundsDeferredInFlightCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredMaxInFlight: ").Append(Rendering.Stats.SkinnedBoundsDeferredMaxInFlightCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredQueueWaitMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredQueueWaitMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredAvgQueueWaitMs: ").Append(deferredAvgQueueMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredMaxQueueWaitMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredMaxQueueWaitMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredCpuJobMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredCpuJobMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredAvgCpuJobMs: ").Append(deferredAvgCpuJobMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredMaxCpuJobMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredMaxCpuJobMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredApplyMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredApplyMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredAvgApplyMs: ").Append(deferredAvgApplyMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredMaxApplyMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredMaxApplyMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuCompleted: ").Append(Rendering.Stats.SkinnedBoundsGpuCompletedCount.ToString("N0")).AppendLine();
+                builder.Append("  GpuComputeMs: ").Append(Rendering.Stats.SkinnedBoundsGpuComputeMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuAvgComputeMs: ").Append(gpuAvgComputeMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuMaxComputeMs: ").Append(Rendering.Stats.SkinnedBoundsGpuMaxComputeMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuApplyMs: ").Append(Rendering.Stats.SkinnedBoundsGpuApplyMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuAvgApplyMs: ").Append(gpuAvgApplyMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuMaxApplyMs: ").Append(Rendering.Stats.SkinnedBoundsGpuMaxApplyMs.ToString("F3")).AppendLine();
             }
 
             private static float GetMedianTailMs(float[] samples, int takeCount, int skipFromEnd)
@@ -911,11 +1065,12 @@ namespace XREngine
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public ProfilerScope Start([CallerMemberName] string? methodName = null)
             {
-                if (!EnableFrameLogging)
+                if (!_enableFrameLogging)
                     return default;
 
                 var state = GetOrCreateThreadProducerState();
-                int depth = ++state.Depth;
+                int depth = state.Depth + 1;
+                state.Depth = depth;
                 long startTicks = Time.Timer.TimeTicks();
                 return new ProfilerScope(this, state, startTicks, depth, methodName);
             }

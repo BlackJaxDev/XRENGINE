@@ -25,12 +25,7 @@ namespace XREngine
         public Job? Job => _job;
 
         public void Wait(CancellationToken cancellationToken = default)
-        {
-            if (_completion == null)
-                return;
-
-            _completion.Wait(cancellationToken);
-        }
+            => _completion?.Wait(cancellationToken);
 
         public bool Wait(TimeSpan timeout)
             => _completion?.Wait(timeout) ?? true;

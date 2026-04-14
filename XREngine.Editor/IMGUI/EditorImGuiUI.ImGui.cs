@@ -64,10 +64,10 @@ public static partial class EditorImGuiUI
         private static bool _showRenderPipelineGraph;
         private static bool _showShaderGraphPanel;
         private static int _probePreviewLayer;
-        private static bool _showHierarchy = true;
+        private static bool _showHierarchy;
         private static bool _showEditorSceneHierarchy;
-        private static bool _showInspector = true;
-        private static bool _showAssetExplorer = true;
+        private static bool _showInspector;
+        private static bool _showAssetExplorer;
         private static bool _showNetworking;
         private static bool _showAnimationClipEditor;
         private static UserSettings? _editorSceneHierarchySettingsSource;
@@ -2109,14 +2109,19 @@ public static partial class EditorImGuiUI
                 if (Engine.CurrentProject is not null)
                 {
                     // Build Settings has a dedicated persisted asset file.
+                    // Game Settings also persist per project, separate from runtime engine defaults.
                     // Engine Rendering Settings is currently a runtime settings object and should not
                     // be rebound onto the project's engine_settings.asset path here because that path
                     // is already used by EditorPreferencesOverrides in the current project flow.
                     if (title == "Build Settings" && Engine.CurrentProject.BuildSettingsPath is string buildSettingsPath)
                         asset.FilePath = buildSettingsPath;
+                    else if (title == "Game Settings" && Engine.CurrentProject.GameSettingsPath is string gameSettingsPath)
+                        asset.FilePath = gameSettingsPath;
                 }
 
-                TryEnsureSettingsAssetTracked(asset, title);
+                // Engine Settings are runtime-only defaults, so do not add them to the save/dirty asset flow.
+                if (title != "Engine Settings")
+                    TryEnsureSettingsAssetTracked(asset, title);
             }
 
             _showInspector = true;

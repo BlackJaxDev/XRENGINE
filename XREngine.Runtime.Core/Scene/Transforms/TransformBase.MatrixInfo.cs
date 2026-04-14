@@ -243,14 +243,11 @@ namespace XREngine.Scene.Transforms
             => Quaternion.Normalize(Quaternion.Concatenate(GetInverseWorldRotation(), worldRotation));
 
         public TransformBase? FirstChild()
-        {
-            lock (_children)
-                return _children.FirstOrDefault();
-        }
+            => _children[0];
         public TransformBase? LastChild()
         {
-            lock (_children)
-                return _children.LastOrDefault();
+            int childCount = _children.Count;
+            return childCount == 0 ? null : _children[childCount - 1];
         }
 
         /// <summary>

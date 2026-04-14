@@ -7,6 +7,7 @@
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
     <EnableAotAnalyzer>false</EnableAotAnalyzer>
     <Nullable>disable</Nullable>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/Build/Temp/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('_wpftmp'))">

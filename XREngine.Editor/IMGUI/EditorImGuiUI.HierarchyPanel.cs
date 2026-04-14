@@ -22,11 +22,13 @@ public static partial class EditorImGuiUI
 {
     private const float HierarchyFocusCameraDurationSeconds = 0.35f;
     private const string HierarchyDeepDuplicatePopupId = "Deep Duplicate Scene Nodes?";
+    private const int LargeHierarchyRootAutoCollapseChildCount = 64;
 
     // Scratch collections for CollectUnassignedRoots — reused every frame to avoid per-frame allocations.
     private static readonly HashSet<SceneNode> _assignedRootsScratch = [];
     private static readonly List<SceneNode> _unassignedRootsScratch = [];
     private static readonly HashSet<SceneNode> _selectedHierarchyNodesScratch = new(ReferenceEqualityComparer.Instance);
+    private static readonly HashSet<SceneNode> _expandedLargeHierarchyRootsScratch = new(ReferenceEqualityComparer.Instance);
     private static SceneNode? _lastSelectedHierarchyNode;
 
     // Cache node labels (name + child count string) to avoid per-node per-frame string allocation.
@@ -227,11 +229,19 @@ public static partial class EditorImGuiUI
         var transform = node.Transform;
         int childCount = transform.Children.Count;
         string nodeLabel = GetOrCreateNodeLabel(node, childCount);
+        bool autoCollapseLargeRoot = depth == 0
+            && childCount >= LargeHierarchyRootAutoCollapseChildCount
+            && !_expandedLargeHierarchyRootsScratch.Contains(node);
+        if (autoCollapseLargeRoot)
+            ImGui.SetNextItemOpen(false, ImGuiCond.Always);
+
         ImGuiTreeNodeFlags flags = childCount > 0
-            ? (depth == 0 ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None)
+            ? ImGuiTreeNodeFlags.None
             : ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen;
 
         bool nodeOpen = DrawSceneNodeEntry(node, world, nodeLabel, flags, owningScene);
+        if (autoCollapseLargeRoot && nodeOpen)
+            _expandedLargeHierarchyRootsScratch.Add(node);
 
         if (childCount > 0 && nodeOpen)
         {

@@ -30,41 +30,28 @@ namespace XREngine.Rendering.Commands
     {
         private static readonly CpuRenderOcclusionCoordinator s_cpuOcclusionCoordinator = new();
         private static int s_addCpuMissingPassDiagCount = 0;
+        private Dictionary<int, Type?> _passSorterTypes = [];
 
         public bool IsShadowPass { get; private set; } = false;
         public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters, IEnumerable<RenderPassMetadata>? passMetadata = null)
         {
-            string ownerName = _ownerPipeline?.Pipeline?.DebugName ?? _ownerPipeline?.Pipeline?.GetType().Name ?? "<no-owner>";
-            Debug.Out($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
             using (_lock.EnterScope())
             {
+                Dictionary<int, RenderPassMetadata> incomingPassMetadata = BuildPassMetadata(passMetadata);
+                EnsureDefaultPassMetadata(passIndicesAndSorters.Keys, incomingPassMetadata);
+                if (HasEquivalentPassConfiguration(passIndicesAndSorters, incomingPassMetadata))
+                    return;
+
+                string ownerName = _ownerPipeline?.Pipeline?.DebugName ?? _ownerPipeline?.Pipeline?.GetType().Name ?? "<no-owner>";
+                Debug.Out($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
+
                 _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
+                _passSorterTypes = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value?.GetType());
 
                 _renderingPasses = [];
                 _gpuPasses = [];
 
-                // PassMetadata should be unique by PassIndex, but during restore/re-init we may end up with duplicates.
-                // Avoid crashing the entire engine; keep the first entry and warn.
-                _passMetadata = [];
-                if (passMetadata is not null)
-                {
-                    foreach (var meta in passMetadata)
-                    {
-                        if (_passMetadata.TryAdd(meta.PassIndex, meta))
-                            continue;
-
-                        var existing = _passMetadata[meta.PassIndex];
-                        Debug.RenderingWarningEvery(
-                            $"RenderPassMetadata.Duplicate.{meta.PassIndex}",
-                            TimeSpan.FromSeconds(5),
-                            "[RenderDiag] Duplicate RenderPassMetadata PassIndex={0}. Keeping first ('{1}', Stage={2}), ignoring ('{3}', Stage={4}).",
-                            meta.PassIndex,
-                            existing.Name,
-                            existing.Stage,
-                            meta.Name,
-                            meta.Stage);
-                    }
-                }
+                _passMetadata = incomingPassMetadata;
 
                 foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _updatingPasses)
                 {
@@ -82,6 +69,108 @@ namespace XREngine.Rendering.Commands
                         _passMetadata[pass.Key] = new RenderPassMetadata(pass.Key, $"Pass{pass.Key}", ERenderGraphPassStage.Graphics);
                 }
             }
+        }
+
+        private Dictionary<int, RenderPassMetadata> BuildPassMetadata(IEnumerable<RenderPassMetadata>? passMetadata)
+        {
+            Dictionary<int, RenderPassMetadata> metadata = [];
+            if (passMetadata is null)
+                return metadata;
+
+            foreach (RenderPassMetadata meta in passMetadata)
+            {
+                if (metadata.TryAdd(meta.PassIndex, meta))
+                    continue;
+
+                RenderPassMetadata existing = metadata[meta.PassIndex];
+                Debug.RenderingWarningEvery(
+                    $"RenderPassMetadata.Duplicate.{meta.PassIndex}",
+                    TimeSpan.FromSeconds(5),
+                    "[RenderDiag] Duplicate RenderPassMetadata PassIndex={0}. Keeping first ('{1}', Stage={2}), ignoring ('{3}', Stage={4}).",
+                    meta.PassIndex,
+                    existing.Name,
+                    existing.Stage,
+                    meta.Name,
+                    meta.Stage);
+            }
+
+            return metadata;
+        }
+
+        private static void EnsureDefaultPassMetadata(IEnumerable<int> passIndices, Dictionary<int, RenderPassMetadata> metadata)
+        {
+            foreach (int passIndex in passIndices)
+            {
+                if (!metadata.ContainsKey(passIndex))
+                    metadata[passIndex] = new RenderPassMetadata(passIndex, $"Pass{passIndex}", ERenderGraphPassStage.Graphics);
+            }
+        }
+
+        private bool HasEquivalentPassConfiguration(
+            Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters,
+            Dictionary<int, RenderPassMetadata> passMetadata)
+        {
+            if (_updatingPasses.Count != passIndicesAndSorters.Count ||
+                _passSorterTypes.Count != passIndicesAndSorters.Count ||
+                _passMetadata.Count != passMetadata.Count)
+            {
+                return false;
+            }
+
+            foreach ((int passIndex, IComparer<RenderCommand>? sorter) in passIndicesAndSorters)
+            {
+                if (!_updatingPasses.ContainsKey(passIndex))
+                    return false;
+
+                if (!_passSorterTypes.TryGetValue(passIndex, out Type? existingSorterType) || existingSorterType != sorter?.GetType())
+                    return false;
+            }
+
+            foreach ((int passIndex, RenderPassMetadata metadata) in passMetadata)
+            {
+                if (!_passMetadata.TryGetValue(passIndex, out RenderPassMetadata? existingMetadata) ||
+                    !HasEquivalentPassMetadata(existingMetadata, metadata))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool HasEquivalentPassMetadata(RenderPassMetadata existing, RenderPassMetadata incoming)
+        {
+            if (existing.PassIndex != incoming.PassIndex ||
+                existing.Stage != incoming.Stage ||
+                !string.Equals(existing.Name, incoming.Name, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (!existing.ExplicitDependencies.OrderBy(static value => value).SequenceEqual(incoming.ExplicitDependencies.OrderBy(static value => value)))
+                return false;
+
+            if (!existing.DescriptorSchemas.OrderBy(static value => value, StringComparer.Ordinal).SequenceEqual(incoming.DescriptorSchemas.OrderBy(static value => value, StringComparer.Ordinal), StringComparer.Ordinal))
+                return false;
+
+            if (existing.ResourceUsages.Count != incoming.ResourceUsages.Count)
+                return false;
+
+            for (int index = 0; index < existing.ResourceUsages.Count; index++)
+            {
+                RenderPassResourceUsage existingUsage = existing.ResourceUsages[index];
+                RenderPassResourceUsage incomingUsage = incoming.ResourceUsages[index];
+                if (!string.Equals(existingUsage.ResourceName, incomingUsage.ResourceName, StringComparison.Ordinal) ||
+                    existingUsage.ResourceType != incomingUsage.ResourceType ||
+                    existingUsage.Access != incomingUsage.Access ||
+                    existingUsage.LoadOp != incomingUsage.LoadOp ||
+                    existingUsage.StoreOp != incomingUsage.StoreOp)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private int _numCommandsRecentlyAddedToUpdate = 0;

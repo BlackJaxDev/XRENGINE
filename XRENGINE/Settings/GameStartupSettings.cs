@@ -327,6 +327,8 @@ namespace XREngine
         private OverrideableSetting<bool> _allowShaderPipelinesOverride = new();
         private OverrideableSetting<bool> _useIntegerWeightingIdsOverride = new();
         private OverrideableSetting<ELoopType> _recalcChildMatricesLoopTypeOverride = new();
+        private OverrideableSetting<ESkinnedBoundsRecomputePolicy> _skinnedBoundsRecomputePolicyOverride = new();
+        private OverrideableSetting<bool> _allowInitialSkinnedBoundsBuildWhenNeverOverride = new();
         private OverrideableSetting<bool> _calculateSkinningInComputeShaderOverride = new();
         private OverrideableSetting<bool> _calculateBlendshapesInComputeShaderOverride = new();
 
@@ -731,6 +733,32 @@ namespace XREngine
         {
             get => _recalcChildMatricesLoopTypeOverride;
             set => SetField(ref _recalcChildMatricesLoopTypeOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for skinned mesh bounds recompute policy.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Technical setting not typically exposed to end users.
+        /// </summary>
+        [Category("Technical Overrides")]
+        [Description("Project override for skinned mesh bounds recompute policy (technical).")]
+        public OverrideableSetting<ESkinnedBoundsRecomputePolicy> SkinnedBoundsRecomputePolicyOverride
+        {
+            get => _skinnedBoundsRecomputePolicyOverride;
+            set => SetField(ref _skinnedBoundsRecomputePolicyOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for allowing one initial runtime skinned-bounds build while the Never policy is active.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Technical setting not typically exposed to end users.
+        /// </summary>
+        [Category("Technical Overrides")]
+        [Description("Project override for allowing one initial runtime skinned-bounds build while the Never policy is active (technical).")]
+        public OverrideableSetting<bool> AllowInitialSkinnedBoundsBuildWhenNeverOverride
+        {
+            get => _allowInitialSkinnedBoundsBuildWhenNeverOverride;
+            set => SetField(ref _allowInitialSkinnedBoundsBuildWhenNeverOverride, value ?? new());
         }
 
         /// <summary>

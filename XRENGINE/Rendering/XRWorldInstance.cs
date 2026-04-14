@@ -663,6 +663,8 @@ namespace XREngine.Rendering
             {
                 VisualScene.GlobalSwapBuffers();
             }
+
+            Engine.Rendering.Stats.SwapSkinnedBoundsStats();
             
             // Swap octree stats after octree commands are consumed.
             Engine.Rendering.Stats.SwapOctreeStats();

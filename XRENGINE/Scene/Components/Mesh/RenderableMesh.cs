@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Numerics;
@@ -28,12 +29,24 @@ namespace XREngine.Components.Scene.Mesh
     public class RenderableMesh : XRBase, IDisposable
     {
         private static readonly ConcurrentQueue<RenderableMesh> _pendingRenderMatrixUpdates = new();
+        private readonly record struct SkinnedBoundsCpuSnapshot(
+            Vertex[] Vertices,
+            Dictionary<TransformBase, Matrix4x4> SkinMatrices,
+            Matrix4x4 FallbackMatrix,
+            Matrix4x4 Basis);
+
+        private readonly record struct SkinnedBoundsRefreshResult(
+            int Revision,
+            SkinnedMeshBoundsCalculator.Result Result,
+            bool Succeeded,
+            long QueueWaitTicks,
+            long CpuJobTicks);
+
         public RenderInfo3D RenderInfo { get; }
 
         private readonly RenderCommandMesh3D _rc;
 
         private readonly Dictionary<TransformBase, int> _trackedSkinnedBones = new();
-        private readonly Dictionary<TransformBase, Matrix4x4> _currentSkinMatrices = new();
         private readonly Dictionary<TransformBase, Matrix4x4> _relativeBoneMatrices = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly object _relativeCacheLock = new();
         private readonly object _skinnedDataLock = new();
@@ -43,6 +56,8 @@ namespace XREngine.Components.Scene.Mesh
         private AABB _skinnedLocalBounds;
         private Vector3[]? _skinnedVertexPositions;
         private int _skinnedVertexCount;
+        private Task<SkinnedBoundsRefreshResult>? _skinnedBoundsRefreshTask;
+        private int _skinnedBoundsRevision;
         private BVH<Triangle>? _skinnedBvh;
         private Task<SkinnedMeshBvhScheduler.Result>? _skinnedBvhTask;
         private int _skinnedBvhVersion = 0;
@@ -62,6 +77,32 @@ namespace XREngine.Components.Scene.Mesh
 
         internal static bool ShouldReuseSkinnedBounds(long nowTicks, long lastRefreshTicks)
             => lastRefreshTicks != long.MinValue && Math.Max(0L, nowTicks - lastRefreshTicks) < SkinnedBoundsRefreshIntervalTicks;
+
+        internal static bool AllowsInitialRuntimeSkinnedBoundsBuild(
+            ESkinnedBoundsRecomputePolicy policy,
+            bool allowInitialBuildWhenNever)
+            => policy != ESkinnedBoundsRecomputePolicy.Never || allowInitialBuildWhenNever;
+
+        internal static bool ShouldScheduleSkinnedBoundsRefresh(
+            ESkinnedBoundsRecomputePolicy policy,
+            bool allowInitialBuildWhenNever,
+            bool hasCachedBounds,
+            bool skinnedBoundsDirty,
+            bool refreshInFlight,
+            long nowTicks,
+            long lastRefreshTicks)
+        {
+            if (!skinnedBoundsDirty || refreshInFlight)
+                return false;
+
+            return policy switch
+            {
+                ESkinnedBoundsRecomputePolicy.Never => allowInitialBuildWhenNever && !hasCachedBounds,
+                ESkinnedBoundsRecomputePolicy.Always => true,
+                ESkinnedBoundsRecomputePolicy.Selective => !hasCachedBounds || !ShouldReuseSkinnedBounds(nowTicks, lastRefreshTicks),
+                _ => false,
+            };
+        }
 
         public Matrix4x4 SkinnedBvhLocalToWorldMatrix => _skinnedRootRenderMatrix;
         public Matrix4x4 SkinnedBvhWorldToLocalMatrix => _skinnedRootRenderMatrixInverse;
@@ -213,6 +254,7 @@ namespace XREngine.Components.Scene.Mesh
                 TransformBase basisTransform = RootBone ?? Component.Transform;
                 SetSkinnedRootRenderMatrix(basisTransform.RenderMatrix);
                 RenderInfo.CullingOffsetMatrix = basisTransform.WorldMatrix;
+                QueuePendingRenderMatrixUpdate();
             }
             else
             {
@@ -733,8 +775,9 @@ namespace XREngine.Components.Scene.Mesh
         private void MarkSkinnedDataDirty()
         {
             _skinnedBoundsDirty = true;
-            _hasSkinnedBounds = false;
+            _skinnedBoundsRevision++;
             _skinnedBoundsAreWorldSpace = false;
+            QueuePendingRenderMatrixUpdate();
             // Do NOT set _skinnedBvhDirty or increment _skinnedBvhVersion here.
             // Bone transform changes happen every frame during animation and the
             // version mismatch causes every in-flight BVH build to be discarded,
@@ -749,46 +792,12 @@ namespace XREngine.Components.Scene.Mesh
 
             lock (_skinnedDataLock)
             {
-                if (!_skinnedBoundsDirty && _hasSkinnedBounds)
-                    return true;
+                TryFinalizeSkinnedBoundsRefreshLocked();
 
-                // Once initialized, reuse cached skinned local bounds shape and only
-                // update root-bone basis. This avoids repeated expensive recompute
-                // stalls in the animation hot path.
                 if (_hasSkinnedBounds)
                 {
-                    Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
-                    SetSkinnedRootRenderMatrix(basis);
-                    if (RenderInfo is not null)
-                    {
-                        RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
-                        RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
-                    }
-                    _skinnedBoundsDirty = false;
+                    ApplyCachedSkinnedBoundsLocked();
                     return true;
-                }
-
-                // If we already have valid bounds from a previous computation, reuse them
-                // with the updated root-bone matrix instead of recomputing every frame.
-                // Full recomputation is throttled to SkinnedBoundsRefreshInterval seconds.
-                if (_hasSkinnedBounds || _skinnedLocalBounds.Max != Vector3.Zero || _skinnedLocalBounds.Min != Vector3.Zero)
-                {
-                    long nowTicks = Engine.ElapsedTicks;
-                    if (ShouldReuseSkinnedBounds(nowTicks, _lastSkinnedBoundsRefreshTicks))
-                    {
-                        // Reuse existing local bounds shape but update the offset matrix
-                        // so culling stays correct as the root bone moves.
-                        Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
-                        SetSkinnedRootRenderMatrix(basis);
-                        if (RenderInfo is not null)
-                        {
-                            RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
-                            RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
-                        }
-                        _skinnedBoundsDirty = false;
-                        _hasSkinnedBounds = true;
-                        return true;
-                    }
                 }
 
                 if (CurrentLODRenderer?.HasGpuDrivenBoneSource == true)
@@ -807,18 +816,18 @@ namespace XREngine.Components.Scene.Mesh
                     return true;
                 }
 
-                bool useGpu = Engine.IsRenderThread && Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+                return false;
+            }
+        }
 
-                // Try GPU path first if enabled
-                if (useGpu && TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result gpuResult))
-                {
-                    _lastSkinnedBoundsRefreshTicks = Engine.ElapsedTicks;
-                    return ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true);
-                }
-
-                // Fall back to CPU path for debugging or when GPU fails
-                _lastSkinnedBoundsRefreshTicks = Engine.ElapsedTicks;
-                return TryComputeSkinnedBoundsOnCpuLocked();
+        private void ApplyCachedSkinnedBoundsLocked()
+        {
+            Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
+            SetSkinnedRootRenderMatrix(basis);
+            if (RenderInfo is not null)
+            {
+                RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
+                RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
             }
         }
 
@@ -853,40 +862,28 @@ namespace XREngine.Components.Scene.Mesh
             return true;
         }
 
-        private bool TryComputeSkinnedBoundsOnCpuLocked()
+        private static bool TryComputeSkinnedBoundsOnCpu(SkinnedBoundsCpuSnapshot snapshot, out SkinnedMeshBoundsCalculator.Result result)
         {
-            var mesh = CurrentLODRenderer?.Mesh;
-            var vertices = mesh?.Vertices;
-            if (mesh is null || vertices is null || vertices.Length == 0)
+            Vertex[] vertices = snapshot.Vertices;
+            if (vertices.Length == 0)
             {
-                _hasSkinnedBounds = false;
+                result = default;
                 return false;
             }
-
-            _currentSkinMatrices.Clear();
-            foreach (var (bone, invBind) in mesh.UtilizedBones)
-            {
-                if (bone is null)
-                    continue;
-                _currentSkinMatrices[bone] = invBind * bone.RenderMatrix;
-            }
-
-            if (_skinnedVertexPositions is null || _skinnedVertexPositions.Length != vertices.Length)
-                _skinnedVertexPositions = new Vector3[vertices.Length];
-            _skinnedVertexCount = vertices.Length;
 
             bool initialized = false;
             Vector3 min = Vector3.Zero;
             Vector3 max = Vector3.Zero;
-            Matrix4x4 fallbackMatrix = Component.Transform.RenderMatrix;
-            Matrix4x4 basis = GetSkinnedBasisMatrix();
+            Matrix4x4 fallbackMatrix = snapshot.FallbackMatrix;
+            Matrix4x4 basis = snapshot.Basis;
             Matrix4x4 invBasis = Matrix4x4.Invert(basis, out var basisInv) ? basisInv : Matrix4x4.Identity;
+            var localPositions = new Vector3[vertices.Length];
 
             for (int i = 0; i < vertices.Length; i++)
             {
-                Vector3 worldPos = ComputeSkinnedPosition(vertices[i], fallbackMatrix);
+                Vector3 worldPos = ComputeSkinnedPosition(vertices[i], fallbackMatrix, snapshot.SkinMatrices);
                 Vector3 localPos = TransformPosition(worldPos, invBasis);
-                _skinnedVertexPositions[i] = localPos;
+                localPositions[i] = localPos;
 
                 if (!initialized)
                 {
@@ -902,16 +899,16 @@ namespace XREngine.Components.Scene.Mesh
 
             if (!initialized)
             {
-                _hasSkinnedBounds = false;
+                result = default;
                 return false;
             }
 
             var localBounds = new AABB(min, max);
-            var localizedResult = new SkinnedMeshBoundsCalculator.Result((Vector3[])_skinnedVertexPositions.Clone(), localBounds, basis);
-            return ApplySkinnedBoundsResult(localizedResult, markBvhDirty: true);
+            result = new SkinnedMeshBoundsCalculator.Result(localPositions, localBounds, basis);
+            return true;
         }
 
-        private Vector3 ComputeSkinnedPosition(Vertex vertex, Matrix4x4 fallbackMatrix)
+        private static Vector3 ComputeSkinnedPosition(Vertex vertex, Matrix4x4 fallbackMatrix, IReadOnlyDictionary<TransformBase, Matrix4x4> skinMatrices)
         {
             if (vertex.Weights is not { Count: > 0 })
                 return TransformPosition(vertex.Position, fallbackMatrix);
@@ -919,11 +916,186 @@ namespace XREngine.Components.Scene.Mesh
             Vector3 result = Vector3.Zero;
             foreach (var (bone, data) in vertex.Weights)
             {
-                if (!_currentSkinMatrices.TryGetValue(bone, out Matrix4x4 boneMatrix))
+                if (!skinMatrices.TryGetValue(bone, out Matrix4x4 boneMatrix))
                     boneMatrix = data.bindInvWorldMatrix * bone.RenderMatrix;
                 result += TransformPosition(vertex.Position, boneMatrix) * data.weight;
             }
             return result;
+        }
+
+        private bool TryFinalizeSkinnedBoundsRefreshLocked()
+        {
+            if (_skinnedBoundsRefreshTask is null || !_skinnedBoundsRefreshTask.IsCompleted)
+                return false;
+
+            long queueWaitTicks = 0L;
+            long cpuJobTicks = 0L;
+            long applyTicks = 0L;
+            bool succeeded = false;
+
+            try
+            {
+                SkinnedBoundsRefreshResult refresh = _skinnedBoundsRefreshTask.GetAwaiter().GetResult();
+                queueWaitTicks = refresh.QueueWaitTicks;
+                cpuJobTicks = refresh.CpuJobTicks;
+                if (refresh.Succeeded)
+                {
+                    long applyStartTicks = Stopwatch.GetTimestamp();
+                    if (ApplySkinnedBoundsResult(refresh.Result, markBvhDirty: true))
+                    {
+                        _lastSkinnedBoundsRefreshTicks = Engine.ElapsedTicks;
+                        _skinnedBoundsDirty = refresh.Revision != _skinnedBoundsRevision;
+                        ApplyCachedSkinnedBoundsLocked();
+                        succeeded = true;
+                    }
+                    else if (!_hasSkinnedBounds)
+                    {
+                        _skinnedBoundsDirty = AllowsInitialRuntimeSkinnedBoundsBuild(
+                            Engine.EffectiveSettings.SkinnedBoundsRecomputePolicy,
+                            Engine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever);
+                    }
+
+                    applyTicks = Math.Max(0L, Stopwatch.GetTimestamp() - applyStartTicks);
+                }
+                else if (!_hasSkinnedBounds)
+                {
+                    _skinnedBoundsDirty = AllowsInitialRuntimeSkinnedBoundsBuild(
+                        Engine.EffectiveSettings.SkinnedBoundsRecomputePolicy,
+                        Engine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever);
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingException(ex, "Deferred skinned bounds refresh failed.");
+                return false;
+            }
+            finally
+            {
+                Engine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
+                _skinnedBoundsRefreshTask = null;
+            }
+        }
+
+        private SkinnedBoundsCpuSnapshot? CreateSkinnedBoundsCpuSnapshotLocked()
+        {
+            XRMesh? mesh = CurrentLODRenderer?.Mesh;
+            Vertex[]? vertices = mesh?.Vertices;
+            if (mesh is null || vertices is null || vertices.Length == 0)
+                return null;
+
+            var skinMatrices = new Dictionary<TransformBase, Matrix4x4>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            foreach (var (bone, invBind) in mesh.UtilizedBones)
+            {
+                if (bone is null)
+                    continue;
+                skinMatrices[bone] = invBind * bone.RenderMatrix;
+            }
+
+            return new SkinnedBoundsCpuSnapshot(
+                vertices,
+                skinMatrices,
+                Component.Transform.RenderMatrix,
+                GetSkinnedBasisMatrix());
+        }
+
+        private static Task<SkinnedBoundsRefreshResult> RunSkinnedBoundsJobAsync(SkinnedBoundsCpuSnapshot snapshot, int revision)
+        {
+            var tcs = new TaskCompletionSource<SkinnedBoundsRefreshResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            long queuedTicks = Stopwatch.GetTimestamp();
+            Engine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredScheduled();
+            Engine.Jobs.Schedule(() => RunSkinnedBoundsJob(snapshot, revision, queuedTicks, tcs), priority: JobPriority.Low);
+            return tcs.Task;
+        }
+
+        private static System.Collections.IEnumerable RunSkinnedBoundsJob(
+            SkinnedBoundsCpuSnapshot snapshot,
+            int revision,
+            long queuedTicks,
+            TaskCompletionSource<SkinnedBoundsRefreshResult> tcs)
+        {
+            try
+            {
+                long startedTicks = Stopwatch.GetTimestamp();
+                bool succeeded = TryComputeSkinnedBoundsOnCpu(snapshot, out var result);
+                long completedTicks = Stopwatch.GetTimestamp();
+                tcs.TrySetResult(new SkinnedBoundsRefreshResult(
+                    revision,
+                    result,
+                    succeeded,
+                    Math.Max(0L, startedTicks - queuedTicks),
+                    Math.Max(0L, completedTicks - startedTicks)));
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+
+            yield break;
+        }
+
+        private void ProcessSkinnedBoundsRefresh()
+        {
+            if (!IsSkinned)
+                return;
+
+            bool requeue = false;
+
+            lock (_skinnedDataLock)
+            {
+                TryFinalizeSkinnedBoundsRefreshLocked();
+
+                ESkinnedBoundsRecomputePolicy policy = Engine.EffectiveSettings.SkinnedBoundsRecomputePolicy;
+                bool allowInitialBuildWhenNever = Engine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever;
+                bool allowMissingBoundsRefresh = AllowsInitialRuntimeSkinnedBoundsBuild(policy, allowInitialBuildWhenNever);
+                bool refreshInFlight = _skinnedBoundsRefreshTask is not null;
+                long nowTicks = Engine.ElapsedTicks;
+                if (ShouldScheduleSkinnedBoundsRefresh(
+                    policy,
+                    allowInitialBuildWhenNever,
+                    _hasSkinnedBounds,
+                    _skinnedBoundsDirty,
+                    refreshInFlight,
+                    nowTicks,
+                    _lastSkinnedBoundsRefreshTicks))
+                {
+                    if (Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader && Engine.IsRenderThread)
+                    {
+                        long gpuStartTicks = Stopwatch.GetTimestamp();
+                        int revision = _skinnedBoundsRevision;
+                        if (TryComputeSkinnedBoundsOnGpu(out var gpuResult))
+                        {
+                            long applyStartTicks = Stopwatch.GetTimestamp();
+                            if (ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true))
+                            {
+                                _lastSkinnedBoundsRefreshTicks = nowTicks;
+                                _skinnedBoundsDirty = revision != _skinnedBoundsRevision;
+                                ApplyCachedSkinnedBoundsLocked();
+                                long applyTicks = Math.Max(0L, Stopwatch.GetTimestamp() - applyStartTicks);
+                                long gpuTicks = Math.Max(0L, applyStartTicks - gpuStartTicks);
+                                Engine.Rendering.Stats.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks);
+                            }
+                            else if (!_hasSkinnedBounds)
+                            {
+                                _skinnedBoundsDirty = allowMissingBoundsRefresh;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        SkinnedBoundsCpuSnapshot? snapshot = CreateSkinnedBoundsCpuSnapshotLocked();
+                        if (snapshot.HasValue)
+                            _skinnedBoundsRefreshTask = RunSkinnedBoundsJobAsync(snapshot.Value, _skinnedBoundsRevision);
+                    }
+                }
+
+                if (_skinnedBoundsRefreshTask is not null || (_skinnedBoundsDirty && allowMissingBoundsRefresh && !_hasSkinnedBounds))
+                    requeue = true;
+            }
+
+            if (requeue)
+                QueuePendingRenderMatrixUpdate();
         }
 
         public BVH<Triangle>? GetSkinnedBvh(bool allowRebuild = true)
@@ -946,7 +1118,14 @@ namespace XREngine.Components.Scene.Mesh
                 if (!allowRebuild)
                     return null;
 
-                if (_skinnedBoundsDirty && !EnsureSkinnedBounds())
+                if (_skinnedBoundsDirty)
+                {
+                    TryFinalizeSkinnedBoundsRefreshLocked();
+                    if (!_hasSkinnedBounds)
+                        return null;
+                }
+
+                if (!EnsureSkinnedBounds())
                     return null;
 
                 // Schedule BVH build once so raycasting works on skinned meshes.
@@ -1248,6 +1427,12 @@ namespace XREngine.Components.Scene.Mesh
                 RenderInfo.CullingOffsetMatrix = matrix;
         }
 
+        private void QueuePendingRenderMatrixUpdate()
+        {
+            if (Interlocked.Exchange(ref _pendingRenderMatrixQueued, 1) == 0)
+                _pendingRenderMatrixUpdates.Enqueue(this);
+        }
+
         private void MarkPendingComponentRenderMatrix(Matrix4x4 renderMatrix)
         {
             lock (_pendingRenderMatrixLock)
@@ -1256,8 +1441,7 @@ namespace XREngine.Components.Scene.Mesh
                 _pendingComponentRenderMatrixVersion++;
             }
 
-            if (Interlocked.Exchange(ref _pendingRenderMatrixQueued, 1) == 0)
-                _pendingRenderMatrixUpdates.Enqueue(this);
+            QueuePendingRenderMatrixUpdate();
         }
 
         private void MarkPendingRootBoneRenderMatrix(Matrix4x4 renderMatrix)
@@ -1268,8 +1452,7 @@ namespace XREngine.Components.Scene.Mesh
                 _pendingRootBoneRenderMatrixVersion++;
             }
 
-            if (Interlocked.Exchange(ref _pendingRenderMatrixQueued, 1) == 0)
-                _pendingRenderMatrixUpdates.Enqueue(this);
+            QueuePendingRenderMatrixUpdate();
         }
 
         private void ApplyPendingRenderMatrixUpdates()
@@ -1311,10 +1494,11 @@ namespace XREngine.Components.Scene.Mesh
                 if (_pendingComponentRenderMatrixVersion != componentVersion ||
                     _pendingRootBoneRenderMatrixVersion != rootBoneVersion)
                 {
-                    if (Interlocked.Exchange(ref _pendingRenderMatrixQueued, 1) == 0)
-                        _pendingRenderMatrixUpdates.Enqueue(this);
+                    QueuePendingRenderMatrixUpdate();
                 }
             }
+
+            ProcessSkinnedBoundsRefresh();
         }
 
         internal static void ProcessPendingRenderMatrixUpdates()

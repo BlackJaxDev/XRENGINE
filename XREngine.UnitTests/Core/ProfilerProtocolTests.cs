@@ -135,6 +135,8 @@ public sealed class ProfilerProtocolTests
             PhysicsChainHierarchyRecalcMilliseconds = 1.75,
             RenderMatrixStatsReady = true,
             RenderMatrixApplied = 300,
+            RenderMatrixBatchCount = 12,
+            RenderMatrixMaxBatchSize = 64,
             RenderMatrixSetCalls = 150,
             RenderMatrixListenerInvocations = 900,
             RenderMatrixListenerCounts =
@@ -142,11 +144,47 @@ public sealed class ProfilerProtocolTests
                 new RenderMatrixListenerEntry { Name = "MeshRenderer", Count = 500 },
                 new RenderMatrixListenerEntry { Name = "LightProbe", Count = 200 }
             ],
+            SkinnedBoundsStatsReady = true,
+            SkinnedBoundsDeferredScheduledCount = 7,
+            SkinnedBoundsDeferredCompletedCount = 5,
+            SkinnedBoundsDeferredFailedCount = 1,
+            SkinnedBoundsDeferredInFlightCount = 1,
+            SkinnedBoundsDeferredMaxInFlightCount = 3,
+            SkinnedBoundsDeferredQueueWaitMs = 9.5,
+            SkinnedBoundsDeferredCpuJobMs = 4.25,
+            SkinnedBoundsDeferredApplyMs = 1.75,
+            SkinnedBoundsDeferredMaxQueueWaitMs = 5.5,
+            SkinnedBoundsDeferredMaxCpuJobMs = 2.25,
+            SkinnedBoundsDeferredMaxApplyMs = 1.0,
+            SkinnedBoundsGpuCompletedCount = 2,
+            SkinnedBoundsGpuComputeMs = 0.75,
+            SkinnedBoundsGpuApplyMs = 0.25,
+            SkinnedBoundsGpuMaxComputeMs = 0.5,
+            SkinnedBoundsGpuMaxApplyMs = 0.2,
             OctreeStatsReady = true,
+            OctreeCollectCallCount = 9,
+            OctreeVisibleRenderableCount = 123,
+            OctreeEmittedCommandCount = 456,
+            OctreeMaxVisibleRenderablesPerCollect = 40,
+            OctreeMaxEmittedCommandsPerCollect = 120,
             OctreeAddCount = 10,
             OctreeMoveCount = 20,
             OctreeRemoveCount = 5,
             OctreeSkippedMoveCount = 3,
+            OctreeSwapDrainedCommandCount = 14,
+            OctreeSwapBufferedCommandCount = 11,
+            OctreeSwapExecutedCommandCount = 9,
+            OctreeSwapDrainMs = 2.5,
+            OctreeSwapExecuteMs = 7.75,
+            OctreeSwapMaxCommandMs = 4.5,
+            OctreeSwapMaxCommandKind = "Move",
+            OctreeRaycastProcessedCommandCount = 6,
+            OctreeRaycastDroppedCommandCount = 2,
+            OctreeRaycastTraversalMs = 12.25,
+            OctreeRaycastCallbackMs = 3.5,
+            OctreeRaycastMaxTraversalMs = 8.25,
+            OctreeRaycastMaxCallbackMs = 2.0,
+            OctreeRaycastMaxCommandMs = 9.75,
             GpuRenderPipelineProfilingEnabled = true,
             GpuRenderPipelineProfilingSupported = true,
             GpuRenderPipelineTimingsReady = true,
@@ -206,11 +244,43 @@ public sealed class ProfilerProtocolTests
         clone.PhysicsChainHierarchyRecalcMilliseconds.ShouldBe(1.75);
         clone.RenderMatrixStatsReady.ShouldBeTrue();
         clone.RenderMatrixApplied.ShouldBe(300);
+        clone.RenderMatrixBatchCount.ShouldBe(12);
+        clone.RenderMatrixMaxBatchSize.ShouldBe(64);
         clone.RenderMatrixListenerCounts.Length.ShouldBe(2);
         clone.RenderMatrixListenerCounts[0].Name.ShouldBe("MeshRenderer");
         clone.RenderMatrixListenerCounts[0].Count.ShouldBe(500);
+        clone.SkinnedBoundsStatsReady.ShouldBeTrue();
+        clone.SkinnedBoundsDeferredScheduledCount.ShouldBe(7);
+        clone.SkinnedBoundsDeferredCompletedCount.ShouldBe(5);
+        clone.SkinnedBoundsDeferredFailedCount.ShouldBe(1);
+        clone.SkinnedBoundsDeferredInFlightCount.ShouldBe(1);
+        clone.SkinnedBoundsDeferredMaxInFlightCount.ShouldBe(3);
+        clone.SkinnedBoundsDeferredQueueWaitMs.ShouldBe(9.5);
+        clone.SkinnedBoundsDeferredCpuJobMs.ShouldBe(4.25);
+        clone.SkinnedBoundsDeferredApplyMs.ShouldBe(1.75);
+        clone.SkinnedBoundsGpuCompletedCount.ShouldBe(2);
+        clone.SkinnedBoundsGpuMaxComputeMs.ShouldBe(0.5);
         clone.OctreeStatsReady.ShouldBeTrue();
+        clone.OctreeCollectCallCount.ShouldBe(9);
+        clone.OctreeVisibleRenderableCount.ShouldBe(123);
+        clone.OctreeEmittedCommandCount.ShouldBe(456);
+        clone.OctreeMaxVisibleRenderablesPerCollect.ShouldBe(40);
+        clone.OctreeMaxEmittedCommandsPerCollect.ShouldBe(120);
         clone.OctreeAddCount.ShouldBe(10);
+        clone.OctreeSwapDrainedCommandCount.ShouldBe(14);
+        clone.OctreeSwapBufferedCommandCount.ShouldBe(11);
+        clone.OctreeSwapExecutedCommandCount.ShouldBe(9);
+        clone.OctreeSwapDrainMs.ShouldBe(2.5);
+        clone.OctreeSwapExecuteMs.ShouldBe(7.75);
+        clone.OctreeSwapMaxCommandMs.ShouldBe(4.5);
+        clone.OctreeSwapMaxCommandKind.ShouldBe("Move");
+        clone.OctreeRaycastProcessedCommandCount.ShouldBe(6);
+        clone.OctreeRaycastDroppedCommandCount.ShouldBe(2);
+        clone.OctreeRaycastTraversalMs.ShouldBe(12.25);
+        clone.OctreeRaycastCallbackMs.ShouldBe(3.5);
+        clone.OctreeRaycastMaxTraversalMs.ShouldBe(8.25);
+        clone.OctreeRaycastMaxCallbackMs.ShouldBe(2.0);
+        clone.OctreeRaycastMaxCommandMs.ShouldBe(9.75);
         clone.GpuRenderPipelineProfilingEnabled.ShouldBeTrue();
         clone.GpuRenderPipelineProfilingSupported.ShouldBeTrue();
         clone.GpuRenderPipelineTimingsReady.ShouldBeTrue();

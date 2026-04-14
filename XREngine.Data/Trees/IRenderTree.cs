@@ -11,6 +11,8 @@ namespace XREngine.Data.Trees
         /// Parameters: (addCount, moveCount, removeCount, skippedCount)
         /// </summary>
         public static Action<int, int, int, int>? OctreeStatsHook = null;
+        public static Action<OctreeSwapTimingStats>? OctreeSwapTimingHook = null;
+        public static Action<OctreeRaycastTimingStats>? OctreeRaycastTimingHook = null;
 
         void Remake();
         void Swap();

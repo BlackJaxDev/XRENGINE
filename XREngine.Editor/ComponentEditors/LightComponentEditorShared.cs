@@ -83,7 +83,7 @@ internal static class LightComponentEditorShared
         }
 
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Currently maps to ELightType (Dynamic / DynamicCached / Static). Shadow baking workflow is not fully implemented yet.");
+            ImGui.SetTooltip("Currently maps to ELightType (Dynamic / DynamicCached / Static). Hybrid auto-baking is disabled by default, and the lightmap workflow is still experimental.");
     }
 
     public static void DrawShadowSection(LightComponent light, bool showCascadedOptions)
@@ -207,7 +207,7 @@ internal static class LightComponentEditorShared
                 light.WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.LightmapBaking?.RequestBake(light);
 
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Queues a lightmap bake for Static meshes. (Lightmap rendering is scaffolded but not implemented yet.)");
+                ImGui.SetTooltip("Queues a lightmap bake for Static meshes. Hybrid auto-baking is disabled by default, and lightmap rendering remains experimental.");
         }
     }
 

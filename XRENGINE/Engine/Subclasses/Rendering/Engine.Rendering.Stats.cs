@@ -2,7 +2,9 @@ using System.Collections.Generic;
 using System;
 using System.Threading;
 using XREngine.Data.Rendering;
+using XREngine.Data.Trees;
 using XREngine.Rendering;
+using XREngine.Timers;
 
 namespace XREngine
 {
@@ -193,9 +195,13 @@ namespace XREngine
                 // Render-matrix stats use a separate swap cycle aligned with SwapBuffers phase.
                 // Current = being written now, Display = last completed swap, Ready = waiting to become Display.
                 private static int _renderMatrixAppliedCurrent;
+                private static int _renderMatrixBatchCountCurrent;
+                private static int _renderMatrixMaxBatchSizeCurrent;
                 private static int _renderMatrixSetCallsCurrent;
                 private static int _renderMatrixListenerInvocationsCurrent;
                 private static int _renderMatrixAppliedDisplay;
+                private static int _renderMatrixBatchCountDisplay;
+                private static int _renderMatrixMaxBatchSizeDisplay;
                 private static int _renderMatrixSetCallsDisplay;
                 private static int _renderMatrixListenerInvocationsDisplay;
                 private static readonly object _renderMatrixStatsLock = new();
@@ -203,6 +209,42 @@ namespace XREngine
                 private static Dictionary<string, int> _renderMatrixListenerCountsDisplay = new(StringComparer.Ordinal);
                 private static bool _renderMatrixStatsReady;
                 private static int _renderMatrixStatsDirty;
+
+                // Skinned-bounds refresh stats use the same swap-cycle model as render-matrix stats.
+                private static int _skinnedBoundsDeferredScheduledCurrent;
+                private static int _skinnedBoundsDeferredCompletedCurrent;
+                private static int _skinnedBoundsDeferredFailedCurrent;
+                private static int _skinnedBoundsDeferredInFlightLive;
+                private static int _skinnedBoundsDeferredMaxInFlightCurrent;
+                private static long _skinnedBoundsDeferredQueueWaitTicksCurrent;
+                private static long _skinnedBoundsDeferredCpuJobTicksCurrent;
+                private static long _skinnedBoundsDeferredApplyTicksCurrent;
+                private static long _skinnedBoundsDeferredMaxQueueWaitTicksCurrent;
+                private static long _skinnedBoundsDeferredMaxCpuJobTicksCurrent;
+                private static long _skinnedBoundsDeferredMaxApplyTicksCurrent;
+                private static int _skinnedBoundsGpuCompletedCurrent;
+                private static long _skinnedBoundsGpuComputeTicksCurrent;
+                private static long _skinnedBoundsGpuApplyTicksCurrent;
+                private static long _skinnedBoundsGpuMaxComputeTicksCurrent;
+                private static long _skinnedBoundsGpuMaxApplyTicksCurrent;
+                private static int _skinnedBoundsDeferredScheduledDisplay;
+                private static int _skinnedBoundsDeferredCompletedDisplay;
+                private static int _skinnedBoundsDeferredFailedDisplay;
+                private static int _skinnedBoundsDeferredInFlightDisplay;
+                private static int _skinnedBoundsDeferredMaxInFlightDisplay;
+                private static long _skinnedBoundsDeferredQueueWaitTicksDisplay;
+                private static long _skinnedBoundsDeferredCpuJobTicksDisplay;
+                private static long _skinnedBoundsDeferredApplyTicksDisplay;
+                private static long _skinnedBoundsDeferredMaxQueueWaitTicksDisplay;
+                private static long _skinnedBoundsDeferredMaxCpuJobTicksDisplay;
+                private static long _skinnedBoundsDeferredMaxApplyTicksDisplay;
+                private static int _skinnedBoundsGpuCompletedDisplay;
+                private static long _skinnedBoundsGpuComputeTicksDisplay;
+                private static long _skinnedBoundsGpuApplyTicksDisplay;
+                private static long _skinnedBoundsGpuMaxComputeTicksDisplay;
+                private static long _skinnedBoundsGpuMaxApplyTicksDisplay;
+                private static bool _skinnedBoundsStatsReady;
+                private static int _skinnedBoundsStatsDirty;
 
                 // VRAM tracking fields
                 private static long _allocatedVRAMBytes;
@@ -355,12 +397,32 @@ namespace XREngine
                 /// <summary>
                 /// Enables collection of render-matrix statistics.
                 /// </summary>
-                public static bool EnableRenderMatrixStats { get; set; }
+                public static bool EnableRenderMatrixStats { get; set; } =
+#if XRE_PUBLISHED
+                    false;
+#else
+                    true;
+#endif
 
                 /// <summary>
                 /// Enables detailed render-matrix listener tracking (per listener type).
                 /// </summary>
-                public static bool EnableRenderMatrixListenerTracking { get; set; }
+                public static bool EnableRenderMatrixListenerTracking { get; set; } =
+#if XRE_PUBLISHED
+                    false;
+#else
+                    true;
+#endif
+
+                /// <summary>
+                /// Enables collection of deferred skinned-bounds refresh statistics.
+                /// </summary>
+                public static bool EnableSkinnedBoundsStats { get; set; } =
+#if XRE_PUBLISHED
+                    false;
+#else
+                    true;
+#endif
 
                 /// <summary>
                 /// When false, disables all per-frame statistics tracking to reduce overhead.
@@ -384,6 +446,16 @@ namespace XREngine
                 public static int RenderMatrixApplied => _renderMatrixAppliedDisplay;
 
                 /// <summary>
+                /// Number of non-empty render-matrix batches applied in the last completed frame.
+                /// </summary>
+                public static int RenderMatrixBatchCount => _renderMatrixBatchCountDisplay;
+
+                /// <summary>
+                /// Largest render-matrix batch applied in the last completed frame.
+                /// </summary>
+                public static int RenderMatrixMaxBatchSize => _renderMatrixMaxBatchSizeDisplay;
+
+                /// <summary>
                 /// Number of SetRenderMatrix calls in the last completed frame.
                 /// </summary>
                 public static int RenderMatrixSetCalls => _renderMatrixSetCallsDisplay;
@@ -392,6 +464,28 @@ namespace XREngine
                 /// Total number of render-matrix listener invocations in the last completed frame.
                 /// </summary>
                 public static int RenderMatrixListenerInvocations => _renderMatrixListenerInvocationsDisplay;
+
+                /// <summary>
+                /// Whether skinned-bounds refresh stats have been populated at least once.
+                /// </summary>
+                public static bool SkinnedBoundsStatsReady => _skinnedBoundsStatsReady;
+
+                public static int SkinnedBoundsDeferredScheduledCount => _skinnedBoundsDeferredScheduledDisplay;
+                public static int SkinnedBoundsDeferredCompletedCount => _skinnedBoundsDeferredCompletedDisplay;
+                public static int SkinnedBoundsDeferredFailedCount => _skinnedBoundsDeferredFailedDisplay;
+                public static int SkinnedBoundsDeferredInFlightCount => _skinnedBoundsDeferredInFlightDisplay;
+                public static int SkinnedBoundsDeferredMaxInFlightCount => _skinnedBoundsDeferredMaxInFlightDisplay;
+                public static double SkinnedBoundsDeferredQueueWaitMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredQueueWaitTicksDisplay);
+                public static double SkinnedBoundsDeferredCpuJobMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredCpuJobTicksDisplay);
+                public static double SkinnedBoundsDeferredApplyMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredApplyTicksDisplay);
+                public static double SkinnedBoundsDeferredMaxQueueWaitMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredMaxQueueWaitTicksDisplay);
+                public static double SkinnedBoundsDeferredMaxCpuJobMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredMaxCpuJobTicksDisplay);
+                public static double SkinnedBoundsDeferredMaxApplyMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredMaxApplyTicksDisplay);
+                public static int SkinnedBoundsGpuCompletedCount => _skinnedBoundsGpuCompletedDisplay;
+                public static double SkinnedBoundsGpuComputeMs => StopwatchTicksToMilliseconds(_skinnedBoundsGpuComputeTicksDisplay);
+                public static double SkinnedBoundsGpuApplyMs => StopwatchTicksToMilliseconds(_skinnedBoundsGpuApplyTicksDisplay);
+                public static double SkinnedBoundsGpuMaxComputeMs => StopwatchTicksToMilliseconds(_skinnedBoundsGpuMaxComputeTicksDisplay);
+                public static double SkinnedBoundsGpuMaxApplyMs => StopwatchTicksToMilliseconds(_skinnedBoundsGpuMaxApplyTicksDisplay);
 
                 /// <summary>
                 /// Total currently allocated GPU VRAM in bytes.
@@ -663,7 +757,7 @@ namespace XREngine
                     _vrRenderSubmitTimeTicks = 0;
                     _fboBandwidthBytes = 0;
                     _fboBindCount = 0;
-                    // Note: render-matrix stats are swapped separately via SwapRenderMatrixStats()
+                    // Note: render-matrix and skinned-bounds stats are swapped separately during swap-buffers.
                 }
 
                 /// <summary>
@@ -868,6 +962,8 @@ namespace XREngine
 
                     // Atomically copy current values to display and reset current.
                     _renderMatrixAppliedDisplay = Interlocked.Exchange(ref _renderMatrixAppliedCurrent, 0);
+                    _renderMatrixBatchCountDisplay = Interlocked.Exchange(ref _renderMatrixBatchCountCurrent, 0);
+                    _renderMatrixMaxBatchSizeDisplay = Interlocked.Exchange(ref _renderMatrixMaxBatchSizeCurrent, 0);
                     _renderMatrixSetCallsDisplay = Interlocked.Exchange(ref _renderMatrixSetCallsCurrent, 0);
                     _renderMatrixListenerInvocationsDisplay = Interlocked.Exchange(ref _renderMatrixListenerInvocationsCurrent, 0);
 
@@ -883,6 +979,36 @@ namespace XREngine
                 }
 
                 /// <summary>
+                /// Swaps skinned-bounds refresh stats from current to display buffer. Call from SwapBuffers phase.
+                /// </summary>
+                public static void SwapSkinnedBoundsStats()
+                {
+                    if (!EnableSkinnedBoundsStats)
+                        return;
+
+                    if (Interlocked.Exchange(ref _skinnedBoundsStatsDirty, 0) == 0)
+                        return;
+
+                    _skinnedBoundsDeferredScheduledDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredScheduledCurrent, 0);
+                    _skinnedBoundsDeferredCompletedDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredCompletedCurrent, 0);
+                    _skinnedBoundsDeferredFailedDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredFailedCurrent, 0);
+                    _skinnedBoundsDeferredInFlightDisplay = Math.Max(0, Volatile.Read(ref _skinnedBoundsDeferredInFlightLive));
+                    _skinnedBoundsDeferredMaxInFlightDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredMaxInFlightCurrent, 0);
+                    _skinnedBoundsDeferredQueueWaitTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredQueueWaitTicksCurrent, 0);
+                    _skinnedBoundsDeferredCpuJobTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredCpuJobTicksCurrent, 0);
+                    _skinnedBoundsDeferredApplyTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredApplyTicksCurrent, 0);
+                    _skinnedBoundsDeferredMaxQueueWaitTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredMaxQueueWaitTicksCurrent, 0);
+                    _skinnedBoundsDeferredMaxCpuJobTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredMaxCpuJobTicksCurrent, 0);
+                    _skinnedBoundsDeferredMaxApplyTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredMaxApplyTicksCurrent, 0);
+                    _skinnedBoundsGpuCompletedDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuCompletedCurrent, 0);
+                    _skinnedBoundsGpuComputeTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuComputeTicksCurrent, 0);
+                    _skinnedBoundsGpuApplyTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuApplyTicksCurrent, 0);
+                    _skinnedBoundsGpuMaxComputeTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuMaxComputeTicksCurrent, 0);
+                    _skinnedBoundsGpuMaxApplyTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuMaxApplyTicksCurrent, 0);
+                    _skinnedBoundsStatsReady = true;
+                }
+
+                /// <summary>
                 /// Record the number of render-matrix updates applied during swap buffers.
                 /// </summary>
                 public static void RecordRenderMatrixApplied(int count)
@@ -891,6 +1017,8 @@ namespace XREngine
                         return;
 
                     Interlocked.Add(ref _renderMatrixAppliedCurrent, count);
+                    Interlocked.Increment(ref _renderMatrixBatchCountCurrent);
+                    UpdateMaxCounter(ref _renderMatrixMaxBatchSizeCurrent, count);
                     Interlocked.Exchange(ref _renderMatrixStatsDirty, 1);
                 }
 
@@ -942,24 +1070,165 @@ namespace XREngine
                     }
                 }
 
+                public static void RecordSkinnedBoundsRefreshDeferredScheduled()
+                {
+                    if (!EnableSkinnedBoundsStats)
+                        return;
+
+                    int inFlight = Interlocked.Increment(ref _skinnedBoundsDeferredInFlightLive);
+                    Interlocked.Increment(ref _skinnedBoundsDeferredScheduledCurrent);
+                    UpdateMaxCounter(ref _skinnedBoundsDeferredMaxInFlightCurrent, inFlight);
+                    Interlocked.Exchange(ref _skinnedBoundsStatsDirty, 1);
+                }
+
+                public static void RecordSkinnedBoundsRefreshDeferredFinished(long queueWaitTicks, long cpuJobTicks, long applyTicks, bool succeeded)
+                {
+                    if (!EnableSkinnedBoundsStats)
+                        return;
+
+                    if (succeeded)
+                        Interlocked.Increment(ref _skinnedBoundsDeferredCompletedCurrent);
+                    else
+                        Interlocked.Increment(ref _skinnedBoundsDeferredFailedCurrent);
+
+                    queueWaitTicks = Math.Max(0L, queueWaitTicks);
+                    cpuJobTicks = Math.Max(0L, cpuJobTicks);
+                    applyTicks = Math.Max(0L, applyTicks);
+
+                    Interlocked.Add(ref _skinnedBoundsDeferredQueueWaitTicksCurrent, queueWaitTicks);
+                    Interlocked.Add(ref _skinnedBoundsDeferredCpuJobTicksCurrent, cpuJobTicks);
+                    Interlocked.Add(ref _skinnedBoundsDeferredApplyTicksCurrent, applyTicks);
+                    UpdateMaxCounter(ref _skinnedBoundsDeferredMaxQueueWaitTicksCurrent, queueWaitTicks);
+                    UpdateMaxCounter(ref _skinnedBoundsDeferredMaxCpuJobTicksCurrent, cpuJobTicks);
+                    UpdateMaxCounter(ref _skinnedBoundsDeferredMaxApplyTicksCurrent, applyTicks);
+
+                    int inFlight = Interlocked.Decrement(ref _skinnedBoundsDeferredInFlightLive);
+                    if (inFlight < 0)
+                    {
+                        Interlocked.Exchange(ref _skinnedBoundsDeferredInFlightLive, 0);
+                    }
+
+                    Interlocked.Exchange(ref _skinnedBoundsStatsDirty, 1);
+                }
+
+                public static void RecordSkinnedBoundsRefreshGpuCompleted(long computeTicks, long applyTicks)
+                {
+                    if (!EnableSkinnedBoundsStats)
+                        return;
+
+                    computeTicks = Math.Max(0L, computeTicks);
+                    applyTicks = Math.Max(0L, applyTicks);
+
+                    Interlocked.Increment(ref _skinnedBoundsGpuCompletedCurrent);
+                    Interlocked.Add(ref _skinnedBoundsGpuComputeTicksCurrent, computeTicks);
+                    Interlocked.Add(ref _skinnedBoundsGpuApplyTicksCurrent, applyTicks);
+                    UpdateMaxCounter(ref _skinnedBoundsGpuMaxComputeTicksCurrent, computeTicks);
+                    UpdateMaxCounter(ref _skinnedBoundsGpuMaxApplyTicksCurrent, applyTicks);
+                    Interlocked.Exchange(ref _skinnedBoundsStatsDirty, 1);
+                }
+
+                private static void UpdateMaxCounter(ref int target, int candidate)
+                {
+                    int current;
+                    while (candidate > (current = Volatile.Read(ref target)) &&
+                           Interlocked.CompareExchange(ref target, candidate, current) != current)
+                    {
+                    }
+                }
+
+                private static void UpdateMaxCounter(ref long target, long candidate)
+                {
+                    long current;
+                    while (candidate > (current = Interlocked.Read(ref target)) &&
+                           Interlocked.CompareExchange(ref target, candidate, current) != current)
+                    {
+                    }
+                }
+
+                private static double StopwatchTicksToMilliseconds(long ticks)
+                    => EngineTimer.TicksToSeconds(Math.Max(0L, ticks)) * 1000.0;
+
                 // Octree stats
+                private static readonly object _octreeTimingStatsLock = new();
+                private static int _octreeCollectCallsCurrent;
+                private static int _octreeVisibleRenderablesCurrent;
+                private static int _octreeEmittedCommandsCurrent;
+                private static int _octreeMaxVisibleRenderablesCurrent;
+                private static int _octreeMaxEmittedCommandsCurrent;
                 private static int _octreeAddCommandsCurrent;
                 private static int _octreeMoveCommandsCurrent;
                 private static int _octreeRemoveCommandsCurrent;
                 private static int _octreeSkippedMovesCurrent;
+                private static int _octreeSwapDrainedCommandsCurrent;
+                private static int _octreeSwapBufferedCommandsCurrent;
+                private static int _octreeSwapExecutedCommandsCurrent;
+                private static long _octreeSwapDrainTicksCurrent;
+                private static long _octreeSwapExecuteTicksCurrent;
+                private static long _octreeSwapMaxCommandTicksCurrent;
+                private static int _octreeSwapMaxCommandKindCurrent;
+                private static int _octreeRaycastProcessedCommandsCurrent;
+                private static int _octreeRaycastDroppedCommandsCurrent;
+                private static long _octreeRaycastTraversalTicksCurrent;
+                private static long _octreeRaycastCallbackTicksCurrent;
+                private static long _octreeRaycastMaxTraversalTicksCurrent;
+                private static long _octreeRaycastMaxCallbackTicksCurrent;
+                private static long _octreeRaycastMaxCommandTicksCurrent;
+                private static int _octreeCollectCallsDisplay;
+                private static int _octreeVisibleRenderablesDisplay;
+                private static int _octreeEmittedCommandsDisplay;
+                private static int _octreeMaxVisibleRenderablesDisplay;
+                private static int _octreeMaxEmittedCommandsDisplay;
                 private static int _octreeAddCommandsDisplay;
                 private static int _octreeMoveCommandsDisplay;
                 private static int _octreeRemoveCommandsDisplay;
                 private static int _octreeSkippedMovesDisplay;
+                private static int _octreeSwapDrainedCommandsDisplay;
+                private static int _octreeSwapBufferedCommandsDisplay;
+                private static int _octreeSwapExecutedCommandsDisplay;
+                private static long _octreeSwapDrainTicksDisplay;
+                private static long _octreeSwapExecuteTicksDisplay;
+                private static long _octreeSwapMaxCommandTicksDisplay;
+                private static int _octreeSwapMaxCommandKindDisplay;
+                private static int _octreeRaycastProcessedCommandsDisplay;
+                private static int _octreeRaycastDroppedCommandsDisplay;
+                private static long _octreeRaycastTraversalTicksDisplay;
+                private static long _octreeRaycastCallbackTicksDisplay;
+                private static long _octreeRaycastMaxTraversalTicksDisplay;
+                private static long _octreeRaycastMaxCallbackTicksDisplay;
+                private static long _octreeRaycastMaxCommandTicksDisplay;
                 private static int _octreeStatsDirty;
                 private static bool _octreeStatsReady;
 
-                public static bool EnableOctreeStats { get; set; }
+                public static bool EnableOctreeStats { get; set; } =
+#if XRE_PUBLISHED
+                    false;
+#else
+                    true;
+#endif
                 public static bool OctreeStatsReady => _octreeStatsReady;
+                public static int OctreeCollectCallCount => _octreeCollectCallsDisplay;
+                public static int OctreeVisibleRenderableCount => _octreeVisibleRenderablesDisplay;
+                public static int OctreeEmittedCommandCount => _octreeEmittedCommandsDisplay;
+                public static int OctreeMaxVisibleRenderablesPerCollect => _octreeMaxVisibleRenderablesDisplay;
+                public static int OctreeMaxEmittedCommandsPerCollect => _octreeMaxEmittedCommandsDisplay;
                 public static int OctreeAddCount => _octreeAddCommandsDisplay;
                 public static int OctreeMoveCount => _octreeMoveCommandsDisplay;
                 public static int OctreeRemoveCount => _octreeRemoveCommandsDisplay;
                 public static int OctreeSkippedMoveCount => _octreeSkippedMovesDisplay;
+                public static int OctreeSwapDrainedCommandCount => _octreeSwapDrainedCommandsDisplay;
+                public static int OctreeSwapBufferedCommandCount => _octreeSwapBufferedCommandsDisplay;
+                public static int OctreeSwapExecutedCommandCount => _octreeSwapExecutedCommandsDisplay;
+                public static double OctreeSwapDrainMs => StopwatchTicksToMilliseconds(_octreeSwapDrainTicksDisplay);
+                public static double OctreeSwapExecuteMs => StopwatchTicksToMilliseconds(_octreeSwapExecuteTicksDisplay);
+                public static double OctreeSwapMaxCommandMs => StopwatchTicksToMilliseconds(_octreeSwapMaxCommandTicksDisplay);
+                public static string OctreeSwapMaxCommandKind => GetOctreeCommandKindName(_octreeSwapMaxCommandKindDisplay);
+                public static int OctreeRaycastProcessedCommandCount => _octreeRaycastProcessedCommandsDisplay;
+                public static int OctreeRaycastDroppedCommandCount => _octreeRaycastDroppedCommandsDisplay;
+                public static double OctreeRaycastTraversalMs => StopwatchTicksToMilliseconds(_octreeRaycastTraversalTicksDisplay);
+                public static double OctreeRaycastCallbackMs => StopwatchTicksToMilliseconds(_octreeRaycastCallbackTicksDisplay);
+                public static double OctreeRaycastMaxTraversalMs => StopwatchTicksToMilliseconds(_octreeRaycastMaxTraversalTicksDisplay);
+                public static double OctreeRaycastMaxCallbackMs => StopwatchTicksToMilliseconds(_octreeRaycastMaxCallbackTicksDisplay);
+                public static double OctreeRaycastMaxCommandMs => StopwatchTicksToMilliseconds(_octreeRaycastMaxCommandTicksDisplay);
 
                 public static void RecordOctreeAdd()
                 {
@@ -989,17 +1258,134 @@ namespace XREngine
                     Interlocked.Exchange(ref _octreeStatsDirty, 1);
                 }
 
+                public static void RecordOctreeCollect(int visibleRenderables, int emittedCommands)
+                {
+                    if (!EnableOctreeStats)
+                        return;
+
+                    Interlocked.Increment(ref _octreeCollectCallsCurrent);
+                    if (visibleRenderables > 0)
+                    {
+                        Interlocked.Add(ref _octreeVisibleRenderablesCurrent, visibleRenderables);
+                        UpdateMaxCounter(ref _octreeMaxVisibleRenderablesCurrent, visibleRenderables);
+                    }
+
+                    if (emittedCommands > 0)
+                    {
+                        Interlocked.Add(ref _octreeEmittedCommandsCurrent, emittedCommands);
+                        UpdateMaxCounter(ref _octreeMaxEmittedCommandsCurrent, emittedCommands);
+                    }
+
+                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
+                }
+
+                public static void RecordOctreeSwapTiming(OctreeSwapTimingStats stats)
+                {
+                    if (!EnableOctreeStats)
+                        return;
+
+                    lock (_octreeTimingStatsLock)
+                    {
+                        _octreeSwapDrainedCommandsCurrent += stats.DrainedCommandCount;
+                        _octreeSwapBufferedCommandsCurrent += stats.BufferedCommandCount;
+                        _octreeSwapExecutedCommandsCurrent += stats.ExecutedCommandCount;
+                        _octreeSwapDrainTicksCurrent += stats.DrainTicks;
+                        _octreeSwapExecuteTicksCurrent += stats.ExecuteTicks;
+
+                        if (stats.MaxCommandTicks > _octreeSwapMaxCommandTicksCurrent)
+                        {
+                            _octreeSwapMaxCommandTicksCurrent = stats.MaxCommandTicks;
+                            _octreeSwapMaxCommandKindCurrent = (int)stats.MaxCommandKind;
+                        }
+                    }
+
+                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
+                }
+
+                public static void RecordOctreeRaycastTiming(OctreeRaycastTimingStats stats)
+                {
+                    if (!EnableOctreeStats)
+                        return;
+
+                    lock (_octreeTimingStatsLock)
+                    {
+                        _octreeRaycastProcessedCommandsCurrent += stats.ProcessedCommandCount;
+                        _octreeRaycastDroppedCommandsCurrent += stats.DroppedCommandCount;
+                        _octreeRaycastTraversalTicksCurrent += stats.TraversalTicks;
+                        _octreeRaycastCallbackTicksCurrent += stats.CallbackTicks;
+
+                        if (stats.MaxTraversalTicks > _octreeRaycastMaxTraversalTicksCurrent)
+                            _octreeRaycastMaxTraversalTicksCurrent = stats.MaxTraversalTicks;
+
+                        if (stats.MaxCallbackTicks > _octreeRaycastMaxCallbackTicksCurrent)
+                            _octreeRaycastMaxCallbackTicksCurrent = stats.MaxCallbackTicks;
+
+                        if (stats.MaxCommandTicks > _octreeRaycastMaxCommandTicksCurrent)
+                            _octreeRaycastMaxCommandTicksCurrent = stats.MaxCommandTicks;
+                    }
+
+                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
+                }
+
                 public static void SwapOctreeStats()
                 {
                     if (!EnableOctreeStats) return;
                     if (Interlocked.Exchange(ref _octreeStatsDirty, 0) == 0) return;
 
+                    _octreeCollectCallsDisplay = Interlocked.Exchange(ref _octreeCollectCallsCurrent, 0);
+                    _octreeVisibleRenderablesDisplay = Interlocked.Exchange(ref _octreeVisibleRenderablesCurrent, 0);
+                    _octreeEmittedCommandsDisplay = Interlocked.Exchange(ref _octreeEmittedCommandsCurrent, 0);
+                    _octreeMaxVisibleRenderablesDisplay = Interlocked.Exchange(ref _octreeMaxVisibleRenderablesCurrent, 0);
+                    _octreeMaxEmittedCommandsDisplay = Interlocked.Exchange(ref _octreeMaxEmittedCommandsCurrent, 0);
                     _octreeAddCommandsDisplay = Interlocked.Exchange(ref _octreeAddCommandsCurrent, 0);
                     _octreeMoveCommandsDisplay = Interlocked.Exchange(ref _octreeMoveCommandsCurrent, 0);
                     _octreeRemoveCommandsDisplay = Interlocked.Exchange(ref _octreeRemoveCommandsCurrent, 0);
                     _octreeSkippedMovesDisplay = Interlocked.Exchange(ref _octreeSkippedMovesCurrent, 0);
+
+                    lock (_octreeTimingStatsLock)
+                    {
+                        _octreeSwapDrainedCommandsDisplay = _octreeSwapDrainedCommandsCurrent;
+                        _octreeSwapBufferedCommandsDisplay = _octreeSwapBufferedCommandsCurrent;
+                        _octreeSwapExecutedCommandsDisplay = _octreeSwapExecutedCommandsCurrent;
+                        _octreeSwapDrainTicksDisplay = _octreeSwapDrainTicksCurrent;
+                        _octreeSwapExecuteTicksDisplay = _octreeSwapExecuteTicksCurrent;
+                        _octreeSwapMaxCommandTicksDisplay = _octreeSwapMaxCommandTicksCurrent;
+                        _octreeSwapMaxCommandKindDisplay = _octreeSwapMaxCommandKindCurrent;
+                        _octreeRaycastProcessedCommandsDisplay = _octreeRaycastProcessedCommandsCurrent;
+                        _octreeRaycastDroppedCommandsDisplay = _octreeRaycastDroppedCommandsCurrent;
+                        _octreeRaycastTraversalTicksDisplay = _octreeRaycastTraversalTicksCurrent;
+                        _octreeRaycastCallbackTicksDisplay = _octreeRaycastCallbackTicksCurrent;
+                        _octreeRaycastMaxTraversalTicksDisplay = _octreeRaycastMaxTraversalTicksCurrent;
+                        _octreeRaycastMaxCallbackTicksDisplay = _octreeRaycastMaxCallbackTicksCurrent;
+                        _octreeRaycastMaxCommandTicksDisplay = _octreeRaycastMaxCommandTicksCurrent;
+
+                        _octreeSwapDrainedCommandsCurrent = 0;
+                        _octreeSwapBufferedCommandsCurrent = 0;
+                        _octreeSwapExecutedCommandsCurrent = 0;
+                        _octreeSwapDrainTicksCurrent = 0L;
+                        _octreeSwapExecuteTicksCurrent = 0L;
+                        _octreeSwapMaxCommandTicksCurrent = 0L;
+                        _octreeSwapMaxCommandKindCurrent = 0;
+                        _octreeRaycastProcessedCommandsCurrent = 0;
+                        _octreeRaycastDroppedCommandsCurrent = 0;
+                        _octreeRaycastTraversalTicksCurrent = 0L;
+                        _octreeRaycastCallbackTicksCurrent = 0L;
+                        _octreeRaycastMaxTraversalTicksCurrent = 0L;
+                        _octreeRaycastMaxCallbackTicksCurrent = 0L;
+                        _octreeRaycastMaxCommandTicksCurrent = 0L;
+                    }
+
                     _octreeStatsReady = true;
                 }
+
+                private static string GetOctreeCommandKindName(int kind)
+                    => kind switch
+                    {
+                        (int)EOctreeCommandKind.Add => nameof(EOctreeCommandKind.Add),
+                        (int)EOctreeCommandKind.Move => nameof(EOctreeCommandKind.Move),
+                        (int)EOctreeCommandKind.Remove => nameof(EOctreeCommandKind.Remove),
+                        _ => nameof(EOctreeCommandKind.None),
+                    };
 
                 /// <summary>
                 /// Increment the draw call counter.

@@ -353,6 +353,7 @@ namespace XREngine
         private int _recentlySavedPruneCounter;
         private readonly object _metadataLock = new();
         private static readonly Lazy<Dictionary<string, Type>> ThirdPartyExtensionMap = new(CreateThirdPartyExtensionMap);
+        private readonly ConcurrentDictionary<string, object> _assetLoadGates = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, object> _thirdPartyImportOptionsCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, byte> _pendingTextureStreamingCacheImports = new(StringComparer.OrdinalIgnoreCase);
 

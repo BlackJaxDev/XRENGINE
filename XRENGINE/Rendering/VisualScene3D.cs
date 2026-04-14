@@ -131,6 +131,7 @@ namespace XREngine.Scene
         public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
         {
             using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems");
+            int visibleRenderables = 0;
 
             bool IntersectionTest(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
                 => item.AllowRender(cullingVolume, commands, camera, containsOnly, collectMirrors);
@@ -138,7 +139,10 @@ namespace XREngine.Scene
             void AddRenderCommands(ITreeItem item)
             {
                 if (item is RenderInfo renderable)
+                {
+                    visibleRenderables++;
                     renderable.CollectCommands(commands, camera);
+                }
             }
 
             if (IsGpuCulling)
@@ -148,8 +152,11 @@ namespace XREngine.Scene
             }
             else
             {
+                int commandsBefore = commands.GetUpdatingCommandCount();
                 using var octreeSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Octree");
                 RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
+                int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - commandsBefore);
+                Engine.Rendering.Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
             }
         }
 
