@@ -72,7 +72,7 @@ namespace XREngine.Rendering.OpenGL
                     Debug.OpenGL($"{GetDescribingName()} generated (no active mesh renderer yet) – delaying attribute binding.");
                 }
 
-                if (Data.Resizable)
+                if (Data.Resizable && !ShouldUseImmutableStorage())
                 {
                     // Use dynamic mutable allocation path.
                     PushData();
@@ -240,6 +240,18 @@ namespace XREngine.Rendering.OpenGL
 
             private uint _lastPushedLength = 0u;
 
+            private bool ShouldUseImmutableStorage()
+                => Data.StorageFlags != 0 ||
+                   Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Persistent) ||
+                   Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Coherent);
+
+            private bool AllowsUpdatesWhileMapped()
+                => Data.StorageFlags.HasFlag(EBufferMapStorageFlags.Persistent) ||
+                   Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Persistent);
+
+            private bool HasBlockingActiveMapping()
+                => Data.ActivelyMapping.Contains(this) && !AllowsUpdatesWhileMapped();
+
             /// <summary>
             /// Threshold above which frame-budgeted uploads are used (64 KB).
             /// Smaller buffers use synchronous upload as the overhead isn't worth it.
@@ -252,7 +264,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void PushData()
             {
-                if (Data.ActivelyMapping.Contains(this))
+                if (HasBlockingActiveMapping())
                     return;
 
                 uint dataLength = Data.Length;
@@ -336,9 +348,45 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void PushDataImmediate()
             {
+                bool shouldUseImmutableStorage = ShouldUseImmutableStorage();
+                bool remapAfterUpload = Data.ActivelyMapping.Contains(this);
+
                 if (!Engine.Rendering.Stats.CanAllocateVram(Data.Length, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
                 {
                     Debug.OpenGLWarning($"[VRAM Budget] Skipping buffer allocation for '{GetDescribingName()}' ({Data.Length} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
+                    return;
+                }
+
+                void* addr = (Data.TryGetAddress(out var address) ? address : VoidPtr.Zero).Pointer;
+
+                if (shouldUseImmutableStorage)
+                {
+                    if (_immutableStorageSet && Data.Length == _lastPushedLength)
+                    {
+                        Api.NamedBufferSubData(BindingId, 0, Data.Length, addr);
+                        _lastPushedLength = Data.Length;
+
+                        if (Data.DisposeOnPush)
+                            Data.Dispose();
+
+                        return;
+                    }
+
+                    if (remapAfterUpload)
+                        UnmapBufferData();
+
+                    if (_immutableStorageSet || _lastPushedLength > 0)
+                        RecreateBuffer();
+
+                    AllocateImmutable();
+                    _lastPushedLength = Data.Length;
+
+                    if (remapAfterUpload)
+                        MapBufferData();
+
+                    if (Data.DisposeOnPush)
+                        Data.Dispose();
+
                     return;
                 }
 
@@ -354,7 +402,6 @@ namespace XREngine.Rendering.OpenGL
                 if (_immutableStorageSet)
                     RecreateBufferAsMutable();
 
-                void* addr = (Data.TryGetAddress(out var address) ? address : VoidPtr.Zero).Pointer;
                 Api.NamedBufferData(BindingId, Data.Length, addr, ToGLEnum(Data.Usage));
                 _lastPushedLength = Data.Length;
 
@@ -425,7 +472,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void PushSubData(int offset, uint length)
             {
-                if (Data.ActivelyMapping.Contains(this))
+                if (HasBlockingActiveMapping())
                     return;
 
                 if (Engine.InvokeOnMainThread(() => PushSubData(offset, length), "GLDataBuffer.PushSubData"))
@@ -472,14 +519,14 @@ namespace XREngine.Rendering.OpenGL
                         length = (uint)clamped;
                     }
 
-                    void* addr = Data.Address;
+                    void* addr = (Data.Address + (uint)offset).Pointer;
                     Api.NamedBufferSubData(BindingId, offset, length, addr);
                 }
             }
 
             public void Flush()
             {
-                if (Data.ActivelyMapping.Contains(this))
+                if (HasBlockingActiveMapping())
                     return;
                 if (Engine.InvokeOnMainThread(Flush, "GLDataBuffer.Flush"))
                     return;
@@ -488,7 +535,7 @@ namespace XREngine.Rendering.OpenGL
 
             public void FlushRange(int offset, uint length)
             {
-                if (Data.ActivelyMapping.Contains(this))
+                if (HasBlockingActiveMapping())
                     return;
                 if (Engine.InvokeOnMainThread(() => FlushRange(offset, length), "GLDataBuffer.FlushRange"))
                     return;
@@ -681,7 +728,7 @@ namespace XREngine.Rendering.OpenGL
             /// Deletes the current GL buffer and creates a fresh mutable one,
             /// allowing subsequent glNamedBufferData calls to succeed.
             /// </summary>
-            internal void RecreateBufferAsMutable()
+            internal void RecreateBuffer()
             {
                 uint oldId = _bindingId!.Value;
                 Api.DeleteBuffer(oldId);
@@ -689,6 +736,9 @@ namespace XREngine.Rendering.OpenGL
                 _bindingId = newId;
                 _immutableStorageSet = false;
             }
+
+            internal void RecreateBufferAsMutable()
+                => RecreateBuffer();
 
             protected internal override void PreDeleted()
             {

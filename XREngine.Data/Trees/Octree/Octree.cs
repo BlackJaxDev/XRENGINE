@@ -55,6 +55,13 @@ namespace XREngine.Data.Trees
             None,
         }
 
+        private readonly record struct SwapExecutionSummary(
+            int BufferedCommandCount,
+            int ExecutedCommandCount,
+            long ExecuteTicks,
+            long MaxCommandTicks,
+            EOctreeCommandKind MaxCommandKind);
+
         internal ConcurrentQueue<(T item, ETreeCommand)> SwapCommands { get; } = new ConcurrentQueue<(T item, ETreeCommand command)>();
         internal ConcurrentQueue<(Segment segment, SortedDictionary<float, List<(T item, object? data)>> items, Func<T, Segment, (float? distance, object? data)> directTest, Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)> RaycastCommands { get; } = new ConcurrentQueue<(Segment segment, SortedDictionary<float, List<(T item, object? data)>> items, Func<T, Segment, (float? distance, object? data)> directTest, Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)>();
 
@@ -104,6 +111,14 @@ namespace XREngine.Data.Trees
         private void ConsumeRaycastCommandsInternal()
         {
             long startTicks = DateTime.UtcNow.Ticks;
+            int processedCommandCount = 0;
+            int droppedCommandCount = 0;
+            long traversalTicks = 0L;
+            long callbackTicks = 0L;
+            long maxTraversalTicks = 0L;
+            long maxCallbackTicks = 0L;
+            long maxCommandTicks = 0L;
+
             while (RaycastCommands.TryDequeue(out (
                 Segment segment,
                 SortedDictionary<float, List<(T item, object? data)>> items,
@@ -111,15 +126,46 @@ namespace XREngine.Data.Trees
                 Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback
             ) command))
             {
+                long commandStart = Stopwatch.GetTimestamp();
                 _head.Raycast(command.segment, command.items, command.directTest);
+                long traversalElapsedTicks = Stopwatch.GetTimestamp() - commandStart;
 
+                long callbackStart = Stopwatch.GetTimestamp();
                 command.finishedCallback(command.items);
+                long callbackElapsedTicks = Stopwatch.GetTimestamp() - callbackStart;
+
+                processedCommandCount++;
+                traversalTicks += traversalElapsedTicks;
+                callbackTicks += callbackElapsedTicks;
+
+                if (traversalElapsedTicks > maxTraversalTicks)
+                    maxTraversalTicks = traversalElapsedTicks;
+
+                if (callbackElapsedTicks > maxCallbackTicks)
+                    maxCallbackTicks = callbackElapsedTicks;
+
+                long commandElapsedTicks = Stopwatch.GetTimestamp() - commandStart;
+                if (commandElapsedTicks > maxCommandTicks)
+                    maxCommandTicks = commandElapsedTicks;
 
                 if (DateTime.UtcNow.Ticks - startTicks > MaxRaycastTicksPerFrame)
                 {
-                    while (RaycastCommands.TryDequeue(out _)) { }
+                    while (RaycastCommands.TryDequeue(out _))
+                        droppedCommandCount++;
                     break;
                 }
+            }
+
+            if (processedCommandCount > 0 || droppedCommandCount > 0)
+            {
+                IRenderTree.OctreeRaycastTimingHook?.Invoke(new OctreeRaycastTimingStats(
+                    processedCommandCount,
+                    droppedCommandCount,
+                    traversalTicks,
+                    callbackTicks,
+                    maxTraversalTicks,
+                    maxCallbackTicks,
+                    maxCommandTicks));
             }
         }
 
@@ -147,13 +193,35 @@ namespace XREngine.Data.Trees
 
             if (SwapCommands.IsEmpty)
             {
+                long executeStart = Stopwatch.GetTimestamp();
                 ExecuteSwapCommand(firstCommand.item, firstCommand.command);
+                long executeTicks = Stopwatch.GetTimestamp() - executeStart;
                 ReportSingleCommandStats(firstCommand.command);
+
+                IRenderTree.OctreeSwapTimingHook?.Invoke(new OctreeSwapTimingStats(
+                    1,
+                    1,
+                    firstCommand.item is null || firstCommand.command == ETreeCommand.None ? 0 : 1,
+                    0L,
+                    executeTicks,
+                    executeTicks,
+                    ToStatsCommandKind(firstCommand.command)));
                 return;
             }
 
-            DrainSwapCommands(firstCommand);
-            ExecuteSwapCommands();
+            long drainStart = Stopwatch.GetTimestamp();
+            int drainedCommandCount = DrainSwapCommands(firstCommand);
+            long drainTicks = Stopwatch.GetTimestamp() - drainStart;
+            SwapExecutionSummary executionSummary = ExecuteSwapCommands();
+
+            IRenderTree.OctreeSwapTimingHook?.Invoke(new OctreeSwapTimingStats(
+                drainedCommandCount,
+                executionSummary.BufferedCommandCount,
+                executionSummary.ExecutedCommandCount,
+                drainTicks,
+                executionSummary.ExecuteTicks,
+                executionSummary.MaxCommandTicks,
+                executionSummary.MaxCommandKind));
         }
 
         private void ReportSingleCommandStats(ETreeCommand command)
@@ -167,10 +235,12 @@ namespace XREngine.Data.Trees
             IRenderTree.OctreeStatsHook(adds, moves, removes, 0);
         }
 
-        private void DrainSwapCommands((T item, ETreeCommand command) firstCommand)
+        private int DrainSwapCommands((T item, ETreeCommand command) firstCommand)
         {
             _swapCommandBuffer.Clear();
             _swapCommandIndices.Clear();
+
+            int drainedCommandCount = 1;
 
             if (firstCommand.item is not null)
             {
@@ -180,6 +250,7 @@ namespace XREngine.Data.Trees
 
             while (SwapCommands.TryDequeue(out (T item, ETreeCommand command) command))
             {
+                drainedCommandCount++;
                 var item = command.item;
                 if (item is null)
                     continue;
@@ -200,14 +271,20 @@ namespace XREngine.Data.Trees
 
                 _swapCommandBuffer[index] = (item, combined);
             }
+
+            return drainedCommandCount;
         }
 
-        private void ExecuteSwapCommands()
+        private SwapExecutionSummary ExecuteSwapCommands()
         {
             if (_swapCommandBuffer.Count == 0)
-                return;
+                return new SwapExecutionSummary(0, 0, 0L, 0L, EOctreeCommandKind.None);
 
             int adds = 0, moves = 0, removes = 0;
+            int executedCommandCount = 0;
+            long executeStart = Stopwatch.GetTimestamp();
+            long maxCommandTicks = 0L;
+            EOctreeCommandKind maxCommandKind = EOctreeCommandKind.None;
             var head = _head;
             for (int i = 0; i < _swapCommandBuffer.Count; i++)
             {
@@ -215,7 +292,16 @@ namespace XREngine.Data.Trees
                 if (item is null || command == ETreeCommand.None)
                     continue;
 
+                long commandStart = Stopwatch.GetTimestamp();
                 ExecuteSwapCommand(item, command, head);
+                long commandTicks = Stopwatch.GetTimestamp() - commandStart;
+                executedCommandCount++;
+
+                if (commandTicks > maxCommandTicks)
+                {
+                    maxCommandTicks = commandTicks;
+                    maxCommandKind = ToStatsCommandKind(command);
+                }
                 
                 switch (command)
                 {
@@ -229,6 +315,13 @@ namespace XREngine.Data.Trees
             _swapCommandIndices.Clear();
 
             IRenderTree.OctreeStatsHook?.Invoke(adds, moves, removes, 0);
+
+            return new SwapExecutionSummary(
+                adds + moves + removes,
+                executedCommandCount,
+                Stopwatch.GetTimestamp() - executeStart,
+                maxCommandTicks,
+                maxCommandKind);
         }
 
         private void ExecuteSwapCommand(T item, ETreeCommand command, OctreeNode<T>? headOverride = null)
@@ -279,6 +372,15 @@ namespace XREngine.Data.Trees
                 _ => next,
             };
         }
+
+        private static EOctreeCommandKind ToStatsCommandKind(ETreeCommand command)
+            => command switch
+            {
+                ETreeCommand.Add => EOctreeCommandKind.Add,
+                ETreeCommand.Move => EOctreeCommandKind.Move,
+                ETreeCommand.Remove => EOctreeCommandKind.Remove,
+                _ => EOctreeCommandKind.None,
+            };
 
         private void RemoveBufferedCommand(int index)
         {

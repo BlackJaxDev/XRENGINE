@@ -263,6 +263,9 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (runtimeMeshes.Count == 0)
             return;
 
+        if (!ImGui.CollapsingHeader("Blendshapes (All LODs)"))
+            return;
+
         var blendshapeValues = new Dictionary<string, List<float>>(StringComparer.InvariantCultureIgnoreCase);
         var displayNames = new Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase);
 
@@ -294,10 +297,10 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
 
         if (blendshapeValues.Count == 0)
+        {
+            ImGui.TextDisabled("No blendshapes found across runtime meshes.");
             return;
-
-        if (!ImGui.CollapsingHeader("Blendshapes (All LODs)"))
-            return;
+        }
 
         if (ImGui.BeginTable("Blendshapes_All", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
         {
@@ -672,8 +675,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         DrawMeshOptimizerControls(modelComponent, subMesh);
         DrawLodSummaryTable(index, subMesh, lodEntries, runtimeMesh);
 
-        ImGui.Spacing();
-        DrawLodPropertyEditors(modelComponent, index, subMesh, lodEntries, runtimeMesh);
+        if (ImGui.CollapsingHeader($"LOD Details##Submesh{index}"))
+        {
+            ImGui.Spacing();
+            DrawLodPropertyEditors(modelComponent, index, subMesh, lodEntries, runtimeMesh);
+        }
 
         ImGui.TreePop();
         ImGui.PopID();
@@ -2228,8 +2234,6 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     {
         if (lodEntries.Count == 0)
             return;
-
-        ImGui.SeparatorText("LOD Details");
 
         foreach (var entry in lodEntries)
             DrawLodEditor(modelComponent, submeshIndex, subMesh, entry, runtimeMesh);

@@ -9,7 +9,7 @@ namespace XREngine
 {
     /// <summary>
     /// Represents an XREngine project file (.xrproj).
-    /// Contains references to editor preferences, user settings, and project configuration.
+    /// Contains references to editor preferences, game settings, user settings, and project configuration.
     /// The project root (directory containing the .xrproj) must only contain the descriptor file and
     /// the standard project folders: Assets, Intermediate, Build, Packages, Config, and Cache.
     /// </summary>
@@ -18,6 +18,7 @@ namespace XREngine
     {
         public const string ProjectExtension = "xrproj";
         public const string EngineSettingsFileName = "engine_settings.asset";
+        public const string GameSettingsFileName = "game_settings.asset";
         public const string UserSettingsFileName = "user_settings.asset";
         public const string BuildSettingsFileName = "build_settings.asset";
         public const string AssetsDirectoryName = "Assets";
@@ -171,6 +172,13 @@ namespace XREngine
         public string? EngineSettingsPath => ConfigDirectory is null
             ? null
             : Path.Combine(ConfigDirectory, EngineSettingsFileName);
+
+        /// <summary>
+        /// Gets the path to the game settings file for this project.
+        /// </summary>
+        public string? GameSettingsPath => ConfigDirectory is null
+            ? null
+            : Path.Combine(ConfigDirectory, GameSettingsFileName);
 
         /// <summary>
         /// Gets the path to the user settings file for this project.

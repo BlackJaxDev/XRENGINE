@@ -319,25 +319,9 @@ public static partial class EditorImGuiUI
                 if (!IsEditorBrowsable(cached.EditorBrowsableCondition, targets.Targets))
                     continue;
 
-                object?[] values = new object?[targets.Targets.Count];
-                bool valueRetrievalFailed = false;
-                for (int targetIndex = 0; targetIndex < targets.Targets.Count; targetIndex++)
-                {
-                    try
-                    {
-                        values[targetIndex] = cached.Property.GetValue(targets.Targets[targetIndex]);
-                    }
-                    catch
-                    {
-                        valueRetrievalFailed = true;
-                    }
-                }
-
                 propertyInfos.Add(new SettingPropertyDescriptor
                 {
                     Property = cached.Property,
-                    Values = values,
-                    ValueRetrievalFailed = valueRetrievalFailed,
                     IsSimple = cached.IsSimple,
                     Category = cached.Category,
                     DisplayName = cached.DisplayName,
@@ -353,25 +337,9 @@ public static partial class EditorImGuiUI
                 if (!IsEditorBrowsable(cached.EditorBrowsableCondition, targets.Targets))
                     continue;
 
-                object?[] values = new object?[targets.Targets.Count];
-                bool valueRetrievalFailed = false;
-                for (int targetIndex = 0; targetIndex < targets.Targets.Count; targetIndex++)
-                {
-                    try
-                    {
-                        values[targetIndex] = cached.Field.GetValue(targets.Targets[targetIndex]);
-                    }
-                    catch
-                    {
-                        valueRetrievalFailed = true;
-                    }
-                }
-
                 fieldInfos.Add(new SettingFieldDescriptor
                 {
                     Field = cached.Field,
-                    Values = values,
-                    ValueRetrievalFailed = valueRetrievalFailed,
                     IsSimple = cached.IsSimple,
                     Category = cached.Category,
                     DisplayName = cached.DisplayName,
@@ -517,9 +485,15 @@ public static partial class EditorImGuiUI
                     }
 
                     if (row.Property is not null)
-                        DrawSimplePropertyRow(targets, row.Property.Property, row.Property.Values, row.DisplayName, row.Description, row.Property.ValueRetrievalFailed);
+                    {
+                        bool propertyValueReadFailed = !TryGetPropertyValues(targets, row.Property.Property, out object?[] propertyValues);
+                        DrawSimplePropertyRow(targets, row.Property.Property, propertyValues, row.DisplayName, row.Description, propertyValueReadFailed);
+                    }
                     else if (row.Field is not null)
-                        DrawSimpleFieldRow(targets, row.Field.Field, row.Field.Values, row.DisplayName, row.Description, row.Field.ValueRetrievalFailed, row.Field.CanWrite);
+                    {
+                        bool fieldValueReadFailed = !TryGetFieldValues(targets, row.Field.Field, out object?[] fieldValues);
+                        DrawSimpleFieldRow(targets, row.Field.Field, fieldValues, row.DisplayName, row.Description, fieldValueReadFailed, row.Field.CanWrite);
+                    }
 
                     continue;
                 }
@@ -530,7 +504,29 @@ public static partial class EditorImGuiUI
                     simpleTableOpen = false;
                 }
 
-                if (row.ValueRetrievalFailed)
+                if (targets.HasMultipleTargets)
+                {
+                    ImGui.TextDisabled($"{row.DisplayName}: <multiple values>");
+                    continue;
+                }
+
+                bool valueRetrievalFailed;
+                object?[] values;
+                if (row.Property is not null)
+                {
+                    valueRetrievalFailed = !TryGetPropertyValues(targets, row.Property.Property, out values);
+                }
+                else if (row.Field is not null)
+                {
+                    valueRetrievalFailed = !TryGetFieldValues(targets, row.Field.Field, out values);
+                }
+                else
+                {
+                    valueRetrievalFailed = true;
+                    values = Array.Empty<object?>();
+                }
+
+                if (valueRetrievalFailed)
                 {
                     ImGui.TextUnformatted($"{row.DisplayName}: <error>");
                     if (!string.IsNullOrEmpty(row.Description) && ImGui.IsItemHovered())
@@ -538,13 +534,7 @@ public static partial class EditorImGuiUI
                     continue;
                 }
 
-                if (targets.HasMultipleTargets)
-                {
-                    ImGui.TextDisabled($"{row.DisplayName}: <multiple values>");
-                    continue;
-                }
-
-                object? value = row.Values.Count > 0 ? row.Values[0] : null;
+                object? value = values.Length > 0 ? values[0] : null;
 
                 if (TryDrawXREventMember(primary, row, value, visited))
                     continue;
@@ -576,6 +566,44 @@ public static partial class EditorImGuiUI
 
             if (simpleTableOpen)
                 ImGui.EndTable();
+        }
+
+        private static bool TryGetPropertyValues(InspectorTargetSet targets, PropertyInfo property, out object?[] values)
+        {
+            values = new object?[targets.Targets.Count];
+            for (int targetIndex = 0; targetIndex < targets.Targets.Count; targetIndex++)
+            {
+                try
+                {
+                    values[targetIndex] = property.GetValue(targets.Targets[targetIndex]);
+                }
+                catch
+                {
+                    values = Array.Empty<object?>();
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryGetFieldValues(InspectorTargetSet targets, FieldInfo field, out object?[] values)
+        {
+            values = new object?[targets.Targets.Count];
+            for (int targetIndex = 0; targetIndex < targets.Targets.Count; targetIndex++)
+            {
+                try
+                {
+                    values[targetIndex] = field.GetValue(targets.Targets[targetIndex]);
+                }
+                catch
+                {
+                    values = Array.Empty<object?>();
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static CachedInspectorTypeLayout GetCachedInspectorTypeLayout(Type type)
@@ -726,8 +754,6 @@ public static partial class EditorImGuiUI
                 Description = property.Description;
                 Category = property.Category;
                 IsSimple = property.IsSimple;
-                Values = property.Values;
-                ValueRetrievalFailed = property.ValueRetrievalFailed;
                 Hidden = property.Hidden;
             }
 
@@ -738,8 +764,6 @@ public static partial class EditorImGuiUI
                 Description = field.Description;
                 Category = field.Category;
                 IsSimple = field.IsSimple;
-                Values = field.Values;
-                ValueRetrievalFailed = field.ValueRetrievalFailed;
                 Hidden = field.Hidden;
             }
 
@@ -750,8 +774,6 @@ public static partial class EditorImGuiUI
             public string? Description { get; }
             public string? Category { get; }
             public bool IsSimple { get; }
-            public bool ValueRetrievalFailed { get; }
-            public IReadOnlyList<object?> Values { get; }
             public bool Hidden { get; }
 
             public string MemberName
@@ -3569,8 +3591,6 @@ public static partial class EditorImGuiUI
                 var descriptor = new SettingPropertyDescriptor
                 {
                     Property = property,
-                    Values = values,
-                    ValueRetrievalFailed = false,
                     IsSimple = true,
                     Category = null,
                     DisplayName = displayName,
@@ -6239,8 +6259,6 @@ public static partial class EditorImGuiUI
         private sealed class SettingPropertyDescriptor
         {
             public required PropertyInfo Property { get; init; }
-            public required IReadOnlyList<object?> Values { get; init; }
-            public bool ValueRetrievalFailed { get; init; }
             public bool IsSimple { get; init; }
             public string? Category { get; init; }
             public string DisplayName { get; set; } = string.Empty;
@@ -6248,23 +6266,17 @@ public static partial class EditorImGuiUI
             public bool IsOverrideable { get; init; }
             public PropertyInfo? PairedBaseProperty { get; set; }
             public bool Hidden { get; set; }
-
-            public object? Value => Values.Count > 0 ? Values[0] : null;
         }
 
         private sealed class SettingFieldDescriptor
         {
             public required FieldInfo Field { get; init; }
-            public required IReadOnlyList<object?> Values { get; init; }
-            public bool ValueRetrievalFailed { get; init; }
             public bool IsSimple { get; init; }
             public string? Category { get; init; }
             public string DisplayName { get; init; } = string.Empty;
             public string? Description { get; init; }
             public bool CanWrite { get; init; }
             public bool Hidden { get; set; }
-
-            public object? Value => Values.Count > 0 ? Values[0] : null;
         }
 
         private sealed class ReferenceEqualityComparer : IEqualityComparer<object>

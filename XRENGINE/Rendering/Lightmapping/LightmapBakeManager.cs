@@ -23,6 +23,7 @@ public sealed class LightmapBakeManager(XRWorldInstance world) : XRBase
     private readonly XRWorldInstance _world = world;
 
     private XRTexture? _currentBakeShadowMap;
+    private bool _autoBakeDynamicCachedLights;
 
     private readonly ConcurrentQueue<LightComponent> _manualBakeRequests = new();
     private readonly Dictionary<LightComponent, uint> _lastBakedMovementVersion = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -85,6 +86,16 @@ public sealed class LightmapBakeManager(XRWorldInstance world) : XRBase
     /// </summary>
     public bool BakeDirectShadows { get; set; } = true;
 
+    /// <summary>
+    /// Enables automatic lightmap bake requests for DynamicCached lights once they remain stationary.
+    /// Disabled by default until the runtime/editor lightmap workflow is mature enough for general use.
+    /// </summary>
+    public bool AutoBakeDynamicCachedLights
+    {
+        get => _autoBakeDynamicCachedLights;
+        set => SetField(ref _autoBakeDynamicCachedLights, value);
+    }
+
     public event Action<LightmapBakeResult>? BakeCompleted;
 
     public bool TryGetBakedLightmap(RenderableMesh mesh, [NotNullWhen(true)] out XRTexture2D? lightmap)
@@ -119,7 +130,7 @@ public sealed class LightmapBakeManager(XRWorldInstance world) : XRBase
 
     public void ProcessDynamicCachedAutoBake(LightComponent light)
     {
-        if (light.Type != ELightType.DynamicCached)
+        if (!AutoBakeDynamicCachedLights || light.Type != ELightType.DynamicCached)
             return;
 
         if (light.TimeSinceLastMovement < DynamicCachedStationarySeconds)

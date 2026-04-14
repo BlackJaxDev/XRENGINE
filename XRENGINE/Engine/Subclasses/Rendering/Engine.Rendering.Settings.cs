@@ -326,10 +326,12 @@ namespace XREngine
                 private bool _allowBinaryProgramCaching = true;
                 private bool _asyncProgramBinaryUpload = true;
                 private bool _asyncProgramCompilation = true;
-                private bool _calculateBlendshapesInComputeShader = false;
-                private bool _calculateSkinningInComputeShader = false;
+                private bool _calculateBlendshapesInComputeShader = true;
+                private bool _calculateSkinningInComputeShader = true;
                 private bool _useGlobalBoneMatricesBufferForComputeSkinning = false;
                 private bool _useGlobalBlendshapeWeightsBufferForComputeSkinning = false;
+                private ESkinnedBoundsRecomputePolicy _skinnedBoundsRecomputePolicy = ESkinnedBoundsRecomputePolicy.Never;
+                private bool _allowInitialSkinnedBoundsBuildWhenNever = true;
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = false;
                 private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Diagnostics;
@@ -835,6 +837,31 @@ namespace XREngine
                 {
                     get => _calculateSkinnedBoundsInComputeShader;
                     set => SetField(ref _calculateSkinnedBoundsInComputeShader, value);
+                }
+
+                /// <summary>
+                /// Controls when skinned mesh bounds are recomputed at runtime.
+                /// Never uses bind-pose or cached bounds only, Selective refreshes on a throttled cadence,
+                /// and Always refreshes whenever skinned data changes.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Controls when skinned mesh bounds are recomputed at runtime. Never uses bind-pose or cached bounds only, Selective refreshes on a throttled cadence, and Always refreshes whenever skinned data changes.")]
+                public ESkinnedBoundsRecomputePolicy SkinnedBoundsRecomputePolicy
+                {
+                    get => _skinnedBoundsRecomputePolicy;
+                    set => SetField(ref _skinnedBoundsRecomputePolicy, value);
+                }
+
+                /// <summary>
+                /// When true, the Never skinned-bounds policy still allows one initial runtime build
+                /// for meshes that do not have cached bounds yet.
+                /// </summary>
+                [Category("Performance")]
+                [Description("When true, the Never skinned-bounds policy still allows one initial runtime build for meshes that do not have cached bounds yet.")]
+                public bool AllowInitialSkinnedBoundsBuildWhenNever
+                {
+                    get => _allowInitialSkinnedBoundsBuildWhenNever;
+                    set => SetField(ref _allowInitialSkinnedBoundsBuildWhenNever, value);
                 }
 
                 /// <summary>

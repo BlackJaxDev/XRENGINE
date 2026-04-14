@@ -16,7 +16,7 @@
   // Editor UI.
   // Selects which editor UI pipeline to create for unit testing.
   // EditorType: None, Native, IMGUI
-  "EditorType": "IMGUI",
+  "EditorType": "None",
   // Controls draw space and offscreen mode for unit testing camera UI.
   // CameraUIDrawSpaceOnInit: Screen, World, Camera, WorldOffscreen, CameraOffscreen
   "CameraUIDrawSpaceOnInit": "Screen",

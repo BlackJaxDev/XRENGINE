@@ -671,8 +671,19 @@ public static class MeshOptimizerIntegration
 
 internal static class MeshOptimizerNative
 {
-    private const string NativeLibrary = "meshoptimizer";
+    private const string NativeLibraryName = "meshoptimizer";
     private const uint SimplifyPermissiveWithSeamsMask = (uint)MeshOptimizerSimplifyOptions.Permissive;
+    private static readonly Lazy<nint> s_nativeLibraryHandle = new(LoadNativeLibraryHandle, LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly Lazy<MeshoptOptimizeMeshletLevelDelegate?> s_optimizeMeshletLevel = new(() => TryLoadExport<MeshoptOptimizeMeshletLevelDelegate>("meshopt_optimizeMeshletLevel"), LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly Lazy<MeshoptOptimizeMeshletDelegate?> s_optimizeMeshlet = new(() => TryLoadExport<MeshoptOptimizeMeshletDelegate>("meshopt_optimizeMeshlet"), LazyThreadSafetyMode.ExecutionAndPublication);
+    private static int s_loggedLegacyOptimizeLevelFallback;
+    private static int s_loggedMissingOptimizeMeshletExport;
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private unsafe delegate void MeshoptOptimizeMeshletLevelDelegate(uint* meshletVertices, nuint vertexCount, byte* meshletTriangles, nuint triangleCount, int level);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private unsafe delegate void MeshoptOptimizeMeshletDelegate(uint* meshletVertices, byte* meshletTriangles, nuint triangleCount, nuint vertexCount);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct MeshoptMeshlet
@@ -703,10 +714,10 @@ internal static class MeshOptimizerNative
         public sbyte ConeCutoffS8;
     }
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsBound")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsBound")]
     private static extern nuint MeshoptBuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshlets")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshlets")]
     private static extern unsafe nuint MeshoptBuildMeshlets(
         MeshoptMeshlet* meshlets,
         uint* meshletVertices,
@@ -720,7 +731,7 @@ internal static class MeshOptimizerNative
         uint maxTriangles,
         float coneWeight);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsScan")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsScan")]
     private static extern unsafe nuint MeshoptBuildMeshletsScan(
         MeshoptMeshlet* meshlets,
         uint* meshletVertices,
@@ -731,7 +742,7 @@ internal static class MeshOptimizerNative
         uint maxVertices,
         uint maxTriangles);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsFlex")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsFlex")]
     private static extern unsafe nuint MeshoptBuildMeshletsFlex(
         MeshoptMeshlet* meshlets,
         uint* meshletVertices,
@@ -747,7 +758,7 @@ internal static class MeshOptimizerNative
         float coneWeight,
         float splitFactor);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsSpatial")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsSpatial")]
     private static extern unsafe nuint MeshoptBuildMeshletsSpatial(
         MeshoptMeshlet* meshlets,
         uint* meshletVertices,
@@ -762,31 +773,28 @@ internal static class MeshOptimizerNative
         uint maxTriangles,
         float fillWeight);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_optimizeMeshletLevel")]
-    private static extern unsafe void MeshoptOptimizeMeshletLevel(uint* meshletVertices, nuint vertexCount, byte* meshletTriangles, nuint triangleCount, int level);
-
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_computeMeshletBounds")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_computeMeshletBounds")]
     private static extern unsafe MeshoptBounds MeshoptComputeMeshletBounds(uint* meshletVertices, byte* meshletTriangles, nuint triangleCount, float* vertexPositions, nuint vertexCount, nuint vertexPositionsStride);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_encodeMeshletBound")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_encodeMeshletBound")]
     private static extern nuint MeshoptEncodeMeshletBound(nuint maxVertices, nuint maxTriangles);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_encodeMeshlet")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_encodeMeshlet")]
     private static extern unsafe nuint MeshoptEncodeMeshlet(byte* buffer, nuint bufferSize, uint* vertices, nuint vertexCount, byte* triangles, nuint triangleCount);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplify")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplify")]
     private static extern unsafe nuint MeshoptSimplify(uint* destination, uint* indices, nuint indexCount, float* vertexPositions, nuint vertexCount, nuint vertexPositionsStride, nuint targetIndexCount, float targetError, uint options, float* resultError);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplifyWithAttributes")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplifyWithAttributes")]
     private static extern unsafe nuint MeshoptSimplifyWithAttributes(uint* destination, uint* indices, nuint indexCount, float* vertexPositions, nuint vertexCount, nuint vertexPositionsStride, float* vertexAttributes, nuint vertexAttributesStride, float* attributeWeights, nuint attributeCount, byte* vertexLock, nuint targetIndexCount, float targetError, uint options, float* resultError);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplifyWithUpdate")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplifyWithUpdate")]
     private static extern unsafe nuint MeshoptSimplifyWithUpdate(uint* indices, nuint indexCount, float* vertexPositions, nuint vertexCount, nuint vertexPositionsStride, float* vertexAttributes, nuint vertexAttributesStride, float* attributeWeights, nuint attributeCount, byte* vertexLock, nuint targetIndexCount, float targetError, uint options, float* resultError);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplifySloppy")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplifySloppy")]
     private static extern unsafe nuint MeshoptSimplifySloppy(uint* destination, uint* indices, nuint indexCount, float* vertexPositions, nuint vertexCount, nuint vertexPositionsStride, byte* vertexLock, nuint targetIndexCount, float targetError, float* resultError);
 
-    [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplifyScale")]
+    [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplifyScale")]
     private static extern unsafe float MeshoptSimplifyScale(float* vertexPositions, nuint vertexCount, nuint vertexPositionsStride);
 
     public static nuint BuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles)
@@ -817,7 +825,73 @@ internal static class MeshOptimizerNative
 
         fixed (uint* verticesPtr = meshletVertices)
         fixed (byte* trianglesPtr = meshletTriangles)
-            MeshoptOptimizeMeshletLevel(verticesPtr, (nuint)meshletVertices.Length, trianglesPtr, (nuint)(meshletTriangles.Length / 3), level);
+        {
+            nuint triangleCount = (nuint)(meshletTriangles.Length / 3);
+            if (triangleCount == 0)
+                return;
+
+            if (s_optimizeMeshletLevel.Value is { } optimizeMeshletLevel)
+            {
+                optimizeMeshletLevel(verticesPtr, (nuint)meshletVertices.Length, trianglesPtr, triangleCount, level);
+                return;
+            }
+
+            if (s_optimizeMeshlet.Value is { } optimizeMeshlet)
+            {
+                optimizeMeshlet(verticesPtr, trianglesPtr, triangleCount, (nuint)meshletVertices.Length);
+
+                if (level != 0 && Interlocked.Exchange(ref s_loggedLegacyOptimizeLevelFallback, 1) == 0)
+                {
+                    Debug.LogWarning($"meshoptimizer native DLL does not expose 'meshopt_optimizeMeshletLevel'; falling back to legacy 'meshopt_optimizeMeshlet'. OptimizeLevel={level} will be ignored.");
+                }
+
+                return;
+            }
+
+            if (Interlocked.Exchange(ref s_loggedMissingOptimizeMeshletExport, 1) == 0)
+            {
+                Debug.LogWarning("meshoptimizer native DLL does not expose meshlet optimization exports. Meshlets will be built without the optional post-build optimization pass.");
+            }
+        }
+    }
+
+    private static nint LoadNativeLibraryHandle()
+    {
+        try
+        {
+            if (NativeLibrary.TryLoad(NativeLibraryName, typeof(MeshOptimizerNative).Assembly, null, out IntPtr assemblyHandle)
+                && assemblyHandle != IntPtr.Zero)
+            {
+                return assemblyHandle;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (NativeLibrary.TryLoad(NativeLibraryName, out IntPtr defaultHandle) && defaultHandle != IntPtr.Zero)
+                return defaultHandle;
+        }
+        catch
+        {
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private static T? TryLoadExport<T>(string exportName) where T : Delegate
+    {
+        IntPtr libraryHandle = s_nativeLibraryHandle.Value;
+        if (libraryHandle == IntPtr.Zero
+            || !NativeLibrary.TryGetExport(libraryHandle, exportName, out IntPtr exportPtr)
+            || exportPtr == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        return Marshal.GetDelegateForFunctionPointer<T>(exportPtr);
     }
 
     public static unsafe MeshoptBounds ComputeMeshletBounds(ReadOnlySpan<uint> meshletVertices, ReadOnlySpan<byte> meshletTriangles, float[] vertexPositions, int vertexCount)

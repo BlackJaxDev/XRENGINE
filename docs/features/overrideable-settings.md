@@ -110,10 +110,22 @@ These walk the cascade in correct priority order and return the effective value.
 - Override editor preferences via `EditorPreferencesOverrides` (theme, debug options, scene depth mode, etc.)
 - Define project-specific defaults that all team members share
 
+Project config assets now live under the project's `Config/` folder:
+- `game_settings.asset` stores persisted `GameStartupSettings`
+- `user_settings.asset` stores persisted per-user overrides for that project
+- `build_settings.asset` stores build/publish settings
+- `engine_settings.asset` stores `EditorPreferencesOverrides` for that project
+
 Example camera-depth cascade:
 - `GameStartupSettings.DepthModeOverride` sets the project default for scene cameras.
 - `EditorPreferences.SceneDepthMode` can force `Normal` or `Reversed`, or defer with `UseProjectDefault`.
 - `EditorPreferencesOverrides.SceneDepthModeOverride` can sandbox that editor preference per project.
+
+Example skinned-bounds cascade:
+- `EngineSettings.SkinnedBoundsRecomputePolicy` sets the engine-wide default for runtime skinned-mesh bounds refreshes.
+- `GameStartupSettings.SkinnedBoundsRecomputePolicyOverride` can force `Never`, `Selective`, or `Always` per project.
+- `EngineSettings.AllowInitialSkinnedBoundsBuildWhenNever` controls whether `Never` still allows a one-time runtime bounds build when no cached skinned bounds exist yet.
+- `GameStartupSettings.AllowInitialSkinnedBoundsBuildWhenNeverOverride` can make `Never` fully strict per project.
 
 **User overrides** – Personal preferences stored outside the project. Not checked into source control. Examples: preferred theme, ImGui panel visibility/layout preferences, window positions, recently opened files.
 

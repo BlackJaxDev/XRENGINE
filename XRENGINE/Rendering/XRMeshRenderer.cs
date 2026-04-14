@@ -16,6 +16,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.Shaders.Generator;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 using static XREngine.Rendering.XRMesh;
 
@@ -433,8 +434,10 @@ namespace XREngine.Rendering
         }
 
         [MemoryPackIgnore]
+        [YamlIgnore]
         private XREngine.Rendering.Models.SubMesh? _sourceSubMeshAsset;
         [MemoryPackIgnore]
+        [YamlIgnore]
         public XREngine.Rendering.Models.SubMesh? SourceSubMeshAsset
         {
             get => _sourceSubMeshAsset;

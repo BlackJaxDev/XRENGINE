@@ -221,13 +221,13 @@ public static partial class EditorUnitTests
                                 }
 
                                 SceneNode? importedNode = nodeTask.Result;
-                                _ = Engine.InvokeOnMainThread(() =>
+                                _ = Engine.InvokeOnAppThread(() =>
                                 {
                                     if (characterParentNode != null && importedNode != null && importedNode.Transform.Parent != characterParentNode.Transform)
                                         characterParentNode.Transform.AddChild(importedNode.Transform, false, EParentAssignmentMode.Immediate);
 
                                     OnFinishedImportingAvatar(importedNode, characterParentNode);
-                                }, $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyMainThread: true);
+                                }, $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
                             });
                         break;
                     }
@@ -780,13 +780,13 @@ public static partial class EditorUnitTests
                 if (startupClips is null)
                     return;
 
-                _ = Engine.InvokeOnMainThread(() =>
+                _ = Engine.InvokeOnAppThread(() =>
                 {
                     if (!rootNode.TryGetComponent<HumanoidComponent>(out var humanComp) || humanComp is null)
                         return;
 
                     AttachAvatarStartupClips(rootNode, humanComp, startupClips);
-                }, $"UnitTestingWorld: Attach startup clips to '{rootNode.Name}'", executeNowIfAlreadyMainThread: true);
+                }, $"UnitTestingWorld: Attach startup clips to '{rootNode.Name}'", executeNowIfAlreadyAppThread: true);
             });
         }
 

@@ -541,7 +541,7 @@ namespace XREngine.Core.Files
             if (propName is nameof(SourceAsset) or nameof(EmbeddedAssets))
                 return;
 
-            if (XRAssetGraphUtility.ShouldRefreshForPropertyChange(prev, field))
+            if (XRAssetGraphUtility.ShouldRefreshForPropertyChange(GetType(), propName, prev, field))
                 XRAssetGraphUtility.RefreshAssetGraph(SourceAsset);
         }
 

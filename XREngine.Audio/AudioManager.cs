@@ -150,7 +150,12 @@ namespace XREngine.Audio
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[AudioManager] Failed to create SteamAudioProcessor: {ex.Message}. Falling back to Passthrough.");
+                string errorMessage = ex.Message.TrimEnd('.', ' ');
+                string installHint = ex is DllNotFoundException ||
+                                     errorMessage.Contains("phonon", StringComparison.OrdinalIgnoreCase)
+                    ? " Install Steam Audio by running 'pwsh Tools\\Dependencies\\Get-Phonon.ps1' from the repo root or the VS Code task 'Install-Phonon'."
+                    : string.Empty;
+                Debug.WriteLine($"[AudioManager] Failed to create SteamAudioProcessor: {errorMessage}. Falling back to Passthrough.{installHint}");
                 return new PassthroughProcessor();
             }
         }

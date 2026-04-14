@@ -34,6 +34,77 @@ public sealed class SecondaryTimingTests
     }
 
     [Test]
+    public void RenderableMesh_ShouldScheduleSkinnedBoundsRefresh_RespectsPolicy()
+    {
+        long baseTicks = Stopwatch.Frequency * 60L * 60L * 24L;
+        long withinWindow = baseTicks + Stopwatch.Frequency * 4L;
+        long outsideWindow = baseTicks + Stopwatch.Frequency * 6L;
+
+        RenderableMesh.ShouldScheduleSkinnedBoundsRefresh(
+            ESkinnedBoundsRecomputePolicy.Never,
+            allowInitialBuildWhenNever: false,
+            hasCachedBounds: false,
+            skinnedBoundsDirty: true,
+            refreshInFlight: false,
+            nowTicks: outsideWindow,
+            lastRefreshTicks: baseTicks).ShouldBeFalse();
+
+        RenderableMesh.ShouldScheduleSkinnedBoundsRefresh(
+            ESkinnedBoundsRecomputePolicy.Never,
+            allowInitialBuildWhenNever: true,
+            hasCachedBounds: false,
+            skinnedBoundsDirty: true,
+            refreshInFlight: false,
+            nowTicks: outsideWindow,
+            lastRefreshTicks: baseTicks).ShouldBeTrue();
+
+        RenderableMesh.ShouldScheduleSkinnedBoundsRefresh(
+            ESkinnedBoundsRecomputePolicy.Never,
+            allowInitialBuildWhenNever: true,
+            hasCachedBounds: true,
+            skinnedBoundsDirty: true,
+            refreshInFlight: false,
+            nowTicks: outsideWindow,
+            lastRefreshTicks: baseTicks).ShouldBeFalse();
+
+        RenderableMesh.ShouldScheduleSkinnedBoundsRefresh(
+            ESkinnedBoundsRecomputePolicy.Selective,
+            allowInitialBuildWhenNever: false,
+            hasCachedBounds: true,
+            skinnedBoundsDirty: true,
+            refreshInFlight: false,
+            nowTicks: withinWindow,
+            lastRefreshTicks: baseTicks).ShouldBeFalse();
+
+        RenderableMesh.ShouldScheduleSkinnedBoundsRefresh(
+            ESkinnedBoundsRecomputePolicy.Selective,
+            allowInitialBuildWhenNever: false,
+            hasCachedBounds: true,
+            skinnedBoundsDirty: true,
+            refreshInFlight: false,
+            nowTicks: outsideWindow,
+            lastRefreshTicks: baseTicks).ShouldBeTrue();
+
+        RenderableMesh.ShouldScheduleSkinnedBoundsRefresh(
+            ESkinnedBoundsRecomputePolicy.Always,
+            allowInitialBuildWhenNever: false,
+            hasCachedBounds: true,
+            skinnedBoundsDirty: true,
+            refreshInFlight: false,
+            nowTicks: withinWindow,
+            lastRefreshTicks: baseTicks).ShouldBeTrue();
+
+        RenderableMesh.ShouldScheduleSkinnedBoundsRefresh(
+            ESkinnedBoundsRecomputePolicy.Always,
+            allowInitialBuildWhenNever: false,
+            hasCachedBounds: true,
+            skinnedBoundsDirty: true,
+            refreshInFlight: true,
+            nowTicks: outsideWindow,
+            lastRefreshTicks: baseTicks).ShouldBeFalse();
+    }
+
+    [Test]
     public void OvrLipSyncComponent_HasRecentAudioData_UsesTickWindow()
     {
         long baseTicks = Stopwatch.Frequency * 60L * 60L * 8L;

@@ -250,6 +250,8 @@ namespace XREngine
                 for (int i = 0; i < moves; i++) Rendering.Stats.RecordOctreeMove();
                 for (int i = 0; i < removes; i++) Rendering.Stats.RecordOctreeRemove();
             };
+            IRenderTree.OctreeSwapTimingHook = Rendering.Stats.RecordOctreeSwapTiming;
+            IRenderTree.OctreeRaycastTimingHook = Rendering.Stats.RecordOctreeRaycastTiming;
 
             // Snapshot restore can invalidate runtime-only bindings (viewport/world/camera).
             // Rebind right after restore (pre-BeginPlay) and once more after play begins.
