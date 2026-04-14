@@ -1,5 +1,4 @@
 ﻿using Extensions;
-using System.Diagnostics;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -8,6 +7,12 @@ namespace XREngine.Animation
 {
     public class BlendManager : XRBase
     {
+        // Cached static blend functions — no per-blend lambda allocation
+        private static readonly Func<float, float> LinearBlend = static (time) => time;
+        private static readonly Func<float, float> CosineBlend = static (time) => Interp.Cosine(0.0f, 1.0f, time);
+        private static readonly Func<float, float> QuadEaseStartBlend = static (time) => Interp.QuadraticEaseStart(0.0f, 1.0f, time);
+        private static readonly Func<float, float> QuadEaseEndBlend = static (time) => Interp.QuadraticEaseEnd(0.0f, 1.0f, time);
+
         private float _linearBlendTime = 0.0f;
         /// <summary>
         /// How long the blend lasts in seconds.
@@ -40,11 +45,12 @@ namespace XREngine.Animation
             _invDuration = transition.BlendDuration == 0.0f ? 0.0f : 1.0f / transition.BlendDuration;
             _blendFunction = transition.BlendType switch
             {
-                EAnimBlendType.CosineEaseInOut => (time) => Interp.Cosine(0.0f, 1.0f, time),
-                EAnimBlendType.QuadraticEaseStart => (time) => Interp.QuadraticEaseStart(0.0f, 1.0f, time),
-                EAnimBlendType.QuadraticEaseEnd => (time) => Interp.QuadraticEaseEnd(0.0f, 1.0f, time),
+                EAnimBlendType.CosineEaseInOut => CosineBlend,
+                EAnimBlendType.QuadraticEaseStart => QuadEaseStartBlend,
+                EAnimBlendType.QuadraticEaseEnd => QuadEaseEndBlend,
+                // Custom must capture transition reference — only allocation case
                 EAnimBlendType.Custom => (time) => _currentTransition.CustomBlendFunction?.GetValue(time) ?? 0.0f,
-                _ => (time) => time, //Linear
+                _ => LinearBlend,
             };
             CurrentState = currentState;
             NextState = nextState;
@@ -54,24 +60,26 @@ namespace XREngine.Animation
 
         private void GetCurves(AnimState? currentState, AnimState nextState)
         {
-            IEnumerable<string> uniquePaths =
-                (currentState?.Motion?.GetAnimationValueKeysSnapshot() ?? Enumerable.Empty<string>()).Union
-                (nextState.Motion?.GetAnimationValueKeysSnapshot() ?? Enumerable.Empty<string>()).Distinct();
-            _animatedCurves = new Dictionary<string, AnimationMember>(uniquePaths.Count());
-            foreach (string path in uniquePaths)
+            var currCurves = currentState?.Motion?.AnimatedCurves;
+            var nextCurves = nextState.Motion?.AnimatedCurves;
+
+            int capacity = (currCurves?.Count ?? 0) + (nextCurves?.Count ?? 0);
+            _animatedCurves = new Dictionary<string, AnimationMember>(capacity);
+
+            // Add from current motion first
+            if (currCurves is not null)
             {
-                var currMotion = currentState?.Motion;
-                var nextMotion = nextState.Motion;
-                if (currMotion != null && (currMotion.AnimatedCurves?.TryGetValue(path, out AnimationMember? mCurr) ?? false))
-                {
-                    if (mCurr != null)
-                        _animatedCurves.Add(path, mCurr);
-                }
-                else if (nextMotion != null && (nextMotion.AnimatedCurves?.TryGetValue(path, out AnimationMember? mNext) ?? false))
-                {
-                    if (mNext != null)
-                        _animatedCurves.Add(path, mNext);
-                }
+                foreach (var kvp in currCurves)
+                    if (kvp.Value is not null)
+                        _animatedCurves.TryAdd(kvp.Key, kvp.Value);
+            }
+
+            // Add from next motion (TryAdd skips duplicates)
+            if (nextCurves is not null)
+            {
+                foreach (var kvp in nextCurves)
+                    if (kvp.Value is not null)
+                        _animatedCurves.TryAdd(kvp.Key, kvp.Value);
             }
         }
 
@@ -96,24 +104,33 @@ namespace XREngine.Animation
         /// <summary>
         /// Returns true if the blend finished, false if still blending.
         /// </summary>
-        /// <param name="currentState"></param>
-        /// <param name="nextState"></param>
-        /// <param name="delta"></param>
-        /// <returns></returns>
         public bool TickBlend(AnimLayer layer, float delta)
         {
-            //Blend between the current and next state
             float blendTime = GetModifiedBlendTime();
 
-            Blend(layer,
-                _currentState?.Motion?.GetAnimationValuesSnapshot(),
-                _nextState?.Motion?.GetAnimationValuesSnapshot(),
-                blendTime);
+            var currMotion = _currentState?.Motion;
+            var nextMotion = _nextState?.Motion;
+
+            // Typed store path: lerp directly into the layer store — no boxing, no snapshots
+            if (layer.SlotLayout is not null
+                && currMotion?.SlotLayout is not null
+                && nextMotion?.SlotLayout is not null)
+            {
+                AnimationValueStore.Lerp(
+                    currMotion.ValueStore,
+                    nextMotion.ValueStore,
+                    blendTime,
+                    layer.ValueStore);
+            }
+            else
+            {
+                // Legacy path
+                BlendLegacy(layer, currMotion, nextMotion, blendTime);
+            }
 
             _linearBlendTime += delta;
             if (_linearBlendTime >= BlendDuration)
             {
-                //Blend is done, remove the transition
                 OnFinished();
                 _currentTransition = null;
                 return true;
@@ -122,44 +139,39 @@ namespace XREngine.Animation
             return false;
         }
 
-        private static void Blend(AnimLayer layer, KeyValuePair<string, object?>[]? v1, KeyValuePair<string, object?>[]? v2, float t)
+        private static void BlendLegacy(AnimLayer layer, MotionBase? currMotion, MotionBase? nextMotion, float t)
         {
-            Dictionary<string, object?>? v1Dict = v1 is null ? null : v1.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            Dictionary<string, object?>? v2Dict = v2 is null ? null : v2.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            var v1Dict = currMotion?.AnimationValues;
+            var v2Dict = nextMotion?.AnimationValues;
 
-            IEnumerable<string> keys =
-                (v1Dict?.Keys ?? Enumerable.Empty<string>()).Union
-                (v2Dict?.Keys ?? Enumerable.Empty<string>()).Distinct();
+            if (v1Dict is null && v2Dict is null)
+                return;
 
-            foreach (string key in keys)
+            // Iterate the first dict's keys to find matching pairs
+            if (v1Dict is not null)
             {
-                //Leave values that don't match alone
-                if (!(v1Dict?.TryGetValue(key, out object? v1Value) ?? false) ||
-                    !(v2Dict?.TryGetValue(key, out object? v2Value) ?? false))
-                    continue;
-
-                switch (v1Value)
+                foreach (var kvp in v1Dict)
                 {
-                    case float f1 when v2Value is float f2:
-                        layer.SetAnimValue(key, Interp.Lerp(f1, f2, t));
-                        break;
-                    case Vector2 vector21 when v2Value is Vector2 vector22:
-                        layer.SetAnimValue(key, Vector2.Lerp(vector21, vector22, t));
-                        break;
-                    case Vector3 vector31 when v2Value is Vector3 vector32:
-                        layer.SetAnimValue(key, Vector3.Lerp(vector31, vector32, t));
-                        break;
-                    case Vector4 vector41 when v2Value is Vector4 vector42:
-                        layer.SetAnimValue(key, Vector4.Lerp(vector41, vector42, t));
-                        break;
-                    case Quaternion quaternion1 when v2Value is Quaternion quaternion2:
-                        layer.SetAnimValue(key, Quaternion.Slerp(quaternion1, quaternion2, t));
-                        break;
-                    default: //Pick the discrete value with the higher weight
-                        layer.SetAnimValue(key, t > 0.5f ? v2Value : v1Value);
-                        break;
+                    if (v2Dict is not null && v2Dict.TryGetValue(kvp.Key, out object? v2Value))
+                    {
+                        // Both have the key — lerp
+                        layer.SetAnimValue(kvp.Key, LerpValue(kvp.Value, v2Value, t));
+                    }
+                    // Key only in v1 — leave alone (don't override with nothing)
                 }
             }
+
+            // Keys only in v2 but not in v1 — leave alone as well
         }
+
+        private static object? LerpValue(object? a, object? b, float t) => a switch
+        {
+            float f1 when b is float f2 => Interp.Lerp(f1, f2, t),
+            Vector2 v1 when b is Vector2 v2 => Vector2.Lerp(v1, v2, t),
+            Vector3 v1 when b is Vector3 v2 => Vector3.Lerp(v1, v2, t),
+            Vector4 v1 when b is Vector4 v2 => Vector4.Lerp(v1, v2, t),
+            Quaternion q1 when b is Quaternion q2 => Quaternion.Slerp(q1, q2, t),
+            _ => t > 0.5f ? b : a, // Discrete: higher weight wins
+        };
     }
 }

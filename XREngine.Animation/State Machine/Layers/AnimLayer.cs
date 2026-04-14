@@ -34,6 +34,18 @@ namespace XREngine.Animation
         protected internal readonly Dictionary<string, object?> _animatedValues = [];
         [MemoryPackIgnore]
         internal readonly object _animationValuesLock = new();
+
+        /// <summary>
+        /// Typed value store for this layer, sized to the owning state machine's slot layout.
+        /// </summary>
+        [MemoryPackIgnore]
+        internal AnimationValueStore ValueStore { get; } = new();
+
+        /// <summary>
+        /// Shared slot layout from the owning state machine.
+        /// </summary>
+        [MemoryPackIgnore]
+        internal AnimationSlotLayout? SlotLayout { get; set; }
         
         [MemoryPackIgnore]
         private readonly BlendManager _blendManager = new();
@@ -249,8 +261,24 @@ namespace XREngine.Animation
         }
 
         private void CopyAnimationValuesFromMotion(MotionBase? motion)
-            => CopyAnimationValues(motion?.GetAnimationValuesSnapshot());
-        private void CopyAnimationValues(IEnumerable<KeyValuePair<string, object?>>? values)
+        {
+            if (motion is null)
+                return;
+
+            // Typed store path: bulk copy (zero-alloc)
+            if (SlotLayout is not null && motion.SlotLayout is not null)
+            {
+                ValueStore.CopyFrom(motion.ValueStore);
+                return;
+            }
+
+            // Legacy fallback: snapshot + copy
+#pragma warning disable CS0618 // Obsolete GetAnimationValuesSnapshot — legacy path only
+            CopyAnimationValuesLegacy(motion.GetAnimationValuesSnapshot());
+#pragma warning restore CS0618
+        }
+
+        private void CopyAnimationValuesLegacy(IEnumerable<KeyValuePair<string, object?>>? values)
         {
             if (values is null)
                 return;
@@ -266,6 +294,17 @@ namespace XREngine.Animation
                 if (!_animatedValues.TryAdd(path, animValue))
                     _animatedValues[path] = animValue;
             }
+        }
+
+        /// <summary>
+        /// Writes a value directly into the typed store at the given slot. No boxing for typed paths.
+        /// </summary>
+        internal void SetAnimValueTyped(in AnimSlot slot, object? animValue)
+        {
+            if (SlotLayout is not null && slot.IsValid)
+                ValueStore.SetValue(slot, animValue);
+            else if (animValue is not null)
+                SetAnimValue(slot.TypeIndex.ToString(), animValue); // Fallback should not normally happen
         }
 
         private bool TryTransition(IDictionary<string, AnimVar> variables, AnimStateBase testState, out AnimState? nextState)

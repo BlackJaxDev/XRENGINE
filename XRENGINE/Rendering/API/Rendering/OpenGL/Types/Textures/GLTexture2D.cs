@@ -177,6 +177,7 @@ namespace XREngine.Rendering.OpenGL
                 return;
             try
             {
+                using var sample = Engine.Profiler.Start("GLTexture2D.PushData");
                 IsPushing = true;
                 //Debug.Out($"Pushing texture: {GetDescribingName()}");
                 OnPrePushData(out bool shouldPush, out bool allowPostPushCallback);
@@ -195,22 +196,28 @@ namespace XREngine.Rendering.OpenGL
 
                 Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
 
-                EPixelInternalFormat? internalFormatForce = EnsureStorageAllocated();
+                EPixelInternalFormat? internalFormatForce;
+                using (Engine.Profiler.Start("GLTexture2D.PushData.EnsureStorageAllocated"))
+                    internalFormatForce = EnsureStorageAllocated();
 
-                if (Mipmaps is null || Mipmaps.Length == 0)
-                    PushMipmap(glTarget, 0, null, internalFormatForce);
-                else
+                using (Engine.Profiler.Start("GLTexture2D.PushData.PushMipmaps"))
                 {
-                    int mipLevelOffset = Data.SparseTextureStreamingEnabled
-                        ? Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel)
-                        : 0;
-                    for (int i = 0; i < Mipmaps.Length; ++i)
-                        PushMipmap(glTarget, i + mipLevelOffset, Mipmaps[i], internalFormatForce);
+                    if (Mipmaps is null || Mipmaps.Length == 0)
+                        PushMipmap(glTarget, 0, null, internalFormatForce);
+                    else
+                    {
+                        int mipLevelOffset = Data.SparseTextureStreamingEnabled
+                            ? Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel)
+                            : 0;
+                        for (int i = 0; i < Mipmaps.Length; ++i)
+                            PushMipmap(glTarget, i + mipLevelOffset, Mipmaps[i], internalFormatForce);
+                    }
                 }
 
                 int minLOD = -1000;
                 int maxLOD = 1000;
-                ApplyMipRangeParameters();
+                using (Engine.Profiler.Start("GLTexture2D.PushData.ApplyMipRangeParameters"))
+                    ApplyMipRangeParameters();
 
                 if (!IsMultisampleTarget)
                 {
@@ -219,7 +226,10 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 if (Data.AutoGenerateMipmaps)
+                {
+                    using var mipmapProf = Engine.Profiler.Start("GLTexture2D.PushData.GenerateMipmaps");
                     GenerateMipmaps();
+                }
 
                 if (allowPostPushCallback)
                     OnPostPushData();
@@ -456,6 +466,7 @@ namespace XREngine.Rendering.OpenGL
 
         private unsafe void PushMipmap(GLEnum glTarget, int i, MipmapInfo? info, EPixelInternalFormat? internalFormatForce)
         {
+            using var sample = Engine.Profiler.Start("GLTexture2D.PushMipmap");
             if (!Data.Resizable && !StorageSet)
             {
                 Debug.OpenGLWarning("Texture storage not set on non-resizable texture, can't push mipmaps.");
@@ -517,9 +528,15 @@ namespace XREngine.Rendering.OpenGL
             }
 
             if ((data is not null && data.Length > 0) || pbo is not null)
+            {
+                using var uploadSample = Engine.Profiler.Start(fullPush ? "GLTexture2D.PushMipmap.UploadFull" : "GLTexture2D.PushMipmap.UploadSubImage");
                 PushWithData(glTarget, i, mip!.Width, mip.Height, pixelFormat, pixelType, internalPixelFormat, data, pbo, fullPush);
+            }
             else
+            {
+                using var uploadSample = Engine.Profiler.Start("GLTexture2D.PushMipmap.AllocateNoData");
                 PushWithNoData(glTarget, i, Data.Width >> i, Data.Height >> i, pixelFormat, pixelType, internalPixelFormat, fullPush);
+            }
 
             if (info != null)
             {

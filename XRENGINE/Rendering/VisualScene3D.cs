@@ -142,9 +142,15 @@ namespace XREngine.Scene
             }
 
             if (IsGpuCulling)
+            {
+                using var gpuSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu");
                 CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors);
+            }
             else
+            {
+                using var octreeSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Octree");
                 RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
+            }
         }
 
         public IReadOnlyList<RenderInfo3D> Renderables => _renderables;
@@ -394,10 +400,14 @@ namespace XREngine.Scene
         {
             using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
 
-            var snapshot = _renderables.ToArray();
-            foreach (var renderable in snapshot)
+            // Iterate by index to avoid per-frame ToArray() allocation.
+            // _renderables is only mutated in PreCollectVisible (same thread), so direct iteration is safe.
+            for (int i = 0; i < _renderables.Count; i++)
+            {
+                var renderable = _renderables[i];
                 if (renderable.AllowRender(collectionVolume, commands, camera, false, collectMirrors))
                     renderable.CollectCommands(commands, camera);
+            }
         }
 
         private void TrackRenderable(RenderInfo3D renderable)

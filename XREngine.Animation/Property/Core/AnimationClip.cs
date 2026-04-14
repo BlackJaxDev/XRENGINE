@@ -225,6 +225,27 @@ namespace XREngine.Animation
 
         public override void GetAnimationValues(MotionBase? parentMotion, IDictionary<string, AnimVar> variables, float weight)
         {
+            // Typed store path: write directly to ValueStore via slot indices (no boxing)
+            if (SlotLayout is not null)
+            {
+                foreach (var member in AnimatedMembersArray)
+                {
+                    if (!member.Slot.IsValid)
+                        continue;
+
+                    if (member.Animation is null && member.MemberType != EAnimationMemberType.Method)
+                    {
+                        member.WriteDefaultToStore(ValueStore);
+                        continue;
+                    }
+
+                    member.WriteCurrentValueToStore(ValueStore);
+                }
+                parentMotion?.CopyAnimationValuesFrom(this);
+                return;
+            }
+
+            // Legacy path
             foreach (var kvp in _animatedCurves)
             {
                 if (kvp.Value.Animation is null && kvp.Value.MemberType != EAnimationMemberType.Method)
@@ -233,17 +254,8 @@ namespace XREngine.Animation
                     continue;
                 }
                 
-                //if (weight < float.Epsilon)
-                //    SetAnimValue(kvp.Key, kvp.Value.DefaultValue);
-                //else if (weight > 1.0f - float.Epsilon)
-                //    SetAnimValue(kvp.Key, kvp.Value.GetAnimationValue());
-                //else
-                //{
-                    object? defaultvalue = kvp.Value.DefaultValue;
-                    object? animatedValue = kvp.Value.GetAnimationValue();
-                    object? weightedValue = Lerp(defaultvalue, animatedValue, weight);
-                    SetAnimValue(kvp.Key, weightedValue);
-                //}
+                object? animatedValue = kvp.Value.GetAnimationValue();
+                SetAnimValue(kvp.Key, animatedValue);
             }
             parentMotion?.CopyAnimationValuesFrom(this);
         }

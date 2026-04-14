@@ -341,11 +341,20 @@ namespace XREngine.Rendering.OpenGL
                 if (_linkDataPrepared || IsLinked || _shaderCache.IsEmpty)
                     return;
 
-                ulong hash = CalcHash(_shaderCache.Values.Select(ResolveSourceForHash));
+                ulong hash;
                 bool isCached = false;
                 BinaryProgram binProg = default;
-                if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
-                    isCached = BinaryCache?.TryGetValue(hash, out binProg) ?? false;
+                using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup"))
+                {
+                    using (Engine.Profiler.Start("GLRenderProgram.Link.CalcHash"))
+                        hash = CalcHash(_shaderCache.Values.Select(ResolveSourceForHash));
+
+                    if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                    {
+                        using (Engine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup"))
+                            isCached = BinaryCache?.TryGetValue(hash, out binProg) ?? false;
+                    }
+                }
 
                 _preparedHash = hash;
                 _preparedIsCached = isCached;
@@ -549,7 +558,10 @@ namespace XREngine.Rendering.OpenGL
                         if (asyncResult.Status == GLProgramBinaryUploadQueue.UploadStatus.Success)
                         {
                             IsLinked = true;
-                            if (!TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms))
+                            bool restoredMetadata;
+                            using (Engine.Profiler.Start("GLRenderProgram.Link.RestoreCachedUniformMetadata"))
+                                restoredMetadata = TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms);
+                            if (!restoredMetadata)
                             {
                                 using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
                                 CacheActiveUniforms();
@@ -643,11 +655,17 @@ namespace XREngine.Rendering.OpenGL
                     if (!_hashComputed)
                     {
                         using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup"))
-                            Hash = CalcHash(_shaderCache.Values.Select(ResolveSourceForHash));
+                        {
+                            using (Engine.Profiler.Start("GLRenderProgram.Link.CalcHash"))
+                                Hash = CalcHash(_shaderCache.Values.Select(ResolveSourceForHash));
+                        }
                         _hashComputed = true;
                     }
                     if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
-                        isCached = BinaryCache?.TryGetValue(Hash, out binProg) ?? false;
+                    {
+                        using (Engine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup"))
+                            isCached = BinaryCache?.TryGetValue(Hash, out binProg) ?? false;
+                    }
                 }
                     
                     if (isCached)
@@ -673,8 +691,11 @@ namespace XREngine.Rendering.OpenGL
                             }
 
                             // Synchronous fallback.
-                            fixed (byte* ptr = binProg.Binary)
-                                Api.ProgramBinary(bindingId, format, ptr, binProg.Length);
+                            using (Engine.Profiler.Start("GLRenderProgram.Link.ProgramBinary"))
+                            {
+                                fixed (byte* ptr = binProg.Binary)
+                                    Api.ProgramBinary(bindingId, format, ptr, binProg.Length);
+                            }
                             var error = Api.GetError();
                             if (error != GLEnum.NoError)
                             {
@@ -684,7 +705,10 @@ namespace XREngine.Rendering.OpenGL
                             else
                             {
                                 IsLinked = true;
-                                if (!TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms))
+                                bool restoredMetadata;
+                                using (Engine.Profiler.Start("GLRenderProgram.Link.RestoreCachedUniformMetadata"))
+                                    restoredMetadata = TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms);
+                                if (!restoredMetadata)
                                 {
                                     using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
                                     CacheActiveUniforms();

@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Numerics;
 using MIConvexHull;
 using YamlDotNet.Serialization;
 using XREngine.Components;
@@ -75,6 +76,7 @@ namespace XREngine.Scene
         private bool _capturing = false;
         private ITriangulation<LightProbeComponent, LightProbeCell>? _cells;
         private readonly List<PreparedFrustum> _frustumScratch = new(6);
+        private readonly List<(Frustum Frustum, Vector3 Position, float MaxDistance)> _cameraFrustumScratch = new(4);
         private readonly ConcurrentQueue<CaptureWorkItem> _captureWorkQueue = new();
         private readonly HashSet<SceneCaptureComponentBase> _pendingCaptureComponents = new();
         private ulong _lastShadowMapsRenderFrameId = ulong.MaxValue;

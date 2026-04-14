@@ -4152,7 +4152,7 @@ void main()
         private string? _currentDrawProgramName;
         private string? _currentDrawMaterialName;
         private string? _currentDrawMeshName;
-        private int[] _currentDrawTextureUnits = [];
+        private IReadOnlyCollection<int>? _currentDrawTextureUnits;
 
         /// <summary>
         /// Gets or sets the texture bound to the currently active texture unit.
@@ -4237,12 +4237,12 @@ void main()
                 _boundTexturesPerUnitTarget.Remove(ActiveTextureUnit);
         }
 
-        public void SetDrawDebugContext(string? programName, string? materialName, string? meshName, int[] textureUnits)
+        public void SetDrawDebugContext(string? programName, string? materialName, string? meshName, IReadOnlyCollection<int>? textureUnits)
         {
             _currentDrawProgramName = string.IsNullOrWhiteSpace(programName) ? null : programName;
             _currentDrawMaterialName = string.IsNullOrWhiteSpace(materialName) ? null : materialName;
             _currentDrawMeshName = string.IsNullOrWhiteSpace(meshName) ? null : meshName;
-            _currentDrawTextureUnits = textureUnits.Length == 0 ? [] : [.. textureUnits];
+            _currentDrawTextureUnits = textureUnits is { Count: > 0 } ? textureUnits : null;
         }
 
         public void ClearDrawDebugContext()
@@ -4250,7 +4250,7 @@ void main()
             _currentDrawProgramName = null;
             _currentDrawMaterialName = null;
             _currentDrawMeshName = null;
-            _currentDrawTextureUnits = [];
+            _currentDrawTextureUnits = null;
         }
 
         private string BuildOpenGLErrorContext()
@@ -4286,7 +4286,24 @@ void main()
 
         private void AppendTrackedTextureUnits(StringBuilder sb)
         {
-            int[] units = _currentDrawTextureUnits.Length > 0 ? [.. _currentDrawTextureUnits] : [.. _boundTexturesPerUnitTarget.Keys];
+            int[] units;
+            if (_currentDrawTextureUnits is ICollection<int> currentTextureUnits && currentTextureUnits.Count > 0)
+            {
+                units = new int[currentTextureUnits.Count];
+                currentTextureUnits.CopyTo(units, 0);
+            }
+            else if (_currentDrawTextureUnits is { Count: > 0 } fallbackTextureUnits)
+            {
+                units = new int[fallbackTextureUnits.Count];
+                int index = 0;
+                foreach (int unit in fallbackTextureUnits)
+                    units[index++] = unit;
+            }
+            else
+            {
+                units = [.. _boundTexturesPerUnitTarget.Keys];
+            }
+
             if (units.Length == 0)
             {
                 sb.Append("<none>");

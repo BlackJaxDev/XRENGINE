@@ -204,33 +204,35 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void RenderLightsStandard(Lights3DCollection lights)
         {
-            foreach (PointLightComponent c in lights.DynamicPointLights)
-                RenderLight(PointLightRenderer!, c);
-            foreach (SpotLightComponent c in lights.DynamicSpotLights)
-                RenderLight(SpotLightRenderer!, c);
-            foreach (DirectionalLightComponent c in lights.DynamicDirectionalLights)
-                RenderLight(DirectionalLightRenderer!, c);
+            // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
+            for (int i = 0; i < lights.DynamicPointLights.Count; i++)
+                RenderLight(PointLightRenderer!, lights.DynamicPointLights[i]);
+            for (int i = 0; i < lights.DynamicSpotLights.Count; i++)
+                RenderLight(SpotLightRenderer!, lights.DynamicSpotLights[i]);
+            for (int i = 0; i < lights.DynamicDirectionalLights.Count; i++)
+                RenderLight(DirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
         }
 
         private void RenderLightsMsaaDeferred(Lights3DCollection lights)
         {
+            // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
             Engine.Rendering.State.DisableSampleShading();
-            foreach (PointLightComponent c in lights.DynamicPointLights)
-                RenderLight(MsaaSimplePointLightRenderer!, c);
-            foreach (SpotLightComponent c in lights.DynamicSpotLights)
-                RenderLight(MsaaSimpleSpotLightRenderer!, c);
-            foreach (DirectionalLightComponent c in lights.DynamicDirectionalLights)
-                RenderLight(MsaaSimpleDirectionalLightRenderer!, c);
+            for (int i = 0; i < lights.DynamicPointLights.Count; i++)
+                RenderLight(MsaaSimplePointLightRenderer!, lights.DynamicPointLights[i]);
+            for (int i = 0; i < lights.DynamicSpotLights.Count; i++)
+                RenderLight(MsaaSimpleSpotLightRenderer!, lights.DynamicSpotLights[i]);
+            for (int i = 0; i < lights.DynamicDirectionalLights.Count; i++)
+                RenderLight(MsaaSimpleDirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
 
             Engine.Rendering.State.EnableSampleShading(1.0f);
             try
             {
-                foreach (PointLightComponent c in lights.DynamicPointLights)
-                    RenderLight(MsaaComplexPointLightRenderer!, c);
-                foreach (SpotLightComponent c in lights.DynamicSpotLights)
-                    RenderLight(MsaaComplexSpotLightRenderer!, c);
-                foreach (DirectionalLightComponent c in lights.DynamicDirectionalLights)
-                    RenderLight(MsaaComplexDirectionalLightRenderer!, c);
+                for (int i = 0; i < lights.DynamicPointLights.Count; i++)
+                    RenderLight(MsaaComplexPointLightRenderer!, lights.DynamicPointLights[i]);
+                for (int i = 0; i < lights.DynamicSpotLights.Count; i++)
+                    RenderLight(MsaaComplexSpotLightRenderer!, lights.DynamicSpotLights[i]);
+                for (int i = 0; i < lights.DynamicDirectionalLights.Count; i++)
+                    RenderLight(MsaaComplexDirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
             }
             finally
             {

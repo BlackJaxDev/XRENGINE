@@ -31,6 +31,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     /// </summary>
     private static readonly ConcurrentDictionary<XRCamera, CameraProjectionTransition> _activeTransitions = new();
     private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> CascadePreviewViews = new();
+    private static readonly List<XRViewport> BoundViewportScratch = [];
 
     /// <summary>
     /// Settings for animated camera transitions.
@@ -181,10 +182,34 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
 
         ImGui.PushID(cameraComponent.GetHashCode());
-        DrawCameraSettings(cameraComponent);
-        DrawParameterSection(cameraComponent, visited);
-        DrawSchemaBasedPostProcessingEditor(cameraComponent, visited);
-        DrawPreviewSection(cameraComponent);
+        if (ImGui.BeginTabBar("CameraEditorTabs"))
+        {
+            if (ImGui.BeginTabItem("Settings"))
+            {
+                DrawCameraSettings(cameraComponent);
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Projection"))
+            {
+                DrawParameterSection(cameraComponent, visited);
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Post Processing"))
+            {
+                DrawSchemaBasedPostProcessingEditor(cameraComponent, visited);
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Preview"))
+            {
+                DrawPreviewSection(cameraComponent);
+                ImGui.EndTabItem();
+            }
+
+            ImGui.EndTabBar();
+        }
         ImGui.PopID();
 
         ComponentEditorLayout.DrawActivePreviewDialog();
@@ -197,7 +222,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         var pawn = component.GetUsingPawn();
 
         // Authoritative viewport bindings: scan live windows.
-        var boundViewports = new List<XRViewport>();
+        var boundViewports = BoundViewportScratch;
+        boundViewports.Clear();
         foreach (var vp in Engine.EnumerateActiveViewports())
         {
             if (ReferenceEquals(vp.CameraComponent, component))
@@ -295,6 +321,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static void DrawCameraSettings(CameraComponent component)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.Settings");
+
         if (!ImGui.CollapsingHeader("Camera Settings", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
@@ -649,6 +677,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static void DrawParameterSection(CameraComponent component, HashSet<object> visited)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.Projection");
+
         if (!ImGui.CollapsingHeader("Projection Parameters", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
@@ -1177,6 +1207,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static void DrawSchemaBasedPostProcessingEditor(CameraComponent component, HashSet<object> visited)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.PostProcessing");
+
         if (!ImGui.CollapsingHeader("Post Processing", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
@@ -1558,6 +1590,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static void DrawPreviewSection(CameraComponent component)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.Preview");
+
         if (!ImGui.CollapsingHeader("Camera Preview", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 

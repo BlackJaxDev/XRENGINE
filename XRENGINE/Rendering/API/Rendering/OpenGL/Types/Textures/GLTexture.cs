@@ -223,13 +223,19 @@ namespace XREngine.Rendering.OpenGL
 
         private void VerifySettings()
         {
-            SetParameters();
-
             if (!IsInvalidated || IsPushing)
+            {
+                SetParameters();
                 return;
-            
+            }
+
+            using var sample = Engine.Profiler.Start("GLTexture.VerifySettings");
+            using (Engine.Profiler.Start("GLTexture.VerifySettings.SetParameters"))
+                SetParameters();
+
             IsInvalidated = false;
-            PushData();
+            using (Engine.Profiler.Start("GLTexture.VerifySettings.PushData"))
+                PushData();
         }
 
         public void Unbind()

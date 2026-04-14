@@ -61,20 +61,40 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         }
 
         DrawActionButtons(humanoid);
-        if (ImGui.CollapsingHeader("General", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawGeneralSection(humanoid);
+        if (ImGui.BeginTabBar("HumanoidEditorTabs"))
+        {
+            if (ImGui.BeginTabItem("General"))
+            {
+                DrawGeneralSection(humanoid);
+                ImGui.EndTabItem();
+            }
 
-        if (ImGui.CollapsingHeader("Bone Mapping", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawBoneMappingSection(humanoid);
+            if (ImGui.BeginTabItem("Rig"))
+            {
+                DrawBoneMappingSection(humanoid);
+                ImGui.EndTabItem();
+            }
 
-        if (ImGui.CollapsingHeader("Per-Muscle Settings"))
-            DrawPerMuscleSettingsSection(humanoid);
+            if (ImGui.BeginTabItem("Muscle Settings"))
+            {
+                DrawPerMuscleSettingsSection(humanoid);
+                ImGui.EndTabItem();
+            }
 
-        if (ImGui.CollapsingHeader("Muscle Debug Overrides"))
-            DrawMuscleDebugSection(humanoid);
+            if (ImGui.BeginTabItem("Muscle Values"))
+            {
+                DrawMuscleValuesSection(humanoid);
+                ImGui.EndTabItem();
+            }
 
-        if (ImGui.CollapsingHeader("Muscle Values"))
-            DrawMuscleValuesSection(humanoid);
+            if (ImGui.BeginTabItem("Debug"))
+            {
+                DrawMuscleDebugSection(humanoid);
+                ImGui.EndTabItem();
+            }
+
+            ImGui.EndTabBar();
+        }
 
         ComponentEditorLayout.DrawActivePreviewDialog();
     }
@@ -105,6 +125,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawGeneralSection(HumanoidComponent humanoid)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.HumanoidComponent.General");
         var previewMode = humanoid.PosePreviewMode;
         if (ImGui.BeginCombo("Pose Preview", PosePreviewModeLabels[(int)previewMode]))
         {
@@ -163,6 +184,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawBoneMappingSection(HumanoidComponent humanoid)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.HumanoidComponent.BoneMapping");
         DrawBoneGroup("Core", [("Hips", humanoid.Hips), ("Spine", humanoid.Spine), ("Chest", humanoid.Chest), ("Neck", humanoid.Neck), ("Head", humanoid.Head), ("Jaw", humanoid.Jaw)]);
 
         if (ImGui.TreeNode("Eyes"))
@@ -181,6 +203,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawPerMuscleSettingsSection(HumanoidComponent humanoid)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.HumanoidComponent.PerMuscleSettings");
         var s = humanoid.Settings;
 
         // ── Global controls ─────────────────────────────────────────
@@ -592,6 +615,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawMuscleValuesSection(HumanoidComponent humanoid)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.HumanoidComponent.MuscleValues");
         bool showZeroes = _showZeroMuscleValues;
         if (ImGui.Checkbox("Show zero values", ref showZeroes))
             _showZeroMuscleValues = showZeroes;
@@ -771,6 +795,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawMuscleDebugSection(HumanoidComponent humanoid)
     {
+        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.HumanoidComponent.DebugOverrides");
         ImGui.TextDisabled("Per-group sign overrides for rapid axis debugging. Changes are immediate, not serialized.");
 
         if (ImGui.Button("Reset All Overrides"))

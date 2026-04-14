@@ -30,6 +30,13 @@ public static partial class EditorImGuiUI
         private static bool _componentRenameInputFocusRequested;
         private static readonly byte[] _componentRenameBuffer = new byte[256];
 
+        /// <summary>Scratch list reused each frame to avoid ToArray() on Components EventList.</summary>
+        private static readonly List<XRComponent> _componentsScratch = [];
+        /// <summary>Reusable visited set for inspector draws, cleared each frame.</summary>
+        private static readonly HashSet<object> _visitedScratch = new(ReferenceEqualityComparer.Instance);
+        /// <summary>Cached component header labels keyed by (componentHashCode, componentName, typeName).</summary>
+        private static readonly Dictionary<(int Hash, string? Name, string TypeName), (string FullDisplay, string Header, string RenamePopup)> _componentLabelCache = [];
+
         private static void BeginComponentRename(XRComponent component)
         {
             _componentPendingRename = component;
@@ -328,9 +335,9 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            _visitedScratch.Clear();
             foreach (var node in nodes)
-                visited.Add(node);
+                _visitedScratch.Add(node);
 
             ImGui.PushID("SceneNodeMultiInspector");
 
@@ -345,7 +352,7 @@ public static partial class EditorImGuiUI
             if (ImGui.CollapsingHeader("Transform", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 ImGui.PushID("TransformSection");
-                DrawTransformInspector(nodes.Select(n => n.Transform).ToList(), visited);
+                DrawTransformInspector(nodes.Select(n => n.Transform).ToList(), _visitedScratch);
                 ImGui.PopID();
             }
 
@@ -356,7 +363,7 @@ public static partial class EditorImGuiUI
                 BeginAddComponentForHierarchyNodes(nodes);
 
             ImGui.Spacing();
-            DrawComponentInspectors(nodes, visited);
+            DrawComponentInspectors(nodes, _visitedScratch);
 
             ImGui.PopID();
         }
@@ -364,10 +371,8 @@ public static partial class EditorImGuiUI
         private static partial void DrawSceneNodeInspector(SceneNode node)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSceneNodeInspector");
-            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance)
-            {
-                node
-            };
+            _visitedScratch.Clear();
+            _visitedScratch.Add(node);
 
             ImGui.PushID(node.ID.ToString());
 
@@ -378,7 +383,7 @@ public static partial class EditorImGuiUI
             if (ImGui.CollapsingHeader("Transform", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 ImGui.PushID("TransformSection");
-                DrawTransformInspector(node.Transform, visited);
+                DrawTransformInspector(node.Transform, _visitedScratch);
                 ImGui.PopID();
             }
 
@@ -389,7 +394,7 @@ public static partial class EditorImGuiUI
                 BeginAddComponentForHierarchyNode(node);
 
             ImGui.Spacing();
-            DrawComponentInspectors(node, visited);
+            DrawComponentInspectors(node, _visitedScratch);
 
             ImGui.PopID();
         }
@@ -955,14 +960,24 @@ public static partial class EditorImGuiUI
         private static partial void DrawComponentInspectors(SceneNode node, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawComponentInspectors");
-            var componentsSnapshot = node.Components.ToArray();
+
+            // Snapshot components into reusable scratch list (avoids ToArray allocation)
+            _componentsScratch.Clear();
+            var components = node.Components;
+            int componentCount = components.Count;
+            for (int i = 0; i < componentCount; i++)
+            {
+                var c = components[i];
+                if (c is not null)
+                    _componentsScratch.Add(c);
+            }
+
             bool anyComponentsDrawn = false;
             List<XRComponent>? componentsToRemove = null;
 
-            foreach (var component in componentsSnapshot)
+            for (int ci = 0; ci < _componentsScratch.Count; ci++)
             {
-                if (component is null)
-                    continue;
+                var component = _componentsScratch[ci];
 
                 anyComponentsDrawn = true;
                 int componentHash = component.GetHashCode();
@@ -970,8 +985,20 @@ public static partial class EditorImGuiUI
 
                 string typeName = component.GetType().Name;
                 string? componentName = string.IsNullOrWhiteSpace(component.Name) ? null : component.Name;
-                string fullDisplayLabel = componentName is null ? typeName : $"{componentName} ({typeName})";
-                string renamePopupId = $"ComponentRenamePopup##{componentHash}";
+
+                // Cache label strings keyed by (hash, name, type) to avoid per-frame string allocations
+                var labelKey = (componentHash, componentName, typeName);
+                if (!_componentLabelCache.TryGetValue(labelKey, out var cachedLabels))
+                {
+                    string fullDisplay = componentName is null ? typeName : $"{componentName} ({typeName})";
+                    string header = $"{fullDisplay}##Component{componentHash}";
+                    string renamePopup = $"ComponentRenamePopup##{componentHash}";
+                    cachedLabels = (fullDisplay, header, renamePopup);
+                    _componentLabelCache[labelKey] = cachedLabels;
+                }
+
+                string fullDisplayLabel = cachedLabels.FullDisplay;
+                string renamePopupId = cachedLabels.RenamePopup;
 
                 bool renameRequested = false;
 
@@ -987,15 +1014,21 @@ public static partial class EditorImGuiUI
 
                     ImGui.TableSetColumnIndex(0);
                     float headerAvail = ImGui.GetContentRegionAvail().X;
-                    string visibleLabel = fullDisplayLabel;
+                    // Use the cached header label when it matches the full display;
+                    // only allocate a truncated variant when the label actually needs shortening.
+                    string headerLabel;
                     if (componentName is not null)
                     {
                         float fullWidth = ImGui.CalcTextSize(fullDisplayLabel).X;
                         if (fullWidth > headerAvail)
-                            visibleLabel = componentName;
+                            headerLabel = $"{componentName}##Component{componentHash}";
+                        else
+                            headerLabel = cachedLabels.Header;
                     }
-
-                    string headerLabel = $"{visibleLabel}##Component{componentHash}";
+                    else
+                    {
+                        headerLabel = cachedLabels.Header;
+                    }
                     ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags.DefaultOpen;
                     open = ImGui.CollapsingHeader(headerLabel, headerFlags);
                     if (ImGui.IsItemHovered())
@@ -1152,6 +1185,12 @@ public static partial class EditorImGuiUI
                 ImGui.TextDisabled("No components attached to this scene node.");
         }
 
+        /// <summary>Scratch dictionaries reused in multi-node DrawComponentInspectors.</summary>
+        private static readonly Dictionary<Type, List<XRComponent>> _multiComponentsByType = [];
+        private static readonly Dictionary<Type, int> _multiTypeCounts = [];
+        private static readonly HashSet<Type> _multiInvalidTypes = [];
+        private static readonly List<Type> _multiSharedTypes = [];
+
         private static void DrawComponentInspectors(IReadOnlyList<SceneNode> nodes, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawComponentInspectors.Multi");
@@ -1161,68 +1200,103 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            var componentsByType = new Dictionary<Type, List<XRComponent>>();
-            var typeCounts = new Dictionary<Type, int>();
-            var invalidTypes = new HashSet<Type>();
+            _multiComponentsByType.Clear();
+            _multiTypeCounts.Clear();
+            _multiInvalidTypes.Clear();
 
-            foreach (var node in nodes)
+            for (int ni = 0; ni < nodes.Count; ni++)
             {
-                var grouped = node.Components.Where(c => c is not null && !c.IsDestroyed).GroupBy(c => c!.GetType());
-                foreach (var group in grouped)
+                var nodeComponents = nodes[ni].Components;
+                int compCount = nodeComponents.Count;
+                for (int ci = 0; ci < compCount; ci++)
                 {
-                    var type = group.Key;
-                    typeCounts[type] = typeCounts.TryGetValue(type, out int count) ? count + 1 : 1;
-
-                    if (group.Count() > 1)
-                    {
-                        invalidTypes.Add(type);
+                    var c = nodeComponents[ci];
+                    if (c is null || c.IsDestroyed)
                         continue;
-                    }
 
-                    if (!componentsByType.TryGetValue(type, out var list))
+                    var type = c.GetType();
+                    _multiTypeCounts[type] = _multiTypeCounts.TryGetValue(type, out int cnt) ? cnt + 1 : 1;
+
+                    if (_multiInvalidTypes.Contains(type))
+                        continue;
+
+                    if (!_multiComponentsByType.TryGetValue(type, out var list))
                     {
                         list = new List<XRComponent>();
-                        componentsByType[type] = list;
+                        _multiComponentsByType[type] = list;
+                        list.Add(c);
                     }
-
-                    var component = group.First();
-                    if (component is not null)
-                        list.Add(component);
+                    else
+                    {
+                        // If this node already contributed a component of this type, mark invalid (duplicate per node)
+                        bool duplicateForNode = false;
+                        for (int li = list.Count - 1; li >= 0; li--)
+                        {
+                            if (ReferenceEquals(list[li].SceneNode, c.SceneNode))
+                            {
+                                duplicateForNode = true;
+                                break;
+                            }
+                        }
+                        if (duplicateForNode)
+                        {
+                            _multiInvalidTypes.Add(type);
+                        }
+                        else
+                        {
+                            list.Add(c);
+                        }
+                    }
                 }
             }
 
-            var sharedTypes = componentsByType.Keys
-                .Where(type => !invalidTypes.Contains(type)
-                               && typeCounts.TryGetValue(type, out int count)
-                               && count == nodes.Count
-                               && componentsByType[type].Count == nodes.Count)
-                .OrderBy(type => type.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            _multiSharedTypes.Clear();
+            foreach (var kvp in _multiComponentsByType)
+            {
+                var type = kvp.Key;
+                if (!_multiInvalidTypes.Contains(type)
+                    && _multiTypeCounts.TryGetValue(type, out int count)
+                    && count == nodes.Count
+                    && kvp.Value.Count == nodes.Count)
+                {
+                    _multiSharedTypes.Add(type);
+                }
+            }
+            _multiSharedTypes.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
 
-            if (sharedTypes.Count == 0)
+            if (_multiSharedTypes.Count == 0)
             {
                 ImGui.TextDisabled("No shared components across the selection.");
                 return;
             }
 
-            foreach (var type in sharedTypes)
+            for (int si = 0; si < _multiSharedTypes.Count; si++)
             {
-                var components = componentsByType[type];
+                var type = _multiSharedTypes[si];
+                var components = _multiComponentsByType[type];
                 DrawMultiComponentInspector(type, components, visited);
                 ImGui.Spacing();
             }
 
-            int totalTypes = typeCounts.Count;
-            if (sharedTypes.Count < totalTypes || invalidTypes.Count > 0)
+            int totalTypes = _multiTypeCounts.Count;
+            if (_multiSharedTypes.Count < totalTypes || _multiInvalidTypes.Count > 0)
             {
                 ImGui.TextDisabled("Some components are not shared across the selection.");
             }
         }
 
+        private static readonly List<XRComponent> _multiComponentListScratch = [];
+
         private static void DrawMultiComponentInspector(Type componentType, IReadOnlyList<XRComponent> components, HashSet<object> visited)
         {
-            var componentList = components.Where(c => c is not null && !c.IsDestroyed).ToList();
-            if (componentList.Count == 0)
+            _multiComponentListScratch.Clear();
+            for (int i = 0; i < components.Count; i++)
+            {
+                var c = components[i];
+                if (c is not null && !c.IsDestroyed)
+                    _multiComponentListScratch.Add(c);
+            }
+            if (_multiComponentListScratch.Count == 0)
             {
                 ImGui.TextDisabled($"No active components of type {componentType.Name}.");
                 return;
@@ -1233,9 +1307,23 @@ public static partial class EditorImGuiUI
 
             var labels = GetComponentInspectorLabels(componentType);
 
-            string? commonName = componentList.Select(c => c.Name ?? string.Empty).Distinct().Count() == 1
-                ? componentList[0].Name
-                : null;
+            // Check common name without LINQ
+            string? commonName = null;
+            if (_multiComponentListScratch.Count > 0)
+            {
+                string firstName = _multiComponentListScratch[0].Name ?? string.Empty;
+                bool allSame = true;
+                for (int i = 1; i < _multiComponentListScratch.Count; i++)
+                {
+                    if (((_multiComponentListScratch[i].Name ?? string.Empty) != firstName))
+                    {
+                        allSame = false;
+                        break;
+                    }
+                }
+                if (allSame)
+                    commonName = _multiComponentListScratch[0].Name;
+            }
             string displayLabel = string.IsNullOrWhiteSpace(commonName) ? componentType.Name : $"{commonName} ({componentType.Name})";
             string headerLabel = $"{displayLabel}##ComponentMulti{componentHash}";
 
@@ -1252,11 +1340,17 @@ public static partial class EditorImGuiUI
                 ImGui.TableSetColumnIndex(0);
                 open = ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"{componentType.FullName} ({componentList.Count} selected)");
+                    ImGui.SetTooltip($"{componentType.FullName} ({_multiComponentListScratch.Count} selected)");
 
                 ImGui.TableSetColumnIndex(1);
-                bool allActive = componentList.All(c => c.IsActive);
-                bool allInactive = componentList.All(c => !c.IsActive);
+                bool allActive = true, allInactive = true;
+                for (int i = 0; i < _multiComponentListScratch.Count; i++)
+                {
+                    if (_multiComponentListScratch[i].IsActive)
+                        allInactive = false;
+                    else
+                        allActive = false;
+                }
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
                 if (mixed)
@@ -1268,8 +1362,9 @@ public static partial class EditorImGuiUI
                 {
                     using var interaction = Undo.BeginUserInteraction();
                     using var scope = Undo.BeginChange("Toggle Component Active");
-                    foreach (var component in componentList)
+                    for (int i = 0; i < _multiComponentListScratch.Count; i++)
                     {
+                        var component = _multiComponentListScratch[i];
                         Undo.Track(component);
                         component.IsActive = active;
                     }
@@ -1290,9 +1385,9 @@ public static partial class EditorImGuiUI
 
             if (removeRequested)
             {
-                foreach (var component in componentList)
+                for (int i = 0; i < _multiComponentListScratch.Count; i++)
                 {
-                    var componentCapture = component;
+                    var componentCapture = _multiComponentListScratch[i];
                     var ownerNode = componentCapture.SceneNode;
                     string compName = componentCapture.GetType().Name;
 
@@ -1335,7 +1430,10 @@ public static partial class EditorImGuiUI
                     ImGui.Spacing();
                 }
 
-                var targetSet = new InspectorTargetSet(componentList.Cast<object>().ToList(), componentType);
+                var targetList = new List<object>(_multiComponentListScratch.Count);
+                for (int i = 0; i < _multiComponentListScratch.Count; i++)
+                    targetList.Add(_multiComponentListScratch[i]);
+                var targetSet = new InspectorTargetSet(targetList, componentType);
                 DrawInspectableObject(targetSet, $"ComponentPropertiesMulti_{componentHash}", visited);
 
                 if (!string.IsNullOrWhiteSpace(labels.Footer))

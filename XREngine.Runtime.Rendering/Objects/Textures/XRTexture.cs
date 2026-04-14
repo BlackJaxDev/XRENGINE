@@ -17,6 +17,20 @@ namespace XREngine.Rendering
     [MemoryPackUnion(7, typeof(XRTextureBuffer))]
     public abstract partial class XRTexture : GenericRenderObject, IRenderTextureResource
     {
+        // Cached "Texture{N}" sampler strings — avoids per-call string interpolation on hot render paths.
+        private static readonly string[] _indexedSamplerNames = CreateIndexedSamplerNames(32);
+        private static string[] CreateIndexedSamplerNames(int count)
+        {
+            var names = new string[count];
+            for (int i = 0; i < count; i++)
+                names[i] = $"Texture{i}";
+            return names;
+        }
+        internal static string GetIndexedSamplerName(int textureIndex)
+            => (uint)textureIndex < (uint)_indexedSamplerNames.Length
+                ? _indexedSamplerNames[textureIndex]
+                : $"Texture{textureIndex}";
+
         /// <summary>
         /// Allocates a new empty image with the specified dimensions, format and type.
         /// </summary>
@@ -419,7 +433,7 @@ namespace XREngine.Rendering
         /// <param name="samplerNameOverride">The binding name to force bind to, if desired.</param>
         /// <returns></returns>
         public string ResolveSamplerName(int textureIndex, string? samplerNameOverride = null)
-            => samplerNameOverride ?? SamplerName ?? $"Texture{textureIndex}";
+            => samplerNameOverride ?? SamplerName ?? GetIndexedSamplerName(textureIndex);
 
         //public XREvent<XRTexture> SetParametersRequested { get; } = new XREvent<XRTexture>();
         //public void SetParameters() => SetParametersRequested.Invoke(this);

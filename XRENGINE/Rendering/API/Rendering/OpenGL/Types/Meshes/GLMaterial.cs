@@ -16,6 +16,10 @@ namespace XREngine.Rendering.OpenGL
             private float _secondsLive = 0.0f;
             private uint _lastUniformProgramBindingId = uint.MaxValue;
             private XRRenderProgram? _lastUniformProgram;
+            private ulong _lastSecondsLiveFrameId = ulong.MaxValue;
+            private ulong _lastRenderTimeProgramFrameId = ulong.MaxValue;
+            private uint _lastRenderTimeProgramBindingId = uint.MaxValue;
+            private XRRenderProgram? _lastRenderTimeProgram;
             public float SecondsLive
             {
                 get => _secondsLive;
@@ -59,9 +63,16 @@ namespace XREngine.Rendering.OpenGL
 
             public void SetUniforms(GLRenderProgram? materialProgram)
             {
+                using var sample = Engine.Profiler.Start("GLMaterial.SetUniforms");
+
+                var renderOptions = Data.RenderOptions;
+
                 //Apply special rendering parameters
-                if (Data.RenderOptions != null)
-                    Renderer.ApplyRenderParameters(Data.RenderOptions);
+                if (renderOptions != null)
+                {
+                    using var renderOptionsProf = Engine.Profiler.Start("GLMaterial.SetUniforms.ApplyRenderParameters");
+                    Renderer.ApplyRenderParameters(renderOptions);
+                }
 
                 bool usePipelines = Engine.Rendering.Settings.AllowShaderPipelines
                     || (Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false);
@@ -71,7 +82,8 @@ namespace XREngine.Rendering.OpenGL
                 if (materialProgram is null)
                     return;
 
-                materialProgram.BeginBindingBatch();
+                using (Engine.Profiler.Start("GLMaterial.SetUniforms.BeginBindingBatch"))
+                    materialProgram.BeginBindingBatch();
 
                 bool forceUniformUpdate = !ReferenceEquals(_lastUniformProgram, materialProgram.Data) ||
                     _lastUniformProgramBindingId != materialProgram.BindingId;
@@ -80,13 +92,27 @@ namespace XREngine.Rendering.OpenGL
                 _lastUniformProgramBindingId = materialProgram.BindingId;
 
                 // Ensure uniforms are resident on every program variant that renders this material.
-                foreach (ShaderVar param in Data.Parameters)
-                    param.SetUniform(materialProgram.Data, forceUpdate: forceUniformUpdate);
+                using (Engine.Profiler.Start("GLMaterial.SetUniforms.Parameters"))
+                {
+                    foreach (ShaderVar param in Data.Parameters)
+                        param.SetUniform(materialProgram.Data, forceUpdate: forceUniformUpdate);
+                }
 
-                SetTextureUniforms(materialProgram);
-                SetEngineUniforms(materialProgram);
-                Data.OnSettingUniforms(materialProgram.Data);
-                Engine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(materialProgram.Data);
+                using (Engine.Profiler.Start("GLMaterial.SetUniforms.Textures"))
+                    SetTextureUniforms(materialProgram);
+
+                EUniformRequirements requiredEngineUniforms = renderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None;
+                if (RequiresEngineUniformBinding(materialProgram, requiredEngineUniforms))
+                {
+                    using (Engine.Profiler.Start("GLMaterial.SetUniforms.EngineUniforms"))
+                        SetEngineUniforms(materialProgram, requiredEngineUniforms);
+                }
+
+                using (Engine.Profiler.Start("GLMaterial.SetUniforms.MaterialHook"))
+                    Data.OnSettingUniforms(materialProgram.Data);
+
+                using (Engine.Profiler.Start("GLMaterial.SetUniforms.ScopedProgramBindings"))
+                    Engine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(materialProgram.Data);
             }
 
             public void FinalizeUniformBindings(GLRenderProgram? materialProgram)
@@ -94,25 +120,46 @@ namespace XREngine.Rendering.OpenGL
                 if (materialProgram is null)
                     return;
 
+                using var sample = Engine.Profiler.Start("GLMaterial.FinalizeUniformBindings");
+
                 // Mesh/FBO SettingUniforms hooks run after SetUniforms(); defer fallback binding until
                 // the full binding batch is complete so late sampler binds are observed correctly.
-                materialProgram.BindFallbackSamplers();
-                materialProgram.WarnIfNoUniformOrSamplerBindings(Data.Name);
+                using (Engine.Profiler.Start("GLMaterial.FinalizeUniformBindings.BindFallbackSamplers"))
+                    materialProgram.BindFallbackSamplers();
+
+                using (Engine.Profiler.Start("GLMaterial.FinalizeUniformBindings.WarnIfNoBindings"))
+                    materialProgram.WarnIfNoUniformOrSamplerBindings(Data.Name);
             }
 
-            private void SetEngineUniforms(GLRenderProgram program)
+            private bool RequiresEngineUniformBinding(GLRenderProgram program, EUniformRequirements requiredRequirements)
             {
-                SecondsLive += Engine.Time.Timer.Update.Delta;
+                if (requiredRequirements == EUniformRequirements.None)
+                    return false;
 
-                var reqs = Data.RenderOptions.RequiredEngineUniforms;
+                EUniformRequirements cachedProgramRequirements = requiredRequirements & ~EUniformRequirements.RenderTime;
+                if (program.GetMissingEngineUniformRequirements(cachedProgramRequirements) != EUniformRequirements.None)
+                    return true;
 
-                if (reqs.HasFlag(EUniformRequirements.Camera))
+                return requiredRequirements.HasFlag(EUniformRequirements.RenderTime) && ShouldApplyRenderTimeUniforms(program);
+            }
+
+            private void SetEngineUniforms(GLRenderProgram program, EUniformRequirements reqs)
+            {
+                if (reqs == EUniformRequirements.None)
+                    return;
+
+                UpdateSecondsLive();
+
+                EUniformRequirements cachedProgramRequirements = reqs & ~EUniformRequirements.RenderTime;
+                EUniformRequirements missingProgramRequirements = program.GetMissingEngineUniformRequirements(cachedProgramRequirements);
+
+                if (missingProgramRequirements.HasFlag(EUniformRequirements.Camera))
                 {
                     Engine.Rendering.State.RenderingCamera?.SetUniforms(program.Data, true);
                     Engine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program.Data, false);
                 }
 
-                if (reqs.HasFlag(EUniformRequirements.Lights))
+                if (missingProgramRequirements.HasFlag(EUniformRequirements.Lights))
                 {
                     var world = Engine.Rendering.State.RenderingWorld;
                     var lights = world?.Lights;
@@ -122,14 +169,15 @@ namespace XREngine.Rendering.OpenGL
                         Debug.OpenGL($"[ForwardLighting] Skipped: RenderingWorld={world != null}, Lights={lights != null}");
                 }
 
-                if (reqs.HasFlag(EUniformRequirements.RenderTime))
+                if (reqs.HasFlag(EUniformRequirements.RenderTime) && ShouldApplyRenderTimeUniforms(program))
                 {
                     program.Uniform(EEngineUniform.RenderTime.ToStringFast(), SecondsLive);
                     program.Uniform(EEngineUniform.EngineTime.ToStringFast(), Engine.ElapsedTime);
                     program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), Engine.Time.Timer.Render.Delta);
+                    MarkRenderTimeUniformsApplied(program);
                 }
                 
-                if (reqs.HasFlag(EUniformRequirements.ViewportDimensions))
+                if (missingProgramRequirements.HasFlag(EUniformRequirements.ViewportDimensions))
                 {
                     var area = Engine.Rendering.State.RenderArea;
                     program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
@@ -137,10 +185,37 @@ namespace XREngine.Rendering.OpenGL
                     program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
                 }
 
-                if (reqs.HasFlag(EUniformRequirements.MousePosition))
+                if (missingProgramRequirements.HasFlag(EUniformRequirements.MousePosition))
                 {
                     //Program?.Uniform(nameof(EUniformRequirements.MousePosition), mousePosition);
                 }
+
+                program.MarkEngineUniformsApplied(missingProgramRequirements);
+            }
+
+            private void UpdateSecondsLive()
+            {
+                ulong frameId = Engine.Rendering.State.RenderFrameId;
+                if (_lastSecondsLiveFrameId == frameId)
+                    return;
+
+                SecondsLive += Engine.Time.Timer.Update.Delta;
+                _lastSecondsLiveFrameId = frameId;
+            }
+
+            private bool ShouldApplyRenderTimeUniforms(GLRenderProgram program)
+            {
+                ulong frameId = Engine.Rendering.State.RenderFrameId;
+                return _lastRenderTimeProgramFrameId != frameId
+                    || _lastRenderTimeProgramBindingId != program.BindingId
+                    || !ReferenceEquals(_lastRenderTimeProgram, program.Data);
+            }
+
+            private void MarkRenderTimeUniformsApplied(GLRenderProgram program)
+            {
+                _lastRenderTimeProgramFrameId = Engine.Rendering.State.RenderFrameId;
+                _lastRenderTimeProgramBindingId = program.BindingId;
+                _lastRenderTimeProgram = program.Data;
             }
 
             public EDrawBuffersAttachment[] CollectFBOAttachments()
@@ -169,6 +244,8 @@ namespace XREngine.Rendering.OpenGL
 
             public void SetTextureUniforms(GLRenderProgram program)
             {
+                using var sample = Engine.Profiler.Start("GLMaterial.SetTextureUniforms");
+
                 // Use textureIndex as textureUnit so that null entries preserve
                 // the correspondence between array position and GL texture unit.
                 // Shaders with layout(binding=X) rely on this stable mapping;
@@ -202,7 +279,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!string.IsNullOrWhiteSpace(samplerNameOverride))
                     return;
 
-                string indexedSamplerName = $"Texture{textureIndex}";
+                string indexedSamplerName = XRTexture.GetIndexedSamplerName(textureIndex);
                 if (string.Equals(resolvedSamplerName, indexedSamplerName, StringComparison.Ordinal))
                     return;
 

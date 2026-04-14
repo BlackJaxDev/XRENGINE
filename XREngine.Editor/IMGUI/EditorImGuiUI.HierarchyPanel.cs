@@ -23,6 +23,35 @@ public static partial class EditorImGuiUI
     private const float HierarchyFocusCameraDurationSeconds = 0.35f;
     private const string HierarchyDeepDuplicatePopupId = "Deep Duplicate Scene Nodes?";
 
+    // Scratch collections for CollectUnassignedRoots — reused every frame to avoid per-frame allocations.
+    private static readonly HashSet<SceneNode> _assignedRootsScratch = [];
+    private static readonly List<SceneNode> _unassignedRootsScratch = [];
+    private static readonly HashSet<SceneNode> _selectedHierarchyNodesScratch = new(ReferenceEqualityComparer.Instance);
+    private static SceneNode? _lastSelectedHierarchyNode;
+
+    // Cache node labels (name + child count string) to avoid per-node per-frame string allocation.
+    private static readonly Dictionary<SceneNode, (string? name, int childCount, string label)> _nodeLabelCache = new(ReferenceEqualityComparer.Instance);
+
+    private static string GetOrCreateNodeLabel(SceneNode node, int childCount)
+    {
+        string? name = node.Name;
+        if (_nodeLabelCache.TryGetValue(node, out var cached)
+            && cached.childCount == childCount
+            && ReferenceEquals(cached.name, name))
+            return cached.label;
+
+        string label = childCount > 0
+            ? $"{name ?? "<unnamed>"} ({childCount})"
+            : name ?? "<unnamed>";
+        _nodeLabelCache[node] = (name, childCount, label);
+
+        // Prevent unbounded growth from destroyed/removed nodes.
+        if (_nodeLabelCache.Count > 2048)
+            _nodeLabelCache.Clear();
+
+        return label;
+    }
+
     private static void DrawHierarchyPanel()
     {
         if (!_showHierarchy) return;
@@ -103,6 +132,7 @@ public static partial class EditorImGuiUI
             return;
         }
 
+        RefreshHierarchySelectionCache();
         DrawWorldHeader(world);
 
         // Editor-only content lives in a hidden scene (gizmos, tools, UI, etc.)
@@ -160,6 +190,22 @@ public static partial class EditorImGuiUI
             ImGui.Text("World has no root nodes.");
     }
 
+    private static void RefreshHierarchySelectionCache()
+    {
+        var selectedNodes = _selectedHierarchyNodesScratch;
+        selectedNodes.Clear();
+
+        SceneNode[] sceneNodes = Selection.SceneNodes;
+        for (int i = 0; i < sceneNodes.Length; i++)
+        {
+            SceneNode? node = sceneNodes[i];
+            if (node is not null)
+                selectedNodes.Add(node);
+        }
+
+        _lastSelectedHierarchyNode = Selection.LastSceneNode;
+    }
+
     private static void DrawEditorSceneHierarchy(XRWorldInstance world)
     {
         var editorScene = world.EditorScene;
@@ -180,9 +226,7 @@ public static partial class EditorImGuiUI
     {
         var transform = node.Transform;
         int childCount = transform.Children.Count;
-        string nodeLabel = childCount > 0
-            ? $"{node.Name ?? "<unnamed>"} ({childCount})"
-            : node.Name ?? "<unnamed>";
+        string nodeLabel = GetOrCreateNodeLabel(node, childCount);
         ImGuiTreeNodeFlags flags = childCount > 0
             ? (depth == 0 ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None)
             : ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen;
@@ -207,7 +251,7 @@ public static partial class EditorImGuiUI
     private static bool DrawSceneNodeEntry(SceneNode node, XRWorldInstance world, string displayLabel, ImGuiTreeNodeFlags flags, XRScene? owningScene)
     {
         bool isRenaming = ReferenceEquals(_nodePendingRename, node);
-        bool isSelected = Selection.SceneNodes.Contains(node) || ReferenceEquals(Selection.LastSceneNode, node);
+        bool isSelected = _selectedHierarchyNodesScratch.Contains(node) || ReferenceEquals(_lastSelectedHierarchyNode, node);
 
         ImGui.PushID(node.ID.GetHashCode());
 
@@ -1221,11 +1265,18 @@ public static partial class EditorImGuiUI
 
     private static List<SceneNode> CollectUnassignedRoots(XRWorldInstance world, IReadOnlyList<XRScene> scenes)
     {
-        var assigned = new HashSet<SceneNode>();
-        foreach (var scene in scenes)
+        var assigned = _assignedRootsScratch;
+        assigned.Clear();
+        for (int sceneIndex = 0; sceneIndex < scenes.Count; sceneIndex++)
         {
-            foreach (var root in scene.RootNodes)
+            XRScene? scene = scenes[sceneIndex];
+            if (scene is null)
+                continue;
+
+            var sceneRoots = scene.RootNodes;
+            for (int rootIndex = 0; rootIndex < sceneRoots.Count; rootIndex++)
             {
+                SceneNode? root = sceneRoots[rootIndex];
                 if (root is not null)
                     assigned.Add(root);
             }
@@ -1238,11 +1289,14 @@ public static partial class EditorImGuiUI
             var allScenes = targetWorld.Scenes;
             for (int s = 0; s < allScenes.Count; s++)
             {
-                var scene = allScenes[s];
+                XRScene? scene = allScenes[s];
                 if (scene is null || !scene.IsEditorOnly)
                     continue;
-                foreach (var root in scene.RootNodes)
+
+                var sceneRoots = scene.RootNodes;
+                for (int rootIndex = 0; rootIndex < sceneRoots.Count; rootIndex++)
                 {
+                    SceneNode? root = sceneRoots[rootIndex];
                     if (root is not null)
                         assigned.Add(root);
                 }
@@ -1255,9 +1309,12 @@ public static partial class EditorImGuiUI
             // Check editor scene nodes
         }
 
-        var unassigned = new List<SceneNode>();
-        foreach (var root in world.RootNodes)
+        var unassigned = _unassignedRootsScratch;
+        unassigned.Clear();
+        var worldRoots = world.RootNodes;
+        for (int rootIndex = 0; rootIndex < worldRoots.Count; rootIndex++)
         {
+            SceneNode? root = worldRoots[rootIndex];
             if (root is null)
                 continue;
             if (!assigned.Contains(root) && !world.IsInEditorScene(root))

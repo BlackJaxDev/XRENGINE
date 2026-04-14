@@ -2,6 +2,7 @@ using Silk.NET.OpenGL;
 using System.Text;
 using XREngine;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -114,11 +115,11 @@ namespace XREngine.Rendering.OpenGL
                 if (string.IsNullOrWhiteSpace(name))
                     return false;
 
-                if (_boundSamplerNames.ContainsKey(name))
+                if (_boundSamplerNames.Contains(name))
                     return true;
 
                 return name.EndsWith("[0]", StringComparison.Ordinal)
-                    && _boundSamplerNames.ContainsKey(name[..^3]);
+                    && _boundSamplerNames.Contains(name[..^3]);
             }
 
             private void SuppressFallbackSamplerWarning(string name)
@@ -126,12 +127,12 @@ namespace XREngine.Rendering.OpenGL
                 if (string.IsNullOrWhiteSpace(name))
                     return;
 
-                _suppressedFallbackSamplerNames[name] = 1;
+                _suppressedFallbackSamplerNames.Add(name);
                 if (name.EndsWith("[0]", StringComparison.Ordinal))
                 {
                     string baseName = name[..^3];
                     if (!string.IsNullOrWhiteSpace(baseName))
-                        _suppressedFallbackSamplerNames[baseName] = 1;
+                        _suppressedFallbackSamplerNames.Add(baseName);
                 }
             }
 
@@ -140,11 +141,11 @@ namespace XREngine.Rendering.OpenGL
                 if (string.IsNullOrWhiteSpace(name))
                     return false;
 
-                if (_suppressedFallbackSamplerNames.ContainsKey(name))
+                if (_suppressedFallbackSamplerNames.Contains(name))
                     return true;
 
                 return name.EndsWith("[0]", StringComparison.Ordinal)
-                    && _suppressedFallbackSamplerNames.ContainsKey(name[..^3]);
+                    && _suppressedFallbackSamplerNames.Contains(name[..^3]);
             }
 
             private static bool IsSamplerType(GLEnum type)
@@ -198,10 +199,10 @@ namespace XREngine.Rendering.OpenGL
                 int maxTextureUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
                 for (int candidate = maxTextureUnits - 1; candidate >= 0; candidate--)
                 {
-                    if (_boundSamplerUnits.ContainsKey(candidate))
+                    if (_boundSamplerUnits.Contains(candidate))
                         continue;
 
-                    _boundSamplerUnits[candidate] = 1;
+                    _boundSamplerUnits.Add(candidate);
                     textureUnit = candidate;
                     return true;
                 }
@@ -226,14 +227,14 @@ namespace XREngine.Rendering.OpenGL
                         continue;
 
                     int location = GetUniformLocation(name);
-                    if (location < 0 || _boundSamplerLocations.ContainsKey(location))
+                    if (location < 0 || _boundSamplerLocations.Contains(location))
                         continue;
 
                     // layout(binding = N) samplers can already point at a unit that has a real
                     // texture bound even when no explicit glUniform1i call happened in this batch.
                     // Do not override those assignments with fallback textures.
                     Api.GetUniform(BindingId, location, out int assignedUnit);
-                    if (assignedUnit >= 0 && _boundSamplerUnits.ContainsKey(assignedUnit))
+                    if (assignedUnit >= 0 && _boundSamplerUnits.Contains(assignedUnit))
                         continue;
 
                     var fallbackTexture = GetFallbackSamplerTexture(meta.Type);
@@ -307,6 +308,102 @@ namespace XREngine.Rendering.OpenGL
                         "Check that material parameter and sampler names match the shader.");
                 }
             }
+
+            public EUniformRequirements GetMissingEngineUniformRequirements(EUniformRequirements requestedRequirements)
+            {
+                if (requestedRequirements == EUniformRequirements.None)
+                    return EUniformRequirements.None;
+
+                if (!MatchesCurrentEngineUniformContext())
+                    return requestedRequirements;
+
+                return requestedRequirements & ~_engineUniformRequirements;
+            }
+
+            public void MarkEngineUniformsApplied(EUniformRequirements appliedRequirements)
+            {
+                if (appliedRequirements == EUniformRequirements.None)
+                    return;
+
+                ulong frameId = Engine.Rendering.State.RenderFrameId;
+                XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+                XRCamera? camera = Engine.Rendering.State.RenderingCamera;
+                XRCamera? stereoRightEyeCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
+                XRWorldInstance? world = Engine.Rendering.State.RenderingWorld;
+                bool stereoPass = Engine.Rendering.State.IsStereoPass;
+                bool useUnjitteredProjection = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+                var renderArea = Engine.Rendering.State.RenderArea;
+
+                if (MatchesEngineUniformContext(frameId, pipeline, camera, stereoRightEyeCamera, world, stereoPass, useUnjitteredProjection, renderArea))
+                {
+                    _engineUniformRequirements |= appliedRequirements;
+                    return;
+                }
+
+                _engineUniformFrameId = frameId;
+                _engineUniformRequirements = appliedRequirements;
+                _engineUniformPipeline = pipeline;
+                _engineUniformCamera = camera;
+                _engineUniformStereoRightEyeCamera = stereoRightEyeCamera;
+                _engineUniformWorld = world;
+                _engineUniformStereoPass = stereoPass;
+                _engineUniformUseUnjitteredProjection = useUnjitteredProjection;
+                _engineUniformRenderAreaX = renderArea.X;
+                _engineUniformRenderAreaY = renderArea.Y;
+                _engineUniformRenderAreaWidth = renderArea.Width;
+                _engineUniformRenderAreaHeight = renderArea.Height;
+            }
+
+            public void ResetEngineUniformBindingState()
+            {
+                _engineUniformFrameId = ulong.MaxValue;
+                _engineUniformRequirements = EUniformRequirements.None;
+                _engineUniformPipeline = null;
+                _engineUniformCamera = null;
+                _engineUniformStereoRightEyeCamera = null;
+                _engineUniformWorld = null;
+                _engineUniformStereoPass = false;
+                _engineUniformUseUnjitteredProjection = false;
+                _engineUniformRenderAreaX = 0;
+                _engineUniformRenderAreaY = 0;
+                _engineUniformRenderAreaWidth = 0;
+                _engineUniformRenderAreaHeight = 0;
+            }
+
+            private bool MatchesCurrentEngineUniformContext()
+            {
+                ulong frameId = Engine.Rendering.State.RenderFrameId;
+                XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+                XRCamera? camera = Engine.Rendering.State.RenderingCamera;
+                XRCamera? stereoRightEyeCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
+                XRWorldInstance? world = Engine.Rendering.State.RenderingWorld;
+                bool stereoPass = Engine.Rendering.State.IsStereoPass;
+                bool useUnjitteredProjection = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+                var renderArea = Engine.Rendering.State.RenderArea;
+
+                return MatchesEngineUniformContext(frameId, pipeline, camera, stereoRightEyeCamera, world, stereoPass, useUnjitteredProjection, renderArea);
+            }
+
+            private bool MatchesEngineUniformContext(
+                ulong frameId,
+                XRRenderPipelineInstance? pipeline,
+                XRCamera? camera,
+                XRCamera? stereoRightEyeCamera,
+                XRWorldInstance? world,
+                bool stereoPass,
+                bool useUnjitteredProjection,
+                XREngine.Data.Geometry.BoundingRectangle renderArea)
+                => _engineUniformFrameId == frameId
+                && ReferenceEquals(_engineUniformPipeline, pipeline)
+                && ReferenceEquals(_engineUniformCamera, camera)
+                && ReferenceEquals(_engineUniformStereoRightEyeCamera, stereoRightEyeCamera)
+                && ReferenceEquals(_engineUniformWorld, world)
+                && _engineUniformStereoPass == stereoPass
+                && _engineUniformUseUnjitteredProjection == useUnjitteredProjection
+                && _engineUniformRenderAreaX == renderArea.X
+                && _engineUniformRenderAreaY == renderArea.Y
+                && _engineUniformRenderAreaWidth == renderArea.Width
+                && _engineUniformRenderAreaHeight == renderArea.Height;
 
             private bool ValidateUniformType(int location, params GLEnum[] expectedTypes)
             {

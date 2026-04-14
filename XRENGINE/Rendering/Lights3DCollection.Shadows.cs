@@ -37,7 +37,8 @@ namespace XREngine.Scene
 
             if (cullByCameraFrusta)
             {
-                List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameraFrustumScratch = new(4);
+                var cameraFrustumScratch = _cameraFrustumScratch;
+                cameraFrustumScratch.Clear();
                 foreach ((XRWindow window, XRViewport viewport) in Engine.EnumerateActiveWindowViewports())
                 {
                     if (!ReferenceEquals(window.TargetWorldInstance, World))
@@ -61,92 +62,57 @@ namespace XREngine.Scene
 
                 if (cameraFrustumScratch.Count > 0)
                 {
-                    foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-                    {
-                        if (!l.IsActiveInHierarchy || !l.CastsShadows || l.ShadowMap is null)
-                            continue;
-
-                        if (IsLightShadowRelevant(l, cameraFrustumScratch))
-                        {
-                            l.CollectVisibleItems();
-                            _shadowLightsCollectedThisTick.Add(l);
-                        }
-                    }
-
-                    foreach (SpotLightComponent l in DynamicSpotLights)
-                    {
-                        if (!l.IsActiveInHierarchy || !l.CastsShadows || l.ShadowMap is null)
-                            continue;
-
-                        if (IsLightShadowRelevant(l, cameraFrustumScratch))
-                        {
-                            l.CollectVisibleItems();
-                            _shadowLightsCollectedThisTick.Add(l);
-                        }
-                    }
-
-                    foreach (PointLightComponent l in DynamicPointLights)
-                    {
-                        if (!l.IsActiveInHierarchy || !l.CastsShadows || l.ShadowMap is null)
-                            continue;
-
-                        if (IsLightShadowRelevant(l, cameraFrustumScratch))
-                        {
-                            l.CollectVisibleItems();
-                            _shadowLightsCollectedThisTick.Add(l);
-                        }
-                    }
+                    CollectRelevantShadowItems(DynamicDirectionalLights, cameraFrustumScratch);
+                    CollectRelevantShadowItems(DynamicSpotLights, cameraFrustumScratch);
+                    CollectRelevantShadowItems(DynamicPointLights, cameraFrustumScratch);
                 }
                 else
                 {
-                    // Safe fallback: if we can't discover any active cameras, preserve previous behavior.
-                    foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-                        if (l.IsActiveInHierarchy)
-                        {
-                            l.CollectVisibleItems();
-                            _shadowLightsCollectedThisTick.Add(l);
-                        }
-
-                    foreach (SpotLightComponent l in DynamicSpotLights)
-                        if (l.IsActiveInHierarchy)
-                        {
-                            l.CollectVisibleItems();
-                            _shadowLightsCollectedThisTick.Add(l);
-                        }
-
-                    foreach (PointLightComponent l in DynamicPointLights)
-                        if (l.IsActiveInHierarchy)
-                        {
-                            l.CollectVisibleItems();
-                            _shadowLightsCollectedThisTick.Add(l);
-                        }
+                    CollectShadowItems(DynamicDirectionalLights);
+                    CollectShadowItems(DynamicSpotLights);
+                    CollectShadowItems(DynamicPointLights);
                 }
             }
             else
             {
-                foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-                    if (l.IsActiveInHierarchy)
-                    {
-                        l.CollectVisibleItems();
-                        _shadowLightsCollectedThisTick.Add(l);
-                    }
-                
-                foreach (SpotLightComponent l in DynamicSpotLights)
-                    if (l.IsActiveInHierarchy)
-                    {
-                        l.CollectVisibleItems();
-                        _shadowLightsCollectedThisTick.Add(l);
-                    }
-
-                foreach (PointLightComponent l in DynamicPointLights)
-                    if (l.IsActiveInHierarchy)
-                    {
-                        l.CollectVisibleItems();
-                        _shadowLightsCollectedThisTick.Add(l);
-                    }
+                CollectShadowItems(DynamicDirectionalLights);
+                CollectShadowItems(DynamicSpotLights);
+                CollectShadowItems(DynamicPointLights);
             }
 
             //CollectingVisibleShadowMaps = false;
+        }
+
+        private static bool ShouldCollectShadowItems(LightComponent light)
+            => light.IsActiveInHierarchy && light.CastsShadows && light.ShadowMap is not null;
+
+        private void CollectShadowItems<TLight>(IReadOnlyList<TLight> lights) where TLight : LightComponent
+        {
+            int count = lights.Count;
+            for (int i = 0; i < count; i++)
+            {
+                TLight light = lights[i];
+                if (!ShouldCollectShadowItems(light))
+                    continue;
+
+                light.CollectVisibleItems();
+                _shadowLightsCollectedThisTick.Add(light);
+            }
+        }
+
+        private void CollectRelevantShadowItems<TLight>(IReadOnlyList<TLight> lights, List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameras)
+            where TLight : LightComponent
+        {
+            int count = lights.Count;
+            for (int i = 0; i < count; i++)
+            {
+                TLight light = lights[i];
+                if (!ShouldCollectShadowItems(light) || !IsLightShadowRelevant(light, cameras))
+                    continue;
+
+                light.CollectVisibleItems();
+                _shadowLightsCollectedThisTick.Add(light);
+            }
         }
 
         private static bool IsLightShadowRelevant(LightComponent light, List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameras) => light switch
@@ -265,12 +231,13 @@ namespace XREngine.Scene
 
             RenderingShadowMaps = true;
 
-            foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-                l.RenderShadowMap(collectVisibleNow);
-            foreach (SpotLightComponent l in DynamicSpotLights)
-                l.RenderShadowMap(collectVisibleNow);
-            foreach (PointLightComponent l in DynamicPointLights)
-                l.RenderShadowMap(collectVisibleNow);
+            // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
+            for (int i = 0; i < DynamicDirectionalLights.Count; i++)
+                DynamicDirectionalLights[i].RenderShadowMap(collectVisibleNow);
+            for (int i = 0; i < DynamicSpotLights.Count; i++)
+                DynamicSpotLights[i].RenderShadowMap(collectVisibleNow);
+            for (int i = 0; i < DynamicPointLights.Count; i++)
+                DynamicPointLights[i].RenderShadowMap(collectVisibleNow);
 
             RenderingShadowMaps = false;
 

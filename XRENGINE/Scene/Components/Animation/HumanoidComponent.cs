@@ -23,6 +23,8 @@ namespace XREngine.Components.Animation
         private readonly Dictionary<EHumanoidValue, float> _muscleValues = [];
         private readonly Dictionary<EHumanoidValue, float> _rawHumanoidValues = [];
         private readonly object _muscleValuesLock = new();
+        private const int MuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
+        private readonly float[] _muscleValueSnapshot = new float[MuscleValueCount];
 
         protected override void OnComponentActivated()
         {
@@ -431,6 +433,31 @@ namespace XREngine.Components.Animation
             }
         }
 
+        private bool TryCaptureMuscleSnapshot(float[] destination)
+        {
+            lock (_muscleValuesLock)
+            {
+                if (_muscleValues.Count == 0)
+                    return false;
+
+                Array.Clear(destination);
+                foreach ((EHumanoidValue value, float amount) in _muscleValues)
+                {
+                    int index = (int)value;
+                    if ((uint)index < (uint)destination.Length)
+                        destination[index] = amount;
+                }
+
+                return true;
+            }
+        }
+
+        private static float GetMuscleValue(ReadOnlySpan<float> snapshot, EHumanoidValue value)
+        {
+            int index = (int)value;
+            return (uint)index < (uint)snapshot.Length ? snapshot[index] : 0.0f;
+        }
+
         public void ApplyCurrentMusclePose()
             => ApplyMusclePose();
 
@@ -647,13 +674,10 @@ namespace XREngine.Components.Animation
             if (!IsAnimatedPosePreviewActive)
                 return;
 
-            // Skip when no muscle values have been set — avoids overwriting
-            // animation-driven bone rotations with bind-pose identity.
-            lock (_muscleValuesLock)
-            {
-                if (_muscleValues.Count == 0)
-                    return;
-            }
+            if (!TryCaptureMuscleSnapshot(_muscleValueSnapshot))
+                return;
+
+            ReadOnlySpan<float> muscleSnapshot = _muscleValueSnapshot;
 
             EnsureBoneMapping();
 
@@ -663,19 +687,19 @@ namespace XREngine.Components.Animation
             // Torso
             ApplyBindRelativeEulerDegrees(
                 Spine.Node,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.SpineTwistLeftRight, GetMuscleValue(EHumanoidValue.SpineTwistLeftRight)),
-                pitchDeg: MapMuscleToDeg(EHumanoidValue.SpineFrontBack, GetMuscleValue(EHumanoidValue.SpineFrontBack)),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.SpineLeftRight, GetMuscleValue(EHumanoidValue.SpineLeftRight)),
+                yawDeg: MapMuscleToDeg(EHumanoidValue.SpineTwistLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.SpineTwistLeftRight)),
+                pitchDeg: MapMuscleToDeg(EHumanoidValue.SpineFrontBack, GetMuscleValue(muscleSnapshot, EHumanoidValue.SpineFrontBack)),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.SpineLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.SpineLeftRight)),
                 axisMapping: GetBoneAxisMapping(Spine.Node));
 
             ApplyBindRelativeEulerDegrees(
                 Chest.Node,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.ChestTwistLeftRight, GetMuscleValue(EHumanoidValue.ChestTwistLeftRight))
-                    + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(EHumanoidValue.UpperChestTwistLeftRight)) : 0.0f),
-                pitchDeg: MapMuscleToDeg(EHumanoidValue.ChestFrontBack, GetMuscleValue(EHumanoidValue.ChestFrontBack))
-                      + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(EHumanoidValue.UpperChestFrontBack)) : 0.0f),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.ChestLeftRight, GetMuscleValue(EHumanoidValue.ChestLeftRight))
-                     + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight)) : 0.0f),
+                yawDeg: MapMuscleToDeg(EHumanoidValue.ChestTwistLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.ChestTwistLeftRight))
+                    + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestTwistLeftRight)) : 0.0f),
+                pitchDeg: MapMuscleToDeg(EHumanoidValue.ChestFrontBack, GetMuscleValue(muscleSnapshot, EHumanoidValue.ChestFrontBack))
+                      + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestFrontBack)) : 0.0f),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.ChestLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.ChestLeftRight))
+                     + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestLeftRight)) : 0.0f),
                 axisMapping: GetBoneAxisMapping(Chest.Node));
 
             // UpperChest — only applied when a separate UpperChest bone exists.
@@ -683,45 +707,45 @@ namespace XREngine.Components.Animation
             {
                 ApplyBindRelativeEulerDegrees(
                     UpperChest.Node,
-                    yawDeg: MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(EHumanoidValue.UpperChestTwistLeftRight)),
-                    pitchDeg: MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(EHumanoidValue.UpperChestFrontBack)),
-                    rollDeg: MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight)),
+                    yawDeg: MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestTwistLeftRight)),
+                    pitchDeg: MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestFrontBack)),
+                    rollDeg: MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestLeftRight)),
                     axisMapping: GetBoneAxisMapping(UpperChest.Node));
             }
 
             // Neck / Head
             ApplyBindRelativeEulerDegrees(
                 Neck.Node,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.NeckTurnLeftRight, GetMuscleValue(EHumanoidValue.NeckTurnLeftRight)),
-                pitchDeg: -MapMuscleToDeg(EHumanoidValue.NeckNodDownUp, GetMuscleValue(EHumanoidValue.NeckNodDownUp)),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.NeckTiltLeftRight, GetMuscleValue(EHumanoidValue.NeckTiltLeftRight)),
+                yawDeg: MapMuscleToDeg(EHumanoidValue.NeckTurnLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.NeckTurnLeftRight)),
+                pitchDeg: -MapMuscleToDeg(EHumanoidValue.NeckNodDownUp, GetMuscleValue(muscleSnapshot, EHumanoidValue.NeckNodDownUp)),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.NeckTiltLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.NeckTiltLeftRight)),
                 axisMapping: GetBoneAxisMapping(Neck.Node));
 
             ApplyBindRelativeEulerDegrees(
                 Head.Node,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.HeadTurnLeftRight, GetMuscleValue(EHumanoidValue.HeadTurnLeftRight)),
-                pitchDeg: -MapMuscleToDeg(EHumanoidValue.HeadNodDownUp, GetMuscleValue(EHumanoidValue.HeadNodDownUp)),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.HeadTiltLeftRight, GetMuscleValue(EHumanoidValue.HeadTiltLeftRight)),
+                yawDeg: MapMuscleToDeg(EHumanoidValue.HeadTurnLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.HeadTurnLeftRight)),
+                pitchDeg: -MapMuscleToDeg(EHumanoidValue.HeadNodDownUp, GetMuscleValue(muscleSnapshot, EHumanoidValue.HeadNodDownUp)),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.HeadTiltLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.HeadTiltLeftRight)),
                 axisMapping: GetBoneAxisMapping(Head.Node));
 
             // Jaw
             ApplyBindRelativeEulerDegrees(
                 Jaw.Node,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.JawLeftRight, GetMuscleValue(EHumanoidValue.JawLeftRight)),
-                pitchDeg: MapMuscleToDeg(EHumanoidValue.JawClose, GetMuscleValue(EHumanoidValue.JawClose)),
+                yawDeg: MapMuscleToDeg(EHumanoidValue.JawLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.JawLeftRight)),
+                pitchDeg: MapMuscleToDeg(EHumanoidValue.JawClose, GetMuscleValue(muscleSnapshot, EHumanoidValue.JawClose)),
                 rollDeg: 0.0f);
 
             // Arms / Legs / Hands / Feet
             GetBindBodyBasis(out Vector3 bodyLeft, out Vector3 bodyUp, out Vector3 bodyForward);
-            ApplyLimbMuscles(isLeft: true, bodyLeft, bodyUp, bodyForward);
-            ApplyLimbMuscles(isLeft: false, bodyLeft, bodyUp, bodyForward);
+            ApplyLimbMuscles(isLeft: true, bodyLeft, bodyUp, bodyForward, muscleSnapshot);
+            ApplyLimbMuscles(isLeft: false, bodyLeft, bodyUp, bodyForward, muscleSnapshot);
 
             // Fingers
-            ApplyFingerMuscles(isLeft: true);
-            ApplyFingerMuscles(isLeft: false);
+            ApplyFingerMuscles(isLeft: true, muscleSnapshot);
+            ApplyFingerMuscles(isLeft: false, muscleSnapshot);
 
             // One-time diagnostic snapshot of muscle values ? degree values.
-            LogMusclePoseSnapshot();
+            LogMusclePoseSnapshot(_muscleValueSnapshot);
         }
 
         private bool _boneMappingComplete;
@@ -741,7 +765,7 @@ namespace XREngine.Components.Animation
             SetFromNode();
         }
 
-        private void ApplyLimbMuscles(bool isLeft, Vector3 bodyLeft, Vector3 bodyUp, Vector3 bodyForward)
+        private void ApplyLimbMuscles(bool isLeft, Vector3 bodyLeft, Vector3 bodyUp, Vector3 bodyForward, ReadOnlySpan<float> muscleSnapshot)
         {
             var side = isLeft ? Left : Right;
             string sideLabel = isLeft ? "L" : "R";
@@ -766,8 +790,8 @@ namespace XREngine.Components.Animation
             // Stretch channels behave like hinge flexion/extension. Keep the raw clip sign
             // and rely on asymmetric hinge ranges so slight negative values do not produce
             // deep extension while strong positive values still allow a bent elbow/knee.
-            float forearmStretchMuscle = GetMuscleValue(forearmStretch);
-            float lowerLegStretchMuscle = GetMuscleValue(lowerLegStretch);
+            float forearmStretchMuscle = GetMuscleValue(muscleSnapshot, forearmStretch);
+            float lowerLegStretchMuscle = GetMuscleValue(muscleSnapshot, lowerLegStretch);
             float lowerLegPitchDeg = MapMuscleToDeg(lowerLegStretch, lowerLegStretchMuscle);
             lowerLegPitchDeg = ClampKneeFlexionDeg(sideLabel, lowerLegStretchMuscle, lowerLegPitchDeg);
 
@@ -798,8 +822,8 @@ namespace XREngine.Components.Animation
             ApplyLimbBoneRotation(
                 side.Shoulder.Node, DebugShoulderSigns,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(shoulderDownUp, GetMuscleValue(shoulderDownUp)),
-                rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack)),
+                pitchDeg: MapMuscleToDeg(shoulderDownUp, GetMuscleValue(muscleSnapshot, shoulderDownUp)),
+                rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(muscleSnapshot, shoulderFrontBack)),
                 twistAxisWorld: shoulderTwistAxisWorld,
                 pitchAxisWorld: armPitchAxisWorld,
                 rollAxisWorld: armRollAxisWorld,
@@ -807,16 +831,16 @@ namespace XREngine.Components.Animation
 
             ApplyLimbBoneRotation(
                 side.Arm.Node, DebugArmSigns,
-                yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(armTwist)),
-                pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(armDownUp)),
-                rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack)),
+                yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(muscleSnapshot, armTwist)),
+                pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(muscleSnapshot, armDownUp)),
+                rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(muscleSnapshot, armFrontBack)),
                 twistAxisWorld: armTwistAxisWorld,
                 pitchAxisWorld: armPitchAxisWorld,
                 rollAxisWorld: armRollAxisWorld);
 
             ApplyLimbBoneRotation(
                 side.Elbow.Node, DebugForearmSigns,
-                yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(forearmTwist)),
+                yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(muscleSnapshot, forearmTwist)),
                 pitchDeg: MapMuscleToDeg(forearmStretch, forearmStretchMuscle),
                 rollDeg: 0.0f,
                 twistAxisWorld: forearmTwistAxisWorld,
@@ -826,17 +850,17 @@ namespace XREngine.Components.Animation
             ApplyLimbBoneRotation(
                 side.Wrist.Node, DebugWristSigns,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(handDownUp, GetMuscleValue(handDownUp)),
-                rollDeg: MapMuscleToDeg(handInOut, GetMuscleValue(handInOut)),
+                pitchDeg: MapMuscleToDeg(handDownUp, GetMuscleValue(muscleSnapshot, handDownUp)),
+                rollDeg: MapMuscleToDeg(handInOut, GetMuscleValue(muscleSnapshot, handInOut)),
                 twistAxisWorld: forearmTwistAxisWorld,
                 pitchAxisWorld: armPitchAxisWorld,
                 rollAxisWorld: armRollAxisWorld);
 
             ApplyLimbBoneRotation(
                 side.Leg.Node, DebugUpperLegSigns,
-                yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(upperLegTwist)),
-                pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack)),
-                rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut)),
+                yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(muscleSnapshot, upperLegTwist)),
+                pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(muscleSnapshot, upperLegFrontBack)),
+                rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(muscleSnapshot, upperLegInOut)),
                 twistAxisWorld: upperLegTwistAxisWorld,
                 pitchAxisWorld: legPitchAxisWorld,
                 rollAxisWorld: legRollAxisWorld,
@@ -844,7 +868,7 @@ namespace XREngine.Components.Animation
 
             ApplyLimbBoneRotation(
                 side.Knee.Node, DebugKneeSigns,
-                yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist)),
+                yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(muscleSnapshot, lowerLegTwist)),
                 pitchDeg: lowerLegPitchDeg,
                 rollDeg: 0.0f,
                 twistAxisWorld: lowerLegTwistAxisWorld,
@@ -854,8 +878,8 @@ namespace XREngine.Components.Animation
 
             ApplyLimbBoneRotation(
                 side.Foot.Node, DebugFootSigns,
-                yawDeg: MapMuscleToDeg(footTwist, GetMuscleValue(footTwist)),
-                pitchDeg: MapMuscleToDeg(footUpDown, GetMuscleValue(footUpDown)),
+                yawDeg: MapMuscleToDeg(footTwist, GetMuscleValue(muscleSnapshot, footTwist)),
+                pitchDeg: MapMuscleToDeg(footUpDown, GetMuscleValue(muscleSnapshot, footUpDown)),
                 rollDeg: 0.0f,
                 twistAxisWorld: footTwistAxisWorld,
                 pitchAxisWorld: legPitchAxisWorld,
@@ -865,7 +889,7 @@ namespace XREngine.Components.Animation
             ApplyLimbBoneRotation(
                 side.Toes.Node, DebugToesSigns,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(toesUpDown, GetMuscleValue(toesUpDown)),
+                pitchDeg: MapMuscleToDeg(toesUpDown, GetMuscleValue(muscleSnapshot, toesUpDown)),
                 rollDeg: 0.0f,
                 twistAxisWorld: footTwistAxisWorld,
                 pitchAxisWorld: legPitchAxisWorld,
@@ -873,35 +897,35 @@ namespace XREngine.Components.Animation
                 preferAxisMapping: true);
         }
 
-        private void ApplyFingerMuscles(bool isLeft)
+        private void ApplyFingerMuscles(bool isLeft, ReadOnlySpan<float> muscleSnapshot)
         {
             var side = isLeft ? Left : Right;
 
-            ApplyFinger(isLeft, side.Hand.Thumb,
+            ApplyFinger(isLeft, side.Hand.Thumb, muscleSnapshot,
                 spread: isLeft ? EHumanoidValue.LeftHandThumbSpread : EHumanoidValue.RightHandThumbSpread,
                 prox: isLeft ? EHumanoidValue.LeftHandThumb1Stretched : EHumanoidValue.RightHandThumb1Stretched,
                 mid: isLeft ? EHumanoidValue.LeftHandThumb2Stretched : EHumanoidValue.RightHandThumb2Stretched,
                 dist: isLeft ? EHumanoidValue.LeftHandThumb3Stretched : EHumanoidValue.RightHandThumb3Stretched);
 
-            ApplyFinger(isLeft, side.Hand.Index,
+            ApplyFinger(isLeft, side.Hand.Index, muscleSnapshot,
                 spread: isLeft ? EHumanoidValue.LeftHandIndexSpread : EHumanoidValue.RightHandIndexSpread,
                 prox: isLeft ? EHumanoidValue.LeftHandIndex1Stretched : EHumanoidValue.RightHandIndex1Stretched,
                 mid: isLeft ? EHumanoidValue.LeftHandIndex2Stretched : EHumanoidValue.RightHandIndex2Stretched,
                 dist: isLeft ? EHumanoidValue.LeftHandIndex3Stretched : EHumanoidValue.RightHandIndex3Stretched);
 
-            ApplyFinger(isLeft, side.Hand.Middle,
+            ApplyFinger(isLeft, side.Hand.Middle, muscleSnapshot,
                 spread: isLeft ? EHumanoidValue.LeftHandMiddleSpread : EHumanoidValue.RightHandMiddleSpread,
                 prox: isLeft ? EHumanoidValue.LeftHandMiddle1Stretched : EHumanoidValue.RightHandMiddle1Stretched,
                 mid: isLeft ? EHumanoidValue.LeftHandMiddle2Stretched : EHumanoidValue.RightHandMiddle2Stretched,
                 dist: isLeft ? EHumanoidValue.LeftHandMiddle3Stretched : EHumanoidValue.RightHandMiddle3Stretched);
 
-            ApplyFinger(isLeft, side.Hand.Ring,
+            ApplyFinger(isLeft, side.Hand.Ring, muscleSnapshot,
                 spread: isLeft ? EHumanoidValue.LeftHandRingSpread : EHumanoidValue.RightHandRingSpread,
                 prox: isLeft ? EHumanoidValue.LeftHandRing1Stretched : EHumanoidValue.RightHandRing1Stretched,
                 mid: isLeft ? EHumanoidValue.LeftHandRing2Stretched : EHumanoidValue.RightHandRing2Stretched,
                 dist: isLeft ? EHumanoidValue.LeftHandRing3Stretched : EHumanoidValue.RightHandRing3Stretched);
 
-            ApplyFinger(isLeft, side.Hand.Pinky,
+            ApplyFinger(isLeft, side.Hand.Pinky, muscleSnapshot,
                 spread: isLeft ? EHumanoidValue.LeftHandLittleSpread : EHumanoidValue.RightHandLittleSpread,
                 prox: isLeft ? EHumanoidValue.LeftHandLittle1Stretched : EHumanoidValue.RightHandLittle1Stretched,
                 mid: isLeft ? EHumanoidValue.LeftHandLittle2Stretched : EHumanoidValue.RightHandLittle2Stretched,
@@ -911,28 +935,29 @@ namespace XREngine.Components.Animation
         private void ApplyFinger(
             bool isLeft,
             BodySide.Fingers.Finger finger,
+            ReadOnlySpan<float> muscleSnapshot,
             EHumanoidValue spread, EHumanoidValue prox, EHumanoidValue mid, EHumanoidValue dist)
         {
             float sideMirror = isLeft ? 1.0f : -1.0f;
             // Stretched channels map to bending on each phalanx.
             ApplyBindRelativeEulerDegrees(
                 finger.Proximal.Node,
-                yawDeg: MapMuscleToDeg(spread, GetMuscleValue(spread)) * sideMirror,
-                pitchDeg: MapMuscleToDeg(prox, GetMuscleValue(prox)),
+                yawDeg: MapMuscleToDeg(spread, GetMuscleValue(muscleSnapshot, spread)) * sideMirror,
+                pitchDeg: MapMuscleToDeg(prox, GetMuscleValue(muscleSnapshot, prox)),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(finger.Proximal.Node));
 
             ApplyBindRelativeEulerDegrees(
                 finger.Intermediate.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(mid, GetMuscleValue(mid)),
+                pitchDeg: MapMuscleToDeg(mid, GetMuscleValue(muscleSnapshot, mid)),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(finger.Intermediate.Node));
 
             ApplyBindRelativeEulerDegrees(
                 finger.Distal.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(dist, GetMuscleValue(dist)),
+                pitchDeg: MapMuscleToDeg(dist, GetMuscleValue(muscleSnapshot, dist)),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(finger.Distal.Node));
         }
@@ -1765,7 +1790,7 @@ namespace XREngine.Components.Animation
         /// Logs a one-time snapshot of live muscle values and the resulting degree
         /// values for key bones. Written to the Animation log category.
         /// </summary>
-        private void LogMusclePoseSnapshot()
+        private void LogMusclePoseSnapshot(float[] muscleSnapshot)
         {
             if (_musclePoseLoggedOnce) return;
             _musclePoseLoggedOnce = true;
@@ -1773,7 +1798,7 @@ namespace XREngine.Components.Animation
             void LogMuscle(string label, EHumanoidValue val)
             {
                 Vector2 range = Settings.GetResolvedMuscleRotationDegRange(val);
-                float raw = GetMuscleValue(val);
+                float raw = GetMuscleValue(muscleSnapshot, val);
                 float deg = MapMuscleToDeg(val, raw);
                 Debug.Animation($"[MusclePose] {label,-30} muscle={raw,8:F4}  deg={deg,8:F2}  range=({range.X:F1},{range.Y:F1})");
             }

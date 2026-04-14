@@ -20,23 +20,33 @@ namespace XREngine.Scene
 
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.DirectionalLights"))
             {
-                foreach (DirectionalLightComponent l in DynamicDirectionalLights)
+                // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
+                for (int i = 0; i < DynamicDirectionalLights.Count; i++)
+                {
+                    DirectionalLightComponent l = DynamicDirectionalLights[i];
                     if (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l))
                         l.SwapBuffers(LightmapBaking);
+                }
             }
 
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.SpotLights"))
             {
-                foreach (SpotLightComponent l in DynamicSpotLights)
+                for (int i = 0; i < DynamicSpotLights.Count; i++)
+                {
+                    SpotLightComponent l = DynamicSpotLights[i];
                     if (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l))
                         l.SwapBuffers(LightmapBaking);
+                }
             }
 
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.PointLights"))
             {
-                foreach (PointLightComponent l in DynamicPointLights)
+                for (int i = 0; i < DynamicPointLights.Count; i++)
+                {
+                    PointLightComponent l = DynamicPointLights[i];
                     if (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l))
                         l.SwapBuffers(LightmapBaking);
+                }
             }
 
             using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.LightmapBaking"))
