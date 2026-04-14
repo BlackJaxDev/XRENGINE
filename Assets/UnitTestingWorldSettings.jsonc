@@ -162,11 +162,11 @@
       // ImporterBackend: PreferNativeThenAssimp, AssimpOnly
       "ImporterBackend": "AssimpOnly",
       // Generated from Path on ModelImportSettings.
-      "Path": "misc\\jax2026.fbx",
+      "Path": "misc\\Mitsuki.fbx",
       // Comma-separated PostProcessSteps flag names.
       "ImportFlags": "Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
       // Generated from Scale on ModelImportSettings.
-      "Scale": 10.0,
+      "Scale": 1.0,
       // Enables or disables ZUp.
       "ZUp": false,
       // Enables or disables GenerateCoacdCollidersPerSubmesh.

@@ -24,10 +24,35 @@ namespace XREngine.Animation
 
         [MemoryPackIgnore]
         protected readonly Dictionary<string, AnimationMember> _animatedCurves = [];
+
+        /// <summary>
+        /// Legacy dictionary store — kept as a compatibility bridge for callers that still use string paths.
+        /// New code should use <see cref="ValueStore"/> directly via slot indices.
+        /// </summary>
         [MemoryPackIgnore]
         protected internal Dictionary<string, object?> _animationValues = [];
         [MemoryPackIgnore]
         private readonly object _animationValuesLock = new();
+
+        /// <summary>
+        /// Typed struct-of-arrays value store. Eliminates boxing and string hashing on hot paths.
+        /// Sized during <see cref="AnimStateMachine.Initialize"/> after slot assignment.
+        /// </summary>
+        [MemoryPackIgnore]
+        internal AnimationValueStore ValueStore { get; } = new();
+
+        /// <summary>
+        /// Shared slot layout from the owning state machine. Null when used outside a state machine context.
+        /// </summary>
+        [MemoryPackIgnore]
+        internal AnimationSlotLayout? SlotLayout { get; set; }
+
+        /// <summary>
+        /// Dense array of all animated members for this motion, built during slot assignment.
+        /// Enables O(1) iteration without dictionary enumeration.
+        /// </summary>
+        [MemoryPackIgnore]
+        internal AnimationMember[] AnimatedMembersArray { get; set; } = [];
 
         [MemoryPackIgnore]
         public Dictionary<string, object?> AnimationValues => _animationValues;
@@ -44,11 +69,19 @@ namespace XREngine.Animation
         {
             //Unregister all animated curves in the motion
             _animatedCurves.Clear();
+            AnimatedMembersArray = [];
         }
 
         public virtual void SetDefaults()
         {
-            //_animationValues.Clear();
+            // Write defaults to typed store if available
+            if (SlotLayout is not null)
+            {
+                foreach (var member in AnimatedMembersArray)
+                    member.WriteDefaultToStore(ValueStore);
+                return;
+            }
+            // Legacy path
             foreach (var kv in _animatedCurves)
                 SetAnimValue(kv.Key, kv.Value.DefaultValue);
         }
@@ -190,6 +223,13 @@ namespace XREngine.Animation
 
         protected internal void SetAnimValue(string path, object? animValue)
         {
+            // Write to typed store if slot is available
+            if (SlotLayout is not null && _animatedCurves.TryGetValue(path, out var member) && member.Slot.IsValid)
+            {
+                ValueStore.SetValue(member.Slot, animValue);
+                return;
+            }
+            // Legacy fallback
             lock (_animationValuesLock)
             {
                 if (!_animationValues.TryAdd(path, animValue))
@@ -197,12 +237,32 @@ namespace XREngine.Animation
             }
         }
 
+        /// <summary>
+        /// Sets a typed float value directly into the store by slot index. No boxing.
+        /// </summary>
+        protected internal void SetAnimFloat(int slotIndex, float value)
+            => ValueStore.SetFloat(slotIndex, value);
+
+        /// <summary>
+        /// Sets a typed Vector3 value directly into the store by slot index. No boxing.
+        /// </summary>
+        protected internal void SetAnimVector3(int slotIndex, Vector3 value)
+            => ValueStore.SetVector3(slotIndex, value);
+
+        /// <summary>
+        /// Sets a typed Quaternion value directly into the store by slot index. No boxing.
+        /// </summary>
+        protected internal void SetAnimQuaternion(int slotIndex, Quaternion value)
+            => ValueStore.SetQuaternion(slotIndex, value);
+
+        [Obsolete("Use ValueStore directly. This allocates a snapshot array every call.")]
         public KeyValuePair<string, object?>[] GetAnimationValuesSnapshot()
         {
             lock (_animationValuesLock)
                 return _animationValues.ToArray();
         }
 
+        [Obsolete("Use ValueStore directly. This allocates a snapshot array every call.")]
         public string[] GetAnimationValueKeysSnapshot()
         {
             lock (_animationValuesLock)
@@ -210,40 +270,59 @@ namespace XREngine.Animation
         }
 
         /// <summary>
-        /// Copies the animation values from the given dictionary to the current motion.
+        /// Copies animation values from another motion's typed store (zero-alloc).
+        /// Falls back to legacy dictionary copy if stores aren't initialized.
         /// </summary>
-        /// <param name="animatedValues"></param>
-        private void CopyAnimationValuesFrom(IEnumerable<KeyValuePair<string, object?>>? animatedValues)
+        public void CopyAnimationValuesFrom(MotionBase? motion)
         {
-            if (animatedValues is null)
+            if (motion is null)
                 return;
 
-            foreach (var kvp in animatedValues)
-                SetAnimValue(kvp.Key, kvp.Value);
+            if (SlotLayout is not null && motion.SlotLayout is not null)
+            {
+                ValueStore.CopyFrom(motion.ValueStore);
+                return;
+            }
+
+            // Legacy fallback
+            lock (motion._animationValuesLock)
+            {
+                foreach (var kvp in motion._animationValues)
+                    SetAnimValue(kvp.Key, kvp.Value);
+            }
         }
 
         /// <summary>
-        /// Lerps between two dictionaries of animation values and sets the result in the current motion.
+        /// Lerps between two child motions' typed stores into this store (zero-alloc, no LINQ, no boxing).
+        /// Falls back to legacy dictionary lerp when stores aren't available.
         /// </summary>
-        /// <param name="v1"></param>
-        /// <param name="v2"></param>
-        /// <param name="t"></param>
-        private void GetLerpedValues(
+        private void GetLerpedValues(MotionBase? m1, MotionBase? m2, float t)
+        {
+            if (SlotLayout is not null && m1?.SlotLayout is not null && m2?.SlotLayout is not null)
+            {
+                AnimationValueStore.Lerp(m1.ValueStore, m2.ValueStore, t, ValueStore);
+                return;
+            }
+
+            // Legacy path
+            GetLerpedValuesLegacy(m1?._animationValues, m2?._animationValues, t);
+        }
+
+        private void GetLerpedValuesLegacy(
             Dictionary<string, object?>? v1,
             Dictionary<string, object?>? v2,
             float t)
         {
-            IEnumerable<string> keys =
-                (v1?.Keys ?? Enumerable.Empty<string>()).Union
-                (v2?.Keys ?? Enumerable.Empty<string>()).Distinct();
+            if (v1 is null || v2 is null)
+                return;
 
-            foreach (string key in keys)
+            foreach (var kvp in v1)
             {
-                //Leave values that don't match alone
-                if (!(v1?.TryGetValue(key, out object? v1Value) ?? false) ||
-                    !(v2?.TryGetValue(key, out object? v2Value) ?? false))
+                string key = kvp.Key;
+                if (!v2.TryGetValue(key, out object? v2Value))
                     continue;
 
+                object? v1Value = kvp.Value;
                 switch (v1Value)
                 {
                     case float f1 when v2Value is float f2:
@@ -261,43 +340,42 @@ namespace XREngine.Animation
                     case Quaternion quaternion1 when v2Value is Quaternion quaternion2:
                         SetAnimValue(key, Quaternion.Slerp(quaternion1, quaternion2, t));
                         break;
-                    default: //Pick the discrete value with the higher weight
+                    default:
                         SetAnimValue(key, t > 0.5f ? v2Value : v1Value);
                         break;
                 }
             }
         }
 
-        /// <summary>
-        /// Lerps between three dictionaries of animation values and sets the result in the current motion.
-        /// </summary>
-        /// <param name="values1"></param>
-        /// <param name="values2"></param>
-        /// <param name="values3"></param>
-        /// <param name="w1"></param>
-        /// <param name="w2"></param>
-        /// <param name="w3"></param>
-        private void GetTriLerpedValues(
+        private void GetTriLerpedValues(MotionBase? m1, MotionBase? m2, MotionBase? m3, float w1, float w2, float w3)
+        {
+            if (SlotLayout is not null && m1?.SlotLayout is not null && m2?.SlotLayout is not null && m3?.SlotLayout is not null)
+            {
+                AnimationValueStore.TriLerp(m1.ValueStore, m2.ValueStore, m3.ValueStore, w1, w2, w3, ValueStore);
+                return;
+            }
+
+            // Legacy fallback
+            GetTriLerpedValuesLegacy(m1?._animationValues, m2?._animationValues, m3?._animationValues, w1, w2, w3);
+        }
+
+        private void GetTriLerpedValuesLegacy(
             Dictionary<string, object?>? values1,
             Dictionary<string, object?>? values2,
             Dictionary<string, object?>? values3,
-            float w1,
-            float w2,
-            float w3)
+            float w1, float w2, float w3)
         {
-            IEnumerable<string> keys =
-                (values1?.Keys ?? Enumerable.Empty<string>()).Union
-                (values2?.Keys ?? Enumerable.Empty<string>()).Union
-                (values3?.Keys ?? Enumerable.Empty<string>()).Distinct();
+            if (values1 is null || values2 is null || values3 is null)
+                return;
 
-            foreach (string key in keys)
+            foreach (var kvp in values1)
             {
-                //Leave values that don't match alone
-                if (!(values1?.TryGetValue(key, out object? v1Value) ?? false) ||
-                    !(values2?.TryGetValue(key, out object? v2Value) ?? false) ||
-                    !(values3?.TryGetValue(key, out object? v3Value) ?? false))
+                string key = kvp.Key;
+                if (!values2.TryGetValue(key, out object? v2Value) ||
+                    !values3.TryGetValue(key, out object? v3Value))
                     continue;
 
+                object? v1Value = kvp.Value;
                 switch (v1Value)
                 {
                     case float f1 when v2Value is float f2 && v3Value is float f3:
@@ -315,52 +393,45 @@ namespace XREngine.Animation
                     case Quaternion quaternion1 when v2Value is Quaternion quaternion2 && v3Value is Quaternion quaternion3:
                         SetAnimValue(key, Interp.WeightedSlerp(quaternion1, quaternion2, quaternion3, w1, w2, w3));
                         break;
-                    default: //Pick the discrete value with the highest weight
-                        SetAnimValue(key, 
-                            Math.Max(Math.Max(w1, w2), w3) == w1 ? v1Value : 
-                            Math.Max(w2, w3) == w2 ? v2Value : 
-                            v3Value);
+                    default:
+                        float maxW = Math.Max(Math.Max(w1, w2), w3);
+                        SetAnimValue(key, maxW == w1 ? v1Value : maxW == w2 ? v2Value : v3Value);
                         break;
                 }
             }
         }
 
-        /// <summary>
-        /// Lerps between four dictionaries of animation values and sets the result in the current motion.
-        /// </summary>
-        /// <param name="values1"></param>
-        /// <param name="values2"></param>
-        /// <param name="values3"></param>
-        /// <param name="values4"></param>
-        /// <param name="w1"></param>
-        /// <param name="w2"></param>
-        /// <param name="w3"></param>
-        /// <param name="w4"></param>
-        private void GetQuadLerpedValues(
+        private void GetQuadLerpedValues(MotionBase? m1, MotionBase? m2, MotionBase? m3, MotionBase? m4, float w1, float w2, float w3, float w4)
+        {
+            if (SlotLayout is not null && m1?.SlotLayout is not null && m2?.SlotLayout is not null && m3?.SlotLayout is not null && m4?.SlotLayout is not null)
+            {
+                AnimationValueStore.QuadLerp(m1.ValueStore, m2.ValueStore, m3.ValueStore, m4.ValueStore, w1, w2, w3, w4, ValueStore);
+                return;
+            }
+
+            // Legacy fallback
+            GetQuadLerpedValuesLegacy(m1?._animationValues, m2?._animationValues, m3?._animationValues, m4?._animationValues, w1, w2, w3, w4);
+        }
+
+        private void GetQuadLerpedValuesLegacy(
             Dictionary<string, object?>? values1,
             Dictionary<string, object?>? values2,
             Dictionary<string, object?>? values3,
             Dictionary<string, object?>? values4,
-            float w1,
-            float w2,
-            float w3,
-            float w4)
+            float w1, float w2, float w3, float w4)
         {
-            IEnumerable<string> keys = 
-                (values1?.Keys ?? Enumerable.Empty<string>()).Union
-                (values2?.Keys ?? Enumerable.Empty<string>()).Union
-                (values3?.Keys ?? Enumerable.Empty<string>()).Union
-                (values4?.Keys ?? Enumerable.Empty<string>()).Distinct();
+            if (values1 is null || values2 is null || values3 is null || values4 is null)
+                return;
 
-            foreach (string key in keys)
+            foreach (var kvp in values1)
             {
-                //Leave values that don't match alone
-                if (!(values1?.TryGetValue(key, out object? v1Value) ?? false) ||
-                    !(values2?.TryGetValue(key, out object? v2Value) ?? false) ||
-                    !(values3?.TryGetValue(key, out object? v3Value) ?? false) ||
-                    !(values4?.TryGetValue(key, out object? v4Value) ?? false))
+                string key = kvp.Key;
+                if (!values2.TryGetValue(key, out object? v2Value) ||
+                    !values3.TryGetValue(key, out object? v3Value) ||
+                    !values4.TryGetValue(key, out object? v4Value))
                     continue;
 
+                object? v1Value = kvp.Value;
                 switch (v1Value)
                 {
                     case float f1 when v2Value is float f2 && v3Value is float f3 && v4Value is float f4:
@@ -378,12 +449,9 @@ namespace XREngine.Animation
                     case Quaternion quaternion1 when v2Value is Quaternion quaternion2 && v3Value is Quaternion quaternion3 && v4Value is Quaternion quaternion4:
                         SetAnimValue(key, Interp.WeightedSlerp(quaternion1, quaternion2, quaternion3, quaternion4, w1, w2, w3, w4));
                         break;
-                    default: //Pick the discrete value with the highest weight
-                        SetAnimValue(key,
-                            Math.Max(Math.Max(Math.Max(w1, w2), w3), w4) == w1 ? v1Value :
-                            Math.Max(Math.Max(w2, w3), w2) == w2 ? v2Value :
-                            Math.Max(Math.Max(w3, w4), w3) == w3 ? v3Value : 
-                            v4Value);
+                    default:
+                        float maxW = Math.Max(Math.Max(Math.Max(w1, w2), w3), w4);
+                        SetAnimValue(key, maxW == w1 ? v1Value : maxW == w2 ? v2Value : maxW == w3 ? v3Value : v4Value);
                         break;
                 }
             }
@@ -399,20 +467,8 @@ namespace XREngine.Animation
         public abstract void GetAnimationValues(MotionBase? parentMotion, IDictionary<string, AnimVar> variables, float weight);
 
         /// <summary>
-        /// Copies the animation values out of a child motion into this motion, no blending applied.
-        /// </summary>
-        /// <param name="parentMotion"></param>
-        /// <param name="motion"></param>
-        public void CopyAnimationValuesFrom(MotionBase? motion)
-            => CopyAnimationValuesFrom(motion?.GetAnimationValuesSnapshot());
-
-        /// <summary>
         /// Blends the animation values of the two given child motions into this motion.
         /// </summary>
-        /// <param name="parentMotion"></param>
-        /// <param name="m1"></param>
-        /// <param name="m2"></param>
-        /// <param name="t"></param>
         public void Blend(
             MotionBase? m1,
             MotionBase? m2,
@@ -422,19 +478,12 @@ namespace XREngine.Animation
         {
             m1?.GetAnimationValues(null, variables, parentWeight);
             m2?.GetAnimationValues(null, variables, parentWeight);
-            GetLerpedValues(m1?._animationValues, m2?._animationValues, t);
+            GetLerpedValues(m1, m2, t);
         }
 
         /// <summary>
         /// Blends the animation values of the three given child motions into this motion.
         /// </summary>
-        /// <param name="parentMotion"></param>
-        /// <param name="m1"></param>
-        /// <param name="w1"></param>
-        /// <param name="m2"></param>
-        /// <param name="w2"></param>
-        /// <param name="m3"></param>
-        /// <param name="w3"></param>
         public void Blend(
             MotionBase? m1,
             float w1,
@@ -448,21 +497,12 @@ namespace XREngine.Animation
             m1?.GetAnimationValues(null, variables, parentWeight);
             m2?.GetAnimationValues(null, variables, parentWeight);
             m3?.GetAnimationValues(null, variables, parentWeight);
-            GetTriLerpedValues(m1?._animationValues, m2?._animationValues, m3?._animationValues, w1, w2, w3);
+            GetTriLerpedValues(m1, m2, m3, w1, w2, w3);
         }
 
         /// <summary>
         /// Blends the animation values of the four given child motions into this motion.
         /// </summary>
-        /// <param name="parentMotion"></param>
-        /// <param name="m1"></param>
-        /// <param name="w1"></param>
-        /// <param name="m2"></param>
-        /// <param name="w2"></param>
-        /// <param name="m3"></param>
-        /// <param name="w3"></param>
-        /// <param name="m4"></param>
-        /// <param name="w4"></param>
         public void Blend(
             MotionBase? m1,
             float w1,
@@ -479,7 +519,7 @@ namespace XREngine.Animation
             m2?.GetAnimationValues(null, variables, parentWeight);
             m3?.GetAnimationValues(null, variables, parentWeight);
             m4?.GetAnimationValues(null, variables, parentWeight);
-            GetQuadLerpedValues(m1?._animationValues, m2?._animationValues, m3?._animationValues, m4?._animationValues, w1, w2, w3, w4);
+            GetQuadLerpedValues(m1, m2, m3, m4, w1, w2, w3, w4);
         }
 
         /// <summary>

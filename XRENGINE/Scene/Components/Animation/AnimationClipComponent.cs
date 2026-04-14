@@ -21,6 +21,7 @@ namespace XREngine.Components.Animation
         private readonly Dictionary<AnimationMember, object?[]> _baselineMethodArguments = [];
         private readonly HashSet<Transform> _animatedQuaternionTargets = [];
         private Transform[] _animatedQuaternionTargetsSnapshot = [];
+        private BasePropAnim[] _propertyAnimationsSnapshot = [];
 
         private AnimationClip? _animation;
         public AnimationClip? Animation
@@ -276,15 +277,25 @@ namespace XREngine.Components.Animation
             if (Animation is null || !_initialized)
                 return;
 
-            long deltaTicks = ScaleStopwatchTicks(SecondsToStopwatchTicks(Engine.Delta), Speed);
-            long playbackTimeTicks = NormalizePlaybackTime(_playbackTimeTicks + deltaTicks, Animation, wrapLooped: Animation.Looped);
-            SetPlaybackTimeTicks(playbackTimeTicks);
-            SetAllPropertyAnimationTimes(Animation, playbackTimeTicks, wrapLooped: false);
+            using var sample = Engine.Profiler.Start("AnimationClipComponent.TickAnimation");
+
+            long deltaTicks;
+            long playbackTimeTicks;
+            using (Engine.Profiler.Start("AnimationClipComponent.TickAnimation.AdvanceTime"))
+            {
+                deltaTicks = ScaleStopwatchTicks(SecondsToStopwatchTicks(Engine.Delta), Speed);
+                playbackTimeTicks = NormalizePlaybackTime(_playbackTimeTicks + deltaTicks, Animation, wrapLooped: Animation.Looped);
+                SetPlaybackTimeTicks(playbackTimeTicks);
+            }
+
+            using (Engine.Profiler.Start("AnimationClipComponent.TickAnimation.SetPropertyTimes"))
+                SetAllPropertyAnimationTimes(Animation, playbackTimeTicks, wrapLooped: false);
 
             if (!ShouldDriveSiblingHumanoidPose())
                 return;
 
-            ApplyAnimatedValues();
+            using (Engine.Profiler.Start("AnimationClipComponent.TickAnimation.ApplyAnimatedValues"))
+                ApplyAnimatedValues();
         }
 
         private void EnsureInitialized()
@@ -298,6 +309,17 @@ namespace XREngine.Components.Animation
             InitializeMembers(Animation.RootMember, this, _animatedMembers, _animatedQuaternionTargets);
             _animatedMembersSnapshot = [.. _animatedMembers];
             _animatedQuaternionTargetsSnapshot = [.. _animatedQuaternionTargets];
+
+            // Cache the concrete track list once; rebuilding the clip animation map each tick
+            // adds avoidable traversal and allocations to the playback hot path.
+            List<BasePropAnim> propertyAnimations = new(_animatedMembersSnapshot.Length);
+            foreach (var member in _animatedMembersSnapshot)
+            {
+                if (member.Animation is BasePropAnim animation)
+                    propertyAnimations.Add(animation);
+            }
+            _propertyAnimationsSnapshot = [.. propertyAnimations];
+
             foreach (var member in _animatedMembersSnapshot)
             {
                 if (member.MemberType == EAnimationMemberType.Method)
@@ -351,6 +373,7 @@ namespace XREngine.Components.Animation
             _baselineMethodArguments.Clear();
             _animatedQuaternionTargets.Clear();
             _animatedQuaternionTargetsSnapshot = [];
+            _propertyAnimationsSnapshot = [];
             _initialized = false;
         }
 
@@ -401,7 +424,12 @@ namespace XREngine.Components.Animation
             if (Animation is null)
                 return;
 
+            using var sample = Engine.Profiler.Start("AnimationClipComponent.ApplyAnimatedValues");
+
             var snapshot = _animatedMembersSnapshot;
+            float weight = Weight;
+            bool fullWeight = weight >= 1.0f;
+
             foreach (var member in snapshot)
             {
                 if (member.Animation is null && member.MemberType != EAnimationMemberType.Method)
@@ -410,11 +438,26 @@ namespace XREngine.Components.Animation
                     continue;
                 }
 
-                object? defaultValue = member.DefaultValue;
+                if (TryApplyTypedAnimatedValue(member, fullWeight, weight))
+                    continue;
+
                 object? animatedValue = member.GetAnimationValue();
-                object? weightedValue = LerpValue(defaultValue, animatedValue, Weight);
-                ApplyRuntimeClipRemaps(member, ref weightedValue);
-                member.ApplyAnimationValue(weightedValue);
+
+                if (fullWeight)
+                {
+                    // Fast path: skip LerpValue entirely — lerp(x, y, 1.0) == y.
+                    // ApplyRuntimeClipRemaps only affects Method members, so skip for field/property.
+                    if (member.MemberType == EAnimationMemberType.Method)
+                        ApplyRuntimeClipRemaps(member, ref animatedValue);
+                    member.ApplyAnimationValue(animatedValue);
+                }
+                else
+                {
+                    object? defaultValue = member.DefaultValue;
+                    object? weightedValue = LerpValue(defaultValue, animatedValue, weight);
+                    ApplyRuntimeClipRemaps(member, ref weightedValue);
+                    member.ApplyAnimationValue(weightedValue);
+                }
             }
 
             NormalizeAnimatedQuaternionTargets();
@@ -428,7 +471,7 @@ namespace XREngine.Components.Animation
 
         private void ApplyRuntimeClipRemaps(AnimationMember member, ref object? value)
         {
-            if (member.MemberType != EAnimationMemberType.Method)
+            if (member.MemberType != EAnimationMemberType.Method || !ShouldApplyRuntimeClipRemap(member.MemberName))
                 return;
 
             RestoreBaselineMethodArguments(member);
@@ -454,6 +497,289 @@ namespace XREngine.Components.Animation
                     break;
             }
         }
+
+        private bool TryApplyTypedAnimatedValue(AnimationMember member, bool fullWeight, float weight)
+            => TryApplyTypedFloat(member, fullWeight, weight)
+            || TryApplyTypedVector3(member, fullWeight, weight)
+            || TryApplyTypedQuaternion(member, fullWeight, weight)
+            || TryApplyTypedVector2(member, fullWeight, weight)
+            || TryApplyTypedVector4(member, fullWeight, weight)
+            || TryApplyTypedBool(member, fullWeight, weight);
+
+        private bool TryApplyTypedFloat(AnimationMember member, bool fullWeight, float weight)
+        {
+            if (!TryGetAnimatedFloat(member, out float animatedValue))
+                return false;
+
+            float value = animatedValue;
+            if (!fullWeight)
+            {
+                if (member.DefaultValue is not float defaultValue)
+                    return false;
+                value = Interp.Lerp(defaultValue, animatedValue, weight);
+            }
+
+            if (member.MemberType == EAnimationMemberType.Method && ShouldApplyRuntimeClipRemap(member.MemberName))
+            {
+                RestoreBaselineMethodArguments(member);
+                switch (member.MemberName)
+                {
+                    case "SetValue":
+                    case "SetImportedRawValue":
+                        RemapHumanoidMuscle(member, ref value);
+                        break;
+                    case "SetAnimatedIKPositionX":
+                    case "SetAnimatedIKPositionY":
+                    case "SetAnimatedIKPositionZ":
+                        RemapAnimatedIKPosition(member, ref value);
+                        break;
+                    case "SetAnimatedIKRotationX":
+                    case "SetAnimatedIKRotationY":
+                    case "SetAnimatedIKRotationZ":
+                    case "SetAnimatedIKRotationW":
+                        RemapAnimatedIKRotation(member, ref value);
+                        break;
+                }
+            }
+
+            return member.TryApplyFloat(value);
+        }
+
+        private bool TryApplyTypedBool(AnimationMember member, bool fullWeight, float weight)
+        {
+            if (!TryGetAnimatedBool(member, out bool animatedValue))
+                return false;
+
+            bool value = animatedValue;
+            if (!fullWeight)
+            {
+                if (member.DefaultValue is not bool defaultValue)
+                    return false;
+                value = weight > 0.5f ? animatedValue : defaultValue;
+            }
+
+            return member.TryApplyBool(value);
+        }
+
+        private bool TryApplyTypedVector2(AnimationMember member, bool fullWeight, float weight)
+        {
+            if (!TryGetAnimatedVector2(member, out Vector2 animatedValue))
+                return false;
+
+            Vector2 value = animatedValue;
+            if (!fullWeight)
+            {
+                if (member.DefaultValue is not Vector2 defaultValue)
+                    return false;
+                value = Vector2.Lerp(defaultValue, animatedValue, weight);
+            }
+
+            return member.TryApplyVector2(value);
+        }
+
+        private bool TryApplyTypedVector3(AnimationMember member, bool fullWeight, float weight)
+        {
+            if (!TryGetAnimatedVector3(member, out Vector3 animatedValue))
+                return false;
+
+            Vector3 value = animatedValue;
+            if (!fullWeight)
+            {
+                if (member.DefaultValue is not Vector3 defaultValue)
+                    return false;
+                value = Vector3.Lerp(defaultValue, animatedValue, weight);
+            }
+
+            if (member.MemberType == EAnimationMemberType.Method && ShouldApplyRuntimeClipRemap(member.MemberName) && member.MemberName == "SetAnimatedIKPosition")
+            {
+                RestoreBaselineMethodArguments(member);
+                RemapAnimatedIKPosition(member, ref value);
+            }
+
+            return member.TryApplyVector3(value);
+        }
+
+        private bool TryApplyTypedVector4(AnimationMember member, bool fullWeight, float weight)
+        {
+            if (!TryGetAnimatedVector4(member, out Vector4 animatedValue))
+                return false;
+
+            Vector4 value = animatedValue;
+            if (!fullWeight)
+            {
+                if (member.DefaultValue is not Vector4 defaultValue)
+                    return false;
+                value = Vector4.Lerp(defaultValue, animatedValue, weight);
+            }
+
+            return member.TryApplyVector4(value);
+        }
+
+        private bool TryApplyTypedQuaternion(AnimationMember member, bool fullWeight, float weight)
+        {
+            if (!TryGetAnimatedQuaternion(member, out Quaternion animatedValue))
+                return false;
+
+            Quaternion value = animatedValue;
+            if (!fullWeight)
+            {
+                if (member.DefaultValue is not Quaternion defaultValue)
+                    return false;
+                value = Quaternion.Slerp(defaultValue, animatedValue, weight);
+            }
+
+            if (member.MemberType == EAnimationMemberType.Method && ShouldApplyRuntimeClipRemap(member.MemberName) && member.MemberName == "SetAnimatedIKRotation")
+            {
+                RestoreBaselineMethodArguments(member);
+                RemapAnimatedIKRotation(member, ref value);
+            }
+
+            return member.TryApplyQuaternion(value);
+        }
+
+        private static bool TryGetAnimatedFloat(AnimationMember member, out float value)
+        {
+            switch (member.Animation)
+            {
+                case PropAnimFloat animation:
+                    value = animation.CurrentPosition;
+                    return true;
+                case PropAnimMethod<float> animation when TryGetMethodAnimationValue(animation, out value):
+                    return true;
+                default:
+                    value = default;
+                    return false;
+            }
+        }
+
+        private static bool TryGetAnimatedBool(AnimationMember member, out bool value)
+        {
+            switch (member.Animation)
+            {
+                case PropAnimBool animation:
+                    value = animation.GetValue(animation.CurrentTime);
+                    return true;
+                case PropAnimMethod<bool> animation when TryGetMethodAnimationValue(animation, out value):
+                    return true;
+                default:
+                    value = default;
+                    return false;
+            }
+        }
+
+        private static bool TryGetAnimatedVector2(AnimationMember member, out Vector2 value)
+        {
+            switch (member.Animation)
+            {
+                case PropAnimVector2 animation:
+                    value = animation.CurrentPosition;
+                    return true;
+                case PropAnimMethod<Vector2> animation when TryGetMethodAnimationValue(animation, out value):
+                    return true;
+                default:
+                    value = default;
+                    return false;
+            }
+        }
+
+        private static bool TryGetAnimatedVector3(AnimationMember member, out Vector3 value)
+        {
+            switch (member.Animation)
+            {
+                case PropAnimVector3 animation:
+                    value = animation.CurrentPosition;
+                    return true;
+                case PropAnimMethod<Vector3> animation when TryGetMethodAnimationValue(animation, out value):
+                    return true;
+                default:
+                    value = default;
+                    return false;
+            }
+        }
+
+        private static bool TryGetAnimatedVector4(AnimationMember member, out Vector4 value)
+        {
+            switch (member.Animation)
+            {
+                case PropAnimVector4 animation:
+                    value = animation.CurrentPosition;
+                    return true;
+                case PropAnimMethod<Vector4> animation when TryGetMethodAnimationValue(animation, out value):
+                    return true;
+                default:
+                    value = default;
+                    return false;
+            }
+        }
+
+        private static bool TryGetAnimatedQuaternion(AnimationMember member, out Quaternion value)
+        {
+            switch (member.Animation)
+            {
+                case PropAnimQuaternion animation:
+                    value = animation.CurrentValue;
+                    return true;
+                case PropAnimMethod<Quaternion> animation when TryGetMethodAnimationValue(animation, out value):
+                    return true;
+                default:
+                    value = default;
+                    return false;
+            }
+        }
+
+        private static bool TryGetMethodAnimationValue<T>(PropAnimMethod<T> animation, out T value)
+        {
+            if (animation.GetValue is { } getValue)
+            {
+                T? currentValue = getValue(animation.CurrentTime);
+                if (currentValue is T typedValue)
+                {
+                    value = typedValue;
+                    return true;
+                }
+            }
+
+            if (animation.DefaultValue is T defaultValue)
+            {
+                value = defaultValue;
+                return true;
+            }
+
+            value = default!;
+            return false;
+        }
+
+        private static bool RequiresRuntimeClipRemap(string memberName)
+            => memberName is "SetValue"
+            or "SetImportedRawValue"
+            or "SetAnimatedIKPosition"
+            or "SetAnimatedIKPositionX"
+            or "SetAnimatedIKPositionY"
+            or "SetAnimatedIKPositionZ"
+            or "SetAnimatedIKRotation"
+            or "SetAnimatedIKRotationX"
+            or "SetAnimatedIKRotationY"
+            or "SetAnimatedIKRotationZ"
+            or "SetAnimatedIKRotationW";
+
+        private bool ShouldApplyRuntimeClipRemap(string memberName)
+            => memberName switch
+            {
+                "SetValue" or "SetImportedRawValue"
+                    => FlipMuscleLeftRight || FlipMuscleZ,
+                "SetAnimatedIKPosition"
+                or "SetAnimatedIKPositionX"
+                or "SetAnimatedIKPositionY"
+                or "SetAnimatedIKPositionZ"
+                    => FlipIKPositionLeftRight || FlipIKPositionZ,
+                "SetAnimatedIKRotation"
+                or "SetAnimatedIKRotationX"
+                or "SetAnimatedIKRotationY"
+                or "SetAnimatedIKRotationZ"
+                or "SetAnimatedIKRotationW"
+                    => FlipIKRotationLeftRight || FlipIKRotationZ,
+                _ => false,
+            };
 
         private void RestoreBaselineMethodArguments(AnimationMember member)
         {
@@ -491,6 +817,23 @@ namespace XREngine.Components.Animation
             value = amount;
         }
 
+        private void RemapHumanoidMuscle(AnimationMember member, ref float value)
+        {
+            if (member.MethodArguments.Length == 0)
+                return;
+
+            object? muscleArg = member.MethodArguments[0];
+            if (!TryGetHumanoidValue(muscleArg, out var humanoidValue))
+                return;
+
+            if (FlipMuscleLeftRight)
+                humanoidValue = SwapHumanoidLeftRight(humanoidValue);
+
+            member.MethodArguments[0] = ConvertHumanoidArgumentType(muscleArg, humanoidValue);
+            if (string.Equals(member.MemberName, "SetImportedRawValue", StringComparison.Ordinal) && member.MethodArguments.Length > 2)
+                member.MethodArguments[2] = FlipMuscleZ;
+        }
+
         private void RemapAnimatedIKPosition(AnimationMember member, ref object? value)
         {
             if (member.MethodArguments.Length == 0)
@@ -510,6 +853,30 @@ namespace XREngine.Components.Animation
 
             if (value is float scalar && member.MemberName == "SetAnimatedIKPositionZ")
                 value = -scalar;
+        }
+
+        private void RemapAnimatedIKPosition(AnimationMember member, ref Vector3 value)
+        {
+            if (member.MethodArguments.Length == 0)
+                return;
+
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKPositionLeftRight)
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+
+            if (FlipIKPositionZ)
+                value = new Vector3(value.X, value.Y, -value.Z);
+        }
+
+        private void RemapAnimatedIKPosition(AnimationMember member, ref float value)
+        {
+            if (member.MethodArguments.Length == 0)
+                return;
+
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKPositionLeftRight)
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+
+            if (FlipIKPositionZ && member.MemberName == "SetAnimatedIKPositionZ")
+                value = -value;
         }
 
         private void RemapAnimatedIKRotation(AnimationMember member, ref object? value)
@@ -533,6 +900,30 @@ namespace XREngine.Components.Animation
                 value = -scalar;
         }
 
+        private void RemapAnimatedIKRotation(AnimationMember member, ref Quaternion value)
+        {
+            if (member.MethodArguments.Length == 0)
+                return;
+
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKRotationLeftRight)
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+
+            if (FlipIKRotationZ)
+                value = new Quaternion(-value.X, -value.Y, value.Z, value.W);
+        }
+
+        private void RemapAnimatedIKRotation(AnimationMember member, ref float value)
+        {
+            if (member.MethodArguments.Length == 0)
+                return;
+
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKRotationLeftRight)
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+
+            if (FlipIKRotationZ && (member.MemberName == "SetAnimatedIKRotationX" || member.MemberName == "SetAnimatedIKRotationY"))
+                value = -value;
+        }
+
         private static bool TryGetHumanoidValue(object? arg, out EHumanoidValue value)
         {
             switch (arg)
@@ -552,24 +943,29 @@ namespace XREngine.Components.Animation
         private static object ConvertHumanoidArgumentType(object? originalArg, EHumanoidValue value)
             => originalArg is int ? (int)value : value;
 
-        private static EHumanoidValue SwapHumanoidLeftRight(EHumanoidValue value)
-        {
-            string name = value.ToString();
-            if (name.StartsWith("Left", StringComparison.Ordinal))
-            {
-                string rightName = "Right" + name[4..];
-                if (Enum.TryParse(rightName, out EHumanoidValue rightValue))
-                    return rightValue;
-            }
-            else if (name.StartsWith("Right", StringComparison.Ordinal))
-            {
-                string leftName = "Left" + name[5..];
-                if (Enum.TryParse(leftName, out EHumanoidValue leftValue))
-                    return leftValue;
-            }
+        private static readonly Dictionary<EHumanoidValue, EHumanoidValue> _humanoidLeftRightSwapCache = BuildHumanoidLeftRightSwapCache();
 
-            return value;
+        private static Dictionary<EHumanoidValue, EHumanoidValue> BuildHumanoidLeftRightSwapCache()
+        {
+            var cache = new Dictionary<EHumanoidValue, EHumanoidValue>();
+            foreach (EHumanoidValue v in Enum.GetValues<EHumanoidValue>())
+            {
+                string name = v.ToString();
+                if (name.StartsWith("Left", StringComparison.Ordinal))
+                {
+                    string rightName = "Right" + name[4..];
+                    if (Enum.TryParse(rightName, out EHumanoidValue rightValue))
+                    {
+                        cache[v] = rightValue;
+                        cache[rightValue] = v;
+                    }
+                }
+            }
+            return cache;
         }
+
+        private static EHumanoidValue SwapHumanoidLeftRight(EHumanoidValue value)
+            => _humanoidLeftRightSwapCache.TryGetValue(value, out var swapped) ? swapped : value;
 
         private static bool TryGetLimbGoal(object? arg, out ELimbEndEffector goal)
         {
@@ -633,23 +1029,27 @@ namespace XREngine.Components.Animation
         private static long GetInitialPlaybackTicks(AnimationClip clip, float speed)
             => speed < 0.0f ? GetClipLengthTicks(clip) : 0L;
 
-        private static void StartAllPropertyAnimations(AnimationClip clip, long initialTimeTicks)
+        private void StartAllPropertyAnimations(AnimationClip clip, long initialTimeTicks)
         {
-            foreach (var anim in clip.GetAllAnimations().Values)
+            var animations = _propertyAnimationsSnapshot;
+            for (int i = 0; i < animations.Length; i++)
             {
+                var anim = animations[i];
                 anim.Looped = clip.Looped;
                 anim.Start();
                 anim.Seek(initialTimeTicks, wrapLooped: false);
             }
         }
 
-        private static void SetAllPropertyAnimationTimes(AnimationClip clip, float timeSeconds, bool wrapLooped)
+        private void SetAllPropertyAnimationTimes(AnimationClip clip, float timeSeconds, bool wrapLooped)
             => SetAllPropertyAnimationTimes(clip, SecondsToStopwatchTicks(timeSeconds), wrapLooped);
 
-        private static void SetAllPropertyAnimationTimes(AnimationClip clip, long timeTicks, bool wrapLooped)
+        private void SetAllPropertyAnimationTimes(AnimationClip clip, long timeTicks, bool wrapLooped)
         {
-            foreach (var anim in clip.GetAllAnimations().Values)
+            var animations = _propertyAnimationsSnapshot;
+            for (int i = 0; i < animations.Length; i++)
             {
+                var anim = animations[i];
                 anim.Looped = clip.Looped;
                 if (anim.State == EAnimationState.Stopped)
                     anim.Start();
@@ -674,7 +1074,8 @@ namespace XREngine.Components.Animation
         private void SetPlaybackTimeTicks(long playbackTimeTicks)
         {
             _playbackTimeTicks = Math.Max(0L, playbackTimeTicks);
-            PlaybackTime = StopwatchTicksToSeconds(_playbackTimeTicks);
+            // Bypass SetField — PlaybackTime fires change notifications every frame for no subscribers.
+            _playbackTime = StopwatchTicksToSeconds(_playbackTimeTicks);
         }
 
         private static long GetClipLengthTicks(AnimationClip clip)
@@ -706,10 +1107,14 @@ namespace XREngine.Components.Animation
             return wrappedTicks;
         }
 
-        private static void StopAllPropertyAnimations(AnimationClip clip)
+        private void StopAllPropertyAnimations(AnimationClip clip)
         {
-            foreach (var anim in clip.GetAllAnimations().Values)
+            var animations = _propertyAnimationsSnapshot;
+            for (int i = 0; i < animations.Length; i++)
+            {
+                var anim = animations[i];
                 anim.Stop();
+            }
         }
 
         protected override void OnComponentActivated()

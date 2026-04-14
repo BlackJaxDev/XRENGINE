@@ -62,39 +62,149 @@ namespace XREngine.Animation
         [MemoryPackIgnore]
         private readonly object _animationValuesLock = new();
 
+        /// <summary>
+        /// Typed value store for this state machine, sized to the slot layout.
+        /// </summary>
+        [MemoryPackIgnore]
+        internal AnimationValueStore ValueStore { get; } = new();
+
+        /// <summary>
+        /// Shared slot layout describing the number of slots per type.
+        /// Built during <see cref="Initialize"/> after all curves are registered.
+        /// </summary>
+        [MemoryPackIgnore]
+        internal AnimationSlotLayout? SlotLayout { get; private set; }
+
+        /// <summary>
+        /// Dense array of all unique animated members, built during slot assignment.
+        /// Used for O(1) iteration in <see cref="ApplyAnimationValues"/>.
+        /// </summary>
+        [MemoryPackIgnore]
+        private AnimationMember[] _animatedMembersArray = [];
+
         public void Initialize(object? rootObject)
         {
             foreach (var layer in Layers)
                 layer?.Initialize(this, rootObject);
+
+            // After all motions are initialized and _animatedCurves is fully populated,
+            // assign dense slot indices and size all typed stores.
+            AssignSlots();
+        }
+
+        /// <summary>
+        /// Builds the slot layout from all registered animated curves, assigns a dense typed slot
+        /// to each unique AnimationMember, and sizes every store in the tree.
+        /// </summary>
+        private void AssignSlots()
+        {
+            var layout = new AnimationSlotLayout();
+            var uniqueMembers = new HashSet<AnimationMember>();
+
+            // Pass 1: assign slots to each unique member
+            foreach (var kvp in _animatedCurves)
+            {
+                var member = kvp.Value;
+                if (!uniqueMembers.Add(member))
+                    continue; // Already assigned
+
+                var type = member.DetermineValueType();
+                member.Slot = layout.AllocateSlot(type);
+            }
+
+            SlotLayout = layout;
+
+            // Build dense member array for ApplyAnimationValues
+            _animatedMembersArray = [.. uniqueMembers];
+
+            // Size our own store
+            ValueStore.Resize(layout);
+
+            // Propagate layout to all layers and all motions in the tree
+            foreach (var layer in Layers)
+            {
+                if (layer is null)
+                    continue;
+
+                layer.SlotLayout = layout;
+                layer.ValueStore.Resize(layout);
+
+                foreach (var state in layer.States)
+                    PropagateLayoutToMotion(state?.Motion, layout);
+            }
+        }
+
+        private static void PropagateLayoutToMotion(MotionBase? motion, AnimationSlotLayout layout)
+        {
+            if (motion is null)
+                return;
+
+            motion.SlotLayout = layout;
+            motion.ValueStore.Resize(layout);
+            motion.AnimatedMembersArray = [.. motion.AnimatedCurves.Values.Distinct()];
+
+            // Recurse into blend tree children
+            switch (motion)
+            {
+                case BlendTree1D bt1d:
+                    foreach (var child in bt1d.Children)
+                        PropagateLayoutToMotion(child.Motion, layout);
+                    break;
+                case BlendTree2D bt2d:
+                    foreach (var child in bt2d.Children)
+                        PropagateLayoutToMotion(child.Motion, layout);
+                    break;
+                case BlendTreeDirect btd:
+                    foreach (var child in btd.Children)
+                        PropagateLayoutToMotion(child.Motion, layout);
+                    break;
+            }
         }
 
         public void Deinitialize()
         {
             foreach (var layer in Layers)
                 layer?.Deinitialize();
+
+            SlotLayout = null;
+            _animatedMembersArray = [];
         }
 
         public void ResetAnimatedState()
         {
-            var restoredMembers = new HashSet<AnimationMember>();
-            foreach (var member in _animatedCurves.Values)
+            // Restore default values via typed store
+            if (SlotLayout is not null)
             {
-                if (!restoredMembers.Add(member))
-                    continue;
+                foreach (var member in _animatedMembersArray)
+                    member.ApplyAnimationValue(member.DefaultValue);
 
-                member.ApplyAnimationValue(member.DefaultValue);
+                ValueStore.Clear();
+                foreach (var layer in Layers)
+                {
+                    if (layer is null) continue;
+                    layer.ValueStore.Clear();
+                }
             }
-
-            lock (_animationValuesLock)
-                _animationValues.Clear();
-
-            foreach (var layer in Layers)
+            else
             {
-                if (layer is null)
-                    continue;
+                // Legacy path
+                var restoredMembers = new HashSet<AnimationMember>();
+                foreach (var member in _animatedCurves.Values)
+                {
+                    if (!restoredMembers.Add(member))
+                        continue;
+                    member.ApplyAnimationValue(member.DefaultValue);
+                }
 
-                lock (layer._animationValuesLock)
-                    layer._animatedValues.Clear();
+                lock (_animationValuesLock)
+                    _animationValues.Clear();
+
+                foreach (var layer in Layers)
+                {
+                    if (layer is null) continue;
+                    lock (layer._animationValuesLock)
+                        layer._animatedValues.Clear();
+                }
             }
         }
 
@@ -122,16 +232,25 @@ namespace XREngine.Animation
 
         private void CombineAnimationValues(AnimLayer layer)
         {
-            //Merge animation paths from the last layer into this layer
-            // Take a snapshot of keys to avoid concurrent modification
+            // Typed store path: single bulk operation, no locks, no string hashing
+            if (SlotLayout is not null && layer.SlotLayout is not null)
+            {
+                bool additive = layer.ApplyType == EApplyType.Additive;
+                if (additive)
+                    ValueStore.AddFrom(layer.ValueStore);
+                else
+                    ValueStore.OverrideFrom(layer.ValueStore);
+                return;
+            }
+
+            // Legacy path: snapshot keys, merge with locks
             string[] currLayerKeys;
             lock (layer._animationValuesLock)
             {
                 currLayerKeys = [.. layer._animatedValues.Keys];
             }
 
-            //First layer is always the initial setter, can't be additive
-            bool additive = layer.ApplyType == EApplyType.Additive;
+            bool additiveLegacy = layer.ApplyType == EApplyType.Additive;
 
             lock (_animationValuesLock)
             {
@@ -144,10 +263,9 @@ namespace XREngine.Animation
                             continue;
                     }
 
-                    //Does the value already exist?
                     if (_animationValues.TryGetValue(key, out object? currentValue))
                     {
-                        _animationValues[key] = additive
+                        _animationValues[key] = additiveLegacy
                             ? AddValues(currentValue, layerValue)
                             : layerValue;
                     }
@@ -166,11 +284,20 @@ namespace XREngine.Animation
             Vector3 currentVector when layerValue is Vector3 layerVector => currentVector + layerVector,
             Vector4 currentVector4 when layerValue is Vector4 layerVector4 => currentVector4 + layerVector4,
             Quaternion currentQuaternion when layerValue is Quaternion layerQuaternion => currentQuaternion * layerQuaternion,
-            _ => currentValue, //Discrete value, just override it
+            _ => currentValue,
         };
 
         public void ApplyAnimationValues()
         {
+            // Typed store path: iterate dense member array, apply from store (no boxing, no string lookup)
+            if (SlotLayout is not null)
+            {
+                foreach (var member in _animatedMembersArray)
+                    member.ApplyFromStore(ValueStore);
+                return;
+            }
+
+            // Legacy path
             KeyValuePair<string, object?>[] snapshot;
             lock (_animationValuesLock)
             {

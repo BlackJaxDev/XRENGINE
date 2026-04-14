@@ -725,12 +725,6 @@ namespace XREngine.Rendering
             using var profilerScope = Engine.Profiler.Start("WorldInstance.PostUpdate");
 
             var loopType = Engine.Rendering.Settings.RecalcChildMatricesLoopType;
-            Func<IEnumerable<TransformBase>, Task> recalcDepth = loopType switch
-            {
-                ELoopType.Asynchronous => RecalcTransformDepthAsync,
-                ELoopType.Parallel => RecalcTransformDepthParallel,
-                _ => RecalcTransformDepthSequential,
-            };
 
             //Sequentially iterate through each depth of modified transforms, in order
             //This will set each transforms' WorldMatrix, which will push it into the _pushToRenderWrite queue
@@ -742,7 +736,7 @@ namespace XREngine.Rendering
                 {
                     if (_invalidTransforms.TryGetValue(depth, out var bag) && bag.Count > 0)
                     {
-                        recalcDepth(bag).Wait();
+                        RecalcTransformDepth(bag, loopType);
                         bag.Clear();
                     }
                 }
@@ -767,37 +761,38 @@ namespace XREngine.Rendering
 
         public event Action<XRWorldInstance, TransformBase, Matrix4x4>? AnyTransformWorldMatrixChanged;
 
-        private static async Task RecalcTransformDepthSequential(IEnumerable<TransformBase> bag)
-        {
-            foreach (var transform in bag)
-                await transform.RecalculateMatrixHierarchy(true, false, ELoopType.Sequential);
-        }
-
         /// <summary>
-        /// Recalculates the transform matrices of all transforms in the bag.
-        /// A bag represents one level of transformations at a certain depth, so all transforms do not depend on one another.
+        /// Dispatches transform recalculation for a bag of dirty transforms, using the requested loop type.
+        /// Avoids per-frame delegate allocation and LINQ iterator overhead from the previous Func-based approach.
         /// </summary>
-        /// <param name="bag"></param>
-        /// <returns></returns>
-        private static Task RecalcTransformDepthAsync(IEnumerable<TransformBase> bag)
-            => Task.WhenAll(bag.Select(tfm => tfm.RecalculateMatrixHierarchy(
-                forceWorldRecalc: true,
-                setRenderMatrixNow: false,
-                childRecalcType: ELoopType.Asynchronous)));
-
-        private static Task RecalcTransformDepthParallel(IEnumerable<TransformBase> bag)
+        private static void RecalcTransformDepth(ConcurrentHashSet<TransformBase> bag, ELoopType loopType)
         {
-            if (!bag.Any())
-                return Task.CompletedTask;
-
-            Parallel.ForEach(bag, tfm =>
-                tfm.RecalculateMatrixHierarchy(
-                    forceWorldRecalc: true,
-                    setRenderMatrixNow: false,
-                    childRecalcType: ELoopType.Parallel)
-                .GetAwaiter().GetResult());
-
-            return Task.CompletedTask;
+            switch (loopType)
+            {
+                case ELoopType.Asynchronous:
+                {
+                    // Collect tasks without LINQ .Select() to avoid iterator allocations.
+                    var tasks = new List<Task>(bag.Count);
+                    foreach (var tfm in bag)
+                        tasks.Add(tfm.RecalculateMatrixHierarchy(true, false, ELoopType.Asynchronous));
+                    Task.WhenAll(tasks).Wait();
+                    break;
+                }
+                case ELoopType.Parallel:
+                {
+                    Parallel.ForEach(bag, tfm =>
+                        tfm.RecalculateMatrixHierarchy(true, false, ELoopType.Parallel)
+                            .GetAwaiter().GetResult());
+                    break;
+                }
+                default:
+                {
+                    foreach (var transform in bag)
+                        transform.RecalculateMatrixHierarchy(true, false, ELoopType.Sequential)
+                            .GetAwaiter().GetResult();
+                    break;
+                }
+            }
         }
 
         private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderWrite = new();

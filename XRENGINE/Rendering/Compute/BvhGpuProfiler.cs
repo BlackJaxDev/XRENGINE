@@ -240,10 +240,10 @@ namespace XREngine.Rendering.Compute
                 query = _queryPool.Count > 0 ? _queryPool.Dequeue() : new XRRenderQuery();
 
             query.CurrentQuery = EQueryTarget.Timestamp;
-            query.Generate();
-
             GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query)
                 ?? throw new InvalidOperationException("Failed to acquire GLRenderQuery wrapper.");
+            if (!glQuery.IsGenerated)
+                glQuery.Generate();
             glQuery.Data.CurrentQuery = EQueryTarget.Timestamp;
             return glQuery;
         }

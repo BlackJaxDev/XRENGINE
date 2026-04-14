@@ -685,12 +685,27 @@ namespace XREngine.Components.Lights
             EnsureCascadeShadowResources();
         }
 
+        private bool ShouldCollectPrimaryShadowViewport()
+        {
+            if (ShadowMap is null)
+                return false;
+
+            if (!EnableCascadedShadows || CascadedShadowMapTexture is null || ActiveCascadeCount <= 0)
+                return true;
+
+            XRWorldInstance? world = WorldAs<XRWorldInstance>();
+            if (world is null)
+                return true;
+
+            return world.Lights.NeedsPrimaryDirectionalShadowMap();
+        }
+
         public override void CollectVisibleItems()
         {
             if (!CastsShadows)
                 return;
 
-            if (ShadowMap is not null)
+            if (ShouldCollectPrimaryShadowViewport())
                 _viewport.CollectVisible(false);
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
@@ -704,7 +719,7 @@ namespace XREngine.Components.Lights
             if (!CastsShadows)
                 return;
 
-            if (ShadowMap is not null)
+            if (ShouldCollectPrimaryShadowViewport())
                 _viewport.SwapBuffers();
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
@@ -726,17 +741,20 @@ namespace XREngine.Components.Lights
                 SwapBuffers();
             }
 
-            if (ShadowMap is not null)
-                _viewport.Render(ShadowMap, null, null, true, ShadowMap.Material);
+            var shadowMap = ShadowMap;
+            XRMaterial? shadowMaterial = shadowMap?.Material;
 
-            if (ShadowMap?.Material is null)
+            if (ShouldCollectPrimaryShadowViewport() && shadowMap is not null && shadowMaterial is not null)
+                _viewport.Render(shadowMap, null, null, true, shadowMaterial);
+
+            if (shadowMaterial is null)
                 return;
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             XRFrameBuffer[] cascadeShadowFrameBuffers = _cascadeShadowFrameBuffers;
             int cascadeCount = GetPublishedCascadeRenderCount(cascadeShadowViewports, cascadeShadowFrameBuffers);
             for (int i = 0; i < cascadeCount; i++)
-                cascadeShadowViewports[i].Render(cascadeShadowFrameBuffers[i], null, null, true, ShadowMap.Material);
+                cascadeShadowViewports[i].Render(cascadeShadowFrameBuffers[i], null, null, true, shadowMaterial);
         }
     }
 }

@@ -663,26 +663,41 @@ public static partial class EditorImGuiUI
             float availableWidth = Math.Max(1.0f, ImGui.GetContentRegionAvail().X);
             float spacing = ImGui.GetStyle().ItemSpacing.X;
             int columns = Math.Max(1, (int)MathF.Floor((availableWidth + spacing) / (tileWidth + spacing)));
+            int rowCount = (entries.Count + columns - 1) / columns;
+            float rowHeight = tileHeight + ImGui.GetStyle().ItemSpacing.Y;
 
-            int columnIndex = 0;
-            for (int i = 0; i < entries.Count; i++)
+            bool directoryChanged = false;
+            unsafe
             {
-                var entry = entries[i];
-                if (DrawAssetExplorerTile(state, entry, tileWidth, tileHeight, previewEdge, labelHeight, padding))
-                    return true;
+                var clipper = new ImGuiListClipper();
+                ImGuiNative.ImGuiListClipper_Begin(&clipper, rowCount, rowHeight);
+                while (!directoryChanged && ImGuiNative.ImGuiListClipper_Step(&clipper) != 0)
+                {
+                    for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; row++)
+                    {
+                        int startIndex = row * columns;
+                        int endIndex = Math.Min(startIndex + columns, entries.Count);
+                        for (int entryIndex = startIndex; entryIndex < endIndex; entryIndex++)
+                        {
+                            if (DrawAssetExplorerTile(state, entries[entryIndex], tileWidth, tileHeight, previewEdge, labelHeight, padding))
+                            {
+                                directoryChanged = true;
+                                break;
+                            }
 
-                columnIndex++;
-                if (columnIndex < columns)
-                {
-                    ImGui.SameLine(0f, spacing);
+                            if (entryIndex + 1 < endIndex)
+                                ImGui.SameLine(0f, spacing);
+                        }
+
+                        if (directoryChanged)
+                            break;
+                    }
                 }
-                else
-                {
-                    columnIndex = 0;
-                }
+
+                ImGuiNative.ImGuiListClipper_End(&clipper);
             }
 
-            return false;
+            return directoryChanged;
         }
 
         private static bool DrawAssetExplorerTile(AssetExplorerTabState state, AssetExplorerEntry entry, float tileWidth, float tileHeight, float previewEdge, float labelHeight, float padding)

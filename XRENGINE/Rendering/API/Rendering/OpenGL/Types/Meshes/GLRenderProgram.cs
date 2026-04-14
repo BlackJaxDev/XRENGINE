@@ -10,6 +10,7 @@ using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders;
 using static XREngine.Rendering.XRRenderProgram;
 
@@ -38,16 +39,30 @@ namespace XREngine.Rendering.OpenGL
             private readonly ConcurrentDictionary<int, string> _locationNameCache = new();
             private readonly ConcurrentDictionary<string, UniformInfo> _uniformMetadata = new();
             private readonly ConcurrentDictionary<string, byte> _loggedUniformMismatches = new();
-            private readonly ConcurrentDictionary<int, byte> _boundSamplerLocations = new();
-            private readonly ConcurrentDictionary<int, byte> _boundSamplerUnits = new();
-            private readonly ConcurrentDictionary<string, byte> _boundSamplerNames = new(StringComparer.Ordinal);
-            private readonly ConcurrentDictionary<string, byte> _suppressedFallbackSamplerNames = new(StringComparer.Ordinal);
+
+            // Binding-batch sampler tracking is scoped to the active draw on the render thread.
+            private readonly HashSet<int> _boundSamplerLocations = [];
+            private readonly HashSet<int> _boundSamplerUnits = [];
+            private readonly HashSet<string> _boundSamplerNames = new(StringComparer.Ordinal);
+            private readonly HashSet<string> _suppressedFallbackSamplerNames = new(StringComparer.Ordinal);
 
             private int _uniformBindingAttempts;
             private int _uniformBindings;
             private int _samplerBindingAttempts;
             private int _samplerBindings;
             private readonly ConcurrentDictionary<string, byte> _loggedEmptyBindingBatches = new();
+            private ulong _engineUniformFrameId = ulong.MaxValue;
+            private EUniformRequirements _engineUniformRequirements = EUniformRequirements.None;
+            private XRRenderPipelineInstance? _engineUniformPipeline;
+            private XRCamera? _engineUniformCamera;
+            private XRCamera? _engineUniformStereoRightEyeCamera;
+            private XRWorldInstance? _engineUniformWorld;
+            private bool _engineUniformStereoPass;
+            private bool _engineUniformUseUnjitteredProjection;
+            private int _engineUniformRenderAreaX;
+            private int _engineUniformRenderAreaY;
+            private int _engineUniformRenderAreaWidth;
+            private int _engineUniformRenderAreaHeight;
 
             private readonly ConcurrentBag<string> _failedAttributes = [];
             private readonly ConcurrentDictionary<string, byte> _failedUniforms = new();
@@ -116,12 +131,8 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
-            internal int[] GetBoundSamplerUnitsSnapshot()
-            {
-                int[] units = [.. _boundSamplerUnits.Keys];
-                Array.Sort(units);
-                return units;
-            }
+            internal IReadOnlyCollection<int> GetBoundSamplerUnitsView()
+                => _boundSamplerUnits;
 
             private void CacheUniformLocation(string name)
             {
@@ -233,6 +244,7 @@ namespace XREngine.Rendering.OpenGL
                 _uniformBindings = 0;
                 _samplerBindingAttempts = 0;
                 _samplerBindings = 0;
+                ResetEngineUniformBindingState();
                 _explicitAttributeLocationsResolved = false;
             }
 

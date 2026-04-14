@@ -34,6 +34,48 @@ namespace XREngine.Scene
         private static bool ViewportPrefersCascadedDirectionalShadows(XRViewport viewport)
             => viewport.CameraComponent is { DirectionalShadowRenderingMode: EDirectionalShadowRenderingMode.Cascaded };
 
+        private bool HasActiveCascadedDirectionalShadowViewport()
+        {
+            bool Matches(XRViewport? viewport)
+                => viewport is not null
+                    && ReferenceEquals(viewport.World, World)
+                    && !viewport.Suppress3DSceneRendering
+                    && viewport.ActiveCamera is not null
+                    && ViewportPrefersCascadedDirectionalShadows(viewport);
+
+            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+                if (Matches(viewport))
+                    return true;
+
+            return Matches(Engine.VRState.LeftEyeViewport) || Matches(Engine.VRState.RightEyeViewport);
+        }
+
+        internal bool NeedsPrimaryDirectionalShadowMap()
+        {
+            bool sawRelevantViewport = false;
+
+            bool PrefersPrimary(XRViewport? viewport)
+            {
+                if (viewport is null ||
+                    !ReferenceEquals(viewport.World, World) ||
+                    viewport.Suppress3DSceneRendering ||
+                    viewport.ActiveCamera is null)
+                    return false;
+
+                sawRelevantViewport = true;
+                return !ViewportPrefersCascadedDirectionalShadows(viewport);
+            }
+
+            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+                if (PrefersPrimary(viewport))
+                    return true;
+
+            if (PrefersPrimary(Engine.VRState.LeftEyeViewport) || PrefersPrimary(Engine.VRState.RightEyeViewport))
+                return true;
+
+            return !sawRelevantViewport;
+        }
+
         private XRCamera? ResolveDirectionalShadowSourceCamera()
         {
             XRCamera? fallback = null;
@@ -80,14 +122,17 @@ namespace XREngine.Scene
 
         private void PrepareDirectionalShadowMaps()
         {
-            XRCamera? cascadeCamera = ResolveDirectionalShadowSourceCamera();
+            bool wantsCascades = HasActiveCascadedDirectionalShadowViewport();
+            XRCamera? cascadeCamera = wantsCascades ? ResolveDirectionalShadowSourceCamera() : null;
 
-            foreach (DirectionalLightComponent light in DynamicDirectionalLights)
+            int lightCount = DynamicDirectionalLights.Count;
+            for (int i = 0; i < lightCount; i++)
             {
+                DirectionalLightComponent light = DynamicDirectionalLights[i];
                 if (!light.IsActiveInHierarchy)
                     continue;
 
-                if (cascadeCamera is not null && light.CastsShadows && light.EnableCascadedShadows)
+                if (wantsCascades && cascadeCamera is not null && light.CastsShadows && light.EnableCascadedShadows)
                     light.UpdateCascadeShadows(cascadeCamera);
                 else
                     light.ClearCascadeShadows();

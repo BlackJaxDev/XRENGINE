@@ -358,8 +358,11 @@ namespace XREngine.Components
             }
 
             // This node is clean, but children might be dirty. Walk them.
-            foreach (var child in root.Children)
-                RecalculateDirtyMatrices(child);
+            // Use index-based iteration to avoid EventList snapshot allocation (ThreadSafe=true).
+            var children = root.Children;
+            int count = children.Count;
+            for (int i = 0; i < count; i++)
+                RecalculateDirtyMatrices(children[i]);
         }
 
         //private int _screenCollectDiagCount = 0;

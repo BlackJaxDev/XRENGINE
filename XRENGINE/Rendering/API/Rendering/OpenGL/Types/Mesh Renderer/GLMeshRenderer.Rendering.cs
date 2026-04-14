@@ -229,7 +229,7 @@ namespace XREngine.Rendering.OpenGL
                         materialProgram.Data.Name,
                         material.Data.Name,
                         Mesh?.Name,
-                        materialProgram.GetBoundSamplerUnitsSnapshot());
+                        materialProgram.GetBoundSamplerUnitsView());
 
                     try
                     {

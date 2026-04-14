@@ -85,7 +85,7 @@ namespace XREngine
                 set => SetField(ref _threadHistoryCapacity, Math.Clamp(value, 2, 10_000));
             }
 
-            private int _maxOverflowPerCycle = 2_000;
+            private int _maxOverflowPerCycle = 8_000;
             public int MaxOverflowPerCycle
             {
                 get => _maxOverflowPerCycle;
@@ -143,6 +143,7 @@ namespace XREngine
             private readonly List<ThreadProducerBuffer> _producerBuffers = [];
             private readonly List<ThreadProducerBuffer> _producerDrainScratch = new(8);
             private readonly ConcurrentQueue<CompletedScopeEvent> _overflowCompletedEvents = new();
+            private long _lastOverflowWarningTicks;
             private readonly ConcurrentDictionary<int, AsyncPendingTimer> _pendingAsyncTimers = [];
 
             private Thread? _statsThread;
@@ -496,8 +497,17 @@ namespace XREngine
 
                 if (_overflowCompletedEvents.Count > MaxOverflowQueueSize)
                 {
-                    while (_overflowCompletedEvents.TryDequeue(out _)) { }
-                    Debug.LogWarning("Profiler overflow queue exceeded capacity; stale events discarded.");
+                    int discarded = 0;
+                    while (_overflowCompletedEvents.TryDequeue(out _))
+                        discarded++;
+
+                    // Rate-limit the warning to at most once per 10 seconds
+                    long nowTicks = Environment.TickCount64;
+                    if (nowTicks - _lastOverflowWarningTicks >= 10_000)
+                    {
+                        _lastOverflowWarningTicks = nowTicks;
+                        Debug.LogWarning($"Profiler overflow queue exceeded capacity ({discarded} stale events discarded).");
+                    }
                 }
 
                 return processed;
@@ -677,7 +687,19 @@ namespace XREngine
                     builder.Append("DropPercent: ").Append((dropFraction * 100.0f).ToString("F1")).AppendLine();
                     builder.Append("HotPathMs: ").Append(hotPathMs.ToString("F3")).AppendLine();
                     builder.Append("HotPath: ").Append(hotPath).AppendLine();
+
+                    if (hotPath.Contains("WaitForRender", StringComparison.Ordinal)
+                        && TryGetLikelyBlockingThread(frame.Threads, thread.ThreadId, out var blockingThread))
+                    {
+                        string blockingHotPath = GetHottestPath(blockingThread.RootNodes, out float blockingHotPathMs);
+                        builder.Append("LikelyBlockingThreadId: ").Append(blockingThread.ThreadId).AppendLine();
+                        builder.Append("LikelyBlockingThreadTotalTimeMs: ").Append(blockingThread.TotalTimeMs.ToString("F3")).AppendLine();
+                        builder.Append("LikelyBlockingHotPathMs: ").Append(blockingHotPathMs.ToString("F3")).AppendLine();
+                        builder.Append("LikelyBlockingHotPath: ").Append(blockingHotPath).AppendLine();
+                    }
+
                     AppendTopRootTimings(builder, thread.RootNodes, 5);
+                    AppendTopFrameThreads(builder, frame.Threads, thread.ThreadId, 5);
                     AppendTopComponentTimings(builder, frame.ComponentTimings?.Components, 5);
                     Debug.WriteAuxiliaryLog("profiler-fps-drops.log", builder.ToString());
                 }
@@ -701,6 +723,53 @@ namespace XREngine
                     ProfilerNodeSnapshot root = rankedRoots[i];
                     builder.Append("  ").Append(i + 1).Append(". ").Append(root.Name).Append(" = ").Append(root.ElapsedMs.ToString("F3")).AppendLine(" ms");
                 }
+            }
+
+            private static void AppendTopFrameThreads(StringBuilder builder, IReadOnlyList<ProfilerThreadSnapshot> threads, int currentThreadId, int maxCount)
+            {
+                if (threads.Count == 0)
+                    return;
+
+                var rankedThreads = new List<ProfilerThreadSnapshot>(threads.Count);
+                for (int i = 0; i < threads.Count; i++)
+                    rankedThreads.Add(threads[i]);
+
+                rankedThreads.Sort(static (left, right) => right.TotalTimeMs.CompareTo(left.TotalTimeMs));
+
+                builder.AppendLine("FrameTopThreads:");
+                int count = Math.Min(maxCount, rankedThreads.Count);
+                for (int i = 0; i < count; i++)
+                {
+                    ProfilerThreadSnapshot thread = rankedThreads[i];
+                    string hotPath = GetHottestPath(thread.RootNodes, out float hotPathMs);
+                    builder.Append("  ").Append(i + 1).Append(". Thread ").Append(thread.ThreadId);
+                    if (thread.ThreadId == currentThreadId)
+                        builder.Append(" (current)");
+                    builder.Append(" total=").Append(thread.TotalTimeMs.ToString("F3"));
+                    builder.Append(" ms hot=").Append(hotPathMs.ToString("F3")).Append(" ms ");
+                    builder.Append(hotPath).AppendLine();
+                }
+            }
+
+            private static bool TryGetLikelyBlockingThread(IReadOnlyList<ProfilerThreadSnapshot> threads, int currentThreadId, out ProfilerThreadSnapshot blockingThread)
+            {
+                blockingThread = null!;
+                float bestTotalMs = float.MinValue;
+
+                for (int i = 0; i < threads.Count; i++)
+                {
+                    ProfilerThreadSnapshot candidate = threads[i];
+                    if (candidate.ThreadId == currentThreadId)
+                        continue;
+
+                    if (candidate.TotalTimeMs > bestTotalMs)
+                    {
+                        bestTotalMs = candidate.TotalTimeMs;
+                        blockingThread = candidate;
+                    }
+                }
+
+                return bestTotalMs > float.MinValue;
             }
 
             private static void AppendTopComponentTimings(StringBuilder builder, IReadOnlyList<ProfilerComponentTimingSnapshot>? components, int maxCount)

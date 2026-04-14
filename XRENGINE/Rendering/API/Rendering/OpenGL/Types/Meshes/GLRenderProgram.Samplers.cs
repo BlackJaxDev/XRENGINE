@@ -14,12 +14,12 @@ namespace XREngine.Rendering.OpenGL
                 if (string.IsNullOrWhiteSpace(name))
                     return;
 
-                _boundSamplerNames[name] = 1;
+                _boundSamplerNames.Add(name);
                 if (name.EndsWith("[0]", StringComparison.Ordinal))
                 {
                     string baseName = name[..^3];
                     if (!string.IsNullOrWhiteSpace(baseName))
-                        _boundSamplerNames[baseName] = 1;
+                        _boundSamplerNames.Add(baseName);
                 }
             }
 
@@ -98,11 +98,11 @@ namespace XREngine.Rendering.OpenGL
             {
                 // Even if the uniform location is invalid (-1), we still want the GL state
                 // to have the texture bound at the requested unit for layout(binding=) samplers.
-                _boundSamplerUnits[textureUnit] = 1;
+                _boundSamplerUnits.Add(textureUnit);
                 bool canBindUniform = MarkSamplerBinding(location);
 
                 if (location >= 0)
-                    _boundSamplerLocations[location] = 1;
+                    _boundSamplerLocations.Add(location);
 
                 texture.PreSampling();
                 Renderer.SetActiveTextureUnit(textureUnit);

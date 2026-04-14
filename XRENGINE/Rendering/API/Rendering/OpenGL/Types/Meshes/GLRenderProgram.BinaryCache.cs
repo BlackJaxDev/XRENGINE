@@ -196,7 +196,7 @@ namespace XREngine.Rendering.OpenGL
                 if (binaryCache is null)
                     return;
 
-                binaryCache.TryAdd(Hash, bin);
+                binaryCache[Hash] = bin;
                 WriteToBinaryShaderCache(bin);
             }
 
@@ -206,6 +206,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private string ResolveSourceForCompilation(XRShader shader)
             {
+                using var sample = Engine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForCompilation");
                 if (shader is null)
                     return string.Empty;
 
@@ -224,6 +225,7 @@ namespace XREngine.Rendering.OpenGL
 
             private string ResolveSourceForHash(GLShader shader)
             {
+                using var sample = Engine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForHash");
                 if (shader is null)
                     return string.Empty;
 

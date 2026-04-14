@@ -434,10 +434,10 @@ internal sealed class RenderPipelineGpuProfiler
             query = _queryPool.Count > 0 ? _queryPool.Dequeue() : new XRRenderQuery();
 
         query.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
-        query.Generate();
-
         GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query)
             ?? throw new InvalidOperationException("Failed to create OpenGL render query wrapper for GPU profiling.");
+        if (!glQuery.IsGenerated)
+            glQuery.Generate();
         glQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
         return glQuery;
     }
