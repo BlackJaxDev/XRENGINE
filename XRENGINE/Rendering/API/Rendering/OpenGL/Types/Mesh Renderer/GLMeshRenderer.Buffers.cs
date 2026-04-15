@@ -10,6 +10,12 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLMeshRenderer
         {
+            private const uint MaxTrackedVertexAttribs = 16u;
+            private const uint ComputeInterleavedBinding = 9u;
+            private const uint ComputePositionBinding = 11u;
+            private const uint ComputeNormalBinding = 12u;
+            private const uint ComputeTangentBinding = 15u;
+
             /// <summary>
             /// Swap triangle index buffer and mark bindings dirty.
             /// </summary>
@@ -97,6 +103,12 @@ namespace XREngine.Rendering.OpenGL
                     _bufferCache.Remove(ECommonBufferType.BoneMatrixCount.ToString());
                 }
 
+                bool needsVertexBlendshapeAttribute = Mesh?.BlendshapeCount > 0
+                    && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader
+                    && Engine.Rendering.Settings.AllowBlendshapes;
+                if (!needsVertexBlendshapeAttribute)
+                    _bufferCache.Remove(ECommonBufferType.BlendshapeCount.ToString());
+
                 Dbg($"CollectBuffers end. Total={_bufferCache.Count}, SSBOs={_ssboBufferCache.Count}", "Buffers");
             }
 
@@ -148,6 +160,16 @@ namespace XREngine.Rendering.OpenGL
                 MeshRenderer.SkinnedPositionsBuffer = null;
                 MeshRenderer.SkinnedNormalsBuffer = null;
                 MeshRenderer.SkinnedTangentsBuffer = null;
+
+                ClearSkinnedVertexBufferBindings();
+            }
+
+            private void ClearSkinnedVertexBufferBindings()
+            {
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeInterleavedBinding, 0);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputePositionBinding, 0);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeNormalBinding, 0);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeTangentBinding, 0);
             }
 
             /// <summary>
@@ -157,7 +179,10 @@ namespace XREngine.Rendering.OpenGL
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.BindSkinnedVertexBuffers");
                 if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+                {
+                    ClearSkinnedVertexBufferBindings();
                     return;
+                }
 
                 var skinnedInterleaved = MeshRenderer.SkinnedInterleavedBuffer;
                 if (skinnedInterleaved is not null)
@@ -173,18 +198,18 @@ namespace XREngine.Rendering.OpenGL
                 if (skinnedPos is null && skinnedNorm is null && skinnedTan is null)
                     return;
 
-                const uint positionBinding = 11;
-                const uint normalBinding = 12;
-                const uint tangentBinding = 15;
-
                 if (skinnedPos is not null)
                 {
                     var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedPos);
                     if (glBuffer is not null)
                     {
                         glBuffer.Generate();
-                        Api.BindBufferBase(GLEnum.ShaderStorageBuffer, positionBinding, glBuffer.BindingId);
+                        Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputePositionBinding, glBuffer.BindingId);
                     }
+                }
+                else
+                {
+                    Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputePositionBinding, 0);
                 }
 
                 if (skinnedNorm is not null)
@@ -193,8 +218,12 @@ namespace XREngine.Rendering.OpenGL
                     if (glBuffer is not null)
                     {
                         glBuffer.Generate();
-                        Api.BindBufferBase(GLEnum.ShaderStorageBuffer, normalBinding, glBuffer.BindingId);
+                        Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeNormalBinding, glBuffer.BindingId);
                     }
+                }
+                else
+                {
+                    Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeNormalBinding, 0);
                 }
 
                 if (skinnedTan is not null)
@@ -203,8 +232,12 @@ namespace XREngine.Rendering.OpenGL
                     if (glBuffer is not null)
                     {
                         glBuffer.Generate();
-                        Api.BindBufferBase(GLEnum.ShaderStorageBuffer, tangentBinding, glBuffer.BindingId);
+                        Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeTangentBinding, glBuffer.BindingId);
                     }
+                }
+                else
+                {
+                    Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeTangentBinding, 0);
                 }
 
                 BindMeshDeformSourceBuffers();
@@ -258,10 +291,26 @@ namespace XREngine.Rendering.OpenGL
 
                 glBuffer.Generate();
 
-                const uint interleavedBinding = 9;
-                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, interleavedBinding, glBuffer.BindingId);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeInterleavedBinding, glBuffer.BindingId);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputePositionBinding, 0);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeNormalBinding, 0);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeTangentBinding, 0);
 
                 Dbg("Bound skinned interleaved buffer as SSBO at binding 9 for compute pre-pass", "Buffers");
+            }
+
+            private void ResetVertexArrayBindings()
+            {
+                uint vaoId = BindingId;
+                Api.VertexArrayElementBuffer(vaoId, 0);
+
+                for (uint attribIndex = 0; attribIndex < MaxTrackedVertexAttribs; attribIndex++)
+                {
+                    Api.DisableVertexArrayAttrib(vaoId, attribIndex);
+                    Api.VertexArrayAttribBinding(vaoId, attribIndex, attribIndex);
+                    Api.VertexArrayBindingDivisor(vaoId, attribIndex, 0);
+                    Api.VertexArrayVertexBuffer(vaoId, attribIndex, 0, 0, 16);
+                }
             }
 
             /// <summary>
@@ -287,6 +336,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Renderer.BindMeshRenderer(this);
                 }
+                ResetVertexArrayBindings();
                 Dbg(mesh is null ? "BindBuffers: binding renderer buffers (mesh=null)" : "BindBuffers: binding attribute & index buffers", "Buffers");
 
                 // Track whether at least one vertex attribute was successfully bound.
