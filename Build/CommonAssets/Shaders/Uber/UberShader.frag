@@ -17,6 +17,14 @@
 #define XRENGINE_UBER_DISABLE_DISSOLVE 1
 #define XRENGINE_UBER_DISABLE_PARALLAX 1
 
+#ifdef XRENGINE_UBER_IMPORT_MATERIAL
+#define XRENGINE_UBER_DISABLE_ALPHA_MASKS 1
+#define XRENGINE_UBER_DISABLE_MATERIAL_AO 1
+#define XRENGINE_UBER_DISABLE_EMISSION 1
+#define XRENGINE_UBER_DISABLE_MATCAP 1
+#define XRENGINE_UBER_DISABLE_RENDER_TIME 1
+#endif
+
 #include "common.glsl"
 #include "uniforms.glsl"
 #undef PI
@@ -26,15 +34,11 @@
 // ============================================
 // Fragment Inputs
 // ============================================
-layout(location = 0) in vec4 v_Uv01;
-layout(location = 1) in vec4 v_Uv23;
-layout(location = 2) in vec3 v_WorldPos;
-layout(location = 3) in vec3 v_WorldNormal;
-layout(location = 4) in vec3 v_WorldTangent;
-layout(location = 5) in float v_TangentSign;
-layout(location = 6) in vec4 v_VertexColor;
-layout(location = 7) in vec3 v_LocalPos;
-layout(location = 8) in vec3 v_ViewDir;
+layout(location = 0) in vec3 FragPos;
+layout(location = 1) in vec3 FragNorm;
+layout(location = 4) in vec2 FragUV0;
+layout(location = 12) in vec4 FragColor0;
+layout(location = 20) in vec3 FragPosLocal;
 
 // ============================================
 // Fragment Output
@@ -89,6 +93,29 @@ struct PBRData {
     vec3 diffuseColor;
     vec3 specularColor;
 };
+
+mat3 computeWorldTbn(vec3 normal, vec3 worldPos, vec2 uv)
+{
+    vec3 n = normalize(normal);
+    vec3 dp1 = dFdx(worldPos);
+    vec3 dp2 = dFdy(worldPos);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+
+    float det = duv1.x * duv2.y - duv1.y * duv2.x;
+    if (abs(det) < 1e-6) {
+        vec3 tangent = normalize(abs(n.z) < 0.999 ? cross(n, vec3(0.0, 0.0, 1.0)) : cross(n, vec3(0.0, 1.0, 0.0)));
+        vec3 bitangent = normalize(cross(n, tangent));
+        return mat3(tangent, bitangent, n);
+    }
+
+    vec3 dp2perp = cross(dp2, n);
+    vec3 dp1perp = cross(n, dp1);
+    vec3 tangent = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 bitangent = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invMax = inversesqrt(max(dot(tangent, tangent), dot(bitangent, bitangent)));
+    return mat3(tangent * invMax, bitangent * invMax, n);
+}
 
 // ============================================
 // UV Selection Helper
@@ -197,6 +224,7 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
 float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
     float alpha = baseColor.a;
     
+#ifndef XRENGINE_UBER_DISABLE_ALPHA_MASKS
     // Alpha mask
     if (_MainAlphaMaskMode > 0) {
         vec2 alphaMaskUV = transformUV(getUV(_AlphaMaskUV, mesh), _AlphaMask_ST);
@@ -216,6 +244,7 @@ float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
             case 4: alpha = saturate(alpha - alphaMask); break; // Subtract
         }
     }
+#endif
     
     // Apply alpha mod
     alpha = saturate(alpha + _AlphaMod);
@@ -256,6 +285,9 @@ vec3 resolveSurfaceRms(PBRData pbr) {
 }
 
 float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
+#ifdef XRENGINE_UBER_DISABLE_MATERIAL_AO
+    return 1.0;
+#else
     if (_LightDataAOStrengthR <= 0.0) {
         return 1.0;
     }
@@ -264,6 +296,7 @@ float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
     aoUV = panUV(aoUV, _LightingAOMapsPan, u_Time);
     float aoSample = texture(_LightingAOMaps, aoUV).r;
     return mix(1.0, aoSample, saturate(_LightDataAOStrengthR));
+#endif
 }
 
 vec3 calculateForwardAmbientLighting(ToonMesh mesh, vec3 baseColor, vec3 normal, PBRData pbr, float ambientOcclusion) {
@@ -528,6 +561,9 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
 // Emission
 // ============================================
 vec3 calculateEmission(ToonMesh mesh, ToonLight light) {
+#ifdef XRENGINE_UBER_DISABLE_EMISSION
+    return vec3(0.0);
+#else
     if (_EnableEmission < 0.5) return vec3(0.0);
     
     vec2 emissionUV = transformUV(getUV(_EmissionMapUV, mesh), _EmissionMap_ST);
@@ -542,12 +578,16 @@ vec3 calculateEmission(ToonMesh mesh, ToonLight light) {
     vec3 emission = emissionTex.rgb * _EmissionColor.rgb * _EmissionStrength;
     
     return emission;
+#endif
 }
 
 // ============================================
 // Matcap
 // ============================================
 vec3 calculateMatcap(ToonMesh mesh, vec3 normal, ToonLight light, inout vec3 emission) {
+#ifdef XRENGINE_UBER_DISABLE_MATCAP
+    return vec3(0.0);
+#else
     if (_MatcapEnable < 0.5) return vec3(0.0);
     
     // Calculate matcap UV based on view-space normal
@@ -591,6 +631,7 @@ vec3 calculateMatcap(ToonMesh mesh, vec3 normal, ToonLight light, inout vec3 emi
     emission += matcapColor * _MatcapEmissionStrength;
     
     return matcapColor;
+#endif
 }
 
 // ============================================
@@ -646,23 +687,22 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
 void main() {
     // Initialize mesh data
     ToonMesh mesh;
-    mesh.uv[0] = v_Uv01.xy;
-    mesh.uv[1] = v_Uv01.zw;
-    mesh.uv[2] = v_Uv23.xy;
-    mesh.uv[3] = v_Uv23.zw;
-    mesh.worldPos = v_WorldPos;
-    mesh.localPos = v_LocalPos;
-    mesh.vertexNormal = normalize(v_WorldNormal);
-    mesh.vertexColor = v_VertexColor;
-    mesh.viewDir = normalize(v_ViewDir);
+    mesh.uv[0] = FragUV0;
+    mesh.uv[1] = FragUV0;
+    mesh.uv[2] = FragUV0;
+    mesh.uv[3] = FragUV0;
+    mesh.worldPos = FragPos;
+    mesh.localPos = FragPosLocal;
+    mesh.vertexNormal = normalize(FragNorm);
+    mesh.vertexColor = FragColor0;
+    mesh.viewDir = normalize(u_CameraPosition - FragPos);
     mesh.isFrontFace = gl_FrontFacing ? 1.0 : -1.0;
     
     // Flip normal for back faces
     mesh.vertexNormal *= mesh.isFrontFace;
     
-    // Build TBN matrix
-    vec3 bitangent = cross(mesh.vertexNormal, v_WorldTangent) * v_TangentSign;
-    mesh.TBN = mat3(v_WorldTangent, bitangent, mesh.vertexNormal);
+    // Build TBN matrix from the generated vertex contract.
+    mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);
     
     // Apply parallax mapping to UVs (before any texture sampling)
 #ifndef XRENGINE_UBER_DISABLE_PARALLAX
@@ -776,14 +816,16 @@ void main() {
 #endif
     
     // Calculate matcap
+#ifndef XRENGINE_UBER_DISABLE_MATCAP
     vec3 matcapColor = calculateMatcap(mesh, mesh.worldNormal, light, fragData.emission);
-    
+
     // Apply matcap blending
     if (_MatcapEnable > 0.5) {
         fragData.finalColor = mix(fragData.finalColor, matcapColor, _MatcapReplace);
         fragData.finalColor *= mix(vec3(1.0), matcapColor, _MatcapMultiply);
         fragData.finalColor += matcapColor * _MatcapAdd;
     }
+#endif
     
     // Calculate rim lighting
 #ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
@@ -823,7 +865,9 @@ void main() {
 #endif
     
     // Calculate emission
+#ifndef XRENGINE_UBER_DISABLE_EMISSION
     fragData.emission += calculateEmission(mesh, light);
+#endif
     
     // Add emission to final color
     fragData.finalColor += fragData.emission;

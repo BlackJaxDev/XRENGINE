@@ -76,7 +76,7 @@ namespace XREngine.Rendering.Shaders.Generator
             else
                 _useSkinningInputs = false;
 
-            bool needBlendshapeAttr = Mesh.BlendshapeCount > 0 && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Engine.Rendering.Settings.AllowBlendshapes;
+            bool needBlendshapeAttr = Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && Engine.Rendering.Settings.AllowBlendshapes;
             _useBlendshapeInput = needBlendshapeAttr && location < MaxVertexAttribs;
             if (_useBlendshapeInput)
                 location++;
@@ -156,12 +156,14 @@ namespace XREngine.Rendering.Shaders.Generator
                 OutputVars.Add(FragBinormName, (3, EShaderVarType._vec3)); //Binormal is created in vertex shader if tangents exist
             }
 
-            if (_texCoordsUsed > 0)
-                for (int i = 0; i < _texCoordsUsed.ClampMax(8); ++i)
+            OutputVars.Add(string.Format(FragUVName, 0), (4, EShaderVarType._vec2));
+            if (_texCoordsUsed > 1)
+                for (int i = 1; i < _texCoordsUsed.ClampMax(8); ++i)
                     OutputVars.Add(string.Format(FragUVName, i), (4u + (uint)i, EShaderVarType._vec2));
 
-            if (_colorsUsed > 0)
-                for (int i = 0; i < _colorsUsed.ClampMax(8); ++i)
+            OutputVars.Add(string.Format(FragColorName, 0), (12, EShaderVarType._vec4));
+            if (_colorsUsed > 1)
+                for (int i = 1; i < _colorsUsed.ClampMax(8); ++i)
                     OutputVars.Add(string.Format(FragColorName, i), (12u + (uint)i, EShaderVarType._vec4));
 
             OutputVars.Add(FragPosLocalName, (20, EShaderVarType._vec3)); //Local position in model space
@@ -242,7 +244,9 @@ namespace XREngine.Rendering.Shaders.Generator
         public virtual bool UseNVStereo => false;
 
         private bool UseComputeSkinning => Engine.Rendering.Settings.CalculateSkinningInComputeShader && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
-        private bool UseComputeBlendshapes => Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Mesh.BlendshapeCount > 0 && Engine.Rendering.Settings.AllowBlendshapes;
+        private bool UseComputeBlendshapes => Mesh.BlendshapeCount > 0
+            && Engine.Rendering.Settings.AllowBlendshapes
+            && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || UseComputeSkinning);
         private bool UseComputeDeformation => UseComputeSkinning || UseComputeBlendshapes;
         private bool UseExplicitRowVectorSkinningConvention => Mesh.SkinningShaderConvention == ESkinningShaderConvention.ExplicitRowMajorRowVector;
 
@@ -283,10 +287,14 @@ namespace XREngine.Rendering.Shaders.Generator
             if (_colorsUsed != 0)
                 for (int i = 0; i < _colorsUsed.ClampMax(8); ++i)
                     Line($"{string.Format(FragColorName, i)} = {ECommonBufferType.Color}{i};");
+            else
+                Line($"{string.Format(FragColorName, 0)} = vec4(1.0f);");
 
             if (_texCoordsUsed != 0)
                 for (int i = 0; i < _texCoordsUsed.ClampMax(8); ++i)
                     Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
+            else
+                Line($"{string.Format(FragUVName, 0)} = vec2(0.0f);");
 
             // Default CPU draw path has gl_BaseInstance == 0; GPU-indirect path uses it as the draw/command index.
             if (EmitTransformId)
@@ -450,11 +458,23 @@ namespace XREngine.Rendering.Shaders.Generator
             if (UseComputeDeformation)
             {
                 WriteComputeBaseAssignments(hasNormals, hasTangents);
-                Line($"{FinalPositionName} = vec4({BasePositionName}, 1.0f);");
-                if (hasNormals)
-                    Line($"{FinalNormalName} = {BaseNormalName};");
-                if (hasTangents)
-                    Line($"{FinalTangentName} = {BaseTangentName};");
+
+                if (UseComputeSkinning)
+                {
+                    Line($"{FinalPositionName} = vec4({BasePositionName}, 1.0f);");
+                    if (hasNormals)
+                        Line($"{FinalNormalName} = {BaseNormalName};");
+                    if (hasTangents)
+                        Line($"{FinalTangentName} = {BaseTangentName};");
+                }
+                else if (!hasSkinning || !WriteSkinningCalc())
+                {
+                    Line($"{FinalPositionName} = vec4({BasePositionName}, 1.0f);");
+                    if (hasNormals)
+                        Line($"{FinalNormalName} = {BaseNormalName};");
+                    if (hasTangents)
+                        Line($"{FinalTangentName} = {BaseTangentName};");
+                }
             }
             else
             {

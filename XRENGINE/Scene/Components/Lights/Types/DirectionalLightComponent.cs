@@ -143,7 +143,7 @@ namespace XREngine.Components.Lights
             // CPU: View * Proj (which becomes (Proj * View)^T when uploaded)
             // GLSL then computes: ((Proj * View)^T) * v = v^T * (Proj * View) = same result
             Matrix4x4 lightViewProj = lightView * lightProj;
-
+/*
             // Debug shadow camera setup
             if (!_loggedShadowCameraOnce)
             {
@@ -162,6 +162,7 @@ namespace XREngine.Components.Lights
                         Debug.Rendering($"[DirLightShadow] OrthoParams: W={ortho.Width}, H={ortho.Height}, NearZ={ortho.NearZ}, FarZ={ortho.FarZ}");
                 }
             }
+*/
 
             program.Uniform($"{flatPrefix}WorldToLightProjMatrix", lightProj);
             program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);

@@ -218,6 +218,51 @@ public sealed class ImportedDeferredMaterialTests
     }
 
     [Test]
+    public void MakeMaterialForwardPlusUberShader_MissingSourceTextures_UsesBindableFallbackSamplers()
+    {
+        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader([], [], "UberFallbackMaterial");
+
+        material.Textures.Count.ShouldBe(2);
+        material.Textures[0].ShouldBeOfType<XRTexture2D>();
+        material.Textures[1].ShouldBeOfType<XRTexture2D>();
+        material.Textures[0]!.SamplerName.ShouldBe("_MainTex");
+        material.Textures[1]!.SamplerName.ShouldBe("_BumpMap");
+        material.Parameter<ShaderFloat>("_BumpScale")?.Value.ShouldBe(0.0f);
+    }
+
+    [Test]
+    public void MakeMaterialForwardPlusUberShader_MissingNormalMap_UsesNeutralNormalFallback()
+    {
+        XRTexture2D albedo = new()
+        {
+            FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "albedo.png"),
+        };
+
+        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader(
+            [albedo],
+            [CreateSlot(albedo.FilePath!, TextureType.Diffuse)],
+            "UberDiffuseOnlyMaterial");
+
+        material.Textures.Count.ShouldBe(2);
+        material.Textures[0].ShouldNotBeNull();
+        material.Textures[1].ShouldNotBeNull();
+        material.Textures[0]!.SamplerName.ShouldBe("_MainTex");
+        material.Textures[1]!.SamplerName.ShouldBe("_BumpMap");
+        material.Textures[0]!.ShouldNotBeSameAs(material.Textures[1]!);
+        material.Parameter<ShaderFloat>("_BumpScale")?.Value.ShouldBe(0.0f);
+    }
+
+    [Test]
+    public void MakeMaterialForwardPlusUberShader_UsesGeneratedVertexPipeline()
+    {
+        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader([], [], "UberGeneratedVertexMaterial");
+
+        material.Shaders.Count.ShouldBe(1);
+        material.FragmentShaders.Count.ShouldBe(1);
+        material.VertexShaders.Count.ShouldBe(0);
+    }
+
+    [Test]
     public void PrefabSource_CreateMaterial_DelegatesToDeferredImporterFactory()
     {
         string source = ReadWorkspaceFile("XRENGINE/Scene/Prefabs/XRPrefabSource.cs").Replace("\r\n", "\n");

@@ -590,10 +590,10 @@ namespace XREngine
         /// </summary>
         private int _importLayer = DefaultLayers.DynamicIndex;
 
-        // Class to track original node transforms for later normalization
-        private class NodeTransformInfo(Node assimpNode, SceneNode sceneNode, Vector3 scale, List<int> meshIndices)
+        // Track transform state per published runtime node so collapsed Assimp helper nodes
+        // do not enqueue duplicate mesh publication work for the same scene node.
+        private class NodeTransformInfo(SceneNode sceneNode, Vector3 scale, List<int> meshIndices)
         {
-            public Node AssimpNode = assimpNode;
             public SceneNode SceneNode = sceneNode;
             public Vector3 OriginalScale = scale;
             public List<int> MeshIndices = meshIndices;
@@ -696,6 +696,7 @@ namespace XREngine
         }
 
         private static readonly ConcurrentDictionary<(string path, string samplerName), XRTexture2D> _uberSamplerTextureCache = new();
+        private static readonly ConcurrentDictionary<string, XRTexture2D> _uberDefaultSamplerTextureCache = new();
 
         public static XRTexture2D GetOrCreateUberSamplerTexture(string filePath, string samplerName)
         {
@@ -740,6 +741,25 @@ namespace XREngine
                     priority: JobPriority.Low);
 
                 return tex;
+            });
+        }
+
+        private static XRTexture2D GetOrCreateDefaultUberSamplerTexture(string samplerName, ColorF4 color)
+        {
+            return _uberDefaultSamplerTextureCache.GetOrAdd(samplerName, key =>
+            {
+                return new XRTexture2D(1u, 1u, color)
+                {
+                    Name = key,
+                    SamplerName = key,
+                    MagFilter = ETexMagFilter.Linear,
+                    MinFilter = ETexMinFilter.Linear,
+                    UWrap = ETexWrapMode.Repeat,
+                    VWrap = ETexWrapMode.Repeat,
+                    AlphaAsTransparency = true,
+                    AutoGenerateMipmaps = false,
+                    Resizable = false,
+                };
             });
         }
 
@@ -1459,31 +1479,22 @@ namespace XREngine
             string? diffusePath = (diffuseSrc as XRTexture2D)?.FilePath;
             string? normalPath = (normalSrc as XRTexture2D)?.FilePath;
 
-            // Always bind something for both samplers so the Uber shader has valid bindings.
-            XRTexture2D? main = diffusePath is not null ? GetOrCreateUberSamplerTexture(diffusePath, "_MainTex") : null;
-            XRTexture2D? bump = null;
+            XRTexture2D main = diffusePath is not null
+                ? GetOrCreateUberSamplerTexture(diffusePath, "_MainTex")
+                : GetOrCreateDefaultUberSamplerTexture("_MainTex", ColorF4.White);
+            XRTexture2D bump = GetOrCreateDefaultUberSamplerTexture("_BumpMap", new ColorF4(0.5f, 0.5f, 1.0f, 1.0f));
             float bumpScale = 0.0f;
             if (normalPath is not null)
             {
                 bump = GetOrCreateUberSamplerTexture(normalPath, "_BumpMap");
                 bumpScale = 1.0f;
             }
-            else if (diffusePath is not null)
-            {
-                bump = GetOrCreateUberSamplerTexture(diffusePath, "_BumpMap");
-            }
 
             mat.Textures = [main, bump];
 
-            XRShader vert = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.vert"), EShaderType.Vertex);
-            XRShader vertOvr = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader_OVR.vert"), EShaderType.Vertex);
-            XRShader vertNv = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader_NV.vert"), EShaderType.Vertex);
-            XRShader frag = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.frag"), EShaderType.Fragment);
+            XRShader frag = ShaderHelper.UberImportFragForward();
 
             mat.Shaders.Clear();
-            mat.Shaders.Add(vert);
-            mat.Shaders.Add(vertOvr);
-            mat.Shaders.Add(vertNv);
             mat.Shaders.Add(frag);
 
             mat.Parameters = CreateDefaultForwardPlusUberShaderParameters(bumpScale);
@@ -1852,19 +1863,37 @@ namespace XREngine
                 //Vector3 translation = tfm.WorldTranslation;
                 //Vector3 scale = tfm.LossyWorldScale;
                 //Quaternion rotation = tfm.WorldRotation;
-                //Debug.Out($"Processing node {nodeInfo.AssimpNode.Name} with world T[{translation}] R[{rotation}] S[{scale}]");
+                //Debug.Out($"Processing node {nodeInfo.SceneNode.Name} with world T[{translation}] R[{rotation}] S[{scale}]");
 
                 Matrix4x4 geometryTransform = nodeInfo.OriginalWorldMatrix * rootTransform.InverseWorldMatrix;
                 EnqueueProcessMeshes(
-                    nodeInfo.AssimpNode,
+                    nodeInfo.MeshIndices,
                     scene,
                     nodeInfo.SceneNode,
+                    nodeInfo.SceneNode.Name,
                     geometryTransform,
                     rootTransform,
                     cancellationToken,
                     publishSubMeshesOnSwapThread: processMeshesAsynchronously,
                     batchSubmeshAddsDuringAsyncImport: processMeshesAsynchronously && batchSubmeshAddsDuringAsyncImport);
             }
+        }
+
+        private void TrackNodeTransform(SceneNode sceneNode, Vector3 scale, List<int> meshIndices)
+        {
+            if (_nodeTransforms.Find(info => ReferenceEquals(info.SceneNode, sceneNode)) is NodeTransformInfo existing)
+            {
+                existing.OriginalScale = scale;
+                foreach (int meshIndex in meshIndices)
+                {
+                    if (!existing.MeshIndices.Contains(meshIndex))
+                        existing.MeshIndices.Add(meshIndex);
+                }
+
+                return;
+            }
+
+            _nodeTransforms.Add(new NodeTransformInfo(sceneNode, scale, meshIndices));
         }
 
         private void ProcessNode(
@@ -1899,13 +1928,7 @@ namespace XREngine
             for (var i = 0; i < node.MeshCount; i++)
                 meshIndices.Add(node.MeshIndices[i]);
             
-            // Store node information for later normalization
-            _nodeTransforms.Add(new NodeTransformInfo(
-                node,
-                sceneNode,
-                scale,
-                meshIndices
-            ));
+            TrackNodeTransform(sceneNode, scale, meshIndices);
 
             // Process children
             for (var i = 0; i < node.ChildCount; i++)
@@ -1989,16 +2012,17 @@ namespace XREngine
         }
 
         private unsafe void EnqueueProcessMeshes(
-            Node node,
+            List<int> meshIndices,
             AScene scene,
             SceneNode sceneNode,
+            string componentBaseName,
             Matrix4x4 dataTransform,
             TransformBase rootTransform,
             CancellationToken cancellationToken,
             bool publishSubMeshesOnSwapThread,
             bool batchSubmeshAddsDuringAsyncImport)
         {
-            int count = node.MeshCount;
+            int count = meshIndices.Count;
             if (count == 0)
                 return;
 
@@ -2023,17 +2047,17 @@ namespace XREngine
                 targetModelsByMeshIndex = new Dictionary<int, Model>(count);
                 for (int i = 0; i < count; i++)
                 {
-                    int meshIndex = node.MeshIndices[i];
+                    int meshIndex = meshIndices[i];
                     Mesh assimpMesh = scene.Meshes[meshIndex];
                     string componentName = string.IsNullOrWhiteSpace(assimpMesh.Name)
-                        ? $"{node.Name} SubMesh {i}"
+                        ? $"{componentBaseName} SubMesh {i}"
                         : assimpMesh.Name;
                     targetModelsByMeshIndex[meshIndex] = CreateModelComponent(componentName).Model!;
                 }
             }
             else
             {
-                sharedModel = CreateModelComponent(node.Name).Model;
+                sharedModel = CreateModelComponent(componentBaseName).Model;
             }
 
             Model ResolveTargetModel(int meshIndex)
@@ -2067,7 +2091,7 @@ namespace XREngine
             {
                 ordered = new int[count];
                 for (int i = 0; i < count; i++)
-                    ordered[i] = node.MeshIndices[i];
+                    ordered[i] = meshIndices[i];
 
                 if (batchSubmeshAddsDuringAsyncImport)
                     _meshFinalizeActions.Add(FlushReadySubMeshes);
@@ -2075,7 +2099,7 @@ namespace XREngine
 
             for (var i = 0; i < count; i++)
             {
-                int localMeshIndex = node.MeshIndices[i];
+                int localMeshIndex = meshIndices[i];
                 _meshProcessRoutines.Add(() => MeshRoutine(localMeshIndex));
             }
 

@@ -97,14 +97,21 @@ namespace XREngine.Rendering.OpenGL
                         _ssboBufferCache.Add(glBuffer);
                 }
 
-                if (Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+                bool useComputeSkinning = Mesh?.HasSkinning == true
+                    && Engine.Rendering.Settings.AllowSkinning
+                    && Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+                bool useComputeBlendshapes = Mesh?.BlendshapeCount > 0
+                    && Engine.Rendering.Settings.AllowBlendshapes
+                    && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+
+                if (useComputeSkinning)
                 {
                     _bufferCache.Remove(ECommonBufferType.BoneMatrixOffset.ToString());
                     _bufferCache.Remove(ECommonBufferType.BoneMatrixCount.ToString());
                 }
 
                 bool needsVertexBlendshapeAttribute = Mesh?.BlendshapeCount > 0
-                    && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader
+                    && !useComputeBlendshapes
                     && Engine.Rendering.Settings.AllowBlendshapes;
                 if (!needsVertexBlendshapeAttribute)
                     _bufferCache.Remove(ECommonBufferType.BlendshapeCount.ToString());
@@ -178,7 +185,15 @@ namespace XREngine.Rendering.OpenGL
             private void BindSkinnedVertexBuffers(GLRenderProgram vertexProgram)
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.BindSkinnedVertexBuffers");
-                if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+                var mesh = MeshRenderer.Mesh;
+                bool useComputeSkinning = mesh?.HasSkinning == true
+                    && Engine.Rendering.Settings.AllowSkinning
+                    && Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+                bool useComputeBlendshapes = mesh?.BlendshapeCount > 0
+                    && Engine.Rendering.Settings.AllowBlendshapes
+                    && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+
+                if (!useComputeSkinning && !useComputeBlendshapes)
                 {
                     ClearSkinnedVertexBufferBindings();
                     return;

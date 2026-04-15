@@ -32,6 +32,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Shader and snippet optimization | Active | [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md) | Active shader performance and preprocessing tracker. |
 | GPU softbody rigging | Active | [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md) | Still an active work item. |
 | Voxel cone tracing / VXAO | Active | [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md) | Shared-voxel roadmap item. |
+| DDGI integration | Active | [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md) | Execution tracker derived from the [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md) roadmap. |
 | Vulkan backlog | Active | [todo/vulkan.md](todo/vulkan.md) | Canonical Vulkan backlog, status, audit, and preserved diagnostics. |
 | Startup FPS drops (2026-03-28) | Active | [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md) | Remaining startup stalls after the earlier GL warmup fixes; includes engine and editor attack order. |
 | Default pipeline regressions (2026-03-28) | Active | [audit/default-render-pipeline-regression-diagnosis-2026-03-28.md](audit/default-render-pipeline-regression-diagnosis-2026-03-28.md) | AO, AA, deferred grayscale, and sampler-binding diagnosis. |
@@ -44,6 +45,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/aot-final-game-builds.md](todo/aot-final-game-builds.md)
 - [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md)
 - [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md)
+- [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md)
 - [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md)
 - [todo/gpu-rendering.md](todo/gpu-rendering.md)
 - [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md)
@@ -64,6 +66,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/affine-matrix-integration-plan.md](design/affine-matrix-integration-plan.md)
 - [design/bindless-deferred-texturing-plan.md](design/bindless-deferred-texturing-plan.md)
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)
+- [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md)
 - [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)
 - [design/gpu-render-pass-pipeline.md](design/gpu-render-pass-pipeline.md)
 - [design/gpu-softbody-mesh-rigging-plan.md](design/gpu-softbody-mesh-rigging-plan.md)

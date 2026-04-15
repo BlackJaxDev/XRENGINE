@@ -1,17 +1,41 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
+using Silk.NET.OpenGL;
+using XREngine.Core.Files;
 using XREngine;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Shaders.Generator;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
-public sealed class UberShaderForwardContractTests
+public sealed class UberShaderForwardContractTests : GpuTestBase
 {
+    private IRuntimeShaderServices? _previousServices;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _previousServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new FileSystemRuntimeShaderServices(ResolveShaderRoot());
+        ShaderHelper.ClearDefinedVariantSourceCache();
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+        ShaderHelper.ClearDefinedVariantSourceCache();
+        RuntimeShaderServices.Current = _previousServices;
+    }
+
     [Test]
     public void UberShaderVertexInputs_MatchEngineMeshSemanticNames()
     {
@@ -86,6 +110,35 @@ public sealed class UberShaderForwardContractTests
     }
 
     [Test]
+    public void ImportedUberFragmentVariant_DefinesLeanImportFeatureSet()
+    {
+        XRShader variant = ShaderHelper.UberImportFragForward();
+
+        string source = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
+        source.IndexOf("#version 450 core", StringComparison.Ordinal).ShouldBeLessThan(
+            source.IndexOf("#define XRENGINE_UBER_IMPORT_MATERIAL", StringComparison.Ordinal));
+        source.ShouldContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_ALPHA_MASKS 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_MATERIAL_AO 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_MATCAP 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_RENDER_TIME 1");
+    }
+
+    [Test]
+    public void ImportedUberFragmentVariant_CompilesOnOpenGl()
+    {
+        RunWithGLContext(gl =>
+        {
+            XRShader fragment = ShaderHelper.UberImportFragForward();
+            string resolvedSource = fragment.GetResolvedSource();
+
+            uint shader = CompileShader(gl, ShaderType.FragmentShader, resolvedSource);
+            gl.DeleteShader(shader);
+        });
+    }
+
+    [Test]
     public void DefaultUberMaterialContract_RequestsForwardEngineUniforms_AndFeatureDefaults()
     {
         ShaderVar[] parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters();
@@ -128,6 +181,85 @@ public sealed class UberShaderForwardContractTests
         nvSource.ShouldContain("FragViewIndex = 0.0;");
     }
 
+    [Test]
+    public void ImportedUberFragment_ConsumesGeneratedVertexContracts()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+
+        source.ShouldContain("layout(location = 0) in vec3 FragPos;");
+        source.ShouldContain("layout(location = 1) in vec3 FragNorm;");
+        source.ShouldContain("layout(location = 4) in vec2 FragUV0;");
+        source.ShouldContain("layout(location = 12) in vec4 FragColor0;");
+        source.ShouldContain("layout(location = 20) in vec3 FragPosLocal;");
+        source.ShouldContain("mesh.viewDir = normalize(u_CameraPosition - FragPos);");
+        source.ShouldContain("mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);");
+    }
+
+    [Test]
+    public void DefaultVertexShaderGenerator_ComputeBlendshapesOnly_StillEmitsBoneSkinning()
+    {
+        XRMesh mesh = CreateGeneratedContractMesh();
+
+        bool previousComputeSkinning = Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+        bool previousComputeBlendshapes = Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
+        bool previousAllowSkinning = Engine.Rendering.Settings.AllowSkinning;
+        bool previousAllowBlendshapes = Engine.Rendering.Settings.AllowBlendshapes;
+
+        try
+        {
+            Engine.Rendering.Settings.AllowSkinning = true;
+            Engine.Rendering.Settings.AllowBlendshapes = true;
+            Engine.Rendering.Settings.CalculateSkinningInComputeShader = false;
+            Engine.Rendering.Settings.CalculateBlendshapesInComputeShader = true;
+
+            string source = new DefaultVertexShaderGenerator(mesh).Generate();
+
+            source.ShouldContain("SkinnedPositionsInput");
+            source.ShouldContain("BoneMatricesBuffer");
+            source.ShouldContain("BasePosition = SkinnedPositions[gl_VertexID].xyz;");
+            source.ShouldContain("FinalPosition += (boneMatrix * vec4(BasePosition, 1.0f)) * weight;");
+        }
+        finally
+        {
+            Engine.Rendering.Settings.CalculateSkinningInComputeShader = previousComputeSkinning;
+            Engine.Rendering.Settings.CalculateBlendshapesInComputeShader = previousComputeBlendshapes;
+            Engine.Rendering.Settings.AllowSkinning = previousAllowSkinning;
+            Engine.Rendering.Settings.AllowBlendshapes = previousAllowBlendshapes;
+        }
+    }
+
+    [Test]
+    public void DefaultVertexShaderGenerator_ComputeSkinning_UsesComputeBlendshapePathToo()
+    {
+        XRMesh mesh = CreateGeneratedContractMesh();
+
+        bool previousComputeSkinning = Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+        bool previousComputeBlendshapes = Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
+        bool previousAllowSkinning = Engine.Rendering.Settings.AllowSkinning;
+        bool previousAllowBlendshapes = Engine.Rendering.Settings.AllowBlendshapes;
+
+        try
+        {
+            Engine.Rendering.Settings.AllowSkinning = true;
+            Engine.Rendering.Settings.AllowBlendshapes = true;
+            Engine.Rendering.Settings.CalculateSkinningInComputeShader = true;
+            Engine.Rendering.Settings.CalculateBlendshapesInComputeShader = false;
+
+            string source = new DefaultVertexShaderGenerator(mesh).Generate();
+
+            source.ShouldContain("SkinnedPositionsInput");
+            source.ShouldNotContain("BlendshapeDeltasBuffer");
+            source.ShouldNotContain("BlendshapeCount);");
+        }
+        finally
+        {
+            Engine.Rendering.Settings.CalculateSkinningInComputeShader = previousComputeSkinning;
+            Engine.Rendering.Settings.CalculateBlendshapesInComputeShader = previousComputeBlendshapes;
+            Engine.Rendering.Settings.AllowSkinning = previousAllowSkinning;
+            Engine.Rendering.Settings.AllowBlendshapes = previousAllowBlendshapes;
+        }
+    }
+
     private static string LoadShaderSource(string shaderRelativePath)
     {
         string shaderRoot = ResolveShaderRoot();
@@ -153,5 +285,68 @@ public sealed class UberShaderForwardContractTests
         }
 
         throw new DirectoryNotFoundException("Could not locate Build/CommonAssets/Shaders from test base directory.");
+    }
+
+    private static XRMesh CreateGeneratedContractMesh()
+    {
+        Vector3 normal = new(0.0f, 0.0f, 1.0f);
+        Vector3 tangent = new(1.0f, 0.0f, 0.0f);
+
+        List<Vertex> vertices =
+        [
+            new Vertex(new Vector3(0.0f, 0.0f, 0.0f), normal, new Vector2(0.0f, 0.0f), Vector4.One) { Tangent = tangent },
+            new Vertex(new Vector3(1.0f, 0.0f, 0.0f), normal, new Vector2(1.0f, 0.0f), Vector4.One) { Tangent = tangent },
+            new Vertex(new Vector3(0.0f, 1.0f, 0.0f), normal, new Vector2(0.0f, 1.0f), Vector4.One) { Tangent = tangent },
+        ];
+
+        XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 })
+        {
+            BlendshapeNames = ["Smile"],
+            UtilizedBones = [(new Transform(), Matrix4x4.Identity)],
+        };
+
+        return mesh;
+    }
+
+    private sealed class FileSystemRuntimeShaderServices(string shaderBasePath) : IRuntimeShaderServices
+    {
+        private readonly string _shaderBasePath = shaderBasePath;
+
+        public T? LoadAsset<T>(string filePath) where T : XRAsset, new()
+            => typeof(T) == typeof(XRShader) ? (T?)(object?)LoadShader(filePath) : default;
+
+        public T LoadEngineAsset<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+        {
+            if (typeof(T) != typeof(XRShader))
+                throw new NotSupportedException($"Test shader services only support {nameof(XRShader)} assets, not '{typeof(T)}'.");
+
+            string fullPath = Path.Combine(_shaderBasePath, relativePath);
+            return (T)(XRAsset)LoadShader(fullPath);
+        }
+
+        public Task<T> LoadEngineAssetAsync<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+            => Task.FromResult(LoadEngineAsset<T>(priority, bypassJobThread, assetRoot, relativePath));
+
+        public void LogWarning(string message)
+        {
+        }
+
+        private static XRShader LoadShader(string fullPath)
+        {
+            if (!File.Exists(fullPath))
+                throw new FileNotFoundException("Shader file not found for test runtime services.", fullPath);
+
+            string source = File.ReadAllText(fullPath);
+            TextFile text = TextFile.FromText(source);
+            text.FilePath = fullPath;
+            text.Name = Path.GetFileName(fullPath);
+
+            XRShader shader = new(XRShader.ResolveType(Path.GetExtension(fullPath)), text)
+            {
+                Name = Path.GetFileNameWithoutExtension(fullPath),
+            };
+
+            return shader;
+        }
     }
 }

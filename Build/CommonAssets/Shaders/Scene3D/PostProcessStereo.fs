@@ -18,9 +18,10 @@ uniform float ChromaticAberrationIntensity;
 
 // Bloom combine controls
 uniform float BloomStrength = 0.15;
-uniform int BloomStartMip = 2;
-uniform int BloomEndMip = 4;
-uniform float BloomLodWeights[5] = float[](0.0, 0.0, 0.65, 0.25, 0.10);
+uniform int BloomStartMip = 1;
+uniform int BloomEndMip = 1;
+uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);
+uniform bool DebugBloomOnly = false;
 
 // Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini, 4=BrownConrady
 uniform int LensDistortionMode;
@@ -221,7 +222,33 @@ void main()
     }
 
     // Add bloom with configurable range/weights, scaled by overall strength
-    if (BloomStrength > 0.0)
+    if (DebugBloomOnly)
+    {
+      int col = uv.x < 0.5 ? 0 : 1;
+      int row = uv.y < 0.5 ? 0 : 1;
+      int mip = row * 2 + col;
+      vec2 cellUV = fract(uv * 2.0);
+      float border = 0.005;
+      bool onBorder = cellUV.x < border || cellUV.x > (1.0 - border)
+                   || cellUV.y < border || cellUV.y > (1.0 - border);
+      vec3 borderColors[4] = vec3[](
+          vec3(1.0, 0.0, 0.0),
+          vec3(0.0, 1.0, 0.0),
+          vec3(0.0, 0.0, 1.0),
+          vec3(1.0, 1.0, 0.0)
+      );
+      if (onBorder)
+      {
+          OutColor = vec4(borderColors[mip], 1.0);
+      }
+      else
+      {
+          vec3 mipColor = textureLod(BloomBlurTexture, vec3(cellUV, gl_ViewID_OVR), float(mip)).rgb;
+          OutColor = vec4(mipColor, 1.0);
+      }
+      return;
+    }
+    else if (BloomStrength > 0.0)
     {
       int startMip = clamp(BloomStartMip, 0, 4);
       int endMip = clamp(BloomEndMip, startMip, 4);

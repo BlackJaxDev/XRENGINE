@@ -60,7 +60,25 @@ Compute max valid bloom mip from current width/height. Set `SmallestAllowedMipma
 
 ---
 
-## 4. Auto-Exposure: Constructor vs Schema Defaults
+## 4. Bloom: Mip 0 Must Start From Raw HDR Scene
+
+**Rule:** The progressive bloom path in `VPRC_BloomPass` expects mip 0 to start as a raw copy of the HDR scene. Do not feed the bloom chain a pre-thresholded bright-pass texture.
+
+### What went wrong
+
+`VPRC_BloomPass.Execute()` copies `InputFBO.Render()` into bloom mip 0, and the first downsample level then applies the bloom threshold. `ForwardPassFBO` still used `BrightPass.fs`, so mip 0 was already thresholded before the downsample chain started. The first downsample then thresholded that signal again, collapsing bloom energy back toward the original hot pixels and making the effect read like local brightness gain instead of light bleeding outward.
+
+### Fix
+
+Use the standard `SceneCopy.fs` / `SceneCopyStereo.fs` material for `ForwardPassFBO.Render()` so bloom mip 0 receives the raw HDR scene. Keep threshold extraction only in the first bloom downsample level.
+
+### Combine contract
+
+`BloomUpsample.fs` accumulates the full multi-scale bloom result into mip 1. Default bloom combine settings should therefore sample mip 1 by default (`StartMip = 1`, `EndMip = 1`, `LOD1 Weight = 1.0`) instead of combining the coarse intermediate mips 2-4. Sampling only the coarse intermediates makes bloom read like a broad exposure lift and hides most threshold, soft-knee, radius, and scatter changes.
+
+---
+
+## 5. Auto-Exposure: Constructor vs Schema Defaults
 
 **Rule:** `ColorGradingSettings` constructor defaults **must** match the pipeline schema defaults in `DefaultRenderPipeline.PostProcessing.cs` / `DefaultRenderPipeline2.PostProcessing.cs`. Keep the regression test `Defaults_MatchPipelineSchemaDefaults` in sync.
 
@@ -74,7 +92,7 @@ Aligned constructor defaults. Added `ColorGradingSettingsTests.Defaults_MatchPip
 
 ---
 
-## 5. FBO Texture-Identity Recreation Predicates
+## 6. FBO Texture-Identity Recreation Predicates
 
 **Rule:** Cached FBOs (`VPRC_CacheOrCreateFBO`) must use a texture-identity recreation predicate, not just size checks. After pipeline invalidation or resize, the FBO may hold stale references to recreated textures.
 

@@ -19,6 +19,7 @@ public static class ShaderHelper
     private const string WeightedBlendedOitDefine = "XRENGINE_FORWARD_WEIGHTED_OIT";
     private const string PerPixelLinkedListDefine = "XRENGINE_FORWARD_PPLL";
     private const string DepthPeelingDefine = "XRENGINE_FORWARD_DEPTH_PEEL";
+    private const string UberImportMaterialDefine = "XRENGINE_UBER_IMPORT_MATERIAL";
     private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<DefinedVariantCacheKey, string>> DefinedVariantSourceCache = new();
     private static readonly ConcurrentDictionary<DefinedVariantShaderCacheKey, XRShader> DefinedVariantShaderCache = new();
     private static readonly HashSet<string> DefineBasedTransparencyForwardShaderFiles = new(StringComparer.OrdinalIgnoreCase)
@@ -73,6 +74,16 @@ public static class ShaderHelper
         source._type = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
         return source;
     }
+
+    /// <summary>
+    /// Lean import-focused Uber fragment shader variant that strips optional features
+    /// the model importer never binds, keeping GL fragment uniform pressure below
+    /// older driver register budgets.
+    /// </summary>
+    public static XRShader UberImportFragForward()
+        => CreateDefinedShaderVariant(
+            LoadEngineShader(Path.Combine("Uber", "UberShader.frag"), EShaderType.Fragment),
+            UberImportMaterialDefine)!;
 
     #region Forward Lit Shaders
 
@@ -757,13 +768,32 @@ public static class ShaderHelper
 
     private static string InjectDefineAfterVersion(string source, string defineName)
     {
-        int versionLineEnd = source.IndexOf('\n');
-        if (versionLineEnd < 0)
-            return $"#define {defineName}{Environment.NewLine}{source}";
+        int searchIndex = 0;
+        while (searchIndex < source.Length)
+        {
+            int lineEnd = source.IndexOf('\n', searchIndex);
+            int lineLength = (lineEnd >= 0 ? lineEnd : source.Length) - searchIndex;
+            string line = source.Substring(searchIndex, lineLength);
+            if (line.TrimStart(' ', '\t', '\r').StartsWith("#version", StringComparison.Ordinal))
+            {
+                int insertionIndex = lineEnd >= 0 ? lineEnd + 1 : source.Length;
+                string header = source[..insertionIndex];
+                string body = insertionIndex < source.Length
+                    ? source[insertionIndex..].TrimStart('\r', '\n')
+                    : string.Empty;
 
-        string header = source[..(versionLineEnd + 1)];
-        string body = source[(versionLineEnd + 1)..].TrimStart('\r', '\n');
-        return header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine + Environment.NewLine + body;
+                return string.IsNullOrEmpty(body)
+                    ? header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine
+                    : header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine + Environment.NewLine + body;
+            }
+
+            if (lineEnd < 0)
+                break;
+
+            searchIndex = lineEnd + 1;
+        }
+
+        return $"#define {defineName}{Environment.NewLine}{source}";
     }
 
     private static ulong ComputeDefinedVariantSourceHash(string source, string defineName)

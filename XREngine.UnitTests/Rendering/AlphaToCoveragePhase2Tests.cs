@@ -133,6 +133,65 @@ public sealed class AlphaToCoveragePhase2Tests
     }
 
     [Test]
+    public void BloomPass_UsesRawHdrForwardPassCopy_InsteadOfLegacyBrightPass()
+    {
+        string pipelineFboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
+        pipelineFboSource.ShouldContain("private XRFrameBuffer CreateForwardPassFBO()");
+        pipelineFboSource.ShouldContain("Path.Combine(SceneShaderPath, SceneCopyShaderName())");
+        pipelineFboSource.ShouldNotContain("Path.Combine(SceneShaderPath, BrightPassShaderName())");
+        pipelineFboSource.ShouldNotContain("fbo.SettingUniforms += BrightPassFBO_SettingUniforms;");
+
+        string pipeline2FboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs").Replace("\r\n", "\n");
+        pipeline2FboSource.ShouldContain("private XRFrameBuffer CreateForwardPassFBO()");
+        pipeline2FboSource.ShouldContain("Path.Combine(SceneShaderPath, SceneCopyShaderName())");
+        pipeline2FboSource.ShouldNotContain("Path.Combine(SceneShaderPath, BrightPassShaderName())");
+        pipeline2FboSource.ShouldNotContain("fbo.SettingUniforms += BrightPassFBO_SettingUniforms;");
+
+        string bloomPassSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_BloomPass.cs").Replace("\r\n", "\n");
+        bloomPassSource.ShouldContain("// Step 1: Copy HDR scene into bloom texture mip 0.");
+        bloomPassSource.ShouldContain("inputFBO.Render();");
+    }
+
+    [Test]
+    public void BloomCombine_DefaultsUseAccumulatedMip1_InsteadOfIntermediateMips()
+    {
+        string bloomSettingsSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/BloomSettings.cs").Replace("\r\n", "\n");
+        bloomSettingsSource.ShouldContain("private int _startMip = 1;");
+        bloomSettingsSource.ShouldContain("private int _endMip = 1;");
+        bloomSettingsSource.ShouldContain("private float _lod1Weight = 1.0f;");
+        bloomSettingsSource.ShouldContain("private float _lod2Weight = 0.0f;");
+        bloomSettingsSource.ShouldContain("private float _lod3Weight = 0.0f;");
+        bloomSettingsSource.ShouldContain("private float _lod4Weight = 0.0f;");
+        bloomSettingsSource.ShouldNotContain("usesLegacySingleMipProfile");
+
+        string pipelinePostProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.StartMip),\n            PostProcessParameterKind.Int,\n            1,");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            1,");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod1Weight),\n            PostProcessParameterKind.Float,\n            1.0f,");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod2Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod3Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod4Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
+
+        string pipeline2PostProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.StartMip),\n            PostProcessParameterKind.Int,\n            1,");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            1,");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod1Weight),\n            PostProcessParameterKind.Float,\n            1.0f,");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod2Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod3Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod4Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
+
+        string postProcessShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/PostProcess.fs").Replace("\r\n", "\n");
+        postProcessShader.ShouldContain("uniform int BloomStartMip = 1;");
+        postProcessShader.ShouldContain("uniform int BloomEndMip = 1;");
+        postProcessShader.ShouldContain("uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);");
+
+        string postProcessStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/PostProcessStereo.fs").Replace("\r\n", "\n");
+        postProcessStereoShader.ShouldContain("uniform int BloomStartMip = 1;");
+        postProcessStereoShader.ShouldContain("uniform int BloomEndMip = 1;");
+        postProcessStereoShader.ShouldContain("uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);");
+    }
+
+    [Test]
     public void DeferredGeometry_UsesDedicatedGBufferFbo_InsteadOfAoQuadFbo()
     {
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
