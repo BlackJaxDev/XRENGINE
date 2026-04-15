@@ -229,10 +229,13 @@ public static partial class EditorUnitTests
             public int Z { get; set; } = 10;
         }
 
-        public List<ModelImportSettings> ModelsToImport { get; set; } =
-        [
-            
-        ];
+        public List<ModelImportSettings> ModelsToImport { get; set; } = [];
+        /// <summary>
+        /// Additional directories that the startup model importer searches recursively by texture file name
+        /// when authored texture paths do not resolve relative to the source model.
+        /// Relative paths are resolved from the process working directory.
+        /// </summary>
+        public List<string> TextureLoadDirSearchPaths { get; set; } = [];
 
         //Audio
         public bool SoundNode = false;

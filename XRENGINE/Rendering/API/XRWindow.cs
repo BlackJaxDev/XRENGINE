@@ -126,6 +126,11 @@ namespace XREngine.Rendering
         /// </summary>
         public bool UseNativeTitleBar { get; }
 
+        /// <summary>
+        /// Per-window request to keep VSync enabled even when the global engine policy is off.
+        /// </summary>
+        public bool WindowVSyncRequested { get; }
+
         public EventList<XRViewport> Viewports => _viewports;
 
         public bool IsTickLinked { get; private set; } = false;
@@ -181,6 +186,64 @@ namespace XREngine.Rendering
             _lastRenderException = null;
         }
 
+        public void ApplyVSyncMode(EVSyncMode globalVSyncMode)
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+
+            if (Engine.IsRenderThread)
+                ApplyVSyncModeOnRenderThread(globalVSyncMode);
+            else
+                Engine.EnqueueRenderThreadTask(
+                    () => ApplyVSyncModeOnRenderThread(globalVSyncMode),
+                    $"XRWindow.ApplyVSync[{GetHashCode()}]");
+        }
+
+        private void ApplyVSyncModeOnRenderThread(EVSyncMode globalVSyncMode)
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+
+            bool enableVSync = WindowVSyncRequested || globalVSyncMode != EVSyncMode.Off;
+            bool isOpenGlWindow = Window.API.API == ContextAPI.OpenGL;
+
+            try
+            {
+                if (isOpenGlWindow)
+                    Window.MakeCurrent();
+
+                Window.VSync = enableVSync;
+
+                if (!isOpenGlWindow || !enableVSync || globalVSyncMode != EVSyncMode.Adaptive)
+                    return;
+
+                try
+                {
+                    Window.GLContext?.SwapInterval(-1);
+                }
+                catch (Exception adaptiveEx)
+                {
+                    Debug.RenderingWarningEvery(
+                        $"XRWindow.AdaptiveVSync[{GetHashCode()}]",
+                        TimeSpan.FromSeconds(5),
+                        "[XRWindow] Adaptive VSync is unavailable for window {0}; falling back to standard VSync. {1}",
+                        GetHashCode(),
+                        adaptiveEx.Message);
+
+                    Window.GLContext?.SwapInterval(1);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingWarningEvery(
+                    $"XRWindow.ApplyVSync[{GetHashCode()}]",
+                    TimeSpan.FromSeconds(5),
+                    "[XRWindow] Failed to apply VSync policy for window {0}. {1}",
+                    GetHashCode(),
+                    ex.Message);
+            }
+        }
+
         /// <summary>
         /// Forces the window to re-evaluate whether it should be tick-linked and rendering.
         /// Intended for settings/UI changes that don't touch Viewports/TargetWorldInstance.
@@ -210,7 +273,7 @@ namespace XREngine.Rendering
 
         #region Constructor
 
-        public XRWindow(WindowOptions options, bool useNativeTitleBar)
+        public XRWindow(WindowOptions options, bool useNativeTitleBar, bool windowVSyncRequested = false)
         {
             _viewports.CollectionChanged += ViewportsChanged;
             _scenePanelAdapter = RuntimeRenderingHostServices.Current.CreateWindowScenePanelAdapter();
@@ -227,6 +290,7 @@ namespace XREngine.Rendering
             Silk.NET.Windowing.Window.PrioritizeGlfw();
             Window = Silk.NET.Windowing.Window.Create(options);
             UseNativeTitleBar = useNativeTitleBar;
+            WindowVSyncRequested = windowVSyncRequested;
             _windowInitializationProbe = new WindowInitializationProbe(options.Title ?? string.Empty, options.API.API, useNativeTitleBar);
             StartWindowInitializationWatchdog(_windowInitializationProbe);
 

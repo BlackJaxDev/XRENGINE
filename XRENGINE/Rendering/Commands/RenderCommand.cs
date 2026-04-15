@@ -1,5 +1,6 @@
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Commands
 {
@@ -53,6 +54,9 @@ namespace XREngine.Rendering.Commands
         /// Used by the render thread to determine if the command should actually render.
         /// </summary>
         public bool RenderEnabled => _renderEnabled;
+
+        [YamlIgnore]
+        internal long SortOrderKey { get; set; }
 
         public abstract int CompareTo(RenderCommand? other);
         public int CompareTo(object? obj) => CompareTo(obj as RenderCommand);

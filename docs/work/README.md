@@ -27,6 +27,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | HBAO / HBAO+ | Active | [todo/hbao-hbao-plus-implementation-todo.md](todo/hbao-hbao-plus-implementation-todo.md) | Active implementation tracker. |
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
 | GPU rendering roadmap | Active | [todo/gpu-rendering.md](todo/gpu-rendering.md) | Broad GPU-driven rendering work remains active. |
+| Dedicated render-thread window ownership | Active | [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md) | Refactor plan to move engine window ownership, graphics contexts, and present off the startup/editor thread. |
 | Animated Gaussian capture and streaming | Active | [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md) | Offline bake plus one-draw animated Gaussian clip playback roadmap. |
 | Shader and snippet optimization | Active | [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md) | Active shader performance and preprocessing tracker. |
 | GPU softbody rigging | Active | [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md) | Still an active work item. |
@@ -63,6 +64,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/affine-matrix-integration-plan.md](design/affine-matrix-integration-plan.md)
 - [design/bindless-deferred-texturing-plan.md](design/bindless-deferred-texturing-plan.md)
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)
+- [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)
 - [design/gpu-render-pass-pipeline.md](design/gpu-render-pass-pipeline.md)
 - [design/gpu-softbody-mesh-rigging-plan.md](design/gpu-softbody-mesh-rigging-plan.md)
 - [design/hbao-hbao-plus-implementation-plan.md](design/hbao-hbao-plus-implementation-plan.md)

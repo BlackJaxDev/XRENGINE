@@ -225,6 +225,7 @@ namespace XREngine.Rendering.OpenGL
                 _asyncLinkedProgramId = 0;
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
+                UnregisterPendingAsyncProgram();
                 _hashComputed = false;
                 _linkDataPrepared = false;
                 _attribCache.Clear();
@@ -279,6 +280,7 @@ namespace XREngine.Rendering.OpenGL
 
                 uint handle = Api.CreateProgram();
 
+                    Api.ProgramParameter(handle, GLEnum.ProgramBinaryRetrievableHint, 1);
                 Api.ProgramParameter(handle, GLEnum.ProgramSeparable, Data.Separable ? 1 : 0);
 
                 return handle;

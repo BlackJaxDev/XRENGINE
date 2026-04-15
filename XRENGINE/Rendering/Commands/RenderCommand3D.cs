@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Commands
 {
@@ -29,7 +30,19 @@ namespace XREngine.Rendering.Commands
         public void UpdateRenderDistance(Vector3 thisWorldPosition, XRCamera camera)
             => RenderDistance = (camera.Transform.RenderTranslation - thisWorldPosition).LengthSquared();
         public override int CompareTo(RenderCommand? other)
-            => RenderDistance < ((other as RenderCommand3D)?.RenderDistance ?? 0.0f) ? -1 : 1;
+        {
+            int distanceCompare = RenderDistance.CompareTo((other as RenderCommand3D)?.RenderDistance ?? 0.0f);
+            if (distanceCompare != 0)
+                return distanceCompare;
+
+            int sortCompare = SortOrderKey.CompareTo(other?.SortOrderKey ?? long.MaxValue);
+            if (sortCompare != 0)
+                return sortCompare;
+
+            return ReferenceEquals(this, other)
+                ? 0
+                : RuntimeHelpers.GetHashCode(this).CompareTo(RuntimeHelpers.GetHashCode(other));
+        }
 
         public RenderCommand3D()
             : this(0) { }

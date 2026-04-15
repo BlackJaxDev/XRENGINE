@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace XREngine.Rendering.Commands
 {
     public abstract class RenderCommand2D : RenderCommand, IRenderCommand
@@ -10,7 +12,19 @@ namespace XREngine.Rendering.Commands
         }
 
         public override int CompareTo(RenderCommand? other)
-            => ZIndex < ((other as RenderCommand2D)?.ZIndex ?? 0) ? -1 : 1;
+        {
+            int zCompare = ZIndex.CompareTo((other as RenderCommand2D)?.ZIndex ?? 0);
+            if (zCompare != 0)
+                return zCompare;
+
+            int sortCompare = SortOrderKey.CompareTo(other?.SortOrderKey ?? long.MaxValue);
+            if (sortCompare != 0)
+                return sortCompare;
+
+            return ReferenceEquals(this, other)
+                ? 0
+                : RuntimeHelpers.GetHashCode(this).CompareTo(RuntimeHelpers.GetHashCode(other));
+        }
 
         public RenderCommand2D()
             : base(0) { }

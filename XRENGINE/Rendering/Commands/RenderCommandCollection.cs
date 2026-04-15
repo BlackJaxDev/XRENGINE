@@ -31,6 +31,7 @@ namespace XREngine.Rendering.Commands
         private static readonly CpuRenderOcclusionCoordinator s_cpuOcclusionCoordinator = new();
         private static int s_addCpuMissingPassDiagCount = 0;
         private Dictionary<int, Type?> _passSorterTypes = [];
+        private Dictionary<int, long> _updatingPassSortOrderCounters = [];
 
         public bool IsShadowPass { get; private set; } = false;
         public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters, IEnumerable<RenderPassMetadata>? passMetadata = null)
@@ -47,6 +48,7 @@ namespace XREngine.Rendering.Commands
 
                 _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
                 _passSorterTypes = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value?.GetType());
+                _updatingPassSortOrderCounters = passIndicesAndSorters.Keys.ToDictionary(static key => key, static _ => 0L);
 
                 _renderingPasses = [];
                 _gpuPasses = [];
@@ -257,9 +259,23 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
+                item.SortOrderKey = GetSortOrderKey(pass);
                 set.Add(item);
                 ++_numCommandsRecentlyAddedToUpdate;
             }
+        }
+
+        private long GetSortOrderKey(int pass)
+        {
+            long nextValue = _updatingPassSortOrderCounters.TryGetValue(pass, out long currentValue)
+                ? currentValue
+                : 0L;
+
+            _updatingPassSortOrderCounters[pass] = nextValue + 1L;
+
+            return _passSorterTypes.TryGetValue(pass, out Type? sorterType) && sorterType == typeof(FarToNearRenderCommandSorter)
+                ? long.MaxValue - nextValue
+                : nextValue;
         }
 
         public int GetCommandsAddedCount()
@@ -695,6 +711,9 @@ namespace XREngine.Rendering.Commands
             {
                 _updatingPasses.Values.ForEach(Clear);
             }
+
+            foreach (int passIndex in _updatingPassSortOrderCounters.Keys.ToArray())
+                _updatingPassSortOrderCounters[passIndex] = 0L;
 
             _numCommandsRecentlyAddedToUpdate = 0;
         }

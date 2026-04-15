@@ -6,6 +6,7 @@ using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.UI
@@ -823,7 +824,7 @@ namespace XREngine.Rendering.UI
         public override bool SupportsBatchedRendering
             => !ClipToBounds && !AnimatableTransforms;
 
-        protected override bool RegisterWithBatchCollector(UIBatchCollector collector)
+        protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
             var font = Font;
             var atlas = font?.Atlas;
@@ -844,7 +845,7 @@ namespace XREngine.Rendering.UI
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
             var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
 
-            collector.AddTextQuad(RenderPass, atlas, in worldMatrix, in textColor, in bounds, glyphsCopy);
+            collector.AddTextQuad(RenderPass, RenderCommand2D.ZIndex, passes, atlas, in worldMatrix, in textColor, in bounds, glyphsCopy);
             return true;
         }
 

@@ -185,16 +185,23 @@ public static class BootstrapWorldFactory
                 priority: JobPriority.Low);
         }
 
+        void QueueSkyTextureLoad()
+        {
+            Engine.Jobs.Schedule(
+                new LabeledActionJob(StartSkyTextureLoad, "BootstrapWorldFactory.StartSkyTextureLoad"),
+                JobPriority.Low);
+        }
+
         if (Engine.Windows.Count > 0 && !Engine.StartingUp)
         {
-            Engine.EnqueueAppThreadTask(StartSkyTextureLoad, "BootstrapWorldFactory.StartSkyTextureLoad");
+            QueueSkyTextureLoad();
             return;
         }
 
         void AfterWindowsCreated(GameStartupSettings _, GameState __)
         {
             Engine.AfterCreateWindows -= AfterWindowsCreated;
-            Engine.EnqueueAppThreadTask(StartSkyTextureLoad, "BootstrapWorldFactory.StartSkyTextureLoad");
+            QueueSkyTextureLoad();
         }
 
         Engine.AfterCreateWindows += AfterWindowsCreated;

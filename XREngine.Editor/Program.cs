@@ -440,9 +440,9 @@ internal class Program
 
         if (window.Renderer is OpenGLRenderer glRenderer)
         {
-            glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(100.0);
-            glRenderer.UploadQueue.BoostBudgetUntilDrained(50.0);
-            WriteBootstrapTrace("Boosted GL mesh-generation and upload budgets until startup warmup drains.");
+            glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(glRenderer.MeshGenerationQueue.FrameBudgetMs);
+            glRenderer.UploadQueue.BoostBudgetUntilDrained(glRenderer.UploadQueue.FrameBudgetMs);
+            WriteBootstrapTrace("Enabled GL startup warmup throttling without increasing mesh-generation or upload budgets.");
         }
 
         window.PostRenderViewportsCallback += OnStartupPostRenderViewports;

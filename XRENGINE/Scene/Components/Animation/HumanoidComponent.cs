@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.ComponentModel;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Reflection.Attributes;
@@ -12,6 +13,7 @@ using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
+using System.Threading;
 
 namespace XREngine.Components.Animation
 {
@@ -25,6 +27,41 @@ namespace XREngine.Components.Animation
         private readonly object _muscleValuesLock = new();
         private const int MuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
         private readonly float[] _muscleValueSnapshot = new float[MuscleValueCount];
+        private static readonly AsyncLocal<int> _deferSceneNodeInitializationScopeDepth = new();
+        private bool _sceneNodeInitializationComplete;
+
+        [Browsable(false)]
+        public bool IsSceneNodeInitializationComplete => _sceneNodeInitializationComplete;
+
+        public static IDisposable BeginDeferredSceneNodeInitialization()
+        {
+            _deferSceneNodeInitializationScopeDepth.Value++;
+            return new DeferredSceneNodeInitializationScope();
+        }
+
+        public void InitializeSceneNodeBindings()
+        {
+            if (_sceneNodeInitializationComplete || SceneNode.IsDestroyed)
+                return;
+
+            SetFromNode();
+            ReloadNeutralPosePreset();
+            ApplyPosePreviewMode();
+            _sceneNodeInitializationComplete = true;
+        }
+
+        private static bool ShouldDeferSceneNodeInitialization()
+            => _deferSceneNodeInitializationScopeDepth.Value > 0;
+
+        private sealed class DeferredSceneNodeInitializationScope : IDisposable
+        {
+            public void Dispose()
+            {
+                int depth = _deferSceneNodeInitializationScopeDepth.Value;
+                if (depth > 0)
+                    _deferSceneNodeInitializationScopeDepth.Value = depth - 1;
+            }
+        }
 
         protected override void OnComponentActivated()
         {
@@ -1337,9 +1374,11 @@ namespace XREngine.Components.Animation
         protected override void AddedToSceneNode(SceneNode sceneNode)
         {
             base.AddedToSceneNode(sceneNode);
-            SetFromNode();
-            ReloadNeutralPosePreset();
-            ApplyPosePreviewMode();
+
+            if (ShouldDeferSceneNodeInitialization())
+                return;
+
+            InitializeSceneNodeBindings();
         }
 
         public HumanoidComponent() 
@@ -1576,7 +1615,6 @@ namespace XREngine.Components.Animation
         //    rootBone.Def.MaxPositionOffset = new Vector3(distance * 0.1f, distance * 0.1f, distance * 0.1f);
         //    rootBone.Def.MinPositionOffset = -rootBone.Def.MaxPositionOffset;
         //}
-
         public void SetFromNode()
         {
             //Debug.Out(SceneNode.PrintTree());
@@ -2137,8 +2175,8 @@ namespace XREngine.Components.Animation
             };
         }
 
-        public LimbSignOverrides DebugArmSigns = LimbSignOverrides.Default;
-        public LimbSignOverrides DebugForearmSigns = LimbSignOverrides.Default;
+    public LimbSignOverrides DebugArmSigns = LimbSignOverrides.Default;
+    public LimbSignOverrides DebugForearmSigns = LimbSignOverrides.Default;
         public LimbSignOverrides DebugWristSigns = LimbSignOverrides.Default;
         public LimbSignOverrides DebugUpperLegSigns = LimbSignOverrides.Default;
         public LimbSignOverrides DebugKneeSigns = LimbSignOverrides.Default;

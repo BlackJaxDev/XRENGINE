@@ -99,7 +99,16 @@ namespace XREngine.Scene
                 }
 
                 if (collectionVolume is null)
-                    RenderTree.CollectAll(AddRenderCommands);
+                {
+                    // UI painter's order must follow stable scene insertion order when no culling
+                    // volume is applied. Quadtree traversal is spatial, not visual, and can draw
+                    // text under later panels even when the batched dispatcher preserves submit order.
+                    for (int i = 0; i < _renderables.Count; i++)
+                    {
+                        walkedCount++;
+                        _renderables[i].CollectCommands(commands, camera);
+                    }
+                }
                 else
                     RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
 

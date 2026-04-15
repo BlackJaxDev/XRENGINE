@@ -1269,6 +1269,16 @@ namespace XREngine.Rendering
             FontGlyphSet font = Engine.Assets.Load3rdPartyVariantWithCache<FontGlyphSet>(path, importOptions, importProfileKey, JobPriority.Highest, bypassJobThread: true)
                 ?? throw new FileNotFoundException($"Unable to import engine font at {path}");
 
+            // Safety net: if the cached font loaded without an atlas or with a blank atlas
+            // (e.g., stale or partially deserialized cache), evict and reimport fresh.
+            if (font.Atlas is null || font.Atlas.Mipmaps is { Length: 0 })
+            {
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFontDirect: cached font at '{path}' has a missing or blank atlas. atlasNull={font.Atlas is null}, mipmaps={font.Atlas?.Mipmaps?.Length ?? -1}. Evicting stale cache and reimporting.");
+                EvictLoadedAsset(font, path);
+                font = Engine.Assets.Load3rdPartyVariantWithCache<FontGlyphSet>(path, importOptions, importProfileKey, JobPriority.Highest, bypassJobThread: true)
+                    ?? throw new FileNotFoundException($"Unable to reimport engine font at {path}");
+            }
+
             font.Name ??= Path.GetFileNameWithoutExtension(path);
             font.FilePath = path;
             font.OriginalPath = path;

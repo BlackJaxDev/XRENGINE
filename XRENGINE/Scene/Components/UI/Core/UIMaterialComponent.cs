@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.UI
@@ -123,7 +124,7 @@ namespace XREngine.Rendering.UI
         public override bool SupportsBatchedRendering
             => !ClipToBounds && (Material?.Textures is null || Material.Textures.Count == 0);
 
-        protected override bool RegisterWithBatchCollector(UIBatchCollector collector)
+        protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
             var tfm = BoundableTransform;
             var worldMatrix = GetRenderWorldMatrix(tfm);
@@ -135,7 +136,7 @@ namespace XREngine.Rendering.UI
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
             var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
 
-            collector.AddMaterialQuad(RenderPass, in worldMatrix, in color, in bounds);
+            collector.AddMaterialQuad(RenderPass, RenderCommand2D.ZIndex, passes, in worldMatrix, in color, in bounds);
             return true;
         }
 

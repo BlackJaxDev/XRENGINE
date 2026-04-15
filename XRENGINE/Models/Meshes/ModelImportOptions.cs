@@ -210,6 +210,12 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public Dictionary<string, XRTexture2D?>? TextureRemap { get; set; }
 
     /// <summary>
+    /// Optional additional directories that the importer will search recursively by file name
+    /// when an authored texture path cannot be resolved relative to the model.
+    /// </summary>
+    public string[] TextureLoadDirSearchPaths { get; set; } = [];
+
+    /// <summary>
     /// Maps imported material names to finalized material assets.
     /// </summary>
     public Dictionary<string, XRMaterial?>? MaterialRemap { get; set; }

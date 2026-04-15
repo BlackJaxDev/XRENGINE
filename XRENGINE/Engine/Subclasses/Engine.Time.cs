@@ -79,10 +79,32 @@ namespace XREngine
             /// <param name="userSet"></param>
             public static void Initialize(GameStartupSettings gameSet, UserSettings userSet)
                 => UpdateTimer(
-                    EffectiveSettings.TargetFramesPerSecond ?? 0.0f,
+                    ResolveRenderFrequency(LastFocusState, EffectiveSettings.VSync),
                     EffectiveSettings.TargetUpdatesPerSecond ?? 0.0f,
                     EffectiveSettings.FixedFramesPerSecond,
                     EffectiveSettings.VSync);
+
+            public static float ResolveRenderFrequency(bool focused, EVSyncMode vSync)
+            {
+                float? focusedTarget = EffectiveSettings.TargetFramesPerSecond;
+                if (!focused)
+                {
+                    float? unfocusedTarget = EffectiveSettings.UnfocusedTargetFramesPerSecond;
+                    if (HasExplicitUnfocusedRenderLimit(focusedTarget, unfocusedTarget))
+                        return unfocusedTarget ?? 0.0f;
+                }
+
+                return ResolveConfiguredRenderFrequency(focusedTarget, vSync);
+            }
+
+            private static float ResolveConfiguredRenderFrequency(float? configuredTargetRenderFrequency, EVSyncMode vSync)
+                => vSync == EVSyncMode.Off
+                    ? configuredTargetRenderFrequency ?? 0.0f
+                    : 0.0f;
+
+            private static bool HasExplicitUnfocusedRenderLimit(float? focusedTarget, float? unfocusedTarget)
+                => unfocusedTarget is float unfocused
+                    && (focusedTarget is not float focused || Math.Abs(unfocused - focused) > 0.0001f);
 
             /// <summary>
             /// Updates the core game engine timer settings.

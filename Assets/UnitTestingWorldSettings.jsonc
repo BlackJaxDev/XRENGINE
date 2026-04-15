@@ -300,6 +300,8 @@
       }
     }
   ],
+  // Additional directories that the startup model importer searches recursively by texture file name when authored texture paths do not resolve relative to the source model. Relative paths are resolved from the process working directory.
+  "TextureLoadDirSearchPaths": [],
 
   // Audio.
   // Enables or disables SoundNode.

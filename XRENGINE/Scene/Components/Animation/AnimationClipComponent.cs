@@ -22,6 +22,8 @@ namespace XREngine.Components.Animation
         private readonly HashSet<Transform> _animatedQuaternionTargets = [];
         private Transform[] _animatedQuaternionTargetsSnapshot = [];
         private BasePropAnim[] _propertyAnimationsSnapshot = [];
+        private int _deferredStartVersion;
+        private bool _deferredStartPending;
 
         private AnimationClip? _animation;
         public AnimationClip? Animation
@@ -145,8 +147,90 @@ namespace XREngine.Components.Animation
 
         private void Start()
         {
-            if (Animation is null || _isPlaying)
+            if (!TryBeginPlayback())
                 return;
+
+            AnimationClip clip = Animation!;
+            EnsureInitialized();
+            PrimePlaybackAtInitialTime(clip);
+            CompletePlaybackStartup();
+        }
+
+        public void PlayDeferred()
+        {
+            if (_isPlaying || _isPaused || _deferredStartPending)
+                Stop();
+
+            if (Animation is null)
+                return;
+
+            int version = ++_deferredStartVersion;
+            _deferredStartPending = true;
+            int stage = 0;
+
+            Engine.AddAppThreadCoroutine(() =>
+            {
+                if (version != _deferredStartVersion || IsDestroyed || SceneNode.IsDestroyed)
+                {
+                    if (version == _deferredStartVersion)
+                        _deferredStartPending = false;
+                    return true;
+                }
+
+                AnimationClip? clip = Animation;
+                if (clip is null)
+                {
+                    _deferredStartPending = false;
+                    return true;
+                }
+
+                switch (stage)
+                {
+                    case 0:
+                        using (Engine.Profiler.Start("AnimationClipComponent.DeferredStart.BeginPlayback"))
+                        {
+                            if (!TryBeginPlayback())
+                            {
+                                _deferredStartPending = false;
+                                return true;
+                            }
+                        }
+
+                        stage++;
+                        return false;
+
+                    case 1:
+                        using (Engine.Profiler.Start("AnimationClipComponent.DeferredStart.InitializeMembers"))
+                            EnsureInitialized();
+
+                        stage++;
+                        return false;
+
+                    case 2:
+                        using (Engine.Profiler.Start("AnimationClipComponent.DeferredStart.PrimePropertyAnimations"))
+                            PrimePlaybackAtInitialTime(clip);
+
+                        stage++;
+                        return false;
+
+                    case 3:
+                        using (Engine.Profiler.Start("AnimationClipComponent.DeferredStart.ApplyInitialPose"))
+                            CompletePlaybackStartup();
+
+                        _deferredStartPending = false;
+                        return true;
+
+                    default:
+                        _deferredStartPending = false;
+                        return true;
+                }
+            });
+        }
+
+        private bool TryBeginPlayback()
+        {
+            if (Animation is null || _isPlaying)
+                return false;
 
             _isPlaying = true;
 
@@ -159,20 +243,28 @@ namespace XREngine.Components.Animation
 
             EnsureHumanoidAnimationIKSolver();
             ResetRootMotionBaselineIfNeeded();
-            EnsureInitialized();
+            return true;
+        }
 
+        private void PrimePlaybackAtInitialTime(AnimationClip clip)
+        {
             // Bind members to this component/SceneNode via the anim state machine.
             // Seed the underlying property animations to a canonical clip time.
-            long initialTicks = GetInitialPlaybackTicks(Animation, Speed);
-            StartAllPropertyAnimations(Animation, initialTicks);
+            long initialTicks = GetInitialPlaybackTicks(clip, Speed);
+            StartAllPropertyAnimations(clip, initialTicks);
             SetPlaybackTimeTicks(initialTicks);
-            ApplyAnimatedValues();
+        }
 
+        private void CompletePlaybackStartup()
+        {
+            ApplyAnimatedValues();
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
         }
 
         private void Stop()
         {
+            _deferredStartVersion++;
+            _deferredStartPending = false;
             _isPlaying = false;
             _isPaused = false;
             ClearHumanoidAnimationIKSolverGoals();
