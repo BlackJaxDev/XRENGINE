@@ -17,7 +17,9 @@ uniform mat4 ViewProjectionMatrix_VTX;
 uniform vec3 CameraPosition;
 
 // Time for animations (provided by engine when RenderTime is requested)
+#ifndef XRENGINE_UBER_DISABLE_RENDER_TIME
 uniform float RenderTime;
+#endif
 
 // ============================================
 // Convenience macros for compatibility with u_ prefix code
@@ -28,7 +30,11 @@ uniform float RenderTime;
 #define u_ModelViewMatrix (ViewMatrix_VTX * ModelMatrix)
 #define u_ModelViewProjectionMatrix (ViewProjectionMatrix_VTX * ModelMatrix)
 #define u_CameraPosition CameraPosition
+#ifndef XRENGINE_UBER_DISABLE_RENDER_TIME
 #define u_Time RenderTime
+#else
+#define u_Time 0.0
+#endif
 #define u_ScreenParams vec4(ScreenWidth, ScreenHeight, 1.0 + 1.0/ScreenWidth, 1.0 + 1.0/ScreenHeight)
 
 // Forward-lighting uniforms, shadows, Forward+, and probe bindings are declared
@@ -57,6 +63,7 @@ uniform float _BumpScale;
 // ============================================
 // Alpha / Transparency
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_ALPHA_MASKS
 uniform sampler2D _AlphaMask;
 uniform vec4 _AlphaMask_ST;
 uniform vec2 _AlphaMaskPan;
@@ -65,6 +72,7 @@ uniform int _MainAlphaMaskMode;     // 0: Off, 1: Replace, 2: Multiply, 3: Add, 
 uniform float _AlphaMaskBlendStrength;
 uniform float _AlphaMaskValue;
 uniform float _AlphaMaskInvert;
+#endif
 
 uniform float _Cutoff;              // Alpha cutoff threshold
 uniform int _Mode;                  // Rendering mode (opaque, cutout, fade, etc.)
@@ -132,11 +140,13 @@ uniform float _LightingGradientEnd;
 #endif
 
 // AO Maps
+#ifndef XRENGINE_UBER_DISABLE_MATERIAL_AO
 uniform sampler2D _LightingAOMaps;
 uniform vec4 _LightingAOMaps_ST;
 uniform vec2 _LightingAOMapsPan;
 uniform int _LightingAOMapsUV;
 uniform float _LightDataAOStrengthR;
+#endif
 
 // Shadow Mask
 #ifndef XRENGINE_UBER_DISABLE_SHADOW_MASKS
@@ -148,6 +158,7 @@ uniform float _LightingShadowMaskStrengthR;
 // ============================================
 // Emission
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_EMISSION
 uniform float _EnableEmission;
 uniform sampler2D _EmissionMap;
 uniform vec4 _EmissionMap_ST;
@@ -160,10 +171,12 @@ uniform float _EmissionStrength;
 uniform float _EmissionScrollingEnabled;
 uniform vec2 _EmissionScrollingSpeed;
 uniform float _EmissionScrollingVertexColor;
+#endif
 
 // ============================================
 // Matcap
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_MATCAP
 uniform float _MatcapEnable;
 uniform sampler2D _Matcap;
 uniform vec4 _MatcapColor;
@@ -181,6 +194,7 @@ uniform sampler2D _MatcapMask;
 uniform vec4 _MatcapMask_ST;
 uniform int _MatcapMaskChannel;
 uniform float _MatcapMaskInvert;
+#endif
 
 // ============================================
 // Rim Lighting

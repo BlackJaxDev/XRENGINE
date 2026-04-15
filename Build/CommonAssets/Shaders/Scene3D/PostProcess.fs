@@ -130,9 +130,10 @@ uniform vec2 BrownConradyTangential; // p1,p2
 
 // Bloom combine controls
 uniform float BloomStrength = 0.15;
-uniform int BloomStartMip = 2;
-uniform int BloomEndMip = 4;
-uniform float BloomLodWeights[5] = float[](0.0, 0.0, 0.65, 0.25, 0.10);
+uniform int BloomStartMip = 1;
+uniform int BloomEndMip = 1;
+uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);
+uniform bool DebugBloomOnly = false;
 
 uniform int DepthMode;
 
@@ -630,7 +631,45 @@ void main()
   }
   
   //Add bloom with configurable range/weights, scaled by overall strength
-  if (BloomStrength > 0.0f)
+  if (DebugBloomOnly)
+  {
+    // Diagnostic: 2x2 grid showing bloom texture mip levels 0-3.
+    //   Top-left  = mip 0 (scene copy, red border)
+    //   Top-right = mip 1 (threshold-filtered downsample, green border)
+    //   Bot-left  = mip 2 (further downsample, blue border)
+    //   Bot-right = mip 3 (further downsample, yellow border)
+    // If mip 0 and mip 1 look identical, either textureLod isn't
+    // distinguishing mips (GL_TEXTURE_MAX_LEVEL issue) or the
+    // downsample pass is not writing threshold-filtered content.
+    int col = uv.x < 0.5 ? 0 : 1;
+    int row = uv.y < 0.5 ? 0 : 1;
+    int mip = row * 2 + col; // 0=TL, 1=TR, 2=BL, 3=BR
+    vec2 cellUV = fract(uv * 2.0);
+
+    // Thin colored border per quadrant for identification.
+    float border = 0.005;
+    bool onBorder = cellUV.x < border || cellUV.x > (1.0 - border)
+                 || cellUV.y < border || cellUV.y > (1.0 - border);
+    vec3 borderColors[4] = vec3[](
+        vec3(1.0, 0.0, 0.0),   // mip 0: red
+        vec3(0.0, 1.0, 0.0),   // mip 1: green
+        vec3(0.0, 0.0, 1.0),   // mip 2: blue
+        vec3(1.0, 1.0, 0.0)    // mip 3: yellow
+    );
+
+    if (onBorder)
+    {
+        OutColor = vec4(borderColors[mip], 1.0);
+    }
+    else
+    {
+        // Sample the bloom texture at the quadrant's mip level using the cell UV.
+        vec3 mipColor = textureLod(BloomBlurTexture, cellUV, float(mip)).rgb;
+        OutColor = vec4(mipColor, 1.0);
+    }
+    return;
+  }
+  else if (BloomStrength > 0.0f)
   {
     int startMip = clamp(BloomStartMip, 0, 4);
     int endMip = clamp(BloomEndMip, startMip, 4);

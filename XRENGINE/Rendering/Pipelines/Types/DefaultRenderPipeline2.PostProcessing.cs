@@ -468,7 +468,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.StartMip),
             PostProcessParameterKind.Int,
-            2,
+            1,
             displayName: "Start Mip (Quality)",
             min: 0,
             max: 4,
@@ -477,7 +477,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.EndMip),
             PostProcessParameterKind.Int,
-            4,
+            1,
             displayName: "End Mip",
             min: 0,
             max: 4,
@@ -495,7 +495,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod1Weight),
             PostProcessParameterKind.Float,
-            0.0f,
+            1.0f,
             displayName: "LOD1 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -504,7 +504,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod2Weight),
             PostProcessParameterKind.Float,
-            0.65f,
+            0.0f,
             displayName: "LOD2 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -513,7 +513,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod3Weight),
             PostProcessParameterKind.Float,
-            0.25f,
+            0.0f,
             displayName: "LOD3 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -522,11 +522,17 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod4Weight),
             PostProcessParameterKind.Float,
-            0.10f,
+            0.0f,
             displayName: "LOD4 Weight",
             min: 0.0f,
             max: 2.0f,
             step: 0.01f);
+
+        stage.AddParameter(
+            nameof(BloomSettings.DebugBloomOnly),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Debug: Show Bloom Only");
     }
 
     private static void DescribeTemporalAntiAliasingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)

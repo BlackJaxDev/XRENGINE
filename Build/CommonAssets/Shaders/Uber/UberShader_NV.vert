@@ -50,19 +50,39 @@ uniform mat4 RightEyeInverseViewMatrix_VTX;
 uniform mat4 LeftEyeProjMatrix_VTX;
 uniform mat4 RightEyeProjMatrix_VTX;
 
+// ============================================
+// Compute-skinning SSBO overrides
+// ============================================
+#ifdef XRENGINE_COMPUTE_SKINNING
+layout(std430, binding = 11) buffer SkinnedPositionsInput { vec4 SkinnedPositions[]; };
+layout(std430, binding = 12) buffer SkinnedNormalsInput   { vec4 SkinnedNormals[];   };
+layout(std430, binding = 15) buffer SkinnedTangentsInput  { vec4 SkinnedTangents[];  };
+#endif
+
 void main() {
-	vec4 worldPosition = u_ModelMatrix * vec4(Position, 1.0);
+#ifdef XRENGINE_COMPUTE_SKINNING
+	vec3 pos  = SkinnedPositions[gl_VertexID].xyz;
+	vec3 norm = SkinnedNormals[gl_VertexID].xyz;
+	vec3 tan  = SkinnedTangents[gl_VertexID].xyz;
+#else
+	vec3 pos  = Position;
+	vec3 norm = Normal;
+	vec3 tan  = Tangent.xyz;
+#endif
+	float tanSign = Tangent.w;
+
+	vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);
 	v_WorldPos = worldPosition.xyz;
-	v_LocalPos = Position;
+	v_LocalPos = pos;
 
 	gl_Position = LeftEyeProjMatrix_VTX * LeftEyeViewMatrix_VTX * worldPosition;
 	gl_SecondaryPositionNV = RightEyeProjMatrix_VTX * RightEyeViewMatrix_VTX * worldPosition;
 	gl_Layer = 0;
 
 	mat3 normalMatrix = mat3(transpose(inverse(u_ModelMatrix)));
-	v_WorldNormal = normalize(normalMatrix * Normal);
-	v_WorldTangent = normalize(normalMatrix * Tangent.xyz);
-	v_TangentSign = Tangent.w;
+	v_WorldNormal = normalize(normalMatrix * norm);
+	v_WorldTangent = normalize(normalMatrix * tan);
+	v_TangentSign = tanSign;
 
 	v_Uv01 = vec4(TexCoord0, TexCoord1);
 	v_Uv23 = vec4(TexCoord2, TexCoord3);

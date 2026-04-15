@@ -186,7 +186,8 @@ namespace XREngine.Rendering.OpenGL
                         _forcedGeneratedVertexProgram?.Destroy();
                         _forcedGeneratedVertexProgram = null;
 
-                        if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+                        if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader
+                            && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader)
                             DestroySkinnedBuffers();
 
                         BuffersBound = false;

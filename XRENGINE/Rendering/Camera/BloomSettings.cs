@@ -10,13 +10,14 @@ namespace XREngine.Rendering
         private float _radius = 1.0f;
         private float _scatter = 0.75f;
         private float _strength = 0.15f;
-        private int _startMip = 2;
-        private int _endMip = 4;
+        private int _startMip = 1;
+        private int _endMip = 1;
         private float _lod0Weight = 0.0f;
-        private float _lod1Weight = 0.0f;
-        private float _lod2Weight = 0.65f;
-        private float _lod3Weight = 0.25f;
-        private float _lod4Weight = 0.10f;
+        private float _lod1Weight = 1.0f;
+        private float _lod2Weight = 0.0f;
+        private float _lod3Weight = 0.0f;
+        private float _lod4Weight = 0.0f;
+        private bool _debugBloomOnly = false;
 
         public BloomSettings()
         {
@@ -115,6 +116,16 @@ namespace XREngine.Rendering
             set => SetField(ref _lod4Weight, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// When true, the post-process shader outputs raw bloom texture content
+        /// instead of the composited scene. Useful for diagnosing bloom pass issues.
+        /// </summary>
+        public bool DebugBloomOnly
+        {
+            get => _debugBloomOnly;
+            set => SetField(ref _debugBloomOnly, value);
+        }
+
         public override void SetUniforms(XRRenderProgram program)
             => SetBrightPassUniforms(program);
 
@@ -160,36 +171,27 @@ namespace XREngine.Rendering
 
         public void SetCombineUniforms(XRRenderProgram program)
         {
-            bool usesLegacySingleMipProfile =
-                MathF.Abs(_strength - 0.5f) <= 0.0001f &&
-                _startMip == 1 &&
-                _endMip == 1 &&
-                MathF.Abs(_lod0Weight - 0.0f) <= 0.0001f &&
-                MathF.Abs(_lod1Weight - 1.0f) <= 0.0001f &&
-                MathF.Abs(_lod2Weight - 0.0f) <= 0.0001f &&
-                MathF.Abs(_lod3Weight - 0.0f) <= 0.0001f &&
-                MathF.Abs(_lod4Weight - 0.0f) <= 0.0001f;
-
-            float bloomStrength = usesLegacySingleMipProfile ? 0.15f : MathF.Max(0.0f, Strength);
-
             // Clamp ordering to avoid invalid ranges.
-            int startMip = Math.Clamp(usesLegacySingleMipProfile ? 2 : StartMip, 0, 4);
-            int endMip = Math.Clamp(usesLegacySingleMipProfile ? 4 : EndMip, startMip, 4);
+            int startMip = Math.Clamp(StartMip, 0, 4);
+            int endMip = Math.Clamp(EndMip, startMip, 4);
 
-            // Provide per-lod weights; unused mips get zero weight.
+            // Mip 1 contains the fully accumulated multi-scale bloom result.
+            // Using mip 1 by default keeps threshold/radius/scatter changes visible
+            // instead of turning bloom into a broad exposure lift from coarse mips.
             Span<float> weights =
             [
-                usesLegacySingleMipProfile ? 0.0f : _lod0Weight,
-                usesLegacySingleMipProfile ? 0.0f : _lod1Weight,
-                usesLegacySingleMipProfile ? 0.65f : _lod2Weight,
-                usesLegacySingleMipProfile ? 0.25f : _lod3Weight,
-                usesLegacySingleMipProfile ? 0.10f : _lod4Weight
+                _lod0Weight,
+                _lod1Weight,
+                _lod2Weight,
+                _lod3Weight,
+                _lod4Weight
             ];
 
-            program.Uniform("BloomStrength", bloomStrength);
+            program.Uniform("BloomStrength", MathF.Max(0.0f, Strength));
             program.Uniform("BloomStartMip", startMip);
             program.Uniform("BloomEndMip", endMip);
             program.Uniform("BloomLodWeights", weights);
+            program.Uniform("DebugBloomOnly", _debugBloomOnly);
         }
     }
 }

@@ -352,7 +352,13 @@ namespace XREngine.Rendering.OpenGL
             if (Data.AutoGenerateMipmaps)
                 return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, naturalMaxLevel));
 
-            if (Mipmaps is not null && Mipmaps.Length > 0)
+            // When multiple Mipmaps entries exist they represent actual uploaded
+            // mip data, so cap to the available count.  A single entry (the default
+            // from CreateFrameBufferTexture and similar) is just the mip-0 descriptor
+            // and must NOT clamp GL_TEXTURE_MAX_LEVEL — immutable-storage FBO textures
+            // allocate their full mip chain via glTexStorage2D and write individual
+            // levels through FBO render targets.
+            if (Mipmaps is not null && Mipmaps.Length > 1)
                 return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, Math.Min(Mipmaps.Length - 1, configuredMaxLevel)));
 
             return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, configuredMaxLevel));

@@ -411,16 +411,9 @@ public partial class DefaultRenderPipeline
     {
         XRTexture hdrSceneTex = (XRTexture)EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
 
-        XRTexture[] brightRefs = [hdrSceneTex];
-        XRMaterial brightMat = new(
-            [
-                new ShaderFloat(1.0f, "BloomIntensity"),
-                new ShaderFloat(1.0f, "BloomThreshold"),
-                new ShaderFloat(0.5f, "SoftKnee"),
-                new ShaderVector3(Engine.Rendering.Settings.DefaultLuminance, "Luminance")
-            ],
-            brightRefs,
-            XRShader.EngineShader(Path.Combine(SceneShaderPath, BrightPassShaderName()), EShaderType.Fragment))
+        XRMaterial sceneCopyMat = new(
+            [hdrSceneTex],
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, SceneCopyShaderName()), EShaderType.Fragment))
         {
             RenderOptions = new RenderingParameters()
             {
@@ -433,8 +426,7 @@ public partial class DefaultRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(brightMat, false);
-        fbo.SettingUniforms += BrightPassFBO_SettingUniforms;
+        var fbo = new XRQuadFrameBuffer(sceneCopyMat, false);
 
         IFrameBufferAttachement hdrAttach = (IFrameBufferAttachement)hdrSceneTex;
         IFrameBufferAttachement dsAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);

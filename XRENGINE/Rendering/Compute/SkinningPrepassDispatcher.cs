@@ -95,8 +95,12 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         if (mesh is null || mesh.VertexCount <= 0)
             return;
 
-        bool doSkinning = Engine.Rendering.Settings.CalculateSkinningInComputeShader && mesh.HasSkinning;
-        bool doBlendshapes = Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && mesh.BlendshapeCount > 0 && Engine.Rendering.Settings.AllowBlendshapes;
+        bool doSkinning = Engine.Rendering.Settings.CalculateSkinningInComputeShader
+            && mesh.HasSkinning
+            && Engine.Rendering.Settings.AllowSkinning;
+        bool doBlendshapes = mesh.BlendshapeCount > 0
+            && Engine.Rendering.Settings.AllowBlendshapes
+            && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || doSkinning);
         if (!doSkinning && !doBlendshapes)
             return;
 
@@ -258,8 +262,14 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                     if (mesh is null)
                         continue;
 
-                    bool needsBones = globalBones && !renderer.HasGpuDrivenBoneSource && Engine.Rendering.Settings.CalculateSkinningInComputeShader && mesh.HasSkinning;
-                    bool needsBlend = globalBlend && Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && mesh.BlendshapeCount > 0 && Engine.Rendering.Settings.AllowBlendshapes;
+                    bool skinningInCompute = Engine.Rendering.Settings.CalculateSkinningInComputeShader
+                        && mesh.HasSkinning
+                        && Engine.Rendering.Settings.AllowSkinning;
+                    bool needsBones = globalBones && !renderer.HasGpuDrivenBoneSource && skinningInCompute;
+                    bool needsBlend = globalBlend
+                        && mesh.BlendshapeCount > 0
+                        && Engine.Rendering.Settings.AllowBlendshapes
+                        && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || skinningInCompute);
                     if (!needsBones && !needsBlend)
                         continue;
 
