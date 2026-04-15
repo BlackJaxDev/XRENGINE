@@ -197,6 +197,12 @@ public class UnitTestingWorldSettings
     }
 
     public List<ModelImportSettings> ModelsToImport { get; set; } = [];
+    /// <summary>
+    /// Additional directories that the startup model importer searches recursively by texture file name
+    /// when authored texture paths do not resolve relative to the source model.
+    /// Relative paths are resolved from the process working directory.
+    /// </summary>
+    public List<string> TextureLoadDirSearchPaths { get; set; } = [];
 
     public bool SoundNode = false;
     public bool Microphone = false;

@@ -761,6 +761,8 @@ namespace XREngine.Rendering.OpenGL
         {
             _frameCounter++;
 
+            GLRenderProgram.PollPendingAsyncPrograms(Engine.Rendering.Settings.MaxAsyncShaderProgramsPerFrame);
+
             // Snapshot and clear the volatile flag set by the debug callback.
             // This must happen before the cooldown check so the cooldown's own
             // draw-suppression flag cannot self-restart the timer.

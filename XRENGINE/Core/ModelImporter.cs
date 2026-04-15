@@ -150,6 +150,7 @@ namespace XREngine
         }
 
         private readonly ConcurrentDictionary<string, XRTexture2D> _texturePathCache = new();
+        private readonly ConcurrentDictionary<string, string> _recursiveTextureSearchCache = new(StringComparer.OrdinalIgnoreCase);
 
         private XRMaterial MakeMaterialInternal(XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
@@ -269,6 +270,72 @@ namespace XREngine
         }
 
         private readonly ConcurrentDictionary<string, bool> _missingTexturePathWarnings = new();
+        private readonly ConcurrentDictionary<string, bool> _invalidTextureSearchPathWarnings = new(StringComparer.OrdinalIgnoreCase);
+
+        private string? TryResolveTextureFromConfiguredSearchPaths(string modelFilePath, string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+                return null;
+
+            if (_recursiveTextureSearchCache.TryGetValue(fileName, out string? cachedPath))
+                return string.IsNullOrWhiteSpace(cachedPath) ? null : cachedPath;
+
+            ModelImportOptions? options = _currentImportOptions.Value ?? ImportOptions;
+            string[] searchPaths = options?.TextureLoadDirSearchPaths ?? [];
+            if (searchPaths.Length == 0)
+            {
+                _recursiveTextureSearchCache.TryAdd(fileName, string.Empty);
+                return null;
+            }
+
+            string? modelDir = Path.GetDirectoryName(modelFilePath);
+            foreach (string rawSearchPath in searchPaths)
+            {
+                if (string.IsNullOrWhiteSpace(rawSearchPath))
+                    continue;
+
+                string searchPath = rawSearchPath;
+                if (!Path.IsPathRooted(searchPath) && !string.IsNullOrWhiteSpace(modelDir))
+                    searchPath = Path.Combine(modelDir, searchPath);
+
+                try
+                {
+                    searchPath = Path.GetFullPath(searchPath);
+                }
+                catch (Exception ex)
+                {
+                    if (_invalidTextureSearchPathWarnings.TryAdd(rawSearchPath, true))
+                        LogImportExpectedWarning(modelFilePath, $"[ModelImporter] Ignoring invalid texture search path '{rawSearchPath}'. {ex.Message}");
+                    continue;
+                }
+
+                if (!Directory.Exists(searchPath))
+                {
+                    if (_invalidTextureSearchPathWarnings.TryAdd(searchPath, true))
+                        LogImportExpectedWarning(modelFilePath, $"[ModelImporter] Texture search path does not exist: '{searchPath}'");
+                    continue;
+                }
+
+                try
+                {
+                    string? match = Directory.EnumerateFiles(searchPath, fileName, SearchOption.AllDirectories).FirstOrDefault();
+                    if (!string.IsNullOrWhiteSpace(match))
+                    {
+                        string resolvedMatch = Path.GetFullPath(match);
+                        _recursiveTextureSearchCache[fileName] = resolvedMatch;
+                        return resolvedMatch;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (_invalidTextureSearchPathWarnings.TryAdd($"{searchPath}|scan", true))
+                        LogImportExpectedWarning(modelFilePath, $"[ModelImporter] Failed to scan texture search path '{searchPath}'. {ex.Message}");
+                }
+            }
+
+            _recursiveTextureSearchCache.TryAdd(fileName, string.Empty);
+            return null;
+        }
 
         private string ResolveTextureFilePath(string modelFilePath, string rawPath, out bool exists)
         {
@@ -373,6 +440,13 @@ namespace XREngine
                 {
                     exists = true;
                     return modelDirCandidate;
+                }
+
+                string? recursiveSearchCandidate = TryResolveTextureFromConfiguredSearchPaths(modelFilePath, fileName);
+                if (!string.IsNullOrWhiteSpace(recursiveSearchCandidate) && File.Exists(recursiveSearchCandidate))
+                {
+                    exists = true;
+                    return recursiveSearchCandidate;
                 }
             }
 

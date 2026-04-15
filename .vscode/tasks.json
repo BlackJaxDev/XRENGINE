@@ -771,7 +771,7 @@
 			"command": "dotnet",
 			"args": [
 				"build",
-				"D:\\Documents\\XRENGINE\\XREngine.Editor\\XREngine.Editor.csproj",
+				"${workspaceFolder}/XREngine.Editor/XREngine.Editor.csproj",
 				"/property:GenerateFullPaths=true",
 				"/consoleloggerparameters:NoSummary"
 			],

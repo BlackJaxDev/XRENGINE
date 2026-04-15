@@ -26,11 +26,9 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
     {
         using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
 
-        // Render batched UI elements (material quads + text quads)
-        if (ActivePipelineInstance.Pipeline is UserInterfaceRenderPipeline uiPipeline)
-            uiPipeline.BatchCollector?.Render(_renderPass);
-
-        // Render any remaining non-batched commands (e.g., clipped elements, custom materials)
+        // Batched UI elements inject lightweight marker commands during collect-visible.
+        // Rendering the CPU pass now executes inline batch groups and normal CPU fallback
+        // commands in the same ordered stream.
         ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, false);
     }
 

@@ -326,6 +326,7 @@ namespace XREngine
                 private bool _allowBinaryProgramCaching = true;
                 private bool _asyncProgramBinaryUpload = true;
                 private bool _asyncProgramCompilation = true;
+                private int _maxAsyncShaderProgramsPerFrame = 4;
                 private bool _calculateBlendshapesInComputeShader = true;
                 private bool _calculateSkinningInComputeShader = true;
                 private bool _useGlobalBoneMatricesBufferForComputeSkinning = false;
@@ -775,6 +776,18 @@ namespace XREngine
                 {
                     get => _asyncProgramCompilation;
                     set => SetField(ref _asyncProgramCompilation, value);
+                }
+
+                /// <summary>
+                /// Caps how many pending async OpenGL shader programs the render thread will advance per frame.
+                /// Lower values keep camera/input responsiveness higher during large shader warmups.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Maximum number of pending async OpenGL shader programs to poll/finalize per render frame.")]
+                public int MaxAsyncShaderProgramsPerFrame
+                {
+                    get => _maxAsyncShaderProgramsPerFrame;
+                    set => SetField(ref _maxAsyncShaderProgramsPerFrame, Math.Max(1, value));
                 }
 
                 /// <summary>

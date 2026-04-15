@@ -127,11 +127,13 @@ namespace XREngine.Rendering.UI
             {
                 if (canvasComp?.BatchCollector is { Enabled: true } collector)
                 {
-                    if (RegisterWithBatchCollector(collector))
+                    if (RegisterWithBatchCollector(collector, passes))
                         return false; // Successfully batched — skip individual command
                     // Registration failed (e.g. font not loaded yet); fall through to individual render
                 }
             }
+
+            canvasComp?.BatchCollector?.BreakBatchRun(RenderPass);
 
             if (diagLog)
             {
@@ -153,8 +155,9 @@ namespace XREngine.Rendering.UI
         /// Override to register per-instance data with the batch collector.
         /// </summary>
         /// <param name="collector">The canvas's batch collector to register with.</param>
+        /// <param name="passes">The UI pass collection so batching can insert ordered dispatch markers.</param>
         /// <returns>True if the component was successfully registered for batching; false to fall back to individual rendering.</returns>
-        protected virtual bool RegisterWithBatchCollector(UIBatchCollector collector) => false;
+        protected virtual bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes) => false;
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {

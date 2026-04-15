@@ -181,7 +181,10 @@ namespace XREngine.Rendering.OpenGL
 
                 Api.GetProgram(bindingId, GLEnum.ProgramBinaryLength, out int len);
                 if (len <= 0)
+                    {
+                        Debug.OpenGLWarning($"[ShaderCache] Program {bindingId} for hash {Hash} did not expose a retrievable program binary. Cache write skipped.");
                     return;
+                    }
 
                 byte[] binary = new byte[len];
                 GLEnum format;

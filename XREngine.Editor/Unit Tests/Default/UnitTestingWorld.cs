@@ -3,6 +3,7 @@ using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Lights;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Components.Scene;
 using XREngine.Data.Core;
@@ -111,14 +112,17 @@ public static partial class EditorUnitTests
 
         if (Toggles.LightProbe != LightProbeMode.Off || Toggles.Skybox)
         {
-            string[] names = ["warm_restaurant_4k"/*, "overcast_soil_puresky_4k", "studio_small_09_4k", "klippad_sunrise_2_4k", "satara_night_4k"*/];
-            Random r = new();
-            XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[r.Next(0, names.Length - 1)]}.exr");
-
             if (Toggles.LightProbe != LightProbeMode.Off)
                 Lighting.AddConfiguredLightProbes(rootNode);
+
             if (Toggles.Skybox)
-                Models.AddSkybox(rootNode, skyEquirect);
+            {
+                string[] names = ["warm_restaurant_4k"/*, "overcast_soil_puresky_4k", "studio_small_09_4k", "klippad_sunrise_2_4k", "satara_night_4k"*/];
+                Random r = new();
+                var skyboxComp = Models.AddSkybox(rootNode, skyEquirect: null);
+                if (skyboxComp is not null)
+                    LoadSkyboxTextureAsync(skyboxComp, "Textures", $"{names[r.Next(0, names.Length - 1)]}.exr");
+            }
         }
 
         if (Toggles.Mirror)
@@ -173,14 +177,16 @@ public static partial class EditorUnitTests
         // then auto-disables after 5 seconds once the scene is stable.
         if (Toggles.LightProbe != LightProbeMode.Off || Toggles.Skybox)
         {
-            string[] names = ["warm_restaurant_4k"];
-            XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[0]}.exr");
-
             if (Toggles.LightProbe != LightProbeMode.Off)
-            Lighting.AddConfiguredLightProbes(rootNode);
+                Lighting.AddConfiguredLightProbes(rootNode);
 
             if (Toggles.Skybox)
-                Models.AddSkybox(rootNode, skyEquirect);
+            {
+                string[] names = ["warm_restaurant_4k"];
+                var skyboxComp = Models.AddSkybox(rootNode, skyEquirect: null);
+                if (skyboxComp is not null)
+                    LoadSkyboxTextureAsync(skyboxComp, "Textures", $"{names[0]}.exr");
+            }
         }
 
         AddUberShaderPreviewGrid(rootNode);
@@ -266,7 +272,49 @@ public static partial class EditorUnitTests
         decalTfm.Scale = new Vector3(7.0f);
         var decalComp = decalNode.AddComponent<DeferredDecalComponent>()!;
         decalComp.Name = "TestDecal";
-        decalComp.SetTexture(Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", "decal guide.png"));
+        _ = LoadAndApplyDecalTextureAsync(decalComp);
+    }
+
+    private static async Task LoadAndApplyDecalTextureAsync(DeferredDecalComponent decalComp)
+    {
+        try
+        {
+            var texture = await Engine.Assets.LoadEngineAssetAsync<XRTexture2D>("Textures", "decal guide.png").ConfigureAwait(false);
+            Engine.EnqueueAppThreadTask(() =>
+            {
+                if (!decalComp.IsDestroyed)
+                    decalComp.SetTexture(texture);
+            }, "UnitTestingWorld: Apply decal texture");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, "[UnitTestingWorld] Failed to load decal texture.");
+        }
+    }
+
+    private static void LoadSkyboxTextureAsync(SkyboxComponent skybox, params string[] relativePathFolders)
+    {
+        _ = LoadAndApplyAsync();
+
+        async Task LoadAndApplyAsync()
+        {
+            try
+            {
+                var texture = await Engine.Assets.LoadEngineAssetAsync<XRTexture2D>(relativePathFolders).ConfigureAwait(false);
+                Engine.EnqueueAppThreadTask(() =>
+                {
+                    if (skybox.IsDestroyed)
+                        return;
+                    skybox.Projection = ESkyboxProjection.Equirectangular;
+                    skybox.Texture = texture;
+                    skybox.Mode = ESkyboxMode.Texture;
+                }, "UnitTestingWorld: Apply skybox texture");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, "[UnitTestingWorld] Failed to load skybox texture.");
+            }
+        }
     }
 
     private static void AddSpline(SceneNode rootNode)

@@ -409,16 +409,18 @@ namespace XREngine
         /// </summary>
         private static void ApplyTimerSettings()
         {
-            float targetRenderFrequency = EffectiveSettings.TargetFramesPerSecond ?? 0.0f;
+            EVSyncMode vSync = EffectiveSettings.VSync;
+            float targetRenderFrequency = Time.ResolveRenderFrequency(LastFocusState, vSync);
             float targetUpdateFrequency = EffectiveSettings.TargetUpdatesPerSecond ?? 0.0f;
             float fixedUpdateFrequency = EffectiveSettings.FixedFramesPerSecond;
-            EVSyncMode vSync = EffectiveSettings.VSync;
 
             Time.UpdateTimer(
                 targetRenderFrequency,
                 targetUpdateFrequency,
                 fixedUpdateFrequency,
                 vSync);
+
+            ApplyWindowVSyncSettings();
         }
 
         /// <summary>

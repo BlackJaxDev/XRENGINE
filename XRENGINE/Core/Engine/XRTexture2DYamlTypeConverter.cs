@@ -27,7 +27,16 @@ public sealed class XRTexture2DYamlTypeConverter : IYamlTypeConverter
 
         XRTexture2DYamlEnvelope? envelope = rootDeserializer(typeof(XRTexture2DYamlEnvelope)) as XRTexture2DYamlEnvelope;
         if (envelope?.Payload is null || envelope.Payload.Length == 0)
-            return new XRTexture2D();
+        {
+            // Old cache files written before the CookedBinary texture serializer produce an
+            // envelope with no payload because the inline XRTexture2D YAML fields don't match
+            // the envelope schema. Throw so that TryLoadCachedAsset deletes the stale cache
+            // and falls through to a fresh import.
+            throw new YamlException(
+                $"{nameof(XRTexture2D)} CookedBinary envelope has no payload. " +
+                "This typically indicates a stale cache written before texture-streaming support. " +
+                "The asset will be reimported automatically.");
+        }
 
         byte[] payload = envelope.Payload.GetBytes();
         XRTexture2D? texture = RuntimeCookedBinarySerializer.Deserialize(typeof(XRTexture2D), payload) as XRTexture2D;

@@ -48,19 +48,20 @@ namespace XREngine
             XRWindow window;
             try
             {
-                window = new XRWindow(options, windowSettings.UseNativeTitleBar);
+                window = new XRWindow(options, windowSettings.UseNativeTitleBar, windowSettings.VSync);
             }
             catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
             {
                 Debug.RenderingWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
                 options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
-                window = new XRWindow(options, windowSettings.UseNativeTitleBar);
+                window = new XRWindow(options, windowSettings.UseNativeTitleBar, windowSettings.VSync);
             }
 
             window.PreferHDROutput = preferHdrOutput;
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
             _windows.Add(window);
+            window.ApplyVSyncMode(EffectiveSettings.VSync);
 
             Debug.Out(
                 "[StartupWindow] Window created hash={0} framebuffer={1}x{2} viewports={3}",
@@ -174,7 +175,7 @@ namespace XREngine
                 windowSettings.WindowTitle ?? string.Empty,
                 windowState,
                 windowBorder,
-                windowSettings.VSync,
+                ResolveWindowVSyncEnabled(windowSettings.VSync, EffectiveSettings.VSync),
                 true,
                 VideoMode.Default,
                 preferredBitDepth,
@@ -185,6 +186,16 @@ namespace XREngine
                 false,
                 null,
                 1);
+        }
+
+        private static bool ResolveWindowVSyncEnabled(bool windowVSyncRequested, EVSyncMode globalVSyncMode)
+            => windowVSyncRequested || globalVSyncMode != EVSyncMode.Off;
+
+        private static void ApplyWindowVSyncSettings()
+        {
+            EVSyncMode vSync = EffectiveSettings.VSync;
+            foreach (var window in _windows)
+                window?.ApplyVSyncMode(vSync);
         }
 
         #endregion
@@ -242,8 +253,12 @@ namespace XREngine
             // Set target FPS to unfocused value (VR headsets manage this independently)
             if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
             {
-                Time.Timer.TargetRenderFrequency = EffectiveSettings.UnfocusedTargetFramesPerSecond.Value;
-                Debug.Out($"Unfocused target FPS set to {EffectiveSettings.UnfocusedTargetFramesPerSecond}.");
+                float targetRenderFrequency = Time.ResolveRenderFrequency(false, EffectiveSettings.VSync);
+                Time.Timer.TargetRenderFrequency = targetRenderFrequency;
+                Debug.Out(
+                    targetRenderFrequency > 0.0f
+                        ? $"Unfocused target FPS set to {targetRenderFrequency}."
+                        : "Unfocused render cadence is now display-synchronized by VSync.");
             }
 
             FocusChanged?.Invoke(false);
@@ -269,8 +284,12 @@ namespace XREngine
             // Restore target FPS to focused value (VR headsets manage this independently)
             if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
             {
-                Time.Timer.TargetRenderFrequency = EffectiveSettings.TargetFramesPerSecond ?? 0.0f;
-                Debug.Out($"Focused target FPS set to {EffectiveSettings.TargetFramesPerSecond}.");
+                float targetRenderFrequency = Time.ResolveRenderFrequency(true, EffectiveSettings.VSync);
+                Time.Timer.TargetRenderFrequency = targetRenderFrequency;
+                Debug.Out(
+                    targetRenderFrequency > 0.0f
+                        ? $"Focused target FPS set to {targetRenderFrequency}."
+                        : "Focused render cadence is now display-synchronized by VSync.");
             }
 
             FocusChanged?.Invoke(true);

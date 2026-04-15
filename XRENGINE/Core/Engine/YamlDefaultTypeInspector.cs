@@ -95,7 +95,16 @@ internal sealed class YamlDefaultTypeInspector(ITypeInspector inner, bool applyD
 
         public bool Required => _inner.Required;
 
-        public Type ConverterType => _inner.ConverterType ?? typeof(object);
+        public Type ConverterType
+        {
+            get
+            {
+#pragma warning disable CS8603
+                // YamlDotNet uses null here to mean "no explicit converter".
+                return _inner.ConverterType;
+#pragma warning restore CS8603
+            }
+        }
 
         public void Write(object target, object? value)
             => _inner.Write(target, value);

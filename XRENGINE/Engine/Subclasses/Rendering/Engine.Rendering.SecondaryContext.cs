@@ -164,7 +164,7 @@ namespace XREngine
                         }
                     }
 
-                    var window = new XRWindow(options, templateWindow.UseNativeTitleBar);
+                    var window = new XRWindow(options, templateWindow.UseNativeTitleBar, false);
                     _headlessWindow = window;
                     window.Renderer.Initialize();
                     _renderer = window.Renderer;

@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.UI;
@@ -21,6 +22,12 @@ namespace XREngine.Rendering.UI;
 public sealed class UIBatchCollector : IDisposable
 {
     #region Batch Entry Types
+
+    private enum EBatchMarkerKind
+    {
+        Material,
+        Text,
+    }
 
     /// <summary>
     /// Per-instance data for a batched material quad.
@@ -50,11 +57,13 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     private sealed class TextBatchData
     {
+        public XRTexture2D? Atlas;
         public readonly List<TextEntry> Entries = [];
         public int TotalGlyphs;
 
         public void Clear()
         {
+            Atlas = null;
             Entries.Clear();
             TotalGlyphs = 0;
         }
@@ -70,17 +79,128 @@ public sealed class UIBatchCollector : IDisposable
         public void Clear() => Entries.Clear();
     }
 
+    private sealed class BatchPool<T> where T : class, new()
+    {
+        public readonly List<T> Items = [];
+        public int Count;
+
+        public T Acquire(out int index)
+        {
+            index = Count;
+            if (index == Items.Count)
+                Items.Add(new T());
+
+            Count++;
+            return Items[index];
+        }
+
+        public T this[int index] => Items[index];
+
+        public bool TryGet(int index, out T item)
+        {
+            if ((uint)index < (uint)Count)
+            {
+                item = Items[index];
+                return true;
+            }
+
+            item = null!;
+            return false;
+        }
+
+        public void Reset(Action<T> clear)
+        {
+            for (int i = 0; i < Count; i++)
+                clear(Items[i]);
+
+            Count = 0;
+        }
+    }
+
+    private sealed class CollectPassState
+    {
+        public EBatchMarkerKind? ActiveKind;
+        public XRTexture2D? ActiveTextAtlas;
+        public int ActiveGroupIndex = -1;
+
+        public void Reset()
+        {
+            ActiveKind = null;
+            ActiveTextAtlas = null;
+            ActiveGroupIndex = -1;
+        }
+    }
+
+    private sealed class MarkerPool
+    {
+        public readonly List<BatchMarkerCommand> Commands = [];
+        public int UsedCount;
+
+        public BatchMarkerCommand Acquire(UIBatchCollector owner, int renderPass)
+        {
+            int index = UsedCount++;
+            if (index == Commands.Count)
+                Commands.Add(new BatchMarkerCommand(owner, renderPass));
+
+            return Commands[index];
+        }
+
+        public void ResetUsage() => UsedCount = 0;
+    }
+
+    private sealed class BatchMarkerCommand : RenderCommand2D
+    {
+        private readonly UIBatchCollector _owner;
+        private readonly int _renderPass;
+        private EBatchMarkerKind _kind;
+        private int _groupIndex;
+        private EBatchMarkerKind _renderKind;
+        private int _renderGroupIndex;
+
+        public BatchMarkerCommand(UIBatchCollector owner, int renderPass)
+            : base(renderPass)
+        {
+            _owner = owner;
+            _renderPass = renderPass;
+        }
+
+        public void Configure(EBatchMarkerKind kind, int groupIndex, int zIndex)
+        {
+            _kind = kind;
+            _groupIndex = groupIndex;
+            ZIndex = zIndex;
+            Enabled = true;
+        }
+
+        public override void SwapBuffers()
+        {
+            base.SwapBuffers();
+            _renderKind = _kind;
+            _renderGroupIndex = _groupIndex;
+        }
+
+        public override void Render()
+        {
+            OnPreRender();
+            _owner.RenderBatchMarker(_renderPass, _renderKind, _renderGroupIndex);
+            OnPostRender();
+        }
+    }
+
     #endregion
 
     #region Double-buffered Batch Lists
 
     // Collecting side (written on collect-visible thread)
-    private Dictionary<int, MaterialQuadBatchData> _collectMaterialQuads = [];
-    private Dictionary<int, Dictionary<XRTexture2D, TextBatchData>> _collectTextData = [];
+    private Dictionary<int, BatchPool<MaterialQuadBatchData>> _collectMaterialGroups = [];
+    private Dictionary<int, BatchPool<TextBatchData>> _collectTextGroups = [];
+    private readonly Dictionary<int, CollectPassState> _collectPassStates = [];
 
     // Rendering side (read on render thread)
-    private Dictionary<int, MaterialQuadBatchData> _renderMaterialQuads = [];
-    private Dictionary<int, Dictionary<XRTexture2D, TextBatchData>> _renderTextData = [];
+    private Dictionary<int, BatchPool<MaterialQuadBatchData>> _renderMaterialGroups = [];
+    private Dictionary<int, BatchPool<TextBatchData>> _renderTextGroups = [];
+
+    private readonly Dictionary<int, MarkerPool> _markerPools = [];
 
     #endregion
 
@@ -141,11 +261,10 @@ public sealed class UIBatchCollector : IDisposable
     {
         get
         {
-            foreach (var kv in _renderMaterialQuads)
-                if (kv.Value.Entries.Count > 0) return true;
-            foreach (var kv in _renderTextData)
-                foreach (var kv2 in kv.Value)
-                    if (kv2.Value.Entries.Count > 0) return true;
+            foreach (var groups in _renderMaterialGroups.Values)
+                if (groups.Count > 0) return true;
+            foreach (var groups in _renderTextGroups.Values)
+                if (groups.Count > 0) return true;
             return false;
         }
     }
@@ -156,15 +275,34 @@ public sealed class UIBatchCollector : IDisposable
 
     /// <summary>
     /// Register a material quad for batched rendering.
-    /// Called from the collect-visible thread.
+    /// Called from the collect-visible thread and inserts an inline dispatch marker into the pass stream.
     /// </summary>
-    public void AddMaterialQuad(int renderPass, in Matrix4x4 worldMatrix, in Vector4 color, in Vector4 uixywh)
+    public void AddMaterialQuad(
+        int renderPass,
+        int zIndex,
+        RenderCommandCollection passes,
+        in Matrix4x4 worldMatrix,
+        in Vector4 color,
+        in Vector4 uixywh)
     {
-        if (!_collectMaterialQuads.TryGetValue(renderPass, out var batch))
+        var state = GetOrCreateCollectPassState(renderPass);
+        var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
+
+        MaterialQuadBatchData batch;
+        if (state.ActiveKind == EBatchMarkerKind.Material && groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
-            batch = new MaterialQuadBatchData();
-            _collectMaterialQuads[renderPass] = batch;
+            batch = existingBatch;
         }
+        else
+        {
+            batch = groups.Acquire(out int groupIndex);
+            batch.Clear();
+            state.ActiveKind = EBatchMarkerKind.Material;
+            state.ActiveTextAtlas = null;
+            state.ActiveGroupIndex = groupIndex;
+            passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Material, groupIndex));
+        }
+
         batch.Entries.Add(new MaterialQuadEntry
         {
             WorldMatrix = worldMatrix,
@@ -178,6 +316,8 @@ public sealed class UIBatchCollector : IDisposable
     /// Called from the collect-visible thread.
     /// </summary>
     /// <param name="renderPass">The render pass index.</param>
+    /// <param name="zIndex">The current 2D sort key for the source component.</param>
+    /// <param name="passes">The pass collection used to inject ordered dispatch markers.</param>
     /// <param name="fontAtlas">The font atlas texture used by this text.</param>
     /// <param name="worldMatrix">The text component's world matrix.</param>
     /// <param name="textColor">The text color.</param>
@@ -185,22 +325,35 @@ public sealed class UIBatchCollector : IDisposable
     /// <param name="glyphs">Snapshot of glyph layout data.</param>
     public void AddTextQuad(
         int renderPass,
+        int zIndex,
+        RenderCommandCollection passes,
         XRTexture2D fontAtlas,
         in Matrix4x4 worldMatrix,
         in Vector4 textColor,
         in Vector4 uixywh,
         (Vector4 transform, Vector4 uvs)[] glyphs)
     {
-        if (!_collectTextData.TryGetValue(renderPass, out var atlasMap))
+        var state = GetOrCreateCollectPassState(renderPass);
+        var groups = GetOrCreatePool(_collectTextGroups, renderPass);
+
+        TextBatchData batch;
+        if (state.ActiveKind == EBatchMarkerKind.Text &&
+            ReferenceEquals(state.ActiveTextAtlas, fontAtlas) &&
+            groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
-            atlasMap = [];
-            _collectTextData[renderPass] = atlasMap;
+            batch = existingBatch;
         }
-        if (!atlasMap.TryGetValue(fontAtlas, out var batch))
+        else
         {
-            batch = new TextBatchData();
-            atlasMap[fontAtlas] = batch;
+            batch = groups.Acquire(out int groupIndex);
+            batch.Clear();
+            batch.Atlas = fontAtlas;
+            state.ActiveKind = EBatchMarkerKind.Text;
+            state.ActiveTextAtlas = fontAtlas;
+            state.ActiveGroupIndex = groupIndex;
+            passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Text, groupIndex));
         }
+
         batch.Entries.Add(new TextEntry
         {
             WorldMatrix = worldMatrix,
@@ -210,6 +363,12 @@ public sealed class UIBatchCollector : IDisposable
             Glyphs = glyphs
         });
         batch.TotalGlyphs += glyphs.Length;
+    }
+
+    public void BreakBatchRun(int renderPass)
+    {
+        if (_collectPassStates.TryGetValue(renderPass, out var state))
+            state.Reset();
     }
 
     #endregion
@@ -222,18 +381,17 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     public void SwapBuffers()
     {
-        // Swap material quads
-        (_collectMaterialQuads, _renderMaterialQuads) = (_renderMaterialQuads, _collectMaterialQuads);
+        (_collectMaterialGroups, _renderMaterialGroups) = (_renderMaterialGroups, _collectMaterialGroups);
+        (_collectTextGroups, _renderTextGroups) = (_renderTextGroups, _collectTextGroups);
 
-        // Swap text data
-        (_collectTextData, _renderTextData) = (_renderTextData, _collectTextData);
-
-        // Clear collecting side for next frame
-        foreach (var batch in _collectMaterialQuads.Values)
-            batch.Clear();
-        foreach (var atlasMap in _collectTextData.Values)
-            foreach (var batch in atlasMap.Values)
-                batch.Clear();
+        foreach (var groups in _collectMaterialGroups.Values)
+            groups.Reset(static batch => batch.Clear());
+        foreach (var groups in _collectTextGroups.Values)
+            groups.Reset(static batch => batch.Clear());
+        foreach (var state in _collectPassStates.Values)
+            state.Reset();
+        foreach (var markerPool in _markerPools.Values)
+            markerPool.ResetUsage();
     }
 
     /// <summary>
@@ -242,59 +400,33 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     public void Clear()
     {
-        foreach (var batch in _collectMaterialQuads.Values)
-            batch.Clear();
-        foreach (var batch in _renderMaterialQuads.Values)
-            batch.Clear();
+        foreach (var groups in _collectMaterialGroups.Values)
+            groups.Reset(static batch => batch.Clear());
+        foreach (var groups in _renderMaterialGroups.Values)
+            groups.Reset(static batch => batch.Clear());
 
-        foreach (var atlasMap in _collectTextData.Values)
-            foreach (var batch in atlasMap.Values)
-                batch.Clear();
+        foreach (var groups in _collectTextGroups.Values)
+            groups.Reset(static batch => batch.Clear());
+        foreach (var groups in _renderTextGroups.Values)
+            groups.Reset(static batch => batch.Clear());
 
-        foreach (var atlasMap in _renderTextData.Values)
-            foreach (var batch in atlasMap.Values)
-                batch.Clear();
+        foreach (var state in _collectPassStates.Values)
+            state.Reset();
+        foreach (var markerPool in _markerPools.Values)
+            markerPool.ResetUsage();
     }
 
     #endregion
 
     #region Render Thread API
 
-    public void Render(int renderPass)
-    {
-        if (!Enabled)
-            return;
-
-        RenderMaterialQuadBatch(renderPass);
-        RenderTextBatch(renderPass);
-    }
-    
-    /// <summary>
-    /// Renders all batched material quads for the given render pass.
-    /// Call from the render thread.
-    /// </summary>
     public void RenderMaterialQuadBatch(int renderPass)
     {
-        if (!_renderMaterialQuads.TryGetValue(renderPass, out var batch) || batch.Entries.Count == 0)
+        if (!Enabled || !_renderMaterialGroups.TryGetValue(renderPass, out var groups) || groups.Count == 0)
             return;
 
-        using var sample = Engine.Profiler.Start();
-
-        EnsureMaterialQuadMesh();
-        UploadMaterialQuadData(batch.Entries);
-
-        // Force-generate the mesh renderer to bypass any deferred generation.
-        // This ensures the first frame renders immediately (matches the text batch path).
-        var version = GetImmediateRenderVersion(_matQuadMesh!);
-        version.Generate();
-
-        Debug.UIEvery(
-            "UIBatchCollector.RenderMaterialQuadBatch",
-            TimeSpan.FromSeconds(5),
-            "[UIBatch] RenderMaterialQuadBatch: pass={0}, entries={1}, capacity={2}",
-            renderPass, batch.Entries.Count, _matQuadCapacity);
-
-        _matQuadMesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
+        for (int i = 0; i < groups.Count; i++)
+            RenderMaterialGroup(renderPass, i);
     }
 
     /// <summary>
@@ -304,26 +436,11 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     public void RenderTextBatch(int renderPass)
     {
-        if (!_renderTextData.TryGetValue(renderPass, out var atlasMap))
+        if (!Enabled || !_renderTextGroups.TryGetValue(renderPass, out var groups) || groups.Count == 0)
             return;
 
-        using var sample = Engine.Profiler.Start();
-
-        foreach (var (atlas, batchData) in atlasMap)
-        {
-            if (batchData.Entries.Count == 0 || batchData.TotalGlyphs == 0)
-                continue;
-
-            var gpu = EnsureTextGPUResources(atlas);
-            FinalizeAndUploadTextData(batchData, gpu, atlas);
-
-            // Force-generate the mesh renderer to bypass any deferred generation.
-            // This ensures the first frame renders immediately.
-            var version = GetImmediateRenderVersion(gpu.Mesh!);
-            version.Generate();
-
-            gpu.Mesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
-        }
+        for (int i = 0; i < groups.Count; i++)
+            RenderTextGroup(renderPass, i);
     }
 
     #endregion
@@ -590,6 +707,100 @@ public sealed class UIBatchCollector : IDisposable
             DisposeOnPush = false
         };
         mesh.Buffers["GlyphTextIndexBuffer"] = gpu.GlyphTextIndexBuf;
+    }
+
+    private static BatchPool<T> GetOrCreatePool<T>(Dictionary<int, BatchPool<T>> pools, int renderPass) where T : class, new()
+    {
+        if (!pools.TryGetValue(renderPass, out var pool))
+        {
+            pool = new BatchPool<T>();
+            pools[renderPass] = pool;
+        }
+
+        return pool;
+    }
+
+    private CollectPassState GetOrCreateCollectPassState(int renderPass)
+    {
+        if (!_collectPassStates.TryGetValue(renderPass, out var state))
+        {
+            state = new CollectPassState();
+            _collectPassStates[renderPass] = state;
+        }
+
+        return state;
+    }
+
+    private BatchMarkerCommand AcquireMarker(int renderPass, int zIndex, EBatchMarkerKind kind, int groupIndex)
+    {
+        if (!_markerPools.TryGetValue(renderPass, out var markerPool))
+        {
+            markerPool = new MarkerPool();
+            _markerPools[renderPass] = markerPool;
+        }
+
+        BatchMarkerCommand marker = markerPool.Acquire(this, renderPass);
+        marker.Configure(kind, groupIndex, zIndex);
+        return marker;
+    }
+
+    private void RenderBatchMarker(int renderPass, EBatchMarkerKind kind, int groupIndex)
+    {
+        if (!Enabled)
+            return;
+
+        if (kind == EBatchMarkerKind.Material)
+            RenderMaterialGroup(renderPass, groupIndex);
+        else
+            RenderTextGroup(renderPass, groupIndex);
+    }
+
+    private void RenderMaterialGroup(int renderPass, int groupIndex)
+    {
+        if (!_renderMaterialGroups.TryGetValue(renderPass, out var groups) ||
+            !groups.TryGet(groupIndex, out var batch) ||
+            batch.Entries.Count == 0)
+        {
+            return;
+        }
+
+        using var sample = Engine.Profiler.Start();
+
+        EnsureMaterialQuadMesh();
+        UploadMaterialQuadData(batch.Entries);
+
+        var version = GetImmediateRenderVersion(_matQuadMesh!);
+        version.Generate();
+
+        Debug.UIEvery(
+            "UIBatchCollector.RenderMaterialQuadBatch",
+            TimeSpan.FromSeconds(5),
+            "[UIBatch] RenderMaterialQuadBatch: pass={0}, entries={1}, capacity={2}",
+            renderPass, batch.Entries.Count, _matQuadCapacity);
+
+        _matQuadMesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
+    }
+
+    private void RenderTextGroup(int renderPass, int groupIndex)
+    {
+        if (!_renderTextGroups.TryGetValue(renderPass, out var groups) ||
+            !groups.TryGet(groupIndex, out var batchData) ||
+            batchData.Atlas is null ||
+            batchData.Entries.Count == 0 ||
+            batchData.TotalGlyphs == 0)
+        {
+            return;
+        }
+
+        using var sample = Engine.Profiler.Start();
+
+        var gpu = EnsureTextGPUResources(batchData.Atlas);
+        FinalizeAndUploadTextData(batchData, gpu, batchData.Atlas);
+
+        var version = GetImmediateRenderVersion(gpu.Mesh!);
+        version.Generate();
+
+        gpu.Mesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
     }
 
     private unsafe void FinalizeAndUploadTextData(TextBatchData batchData, TextGPUResources gpu, XRTexture2D atlas)

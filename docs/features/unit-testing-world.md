@@ -104,6 +104,8 @@ Use `ModelsToImport` to add one or more assets at startup. Each entry can choose
 - import flags
 - scale and transform offsets
 
+If a startup model references textures outside the authored folder layout, use `TextureLoadDirSearchPaths` to add one or more root directories. The importer will recursively scan those directories by texture file name when the original path cannot be resolved relative to the model.
+
 `ImporterBackend` defaults to `PreferNativeThenAssimp`, which uses a native importer when the format has one available and falls back to Assimp otherwise. That native path now covers FBX, glTF, and GLB startup imports. Set `ImporterBackend` to `AssimpOnly` if you need to force the older compatibility path for a specific FBX or glTF startup import.
 
 For glTF validation work, the checked-in corpus under `XREngine.UnitTests/TestData/Gltf/` is the fastest repeatable source of startup assets. It covers external resources, data URIs, embedded GLB BIN chunks, sparse accessors, skins, morph targets, animations, and malformed-container regression cases.
