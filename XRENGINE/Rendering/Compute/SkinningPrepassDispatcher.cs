@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using Silk.NET.OpenGL;
 using XREngine.Data.Rendering;
 using State = XREngine.Engine.Rendering.State;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.Compute;
 
@@ -17,6 +19,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
     private const string ShaderPath = "Compute/Animation/SkinningPrepass.comp";
     private const string InterleavedShaderPath = "Compute/Animation/SkinningPrepassInterleaved.comp";
     private const uint ThreadGroupSize = 256u;
+    private const uint MaxComputeStorageBinding = 15u;
 
     private static readonly Lazy<SkinningPrepassDispatcher> _instance = new(() => new SkinningPrepassDispatcher());
     public static SkinningPrepassDispatcher Instance => _instance.Value;
@@ -159,45 +162,61 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             if (useGlobalBlendWeights && _globalInputs.TryGetBlendshapeWeightsSlice(renderer, out uint packedBlendBase, out _))
                 blendBase = packedBlendBase;
 
-            resources.BindBlocks(
-                doSkinning,
-                doBlendshapes,
-                isInterleaved,
-                useGlobalBones,
-                useGlobalBlendWeights,
-                _globalInputs.GlobalBoneMatrices,
-                _globalInputs.GlobalBoneInvBindMatrices,
-                _globalInputs.GlobalBlendshapeWeights);
-
-            uint vertexCount = (uint)mesh.VertexCount;
-            activeProgram.Uniform("vertexCount", vertexCount);
-            activeProgram.Uniform("hasSkinning", doSkinning ? 1 : 0);
-            activeProgram.Uniform("hasNormals", mesh.HasNormals ? 1 : 0);
-            activeProgram.Uniform("hasTangents", mesh.HasTangents ? 1 : 0);
-            activeProgram.Uniform("hasBlendshapes", doBlendshapes ? 1 : 0);
-            activeProgram.Uniform("allowBlendshapes", Engine.Rendering.Settings.AllowBlendshapes ? 1 : 0);
-            activeProgram.Uniform("absoluteBlendshapePositions", Engine.Rendering.Settings.UseAbsoluteBlendshapePositions ? 1 : 0);
-            activeProgram.Uniform("maxBlendshapeAccumulation", mesh.MaxBlendshapeAccumulation ? 1 : 0);
-            activeProgram.Uniform("useIntegerUniforms", Engine.Rendering.Settings.UseIntegerUniformsInShaders ? 1 : 0);
-            activeProgram.Uniform("optimized4", optimizeTo4Weights ? 1 : 0);
-
-            // Global-packed animation input base offsets (0 when using per-renderer buffers).
-            activeProgram.Uniform("boneMatrixBase", boneBase);
-            activeProgram.Uniform("boneMatrixCount", boneCount);
-            activeProgram.Uniform("blendshapeWeightBase", blendBase);
-
-            // Set interleaved-specific uniforms
-            if (isInterleaved)
+            try
             {
-                activeProgram.Uniform("interleavedStride", mesh.InterleavedStride);
-                activeProgram.Uniform("positionOffsetBytes", mesh.PositionOffset);
-                activeProgram.Uniform("normalOffsetBytes", mesh.NormalOffset ?? 0u);
-                activeProgram.Uniform("tangentOffsetBytes", mesh.TangentOffset ?? 0u);
-            }
+                resources.BindBlocks(
+                    doSkinning,
+                    doBlendshapes,
+                    isInterleaved,
+                    useGlobalBones,
+                    useGlobalBlendWeights,
+                    _globalInputs.GlobalBoneMatrices,
+                    _globalInputs.GlobalBoneInvBindMatrices,
+                    _globalInputs.GlobalBlendshapeWeights);
 
-            uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
-            activeProgram.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray);
+                uint vertexCount = (uint)mesh.VertexCount;
+                activeProgram.Uniform("vertexCount", vertexCount);
+                activeProgram.Uniform("hasSkinning", doSkinning ? 1 : 0);
+                activeProgram.Uniform("hasNormals", mesh.HasNormals ? 1 : 0);
+                activeProgram.Uniform("hasTangents", mesh.HasTangents ? 1 : 0);
+                activeProgram.Uniform("hasBlendshapes", doBlendshapes ? 1 : 0);
+                activeProgram.Uniform("allowBlendshapes", Engine.Rendering.Settings.AllowBlendshapes ? 1 : 0);
+                activeProgram.Uniform("absoluteBlendshapePositions", Engine.Rendering.Settings.UseAbsoluteBlendshapePositions ? 1 : 0);
+                activeProgram.Uniform("maxBlendshapeAccumulation", mesh.MaxBlendshapeAccumulation ? 1 : 0);
+                activeProgram.Uniform("useIntegerUniforms", Engine.Rendering.Settings.UseIntegerUniformsInShaders ? 1 : 0);
+                activeProgram.Uniform("optimized4", optimizeTo4Weights ? 1 : 0);
+
+                // Global-packed animation input base offsets (0 when using per-renderer buffers).
+                activeProgram.Uniform("boneMatrixBase", boneBase);
+                activeProgram.Uniform("boneMatrixCount", boneCount);
+                activeProgram.Uniform("blendshapeWeightBase", blendBase);
+
+                // Set interleaved-specific uniforms
+                if (isInterleaved)
+                {
+                    activeProgram.Uniform("interleavedStride", mesh.InterleavedStride);
+                    activeProgram.Uniform("positionOffsetBytes", mesh.PositionOffset);
+                    activeProgram.Uniform("normalOffsetBytes", mesh.NormalOffset ?? 0u);
+                    activeProgram.Uniform("tangentOffsetBytes", mesh.TangentOffset ?? 0u);
+                }
+
+                uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
+                activeProgram.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray);
+            }
+            finally
+            {
+                ClearOpenGlComputeBindings();
+            }
         }
+    }
+
+    private static void ClearOpenGlComputeBindings()
+    {
+        if (AbstractRenderer.Current is not OpenGLRenderer glRenderer)
+            return;
+
+        for (uint binding = 0u; binding <= MaxComputeStorageBinding; binding++)
+            glRenderer.RawGL.BindBufferBase(GLEnum.ShaderStorageBuffer, binding, 0);
     }
 
     public void RunVisible(RenderCommandCollection commands)
@@ -343,7 +362,15 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         private void EnsureOutputBuffers(XRMesh mesh, bool isInterleaved)
         {
             int vertexCount = mesh.VertexCount;
-            if (_lastVertexCount == vertexCount && _lastWasInterleaved == isInterleaved)
+
+            // Also verify the output buffers still exist — they may have been
+            // destroyed externally (e.g. GLMeshRenderer.DestroySkinnedBuffers
+            // when the compute-skinning toggle is flipped off and back on).
+            bool buffersExist = isInterleaved
+                ? _renderer.SkinnedInterleavedBuffer is not null
+                : _renderer.SkinnedPositionsBuffer is not null;
+
+            if (buffersExist && _lastVertexCount == vertexCount && _lastWasInterleaved == isInterleaved)
                 return;
 
             _lastVertexCount = vertexCount;
