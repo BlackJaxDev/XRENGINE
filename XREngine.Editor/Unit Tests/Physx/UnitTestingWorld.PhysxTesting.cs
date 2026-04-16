@@ -33,9 +33,7 @@ public static partial class EditorUnitTests
 
         AddPhysxPlayground(rootNode);
 
-        var world = new XRWorld("PhysX Testing World", scene);
-        Undo.TrackWorld(world);
-        return world;
+        return CreateTrackedWorld("PhysX Testing World", scene);
     }
 
     private static void AddPhysxPlayground(SceneNode rootNode)

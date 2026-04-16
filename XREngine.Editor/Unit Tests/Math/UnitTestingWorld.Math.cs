@@ -42,9 +42,7 @@ public static partial class EditorUnitTests
             RegisterMathIntersectionsTest(testLayoutController, testRootNode, definition);
         }
 
-        var world = new XRWorld("Math Intersections World", scene);
-        Undo.TrackWorld(world);
-        return world;
+        return CreateTrackedWorld("Math Intersections World", scene);
     }
 
     private static void RegisterMathIntersectionsTest(

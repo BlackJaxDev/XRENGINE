@@ -9,8 +9,14 @@ public partial class XRTexture2D
 {
     internal const uint ImportedPreviewMaxDimensionInternal = 64;
 
+    internal static bool ShouldSuppressTextureStreamingCacheWarmup
+        => ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports;
+
     public static IDisposable EnterImportedTextureStreamingScope()
         => ImportedTextureStreamingManager.Instance.EnterScope();
+
+    public static void RegisterImportedTextureStreamingPlaceholder(string filePath, XRTexture2D texture)
+        => ImportedTextureStreamingManager.Instance.RegisterTexture(filePath, texture);
 
     public static EnumeratorJob ScheduleImportedTexturePreviewJob(
         string filePath,

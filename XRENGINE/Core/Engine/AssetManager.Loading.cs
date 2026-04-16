@@ -1,5 +1,6 @@
 using Extensions;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -618,6 +619,14 @@ namespace XREngine
             if (IsCacheAssetFresh(cachePath, normalizedPath, typeof(XRTexture2D)))
                 return cachePath;
 
+            // Imported model texture previews can resolve many external textures through
+            // search-dir fallback. Warming the texture cache for each hit during the import
+            // pushes a full XRTexture2D serialization path into the background job system and,
+            // under the debugger, floods the output window. Keep using the original image path
+            // while the import is active and let later non-import loads generate cache assets.
+            if (XRTexture2D.ShouldSuppressTextureStreamingCacheWarmup)
+                return normalizedPath;
+
             QueueTextureStreamingCacheImport(normalizedPath, cachePath);
             return normalizedPath;
         }
@@ -627,24 +636,24 @@ namespace XREngine
             if (!_pendingTextureStreamingCacheImports.TryAdd(sourcePath, 0))
                 return;
 
-            _ = Task.Run(() =>
-            {
-                try
-                {
-                    if (IsCacheAssetFresh(cachePath, sourcePath, typeof(XRTexture2D)))
-                        return;
-
-                    _ = TryImportThirdPartyCacheAsset(sourcePath, typeof(XRTexture2D), importOptions: null, cacheVariantKey: null, cachePath);
-                }
-                catch (Exception ex)
+            Engine.Jobs.Schedule(
+                CacheImportRoutine,
+                error: ex =>
                 {
                     Debug.LogWarning($"Failed to warm texture cache for '{sourcePath}'. {ex.Message}");
-                }
-                finally
-                {
                     _pendingTextureStreamingCacheImports.TryRemove(sourcePath, out _);
-                }
-            });
+                },
+                completed: () => _pendingTextureStreamingCacheImports.TryRemove(sourcePath, out _),
+                canceled: () => _pendingTextureStreamingCacheImports.TryRemove(sourcePath, out _),
+                priority: JobPriority.Low);
+
+            IEnumerable CacheImportRoutine()
+            {
+                if (!IsCacheAssetFresh(cachePath, sourcePath, typeof(XRTexture2D)))
+                    TryImportThirdPartyCacheAsset(sourcePath, typeof(XRTexture2D), importOptions: null, cacheVariantKey: null, cachePath);
+
+                yield break;
+            }
         }
 
         internal string ResolveThirdPartyCacheAuthorityPath<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(

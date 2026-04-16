@@ -3,6 +3,7 @@ using MagicPhysX;
 using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Numerics;
+using System.Threading;
 using XREngine.Components.Movement.Modules;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
@@ -144,6 +145,7 @@ namespace XREngine.Components.Movement
         private ICharacterController? _controller;
         private PhysxCapsuleController? _physxController;
         private IJoltCharacterController? _joltController;
+        private int _physxControllerInitVersion;
 
         private AbstractPhysicsScene? _subscribedPhysicsScene;
         private IAbstractRigidPhysicsActor? _controllerActorProxy;
@@ -655,50 +657,7 @@ namespace XREngine.Components.Movement
 
             if (physicsScene is PhysxScene physxScene)
             {
-                var manager = physxScene.GetOrCreateControllerManager();
-                if (manager is null)
-                    return;
-
-                PhysxMaterial? material = ResolvePhysxMaterial();
-                if (material is null)
-                    return;
-
-                Vector3 up = Globals.Up;
-                _physxController = manager.CreateCapsuleController(
-                    pos,
-                    up,
-                    MovementModule.SlopeLimitCosine,
-                    InvisibleWallHeight,
-                    MaxJumpHeight,
-                    ContactOffset,
-                    MovementModule.StepOffset,
-                    Density,
-                    ScaleCoeff,
-                    VolumeGrowth,
-                    SlideOnSteepSlopes 
-                        ? PxControllerNonWalkableMode.PreventClimbingAndForceSliding
-                        : PxControllerNonWalkableMode.PreventClimbing,
-                    material,
-                    0,
-                    null,
-                    Radius,
-                    StandingHeight,
-                    ConstrainedClimbing 
-                        ? PxCapsuleClimbingMode.Constrained
-                        : PxCapsuleClimbingMode.Easy);
-
-                ActiveController = new PhysxCharacterControllerAdapter(_physxController);
-
-                // Link the transform to a read-only proxy of the controller.
-                unsafe { _controllerActorProxy = new PhysxControllerActorProxy(_physxController.ControllerPtr); }
-
-                // CCT doesn't have rotation like regular physics actors, so clear the default -90° Z offset
-                // that RigidBodyTransform applies for normal PhysX actors.
-                RigidBodyTransform.PostRotationOffset = Quaternion.Identity;
-                RigidBodyTransform.RigidBody = _controllerActorProxy;
-                RigidBodyTransform.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
-                (_controllerActorProxy as PhysxControllerActorProxy)?.RefreshFromNative();
-                RigidBodyTransform.OnPhysicsStepped();
+                QueuePhysxControllerCreation(physxScene, pos);
             }
             else if (physicsScene is JoltScene joltScene)
             {
@@ -723,8 +682,97 @@ namespace XREngine.Components.Movement
             }
         }
 
+        private void QueuePhysxControllerCreation(PhysxScene physxScene, Vector3 position)
+        {
+            if (_physxController is not null)
+                return;
+
+            int initVersion = Interlocked.Increment(ref _physxControllerInitVersion);
+            Engine.EnqueuePhysicsThreadTask(() => CreatePhysxControllerOnPhysicsThread(physxScene, position, initVersion));
+        }
+
+        private unsafe void CreatePhysxControllerOnPhysicsThread(PhysxScene physxScene, Vector3 position, int initVersion)
+        {
+            if (initVersion != Volatile.Read(ref _physxControllerInitVersion))
+                return;
+
+            if (!IsActiveInHierarchy)
+                return;
+
+            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physxScene)
+                return;
+
+            if (_physxController is not null)
+                return;
+
+            PhysxMaterial? material = ResolvePhysxMaterial();
+            if (material is null)
+                return;
+
+            Vector3 up = Globals.Up;
+            ControllerManager manager = physxScene.GetOrCreateControllerManager();
+            PhysxCapsuleController controller = manager.CreateCapsuleController(
+                position,
+                up,
+                MovementModule.SlopeLimitCosine,
+                InvisibleWallHeight,
+                MaxJumpHeight,
+                ContactOffset,
+                MovementModule.StepOffset,
+                Density,
+                ScaleCoeff,
+                VolumeGrowth,
+                SlideOnSteepSlopes
+                    ? PxControllerNonWalkableMode.PreventClimbingAndForceSliding
+                    : PxControllerNonWalkableMode.PreventClimbing,
+                material,
+                0,
+                null,
+                Radius,
+                StandingHeight,
+                ConstrainedClimbing
+                    ? PxCapsuleClimbingMode.Constrained
+                    : PxCapsuleClimbingMode.Easy);
+            var controllerActorProxy = new PhysxControllerActorProxy(controller.ControllerPtr);
+
+            if (initVersion != Volatile.Read(ref _physxControllerInitVersion))
+            {
+                controller.RequestRelease();
+                return;
+            }
+
+            Engine.EnqueueUpdateThreadTask(() => BindPhysxController(physxScene, controller, controllerActorProxy, initVersion));
+        }
+
+        private void BindPhysxController(
+            PhysxScene physxScene,
+            PhysxCapsuleController controller,
+            PhysxControllerActorProxy controllerActorProxy,
+            int initVersion)
+        {
+            if (initVersion != Volatile.Read(ref _physxControllerInitVersion)
+                || !IsActiveInHierarchy
+                || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physxScene)
+            {
+                controller.RequestRelease();
+                return;
+            }
+
+            _physxController = controller;
+            ActiveController = new PhysxCharacterControllerAdapter(controller);
+
+            // CCT doesn't have rotation like regular physics actors, so clear the default -90° Z offset
+            // that RigidBodyTransform applies for normal PhysX actors.
+            _controllerActorProxy = controllerActorProxy;
+            RigidBodyTransform.PostRotationOffset = Quaternion.Identity;
+            RigidBodyTransform.RigidBody = controllerActorProxy;
+            RigidBodyTransform.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
+            RigidBodyTransform.OnPhysicsStepped();
+        }
+
         protected override void OnComponentDeactivated()
         {
+            Interlocked.Increment(ref _physxControllerInitVersion);
             _subUpdateTick = null;
             _subscribedPhysicsScene?.OnSimulationStep -= OnPhysicsSimulationStep;
             _subscribedPhysicsScene = null;

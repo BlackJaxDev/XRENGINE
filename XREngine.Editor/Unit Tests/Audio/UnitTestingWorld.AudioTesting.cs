@@ -39,9 +39,7 @@ public static partial class EditorUnitTests
             UserInterface.EnableTransformToolForNode(sourceNode);
         }
 
-        var world = new XRWorld("Audio Testing World", scene);
-        Undo.TrackWorld(world);
-        return world;
+        return CreateTrackedWorld("Audio Testing World", scene);
     }
 
     private static void AddAudioTestRoom(SceneNode rootNode)

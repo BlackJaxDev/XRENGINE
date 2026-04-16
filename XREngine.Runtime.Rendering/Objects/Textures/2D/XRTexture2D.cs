@@ -30,7 +30,8 @@ namespace XREngine.Rendering
     [MemoryPackable]
     public partial class XRTexture2D : XRTexture, IFrameBufferAttachement, ICookedBinarySerializable
     {
-        private const int MaxConcurrentProgressiveOpenGlUploads = 4;
+        private const int MaxConcurrentProgressiveOpenGlUploads = 1;
+        private const long ProgressiveOpenGlUploadBytesPerFrame = 4L * 1024L * 1024L;
         private const long CaptureDeferralBacklogBytesPerFrame = 24L * 1024L * 1024L;
 
         private static readonly ConcurrentDictionary<XRTexture2D, byte> _progressiveUploads = [];
@@ -479,6 +480,7 @@ namespace XREngine.Rendering
         {
             bool slotAcquired = false;
             bool waitLogged = false;
+            bool budgetWaitLogged = false;
 
             void CleanupProgressiveUpload()
             {
@@ -554,7 +556,6 @@ namespace XREngine.Rendering
                         }
 
                         slotAcquired = true;
-                        texture.ShouldLoadDataFromInternalPBO = true;
                         RuntimeRenderingHostServices.Current.LogOutput(
                             $"[UploadMipmaps] Starting progressive upload for '{texture.Name}' ({mipmaps[0].Width}x{mipmaps[0].Height}), {mipmaps.Length} mipmaps. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
                     }
@@ -572,9 +573,24 @@ namespace XREngine.Rendering
                     texture.LargestMipmapLevel = nextMipToUpload;
                     texture.SmallestAllowedMipmapLevel = smallestResidentMip;
 
-                    RegisterProgressiveUploadBytesForCurrentFrame(mipmaps[nextMipToUpload].Data?.Length ?? 0);
+                    long nextMipBytes = mipmaps[nextMipToUpload].Data?.Length ?? 0;
+                    long scheduledBytes = GetProgressiveUploadBytesScheduledThisFrame();
+                    if (nextMipBytes > 0
+                        && scheduledBytes > 0
+                        && scheduledBytes + nextMipBytes > ProgressiveOpenGlUploadBytesPerFrame)
+                    {
+                        if (!budgetWaitLogged)
+                        {
+                            budgetWaitLogged = true;
+                            RuntimeRenderingHostServices.Current.LogOutput(
+                                $"[UploadMipmaps] Deferring mip {nextMipToUpload} for '{texture.Name}' to stay within frame budget. bytes={nextMipBytes}, scheduled={scheduledBytes}, budget={ProgressiveOpenGlUploadBytesPerFrame}");
+                        }
+                        return false;
+                    }
 
-                    texture.LoadFromPBO(nextMipToUpload);
+                    budgetWaitLogged = false;
+                    RegisterProgressiveUploadBytesForCurrentFrame(nextMipBytes);
+
                     texture.PushMipLevel(nextMipToUpload);
                     mipmaps[nextMipToUpload].StreamingPBO = null;
                     nextMipToUpload--;

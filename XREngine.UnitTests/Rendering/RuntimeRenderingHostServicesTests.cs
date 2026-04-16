@@ -101,6 +101,49 @@ public sealed class RuntimeRenderingHostServicesTests
         originalSourcePath.ShouldBe(Path.GetFullPath(sourcePath));
     }
 
+    [Test]
+    public void ImportedTextureStreamingScope_SuppressesTextureCacheWarmup()
+    {
+        XRTexture2D.ShouldSuppressTextureStreamingCacheWarmup.ShouldBeFalse();
+
+        using (XRTexture2D.EnterImportedTextureStreamingScope())
+            XRTexture2D.ShouldSuppressTextureStreamingCacheWarmup.ShouldBeTrue();
+
+        XRTexture2D.ShouldSuppressTextureStreamingCacheWarmup.ShouldBeFalse();
+    }
+
+    [Test]
+    public void RegisterImportedTextureStreamingPlaceholder_TracksTextureWithoutPreview()
+    {
+        TestRuntimeRenderingHostServices services = new()
+        {
+            DefaultPipeline = new TestRenderPipeline(),
+        };
+        RuntimeRenderingHostServices.Current = services;
+
+        string sourcePath = Path.Combine(Path.GetTempPath(), $"ImportedTexturePreview_{Guid.NewGuid():N}.png");
+        string normalizedPath = Path.GetFullPath(sourcePath);
+        XRTexture2D texture = new()
+        {
+            Name = "DeferredPreviewTexture",
+        };
+
+        XRTexture2D.RegisterImportedTextureStreamingPlaceholder(sourcePath, texture);
+
+        bool found = false;
+        foreach (ImportedTextureStreamingTextureTelemetry telemetry in XRTexture2D.GetImportedTextureStreamingTextureTelemetry())
+        {
+            if (!string.Equals(telemetry.FilePath, normalizedPath, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            telemetry.PreviewReady.ShouldBeFalse();
+            found = true;
+            break;
+        }
+
+        found.ShouldBeTrue();
+    }
+
     private sealed class TestRuntimeRenderingHostServices : IRuntimeRenderingHostServices
     {
         public RenderPipeline? DefaultPipeline { get; set; }

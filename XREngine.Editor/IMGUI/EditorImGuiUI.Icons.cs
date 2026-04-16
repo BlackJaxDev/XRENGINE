@@ -126,9 +126,9 @@ public static partial class EditorImGuiUI
             {
                 Name = Path.GetFileNameWithoutExtension(svgPath),
                 FilePath = svgPath,
-                AutoGenerateMipmaps = true,
+                AutoGenerateMipmaps = false,
                 Resizable = false,
-                MinFilter = ETexMinFilter.LinearMipmapLinear,
+                MinFilter = ETexMinFilter.Linear,
                 MagFilter = ETexMagFilter.Linear,
                 UWrap = ETexWrapMode.ClampToEdge,
                 VWrap = ETexWrapMode.ClampToEdge

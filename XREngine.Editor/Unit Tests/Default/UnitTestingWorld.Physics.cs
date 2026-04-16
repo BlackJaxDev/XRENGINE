@@ -155,12 +155,7 @@ public static partial class EditorUnitTests
             {
                 ballComp.AngularVelocity = angularVelocity;
                 ballComp.LinearVelocity = linearVelocity;
-                if (ballComp.RigidBody is PhysxDynamicRigidBody physxBody)
-                {
-                    physxBody.SetAngularVelocity(angularVelocity);
-                    physxBody.SetLinearVelocity(linearVelocity);
-                }
-                else
+                if (ballComp.RigidBody is null)
                 {
                     Debug.Physics("[UnitTestingWorld.Physics] Skipped initial velocities for {0}: RigidBody not ready", ball.Name);
                 }

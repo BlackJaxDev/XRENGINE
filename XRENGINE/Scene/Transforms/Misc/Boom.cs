@@ -112,13 +112,15 @@ namespace XREngine.Components.Scene.Transforms
         protected override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
+            UnregisterTick(ETickGroup.Late, (int)ETickOrder.Scene, Tick);
             RegisterTick(ETickGroup.Late, (int)ETickOrder.Scene, Tick);
         }
-        //protected override void OnSceneNodeDeactivated()
-        //{
-        //    base.OnSceneNodeDeactivated();
-        //    UnregisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, Tick);
-        //}
+
+        protected override void OnSceneNodeDeactivated()
+        {
+            base.OnSceneNodeDeactivated();
+            UnregisterTick(ETickGroup.Late, (int)ETickOrder.Scene, Tick);
+        }
 
         private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _traceOutput = [];
 

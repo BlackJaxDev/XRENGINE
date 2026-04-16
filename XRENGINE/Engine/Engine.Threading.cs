@@ -13,6 +13,13 @@ namespace XREngine
         private static readonly ConcurrentDictionary<string, byte> _renderDispatchWarningLabels = new(StringComparer.Ordinal);
         private const int MaxRenderThreadJobsPerDispatch = 128;
 
+        /// <summary>
+        /// Time budget in milliseconds for render-thread job dispatch per frame.
+        /// After each job completes, if cumulative time exceeds this budget, remaining
+        /// jobs are deferred to the next frame to keep the window responsive.
+        /// </summary>
+        private const double RenderThreadJobBudgetMs = 4.0;
+
         #region Public Properties - Threading
 
         /// <summary>
@@ -383,7 +390,7 @@ namespace XREngine
         private static void ProcessPendingMainThreadWork()
         {
             using var scope = Engine.Profiler.Start("MainThreadJobs.Dispatch");
-            Jobs.ProcessMainThreadJobs(MaxRenderThreadJobsPerDispatch);
+            Jobs.ProcessMainThreadJobs(MaxRenderThreadJobsPerDispatch, RenderThreadJobBudgetMs);
         }
 
         private static void ExecuteLoggedMainThreadInvoke(Action task, MainThreadInvokeEntry entry, long? queuedAtTimestamp)

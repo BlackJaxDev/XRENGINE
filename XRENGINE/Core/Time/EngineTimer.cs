@@ -282,7 +282,7 @@ namespace XREngine.Timers
         /// This thread runs at a fixed rate, executing logic that should not be tied to the update/render threads.
         /// Typical events occuring here are logic like physics calculations.
         /// </summary>
-        private async Task FixedUpdateThread()
+        private void FixedUpdateThread()
         {
             Engine.SetPhysicsThreadId(Environment.CurrentManagedThreadId);
             while (IsRunning)
@@ -290,18 +290,23 @@ namespace XREngine.Timers
                 // Always drain physics-thread work, even while paused.
                 Engine.ProcessPhysicsThreadTasks();
 
-                // Skip fixed updates when paused (unless stepping)
+                // Keep this as a dedicated, stable thread. Using await/Task.Delay here would
+                // allow the loop to resume on a different ThreadPool worker, which breaks the
+                // engine's "physics thread" affinity assumptions for queued PhysX mutations.
                 if (!ShouldDispatchUpdate())
                 {
-                    await Task.Delay(1);
+                    Thread.Sleep(1);
                     continue;
                 }
 
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - FixedUpdateManager.LastTimestampTicks, 0L, Stopwatch.Frequency);
                 if (elapsedTicks < _fixedUpdateDeltaTicks)
+                {
+                    Thread.Yield();
                     continue;
-                
+                }
+
                 FixedUpdateManager.DeltaTicks = elapsedTicks;
                 FixedUpdateManager.LastTimestampTicks = timestampTicks;
 
@@ -327,22 +332,23 @@ namespace XREngine.Timers
         }
         /// <summary>
         /// Waits for the prerender to finish, then swaps buffers and dispatches a render.
+        /// Drains a few render-thread jobs between polls so queued GPU work
+        /// (texture uploads, property updates) is spread across the wait instead of
+        /// bursting at the start of the next frame.
         /// </summary>
         public void WaitToRender()
         {
             // Wait for the collect-visible thread to finish swapping buffers.
             while (!_swapDone.Wait(0))
             {
-                //Engine.ProcessMainThreadTasks();
-                //Thread.Yield();
+                Engine.ProcessMainThreadTasks();
             }
             _swapDone.Reset();
 
             // Suspend this thread until a render is dispatched, draining queued work between polls.
             while (!DispatchRender())
             {
-                //Engine.ProcessMainThreadTasks();
-                //Thread.Yield();
+                Engine.ProcessMainThreadTasks();
             }
 
             // Inform the update thread that the render is done

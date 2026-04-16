@@ -500,11 +500,6 @@ namespace XREngine
         {
             AssetManager.EnsureYamlAssetRuntimeSupported();
 
-            if (value is XRAsset asset)
-            {
-                System.Diagnostics.Trace.WriteLine($"[XRAssetYamlConverter] WriteYaml type={type.Name}, depth={DepthTrackingEventEmitter.CurrentDepth}, skipConverter={_skipConverter}, SourceAsset==this:{ReferenceEquals(asset.SourceAsset, asset)}, FilePath={asset.FilePath ?? "null"}");
-            }
-
             if (!_skipConverter && value is XRAsset asset2 && ShouldWriteReference(asset2))
             {
                 WriteReference(emitter, asset2);

@@ -481,7 +481,7 @@ namespace XREngine.Rendering.Physics.Physx
                 if (Manager is not null)
                     Manager.Controllers.TryRemove((nint)ControllerPtr, out _);
                 else
-                    Scene.GetOrCreateControllerManager().Controllers.TryRemove((nint)ControllerPtr, out _);
+                    Scene.GetExistingControllerManager()?.Controllers.TryRemove((nint)ControllerPtr, out _);
 
                 ControllerPtr->ReleaseMut();
             }

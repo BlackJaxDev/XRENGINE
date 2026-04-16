@@ -8,6 +8,9 @@ namespace XREngine.Input.Devices.Glfw
     public class GlfwMouse : BaseMouse
     {
         private readonly IMouse _mouse;
+        private bool _leftPressed;
+        private bool _rightPressed;
+        private bool _middlePressed;
 
         public override Vector2 CursorPosition
         {
@@ -70,14 +73,10 @@ namespace XREngine.Input.Devices.Glfw
         }
 
         private void MouseDown(IMouse mouse, MouseButton button)
-        {
-
-        }
+            => SetButtonState(button, true);
 
         private void MouseUp(IMouse mouse, MouseButton button)
-        {
-
-        }
+            => SetButtonState(button, false);
 
         private void MouseMove(IMouse mouse, Vector2 position)
         {
@@ -98,9 +97,34 @@ namespace XREngine.Input.Devices.Glfw
             for (int i = 0; i < _scrollDispatchBuffer.Count; i++)
                 _wheel.Tick(_scrollDispatchBuffer[i]);
 
-            LeftClick?.Tick(_mouse.IsButtonPressed(MouseButton.Left), delta);
-            RightClick?.Tick(_mouse.IsButtonPressed(MouseButton.Right), delta);
-            MiddleClick?.Tick(_mouse.IsButtonPressed(MouseButton.Middle), delta);
+            LeftClick?.Tick(IsButtonPressed(MouseButton.Left), delta);
+            RightClick?.Tick(IsButtonPressed(MouseButton.Right), delta);
+            MiddleClick?.Tick(IsButtonPressed(MouseButton.Middle), delta);
+        }
+
+        private bool IsButtonPressed(MouseButton button)
+            => button switch
+            {
+                MouseButton.Left => _leftPressed,
+                MouseButton.Right => _rightPressed,
+                MouseButton.Middle => _middlePressed,
+                _ => false,
+            };
+
+        private void SetButtonState(MouseButton button, bool isPressed)
+        {
+            switch (button)
+            {
+                case MouseButton.Left:
+                    _leftPressed = isPressed;
+                    break;
+                case MouseButton.Right:
+                    _rightPressed = isPressed;
+                    break;
+                case MouseButton.Middle:
+                    _middlePressed = isPressed;
+                    break;
+            }
         }
     }
 }

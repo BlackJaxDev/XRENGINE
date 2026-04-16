@@ -134,7 +134,7 @@
   // Enables the player to physically locomote in the world. Requires a physical floor.
   "Locomotion": false,
   // If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
-  "ThirdPersonPawn": false,
+  "ThirdPersonPawn": true,
   // World-space Y translation to apply to the character controller capsule/root on spawn. If null, UnitTestingWorld will pick a safe default that places the capsule just above the floor.
   "CharacterControllerCapsuleTranslationY": 1.6,
 
@@ -142,9 +142,9 @@
   // Adds a jiggle physics chain to the character pawn.
   "PhysicsChain": false,
   // Enables or disables AddPhysics.
-  "AddPhysics": false,
+  "AddPhysics": true,
   // The number of physics balls to add to the scene.
-  "PhysicsBallCount": 0,
+  "PhysicsBallCount": 10,
   // Generated from ModelsToImport on Settings.
   "ModelsToImport": [
     {
@@ -155,18 +155,18 @@
       "Kind": "Animated",
       // Selects the MaterialMode enum value.
       // MaterialMode: Deferred, Forward, Uber
-      "MaterialMode": "Forward",
+      "MaterialMode": "Uber",
       // When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline.
       "UseForwardForTransparent": false,
       // Selects how this model import chooses between native format-specific importers and Assimp fallback. PreferNativeThenAssimp uses a native importer when the format has one available and falls back to Assimp otherwise. Today the native path exists for FBX and glTF.
       // ImporterBackend: PreferNativeThenAssimp, AssimpOnly
       "ImporterBackend": "AssimpOnly",
       // Generated from Path on ModelImportSettings.
-      "Path": "misc\\Mitsuki.fbx",
+      "Path": "misc\\jax2026.fbx",
       // Comma-separated PostProcessSteps flag names.
-      "ImportFlags": "Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
+      "ImportFlags": "Triangulate, FlipUVs, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
       // Generated from Scale on ModelImportSettings.
-      "Scale": 1.0,
+      "Scale": 2.0,
       // Enables or disables ZUp.
       "ZUp": false,
       // Enables or disables GenerateCoacdCollidersPerSubmesh.
@@ -193,9 +193,9 @@
       "Kind": "Static",
       // Selects the MaterialMode enum value.
       // MaterialMode: Deferred, Forward, Uber
-      "MaterialMode": "Forward",
+      "MaterialMode": "Uber",
       // When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline.
-      "UseForwardForTransparent": true,
+      "UseForwardForTransparent": false,
       // Selects how this model import chooses between native format-specific importers and Assimp fallback. PreferNativeThenAssimp uses a native importer when the format has one available and falls back to Assimp otherwise. Today the native path exists for FBX and glTF.
       // ImporterBackend: PreferNativeThenAssimp, AssimpOnly
       "ImporterBackend": "PreferNativeThenAssimp",
@@ -204,11 +204,11 @@
       // Comma-separated PostProcessSteps flag names.
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
       // Generated from Scale on ModelImportSettings.
-      "Scale": 0.01,
+      "Scale": 0.1,
       // Enables or disables ZUp.
       "ZUp": false,
       // Enables or disables GenerateCoacdCollidersPerSubmesh.
-      "GenerateCoacdCollidersPerSubmesh": false,
+      "GenerateCoacdCollidersPerSubmesh": true,
       // When true, each imported submesh gets its own ModelComponent instead of grouping all submeshes from the same source node into one ModelComponent. Increases GPU resource usage; leave false unless per-submesh scene nodes are needed.
       "SplitSubmeshesIntoSeparateModelComponents": false,
       // Optional additional local-space rotation to apply after import. Values are degrees.
@@ -220,7 +220,7 @@
         // Generated from Y on TranslationXYZ.
         "Y": 0.0,
         // Generated from Z on TranslationXYZ.
-        "Z": 10.0
+        "Z": 0.0
       }
     },
     {
@@ -300,8 +300,9 @@
       }
     }
   ],
+
   // Additional directories that the startup model importer searches recursively by texture file name when authored texture paths do not resolve relative to the source model. Relative paths are resolved from the process working directory.
-  "TextureLoadDirSearchPaths": [],
+  "TextureLoadDirSearchPaths": ["K:\\Unity\\Jax Main Avatars\\Assets"],
 
   // Audio.
   // Enables or disables SoundNode.
@@ -333,7 +334,7 @@
   // Imports a VMD animation clip for testing.
   "AnimationClipVMD": false,
   // Imports a .anim clip for testing.
-  "AnimationClipAnim": true,
+  "AnimationClipAnim": false,
   // Generated from AnimClipPath on Settings.
   "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
   // Enables or disables AnimLooped.
