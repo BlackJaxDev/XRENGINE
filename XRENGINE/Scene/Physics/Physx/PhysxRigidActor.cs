@@ -210,7 +210,7 @@ namespace XREngine.Rendering.Physics.Physx
         private static string FormatGroupsMask(PxGroupsMask mask)
             => $"{mask.bits0:X4}:{mask.bits1:X4}:{mask.bits2:X4}:{mask.bits3:X4}";
 
-        protected override void RemoveFromCaches()
+        internal override void RemoveFromCaches()
         {
             if (RigidActorPtr is not null)
                 PhysxObjectLog.RemoveIfSame(AllRigidActors, nameof(AllRigidActors), (nint)RigidActorPtr, this);

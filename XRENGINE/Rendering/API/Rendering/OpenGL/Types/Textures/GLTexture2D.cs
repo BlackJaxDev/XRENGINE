@@ -14,6 +14,13 @@ namespace XREngine.Rendering.OpenGL
         private const GLEnum TextureMaxAnisotropyExt = (GLEnum)0x84FE;
         private const GLEnum MaxTextureMaxAnisotropyExt = (GLEnum)0x84FF;
 
+        /// <summary>
+        /// Any meaningful CPU-backed mip payload should be uploaded progressively rather
+        /// than synchronously on first bind. Render-target/no-data textures still use the
+        /// synchronous path, but asset textures defer uploads across frames.
+        /// </summary>
+        private const long ProgressivePushDataThresholdBytes = 4 * 1024;
+
         private static bool? _supportsTextureFilterAnisotropic;
         private static float _maxSupportedTextureAnisotropy = 1.0f;
         /// <summary>
@@ -200,6 +207,32 @@ namespace XREngine.Rendering.OpenGL
                 using (Engine.Profiler.Start("GLTexture2D.PushData.EnsureStorageAllocated"))
                     internalFormatForce = EnsureStorageAllocated();
 
+                // Determine whether mipmaps carry significant CPU data worth deferring.
+                bool hasBulkMipData = false;
+                if (Mipmaps is not null && Mipmaps.Length > 0)
+                {
+                    long totalBytes = 0;
+                    for (int i = 0; i < Mipmaps.Length; ++i)
+                    {
+                        var d = Mipmaps[i]?.Mipmap?.Data;
+                        if (d is not null)
+                            totalBytes += d.Length;
+                    }
+                    hasBulkMipData = totalBytes >= ProgressivePushDataThresholdBytes;
+                }
+
+                if (hasBulkMipData)
+                {
+                    // Large texture — defer per-mip uploads to a render-thread coroutine
+                    // so the current frame completes without a multi-hundred-ms stall.
+                    // Storage is already allocated above (fast); the texture will appear
+                    // black/transparent until the coroutine finishes uploading all mips.
+                    ScheduleProgressiveMipUpload(glTarget, internalFormatForce, allowPostPushCallback);
+                    Unbind();
+                    // IsPushing stays true — VerifySettings will skip re-entry until the coroutine clears it.
+                    return;
+                }
+
                 using (Engine.Profiler.Start("GLTexture2D.PushData.PushMipmaps"))
                 {
                     if (Mipmaps is null || Mipmaps.Length == 0)
@@ -214,25 +247,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                int minLOD = -1000;
-                int maxLOD = 1000;
-                using (Engine.Profiler.Start("GLTexture2D.PushData.ApplyMipRangeParameters"))
-                    ApplyMipRangeParameters();
-
-                if (!IsMultisampleTarget)
-                {
-                    Api.TextureParameterI(BindingId, GLEnum.TextureMinLod, in minLOD);
-                    Api.TextureParameterI(BindingId, GLEnum.TextureMaxLod, in maxLOD);
-                }
-
-                if (Data.AutoGenerateMipmaps)
-                {
-                    using var mipmapProf = Engine.Profiler.Start("GLTexture2D.PushData.GenerateMipmaps");
-                    GenerateMipmaps();
-                }
-
-                if (allowPostPushCallback)
-                    OnPostPushData();
+                FinalizePushData(allowPostPushCallback);
             }
             catch (Exception ex)
             {
@@ -240,9 +255,92 @@ namespace XREngine.Rendering.OpenGL
             }
             finally
             {
+                if (IsPushing)
+                {
+                    IsPushing = false;
+                    Unbind();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Common tail of <see cref="PushData"/>: applies mip-range parameters, LOD bounds,
+        /// optional auto-mipmap generation, and fires the post-push callback.
+        /// </summary>
+        private void FinalizePushData(bool allowPostPushCallback)
+        {
+            int minLOD = -1000;
+            int maxLOD = 1000;
+            using (Engine.Profiler.Start("GLTexture2D.PushData.ApplyMipRangeParameters"))
+                ApplyMipRangeParameters();
+
+            if (!IsMultisampleTarget)
+            {
+                Api.TextureParameterI(BindingId, GLEnum.TextureMinLod, in minLOD);
+                Api.TextureParameterI(BindingId, GLEnum.TextureMaxLod, in maxLOD);
+            }
+
+            if (Data.AutoGenerateMipmaps)
+            {
+                using var mipmapProf = Engine.Profiler.Start("GLTexture2D.PushData.GenerateMipmaps");
+                GenerateMipmaps();
+            }
+
+            if (allowPostPushCallback)
+                OnPostPushData();
+        }
+
+        /// <summary>
+        /// Schedules a render-thread coroutine that uploads one mipmap level per tick,
+        /// preventing large imported textures from stalling the render frame.
+        /// </summary>
+        private void ScheduleProgressiveMipUpload(GLEnum glTarget, EPixelInternalFormat? internalFormatForce, bool allowPostPushCallback)
+        {
+            int mipLevelOffset = Data.SparseTextureStreamingEnabled
+                ? Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel)
+                : 0;
+
+            int mipCount = Mipmaps!.Length;
+            int smallestResidentMip = mipCount - 1;
+            int nextMip = smallestResidentMip;
+
+            Engine.AddRenderThreadCoroutine(() =>
+            {
+                using var sample = Engine.Profiler.Start("GLTexture2D.ProgressiveMipUpload");
+                if (!IsGenerated)
+                {
+                    // Texture was destroyed before the coroutine finished.
+                    IsPushing = false;
+                    return true;
+                }
+
+                Bind();
+                Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+
+                if (nextMip >= 0)
+                {
+                    // Upload from smallest to largest so early frames only pay for tiny mips.
+                    // Clamp sampling to the currently resident range until the full chain arrives.
+                    if (!IsMultisampleTarget)
+                    {
+                        int residentBaseLevel = nextMip + mipLevelOffset;
+                        int residentMaxLevel = smallestResidentMip + mipLevelOffset;
+                        Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in residentBaseLevel);
+                        Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in residentMaxLevel);
+                    }
+
+                    PushMipmap(glTarget, nextMip + mipLevelOffset, Mipmaps![nextMip], internalFormatForce);
+                    nextMip--;
+                    Unbind();
+                    return false; // continue — more mips to upload
+                }
+
+                // All mips uploaded — finalize.
+                FinalizePushData(allowPostPushCallback);
                 IsPushing = false;
                 Unbind();
-            }
+                return true; // done
+            });
         }
 
         private EPixelInternalFormat? EnsureStorageAllocated()

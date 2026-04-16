@@ -20,6 +20,21 @@ public static partial class EditorUnitTests
 {
     private static bool _emulatedVrStereoPreviewHooked;
 
+    // Unit-test worlds create and possess their own pawn during scene setup.
+    // Prevent play-mode fallback from spawning a second default pawn over it.
+    private static XRWorld CreateTrackedWorld(string name, XRScene scene)
+    {
+        var world = new XRWorld(name, CreatePreplacedPawnGameMode(), scene);
+        Undo.TrackWorld(world);
+        return world;
+    }
+
+    private static GameMode CreatePreplacedPawnGameMode()
+        => new CustomGameMode
+        {
+            DefaultPlayerPawnClass = null,
+        };
+
     private static void EnsureEmulatedVRStereoPreviewRenderingHooked()
     {
         if (_emulatedVrStereoPreviewHooked)
@@ -143,9 +158,7 @@ public static partial class EditorUnitTests
 
         Models.ImportModels(desktopDir, rootNode, characterPawnModelParentNode ?? rootNode);
 
-        var world = new XRWorld("Default World", scene);
-        Undo.TrackWorld(world);
-        return world;
+        return CreateTrackedWorld("Default World", scene);
     }
 
     public static XRWorld CreateSelectedWorld(bool setUI, bool isServer)
@@ -192,9 +205,7 @@ public static partial class EditorUnitTests
         AddUberShaderPreviewGrid(rootNode);
         AddUberShaderReferenceGrid(rootNode);
 
-        var world = new XRWorld("Uber Shader World", scene);
-        Undo.TrackWorld(world);
-        return world;
+        return CreateTrackedWorld("Uber Shader World", scene);
     }
 
     private static void AddMirror(SceneNode rootNode)

@@ -85,22 +85,85 @@ namespace XREngine.Components.Physics
 
             var results = new List<CoACD.ConvexHullMesh>();
 
-            var inputs = ConvexHullUtility.CollectCollisionInputs(modelComponent);
-            int totalInputs = inputs.Count;
-            if (totalInputs == 0)
+            ConvexHullInputCollection inputCollection = ConvexHullUtility.CollectCollisionInputCollection(modelComponent);
+            List<ConvexHullInputBatch> batches = [.. inputCollection.EnumeratePreferredBatches()];
+            if (batches.Count == 0)
             {
                 progress?.Report(new ConvexHullGenerationProgress(0, 0, "No collision meshes available."));
                 return results;
             }
 
-            progress?.Report(new ConvexHullGenerationProgress(0, totalInputs, "Starting convex decomposition."));
+            string targetLabel = DescribeCollisionTarget(modelComponent);
+            for (int batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                ConvexHullInputBatch batch = batches[batchIndex];
+                Debug.Physics(
+                    "[{0}] Collision input batch for {1}: source={2}, sourceMeshes={3}, inputs={4}, vertices={5}, triangles={6}",
+                    GetType().Name,
+                    targetLabel,
+                    batch.SourceLabel,
+                    batch.SourceMeshCount,
+                    batch.InputCount,
+                    batch.VertexCount,
+                    batch.TriangleCount);
+
+                List<CoACD.ConvexHullMesh> batchResults = await CreateConvexDecompositionForInputsAsync(
+                    config,
+                    batch,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (batchResults.Count > 0)
+                {
+                    results.AddRange(batchResults);
+                    break;
+                }
+
+                if (batchIndex + 1 < batches.Count)
+                {
+                    ConvexHullInputBatch nextBatch = batches[batchIndex + 1];
+                    Debug.Physics(
+                        "[{0}] No convex hulls generated for {1} from {2}; retrying {3}.",
+                        GetType().Name,
+                        targetLabel,
+                        batch.SourceLabel,
+                        nextBatch.SourceLabel);
+                    progress?.Report(new ConvexHullGenerationProgress(
+                        0,
+                        nextBatch.InputCount,
+                        $"No convex hulls from {batch.SourceLabel}; retrying {nextBatch.SourceLabel}."));
+                }
+            }
+
+            if (results.Count > 0)
+            {
+                UpdateCachedHullSnapshot(config, results);
+                progress?.Report(new ConvexHullGenerationProgress(results.Count, results.Count, "Convex hulls cached."));
+            }
+            else
+            {
+                progress?.Report(new ConvexHullGenerationProgress(0, 0, "No convex hulls generated."));
+            }
+
+            return results;
+        }
+
+        private async Task<List<CoACD.ConvexHullMesh>> CreateConvexDecompositionForInputsAsync(
+            CoACD.CoACDParameters config,
+            ConvexHullInputBatch batch,
+            IProgress<ConvexHullGenerationProgress>? progress,
+            CancellationToken cancellationToken)
+        {
+            List<CoACD.ConvexHullMesh> results = [];
+            int totalInputs = batch.InputCount;
+            progress?.Report(new ConvexHullGenerationProgress(0, totalInputs, $"Starting convex decomposition from {batch.SourceLabel}."));
 
             for (int i = 0; i < totalInputs; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var input = inputs[i];
-                progress?.Report(new ConvexHullGenerationProgress(i, totalInputs, $"Decomposing mesh {i + 1} of {totalInputs}..."));
+                ConvexHullInput input = batch.Inputs[i];
+                progress?.Report(new ConvexHullGenerationProgress(i, totalInputs, $"Decomposing {batch.SourceLabel} {i + 1} of {totalInputs}..."));
 
                 if (ConvexHullDiskCache.TryLoad(config, input, out var cachedInputHulls))
                 {
@@ -113,15 +176,15 @@ namespace XREngine.Components.Physics
                     progress?.Report(new ConvexHullGenerationProgress(
                         i + 1,
                         totalInputs,
-                        $"Loaded cached convex hulls for mesh {i + 1} of {totalInputs}."));
+                        $"Loaded cached convex hulls for {batch.SourceLabel} {i + 1} of {totalInputs}."));
                     continue;
                 }
 
-                var hulls = await ConvexDecompositionRunner
+                IReadOnlyList<CoACD.ConvexHullMesh> generatedHulls = await ConvexDecompositionRunner
                     .GenerateAsync(input.Positions, input.Indices, config, cancellationToken)
-                    .ConfigureAwait(false);
+                    .ConfigureAwait(false)
+                    ?? Array.Empty<CoACD.ConvexHullMesh>();
 
-                IReadOnlyList<CoACD.ConvexHullMesh> generatedHulls = hulls ?? Array.Empty<CoACD.ConvexHullMesh>();
                 if (generatedHulls.Count > 0)
                 {
                     results.AddRange(generatedHulls);
@@ -129,18 +192,7 @@ namespace XREngine.Components.Physics
                 }
 
                 ConvexHullDiskCache.TryStore(config, input, generatedHulls);
-
-                progress?.Report(new ConvexHullGenerationProgress(i + 1, totalInputs, $"Completed mesh {i + 1} of {totalInputs}."));
-            }
-
-            if (results.Count > 0)
-            {
-                UpdateCachedHullSnapshot(config, results);
-                progress?.Report(new ConvexHullGenerationProgress(totalInputs, totalInputs, "Convex hulls cached."));
-            }
-            else
-            {
-                progress?.Report(new ConvexHullGenerationProgress(totalInputs, totalInputs, "No convex hulls generated."));
+                progress?.Report(new ConvexHullGenerationProgress(i + 1, totalInputs, $"Completed {batch.SourceLabel} {i + 1} of {totalInputs}."));
             }
 
             return results;
@@ -157,7 +209,7 @@ namespace XREngine.Components.Physics
             var config = parameters ?? CoACD.CoACDParameters.Default;
             var cacheKey = (config, extraFlags, requestGpuData);
 
-            if (_physxMeshCache.TryGetValue(cacheKey, out var cachedMeshes) && cachedMeshes.Count > 0)
+            if (_physxMeshCache.TryGetValue(cacheKey, out var cachedMeshes))
                 return cachedMeshes;
 
             var hulls = cachedHulls ?? GetCachedHullReference(config);
@@ -167,8 +219,26 @@ namespace XREngine.Components.Physics
             if (hulls.Count == 0)
                 return [];
 
-            var cooked = PhysxConvexHullCooker.CookHulls(hulls, extraFlags, requestGpuData);
+            var cooked = PhysxConvexHullCooker.CookHulls(
+                hulls,
+                out int skippedHullCount,
+                out string? firstFailureMessage,
+                extraFlags,
+                requestGpuData);
             var meshList = cooked is List<PhysxConvexMesh> list ? list : [.. cooked];
+
+            if (skippedHullCount > 0)
+            {
+                Debug.Physics(
+                    "[{0}] Cooked {1} of {2} convex hull(s) for {3}; skipped {4}. First failure: {5}",
+                    GetType().Name,
+                    meshList.Count,
+                    hulls.Count,
+                    SceneNode?.Name ?? "<unnamed>",
+                    skippedHullCount,
+                    firstFailureMessage ?? "<unknown>");
+            }
+
             _physxMeshCache[cacheKey] = meshList;
             return meshList;
         }
@@ -405,6 +475,15 @@ namespace XREngine.Components.Physics
                 CoACD.CoACDParameters parameters,
                 CancellationToken cancellationToken)
                 => CoACD.CalculateAsync(positions, indices, parameters, cancellationToken);
+        }
+
+        private string DescribeCollisionTarget(ModelComponent modelComponent)
+        {
+            string nodeLabel = SceneNode?.Name ?? "<unnamed>";
+            string componentLabel = string.IsNullOrWhiteSpace(modelComponent.Name)
+                ? modelComponent.GetType().Name
+                : modelComponent.Name;
+            return $"{nodeLabel}/{componentLabel}#{modelComponent.GetHashCode():X8}";
         }
     }
 }

@@ -107,6 +107,58 @@ public sealed class ConvexHullUtilityTests
     }
 
     [Test]
+    public async Task CreateConvexDecompositionAsync_RetriesAssetMeshesWhenRuntimeMeshesYieldNoHulls()
+    {
+        var node = new SceneNode("ConvexHullRetryTests");
+        var (physicsComponent, modelComponent) = node.AddComponents<SequencedPhysicsActorComponent, ModelComponent>();
+        physicsComponent.ShouldNotBeNull();
+        modelComponent.ShouldNotBeNull();
+
+        AttachModel(modelComponent!);
+        ReplaceRuntimeMeshes(modelComponent!, XRMesh.CreateTriangles(
+            new Vector3(10f, 0f, 0f),
+            new Vector3(11f, 0f, 0f),
+            new Vector3(10f, 1f, 0f)));
+
+        var expectedHull = new CoACD.ConvexHullMesh(
+            new[] { Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ },
+            new[] { 0, 1, 2, 0, 2, 3 });
+
+        physicsComponent!.SetStepResults(Array.Empty<CoACD.ConvexHullMesh>(), [expectedHull]);
+
+        Task<List<CoACD.ConvexHullMesh>> generationTask = physicsComponent.CreateConvexDecompositionAsync();
+        await physicsComponent.WaitForSecondCallAsync().ConfigureAwait(false);
+        physicsComponent.ReleaseSecondCall();
+
+        var hulls = await generationTask.ConfigureAwait(false);
+        hulls.ShouldHaveSingleItem();
+        hulls[0].Vertices.ShouldBe(expectedHull.Vertices);
+        hulls[0].Indices.ShouldBe(expectedHull.Indices);
+    }
+
+    [Test]
+    public void CollectCollisionInputs_StripsDegenerateTriangles()
+    {
+        var (_, modelComponent) = CreateComponentPair();
+        modelComponent.Model = new Model(new SubMesh(new SubMeshLOD(
+            material: null,
+            XRMesh.CreateTriangles(
+                Vector3.Zero,
+                Vector3.Zero,
+                Vector3.UnitX,
+                Vector3.Zero,
+                Vector3.UnitX,
+                Vector3.UnitY),
+            maxVisibleDistance: 0f)));
+
+        var inputs = ConvexHullUtility.CollectCollisionInputs(modelComponent);
+
+        inputs.ShouldHaveSingleItem();
+        inputs[0].Positions.Length.ShouldBe(3);
+        inputs[0].Indices.Length.ShouldBe(3);
+    }
+
+    [Test]
     public async Task CreateConvexDecompositionAsync_ReusesDiskCachedHullsAcrossComponents()
     {
         var firstExpectedHull = new CoACD.ConvexHullMesh(
@@ -204,6 +256,13 @@ public sealed class ConvexHullUtilityTests
         var firstSubMesh = new SubMesh(new SubMeshLOD(material: null, firstMesh, maxVisibleDistance: 0f));
         var secondSubMesh = new SubMesh(new SubMeshLOD(material: null, secondMesh, maxVisibleDistance: 0f));
         component.Model = new Model([firstSubMesh, secondSubMesh]);
+    }
+
+    private static void ReplaceRuntimeMeshes(ModelComponent component, XRMesh mesh)
+    {
+        component.Meshes.Clear();
+        var runtimeSubMesh = new SubMesh(new SubMeshLOD(material: null, mesh, maxVisibleDistance: 0f));
+        component.Meshes.Add(new RenderableMesh(runtimeSubMesh, component));
     }
 
     private sealed class TestPhysicsActorComponent : PhysicsActorComponent

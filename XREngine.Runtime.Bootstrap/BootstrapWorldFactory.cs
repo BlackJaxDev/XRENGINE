@@ -20,6 +20,17 @@ namespace XREngine.Runtime.Bootstrap;
 
 public static class BootstrapWorldFactory
 {
+    // Bootstrap worlds create and possess their own pawn during scene setup.
+    // Prevent play-mode fallback from spawning a second default pawn over it.
+    private static XRWorld CreateBootstrapWorld(string name, XRScene scene)
+        => new(name, CreatePreplacedPawnGameMode(), scene);
+
+    private static GameMode CreatePreplacedPawnGameMode()
+        => new CustomGameMode
+        {
+            DefaultPlayerPawnClass = null,
+        };
+
     public static XRWorld CreateSelectedWorld(bool setUI, bool isServer)
     {
         var settings = RuntimeBootstrapState.Settings;
@@ -104,7 +115,7 @@ public static class BootstrapWorldFactory
 
         BootstrapModelBuilder.ImportModels(desktopDir, rootNode, characterPawnModelParentNode ?? rootNode);
 
-        return new XRWorld("Default World", scene);
+        return CreateBootstrapWorld("Default World", scene);
     }
 
     public static XRWorld CreateDefaultEmptyWorld(bool setUI, bool isServer)
@@ -139,7 +150,7 @@ public static class BootstrapWorldFactory
 
             AddDefaultGridFloor(rootNode);
 
-            return new XRWorld("Default World", scene);
+            return CreateBootstrapWorld("Default World", scene);
         }
         finally
         {

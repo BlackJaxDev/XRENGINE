@@ -870,6 +870,9 @@ internal sealed class ImportedTextureStreamingManager
     {
     }
 
+    internal bool HasActiveImportedModelImports
+        => Volatile.Read(ref _activeImportedModelImports) > 0;
+
     private sealed class ImportedTextureStreamingScope(ImportedTextureStreamingManager owner) : IDisposable
     {
         private readonly ImportedTextureStreamingManager _owner = owner;
@@ -948,6 +951,23 @@ internal sealed class ImportedTextureStreamingManager
         EnsureCallbacksSubscribed();
         Interlocked.Increment(ref _activeImportedModelImports);
         return new ImportedTextureStreamingScope(this);
+    }
+
+    public void RegisterTexture(string filePath, XRTexture2D texture)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        ArgumentNullException.ThrowIfNull(texture);
+
+        EnsureCallbacksSubscribed();
+
+        string normalizedPath = Path.GetFullPath(filePath);
+        if (string.IsNullOrWhiteSpace(texture.FilePath))
+            texture.FilePath = normalizedPath;
+
+        if (string.IsNullOrWhiteSpace(texture.Name))
+            texture.Name = Path.GetFileNameWithoutExtension(normalizedPath);
+
+        _ = GetOrCreateRecord(texture, normalizedPath);
     }
 
     public EnumeratorJob SchedulePreviewJob(
@@ -1983,6 +2003,7 @@ internal sealed class ImportedTextureStreamingManager
             {
                 uint previousResidentSize = record.ResidentMaxDimension;
                 record.ResidentMaxDimension = completedResidentSize;
+                record.PreviewReady = true;
 
                 if (texture is not null)
                 {

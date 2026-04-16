@@ -58,9 +58,7 @@ public static partial class EditorUnitTests
             RefreshEditableMesh(editableMesh, modelComp, wireDebug, material);
         });
 
-        var world = new XRWorld("Mesh Editing World", scene);
-        Undo.TrackWorld(world);
-        return world;
+        return CreateTrackedWorld("Mesh Editing World", scene);
     }
 
     private static XRMesh CreateEditableCubeMesh(float size)

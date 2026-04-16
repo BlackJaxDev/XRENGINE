@@ -52,6 +52,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             grading.MarkGpuAutoExposureReady(false);
 
+            if (Engine.StartupPresentationEnabled)
+                return;
+
             if (IsAutoExposureRestrictedPass())
             {
                 Debug.RenderingWarningEvery(

@@ -509,6 +509,12 @@ namespace XREngine.Rendering
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.BeginPlay");
 
+            if (PlayState is EPlayState.BeginningPlay or EPlayState.Playing or EPlayState.Paused)
+            {
+                Debug.Out($"[XRWorldInstance] BeginPlay skipped because world is already {PlayState}.");
+                return;
+            }
+
             PlayState = EPlayState.BeginningPlay;
             PreBeginPlay?.Invoke(this);
 

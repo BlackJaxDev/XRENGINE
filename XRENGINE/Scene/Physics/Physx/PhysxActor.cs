@@ -185,10 +185,10 @@ namespace XREngine.Rendering.Physics.Physx
         public bool IsReleased
         {
             get => _isReleased;
-            protected set => SetField(ref _isReleased, value);
+            internal set => SetField(ref _isReleased, value);
         }
 
-        protected virtual void RemoveFromCaches()
+        internal virtual void RemoveFromCaches()
         {
             if (ActorPtr is null)
                 return;

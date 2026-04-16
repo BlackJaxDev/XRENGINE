@@ -69,7 +69,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
             ZUp = true,
         };
 
-        ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model);
+        ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model, []);
 
         options.ShouldNotBeNull();
         options!.FbxBackend.ShouldBe(FbxImportBackend.AssimpLegacy);
@@ -88,7 +88,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
             GenerateCoacdCollidersPerSubmesh = true,
         };
 
-        ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model);
+        ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model, []);
 
         options.ShouldNotBeNull();
         options!.SplitSubmeshesIntoSeparateModelComponents.ShouldBeTrue();

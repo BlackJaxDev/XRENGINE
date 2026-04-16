@@ -98,11 +98,6 @@ public static class BootstrapPhysicsBuilder
         {
             ballComp.AngularVelocity = angularVelocity;
             ballComp.LinearVelocity = linearVelocity;
-            if (ballComp.RigidBody is PhysxDynamicRigidBody physxBody)
-            {
-                physxBody.SetAngularVelocity(angularVelocity);
-                physxBody.SetLinearVelocity(linearVelocity);
-            }
 
             node.Activated -= OnBallActivated;
         }

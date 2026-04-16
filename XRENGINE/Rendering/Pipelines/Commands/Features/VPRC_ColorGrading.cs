@@ -284,7 +284,7 @@ void main()
             bool useGpuAutoExposure = settings.UseGpuAutoExposureThisFrame && hasExposureTexture;
 
             program.Sampler("SourceTexture", sourceTexture, 0);
-            program.Sampler("AutoExposureTex", hasExposureTexture ? exposureTexture! : sourceTexture, 1);
+            program.Sampler("AutoExposureTex", useGpuAutoExposure ? exposureTexture! : sourceTexture, 1);
             settings.SetUniforms(program);
             program.Uniform("UseGpuAutoExposure", useGpuAutoExposure);
             program.Uniform("OutputHDR", OutputHDR || DefaultRenderPipeline.ResolveOutputHDR());

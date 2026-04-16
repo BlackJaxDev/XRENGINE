@@ -656,7 +656,12 @@ namespace XREngine.Components.Physics
         {
             base.OnComponentActivated();
             Debug.Physics("[DynamicRigidBodyComponent] Activating component on {0}", SceneNode?.Name ?? "<unnamed>");
+            bool hadRigidBody = RigidBody is not null;
             EnsureRigidBodyConstructed();
+
+            if (!hadRigidBody)
+                return;
+
             if (Engine.IsPhysicsThread)
             {
                 ApplyAllCachedProperties();
@@ -670,6 +675,7 @@ namespace XREngine.Components.Physics
                     ApplyAllCachedProperties();
                 });
             }
+
             TryRegisterRigidBodyWithScene();
         }
 
@@ -747,13 +753,10 @@ namespace XREngine.Components.Physics
                     rotation,
                     ShapeOffsetTranslation,
                     ShapeOffsetRotation);
-                ApplyAllCachedProperties(created);
                 return created;
             }
 
-            var body = new PhysxDynamicRigidBody(position, rotation);
-            ApplyAllCachedProperties(body);
-            return body;
+            return new PhysxDynamicRigidBody(position, rotation);
         }
 
         private JoltDynamicRigidBody? CreateJoltDynamicRigidBody(JoltScene scene)
@@ -774,10 +777,6 @@ namespace XREngine.Components.Physics
                 ShapeOffsetRotation,
                 layerMask);
 
-            if (body is null)
-                return null;
-
-            ApplyAllCachedProperties(body);
             return body;
         }
 

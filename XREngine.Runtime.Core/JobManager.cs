@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -845,11 +846,23 @@ namespace XREngine
         /// <summary>
         /// Drains main-thread jobs that were already queued when this method begins.
         /// This method never waits/spins for more work, and it will not chase newly-enqueued jobs.
+        /// Stops early when the time budget is exceeded, deferring remaining jobs to the next call.
         /// </summary>
-        public void ProcessMainThreadJobs(int maxJobs = int.MaxValue)
+        /// <param name="maxJobs">Maximum number of jobs to process per call.</param>
+        /// <param name="budgetMilliseconds">
+        /// Time budget in milliseconds. After each job completes, if cumulative elapsed time exceeds
+        /// this budget the method returns, leaving remaining jobs for the next frame. A value of
+        /// <c>0</c> disables the time budget (count-only limiting).
+        /// </param>
+        public void ProcessMainThreadJobs(int maxJobs = int.MaxValue, double budgetMilliseconds = 0.0)
         {
             int snapshot = SnapshotQueuedMainThreadJobs();
             int remaining = Math.Min(Math.Max(0, maxJobs), snapshot);
+
+            long budgetTicks = budgetMilliseconds > 0.0
+                ? (long)(budgetMilliseconds * Stopwatch.Frequency / 1000.0)
+                : 0L;
+            long start = budgetTicks > 0L ? Stopwatch.GetTimestamp() : 0L;
 
             int processed = 0;
             while (processed < remaining && TryDequeueWithAging(_pendingMainThreadByPriority, JobAffinity.RenderThread, out var job, out var bucket))
@@ -862,6 +875,10 @@ namespace XREngine
                     ExecuteJob(job);
                 }
                 processed++;
+
+                // Check time budget after each job completes.
+                if (budgetTicks > 0L && Stopwatch.GetTimestamp() - start > budgetTicks)
+                    break;
             }
         }
 

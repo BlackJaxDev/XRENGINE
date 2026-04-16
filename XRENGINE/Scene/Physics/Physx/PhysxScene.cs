@@ -99,6 +99,13 @@ namespace XREngine.Rendering.Physics.Physx
             if (_scene is not null)
             {
                 Debug.Log(ELogCategory.Physics, "[PhysxScene] Clearing caches shapes={0} joints={1}", Shapes.Count, Joints.Count);
+
+                // Mark all actors owned by this scene as released BEFORE destroying the
+                // native scene. PxScene::release() frees every actor, so any deferred
+                // physics-thread tasks (e.g. WakeUp) that still reference those actors
+                // would otherwise dereference dangling pointers.
+                MarkSceneActorsReleased();
+
                 Shapes.Clear();
                 Joints.Clear();
                 ContactJoints.Clear();
@@ -120,6 +127,39 @@ namespace XREngine.Rendering.Physics.Physx
                 ((PxDefaultCpuDispatcher*)_dispatcher)->ReleaseMut();
                 _dispatcher = null;
             }
+        }
+
+        /// <summary>
+        /// Enumerates all actors still in the native scene and marks their managed wrappers
+        /// as released. This prevents deferred physics-thread tasks from touching freed memory.
+        /// </summary>
+        private void MarkSceneActorsReleased()
+        {
+            const PxActorTypeFlags allTypes =
+                PxActorTypeFlags.RigidStatic |
+                PxActorTypeFlags.RigidDynamic;
+
+            uint count = _scene->GetNbActors(allTypes);
+            if (count == 0)
+                return;
+
+            PxActor** ptrs = stackalloc PxActor*[(int)count];
+            uint written = _scene->GetActors(allTypes, ptrs, count, 0);
+
+            int marked = 0;
+            for (uint i = 0; i < written; i++)
+            {
+                var actor = PhysxActor.Get(ptrs[i]);
+                if (actor is not null && !actor.IsReleased)
+                {
+                    actor.IsReleased = true;
+                    actor.RemoveFromCaches();
+                    marked++;
+                }
+            }
+
+            if (marked > 0)
+                Debug.Log(ELogCategory.Physics, "[PhysxScene] Marked {0} actors released before scene destroy", marked);
         }
 
         private unsafe void ConfigureSimulationEventCallbacks(ref PxSceneDesc sceneDesc)
@@ -1416,10 +1456,19 @@ namespace XREngine.Rendering.Physics.Physx
             => _scene->WriteLockNewAlloc(file, line);
 
         private ControllerManager? _controllerManager;
+        internal ControllerManager? GetExistingControllerManager()
+            => _controllerManager;
+
         public ControllerManager GetOrCreateControllerManager(bool lockingEnabled = false)
         {
             if (_controllerManager is not null)
                 return _controllerManager;
+
+            if (!Engine.IsPhysicsThread)
+                throw new InvalidOperationException("PhysX controller manager creation must run on the physics thread.");
+
+            if (_scene is null)
+                throw new InvalidOperationException("PhysX scene is not initialized.");
 
             var mgrPtr = _scene->PhysPxCreateControllerManager(lockingEnabled);
             _controllerManager = new ControllerManager(mgrPtr);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using MagicPhysX;
 using XREngine.Data.Tools;
 using static MagicPhysX.NativeMethods;
@@ -50,11 +51,68 @@ namespace XREngine.Rendering.Physics.Physx
 
         public static PhysxConvexMesh CookHull(CoACD.ConvexHullMesh hull, PxConvexFlags extraFlags = 0, bool requestGpuData = false)
         {
+            ArgumentNullException.ThrowIfNull(hull);
+
+            if (!TryCookHull(hull, out PhysxConvexMesh? mesh, out string? failureMessage, extraFlags, requestGpuData))
+                throw new InvalidOperationException(failureMessage ?? "PxCreateConvexMesh failed.");
+
+            return mesh;
+        }
+
+        public static IReadOnlyList<PhysxConvexMesh> CookHulls(
+            IReadOnlyList<CoACD.ConvexHullMesh> hulls,
+            out int skippedHullCount,
+            out string? firstFailureMessage,
+            PxConvexFlags extraFlags = 0,
+            bool requestGpuData = false)
+        {
+            EnsureInitialized();
+            skippedHullCount = 0;
+            firstFailureMessage = null;
+            if (hulls == null || hulls.Count == 0)
+                return [];
+
+            List<PhysxConvexMesh> meshes = new(hulls.Count);
+
+            foreach (var hull in hulls)
+            {
+                if (TryCookHull(hull, out PhysxConvexMesh? mesh, out string? failureMessage, extraFlags, requestGpuData))
+                {
+                    meshes.Add(mesh);
+                    continue;
+                }
+
+                skippedHullCount++;
+                firstFailureMessage ??= failureMessage;
+            }
+
+            return meshes;
+        }
+
+        private static bool TryCookHull(
+            CoACD.ConvexHullMesh? hull,
+            [NotNullWhen(true)]
+            out PhysxConvexMesh? mesh,
+            out string? failureMessage,
+            PxConvexFlags extraFlags,
+            bool requestGpuData)
+        {
             EnsureInitialized();
 
-            ArgumentNullException.ThrowIfNull(hull);
+            mesh = null;
+            failureMessage = null;
+
+            if (hull is null)
+            {
+                failureMessage = "Convex hull is null.";
+                return false;
+            }
+
             if (hull.Vertices.Length < 4)
-                throw new ArgumentException("Convex hull requires at least four vertices.", nameof(hull));
+            {
+                failureMessage = "Convex hull requires at least four vertices.";
+                return false;
+            }
 
             PxConvexMeshDesc* descPtr = stackalloc PxConvexMeshDesc[1];
             *descPtr = PxConvexMeshDesc_new();
@@ -86,46 +144,29 @@ namespace XREngine.Rendering.Physics.Physx
                 descPtr->points.data = vertexPtr;
 
                 if (!PxConvexMeshDesc_isValid(descPtr))
-                    throw new InvalidOperationException("PxConvexMeshDesc validation failed for supplied hull.");
+                {
+                    failureMessage = "PxConvexMeshDesc validation failed for supplied hull.";
+                    return false;
+                }
 
-                PxConvexMeshCookingResult result = PxConvexMeshCookingResult.Success;
                 PxPhysics* physics = PhysxScene.PhysicsPtr;
                 if (physics == null)
-                    throw new InvalidOperationException("PhysX must be initialized before cooking convex meshes.");
+                {
+                    failureMessage = "PhysX must be initialized before cooking convex meshes.";
+                    return false;
+                }
+
+                PxConvexMeshCookingResult result = PxConvexMeshCookingResult.Success;
                 PxInsertionCallback* insertion = physics->GetPhysicsInsertionCallbackMut();
                 var meshPtr = phys_PxCreateConvexMesh(paramsPtr, descPtr, insertion, &result);
                 if (meshPtr == null)
-                    throw new InvalidOperationException($"PxCreateConvexMesh failed with result {result}.");
-
-                return new PhysxConvexMesh(meshPtr);
-            }
-        }
-
-        public static IReadOnlyList<PhysxConvexMesh> CookHulls(IReadOnlyList<CoACD.ConvexHullMesh> hulls, PxConvexFlags extraFlags = 0, bool requestGpuData = false)
-        {
-            EnsureInitialized();
-            if (hulls == null || hulls.Count == 0)
-                return [];
-
-            List<PhysxConvexMesh> meshes = new(hulls.Count);
-            try
-            {
-                foreach (var hull in hulls)
                 {
-                    if (hull is null)
-                        continue;
-                    meshes.Add(CookHull(hull, extraFlags, requestGpuData));
+                    failureMessage = $"PxCreateConvexMesh failed with result {result}.";
+                    return false;
                 }
-                return meshes;
-            }
-            catch
-            {
-                foreach (var mesh in meshes)
-                {
-                    try { mesh.Release(); }
-                    catch { }
-                }
-                throw;
+
+                mesh = new PhysxConvexMesh(meshPtr);
+                return true;
             }
         }
     }

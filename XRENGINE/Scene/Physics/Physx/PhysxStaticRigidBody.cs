@@ -65,7 +65,7 @@ namespace XREngine.Rendering.Physics.Physx
             PhysxObjectLog.Created(this, (nint)_obj, detail);
         }
 
-        protected override void RemoveFromCaches()
+        internal override void RemoveFromCaches()
         {
             PhysxObjectLog.RemoveIfSame(AllStaticRigidBodies, nameof(AllStaticRigidBodies), (nint)_obj, this);
             base.RemoveFromCaches();

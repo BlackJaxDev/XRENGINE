@@ -117,6 +117,9 @@ namespace XREngine.Rendering.Physics.Physx
 
         private void SetKinematicTargetInternal((Vector3 position, Quaternion rotation)? value)
         {
+            if (_obj is null || IsReleased)
+                return;
+
             if (value.HasValue)
             {
                 // Ensure body is kinematic.
@@ -152,6 +155,8 @@ namespace XREngine.Rendering.Physics.Physx
         }
         private void WakeUpInternal()
         {
+            if (_obj is null || IsReleased)
+                return;
             _obj->WakeUpMut();
             PhysxObjectLog.Modified(this, (nint)_obj, nameof(WakeUp));
         }
@@ -162,6 +167,8 @@ namespace XREngine.Rendering.Physics.Physx
         }
         private void PutToSleepInternal()
         {
+            if (_obj is null || IsReleased)
+                return;
             _obj->PutToSleepMut();
             PhysxObjectLog.Modified(this, (nint)_obj, nameof(PutToSleep));
         }
@@ -230,7 +237,7 @@ namespace XREngine.Rendering.Physics.Physx
             PhysxObjectLog.Created(this, (nint)_obj, "empty");
         }
 
-        protected override void RemoveFromCaches()
+        internal override void RemoveFromCaches()
         {
             PhysxObjectLog.RemoveIfSame(AllDynamic, nameof(AllDynamic), (nint)_obj, this);
             base.RemoveFromCaches();

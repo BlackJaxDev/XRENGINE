@@ -462,7 +462,7 @@ namespace XREngine
         public Func<string, XRTexture2D> MakeTextureAction { get; set; } = TextureFactoryInternal;
 
         private static XRTexture2D TextureFactoryInternal(string path)
-            => TextureFactoryInternal(path, schedulePreviewLoad: true);
+            => TextureFactoryInternal(path, schedulePreviewLoad: false);
 
         private static XRTexture2D TextureFactoryInternal(string path, bool schedulePreviewLoad)
         {
@@ -505,6 +505,10 @@ namespace XREngine
                     },
                     onError: ex => LogImportException(ex, $"[TextureFactory] Texture import job FAILED for '{path}'."),
                     priority: JobPriority.Low);
+            }
+            else
+            {
+                XRTexture2D.RegisterImportedTextureStreamingPlaceholder(path, placeholder);
             }
 
             return placeholder;
@@ -725,20 +729,7 @@ namespace XREngine
                     LogImportWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
                 }
 
-                XRTexture2D.ScheduleImportedTexturePreviewJob(
-                    key.path,
-                    tex,
-                    onFinished: _ =>
-                    {
-                        tex.MagFilter = ETexMagFilter.Linear;
-                        tex.UWrap = ETexWrapMode.Repeat;
-                        tex.VWrap = ETexWrapMode.Repeat;
-                        tex.AlphaAsTransparency = true;
-                        tex.Resizable = false;
-                        tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-                    },
-                    onError: ex => LogImportException(ex, $"Uber sampler texture import job failed for '{key.path}'."),
-                    priority: JobPriority.Low);
+                XRTexture2D.RegisterImportedTextureStreamingPlaceholder(key.path, tex);
 
                 return tex;
             });
@@ -1722,7 +1713,10 @@ namespace XREngine
                 return;
             }
 
-            int targetBatchCount = Math.Max(1, Math.Min(total, Engine.Jobs.WorkerCount));
+            // Reserve some workers for other engine jobs (texture cache, debug vis, etc.)
+            // to prevent mesh processing from starving the entire job system.
+            int availableWorkers = Math.Max(1, Engine.Jobs.WorkerCount - 2);
+            int targetBatchCount = Math.Max(1, Math.Min(total, availableWorkers));
             int batchSize = Math.Max(1, (int)Math.Ceiling(total / (double)targetBatchCount));
             int batchCount = (total + batchSize - 1) / batchSize;
 
