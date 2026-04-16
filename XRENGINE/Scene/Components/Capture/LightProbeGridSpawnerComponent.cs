@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights;
@@ -30,6 +31,8 @@ public class LightProbeGridSpawnerComponent : XRComponent
     private int _sequentialCaptureCompletedCount;
     private LightProbeComponent? _activeCaptureProbe;
     private uint _activeCaptureVersion;
+    private long _activeCaptureStartTimestamp;
+    private long _batchCaptureStartTimestamp;
     private string _captureStatus = "Idle";
 
     private IVector3 _probeCounts = new(2, 2, 2);
@@ -465,7 +468,13 @@ public class LightProbeGridSpawnerComponent : XRComponent
         _sequentialCaptureCompletedCount = 0;
         _activeCaptureProbe = null;
         _activeCaptureVersion = 0;
+        _activeCaptureStartTimestamp = 0;
+        _batchCaptureStartTimestamp = Stopwatch.GetTimestamp();
         _captureStatus = $"Queued 0/{_spawnedProbes.Count} probes.";
+
+        XRWorldInstance? world = WorldAs<XRWorldInstance>();
+        world?.Lights.BeginLightProbeBatchCapture();
+        Debug.Out($"[LightProbeBatch] Starting sequential capture total={_spawnedProbes.Count} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0}");
 
         RegisterTick(ETickGroup.Late, ETickOrder.Scene, TickSequentialCapture);
         QueueNextSequentialCapture();
@@ -672,8 +681,17 @@ public class LightProbeGridSpawnerComponent : XRComponent
         if (_activeCaptureProbe.CaptureVersion == _activeCaptureVersion)
             return;
 
+        XRWorldInstance? world = WorldAs<XRWorldInstance>();
+        var batchDiagnostics = world?.Lights.ConsumeLightProbeBatchDiagnostics();
+        double captureMs = _activeCaptureStartTimestamp == 0
+            ? 0.0
+            : Stopwatch.GetElapsedTime(_activeCaptureStartTimestamp).TotalMilliseconds;
+
         _sequentialCaptureCompletedCount++;
+        Debug.Out(
+            $"[LightProbeBatch] Completed {_sequentialCaptureCompletedCount}/{_spawnedProbes.Count} probe={_activeCaptureProbe.SceneNode.Name} captureMs={captureMs:F2} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0} structuralRefreshMs={batchDiagnostics?.StructuralRefreshTime.TotalMilliseconds ?? 0.0:F2} structuralRefreshes={batchDiagnostics?.StructuralRefreshCount ?? 0} contentRefreshMs={batchDiagnostics?.ContentRefreshTime.TotalMilliseconds ?? 0.0:F2} contentRefreshes={batchDiagnostics?.ContentRefreshCount ?? 0}");
         _activeCaptureProbe = null;
+        _activeCaptureStartTimestamp = 0;
 
         if (!QueueNextSequentialCapture())
             StopSequentialCapture($"Completed {_sequentialCaptureCompletedCount}/{_spawnedProbes.Count} probes.");
@@ -689,7 +707,10 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
             _activeCaptureProbe = probe;
             _activeCaptureVersion = probe.CaptureVersion;
+            _activeCaptureStartTimestamp = Stopwatch.GetTimestamp();
             _captureStatus = $"Capturing {_sequentialCaptureIndex + 1}/{_spawnedProbes.Count}: {probe.SceneNode.Name}";
+            XRWorldInstance? world = WorldAs<XRWorldInstance>();
+            Debug.Out($"[LightProbeBatch] Queueing {_sequentialCaptureIndex + 1}/{_spawnedProbes.Count} probe={probe.SceneNode.Name} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0}");
             probe.QueueCapture();
             return true;
         }
@@ -699,11 +720,27 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
     private void StopSequentialCapture(string status)
     {
+        bool wasRunning = _isSequentialCaptureRunning;
+        XRWorldInstance? world = WorldAs<XRWorldInstance>();
+        var batchDiagnostics = wasRunning ? world?.Lights.ConsumeLightProbeBatchDiagnostics() : null;
+        double totalMs = wasRunning && _batchCaptureStartTimestamp != 0
+            ? Stopwatch.GetElapsedTime(_batchCaptureStartTimestamp).TotalMilliseconds
+            : 0.0;
+
         UnregisterTick(ETickGroup.Late, ETickOrder.Scene, TickSequentialCapture);
         _isSequentialCaptureRunning = false;
         _activeCaptureProbe = null;
         _activeCaptureVersion = 0;
+        _activeCaptureStartTimestamp = 0;
+        _batchCaptureStartTimestamp = 0;
         _captureStatus = status;
+
+        if (wasRunning)
+        {
+            Debug.Out(
+                $"[LightProbeBatch] {status} totalMs={totalMs:F2} avgProbeMs={(_sequentialCaptureCompletedCount > 0 ? totalMs / _sequentialCaptureCompletedCount : 0.0):F2} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0} structuralRefreshMs={batchDiagnostics?.StructuralRefreshTime.TotalMilliseconds ?? 0.0:F2} structuralRefreshes={batchDiagnostics?.StructuralRefreshCount ?? 0} contentRefreshMs={batchDiagnostics?.ContentRefreshTime.TotalMilliseconds ?? 0.0:F2} contentRefreshes={batchDiagnostics?.ContentRefreshCount ?? 0}");
+            world?.Lights.EndLightProbeBatchCapture();
+        }
     }
 
     private ProbeOccluder[] CollectProbeOccluders()

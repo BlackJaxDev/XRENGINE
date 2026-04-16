@@ -246,6 +246,7 @@ namespace XREngine.Components.Capture.Lights
         private static XRShader? s_irradianceCubemapToOctaFragmentShader;
         private static XRShader? s_prefilterCubemapFragmentShader;
         private static XRShader? s_prefilterCubemapToOctaFragmentShader;
+        private static XRMesh? s_previewSphereMesh;
 
         private static readonly FaceDebugInfo[] s_faceDebugInfos =
         [
@@ -311,6 +312,7 @@ namespace XREngine.Components.Capture.Lights
         private XRTextureCube? _irradianceTextureCubemap;
         private XRTextureCube? _prefilterTextureCubemap;
         private XRMeshRenderer? _previewSphere;
+        private bool _previewSphereDirty = true;
         private XRTexture2D? _environmentTextureEquirect;
         private bool _useCubemapConvolution;
 
