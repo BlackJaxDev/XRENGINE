@@ -101,45 +101,45 @@ namespace XREngine.Components.Capture.Lights
             uint irradianceOctaExtent,
             uint prefilterOctaExtent)
         {
-            DestroyIblResources();
-
             // Directly convolve from the captured cubemap into the final octahedral outputs.
+            DestroyCubemapConvolutionResources();
             _useCubemapConvolution = false;
             _prefilterSourceDimension = Math.Max(1, (int)sourceCubemap.Extent);
 
             RenderingParameters renderParams = CreateIblRenderParams();
+            XRShader fullscreenVertex = GetFullscreenTriVertexShader();
+            bool outputsRecreated = false;
 
-            IrradianceTexture = CreateIrradianceTexture(irradianceOctaExtent);
-            PrefilterTexture = CreatePrefilterTexture(prefilterOctaExtent);
+            outputsRecreated |= EnsureIblOutputTexture(ref _irradianceTexture, irradianceOctaExtent, CreateIrradianceTexture);
+            outputsRecreated |= EnsureIblOutputTexture(ref _prefilterTexture, prefilterOctaExtent, CreatePrefilterTexture);
 
-            XRMaterial irradianceOctaMaterial = new([], [sourceCubemap], GetFullscreenTriVertexShader(), GetIrradianceCubemapToOctaShader())
-            {
-                RenderOptions = renderParams,
-            };
+            EnsureProbeFullscreenMaterial(
+                ref _irradianceFBO,
+                [],
+                sourceCubemap,
+                fullscreenVertex,
+                GetIrradianceCubemapToOctaShader(),
+                renderParams);
 
-            XRMaterial prefilterOctaMaterial = new(
+            EnsureProbeFullscreenMaterial(
+                ref _prefilterFBO,
                 CreateCubemapPrefilterShaderVars(_prefilterSourceDimension),
-                [sourceCubemap],
-                GetFullscreenTriVertexShader(),
-                GetPrefilterCubemapToOctaShader())
-            {
-                RenderOptions = renderParams,
-            };
+                sourceCubemap,
+                fullscreenVertex,
+                GetPrefilterCubemapToOctaShader(),
+                renderParams);
 
-            _irradianceFBO = new XRQuadFrameBuffer(irradianceOctaMaterial);
-            _irradianceFBO.SetRenderTargets((IrradianceTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-            _irradianceFBO.SettingUniforms -= BindIrradianceSourceSampler;
-            _irradianceFBO.SettingUniforms += BindIrradianceSourceSampler;
-
-            _prefilterFBO = new XRQuadFrameBuffer(prefilterOctaMaterial);
-            _prefilterFBO.SetRenderTargets((PrefilterTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-            _prefilterFBO.SettingUniforms -= BindPrefilterSourceSampler;
-            _prefilterFBO.SettingUniforms += BindPrefilterSourceSampler;
+            ConfigureIrradianceFramebufferTarget();
+            ConfigurePrefilterFramebufferTarget();
 
             _irradianceSourceTexture = sourceCubemap;
             _prefilterSourceTexture = sourceCubemap;
 
-            CachePreviewSphere();
+            if (outputsRecreated)
+            {
+                _previewSphereDirty = true;
+                CachePreviewSphere();
+            }
         }
 
         private void InitializeOctaIblResources(
@@ -150,11 +150,11 @@ namespace XREngine.Components.Capture.Lights
             uint irradianceExtent,
             uint prefilterExtent)
         {
-            DestroyIblResources();
-
+            DestroyCubemapConvolutionResources();
             _useCubemapConvolution = false;
-            IrradianceTexture = CreateIrradianceTexture(irradianceExtent);
-            PrefilterTexture = CreatePrefilterTexture(prefilterExtent);
+            bool outputsRecreated = false;
+            outputsRecreated |= EnsureIblOutputTexture(ref _irradianceTexture, irradianceExtent, CreateIrradianceTexture);
+            outputsRecreated |= EnsureIblOutputTexture(ref _prefilterTexture, prefilterExtent, CreatePrefilterTexture);
 
             ShaderVar[] prefilterVars = CreatePrefilterShaderVars(sourceDimension);
             _prefilterSourceDimension = Math.Max(1, sourceDimension);
@@ -165,29 +165,108 @@ namespace XREngine.Components.Capture.Lights
             XRShader irradianceFragment = ShaderHelper.LoadEngineShader(irradianceShaderPath, EShaderType.Fragment);
             XRShader prefilterFragment = ShaderHelper.LoadEngineShader(prefilterShaderPath, EShaderType.Fragment);
 
-            XRMaterial irradianceMaterial = new([], [sourceTexture], fullscreenVertex, irradianceFragment)
-            {
-                RenderOptions = renderParams,
-            };
+            EnsureProbeFullscreenMaterial(
+                ref _irradianceFBO,
+                [],
+                sourceTexture,
+                fullscreenVertex,
+                irradianceFragment,
+                renderParams);
 
-            XRMaterial prefilterMaterial = new(prefilterVars, [sourceTexture], fullscreenVertex, prefilterFragment)
-            {
-                RenderOptions = renderParams,
-            };
+            EnsureProbeFullscreenMaterial(
+                ref _prefilterFBO,
+                prefilterVars,
+                sourceTexture,
+                fullscreenVertex,
+                prefilterFragment,
+                renderParams);
 
-            _irradianceFBO = new XRQuadFrameBuffer(irradianceMaterial);
-            _irradianceFBO.SetRenderTargets((IrradianceTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-            _irradianceFBO.SettingUniforms -= BindIrradianceSourceSampler;
-            _irradianceFBO.SettingUniforms += BindIrradianceSourceSampler;
+            ConfigureIrradianceFramebufferTarget();
+            ConfigurePrefilterFramebufferTarget();
 
-            _prefilterFBO = new XRQuadFrameBuffer(prefilterMaterial);
-            _prefilterFBO.SetRenderTargets((PrefilterTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-            _prefilterFBO.SettingUniforms -= BindPrefilterSourceSampler;
-            _prefilterFBO.SettingUniforms += BindPrefilterSourceSampler;
             _irradianceSourceTexture = sourceTexture;
             _prefilterSourceTexture = sourceTexture;
 
-            CachePreviewSphere();
+            if (outputsRecreated)
+            {
+                _previewSphereDirty = true;
+                CachePreviewSphere();
+            }
+        }
+
+        private bool EnsureIblOutputTexture(ref XRTexture2D? texture, uint extent, Func<uint, XRTexture2D> factory)
+        {
+            if (texture is not null && texture.Width == extent && texture.Height == extent)
+                return false;
+
+            texture?.Destroy();
+            texture = factory(extent);
+            return true;
+        }
+
+        private XRMaterial EnsureProbeFullscreenMaterial(
+            ref XRQuadFrameBuffer? fbo,
+            ShaderVar[] parameters,
+            XRTexture sourceTexture,
+            XRShader vertexShader,
+            XRShader fragmentShader,
+            RenderingParameters renderParams)
+        {
+            if (fbo is null)
+            {
+                XRMaterial createdMaterial = new(parameters, [sourceTexture], vertexShader, fragmentShader)
+                {
+                    RenderOptions = renderParams,
+                };
+
+                fbo = new XRQuadFrameBuffer(createdMaterial);
+                return createdMaterial;
+            }
+
+            XRMaterial material = fbo.Material ?? fbo.FullScreenMesh.Material ?? new XRMaterial();
+            material.Parameters = [.. parameters];
+            material.Textures = [sourceTexture];
+            material.Shaders = [vertexShader, fragmentShader];
+            material.RenderOptions = renderParams;
+
+            if (!ReferenceEquals(fbo.Material, material))
+                fbo.Material = material;
+            if (!ReferenceEquals(fbo.FullScreenMesh.Material, material))
+                fbo.FullScreenMesh.Material = material;
+
+            return material;
+        }
+
+        private void ConfigureIrradianceFramebufferTarget()
+        {
+            if (_irradianceFBO is null || IrradianceTexture is null)
+                return;
+
+            _irradianceFBO.SetRenderTargets((IrradianceTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+            _irradianceFBO.SettingUniforms -= BindIrradianceSourceSampler;
+            _irradianceFBO.SettingUniforms += BindIrradianceSourceSampler;
+        }
+
+        private void ConfigurePrefilterFramebufferTarget()
+        {
+            if (_prefilterFBO is null || PrefilterTexture is null)
+                return;
+
+            _prefilterFBO.SetRenderTargets((PrefilterTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+            _prefilterFBO.SettingUniforms -= BindPrefilterSourceSampler;
+            _prefilterFBO.SettingUniforms += BindPrefilterSourceSampler;
+        }
+
+        private void DestroyCubemapConvolutionResources()
+        {
+            _irradianceCubeFBO?.Destroy();
+            _irradianceCubeFBO = null;
+            _prefilterCubeFBO?.Destroy();
+            _prefilterCubeFBO = null;
+            _irradianceTextureCubemap?.Destroy();
+            _irradianceTextureCubemap = null;
+            _prefilterTextureCubemap?.Destroy();
+            _prefilterTextureCubemap = null;
         }
 
         private void DestroyIblResources()
@@ -205,20 +284,13 @@ namespace XREngine.Components.Capture.Lights
             _irradianceFBO = null;
             _prefilterFBO?.Destroy();
             _prefilterFBO = null;
-            _irradianceCubeFBO?.Destroy();
-            _irradianceCubeFBO = null;
-            _prefilterCubeFBO?.Destroy();
-            _prefilterCubeFBO = null;
-
-            _irradianceTextureCubemap?.Destroy();
-            _irradianceTextureCubemap = null;
-            _prefilterTextureCubemap?.Destroy();
-            _prefilterTextureCubemap = null;
+            DestroyCubemapConvolutionResources();
 
             IrradianceTexture?.Destroy();
             IrradianceTexture = null;
             PrefilterTexture?.Destroy();
             PrefilterTexture = null;
+            _previewSphereDirty = true;
         }
 
         private void GenerateIrradianceInternal()

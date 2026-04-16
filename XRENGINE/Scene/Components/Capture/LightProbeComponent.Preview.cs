@@ -12,6 +12,9 @@ namespace XREngine.Components.Capture.Lights
     {
         #region Preview Methods
 
+        private static XRMesh SharedPreviewSphereMesh
+            => s_previewSphereMesh ??= XRMesh.Shapes.SolidSphere(Vector3.Zero, 0.5f, 20u);
+
         public XRTexture? GetPreviewTexture()
             => PreviewDisplay switch
             {
@@ -41,25 +44,51 @@ namespace XREngine.Components.Capture.Lights
                 return false;
             if (AutoShowPreviewOnSelect)
                 PreviewEnabled = IsSceneNodeSelected();
+            if (PreviewEnabled)
+                CachePreviewSphere();
             _debugInfluenceCommand.Enabled = RenderInfluenceOnSelection && IsSceneNodeSelected();
             return true;
         }
 
         private void CachePreviewSphere()
         {
-            PreviewSphere?.Destroy();
+            bool shouldMaterialize = PreviewEnabled || (AutoShowPreviewOnSelect && IsSceneNodeSelected());
+            if (!shouldMaterialize)
+            {
+                _previewSphereDirty = true;
+                return;
+            }
+
+            if (!_previewSphereDirty && PreviewSphere is not null)
+                return;
 
             int pass = (int)EDefaultRenderPass.OpaqueForward;
-            var mesh = XRMesh.Shapes.SolidSphere(Vector3.Zero, 0.5f, 20u);
-            var mat = new XRMaterial([GetPreviewTexture()], XRShader.EngineShader(GetPreviewShaderPath(), EShaderType.Fragment)) { RenderPass = pass };
-            PreviewSphere = new XRMeshRenderer(mesh, mat);
+            XRTexture? previewTexture = GetPreviewTexture();
+            XRShader previewShader = XRShader.EngineShader(GetPreviewShaderPath(), EShaderType.Fragment);
+
+            if (PreviewSphere is null)
+            {
+                XRMaterial material = new([previewTexture], previewShader) { RenderPass = pass };
+                PreviewSphere = new XRMeshRenderer(SharedPreviewSphereMesh, material);
+            }
+            else
+            {
+                PreviewSphere.Mesh = SharedPreviewSphereMesh;
+
+                XRMaterial material = PreviewSphere.Material ?? new XRMaterial();
+                material.Textures = [previewTexture];
+                material.Shaders = [previewShader];
+                material.RenderPass = pass;
+                PreviewSphere.Material = material;
+            }
 
             _visualRC.Mesh = PreviewSphere;
             _visualRC.WorldMatrix = Transform.RenderMatrix;
             _visualRC.RenderPass = pass;
 
-            VisualRenderInfo.LocalCullingVolume = PreviewSphere?.Mesh?.Bounds;
+            VisualRenderInfo.LocalCullingVolume = SharedPreviewSphereMesh.Bounds;
             VisualRenderInfo.CullingOffsetMatrix = Transform.RenderMatrix;
+            _previewSphereDirty = false;
         }
 
         private bool IsSceneNodeSelected()

@@ -263,6 +263,8 @@ namespace XREngine.Scene
                 if (!_captureWorkQueue.TryDequeue(out CaptureWorkItem item))
                     break;
 
+                NoteCaptureWorkItemDequeued();
+
                 switch (item.WorkType)
                 {
                     case ECaptureWorkType.CubemapFace:

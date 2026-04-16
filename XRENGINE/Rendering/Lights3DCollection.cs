@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
+using System.Threading;
 using MIConvexHull;
 using YamlDotNet.Serialization;
 using XREngine.Components;
@@ -82,6 +83,12 @@ namespace XREngine.Scene
         private ulong _lastShadowMapsRenderFrameId = ulong.MaxValue;
         private readonly Stopwatch _captureBudgetStopwatch = new();
         private long _lastStreamingPressureLogFrameTicks = -1;
+        private int _captureWorkQueueDepth;
+        private int _lightProbeBatchCaptureNesting;
+        private long _lightProbeBatchStructuralRefreshTicks;
+        private int _lightProbeBatchStructuralRefreshCount;
+        private long _lightProbeBatchContentRefreshTicks;
+        private int _lightProbeBatchContentRefreshCount;
 
         // When shadow collection is culled by camera frusta, some lights may be intentionally skipped.
         // If we still swap their internal shadow-viewport buffers, we can end up swapping in an empty
@@ -97,6 +104,16 @@ namespace XREngine.Scene
         public bool IBLCaptured { get; private set; } = false;
         public bool RenderingShadowMaps { get; private set; } = false;
         public bool CollectingVisibleShadowMaps { get; private set; } = false;
+        public bool LightProbeBatchCaptureActive => Volatile.Read(ref _lightProbeBatchCaptureNesting) > 0;
+        public int PendingCaptureWorkItemCount => Math.Max(0, Volatile.Read(ref _captureWorkQueueDepth));
+        public int PendingCaptureComponentCount
+        {
+            get
+            {
+                lock (_pendingCaptureComponents)
+                    return _pendingCaptureComponents.Count;
+            }
+        }
 
         /// <summary>
         /// Budget in milliseconds for processing capture work (collect + render) per frame on the main thread.
@@ -134,6 +151,33 @@ namespace XREngine.Scene
 
         public List<SceneCaptureComponentBase> CaptureComponents { get; } = [];
 
+        public readonly record struct LightProbeBatchDiagnosticSnapshot(
+            TimeSpan StructuralRefreshTime,
+            int StructuralRefreshCount,
+            TimeSpan ContentRefreshTime,
+            int ContentRefreshCount);
+
+        public void BeginLightProbeBatchCapture()
+        {
+            int nesting = Interlocked.Increment(ref _lightProbeBatchCaptureNesting);
+            if (nesting == 1)
+                ResetLightProbeBatchDiagnostics();
+        }
+
+        public void EndLightProbeBatchCapture()
+        {
+            int nesting = Interlocked.Decrement(ref _lightProbeBatchCaptureNesting);
+            if (nesting < 0)
+                Interlocked.Exchange(ref _lightProbeBatchCaptureNesting, 0);
+        }
+
+        public LightProbeBatchDiagnosticSnapshot ConsumeLightProbeBatchDiagnostics()
+            => new(
+                TimeSpan.FromTicks(Interlocked.Exchange(ref _lightProbeBatchStructuralRefreshTicks, 0)),
+                Interlocked.Exchange(ref _lightProbeBatchStructuralRefreshCount, 0),
+                TimeSpan.FromTicks(Interlocked.Exchange(ref _lightProbeBatchContentRefreshTicks, 0)),
+                Interlocked.Exchange(ref _lightProbeBatchContentRefreshCount, 0));
+
         /// <summary>
         /// Enqueues a scene capture component for rendering.
         /// Progressive captures are decomposed into per-face work items so the
@@ -150,12 +194,12 @@ namespace XREngine.Scene
             if (component is SceneCaptureComponent scc && scc.ProgressiveRenderEnabled)
             {
                 for (int i = 0; i < 6; i++)
-                    _captureWorkQueue.Enqueue(new CaptureWorkItem(scc, ECaptureWorkType.CubemapFace, i));
-                _captureWorkQueue.Enqueue(new CaptureWorkItem(scc, ECaptureWorkType.CaptureFinalize));
+                    EnqueueCaptureWorkItem(new CaptureWorkItem(scc, ECaptureWorkType.CubemapFace, i));
+                EnqueueCaptureWorkItem(new CaptureWorkItem(scc, ECaptureWorkType.CaptureFinalize));
             }
             else
             {
-                _captureWorkQueue.Enqueue(new CaptureWorkItem(component, ECaptureWorkType.FullCapture));
+                EnqueueCaptureWorkItem(new CaptureWorkItem(component, ECaptureWorkType.FullCapture));
             }
         }
 
@@ -184,6 +228,40 @@ namespace XREngine.Scene
 
             return true;
         }
+
+        internal void RecordLightProbeResourceRefresh(bool structuralRefresh, TimeSpan elapsed)
+        {
+            if (!LightProbeBatchCaptureActive)
+                return;
+
+            if (structuralRefresh)
+            {
+                Interlocked.Add(ref _lightProbeBatchStructuralRefreshTicks, elapsed.Ticks);
+                Interlocked.Increment(ref _lightProbeBatchStructuralRefreshCount);
+            }
+            else
+            {
+                Interlocked.Add(ref _lightProbeBatchContentRefreshTicks, elapsed.Ticks);
+                Interlocked.Increment(ref _lightProbeBatchContentRefreshCount);
+            }
+        }
+
+        private void ResetLightProbeBatchDiagnostics()
+        {
+            Interlocked.Exchange(ref _lightProbeBatchStructuralRefreshTicks, 0);
+            Interlocked.Exchange(ref _lightProbeBatchStructuralRefreshCount, 0);
+            Interlocked.Exchange(ref _lightProbeBatchContentRefreshTicks, 0);
+            Interlocked.Exchange(ref _lightProbeBatchContentRefreshCount, 0);
+        }
+
+        private void EnqueueCaptureWorkItem(CaptureWorkItem item)
+        {
+            _captureWorkQueue.Enqueue(item);
+            Interlocked.Increment(ref _captureWorkQueueDepth);
+        }
+
+        private void NoteCaptureWorkItemDequeued()
+            => Interlocked.Decrement(ref _captureWorkQueueDepth);
 
         #endregion
 
