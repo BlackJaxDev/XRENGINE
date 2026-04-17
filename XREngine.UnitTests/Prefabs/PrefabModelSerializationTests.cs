@@ -354,6 +354,32 @@ public sealed class PrefabModelSerializationTests
         yaml.ShouldNotContain($"Transform:{Environment.NewLine}  ID: {freshNode.Transform.EffectiveSerializedReferenceId}");
     }
 
+        [Test]
+        public void TransformYaml_UnknownComplexMetadata_IsSkippedWithoutThrowing()
+        {
+                string transformTypeName = typeof(Transform).AssemblyQualifiedName.ShouldNotBeNull();
+                string yaml = $$"""
+$type: {{transformTypeName}}
+$value:
+    Name: ComplexMetadataTransform
+    Unknown:
+        ?
+            Complex: Key
+        :
+            Nested:
+                Value: 42
+    Translation:
+        X: 1
+        Y: 2
+        Z: 3
+""";
+
+                Transform transform = AssetManager.Deserializer.Deserialize<Transform>(yaml).ShouldNotBeNull();
+
+                transform.Name.ShouldBe("ComplexMetadataTransform");
+                transform.Translation.ShouldBe(new Vector3(1.0f, 2.0f, 3.0f));
+        }
+
     [Test]
     public void SceneNodeYaml_ExternalSkinnedSubMesh_RebindsBonesAndPreservesBlendshapes()
     {
@@ -588,6 +614,143 @@ public sealed class PrefabModelSerializationTests
         }
     }
 
+    [Test]
+    public void LoadPrefabFromSiblingBuildAssetRoot_ResolvesExternalModelGraphByLocalMetadata()
+    {
+        string tempRoot = Path.Combine(TestContext.CurrentContext.WorkDirectory, "PrefabLocalMetadata", Guid.NewGuid().ToString("N"));
+        string assetsRoot = Path.Combine(tempRoot, "Assets");
+        string metadataRoot = Path.Combine(tempRoot, "Metadata");
+
+        Directory.CreateDirectory(assetsRoot);
+        Directory.CreateDirectory(metadataRoot);
+
+        try
+        {
+            string meshPath = Path.Combine(assetsRoot, "BuildOutput", "Meshes", "BuildOutputMesh.asset");
+            Directory.CreateDirectory(Path.GetDirectoryName(meshPath).ShouldNotBeNull());
+            XRMesh mesh = CreateTriangleMesh("BuildOutputMesh");
+            mesh.FilePath = meshPath;
+            mesh.SourceAsset = mesh;
+            mesh.SerializeTo(meshPath, AssetManager.Serializer);
+            WriteMetadataForAsset(meshPath, mesh.ID, assetsRoot, metadataRoot);
+
+            string materialPath = Path.Combine(assetsRoot, "BuildOutput", "Materials", "BuildOutputMaterial.asset");
+            Directory.CreateDirectory(Path.GetDirectoryName(materialPath).ShouldNotBeNull());
+            XRMaterial material = new()
+            {
+                Name = "BuildOutputMaterial"
+            };
+            material.FilePath = materialPath;
+            material.SourceAsset = material;
+            material.SerializeTo(materialPath, AssetManager.Serializer);
+            WriteMetadataForAsset(materialPath, material.ID, assetsRoot, metadataRoot);
+
+            string subMeshPath = Path.Combine(assetsRoot, "BuildOutput", "SubMeshes", "BuildOutputSubMesh.asset");
+            Directory.CreateDirectory(Path.GetDirectoryName(subMeshPath).ShouldNotBeNull());
+            SubMesh subMesh = new(new SubMeshLOD(material, mesh, 0.0f))
+            {
+                Name = "BuildOutputSubMesh"
+            };
+            subMesh.FilePath = subMeshPath;
+            subMesh.SourceAsset = subMesh;
+            XRAssetGraphUtility.RefreshAssetGraph(subMesh);
+            subMesh.SerializeTo(subMeshPath, AssetManager.Serializer);
+            WriteMetadataForAsset(subMeshPath, subMesh.ID, assetsRoot, metadataRoot);
+
+            string modelPath = Path.Combine(assetsRoot, "BuildOutput", "Models", "BuildOutputModel.asset");
+            Directory.CreateDirectory(Path.GetDirectoryName(modelPath).ShouldNotBeNull());
+            Model model = new(subMesh)
+            {
+                Name = "BuildOutputModel",
+                FilePath = modelPath,
+            };
+            model.SourceAsset = model;
+            XRAssetGraphUtility.RefreshAssetGraph(model);
+            model.SerializeTo(modelPath, AssetManager.Serializer);
+            WriteMetadataForAsset(modelPath, model.ID, assetsRoot, metadataRoot);
+
+            string prefabPath = Path.Combine(assetsRoot, "BuildOutputPrefab.asset");
+            XRPrefabSource prefab = new()
+            {
+                Name = "BuildOutputPrefab",
+                RootNode = CreateSceneNodeWithModel(model),
+                FilePath = prefabPath,
+            };
+            prefab.SourceAsset = prefab;
+            XRAssetGraphUtility.RefreshAssetGraph(prefab);
+            prefab.SerializeTo(prefabPath, AssetManager.Serializer);
+            WriteMetadataForAsset(prefabPath, prefab.ID, assetsRoot, metadataRoot);
+
+            string prefabYaml = File.ReadAllText(prefabPath);
+            prefabYaml.ShouldContain($"ID: {model.ID}");
+            prefabYaml.ShouldNotContain("Meshes:");
+
+            ClearAssetCaches();
+
+            XRPrefabSource loadedPrefab = Engine.Assets.Load<XRPrefabSource>(prefabPath).ShouldNotBeNull();
+            ModelComponent component = loadedPrefab.RootNode.ShouldNotBeNull().GetComponent<ModelComponent>().ShouldNotBeNull();
+            bool trackedModelResolved = Engine.Assets.TryGetAssetByPath(modelPath, out XRAsset? trackedModelAsset);
+
+            component.Model.ShouldNotBeNull();
+            component.Model!.ID.ShouldBe(model.ID);
+            trackedModelResolved.ShouldBeTrue();
+            trackedModelAsset.ShouldBeSameAs(component.Model);
+            component.Model.Meshes.Count.ShouldBe(1);
+            component.Model.Meshes[0].ID.ShouldBe(subMesh.ID);
+            component.Model.Meshes[0].LODs.Min.ShouldNotBeNull().Mesh.ShouldNotBeNull();
+            component.Model.Meshes[0].LODs.Min!.Mesh!.ID.ShouldBe(mesh.ID);
+            component.Model.Meshes[0].LODs.Min.ShouldNotBeNull().Material.ShouldNotBeNull();
+            component.Model.Meshes[0].LODs.Min!.Material!.ID.ShouldBe(material.ID);
+        }
+        finally
+        {
+            ClearAssetCaches();
+            DeleteDirectoryIfExists(tempRoot);
+        }
+    }
+
+    [Test]
+    public void MaterialYaml_UnchangedShaderSource_UsesBackingPathInsteadOfInliningText()
+    {
+        string shaderPath = Path.Combine(Engine.Assets.EngineAssetsPath, "Shaders", "Common", "TexturedNormalMetallicRoughnessDeferred.fs");
+        File.Exists(shaderPath).ShouldBeTrue();
+
+        DateTime lastWriteTimeUtc = File.GetLastWriteTimeUtc(shaderPath);
+        string sourceText = File.ReadAllText(shaderPath, TextFile.GetEncoding(shaderPath));
+
+        TextFile shaderSource = new(shaderPath)
+        {
+            Name = Path.GetFileName(shaderPath),
+            OriginalPath = shaderPath,
+            OriginalLastWriteTimeUtc = lastWriteTimeUtc,
+            Encoding = TextFile.GetEncoding(shaderPath),
+            Text = sourceText,
+        };
+
+        XRShader shader = new(XRShader.ResolveType(Path.GetExtension(shaderPath)), shaderSource)
+        {
+            Name = Path.GetFileNameWithoutExtension(shaderPath),
+            OriginalPath = shaderPath,
+            OriginalLastWriteTimeUtc = lastWriteTimeUtc,
+        };
+
+        XRMaterial material = new(shader)
+        {
+            Name = "CompactShaderMaterial"
+        };
+
+        XRAssetGraphUtility.RefreshAssetGraph(material);
+        string yaml = AssetManager.Serializer.Serialize(material);
+
+        yaml.ShouldContain($"Source: {shaderPath}");
+        yaml.ShouldNotContain("Text:");
+
+        XRMaterial clone = AssetManager.Deserializer.Deserialize<XRMaterial>(yaml).ShouldNotBeNull();
+        clone.Shaders.Count.ShouldBe(1);
+        clone.Shaders[0].Source.ShouldNotBeNull();
+        clone.Shaders[0].Source.Text.ShouldBe(sourceText);
+    }
+
     private static SceneNode CreateSceneNodeWithModel(Model model)
     {
         SceneNode node = new("PrefabModelRoot");
@@ -686,8 +849,22 @@ public sealed class PrefabModelSerializationTests
 
     private static void WriteMetadataForGameAsset(string assetPath, Guid assetId)
     {
+        WriteMetadataForAsset(assetPath, assetId, Engine.Assets.GameAssetsPath, Engine.Assets.GameMetadataPath.ShouldNotBeNull());
+    }
+
+    private static AssetMetadata ReadMetadataForGameAsset(string assetPath)
+    {
         string assetsRoot = Engine.Assets.GameAssetsPath;
         string metadataRoot = Engine.Assets.GameMetadataPath.ShouldNotBeNull();
+        string relativePath = Path.GetRelativePath(assetsRoot, assetPath);
+        string metadataPath = Path.Combine(metadataRoot, relativePath) + ".meta";
+
+        File.Exists(metadataPath).ShouldBeTrue();
+        return AssetManager.Deserializer.Deserialize<AssetMetadata>(File.ReadAllText(metadataPath)).ShouldNotBeNull();
+    }
+
+    private static void WriteMetadataForAsset(string assetPath, Guid assetId, string assetsRoot, string metadataRoot)
+    {
         string relativePath = Path.GetRelativePath(assetsRoot, assetPath);
         string metadataPath = Path.Combine(metadataRoot, relativePath) + ".meta";
 
@@ -703,17 +880,6 @@ public sealed class PrefabModelSerializationTests
         };
 
         File.WriteAllText(metadataPath, AssetManager.Serializer.Serialize(metadata));
-    }
-
-    private static AssetMetadata ReadMetadataForGameAsset(string assetPath)
-    {
-        string assetsRoot = Engine.Assets.GameAssetsPath;
-        string metadataRoot = Engine.Assets.GameMetadataPath.ShouldNotBeNull();
-        string relativePath = Path.GetRelativePath(assetsRoot, assetPath);
-        string metadataPath = Path.Combine(metadataRoot, relativePath) + ".meta";
-
-        File.Exists(metadataPath).ShouldBeTrue();
-        return AssetManager.Deserializer.Deserialize<AssetMetadata>(File.ReadAllText(metadataPath)).ShouldNotBeNull();
     }
 
     private static void ClearAssetCaches()

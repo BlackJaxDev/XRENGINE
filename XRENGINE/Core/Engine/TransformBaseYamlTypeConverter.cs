@@ -412,20 +412,52 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
         if (parser.TryConsume<AnchorAlias>(out _))
             return;
 
+        if (parser.TryConsume<DocumentStart>(out _))
+        {
+            if (!parser.Accept<DocumentEnd>(out _))
+                SkipNode(parser);
+
+            _ = parser.TryConsume<DocumentEnd>(out _);
+            return;
+        }
+
+        if (parser.TryConsume<DocumentEnd>(out _))
+            return;
+
+        if (parser.TryConsume<StreamStart>(out _))
+        {
+            if (!parser.Accept<StreamEnd>(out _))
+                SkipNode(parser);
+
+            _ = parser.TryConsume<StreamEnd>(out _);
+            return;
+        }
+
+        if (parser.TryConsume<StreamEnd>(out _))
+            return;
+
         if (parser.TryConsume<SequenceStart>(out _))
         {
-            while (!parser.TryConsume<SequenceEnd>(out _))
+            while (!parser.Accept<SequenceEnd>(out _))
                 SkipNode(parser);
+
+            parser.Consume<SequenceEnd>();
             return;
         }
 
         if (parser.TryConsume<MappingStart>(out _))
         {
-            while (!parser.TryConsume<MappingEnd>(out _))
+            while (!parser.Accept<MappingEnd>(out _))
             {
-                parser.Consume<Scalar>();
+                SkipNode(parser);
+
+                if (parser.Accept<MappingEnd>(out _))
+                    break;
+
                 SkipNode(parser);
             }
+
+            parser.Consume<MappingEnd>();
             return;
         }
 

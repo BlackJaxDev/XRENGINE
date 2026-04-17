@@ -47,7 +47,8 @@ public sealed class XRMeshYamlTypeConverter : IYamlTypeConverter
         if (Engine.Assets.TryGetAssetByID(id, out XRAsset? loadedAsset) && loadedAsset is XRMesh loadedMesh)
             return loadedMesh;
 
-        if (!Engine.Assets.TryResolveAssetPathById(id, out string? assetPath) || string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
+        string? referenceAssetPath = AssetDeserializationContext.CurrentFilePath;
+        if (!Engine.Assets.TryResolveAssetPathById(id, referenceAssetPath, out string? assetPath) || string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
             return null;
 
         return Engine.Assets.LoadImmediate(assetPath, typeof(XRMesh)) as XRMesh;

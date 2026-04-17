@@ -433,6 +433,9 @@ namespace XREngine
             => LoadedAssetsByOriginalPathInternal.TryGetValue(path, out asset);
 
         public bool TryResolveAssetPathById(Guid assetId, [NotNullWhen(true)] out string? assetPath)
+            => TryResolveAssetPathById(assetId, referenceAssetPath: null, out assetPath);
+
+        internal bool TryResolveAssetPathById(Guid assetId, string? referenceAssetPath, [NotNullWhen(true)] out string? assetPath)
         {
             assetPath = null;
 
@@ -445,21 +448,45 @@ namespace XREngine
                 return true;
             }
 
-            if (string.IsNullOrWhiteSpace(GameMetadataPath) || !Directory.Exists(GameMetadataPath))
+            if (TryResolveAssetPathByIdFromMetadataRoot(assetId, GameMetadataPath, GameAssetsPath, out assetPath))
+                return true;
+
+            if (!TryInferMetadataRootsFromReferenceAssetPath(referenceAssetPath, out string? metadataRoot, out string? assetsRoot))
+                return false;
+
+            if (string.Equals(metadataRoot, GameMetadataPath, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(assetsRoot, GameAssetsPath, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            return TryResolveAssetPathByIdFromMetadataRoot(assetId, metadataRoot, assetsRoot, out assetPath);
+        }
+
+        private static bool TryResolveAssetPathByIdFromMetadataRoot(
+            Guid assetId,
+            string? metadataRoot,
+            string? assetsRoot,
+            [NotNullWhen(true)] out string? assetPath)
+        {
+            assetPath = null;
+
+            if (assetId == Guid.Empty
+                || string.IsNullOrWhiteSpace(metadataRoot)
+                || string.IsNullOrWhiteSpace(assetsRoot)
+                || !Directory.Exists(metadataRoot))
                 return false;
 
             try
             {
-                foreach (string metaFile in Directory.EnumerateFiles(GameMetadataPath, "*.meta", SearchOption.AllDirectories))
+                foreach (string metaFile in Directory.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories))
                 {
                     if (IsTransientMetadataPath(metaFile))
                         continue;
 
-                    var meta = TryReadMetadata(metaFile);
+                    AssetMetadata? meta = TryReadMetadata(metaFile);
                     if (meta?.Guid != assetId || string.IsNullOrWhiteSpace(meta.RelativePath))
                         continue;
 
-                    string candidate = Path.Combine(GameAssetsPath, meta.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+                    string candidate = Path.Combine(assetsRoot, meta.RelativePath.Replace('/', Path.DirectorySeparatorChar));
                     if (File.Exists(candidate))
                     {
                         assetPath = candidate;
@@ -469,7 +496,53 @@ namespace XREngine
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to resolve asset id '{assetId}' from metadata: {ex.Message}");
+                Debug.LogWarning($"Failed to resolve asset id '{assetId}' from metadata root '{metadataRoot}': {ex.Message}");
+            }
+
+            return false;
+        }
+
+        private static bool TryInferMetadataRootsFromReferenceAssetPath(
+            string? referenceAssetPath,
+            [NotNullWhen(true)] out string? metadataRoot,
+            [NotNullWhen(true)] out string? assetsRoot)
+        {
+            metadataRoot = null;
+            assetsRoot = null;
+
+            if (string.IsNullOrWhiteSpace(referenceAssetPath))
+                return false;
+
+            string fullReferencePath;
+            try
+            {
+                fullReferencePath = Path.GetFullPath(referenceAssetPath);
+            }
+            catch
+            {
+                return false;
+            }
+
+            string? directoryPath = Path.GetDirectoryName(fullReferencePath);
+            if (string.IsNullOrWhiteSpace(directoryPath))
+                return false;
+
+            for (DirectoryInfo? directory = new(directoryPath); directory is not null; directory = directory.Parent)
+            {
+                if (!string.Equals(directory.Name, "Assets", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                DirectoryInfo? parent = directory.Parent;
+                if (parent is null)
+                    break;
+
+                string candidateMetadataRoot = Path.Combine(parent.FullName, "Metadata");
+                if (!Directory.Exists(candidateMetadataRoot))
+                    continue;
+
+                assetsRoot = directory.FullName;
+                metadataRoot = candidateMetadataRoot;
+                return true;
             }
 
             return false;

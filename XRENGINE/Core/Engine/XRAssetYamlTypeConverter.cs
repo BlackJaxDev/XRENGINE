@@ -98,6 +98,15 @@ namespace XREngine
                 return TryHandleScalarXRAsset(reader, expectedType, scalarPeek.Value, out value);
             }
 
+            // Let the normal object deserializer own each file's document root. Nested
+            // asset loads can occur while another YAML parse is already active, so parser
+            // depth alone is not enough to identify a new document root.
+            if (!_isReplaying && AssetDeserializationContext.ConsumeRootAsset())
+            {
+                value = null;
+                return false;
+            }
+
             // Don't intercept mapping/sequence during replay - let normal deserializer handle it
             if (_isReplaying)
             {
@@ -108,13 +117,6 @@ namespace XREngine
             _deserializeDepth++;
             try
             {
-                // At root level (depth 1), just deserialize normally.
-                if (_deserializeDepth <= 1)
-                {
-                    value = nestedObjectDeserializer(reader, expectedType);
-                    return true;
-                }
-
                 // XRAssets should always be represented as mappings. If not, fall back immediately.
                 if (!reader.Accept<MappingStart>(out _))
                 {
@@ -292,7 +294,8 @@ namespace XREngine
                 return asset;
 
             // Otherwise, resolve the backing file via metadata and load it.
-            if (!Engine.Assets.TryResolveAssetPathById(guid, out var assetPath) || string.IsNullOrWhiteSpace(assetPath))
+            string? referenceAssetPath = AssetDeserializationContext.CurrentFilePath;
+            if (!Engine.Assets.TryResolveAssetPathById(guid, referenceAssetPath, out var assetPath) || string.IsNullOrWhiteSpace(assetPath))
                 return null;
 
             if (!File.Exists(assetPath))
