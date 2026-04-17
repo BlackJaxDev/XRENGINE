@@ -6,6 +6,7 @@ using System.Reflection;
 using MemoryPack;
 using XREngine.Animation;
 using XREngine.Core.Files;
+using YamlDotNet.Serialization;
 
 namespace XREngine;
 
@@ -121,7 +122,18 @@ internal sealed partial class SerializedPropertyAnimationModel
 {
     public string? TypeName { get; set; }
 
+    // Kept as byte[] for efficient MemoryPack binary serialization; hidden from YAML.
+    // YAML round-trips via the base64 string proxy below under the key "Payload".
+    [YamlIgnore]
     public byte[]? Payload { get; set; }
+
+    [MemoryPackIgnore]
+    [YamlMember(Alias = "Payload")]
+    public string? PayloadBase64
+    {
+        get => Payload is null ? null : Convert.ToBase64String(Payload);
+        set => Payload = string.IsNullOrEmpty(value) ? null : Convert.FromBase64String(value);
+    }
 
     public List<SerializedKeyframeModel> Keyframes { get; set; } = [];
 }
@@ -131,5 +143,14 @@ internal sealed partial class SerializedKeyframeModel
 {
     public string? TypeName { get; set; }
 
+    [YamlIgnore]
     public byte[]? Payload { get; set; }
+
+    [MemoryPackIgnore]
+    [YamlMember(Alias = "Payload")]
+    public string? PayloadBase64
+    {
+        get => Payload is null ? null : Convert.ToBase64String(Payload);
+        set => Payload = string.IsNullOrEmpty(value) ? null : Convert.FromBase64String(value);
+    }
 }

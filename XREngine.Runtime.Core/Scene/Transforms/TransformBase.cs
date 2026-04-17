@@ -173,10 +173,37 @@ namespace XREngine.Scene.Transforms
         private Capsule? _capsule = null;
         private bool _immediateLocalMatrixRecalculation = true;
         private readonly IRuntimeTransformDebugHandle? _debugHandle;
+        private Guid _serializedReferenceId;
 
         #endregion
 
         #region Basic Properties
+
+        [Browsable(false)]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public Guid SerializedReferenceId
+        {
+            get => _serializedReferenceId;
+            set => SetField(ref _serializedReferenceId, value);
+        }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public Guid EffectiveSerializedReferenceId
+            => SerializedReferenceId != Guid.Empty ? SerializedReferenceId : ID;
+
+        public bool MatchesSerializedReferenceId(Guid id)
+            => id != Guid.Empty && EffectiveSerializedReferenceId == id;
+
+        public TransformBase? FindSelfOrDescendantBySerializedReferenceId(Guid id)
+        {
+            if (MatchesSerializedReferenceId(id))
+                return this;
+
+            return FindDescendant(candidate => candidate.MatchesSerializedReferenceId(id));
+        }
 
         [YamlIgnore]
         [Browsable(false)]

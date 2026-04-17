@@ -11,6 +11,7 @@ public partial class XRMesh
 
         XRMesh clone = new()
         {
+            Name = Name,
             _interleaved = Interleaved,
             _interleavedStride = InterleavedStride,
             _positionOffset = PositionOffset,
@@ -22,8 +23,11 @@ public partial class XRMesh
             _texCoordCount = TexCoordCount,
             VertexCount = VertexCount,
             _type = Type,
+            _patchVertices = PatchVertices,
             _bounds = Bounds,
             _maxWeightCount = MaxWeightCount,
+            _skinningShaderConvention = SkinningShaderConvention,
+            BindRootMatrix = BindRootMatrix,
             BlendshapeNames = [.. BlendshapeNames],
             _vertices = new Vertex[Vertices.Length]
         };

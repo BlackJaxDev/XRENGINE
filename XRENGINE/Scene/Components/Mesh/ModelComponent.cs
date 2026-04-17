@@ -9,6 +9,7 @@ using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Scene;
 
 namespace XREngine.Components.Scene.Mesh
 {
@@ -20,6 +21,7 @@ namespace XREngine.Components.Scene.Mesh
     public class ModelComponent : RenderableComponent
     {
         private readonly ConcurrentDictionary<SubMesh, RenderableMesh> _meshLinks = new();
+        private bool _pendingRuntimeMeshRebuild;
 
         private Model? _model;
         /// <summary>
@@ -97,7 +99,15 @@ namespace XREngine.Components.Scene.Mesh
             switch (propName)
             {
                 case nameof(Model):
-                    OnModelChanged();
+                    if (CanBuildRuntimeMeshes())
+                    {
+                        _pendingRuntimeMeshRebuild = false;
+                        OnModelChanged();
+                    }
+                    else
+                    {
+                        _pendingRuntimeMeshRebuild = true;
+                    }
                     break;
                 case nameof(RenderBounds):
                     foreach (RenderableMesh mesh in Meshes)
@@ -110,6 +120,9 @@ namespace XREngine.Components.Scene.Mesh
 
         public void RebuildRuntimeMeshes()
             => OnModelChanged();
+
+        private bool CanBuildRuntimeMeshes()
+            => SceneNode is not null && !SceneNode.IsTransformNull;
 
         private void OnModelChanged()
         {
@@ -154,7 +167,21 @@ namespace XREngine.Components.Scene.Mesh
             base.OwningSceneNodePostDeserialize();
 
             if (Model is not null)
+            {
+                _pendingRuntimeMeshRebuild = false;
                 OnModelChanged();
+            }
+        }
+
+        protected override void AddedToSceneNode(SceneNode sceneNode)
+        {
+            base.AddedToSceneNode(sceneNode);
+
+            if (_pendingRuntimeMeshRebuild && Model is not null && !sceneNode.IsTransformNull)
+            {
+                _pendingRuntimeMeshRebuild = false;
+                OnModelChanged();
+            }
         }
 
         private void BuildMeshBVHs()

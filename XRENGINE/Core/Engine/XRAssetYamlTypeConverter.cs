@@ -55,6 +55,12 @@ namespace XREngine
             _depth++;
             try
             {
+                if (_depth == 1)
+                {
+                    YamlDefaultTypeContext.ResetReadState();
+                    YamlTransformReferenceContext.ResetReadState();
+                }
+
                 return innerDeserializer.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
             }
             finally
@@ -483,11 +489,7 @@ namespace XREngine
         public bool Accepts(Type type)
         {
             AssetManager.EnsureYamlAssetRuntimeSupported();
-
-            if (_skipConverter)
-                return false;
-
-            return typeof(XRAsset).IsAssignableFrom(type);
+            return !_skipConverter && typeof(XRAsset).IsAssignableFrom(type);
         }
 
         public object? ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
@@ -519,12 +521,27 @@ namespace XREngine
         }
 
         private static bool ShouldWriteReference(XRAsset asset)
+            => TryWriteAsReference.ShouldWriteReference(asset);
+
+        private static void WriteReference(IEmitter emitter, XRAsset asset)
+            => TryWriteAsReference.WriteReference(emitter, asset);
+    }
+
+    /// <summary>
+    /// Shared reference-emission gate used by <see cref="XRAssetYamlConverter"/> and type-specific
+    /// asset converters (e.g. <c>XRTexture2DYamlTypeConverter</c>, <c>XRMeshYamlTypeConverter</c>,
+    /// <c>AnimationClipYamlTypeConverter</c>) so an externalized asset always emits a compact
+    /// <c>{ID: &lt;guid&gt;}</c> reference instead of its inline body.
+    /// </summary>
+    public static class TryWriteAsReference
+    {
+        public static bool ShouldWriteReference(XRAsset asset)
         {
-            // CurrentDepth is 0 before the first MappingStart, so depth 0 means root object
+            // CurrentDepth is 0 before the first MappingStart, so depth 0 means root object.
             if (DepthTrackingEventEmitter.CurrentDepth < 1)
                 return false;
 
-            // Embedded assets should always serialize inline
+            // Embedded assets (SourceAsset != self) must serialize inline.
             if (!ReferenceEquals(asset.SourceAsset, asset))
                 return false;
 
@@ -534,12 +551,21 @@ namespace XREngine
             return File.Exists(asset.FilePath);
         }
 
-        private static void WriteReference(IEmitter emitter, XRAsset asset)
+        public static void WriteReference(IEmitter emitter, XRAsset asset)
         {
             emitter.Emit(new MappingStart(null, null, false, MappingStyle.Block));
             emitter.Emit(new Scalar("ID"));
             emitter.Emit(new Scalar(asset.ID.ToString()));
             emitter.Emit(new MappingEnd());
+        }
+
+        public static bool TryEmitReference(IEmitter emitter, XRAsset? asset)
+        {
+            if (asset is null || !ShouldWriteReference(asset))
+                return false;
+
+            WriteReference(emitter, asset);
+            return true;
         }
     }
 

@@ -89,7 +89,31 @@ namespace XREngine.Scene.Prefabs
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class XRPrefabSource : XRAsset
     {
+        private sealed class RestoreProcessMeshesAsyncScope(ModelImportOptions options, bool? requestedProcessMeshesAsynchronously) : IDisposable
+        {
+            private ModelImportOptions? _options = options;
+            private readonly bool? _requestedProcessMeshesAsynchronously = requestedProcessMeshesAsynchronously;
+
+            public void Dispose()
+            {
+                if (_options is null)
+                    return;
+
+                _options.ProcessMeshesAsynchronously = _requestedProcessMeshesAsynchronously;
+                _options = null;
+            }
+        }
+
         private SceneNode? _rootNode;
+
+        internal static IDisposable EnterSynchronousMeshImportScope(ModelImportOptions options)
+        {
+            ArgumentNullException.ThrowIfNull(options);
+
+            bool? requestedProcessMeshesAsynchronously = options.ProcessMeshesAsynchronously;
+            options.ProcessMeshesAsynchronously = false;
+            return new RestoreProcessMeshesAsyncScope(options, requestedProcessMeshesAsynchronously);
+        }
 
         /// <summary>
         /// Root of the prefab hierarchy. All descendants get stable prefab GUIDs when assigned here.
@@ -230,18 +254,23 @@ namespace XREngine.Scene.Prefabs
             importer.MakeMaterialAction = GetOrCreateMaterialRemapped;
             importer.MakeTextureAction = GetOrCreateTextureRemapped;
 
-            bool? processMeshesAsynchronously = opts.ProcessMeshesAsynchronously;
             bool batchSubmeshAddsDuringAsyncImport = opts.BatchSubmeshAddsDuringAsyncImport;
 
-            SceneNode? rootNode = importer.Import(
-                opts.PostProcessSteps,
-                preservePivots: opts.FbxPivotPolicy == FbxPivotImportPolicy.PreservePivotSemantics,
-                removeAssimpFBXNodes: opts.CollapseGeneratedFbxHelperNodes,
-                scaleConversion: opts.ScaleConversion,
-                zUp: opts.ZUp,
-                multiThread: opts.MultiThread,
-                processMeshesAsynchronously: processMeshesAsynchronously,
-                batchSubmeshAddsDuringAsyncImport: batchSubmeshAddsDuringAsyncImport);
+            // Prefab imports must be fully populated before returning because downstream callers
+            // immediately serialize/externalize the imported asset graph.
+            SceneNode? rootNode;
+            using (EnterSynchronousMeshImportScope(opts))
+            {
+                rootNode = importer.Import(
+                    opts.PostProcessSteps,
+                    preservePivots: opts.FbxPivotPolicy == FbxPivotImportPolicy.PreservePivotSemantics,
+                    removeAssimpFBXNodes: opts.CollapseGeneratedFbxHelperNodes,
+                    scaleConversion: opts.ScaleConversion,
+                    zUp: opts.ZUp,
+                    multiThread: opts.MultiThread,
+                    processMeshesAsynchronously: opts.ProcessMeshesAsynchronously,
+                    batchSubmeshAddsDuringAsyncImport: batchSubmeshAddsDuringAsyncImport);
+            }
 
             if (rootNode is null)
                 return false;

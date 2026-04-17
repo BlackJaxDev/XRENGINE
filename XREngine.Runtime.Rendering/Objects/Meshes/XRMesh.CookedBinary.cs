@@ -1003,7 +1003,7 @@ public partial class XRMesh : ICookedBinarySerializable
 
             bones[i] = new BoneInfo
             {
-                BoneId = transform.ID,
+                BoneId = transform.EffectiveSerializedReferenceId,
                 Name = transform.Name,
                 ParentIndex = parentIndex,
                 BindMatrix = transform.BindMatrix,
@@ -1436,6 +1436,7 @@ public partial class XRMesh : ICookedBinarySerializable
             BoneInfo info = infos[i];
             Transform bone = new();
             bone.Name = info.Name ?? $"Bone_{i}";
+            bone.SerializedReferenceId = info.BoneId;
             bone.BindMatrix = info.BindMatrix;
             bone.InverseBindMatrix = info.InverseBindMatrix;
             bones[i] = bone;

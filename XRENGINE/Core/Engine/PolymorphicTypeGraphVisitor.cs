@@ -22,12 +22,20 @@ namespace XREngine
         private readonly IObjectGraphVisitor<IEmitter> _next = nextVisitor;
 
         public bool Enter(IObjectDescriptor value, IEmitter context, ObjectSerializer serializer)
+        {
+            ResetRootSerializationState();
             // This YamlDotNet version routes root-object entry through the (key,value) overload,
             // where key is null for the root.
-            => _next.Enter(null, value, context, serializer);
+            return _next.Enter(null, value, context, serializer);
+        }
 
         public bool Enter(IPropertyDescriptor? key, IObjectDescriptor value, IEmitter context, ObjectSerializer serializer)
-            => _next.Enter(key, value, context, serializer);
+        {
+            if (key is null && DepthTrackingEventEmitter.CurrentDepth == 0)
+                ResetRootSerializationState();
+
+            return _next.Enter(key, value, context, serializer);
+        }
 
         public bool EnterMapping(IObjectDescriptor key, IObjectDescriptor value, IEmitter context, ObjectSerializer serializer)
             => _next.EnterMapping(key, value, context, serializer);
@@ -60,6 +68,12 @@ namespace XREngine
 
         public void VisitSequenceEnd(IObjectDescriptor sequence, IEmitter emitter, ObjectSerializer serializer)
             => _next.VisitSequenceEnd(sequence, emitter, serializer);
+
+        private static void ResetRootSerializationState()
+        {
+            YamlDefaultTypeContext.ResetWriteState();
+            YamlTransformReferenceContext.ResetWriteState();
+        }
 
         private static bool ShouldEmitType(IObjectDescriptor descriptor, Type? defaultType)
         {

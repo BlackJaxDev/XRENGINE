@@ -72,6 +72,7 @@ namespace XREngine
                 .WithEmissionPhaseObjectGraphVisitor(args => new PolymorphicTypeGraphVisitor(args.InnerVisitor))
                 .WithEventEmitter(nextEmitter => new DepthTrackingEventEmitter(nextEmitter))
                 .WithTypeInspector(inner => new DelegateSkippingTypeInspector(inner))
+                .WithTypeInspector(inner => new TransformYamlTypeInspector(inner, applyReferenceOnRead: false))
                 .WithTypeInspector(inner => new YamlDefaultTypeInspector(inner, applyDefaultTypeOnRead: false))
                 //.WithTypeConverter(new XRAssetYamlConverter())
                 .IncludeNonPublicProperties()
@@ -116,6 +117,7 @@ namespace XREngine
                 .WithEnforceNullability()
                 .WithEnforceRequiredMembers()
                 .WithDuplicateKeyChecking()
+                .WithTypeInspector(inner => new TransformYamlTypeInspector(inner, applyReferenceOnRead: true))
                 .WithTypeInspector(inner => new YamlDefaultTypeInspector(inner, applyDefaultTypeOnRead: true))
                 .WithNodeDeserializer(
                     inner => new DepthTrackingNodeDeserializer(inner),
@@ -127,7 +129,8 @@ namespace XREngine
                 ;
 
             foreach (var converter in RegisteredYamlTypeConverters.Value)
-                builder.WithTypeConverter(converter);
+                if (converter is not IWriteOnlyYamlTypeConverter)
+                    builder.WithTypeConverter(converter);
 
             builder.WithNodeDeserializer(new XRAssetDeserializer(), w => w.OnTop());
 
@@ -143,7 +146,7 @@ namespace XREngine
             List<IYamlTypeConverter> converters = [];
             HashSet<Type> registeredTypes = [];
 
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (Assembly assembly in EnumerateYamlTypeConverterAssemblies())
             {
                 Type?[] types;
                 try
@@ -175,6 +178,20 @@ namespace XREngine
             }
 
             return converters;
+        }
+
+        private static IEnumerable<Assembly> EnumerateYamlTypeConverterAssemblies()
+        {
+            HashSet<Assembly> assemblies = [];
+
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+                assemblies.Add(assembly);
+
+            // Asset payload wrappers depend on DataSource's YAML converter, but the data assembly
+            // is not guaranteed to be loaded before the serializer is initialized.
+            assemblies.Add(typeof(DataSourceYamlTypeConverter).Assembly);
+
+            return assemblies;
         }
     }
 }

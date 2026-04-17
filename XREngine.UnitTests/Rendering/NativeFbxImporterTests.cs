@@ -18,6 +18,7 @@ using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Generator;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -237,6 +238,32 @@ public sealed class NativeFbxImporterTests
         {
             Directory.Delete(tempDirectory, recursive: true);
         }
+    }
+
+    [Test]
+    public void PrefabSource_SynchronousMeshImportScope_ForcesFalseAndRestoresRequestedValue()
+    {
+        ModelImportOptions options = new()
+        {
+            ProcessMeshesAsynchronously = true,
+        };
+
+        using (XRPrefabSource.EnterSynchronousMeshImportScope(options))
+        {
+            options.ProcessMeshesAsynchronously.ShouldBe(false);
+        }
+
+        options.ProcessMeshesAsynchronously.ShouldBe(true);
+
+        options.ProcessMeshesAsynchronously = null;
+
+        using (XRPrefabSource.EnterSynchronousMeshImportScope(options))
+        {
+            options.ProcessMeshesAsynchronously.ShouldBe(false);
+        }
+
+        options.ProcessMeshesAsynchronously.ShouldBeNull();
+
     }
 
     [Test]

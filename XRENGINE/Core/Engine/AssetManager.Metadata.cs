@@ -23,11 +23,40 @@ namespace XREngine
 
             Directory.CreateDirectory(metadataRoot);
 
+            PruneStaleMetadataEntries(assetsRoot, metadataRoot);
+
             foreach (string directory in Directory.EnumerateDirectories(assetsRoot, "*", SearchOption.AllDirectories))
                 EnsureMetadataForAssetPath(directory, true);
 
             foreach (string file in Directory.EnumerateFiles(assetsRoot, "*", SearchOption.AllDirectories))
                 EnsureMetadataForAssetPath(file, false);
+        }
+
+        private void PruneStaleMetadataEntries(string assetsRoot, string metadataRoot)
+        {
+            lock (_metadataLock)
+            {
+                foreach (string metaFile in Directory.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories).ToArray())
+                {
+                    if (!ShouldDeleteMetadataFile(metaFile, assetsRoot))
+                        continue;
+
+                    try
+                    {
+                        File.Delete(metaFile);
+                    }
+                    catch (IOException)
+                    {
+                        continue;
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        continue;
+                    }
+
+                    TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaFile));
+                }
+            }
         }
 
         private void HandleMetadataCreated(string path)
@@ -146,11 +175,11 @@ namespace XREngine
 
                     if (isAssetFile)
                     {
-                        if (meta.Guid == Guid.Empty)
-                        {
-                            Guid extracted = TryExtractGuidFromAsset(assetPath);
-                            meta.Guid = extracted == Guid.Empty ? Guid.NewGuid() : extracted;
-                        }
+                        Guid extracted = TryExtractGuidFromAsset(assetPath);
+                        if (extracted != Guid.Empty)
+                            meta.Guid = extracted;
+                        else if (meta.Guid == Guid.Empty)
+                            meta.Guid = Guid.NewGuid();
 
                         meta.Import = null;
                     }
@@ -242,9 +271,29 @@ namespace XREngine
 
         private static void WriteMetadataFile(string metaPath, AssetMetadata meta)
         {
+            string? directory = Path.GetDirectoryName(metaPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
             string yaml = Serializer.Serialize(meta);
             File.WriteAllText(metaPath, yaml);
         }
+
+        private static bool ShouldDeleteMetadataFile(string metaPath, string assetsRoot)
+        {
+            if (IsTransientMetadataPath(metaPath))
+                return true;
+
+            AssetMetadata? meta = TryReadMetadata(metaPath);
+            if (meta is null || string.IsNullOrWhiteSpace(meta.RelativePath))
+                return false;
+
+            string candidate = Path.Combine(assetsRoot, meta.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+            return !File.Exists(candidate) && !Directory.Exists(candidate);
+        }
+
+        private static bool IsTransientMetadataPath(string metaPath)
+            => Path.GetFileName(metaPath).EndsWith(".tmp.meta", StringComparison.OrdinalIgnoreCase);
 
         private static Guid TryExtractGuidFromAsset(string assetPath)
         {
@@ -268,6 +317,9 @@ namespace XREngine
                     string? line;
                     while ((line = reader.ReadLine()) is not null)
                     {
+                        if (string.IsNullOrWhiteSpace(line) || char.IsWhiteSpace(line[0]))
+                            continue;
+
                         string trimmed = line.Trim();
                         if (!trimmed.StartsWith("ID:", StringComparison.OrdinalIgnoreCase))
                             continue;
@@ -334,11 +386,28 @@ namespace XREngine
                 if (!Directory.Exists(current))
                     break;
 
-                using var enumerator = Directory.EnumerateFileSystemEntries(current).GetEnumerator();
-                if (enumerator.MoveNext())
+                bool hasEntries;
+                try
+                {
+                    using var enumerator = Directory.EnumerateFileSystemEntries(current).GetEnumerator();
+                    hasEntries = enumerator.MoveNext();
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    break;
+                }
+
+                if (hasEntries)
                     break;
 
-                Directory.Delete(current);
+                try
+                {
+                    Directory.Delete(current);
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    break;
+                }
 
                 string? parent = Path.GetDirectoryName(current);
                 if (string.IsNullOrWhiteSpace(parent))

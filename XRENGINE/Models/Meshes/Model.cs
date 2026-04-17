@@ -6,6 +6,7 @@ using System.Collections.Generic;
 
 namespace XREngine.Rendering.Models
 {
+    [XRAssetInspector("XREngine.Editor.AssetEditors.ModelInspector")]
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class Model : XRAsset
     {

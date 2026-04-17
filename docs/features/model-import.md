@@ -83,3 +83,21 @@ Model import settings also persist per-import replacement maps for textures and 
 On the first successful model import, these dictionaries are automatically seeded with any discovered texture-path and material-name keys from the source model. New entries are written with null values so reimport settings can be filled in later without manually copying keys out of the model.
 
 Older cached import-option files that still store path-based remaps continue to load as legacy fallbacks, but resaving import settings writes the asset-based remap form.
+
+## On-disk externalization layout
+
+When a third-party model (e.g. `Mitsuki.fbx`) is imported to a native prefab `Mitsuki.asset`, embedded sub-assets are externalized into a sibling folder named after the root asset. The externalizer runs in three phases — **Discover**, **PreAssign & Touch**, then **Topological Write (leaves-first)** — so that every nested sub-asset already has a real file path and a zero-byte placeholder on disk before any container serializes. This lets the YAML reference-emission gate in `XRAssetYamlConverter` / `AnimationClipYamlTypeConverter` emit compact `{ID: <guid>}` references for externalized sub-assets instead of inlining their full content.
+
+```
+<import-folder>/
+    Mitsuki.asset                    # XRPrefabSource (root)
+    Mitsuki/
+        Textures/*.asset             # XRTexture (leaves — written first)
+        Materials/*.asset            # XRMaterialBase
+        SubMeshes/*.asset            # SubMesh
+        Meshes/*.asset               # XRMesh
+        Models/*.asset               # Model
+        Animations/*.asset           # AnimationClip (containers — written last)
+```
+
+If any sub-asset serialization fails mid-import, placeholder files that were never overwritten are deleted during cleanup so the on-disk folder does not accumulate empty `.asset` stubs.

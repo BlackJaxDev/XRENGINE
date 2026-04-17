@@ -391,6 +391,12 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(path))
                 return false;
 
+            // File.Replace emits temporary transaction paths such as
+            // '*.tmp' and '*~RFxxxx.TMP'. These are implementation details
+            // of a save, not real user-facing asset changes.
+            if (string.Equals(Path.GetExtension(path), ".tmp", StringComparison.OrdinalIgnoreCase))
+                return true;
+
             if (!_recentlySavedPaths.TryGetValue(path, out var saveTime))
                 return false;
 
@@ -400,6 +406,9 @@ namespace XREngine
             _recentlySavedPaths.TryRemove(path, out _);
             return false;
         }
+
+        private bool ShouldIgnoreWatcherRenameEvent(string oldPath, string newPath)
+            => ShouldIgnoreWatcherEvent(oldPath) || ShouldIgnoreWatcherEvent(newPath);
 
         #endregion
 
@@ -443,6 +452,9 @@ namespace XREngine
             {
                 foreach (string metaFile in Directory.EnumerateFiles(GameMetadataPath, "*.meta", SearchOption.AllDirectories))
                 {
+                    if (IsTransientMetadataPath(metaFile))
+                        continue;
+
                     var meta = TryReadMetadata(metaFile);
                     if (meta?.Guid != assetId || string.IsNullOrWhiteSpace(meta.RelativePath))
                         continue;

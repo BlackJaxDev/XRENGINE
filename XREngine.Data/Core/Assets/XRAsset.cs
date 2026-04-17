@@ -565,10 +565,42 @@ namespace XREngine.Core.Files
 
         private static void ReplaceSerializedAssetFile(string tempPath, string filePath)
         {
-            if (File.Exists(filePath))
-                File.Replace(tempPath, filePath, destinationBackupFileName: null, ignoreMetadataErrors: true);
-            else
+            if (!File.Exists(filePath))
+            {
                 File.Move(tempPath, filePath);
+                return;
+            }
+
+            // File.Replace is occasionally flaky on Windows when the destination was just
+            // created (e.g., a zero-byte placeholder): AV scanners, the search indexer, or
+            // transient share locks cause "Unable to remove the file to be replaced."
+            // Retry a few times, then fall back to delete + move.
+            const int maxAttempts = 4;
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    File.Replace(tempPath, filePath, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                    return;
+                }
+                catch (IOException) when (attempt < maxAttempts)
+                {
+                    System.Threading.Thread.Sleep(25 * attempt);
+                }
+            }
+
+            // Final fallback: delete the destination and move the temp file into place.
+            try
+            {
+                File.Delete(filePath);
+            }
+            catch (IOException)
+            {
+                // Clear a potential read-only attribute and retry once.
+                try { File.SetAttributes(filePath, FileAttributes.Normal); } catch { }
+                File.Delete(filePath);
+            }
+            File.Move(tempPath, filePath);
         }
 
         private static void TryDeleteTempWritePath(string tempPath)

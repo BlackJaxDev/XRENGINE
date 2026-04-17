@@ -27,6 +27,7 @@ using ICookedBinarySerializable = XREngine.Core.Files.IRuntimeCookedBinarySerial
 namespace XREngine.Rendering
 {
     [XR3rdPartyExtensions(typeof(XREngine.Data.XRTexture2DImportOptions), "png", "jpg", "jpeg", "tif", "tiff", "tga", "exr", "hdr")]
+    [XRAssetInspector("XREngine.Editor.AssetEditors.XRTexture2DInspector")]
     [MemoryPackable]
     public partial class XRTexture2D : XRTexture, IFrameBufferAttachement, ICookedBinarySerializable
     {

@@ -4,6 +4,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
+using XREngine.Rendering.Models;
 
 namespace XREngine
 {
@@ -39,6 +40,10 @@ namespace XREngine
         private OverrideableSetting<int> _mcpServerRateLimitRequestsOverride = new();
         private OverrideableSetting<int> _mcpServerRateLimitWindowSecondsOverride = new();
         private OverrideableSetting<bool> _mcpServerIncludeStatusInPingOverride = new();
+
+        // Importer overrides
+        private OverrideableSetting<FbxImportBackend> _fbxImporterBackendOverride = new();
+        private OverrideableSetting<GltfImportBackend> _gltfImporterBackendOverride = new();
 
         // Audio overrides (Editor > Game > User cascade)
         private OverrideableSetting<EAudioTransport> _audioTransportOverride = new();
@@ -196,6 +201,22 @@ namespace XREngine
         {
             get => _mcpServerIncludeStatusInPingOverride;
             set => SetField(ref _mcpServerIncludeStatusInPingOverride, value ?? new());
+        }
+
+        [Category("Importer Overrides")]
+        [Description("Override for the default FBX importer backend.")]
+        public OverrideableSetting<FbxImportBackend> FbxImporterBackendOverride
+        {
+            get => _fbxImporterBackendOverride;
+            set => SetField(ref _fbxImporterBackendOverride, value ?? new());
+        }
+
+        [Category("Importer Overrides")]
+        [Description("Override for the default glTF importer backend.")]
+        public OverrideableSetting<GltfImportBackend> GltfImporterBackendOverride
+        {
+            get => _gltfImporterBackendOverride;
+            set => SetField(ref _gltfImporterBackendOverride, value ?? new());
         }
 
         /// <summary>

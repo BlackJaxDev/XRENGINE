@@ -4,6 +4,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
+using XREngine.Rendering.Models;
 
 namespace XREngine
 {
@@ -76,6 +77,11 @@ namespace XREngine
         private string _mcpAssistantGeminiModel = "gemini-2.5-pro";
         private string _mcpAssistantGitHubModelsToken = string.Empty;
         private string _mcpAssistantGitHubModelsModel = "openai/gpt-4.1";
+
+        // Importer backend selection (per third-party file type).
+        // Defaults favor the legacy Assimp path while the native importers stabilize.
+        private FbxImportBackend _fbxImporterBackend = FbxImportBackend.AssimpLegacy;
+        private GltfImportBackend _gltfImporterBackend = GltfImportBackend.Auto;
 
         [Category("Theme")]
         [DisplayName("Theme")]
@@ -623,6 +629,36 @@ namespace XREngine
                 MarkDirty();
         }
 
+        // ── Importers ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Selects which importer backend is used for .fbx third-party assets.
+        /// Default is <see cref="FbxImportBackend.AssimpLegacy"/> while the native FBX path stabilizes.
+        /// Per-asset <c>ModelImportOptions.FbxBackend</c> overrides this default when not set to <c>Auto</c>.
+        /// </summary>
+        [Category("Importers")]
+        [DisplayName("FBX Importer Backend")]
+        [Description("Default importer backend for .fbx files. Per-asset ModelImportOptions.FbxBackend overrides this default when not set to Auto.")]
+        public FbxImportBackend FbxImporterBackend
+        {
+            get => _fbxImporterBackend;
+            set => SetField(ref _fbxImporterBackend, value);
+        }
+
+        /// <summary>
+        /// Selects which importer backend is used for .gltf / .glb third-party assets.
+        /// Default is <see cref="GltfImportBackend.Auto"/> (native with Assimp fallback).
+        /// Per-asset <c>ModelImportOptions.GltfBackend</c> overrides this default when not set to <c>Auto</c>.
+        /// </summary>
+        [Category("Importers")]
+        [DisplayName("glTF Importer Backend")]
+        [Description("Default importer backend for .gltf / .glb files. Per-asset ModelImportOptions.GltfBackend overrides this default when not set to Auto.")]
+        public GltfImportBackend GltfImporterBackend
+        {
+            get => _gltfImporterBackend;
+            set => SetField(ref _gltfImporterBackend, value);
+        }
+
         public void CopyFrom(EditorPreferences source)
         {
             if (source is null)
@@ -670,6 +706,10 @@ namespace XREngine
             McpAssistantGeminiModel = source.McpAssistantGeminiModel;
             McpAssistantGitHubModelsToken = source.McpAssistantGitHubModelsToken;
             McpAssistantGitHubModelsModel = source.McpAssistantGitHubModelsModel;
+
+            // Importers
+            FbxImporterBackend = source.FbxImporterBackend;
+            GltfImporterBackend = source.GltfImporterBackend;
         }
 
         public void ApplyOverrides(EditorPreferencesOverrides overrides)
@@ -727,6 +767,12 @@ namespace XREngine
 
             if (overrides.McpServerIncludeStatusInPingOverride is { HasOverride: true } mcpStatusPingOverride)
                 McpServerIncludeStatusInPing = mcpStatusPingOverride.Value;
+
+            if (overrides.FbxImporterBackendOverride is { HasOverride: true } fbxBackendOverride)
+                FbxImporterBackend = fbxBackendOverride.Value;
+
+            if (overrides.GltfImporterBackendOverride is { HasOverride: true } gltfBackendOverride)
+                GltfImporterBackend = gltfBackendOverride.Value;
         }
     }
 

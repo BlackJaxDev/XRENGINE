@@ -199,4 +199,10 @@ internal static class YamlDefaultTypeContext
             _writeDefaults = null;
         return defaultType;
     }
+
+    public static void ResetReadState()
+        => _readEntries = null;
+
+    public static void ResetWriteState()
+        => _writeDefaults = null;
 }
