@@ -956,12 +956,15 @@ namespace XREngine.Rendering
 
             _bones = null;
 
+            RemoveMeshDeformBuffer(BoneMatricesBuffer);
             BoneMatricesBuffer?.Destroy();
             BoneMatricesBuffer = null;
 
+            RemoveMeshDeformBuffer(BoneInvBindMatricesBuffer);
             BoneInvBindMatricesBuffer?.Destroy();
             BoneInvBindMatricesBuffer = null;
 
+            RemoveMeshDeformBuffer(BlendshapeWeights);
             BlendshapeWeights?.Destroy();
             BlendshapeWeights = null;
 

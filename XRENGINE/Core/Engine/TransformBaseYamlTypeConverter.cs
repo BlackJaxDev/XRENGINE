@@ -29,15 +29,26 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
 
     public object? ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
     {
+        bool isReferenceMode = YamlTransformReferenceContext.ConsumeRead();
+
         if (parser.TryConsume<Scalar>(out var scalar) && IsNullScalar(scalar))
             return null;
 
-        parser.Consume<MappingStart>();
+        if (isReferenceMode)
+            return ReadReferenceTransform(parser);
+
+        bool isInlineMapping = parser.TryConsume<MappingStart>(out _);
+        if (!isInlineMapping && !parser.Accept<Scalar>(out _))
+            parser.Consume<MappingStart>();
 
         Type? runtimeType = null;
         TransformBase? result = null;
         TransformBase[]? serializedChildren = null;
         bool hasSerializedChildren = false;
+        Guid referenceId = Guid.Empty;
+        string? referenceName = null;
+        bool hasReferenceFields = false;
+        bool hasExplicitValue = false;
 
         while (!parser.TryConsume<MappingEnd>(out _))
         {
@@ -50,6 +61,7 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
                     break;
 
                 case ValueKey:
+                    hasExplicitValue = true;
                     if (runtimeType is null && !YamlDefaultTypeContext.TryConsumeRead(type, out runtimeType))
                         runtimeType = typeof(Transform);
                     if (runtimeType == typeof(Transform))
@@ -77,6 +89,30 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
                         throw new InvalidOperationException($"Deserialized type '{deserialized.GetType().FullName}' is not a {nameof(TransformBase)}.");
                     break;
 
+                case "ID":
+                    if (parser.TryConsume<Scalar>(out var idScalar) && Guid.TryParse(idScalar.Value, out Guid parsedReferenceId))
+                    {
+                        referenceId = parsedReferenceId;
+                        hasReferenceFields = true;
+                    }
+                    else
+                    {
+                        SkipNode(parser);
+                    }
+                    break;
+
+                case "Name":
+                    if (parser.TryConsume<Scalar>(out var nameScalar))
+                    {
+                        referenceName = nameScalar.Value;
+                        hasReferenceFields = true;
+                    }
+                    else
+                    {
+                        SkipNode(parser);
+                    }
+                    break;
+
                 case ChildrenKey:
                     serializedChildren = rootDeserializer(typeof(TransformBase[])) as TransformBase[];
                     hasSerializedChildren = true;
@@ -88,6 +124,9 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
             }
         }
 
+        if (result is null && hasReferenceFields && !hasExplicitValue && !hasSerializedChildren)
+            return CreateReferencePlaceholder(referenceId, referenceName);
+
         result ??= new Transform();
 
         if (hasSerializedChildren)
@@ -98,9 +137,17 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
 
     public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)
     {
+        bool isReferenceMode = YamlTransformReferenceContext.ConsumeWrite();
+
         if (value is null)
         {
             emitter.Emit(new Scalar(null, null, "null", ScalarStyle.Plain, true, false));
+            return;
+        }
+
+        if (isReferenceMode && value is TransformBase referenceTransform)
+        {
+            EmitReferenceTransform(emitter, referenceTransform);
             return;
         }
 
@@ -176,7 +223,9 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
 
     private static Transform ReadConcreteTransform(IParser parser, ObjectDeserializer rootDeserializer)
     {
-        parser.Consume<MappingStart>();
+        bool isInlineMapping = parser.TryConsume<MappingStart>(out _);
+        if (!isInlineMapping && !parser.Accept<Scalar>(out _))
+            parser.Consume<MappingStart>();
 
         Transform transform = new();
         while (!parser.TryConsume<MappingEnd>(out _))
@@ -212,7 +261,10 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
                     break;
 
                 case "ID":
-                    SkipNode(parser);
+                    if (parser.TryConsume<Scalar>(out Scalar? idScalar) && Guid.TryParse(idScalar.Value, out Guid serializedReferenceId))
+                        transform.SerializedReferenceId = serializedReferenceId;
+                    else
+                        SkipNode(parser);
                     break;
 
                 default:
@@ -223,6 +275,110 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
 
         return transform;
     }
+
+    private static void EmitReferenceTransform(IEmitter emitter, TransformBase transform)
+    {
+        emitter.Emit(new MappingStart(null, null, false, MappingStyle.Block));
+        emitter.Emit(new Scalar("ID"));
+        emitter.Emit(new Scalar(transform.EffectiveSerializedReferenceId.ToString()));
+        emitter.Emit(new MappingEnd());
+    }
+
+    private static TransformBase ReadReferenceTransform(IParser parser)
+    {
+        if (parser.TryConsume<Scalar>(out Scalar? scalar))
+        {
+            if (Guid.TryParse(scalar.Value, out Guid scalarId))
+                return CreateReferencePlaceholder(scalarId, name: null);
+
+            throw new YamlException($"Expected transform reference mapping or GUID scalar, but found '{scalar.Value}'.");
+        }
+
+        bool isInlineMapping = parser.TryConsume<MappingStart>(out _);
+        if (!isInlineMapping && !parser.Accept<Scalar>(out _))
+            parser.Consume<MappingStart>();
+
+        Guid referenceId = Guid.Empty;
+        string? name = null;
+
+        while (!parser.TryConsume<MappingEnd>(out _))
+        {
+            string? key = parser.Consume<Scalar>().Value;
+            switch (key)
+            {
+                case "ID":
+                    if (parser.TryConsume<Scalar>(out Scalar? idScalar) && Guid.TryParse(idScalar.Value, out Guid parsedId))
+                        referenceId = parsedId;
+                    else
+                        SkipNode(parser);
+                    break;
+
+                case "Name":
+                    if (parser.TryConsume<Scalar>(out Scalar? nameScalar))
+                        name = nameScalar.Value;
+                    else
+                        SkipNode(parser);
+                    break;
+
+                case TypeKey:
+                    SkipNode(parser);
+                    break;
+
+                case ValueKey:
+                    ReadReferenceTransformValue(parser, ref referenceId, ref name);
+                    break;
+
+                default:
+                    SkipNode(parser);
+                    break;
+            }
+        }
+
+        return CreateReferencePlaceholder(referenceId, name);
+    }
+
+    private static void ReadReferenceTransformValue(IParser parser, ref Guid referenceId, ref string? name)
+    {
+        if (parser.TryConsume<Scalar>(out Scalar? scalar))
+        {
+            if (Guid.TryParse(scalar.Value, out Guid scalarId))
+                referenceId = scalarId;
+            return;
+        }
+
+        parser.Consume<MappingStart>();
+        while (!parser.TryConsume<MappingEnd>(out _))
+        {
+            string? key = parser.Consume<Scalar>().Value;
+            switch (key)
+            {
+                case "ID":
+                    if (parser.TryConsume<Scalar>(out Scalar? idScalar) && Guid.TryParse(idScalar.Value, out Guid parsedId))
+                        referenceId = parsedId;
+                    else
+                        SkipNode(parser);
+                    break;
+
+                case "Name":
+                    if (parser.TryConsume<Scalar>(out Scalar? nameScalar))
+                        name = nameScalar.Value;
+                    else
+                        SkipNode(parser);
+                    break;
+
+                default:
+                    SkipNode(parser);
+                    break;
+            }
+        }
+    }
+
+    private static TransformBase CreateReferencePlaceholder(Guid referenceId, string? name)
+        => new Transform
+        {
+            Name = name,
+            SerializedReferenceId = referenceId,
+        };
 
     private static Type? ResolveTransformType(string? typeName)
     {

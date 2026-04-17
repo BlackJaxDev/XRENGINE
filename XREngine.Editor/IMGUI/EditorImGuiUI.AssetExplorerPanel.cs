@@ -1947,6 +1947,9 @@ public static partial class EditorImGuiUI
                 return;
             }
 
+            // SHFileOperation wants a fully-qualified absolute path; relative paths silently no-op.
+            string absolutePath = Path.GetFullPath(path);
+
             const int FO_DELETE = 3;
             const ushort FOF_SILENT = 0x0004;
             const ushort FOF_NOCONFIRMATION = 0x0010;
@@ -1954,7 +1957,7 @@ public static partial class EditorImGuiUI
             const ushort FOF_NOERRORUI = 0x0400;
 
             // pFrom is a double-null-terminated list of paths.
-            string from = path + "\0\0";
+            string from = absolutePath + "\0\0";
 
             var op = new SHFILEOPSTRUCT
             {
@@ -1964,8 +1967,56 @@ public static partial class EditorImGuiUI
             };
 
             int result = SHFileOperation(ref op);
-            if (result != 0 || op.fAnyOperationsAborted)
-                throw new IOException($"SHFileOperation failed (code={result}, aborted={op.fAnyOperationsAborted}) for '{path}'.");
+            bool shellSucceeded = result == 0 && !op.fAnyOperationsAborted;
+
+            // SHFileOperation sometimes returns success while silently skipping the entry
+            // (editor-held file handles, AV interference, rare protocol issues). Verify that
+            // the path is actually gone and fall back to direct deletion otherwise so a
+            // right-click "Delete" never becomes a no-op.
+            bool stillExists = isDirectory ? Directory.Exists(absolutePath) : File.Exists(absolutePath);
+            if (shellSucceeded && !stillExists)
+                return;
+
+            if (!shellSucceeded)
+            {
+                Debug.LogWarning($"SHFileOperation failed (code={result}, aborted={op.fAnyOperationsAborted}) for '{absolutePath}'; falling back to direct delete.");
+            }
+            else
+            {
+                Debug.LogWarning($"SHFileOperation reported success but '{absolutePath}' still exists; falling back to direct delete.");
+            }
+
+            if (isDirectory)
+            {
+                ClearReadOnlyRecursive(absolutePath);
+                Directory.Delete(absolutePath, recursive: true);
+            }
+            else
+            {
+                try { File.SetAttributes(absolutePath, FileAttributes.Normal); } catch { }
+                File.Delete(absolutePath);
+            }
+        }
+
+        private static void ClearReadOnlyRecursive(string directory)
+        {
+            try
+            {
+                var di = new DirectoryInfo(directory);
+                if ((di.Attributes & FileAttributes.ReadOnly) != 0)
+                    di.Attributes &= ~FileAttributes.ReadOnly;
+
+                foreach (var file in di.EnumerateFiles("*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        if ((file.Attributes & FileAttributes.ReadOnly) != 0)
+                            file.Attributes &= ~FileAttributes.ReadOnly;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
 
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]

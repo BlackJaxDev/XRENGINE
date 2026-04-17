@@ -8,6 +8,7 @@ public partial class DefaultRenderPipeline
 {
     internal void LogAttachmentTextureRebuild(XRRenderPipelineInstance instance, string textureName, XRTexture? cachedTexture, string reason)
     {
+        /*
         Debug.Rendering(
             "[RenderResourceDiag][{0}] Rebuilding attachment texture '{1}' for {2}. Reason={3}. Cached={4}",
             DebugName,
@@ -15,12 +16,14 @@ public partial class DefaultRenderPipeline
             instance.DebugDescriptor,
             reason,
             cachedTexture is null ? "<none>" : DescribeTexture(cachedTexture));
+        */
     }
 
     internal void LogTextureBinding(XRRenderPipelineInstance instance, string name, XRTexture texture, XRTexture? replacedTexture)
     {
         if (replacedTexture is not null && !ReferenceEquals(replacedTexture, texture))
         {
+            /*
             Debug.Rendering(
                 "[RenderResourceDiag][{0}] Recreated texture '{1}' for {2}. Destroying previous instance {3}. New={4}",
                 DebugName,
@@ -28,21 +31,25 @@ public partial class DefaultRenderPipeline
                 instance.DebugDescriptor,
                 DescribeTexture(replacedTexture),
                 DescribeTexture(texture));
+            */
             return;
         }
 
+        /*
         Debug.Rendering(
             "[RenderResourceDiag][{0}] Created texture '{1}' for {2}. {3}",
             DebugName,
             name,
             instance.DebugDescriptor,
             DescribeTexture(texture));
+        */
     }
 
     internal void LogFrameBufferBinding(XRRenderPipelineInstance instance, string name, XRFrameBuffer frameBuffer, XRFrameBuffer? replacedFrameBuffer)
     {
         if (replacedFrameBuffer is not null && !ReferenceEquals(replacedFrameBuffer, frameBuffer))
         {
+            /*
             Debug.Rendering(
                 "[RenderResourceDiag][{0}] Recreated FBO '{1}' for {2}. Destroying previous instance {3}. New={4}",
                 DebugName,
@@ -50,19 +57,23 @@ public partial class DefaultRenderPipeline
                 instance.DebugDescriptor,
                 DescribeFrameBuffer(replacedFrameBuffer),
                 DescribeFrameBuffer(frameBuffer));
+            */
             return;
         }
 
+        /*
         Debug.Rendering(
             "[RenderResourceDiag][{0}] Created FBO '{1}' for {2}. {3}",
             DebugName,
             name,
             instance.DebugDescriptor,
             DescribeFrameBuffer(frameBuffer));
+        */
     }
 
     internal void LogTextureDestroy(XRRenderPipelineInstance instance, string name, XRTexture texture, string reason)
     {
+        /*
         Debug.Rendering(
             "[RenderResourceDiag][{0}] Destroying texture '{1}' for {2}. Reason={3}. {4}",
             DebugName,
@@ -70,10 +81,12 @@ public partial class DefaultRenderPipeline
             instance.DebugDescriptor,
             reason,
             DescribeTexture(texture));
+        */
     }
 
     internal void LogFrameBufferDestroy(XRRenderPipelineInstance instance, string name, XRFrameBuffer frameBuffer, string reason)
     {
+        /*
         Debug.Rendering(
             "[RenderResourceDiag][{0}] Destroying FBO '{1}' for {2}. Reason={3}. {4}",
             DebugName,
@@ -81,6 +94,7 @@ public partial class DefaultRenderPipeline
             instance.DebugDescriptor,
             reason,
             DescribeFrameBuffer(frameBuffer));
+        */
     }
 
     private static string DescribeFrameBuffer(XRFrameBuffer frameBuffer)

@@ -256,7 +256,7 @@ public static class XRAssetGraphUtility
 
         // Skip types from assemblies that aren't part of the XREngine solution
         string? assemblyName = type.Assembly.GetName().Name;
-        if (assemblyName is not null && !assemblyName.StartsWith("XREngine", StringComparison.Ordinal))
+        if (assemblyName is not null && !assemblyName.StartsWith("XREngine", StringComparison.OrdinalIgnoreCase))
             return true;
 
         return false;

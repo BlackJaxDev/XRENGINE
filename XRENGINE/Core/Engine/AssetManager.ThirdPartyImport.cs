@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
+using XREngine.Animation;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -410,9 +411,10 @@ namespace XREngine
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
 
+            MarkRecentlySaved(generatedAssetPath);
             asset.SerializeTo(generatedAssetPath, Serializer);
 
-            _recentlySavedPaths[generatedAssetPath] = DateTime.UtcNow;
+            MarkRecentlySaved(generatedAssetPath);
             return true;
         }
 
@@ -430,180 +432,327 @@ namespace XREngine
             }
 
             string rootName = Path.GetFileNameWithoutExtension(rootAssetPath);
-            string prefabFolderName = SanitizeFileName(rootName);
+            string prefabFolderName = SanitizeExternalizedFileName(rootName);
             string prefabFolderPath = Path.Combine(directory, prefabFolderName);
 
-            static string KindFolderName(XRAsset a)
+            static bool IsPathUnderDirectory(string filePath, string directoryPath)
             {
-                if (IsModel(a)) return "Models";
-                if (IsMesh(a)) return "Meshes";
-                if (IsSubMesh(a)) return "SubMeshes";
-                if (IsMaterial(a)) return "Materials";
-                if (IsTexture(a)) return "Textures";
-                return "Assets";
-            }
-
-            static bool IsTexture(XRAsset a) => a is XRTexture;
-            static bool IsMaterial(XRAsset a) => a is XRMaterialBase;
-            static bool IsMesh(XRAsset a) => a is XRMesh;
-            static bool IsSubMesh(XRAsset a) => a is SubMesh;
-            static bool IsModel(XRAsset a) => a is Model;
-
-            static bool IsRelevant(XRAsset a)
-                => IsTexture(a) || IsMaterial(a) || IsMesh(a) || IsSubMesh(a) || IsModel(a);
-
-            static int KindOrder(XRAsset a)
-            {
-                // Prefer saving higher-level containers first.
-                if (IsModel(a)) return 0;
-                if (IsMesh(a)) return 1;
-                if (IsSubMesh(a)) return 2;
-                if (IsMaterial(a)) return 3;
-                if (IsTexture(a)) return 4;
-                return 10;
-            }
-
-            static bool HasExistingAssetFile(XRAsset a)
-            {
-                string? path = a.FilePath;
-                if (string.IsNullOrWhiteSpace(path))
+                if (string.IsNullOrWhiteSpace(filePath) || string.IsNullOrWhiteSpace(directoryPath))
                     return false;
-                if (!string.Equals(Path.GetExtension(path), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
-                    return false;
-                return File.Exists(path);
+
+                string fullFilePath = Path.GetFullPath(filePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string fullDirectoryPath = Path.GetFullPath(directoryPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return string.Equals(fullFilePath, fullDirectoryPath, StringComparison.OrdinalIgnoreCase)
+                    || fullFilePath.StartsWith(fullDirectoryPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                    || fullFilePath.StartsWith(fullDirectoryPath + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
             }
 
-            static string SanitizeFileName(string name)
+            bool suspendGameWatcher = IsPathUnderDirectory(rootAssetPath, GameAssetsPath);
+            bool suspendEngineWatcher = IsPathUnderDirectory(rootAssetPath, EngineAssetsPath);
+            bool previousGameWatcherState = MonitorGameAssetsForChanges;
+            bool previousEngineWatcherState = MonitorEngineAssetsForChanges;
+
+            try
             {
-                if (string.IsNullOrWhiteSpace(name))
-                    return "Asset";
+                if (suspendGameWatcher && previousGameWatcherState)
+                    MonitorGameAssetsForChanges = false;
+                if (suspendEngineWatcher && previousEngineWatcherState)
+                    MonitorEngineAssetsForChanges = false;
 
-                foreach (char c in Path.GetInvalidFileNameChars())
-                    name = name.Replace(c, '_');
+                // ── Phase A: Discovery ───────────────────────────────────────
+                List<XRAsset> discovered = DiscoverRelevantSubAssets(rootAsset);
+                Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Discovered {0} relevant sub-assets", discovered.Count);
+                {
+                    int textures = discovered.Count(IsExternalizableTexture);
+                    int materials = discovered.Count(IsExternalizableMaterial);
+                    int subMeshes = discovered.Count(IsExternalizableSubMesh);
+                    int meshes = discovered.Count(IsExternalizableMesh);
+                    int models = discovered.Count(IsExternalizableModel);
+                    int animations = discovered.Count(IsExternalizableAnimationClip);
+                    Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Breakdown: Texture={0}, Material={1}, SubMesh={2}, Mesh={3}, Model={4}, AnimationClip={5}", textures, materials, subMeshes, meshes, models, animations);
+                }
 
-                name = name.Trim().TrimEnd('.', ' ');
-                return string.IsNullOrWhiteSpace(name) ? "Asset" : name;
+                // ── Phase B: Pre-assign paths + write placeholder files ──────
+                var createdPlaceholders = new List<string>();
+                try
+                {
+                    PreAssignExternalizationPaths(discovered, prefabFolderPath, rootName, createdPlaceholders);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex, "[ExternalizeEmbedded] Phase B (pre-assign) failed; rolling back placeholders.");
+                    DeletePlaceholders(createdPlaceholders);
+                    throw;
+                }
+
+                // ── Phase C: Topological write, leaves-first ─────────────────
+                int exportedCount = 0;
+                int skippedCount = 0;
+                int failedCount = 0;
+                var overwrittenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                try
+                {
+                    foreach (XRAsset subAsset in discovered.OrderBy(KindOrderLeavesFirst))
+                    {
+                        string? targetPath = subAsset.FilePath;
+                        if (string.IsNullOrWhiteSpace(targetPath))
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        try
+                        {
+                            Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Exporting {0} '{1}' -> '{2}'", subAsset.GetType().Name, subAsset.Name ?? string.Empty, targetPath);
+                            SaveAssetToPathCore(subAsset, targetPath);
+                            EnsureMetadataForAssetPath(targetPath, isDirectory: false);
+                            overwrittenPaths.Add(targetPath);
+                            exportedCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            failedCount++;
+                            Debug.LogException(ex, $"[ExternalizeEmbedded] Failed exporting {subAsset.GetType().Name} '{subAsset.Name}' -> '{targetPath}'");
+                        }
+                    }
+                }
+                finally
+                {
+                    // Delete any placeholders that were never overwritten by a real serialization.
+                    List<string> orphans = createdPlaceholders.Where(p => !overwrittenPaths.Contains(p)).ToList();
+                    if (orphans.Count > 0)
+                    {
+                        Debug.LogWarning($"[ExternalizeEmbedded] Cleaning up {orphans.Count} placeholder file(s) that were never written.");
+                        DeletePlaceholders(orphans);
+                    }
+                }
+
+                Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Externalization complete: {0} exported, {1} skipped, {2} failed", exportedCount, skippedCount, failedCount);
+
+                // Recompute to ensure the root no longer treats these as embedded.
+                XRAssetGraphUtility.RefreshAssetGraph(rootAsset);
             }
-
-            static string EnsureHasName(XRAsset asset, string rootName)
+            finally
             {
-                if (!string.IsNullOrWhiteSpace(asset.Name))
-                    return asset.Name!;
-
-                string shortId = asset.ID == Guid.Empty
-                    ? Guid.NewGuid().ToString("N")[..8]
-                    : asset.ID.ToString("N")[..8];
-                asset.Name = $"{rootName}_{asset.GetType().Name}_{shortId}";
-                return asset.Name;
+                if (suspendGameWatcher)
+                    MonitorGameAssetsForChanges = previousGameWatcherState;
+                if (suspendEngineWatcher)
+                    MonitorEngineAssetsForChanges = previousEngineWatcherState;
             }
+        }
 
-            // Export assets that would be embedded into the prefab YAML. In practice, prefab-generated sub-assets
-            // are typically tagged as owned by the prefab via SourceAsset == rootAsset.
-            //
-            // We use EmbeddedAssets when available (asset-graph-derived), but also include prefab-owned
-            // reachable assets as a fallback/union because some graphs (e.g., SceneNode trees) may not be
-            // traversed by XRAssetGraphUtility depending on its leaf/pruning rules.
+        // ── Classification helpers ───────────────────────────────────────
+
+        private static bool IsExternalizableTexture(XRAsset a) => a is XRTexture;
+        private static bool IsExternalizableMaterial(XRAsset a) => a is XRMaterialBase;
+        private static bool IsExternalizableSubMesh(XRAsset a) => a is SubMesh;
+        private static bool IsExternalizableMesh(XRAsset a) => a is XRMesh;
+        private static bool IsExternalizableModel(XRAsset a) => a is Model;
+        private static bool IsExternalizableAnimationClip(XRAsset a) => a is AnimationClip;
+
+        private static bool IsExternalizable(XRAsset a)
+            => IsExternalizableTexture(a)
+            || IsExternalizableMaterial(a)
+            || IsExternalizableSubMesh(a)
+            || IsExternalizableMesh(a)
+            || IsExternalizableModel(a)
+            || IsExternalizableAnimationClip(a);
+
+        /// <summary>
+        /// Leaves-first ordering so nested references resolve to already-written files.
+        /// </summary>
+        private static int KindOrderLeavesFirst(XRAsset a)
+        {
+            if (IsExternalizableTexture(a)) return 0;
+            if (IsExternalizableMaterial(a)) return 1;
+            if (IsExternalizableSubMesh(a)) return 2;
+            if (IsExternalizableMesh(a)) return 3;
+            if (IsExternalizableModel(a)) return 4;
+            if (IsExternalizableAnimationClip(a)) return 5;
+            return 10;
+        }
+
+        private static string KindFolderNameFor(XRAsset a)
+        {
+            if (IsExternalizableTexture(a)) return "Textures";
+            if (IsExternalizableMaterial(a)) return "Materials";
+            if (IsExternalizableSubMesh(a)) return "SubMeshes";
+            if (IsExternalizableMesh(a)) return "Meshes";
+            if (IsExternalizableModel(a)) return "Models";
+            if (IsExternalizableAnimationClip(a)) return "Animations";
+            return "Assets";
+        }
+
+        private static string SanitizeExternalizedFileName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return "Asset";
+
+            foreach (char c in Path.GetInvalidFileNameChars())
+                name = name.Replace(c, '_');
+
+            name = name.Trim().TrimEnd('.', ' ');
+            return string.IsNullOrWhiteSpace(name) ? "Asset" : name;
+        }
+
+        private static string EnsureAssetHasName(XRAsset asset, string rootName)
+        {
+            if (!string.IsNullOrWhiteSpace(asset.Name))
+                return asset.Name!;
+
+            string shortId = asset.ID == Guid.Empty
+                ? Guid.NewGuid().ToString("N")[..8]
+                : asset.ID.ToString("N")[..8];
+            asset.Name = $"{rootName}_{asset.GetType().Name}_{shortId}";
+            return asset.Name;
+        }
+
+        private static bool HasValidExistingAssetFile(XRAsset a)
+        {
+            string? path = a.FilePath;
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+            if (!string.Equals(Path.GetExtension(path), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                return false;
+            return File.Exists(path);
+        }
+
+        // ── Phase A: Discovery ───────────────────────────────────────────
+
+        private List<XRAsset> DiscoverRelevantSubAssets(XRAsset rootAsset)
+        {
             XRAssetGraphUtility.RefreshAssetGraph(rootAsset);
 
-            var graphEmbedded = rootAsset.EmbeddedAssets
-                .Where(a => a is not null && !ReferenceEquals(a, rootAsset) && IsRelevant(a))
-                .Distinct(XRAssetReferenceEqualityComparer.Instance)
-                .ToList();
+            IEnumerable<XRAsset> fromGraph = rootAsset.EmbeddedAssets
+                .Where(a => a is not null && !ReferenceEquals(a, rootAsset) && IsExternalizable(a));
 
-            // Prefer walking the prefab hierarchy rather than the XRPrefabSource object itself.
-            // The prefab asset can indirectly reference lots of editor/runtime state; the scene tree
-            // is the stable, serialized portion we actually care about.
             object traversalRoot = rootAsset;
             if (rootAsset is XRPrefabSource prefab && prefab.RootNode is not null)
                 traversalRoot = prefab.RootNode;
 
-            var reachableRelevant = CollectReachableAssets(traversalRoot)
-                .Where(a => a is not null && !ReferenceEquals(a, rootAsset) && IsRelevant(a))
+            IEnumerable<XRAsset> fromReachable = CollectReachableAssets(traversalRoot)
+                .Where(a => a is not null && !ReferenceEquals(a, rootAsset) && IsExternalizable(a));
+
+            return fromGraph
+                .Concat(fromReachable)
                 .Distinct(XRAssetReferenceEqualityComparer.Instance)
                 .ToList();
+        }
 
-            var embedded = graphEmbedded
-                .Concat(reachableRelevant)
-                .Distinct(XRAssetReferenceEqualityComparer.Instance)
-                .OrderBy(KindOrder)
-                .ToList();
+        // ── Phase B: Pre-assign paths and touch placeholder files ────────
 
-            Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Relevant embedded assets: {0} (graph: {1}, reachable: {2})", embedded.Count, graphEmbedded.Count, reachableRelevant.Count);
+        private void PreAssignExternalizationPaths(
+            IReadOnlyList<XRAsset> discovered,
+            string prefabFolderPath,
+            string rootName,
+            List<string> createdPlaceholders)
+        {
+            if (discovered.Count == 0)
+                return;
+
+            // Track claimed filenames per kind folder so collisions are deduped deterministically.
+            var claimedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (XRAsset subAsset in discovered)
             {
-                int textures = embedded.Count(IsTexture);
-                int materials = embedded.Count(IsMaterial);
-                int meshes = embedded.Count(IsMesh);
-                int subMeshes = embedded.Count(IsSubMesh);
-                int models = embedded.Count(IsModel);
-                Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Breakdown: Model={0}, Mesh={1}, SubMesh={2}, Material={3}, Texture={4}", models, meshes, subMeshes, materials, textures);
-
-                const int sampleCount = 50;
-                for (int i = 0; i < embedded.Count && i < sampleCount; i++)
-                {
-                    var a = embedded[i];
-                    Debug.Log(ELogCategory.General, "[ExternalizeEmbedded]   - {0}: '{1}' (ID: {2})", a.GetType().Name, a.Name ?? "(unnamed)", a.ID);
-                }
-                if (embedded.Count > sampleCount)
-                    Debug.Log(ELogCategory.General, "[ExternalizeEmbedded]   ... ({0} more)", embedded.Count - sampleCount);
-            }
-
-            int exportedCount = 0;
-            int skippedCount = 0;
-            int failedCount = 0;
-            foreach (var subAsset in embedded)
-            {
-                // Important: embedded assets typically have SourceAsset == rootAsset.
-                // XRAsset.FilePath then delegates to SourceAsset.FilePath, which makes it look like
-                // the sub-asset already has a real .asset file (the prefab's file). Self-root first
-                // so FilePath reflects the sub-asset's own path, enabling correct export.
-                bool wasRerooted = false;
+                // Embedded assets typically have SourceAsset == rootAsset. Self-root first so FilePath
+                // reflects this sub-asset's own path, enabling correct reference emission later.
                 if (!ReferenceEquals(subAsset.SourceAsset, subAsset))
-                {
                     subAsset.SourceAsset = subAsset;
-                    wasRerooted = true;
-                }
 
-                if (HasExistingAssetFile(subAsset))
+                if (subAsset.ID == Guid.Empty)
+                    Debug.LogWarning($"[ExternalizeEmbedded] Sub-asset {subAsset.GetType().Name} has empty ID; references to it may fail to resolve.");
+
+                // Shared-asset case: asset already has a valid on-disk .asset file under our control.
+                if (HasValidExistingAssetFile(subAsset))
                 {
-                    skippedCount++;
-                    Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Skipping (already exists): {0} '{1}' at '{2}'", subAsset.GetType().Name, subAsset.Name ?? string.Empty, subAsset.FilePath ?? string.Empty);
+                    claimedPaths.Add(subAsset.FilePath!);
                     continue;
                 }
 
-                string displayName = EnsureHasName(subAsset, rootName);
-                string safeName = SanitizeFileName(displayName);
-
-                string kindFolder = KindFolderName(subAsset);
+                string kindFolder = KindFolderNameFor(subAsset);
                 string kindFolderPath = Path.Combine(prefabFolderPath, kindFolder);
 
-                // Ensure folder structure exists and has stable metadata.
                 Directory.CreateDirectory(prefabFolderPath);
                 Directory.CreateDirectory(kindFolderPath);
                 EnsureMetadataForAssetPath(prefabFolderPath, isDirectory: true);
                 EnsureMetadataForAssetPath(kindFolderPath, isDirectory: true);
 
+                string displayName = EnsureAssetHasName(subAsset, rootName);
+                string safeName = SanitizeExternalizedFileName(displayName);
+
                 string candidatePath = Path.Combine(kindFolderPath, $"{safeName}.{AssetExtension}");
-                string targetPath = GetUniqueAssetPath(candidatePath);
+                string targetPath = ReserveUniqueAssetPath(candidatePath, subAsset, claimedPaths);
+                claimedPaths.Add(targetPath);
 
-                Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Exporting {0} '{1}' -> '{2}' (was rerooted: {3})", subAsset.GetType().Name, displayName, targetPath, wasRerooted);
+                subAsset.FilePath = targetPath;
 
+                // Write a placeholder file so XRAssetYamlConverter.ShouldWriteReference's File.Exists
+                // check passes while nested references are emitted during Phase C.
                 try
                 {
-                    SaveAssetToPathCore(subAsset, targetPath);
-                    EnsureMetadataForAssetPath(targetPath, isDirectory: false);
-                    exportedCount++;
+                    if (!File.Exists(targetPath))
+                    {
+                        using (var _ = new FileStream(targetPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read)) { }
+                        createdPlaceholders.Add(targetPath);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    failedCount++;
-                    Debug.LogException(ex, $"[ExternalizeEmbedded] Failed exporting {subAsset.GetType().Name} '{displayName}' -> '{targetPath}'");
+                    Debug.LogException(ex, $"[ExternalizeEmbedded] Failed creating placeholder '{targetPath}' for {subAsset.GetType().Name} '{displayName}'.");
+                    throw;
                 }
             }
+        }
 
-            Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Externalization complete: {0} exported, {1} skipped (already exist), {2} failed", exportedCount, skippedCount, failedCount);
+        private static string ReserveUniqueAssetPath(string candidatePath, XRAsset subAsset, HashSet<string> claimedPaths)
+        {
+            if (!File.Exists(candidatePath) && !claimedPaths.Contains(candidatePath))
+                return candidatePath;
 
-            // Recompute to ensure the root no longer treats these as embedded.
-            XRAssetGraphUtility.RefreshAssetGraph(rootAsset);
+            string directory = Path.GetDirectoryName(candidatePath) ?? string.Empty;
+            string fileName = Path.GetFileNameWithoutExtension(candidatePath);
+            string extension = Path.GetExtension(candidatePath);
+
+            string shortId = subAsset.ID == Guid.Empty
+                ? Guid.NewGuid().ToString("N")[..8]
+                : subAsset.ID.ToString("N")[..8];
+
+            string idScopedPath = Path.Combine(directory, $"{fileName}_{shortId}{extension}");
+            if (!File.Exists(idScopedPath) && !claimedPaths.Contains(idScopedPath))
+                return idScopedPath;
+
+            // Last-resort numeric dedup.
+            for (int i = 2; i < 10000; i++)
+            {
+                string numbered = Path.Combine(directory, $"{fileName}_{shortId}_{i}{extension}");
+                if (!File.Exists(numbered) && !claimedPaths.Contains(numbered))
+                    return numbered;
+            }
+
+            throw new IOException($"Could not reserve unique asset path near '{candidatePath}'.");
+        }
+
+        private static void DeletePlaceholders(IEnumerable<string> paths)
+        {
+            foreach (string path in paths)
+            {
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        var fi = new FileInfo(path);
+                        // Only delete zero-byte files — anything larger has real content now.
+                        if (fi.Length == 0)
+                            File.Delete(path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex, $"[ExternalizeEmbedded] Failed to clean up placeholder '{path}'.");
+                }
+            }
         }
 
         private void SaveAssetToPathCore(XRAsset asset, string filePath)
@@ -613,6 +762,7 @@ namespace XREngine
                 Directory.CreateDirectory(directory);
 
             asset.FilePath = filePath;
+            MarkRecentlySaved(filePath);
             XRAssetGraphUtility.RefreshAssetGraph(asset);
             asset.SerializeTo(filePath, Serializer);
             PostSaved(asset, newAsset: true);
@@ -622,11 +772,11 @@ namespace XREngine
         {
             if (root is null)
             {
-                Debug.Log(ELogCategory.General, "[CollectReachable] Root is null, returning empty.");
+                //Debug.Log(ELogCategory.General, "[CollectReachable] Root is null, returning empty.");
                 yield break;
             }
 
-            Debug.Log(ELogCategory.General, "[CollectReachable] Starting traversal from root type: {0}", root.GetType().Name);
+            //Debug.Log(ELogCategory.General, "[CollectReachable] Starting traversal from root type: {0}", root.GetType().Name);
 
             static bool ShouldReflectInto(Type type)
             {
@@ -762,14 +912,14 @@ namespace XREngine
                 int depth = depths.TryGetValue(current, out int d) ? d : 0;
                 if (depth > maxDepth)
                 {
-                    Debug.Log(ELogCategory.General, "[CollectReachable] Max depth reached for {0}", current.GetType().Name);
+                    //Debug.Log(ELogCategory.General, "[CollectReachable] Max depth reached for {0}", current.GetType().Name);
                     continue;
                 }
 
                 if (current is XRAsset asset)
                 {
                     assetsFound++;
-                    Debug.Log(ELogCategory.General, "[CollectReachable] Found XRAsset: {0} '{1}' at depth {2}", asset.GetType().Name, asset.Name ?? "(unnamed)", depth);
+                    //Debug.Log(ELogCategory.General, "[CollectReachable] Found XRAsset: {0} '{1}' at depth {2}", asset.GetType().Name, asset.Name ?? "(unnamed)", depth);
                     yield return asset;
                 }
 
@@ -872,8 +1022,8 @@ namespace XREngine
                     }
 
                     // Always log for EventList types to help diagnose empty children issues
-                    if (type.Name.Contains("EventList") || (count > 0 && depth <= 5))
-                        Debug.Log(ELogCategory.General, "[CollectReachable] Traversing IEnumerable {0} with {1} items at depth {2}", type.Name, count, depth);
+                    //if (type.Name.Contains("EventList") || (count > 0 && depth <= 5))
+                    //    Debug.Log(ELogCategory.General, "[CollectReachable] Traversing IEnumerable {0} with {1} items at depth {2}", type.Name, count, depth);
                     continue;
                 }
 
@@ -898,7 +1048,7 @@ namespace XREngine
                 
                 if (depth <= 5 || isInterestingType)
                 {
-                    Debug.Log(ELogCategory.General, "[CollectReachable] Reflecting into {0} at depth {1}, fields: {2}", type.Name, depth, fields.Length);
+                    //Debug.Log(ELogCategory.General, "[CollectReachable] Reflecting into {0} at depth {1}, fields: {2}", type.Name, depth, fields.Length);
                     if (isInterestingType)
                     {
                         foreach (var f in fields)
@@ -906,10 +1056,10 @@ namespace XREngine
                             object? val = null;
                             try { val = f.GetValue(current); }
                             catch { }
-                            Debug.Log(ELogCategory.General, "[CollectReachable]   field '{0}' ({1}) = {2}", 
-                                f.Name, 
-                                f.FieldType.Name, 
-                                val is null ? "null" : val.GetType().Name);
+                            //Debug.Log(ELogCategory.General, "[CollectReachable]   field '{0}' ({1}) = {2}", 
+                            //    f.Name, 
+                            //    f.FieldType.Name, 
+                            //    val is null ? "null" : val.GetType().Name);
                         }
                     }
                 }
@@ -942,7 +1092,7 @@ namespace XREngine
                     {
                         int childCount = 0;
                         foreach (var _ in childList) childCount++;
-                        Debug.Log(ELogCategory.General, "[CollectReachable] Found _children field on {0} (declared on {1}) with {2} children", type.Name, field.DeclaringType?.Name ?? "<unknown>", childCount);
+                        //Debug.Log(ELogCategory.General, "[CollectReachable] Found _children field on {0} (declared on {1}) with {2} children", type.Name, field.DeclaringType?.Name ?? "<unknown>", childCount);
                     }
 
                     depths[value] = depth + 1;
@@ -950,7 +1100,7 @@ namespace XREngine
                 }
             }
 
-            Debug.Log(ELogCategory.General, "[CollectReachable] Traversal complete: visited {0} objects, found {1} XRAssets", visitedCount, assetsFound);
+            //Debug.Log(ELogCategory.General, "[CollectReachable] Traversal complete: visited {0} objects, found {1} XRAssets", visitedCount, assetsFound);
         }
 
         private sealed class XRAssetReferenceEqualityComparer : IEqualityComparer<XRAsset>

@@ -30,6 +30,7 @@ public static partial class EditorImGuiUI
     private static readonly HashSet<SceneNode> _selectedHierarchyNodesScratch = new(ReferenceEqualityComparer.Instance);
     private static readonly HashSet<SceneNode> _expandedLargeHierarchyRootsScratch = new(ReferenceEqualityComparer.Instance);
     private static SceneNode? _lastSelectedHierarchyNode;
+    private static SceneNode? _hierarchyAssetDropTargetNode;
 
     // Cache node labels (name + child count string) to avoid per-node per-frame string allocation.
     private static readonly Dictionary<SceneNode, (string? name, int childCount, string label)> _nodeLabelCache = new(ReferenceEqualityComparer.Instance);
@@ -62,6 +63,8 @@ public static partial class EditorImGuiUI
             ImGui.End();
             return;
         }
+
+        _hierarchyAssetDropTargetNode = null;
 
         DrawWorldHierarchyTab();
         DrawHierarchyDeepDuplicateConfirmation();
@@ -108,20 +111,19 @@ public static partial class EditorImGuiUI
         if (string.IsNullOrWhiteSpace(path))
             return;
 
-        SceneNode? parent = Selection.SceneNode;
+        SceneNode? parent = _hierarchyAssetDropTargetNode ?? Selection.SceneNode;
         if (TryLoadPrefabAsset(path, out var prefab))
         {
             UpdatePrefabPreview(world, parent, prefab!);
-            if (ImGui.IsMouseReleased(ImGuiMouseButton.Left) && !TryFinalizePrefabPreview(world, parent, prefab!))
-                EnqueueSceneEdit(() => SpawnPrefabNode(world, parent, prefab!));
         }
         else if (TryLoadModelAsset(path, out var model))
         {
             if (_prefabPreviewActive)
                 RevertPrefabPreview();
-            if (ImGui.IsMouseReleased(ImGuiMouseButton.Left))
-            EnqueueSceneEdit(() => SpawnModelNode(world, parent, model!, path));
         }
+
+        if (ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+            _ = TryHandleDroppedSpawnableAsset(world, parent, path);
     }
 
     private static void DrawWorldHierarchyTab()
@@ -277,6 +279,16 @@ public static partial class EditorImGuiUI
             fullFlags |= ImGuiTreeNodeFlags.Selected;
         bool nodeOpen = ImGui.TreeNodeEx("##TreeNode", fullFlags);
         bool treeItemHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem);
+        if (treeItemHovered)
+        {
+            var payload = ImGui.GetDragDropPayload();
+            unsafe
+            {
+                if ((nint)payload.NativePtr != IntPtr.Zero)
+                    _hierarchyAssetDropTargetNode = node;
+            }
+        }
+
         if (!isRenaming && ImGui.IsItemClicked(ImGuiMouseButton.Left))
             _nodePendingSelection = node;
 

@@ -1,5 +1,6 @@
 using Assimp;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Scene.Transforms;
 using XREngine.Scene;
@@ -65,6 +66,110 @@ public partial class XRMesh
 
         UtilizedBones = [.. utilizedBones];
         PopulateSkinningBuffers(boneToIndexTable, weightsPerVertex);
+    }
+
+    public bool NeedsSerializedTransformRebind()
+    {
+        if (!HasSkinning)
+            return false;
+
+        for (int i = 0; i < UtilizedBones.Length; i++)
+        {
+            TransformBase bone = UtilizedBones[i].tfm;
+            if (bone.SceneNode is null && bone.EffectiveSerializedReferenceId != Guid.Empty)
+                return true;
+        }
+
+        return false;
+    }
+
+    public bool RebindSerializedTransformReferences(TransformBase searchRoot)
+    {
+        ArgumentNullException.ThrowIfNull(searchRoot);
+
+        if (!HasSkinning)
+            return false;
+
+        Dictionary<TransformBase, TransformBase>? remap = null;
+        bool changed = false;
+
+        var reboundBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[UtilizedBones.Length];
+        for (int i = 0; i < UtilizedBones.Length; i++)
+        {
+            (TransformBase sourceBone, Matrix4x4 inverseBind) = UtilizedBones[i];
+            TransformBase resolvedBone = ResolveSerializedBoneReference(searchRoot, sourceBone);
+            reboundBones[i] = (resolvedBone, inverseBind);
+
+            if (ReferenceEquals(sourceBone, resolvedBone))
+                continue;
+
+            changed = true;
+            remap ??= new Dictionary<TransformBase, TransformBase>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            remap[sourceBone] = resolvedBone;
+        }
+
+        if (!changed || remap is null)
+            return false;
+
+        UtilizedBones = reboundBones;
+        RemapVertexWeights(remap);
+        return true;
+    }
+
+    private static TransformBase ResolveSerializedBoneReference(TransformBase searchRoot, TransformBase sourceBone)
+    {
+        if (sourceBone.SceneNode is not null)
+            return sourceBone;
+
+        Guid referenceId = sourceBone.EffectiveSerializedReferenceId;
+        if (referenceId == Guid.Empty)
+            return sourceBone;
+
+        return searchRoot.FindSelfOrDescendantBySerializedReferenceId(referenceId) ?? sourceBone;
+    }
+
+    private void RemapVertexWeights(IReadOnlyDictionary<TransformBase, TransformBase> remap)
+    {
+        if (Vertices is not { Length: > 0 })
+            return;
+
+        for (int vertexIndex = 0; vertexIndex < Vertices.Length; vertexIndex++)
+        {
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = Vertices[vertexIndex].Weights;
+            if (weights is null || weights.Count == 0)
+                continue;
+
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? remapped = null;
+            foreach (var pair in weights)
+            {
+                if (!remap.ContainsKey(pair.Key))
+                    continue;
+
+                remapped = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>(weights.Count, System.Collections.Generic.ReferenceEqualityComparer.Instance);
+                break;
+            }
+
+            if (remapped is null)
+                continue;
+
+            foreach (var pair in weights)
+            {
+                TransformBase bone = remap.TryGetValue(pair.Key, out TransformBase? reboundBone)
+                    ? reboundBone
+                    : pair.Key;
+
+                if (remapped.TryGetValue(bone, out (float weight, Matrix4x4 bindInvWorldMatrix) existing))
+                {
+                    remapped[bone] = (existing.weight + pair.Value.weight, pair.Value.bindInvWorldMatrix);
+                }
+                else
+                {
+                    remapped.Add(bone, pair.Value);
+                }
+            }
+
+            Vertices[vertexIndex].Weights = remapped;
+        }
     }
 
     private void ClearSkinningBuffers()

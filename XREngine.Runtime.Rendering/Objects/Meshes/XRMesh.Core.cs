@@ -19,6 +19,7 @@ public enum ESkinningShaderConvention : byte
     ExplicitRowMajorRowVector = 1,
 }
 
+[XRAssetInspector("XREngine.Editor.AssetEditors.XRMeshInspector")]
 [MemoryPackable(GenerateType.NoGenerate)]
 public partial class XRMesh : XRAsset
 {
@@ -37,7 +38,7 @@ public partial class XRMesh : XRAsset
     private uint _positionOffset;
     public uint PositionOffset { get => _positionOffset; set => SetField(ref _positionOffset, value); }
 
-    private uint? _normalOffset = 0;
+    private uint? _normalOffset;
     public uint? NormalOffset { get => _normalOffset; set => SetField(ref _normalOffset, value); }
 
     private uint? _tangentOffset;

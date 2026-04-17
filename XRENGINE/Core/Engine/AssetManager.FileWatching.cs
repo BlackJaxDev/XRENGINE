@@ -19,11 +19,17 @@ namespace XREngine
 
         void OnEngineFileCreated(object sender, FileSystemEventArgs args)
         {
+            if (ShouldIgnoreWatcherEvent(args.FullPath))
+                return;
+
             OnFileCreated(args);
             EngineFileCreated?.Invoke(args);
         }
         void OnGameFileCreated(object sender, FileSystemEventArgs args)
         {
+            if (ShouldIgnoreWatcherEvent(args.FullPath))
+                return;
+
             OnFileCreated(args);
             HandleMetadataCreated(args.FullPath);
             TryQueueAutoImportForThirdPartyFile(args.FullPath, reason: "created");
@@ -36,11 +42,17 @@ namespace XREngine
 
         async void OnEngineFileChanged(object sender, FileSystemEventArgs args)
         {
+            if (ShouldIgnoreWatcherEvent(args.FullPath))
+                return;
+
             await OnFileChanged(args);
             EngineFileChanged?.Invoke(args);
         }
         async void OnGameFileChanged(object sender, FileSystemEventArgs args)
         {
+            if (ShouldIgnoreWatcherEvent(args.FullPath))
+                return;
+
             await OnFileChanged(args);
             HandleMetadataChanged(args.FullPath);
             TryQueueAutoImportForThirdPartyFile(args.FullPath, reason: "changed");
@@ -48,16 +60,8 @@ namespace XREngine
         }
         private async Task OnFileChanged(FileSystemEventArgs args)
         {
-            // Skip reload if we just saved this file (within last 2 seconds)
-            if (_recentlySavedPaths.TryGetValue(args.FullPath, out var saveTime))
-            {
-                if ((DateTime.UtcNow - saveTime).TotalSeconds < 2)
-                {
-                    _recentlySavedPaths.TryRemove(args.FullPath, out _);
-                    return;
-                }
-                _recentlySavedPaths.TryRemove(args.FullPath, out _);
-            }
+            if (ShouldIgnoreWatcherEvent(args.FullPath))
+                return;
             
             Debug.Out($"File '{args.FullPath}' was changed.");
             var asset = GetAssetByPath(args.FullPath);
@@ -67,11 +71,17 @@ namespace XREngine
 
         void OnEngineFileDeleted(object sender, FileSystemEventArgs args)
         {
+            if (ShouldIgnoreWatcherEvent(args.FullPath))
+                return;
+
             OnFileDeleted(args);
             EngineFileDeleted?.Invoke(args);
         }
         void OnGameFileDeleted(object sender, FileSystemEventArgs args)
         {
+            if (ShouldIgnoreWatcherEvent(args.FullPath))
+                return;
+
             OnFileDeleted(args);
             HandleMetadataDeleted(args.FullPath);
             HandleThirdPartyImportOptionsDeleted(args.FullPath);
@@ -104,6 +114,9 @@ namespace XREngine
 
         void OnGameFileRenamed(object sender, RenamedEventArgs args)
         {
+            if (ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
+                return;
+
             OnFileRenamed(args);
             HandleMetadataRenamed(args.OldFullPath, args.FullPath);
             HandleThirdPartyImportOptionsRenamed(args.OldFullPath, args.FullPath);
@@ -112,6 +125,9 @@ namespace XREngine
         }
         void OnEngineFileRenamed(object sender, RenamedEventArgs args)
         {
+            if (ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
+                return;
+
             OnFileRenamed(args);
             EngineFileRenamed?.Invoke(args);
         }

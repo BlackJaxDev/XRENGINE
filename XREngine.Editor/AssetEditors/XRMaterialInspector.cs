@@ -16,7 +16,7 @@ namespace XREngine.Editor.AssetEditors;
 
 public sealed partial class XRMaterialInspector : IXRAssetInspector
 {
-    private const float TexturePreviewMaxEdge = 96.0f;
+    private const float TexturePreviewMaxEdge = 128.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
 
     private static readonly Dictionary<string, string> RuntimeDrivenSamplerProviders = new(StringComparer.Ordinal)
@@ -38,6 +38,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     private static readonly Vector4 EngineTagColor = new(0.40f, 0.75f, 0.95f, 1.0f);
     private static readonly Vector4 EngineActiveColor = new(0.30f, 0.85f, 0.55f, 1.0f);
     private static readonly Vector4 EngineMissingFlagColor = new(0.95f, 0.75f, 0.25f, 1.0f);
+    private static readonly Vector4 DirtyBadgeColor = new(0.95f, 0.65f, 0.2f, 1.0f);
 
     private static bool _hideEngineDrivenUniforms;
 
@@ -70,8 +71,8 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         }
 
         DrawHeader(material);
+        DrawShaderStageSection(material);
         DrawTransparencySettings(material);
-        DrawShaderList(material);
         DrawRenderOptions(material, visitedObjects);
         ImGui.Checkbox("Hide engine-driven", ref _hideEngineDrivenUniforms);
         if (ImGui.IsItemHovered())
@@ -86,11 +87,28 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     private static void DrawHeader(XRMaterial material)
     {
         ImGui.TextUnformatted(material.Name ?? "<unnamed material>");
+        ImGui.TextDisabled(material.FilePath ?? "<unsaved asset>");
+
+        if (!string.IsNullOrWhiteSpace(material.FilePath))
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Copy Path##XRMaterial"))
+                ImGui.SetClipboardText(material.FilePath);
+        }
+
+        if (material.IsDirty)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(DirtyBadgeColor, "Modified");
+        }
+
         ImGui.TextDisabled($"Render Pass: {DescribeRenderPass(material.RenderPass)}");
 
         ETransparencyMode inferred = material.InferTransparencyMode();
         if (inferred != material.TransparencyMode)
             ImGui.TextDisabled($"Inferred: {inferred} | Explicit: {material.TransparencyMode}");
+
+        ImGui.Separator();
     }
 
     private static void DrawTransparencySettings(XRMaterial material)
@@ -205,6 +223,9 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         if (!ImGui.CollapsingHeader("Uniforms", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
+        ImGui.TextDisabled("Edit local material values directly. Use Copy Anim Path to drive a parameter from an owning scene object.");
+        ImGui.Separator();
+
         var parameterLookup = BuildParameterLookup(material);
         bool anyUniforms = false;
 
@@ -239,6 +260,9 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     {
         if (!ImGui.CollapsingHeader("Uniform Blocks", ImGuiTreeNodeFlags.DefaultOpen))
             return;
+
+        ImGui.TextDisabled("Create local parameters for block members when you need explicit overrides or animation targets.");
+        ImGui.Separator();
 
         var parameterLookup = BuildParameterLookup(material);
         bool anyBlocks = false;
@@ -287,6 +311,9 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         if (!ImGui.CollapsingHeader("Texture Samplers", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
+        ImGui.TextDisabled("Click a texture field to inspect it inline. Replacing a texture also updates its sampler binding name to match the shader slot.");
+        ImGui.Separator();
+
         var samplers = CollectSamplerDefinitions(material);
         var samplerBindings = ResolveSamplerBindings(material, samplers);
         if (samplers.Count == 0)
@@ -295,13 +322,14 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             return;
         }
 
-        if (ImGui.BeginTable("SamplerTable", 5, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        if (ImGui.BeginTable("SamplerTable", 6, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
         {
             ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, 50.0f);
-            ImGui.TableSetupColumn("Sampler", ImGuiTableColumnFlags.WidthStretch, 0.25f);
+            ImGui.TableSetupColumn("Sampler", ImGuiTableColumnFlags.WidthStretch, 0.22f);
             ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 120.0f);
-            ImGui.TableSetupColumn("Texture", ImGuiTableColumnFlags.WidthStretch, 0.35f);
+            ImGui.TableSetupColumn("Texture", ImGuiTableColumnFlags.WidthStretch, 0.32f);
             ImGui.TableSetupColumn("Preview", ImGuiTableColumnFlags.WidthFixed, 140.0f);
+            ImGui.TableSetupColumn("Drive", ImGuiTableColumnFlags.WidthStretch, 0.18f);
             ImGui.TableHeadersRow();
 
             for (int i = 0; i < samplers.Count; i++)
@@ -336,6 +364,9 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
                 ImGui.TableSetColumnIndex(4);
                 DrawTexturePreviewCell(binding.PreviewTexture, TexturePreviewMaxEdge);
+
+                ImGui.TableSetColumnIndex(5);
+                DrawSamplerDriveCell(material, binding);
             }
 
             ImGui.EndTable();
@@ -371,12 +402,13 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
     private static void DrawUniformTable(IReadOnlyList<UniformEntry> uniforms, Dictionary<string, ShaderVar> parameters, XRMaterial material)
     {
-        if (!ImGui.BeginTable("UniformTable", 3, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        if (!ImGui.BeginTable("UniformTable", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
             return;
 
         ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch, 0.3f);
         ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 120.0f);
-        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.4f);
+        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.36f);
+        ImGui.TableSetupColumn("Drive", ImGuiTableColumnFlags.WidthStretch, 0.24f);
         ImGui.TableHeadersRow();
 
         foreach (var uniform in uniforms)
@@ -427,7 +459,14 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             }
             else if (param is null)
             {
-                ImGui.TextDisabled("<missing parameter>");
+                string preferredName = ResolveParameterName(uniform.Name);
+                if (ImGui.SmallButton($"Create##Uniform_{uniform.Name}"))
+                {
+                    if (TryCreateMaterialParameter(material, uniform.Type, preferredName))
+                        parameters[preferredName] = material.Parameters[^1];
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Create a local material parameter named '{preferredName}' for this uniform.");
             }
             else
             {
@@ -437,6 +476,20 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                     ImGui.SetTooltip("This value is overwritten at render time by the engine.");
                 ImGui.PopID();
             }
+
+            ImGui.TableSetColumnIndex(3);
+            if (isEngine && flagsActive && param is null)
+            {
+                ImGui.TextColored(EngineActiveColor, "Engine");
+            }
+            else if (isEngine && !flagsActive && param is null)
+            {
+                ImGui.TextColored(EngineMissingFlagColor, "Needs engine flags");
+            }
+            else
+            {
+                DrawParameterDriveCell(material, param, ResolveParameterName(uniform.Name), uniform.TypeLabel);
+            }
         }
 
         ImGui.EndTable();
@@ -444,12 +497,13 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
     private static void DrawUniformBlockMembers(UniformBlockEntry block, Dictionary<string, ShaderVar> parameters, XRMaterial material)
     {
-        if (!ImGui.BeginTable($"Block_{block.BlockName}", 3, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        if (!ImGui.BeginTable($"Block_{block.BlockName}", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
             return;
 
         ImGui.TableSetupColumn("Member", ImGuiTableColumnFlags.WidthStretch, 0.3f);
         ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 120.0f);
-        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.4f);
+        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.36f);
+        ImGui.TableSetupColumn("Drive", ImGuiTableColumnFlags.WidthStretch, 0.24f);
         ImGui.TableHeadersRow();
 
         foreach (var member in block.Members)
@@ -500,7 +554,14 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             }
             else if (param is null)
             {
-                ImGui.TextDisabled("<missing parameter>");
+                string preferredName = ResolveParameterName(member.Name, block.BlockName, block.InstanceName);
+                if (ImGui.SmallButton($"Create##Block_{preferredName}"))
+                {
+                    if (TryCreateMaterialParameter(material, member.Type, preferredName))
+                        parameters[preferredName] = material.Parameters[^1];
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Create a local material parameter named '{preferredName}' for this uniform-block member.");
             }
             else
             {
@@ -509,6 +570,20 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 if (isEngine && flagsActive && ImGui.IsItemHovered())
                     ImGui.SetTooltip("This value is overwritten at render time by the engine.");
                 ImGui.PopID();
+            }
+
+            ImGui.TableSetColumnIndex(3);
+            if (isEngine && flagsActive && param is null)
+            {
+                ImGui.TextColored(EngineActiveColor, "Engine");
+            }
+            else if (isEngine && !flagsActive && param is null)
+            {
+                ImGui.TextColored(EngineMissingFlagColor, "Needs engine flags");
+            }
+            else
+            {
+                DrawParameterDriveCell(material, param, ResolveParameterName(member.Name, block.BlockName, block.InstanceName), member.TypeLabel);
             }
         }
 
@@ -596,7 +671,10 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 {
                     Vector3 value = v3.Value;
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat3("##Vec3", ref value, 0.01f))
+                    bool changed = LooksLikeColorParameter(param.Name, param)
+                        ? ImGui.ColorEdit3("##Vec3", ref value)
+                        : ImGui.DragFloat3("##Vec3", ref value, 0.01f);
+                    if (changed)
                     {
                         v3.SetValue(value);
                         material.MarkDirty();
@@ -607,7 +685,10 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 {
                     Vector4 value = v4.Value;
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat4("##Vec4", ref value, 0.01f))
+                    bool changed = LooksLikeColorParameter(param.Name, param)
+                        ? ImGui.ColorEdit4("##Vec4", ref value)
+                        : ImGui.DragFloat4("##Vec4", ref value, 0.01f);
+                    if (changed)
                     {
                         v4.SetValue(value);
                         material.MarkDirty();
@@ -643,45 +724,37 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             return;
         }
 
-        int slotIndex = binding.MaterialTextureSlot ?? binding.FallbackTextureSlot;
         XRTexture? currentTexture = binding.AssignedTexture;
         SamplerEntry sampler = binding.Sampler;
-
-        void Assign(XRTexture? tex)
-        {
-            EnsureTextureSlots(material, slotIndex + 1);
-            material.Textures[slotIndex] = tex;
-            material.MarkDirty();
-        }
 
         switch (sampler.Kind)
         {
             case SamplerKind.Texture1D:
-                ImGuiAssetUtilities.DrawAssetField("Texture1D", currentTexture as XRTexture1D, asset => Assign(asset));
+                ImGuiAssetUtilities.DrawAssetField("Texture1D", currentTexture as XRTexture1D, asset => AssignTextureToBinding(material, binding, asset));
                 break;
             case SamplerKind.Texture1DArray:
-                ImGuiAssetUtilities.DrawAssetField("Texture1DArray", currentTexture as XRTexture1DArray, asset => Assign(asset));
+                ImGuiAssetUtilities.DrawAssetField("Texture1DArray", currentTexture as XRTexture1DArray, asset => AssignTextureToBinding(material, binding, asset));
                 break;
             case SamplerKind.Texture2D:
-                ImGuiAssetUtilities.DrawAssetField("Texture2D", currentTexture as XRTexture2D, asset => Assign(asset));
+                ImGuiAssetUtilities.DrawAssetField("Texture2D", currentTexture as XRTexture2D, asset => AssignTextureToBinding(material, binding, asset));
                 break;
             case SamplerKind.Texture2DArray:
-                ImGuiAssetUtilities.DrawAssetField("Texture2DArray", currentTexture as XRTexture2DArray, asset => Assign(asset));
+                ImGuiAssetUtilities.DrawAssetField("Texture2DArray", currentTexture as XRTexture2DArray, asset => AssignTextureToBinding(material, binding, asset));
                 break;
             case SamplerKind.Texture3D:
-                ImGuiAssetUtilities.DrawAssetField("Texture3D", currentTexture as XRTexture3D, asset => Assign(asset));
+                ImGuiAssetUtilities.DrawAssetField("Texture3D", currentTexture as XRTexture3D, asset => AssignTextureToBinding(material, binding, asset));
                 break;
             case SamplerKind.TextureCube:
-                ImGuiAssetUtilities.DrawAssetField("TextureCube", currentTexture as XRTextureCube, asset => Assign(asset));
+                ImGuiAssetUtilities.DrawAssetField("TextureCube", currentTexture as XRTextureCube, asset => AssignTextureToBinding(material, binding, asset));
                 break;
             case SamplerKind.TextureCubeArray:
-                ImGuiAssetUtilities.DrawAssetField("TextureCubeArray", currentTexture as XRTextureCubeArray, asset => Assign(asset));
+                ImGuiAssetUtilities.DrawAssetField("TextureCubeArray", currentTexture as XRTextureCubeArray, asset => AssignTextureToBinding(material, binding, asset));
                 break;
             case SamplerKind.TextureRectangle:
-                ImGuiAssetUtilities.DrawAssetField("TextureRectangle", currentTexture as XRTextureRectangle, asset => Assign(asset));
+                ImGuiAssetUtilities.DrawAssetField("TextureRectangle", currentTexture as XRTextureRectangle, asset => AssignTextureToBinding(material, binding, asset));
                 break;
             case SamplerKind.TextureBuffer:
-                ImGuiAssetUtilities.DrawAssetField("TextureBuffer", currentTexture as XRTextureBuffer, asset => Assign(asset));
+                ImGuiAssetUtilities.DrawAssetField("TextureBuffer", currentTexture as XRTextureBuffer, asset => AssignTextureToBinding(material, binding, asset));
                 break;
             default:
                 ImGui.TextDisabled("Unsupported sampler type");

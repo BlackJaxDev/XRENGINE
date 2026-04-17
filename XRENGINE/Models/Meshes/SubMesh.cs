@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Models
     /// <summary>
     /// Represents various levels of detail for a mesh that can be rendered.
     /// </summary>
+    [XRAssetInspector("XREngine.Editor.AssetEditors.SubMeshInspector")]
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class SubMesh : XRAsset
     {
@@ -48,6 +49,7 @@ namespace XREngine.Rendering.Models
             set => SetField(ref _bounds, value);
         }
 
+        [YamlTransformReference]
         public TransformBase? RootBone
         {
             get => _rootBone;
@@ -63,6 +65,7 @@ namespace XREngine.Rendering.Models
             set => SetField(ref _cullingVolumeOverride, value);
         }
 
+        [YamlTransformReference]
         public TransformBase? RootTransform { get; set; }
 
         public void DetermineRootBone()

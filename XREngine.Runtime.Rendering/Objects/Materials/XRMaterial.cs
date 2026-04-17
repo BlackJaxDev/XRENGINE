@@ -40,6 +40,15 @@ namespace XREngine.Rendering
         [Browsable(false)]
         [YamlIgnore]
         public IReadOnlyList<XRShader> VertexShaders => _vertexShaders;
+        [Browsable(false)]
+        [YamlIgnore]
+        public IReadOnlyList<XRShader> MeshShaders => _meshShaders;
+        [Browsable(false)]
+        [YamlIgnore]
+        public IReadOnlyList<XRShader> TaskShaders => _taskShaders;
+        [Browsable(false)]
+        [YamlIgnore]
+        public IReadOnlyList<XRShader> ComputeShaders => _computeShaders;
 
         private readonly List<XRShader> _fragmentShaders = [];
         private readonly List<XRShader> _geometryShaders = [];
@@ -112,6 +121,116 @@ namespace XREngine.Rendering
             get => _shaders;
             set => SetField(ref _shaders, value);
         }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public bool HasFragmentShader => _fragmentShaders.Count > 0;
+
+        public XRShader? GetShader(EShaderType shaderType)
+            => GetShaderList(shaderType).LastOrDefault();
+
+        public int GetShaderCount(EShaderType shaderType)
+            => GetShaderList(shaderType).Count;
+
+        public void SetShader(EShaderType shaderType, XRShader? shader, bool coerceShaderType = false)
+        {
+            if (shader is not null)
+            {
+                if (coerceShaderType && shader.Type != shaderType)
+                    shader.Type = shaderType;
+
+                if (shader.Type != shaderType)
+                    throw new ArgumentException($"Shader '{shader.Name ?? shader.FilePath ?? shader.GetType().Name}' is {shader.Type} but was assigned to {shaderType}.", nameof(shader));
+            }
+
+            var updated = new List<XRShader>(Shaders.Count + (shader is null ? 0 : 1));
+            bool changed = false;
+
+            foreach (XRShader existing in Shaders)
+            {
+                if (existing is null)
+                {
+                    changed = true;
+                    continue;
+                }
+
+                if (existing.Type == shaderType || ReferenceEquals(existing, shader))
+                {
+                    changed = true;
+                    continue;
+                }
+
+                updated.Add(existing);
+            }
+
+            if (shader is not null)
+            {
+                updated.Add(shader);
+                changed = true;
+            }
+
+            if (!changed)
+                return;
+
+            Shaders = new EventList<XRShader>(updated);
+            MarkDirty();
+        }
+
+        public int NormalizeShaderStages(bool preferLast = true)
+        {
+            if (Shaders.Count <= 1)
+                return 0;
+
+            var seenTypes = new HashSet<EShaderType>();
+            var normalized = new List<XRShader>(Shaders.Count);
+            int removedCount = 0;
+
+            if (preferLast)
+            {
+                for (int i = Shaders.Count - 1; i >= 0; i--)
+                {
+                    XRShader shader = Shaders[i];
+                    if (shader is null)
+                    {
+                        removedCount++;
+                        continue;
+                    }
+
+                    if (seenTypes.Add(shader.Type))
+                        normalized.Add(shader);
+                    else
+                        removedCount++;
+                }
+
+                normalized.Reverse();
+            }
+            else
+            {
+                foreach (XRShader shader in Shaders)
+                {
+                    if (shader is null)
+                    {
+                        removedCount++;
+                        continue;
+                    }
+
+                    if (seenTypes.Add(shader.Type))
+                        normalized.Add(shader);
+                    else
+                        removedCount++;
+                }
+            }
+
+            if (removedCount == 0)
+                return 0;
+
+            Shaders = new EventList<XRShader>(normalized);
+            MarkDirty();
+            return removedCount;
+        }
+
+        public void RefreshShaderState()
+            => ShadersChanged();
 
         private EMeshBillboardMode _billboardMode = EMeshBillboardMode.None;
         public EMeshBillboardMode BillboardMode
@@ -249,6 +368,20 @@ namespace XREngine.Rendering
             _shaders.PostAnythingAdded -= ShaderAdded;
             _shaders.PostAnythingRemoved -= ShaderRemoved;
         }
+
+        private IReadOnlyList<XRShader> GetShaderList(EShaderType shaderType)
+            => shaderType switch
+            {
+                EShaderType.Vertex => _vertexShaders,
+                EShaderType.Fragment => _fragmentShaders,
+                EShaderType.Geometry => _geometryShaders,
+                EShaderType.TessControl => _tessCtrlShaders,
+                EShaderType.TessEvaluation => _tessEvalShaders,
+                EShaderType.Mesh => _meshShaders,
+                EShaderType.Task => _taskShaders,
+                EShaderType.Compute => _computeShaders,
+                _ => Array.Empty<XRShader>()
+            };
 
         private void PostShadersSet()
         {

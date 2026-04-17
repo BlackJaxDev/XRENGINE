@@ -603,6 +603,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             return;
         }
 
+/*
         Debug.Rendering(
             "[RenderResourceDiag][{0}] Destroying physical resources for {1}. Reason={2}. textures={3} framebuffers={4} buffers={5} renderbuffers={6}",
             pipeline.DebugName,
@@ -612,6 +613,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             liveFrameBufferCount,
             liveBufferCount,
             liveRenderBufferCount);
+*/
     }
 
     public XRRenderBuffer? GetRenderBuffer(string name)

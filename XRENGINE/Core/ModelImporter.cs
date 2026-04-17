@@ -1655,15 +1655,29 @@ namespace XREngine
         }
 
         private bool ShouldUseNativeFbxBackend(ModelImportOptions effectiveImportOptions)
-            => Path.GetExtension(SourceFilePath).Equals(".fbx", StringComparison.OrdinalIgnoreCase)
-                && effectiveImportOptions.FbxBackend is not FbxImportBackend.AssimpLegacy;
+        {
+            if (!Path.GetExtension(SourceFilePath).Equals(".fbx", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            FbxImportBackend selected = effectiveImportOptions.FbxBackend;
+            if (selected == FbxImportBackend.Auto)
+                selected = Engine.EditorPreferences?.FbxImporterBackend ?? FbxImportBackend.AssimpLegacy;
+
+            return selected is not FbxImportBackend.AssimpLegacy;
+        }
 
         private bool ShouldUseNativeGltfBackend(ModelImportOptions effectiveImportOptions)
         {
             string extension = Path.GetExtension(SourceFilePath);
-            return (extension.Equals(".gltf", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".glb", StringComparison.OrdinalIgnoreCase))
-                && effectiveImportOptions.GltfBackend is not GltfImportBackend.AssimpLegacy;
+            if (!extension.Equals(".gltf", StringComparison.OrdinalIgnoreCase)
+                && !extension.Equals(".glb", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            GltfImportBackend selected = effectiveImportOptions.GltfBackend;
+            if (selected == GltfImportBackend.Auto)
+                selected = Engine.EditorPreferences?.GltfImporterBackend ?? GltfImportBackend.Auto;
+
+            return selected is not GltfImportBackend.AssimpLegacy;
         }
 
         private void SetAssimpConfig(ModelImportOptions importOptions)

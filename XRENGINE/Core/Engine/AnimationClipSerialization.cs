@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using MemoryPack;
@@ -126,6 +127,9 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
 
         if (value is not AnimationClip clip)
             throw new YamlException($"Expected {nameof(AnimationClip)} but got '{value.GetType()}'.");
+
+        if (TryWriteAsReference.TryEmitReference(emitter, clip))
+            return;
 
         serializer(AnimationClipSerialization.CreateModel(clip), typeof(AnimationClipSerializedModel));
     }
@@ -371,5 +375,14 @@ internal sealed partial class SerializedMethodArgumentModel
 {
     public string? TypeName { get; set; }
 
+    [YamlIgnore]
     public byte[]? Payload { get; set; }
+
+    [MemoryPackIgnore]
+    [YamlMember(Alias = "Payload")]
+    public string? PayloadBase64
+    {
+        get => Payload is null ? null : Convert.ToBase64String(Payload);
+        set => Payload = string.IsNullOrEmpty(value) ? null : Convert.FromBase64String(value);
+    }
 }

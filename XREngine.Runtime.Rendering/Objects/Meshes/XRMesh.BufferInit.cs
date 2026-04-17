@@ -13,6 +13,19 @@ public partial class XRMesh
         bool targetInterleaved = forceInterleaved ?? RuntimeRenderingHostServices.Current.UseInterleavedMeshBuffer;
         Interleaved = targetInterleaved;
 
+        InterleavedVertexBuffer = null;
+        PositionsBuffer = null;
+        NormalsBuffer = null;
+        TangentsBuffer = null;
+        ColorBuffers = [];
+        TexCoordBuffers = [];
+        InterleavedStride = 0;
+        PositionOffset = 0;
+        NormalOffset = null;
+        TangentOffset = null;
+        ColorOffset = null;
+        TexCoordOffset = null;
+
         if (targetInterleaved)
         {
             InterleavedVertexBuffer = new XRDataBuffer(ECommonBufferType.InterleavedVertex.ToString(), EBufferTarget.ArrayBuffer, false)

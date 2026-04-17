@@ -251,7 +251,7 @@ public static partial class EditorImGuiUI
                 {
                     if (_materialPreviewActive)
                         RevertMaterialPreview();
-                    UpdatePrefabPreview(world, parent: null, prefab!);
+                    UpdatePrefabPreview(world, parent: null, prefab!, GetViewportDropWorldPosition());
                 }
             }
         }
@@ -275,14 +275,15 @@ public static partial class EditorImGuiUI
                     }
                     else if (TryLoadPrefabAsset(path, out var prefab))
                     {
-                        if (!TryFinalizePrefabPreview(world, parent: null, prefab!))
-                            EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
+                        _ = TryHandleDroppedSpawnableAsset(world, parent: null, path, GetViewportDropWorldPosition());
                     }
                     else if (TryLoadModelAsset(path, out var model))
                     {
-                        if (_prefabPreviewActive)
-                            RevertPrefabPreview();
-                        EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
+                        _ = TryHandleDroppedSpawnableAsset(world, parent: null, path, GetViewportDropWorldPosition());
+                    }
+                    else
+                    {
+                        _ = TryHandleDroppedSpawnableAsset(world, parent: null, path, GetViewportDropWorldPosition());
                     }
                 }
             }

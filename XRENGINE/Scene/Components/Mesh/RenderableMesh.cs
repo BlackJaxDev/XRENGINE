@@ -21,6 +21,7 @@ using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
 
@@ -48,6 +49,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private readonly Dictionary<TransformBase, int> _trackedSkinnedBones = new();
         private readonly Dictionary<TransformBase, Matrix4x4> _relativeBoneMatrices = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        private readonly HashSet<XRMesh> _ownedRuntimeMeshes = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly object _relativeCacheLock = new();
         private readonly object _skinnedDataLock = new();
         private bool _skinnedBoundsDirty = true;
@@ -199,21 +201,25 @@ namespace XREngine.Components.Scene.Mesh
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
         {
             Component = component;
-            RootBone = mesh.RootBone;
+            TransformBase? referenceSearchRoot = GetTransformReferenceSearchRoot();
+            TransformBase? serializedRootBone = ResolveTransformReference(mesh.RootBone, referenceSearchRoot);
 
             lock (_lodsLock)
             {
                 foreach (var lod in mesh.LODs)
                 {
                     var renderer = lod.NewRenderer();
+                    renderer.Mesh = CreateRuntimeMesh(lod.Mesh, referenceSearchRoot);
                     renderer.SourceSubMeshAsset = mesh;
                     renderer.SettingUniforms += SettingUniforms;
                     void UpdateReferences(object? s, IXRPropertyChangedEventArgs e)
                     {
                         if (e.PropertyName == nameof(SubMeshLOD.Mesh))
                         {
-                            TrackBones(renderer.Mesh, false);
-                            renderer.Mesh = lod.Mesh;
+                            XRMesh? previousMesh = renderer.Mesh;
+                            TrackBones(previousMesh, false);
+                            ReleaseOwnedRuntimeMesh(previousMesh);
+                            renderer.Mesh = CreateRuntimeMesh(lod.Mesh, GetTransformReferenceSearchRoot());
                             TrackBones(renderer.Mesh, true);
                             MarkSkinnedDataDirty();
                         }
@@ -222,10 +228,12 @@ namespace XREngine.Components.Scene.Mesh
                     }
                     lod.PropertyChanged += UpdateReferences;
                     LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance));
-                    TrackBones(lod.Mesh, true);
+                    TrackBones(renderer.Mesh, true);
                 }
 
             }
+
+            RootBone = DetermineRootBoneFromRenderers() ?? serializedRootBone;
 
             _renderBoundsCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, DoRenderBounds);
             RenderInfo = RenderInfo3D.New(component, _rc = new RenderCommandMesh3D(0));
@@ -1226,7 +1234,95 @@ namespace XREngine.Components.Scene.Mesh
 
             foreach (RenderableLOD lod in lods)
                 lod.Renderer.Destroy();
+
+            foreach (XRMesh mesh in _ownedRuntimeMeshes)
+                mesh.Destroy(now: true);
+            _ownedRuntimeMeshes.Clear();
+
             GC.SuppressFinalize(this);
+        }
+
+        private TransformBase? GetTransformReferenceSearchRoot()
+        {
+            SceneNode? node = Component.SceneNode;
+            if (node is null)
+                return null;
+
+            Guid prefabAssetId = node.Prefab?.PrefabAssetId ?? Guid.Empty;
+            while (node.Parent is SceneNode parent)
+            {
+                if (prefabAssetId != Guid.Empty && (parent.Prefab?.PrefabAssetId ?? Guid.Empty) != prefabAssetId)
+                    break;
+
+                node = parent;
+            }
+
+            return node.Transform;
+        }
+
+        private static TransformBase? ResolveTransformReference(TransformBase? source, TransformBase? searchRoot)
+        {
+            if (source is null || searchRoot is null)
+                return source;
+
+            if (source.SceneNode is not null)
+                return source;
+
+            Guid referenceId = source.EffectiveSerializedReferenceId;
+            if (referenceId == Guid.Empty)
+                return source;
+
+            return searchRoot.FindSelfOrDescendantBySerializedReferenceId(referenceId) ?? source;
+        }
+
+        private XRMesh? CreateRuntimeMesh(XRMesh? sourceMesh, TransformBase? searchRoot)
+        {
+            if (sourceMesh is null || searchRoot is null || !sourceMesh.NeedsSerializedTransformRebind())
+                return sourceMesh;
+
+            XRMesh reboundMesh = sourceMesh.Clone();
+            if (!reboundMesh.RebindSerializedTransformReferences(searchRoot))
+            {
+                reboundMesh.Destroy(now: true);
+                return sourceMesh;
+            }
+
+            _ownedRuntimeMeshes.Add(reboundMesh);
+            return reboundMesh;
+        }
+
+        private void ReleaseOwnedRuntimeMesh(XRMesh? mesh)
+        {
+            if (mesh is null || !_ownedRuntimeMeshes.Remove(mesh))
+                return;
+
+            mesh.Destroy(now: true);
+        }
+
+        private TransformBase? DetermineRootBoneFromRenderers()
+        {
+            var bones = new HashSet<TransformBase>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+            lock (_lodsLock)
+            {
+                foreach (RenderableLOD lod in LODs)
+                {
+                    XRMesh? mesh = lod.Renderer.Mesh;
+                    if (mesh?.HasSkinning != true)
+                        continue;
+
+                    foreach (var (bone, _) in mesh.UtilizedBones)
+                    {
+                        if (bone is not null)
+                            bones.Add(bone);
+                    }
+                }
+            }
+
+            if (bones.Count == 0)
+                return null;
+
+            return TransformBase.FindCommonAncestor([.. bones]);
         }
 
         [RequiresDynamicCode("")]
