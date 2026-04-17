@@ -21,6 +21,66 @@ using XREngine.Animation;
 
 namespace XREngine
 {
+    internal static class AssetDeserializationContext
+    {
+        [ThreadStatic]
+        private static Stack<string>? _filePathStack;
+
+        [ThreadStatic]
+        private static Stack<bool>? _rootAssetPendingStack;
+
+        public static string? CurrentFilePath
+            => _filePathStack is { Count: > 0 } stack ? stack.Peek() : null;
+
+        public static Scope Push(string? filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                return default;
+
+            (_filePathStack ??= []).Push(Path.GetFullPath(filePath));
+            (_rootAssetPendingStack ??= []).Push(true);
+            return new Scope(active: true);
+        }
+
+        public static bool ConsumeRootAsset()
+        {
+            Stack<bool>? stack = _rootAssetPendingStack;
+            if (stack is null || stack.Count == 0 || !stack.Peek())
+                return false;
+
+            _ = stack.Pop();
+            stack.Push(false);
+            return true;
+        }
+
+        internal readonly struct Scope(bool active) : IDisposable
+        {
+            private readonly bool _active = active;
+
+            public void Dispose()
+            {
+                if (!_active)
+                    return;
+
+                Stack<string>? stack = _filePathStack;
+                if (stack is null || stack.Count == 0)
+                    return;
+
+                stack.Pop();
+                if (stack.Count == 0)
+                    _filePathStack = null;
+
+                Stack<bool>? rootStack = _rootAssetPendingStack;
+                if (rootStack is null || rootStack.Count == 0)
+                    return;
+
+                rootStack.Pop();
+                if (rootStack.Count == 0)
+                    _rootAssetPendingStack = null;
+            }
+        }
+    }
+
     public partial class AssetManager
     {
         private object GetAssetLoadGate(string filePath)
@@ -323,6 +383,7 @@ namespace XREngine
             }
 
             string contents = Encoding.UTF8.GetString(response.Payload);
+            using var scope = AssetDeserializationContext.Push(filePath);
             var asset = Deserializer.Deserialize<T>(contents);
             PostLoaded(filePath, asset);
             return asset;
@@ -475,6 +536,7 @@ namespace XREngine
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(fs);
+            using var scope = AssetDeserializationContext.Push(filePath);
             return Deserializer.Deserialize<T>(reader);
         }
 
@@ -484,6 +546,7 @@ namespace XREngine
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(fs);
+            using var scope = AssetDeserializationContext.Push(filePath);
             return Deserializer.Deserialize(reader, type) as XRAsset;
         }
 
@@ -496,6 +559,7 @@ namespace XREngine
             {
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var reader = new StreamReader(fs);
+                using var scope = AssetDeserializationContext.Push(filePath);
                 return Deserializer.Deserialize<T>(reader);
             }).ConfigureAwait(false);
         }
@@ -509,6 +573,7 @@ namespace XREngine
             {
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var reader = new StreamReader(fs);
+                using var scope = AssetDeserializationContext.Push(filePath);
                 return Deserializer.Deserialize(reader, type) as XRAsset;
             }).ConfigureAwait(false);
         }
