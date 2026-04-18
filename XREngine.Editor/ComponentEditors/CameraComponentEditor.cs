@@ -24,12 +24,27 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 {
     private const float PreviewMaxEdge = 256.0f;
     private const float PreviewMinEdge = 96.0f;
+    private const string TonemappingStageKey = "tonemapping";
     private const int CascadePreviewsPerRow = 2;
 
     /// <summary>
     /// Active camera transitions keyed by camera instance.
     /// </summary>
     private static readonly ConcurrentDictionary<XRCamera, CameraProjectionTransition> _activeTransitions = new();
+
+    private readonly struct PostProcessStageTabEntry
+    {
+        public PostProcessStageTabEntry(PostProcessCategoryDescriptor? category, PostProcessStageDescriptor descriptor, PostProcessStageState state)
+        {
+            Category = category;
+            Descriptor = descriptor;
+            State = state;
+        }
+
+        public PostProcessCategoryDescriptor? Category { get; }
+        public PostProcessStageDescriptor Descriptor { get; }
+        public PostProcessStageState State { get; }
+    }
     private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> CascadePreviewViews = new();
     private static readonly List<XRViewport> BoundViewportScratch = [];
 
@@ -1209,17 +1224,22 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     {
         using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.PostProcessing");
 
-        if (!ImGui.CollapsingHeader("Post Processing", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
         var pipeline = ResolvePostProcessingEditorPipeline(component.Camera);
         var schema = pipeline.PostProcessSchema;
         var state = component.Camera.GetPostProcessState(pipeline);
 
         ImGui.PushID("PostProcessingPanel");
+        ImGui.TextDisabled($"Pipeline: {pipeline.DebugName}");
+
+        if (!schema.IsEmpty)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled($"Stages: {schema.StagesByKey.Count}");
+        }
 
         if (schema.IsEmpty || state is null)
         {
+            ImGui.Separator();
             ImGui.TextDisabled($"Pipeline '{pipeline.DebugName}' exposes no post-processing schema.");
             DrawAdvancedPostProcessingInspector(state, visited);
         }
@@ -1227,7 +1247,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         {
             DrawTemporalControlsStatus(component);
             ImGui.Separator();
-            DrawSchemaCategories(schema, state, component);
+            DrawSchemaStageTabs(schema, state, component);
+            ImGui.Spacing();
             DrawAdvancedPostProcessingInspector(state, visited);
         }
 
@@ -1240,49 +1261,147 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             .FirstOrDefault(pipeline => pipeline is not null)
             ?? camera.RenderPipeline;
 
-    private static void DrawSchemaCategories(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, CameraComponent component)
+    private static void DrawSchemaStageTabs(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, CameraComponent component)
     {
-        bool effectiveHDR = component.Camera.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+        List<PostProcessStageTabEntry> stageTabs = BuildOrderedStageTabs(schema, state);
+        if (stageTabs.Count == 0)
+        {
+            ImGui.TextDisabled("No schema-backed post-processing stages are available for this camera.");
+            return;
+        }
+
+        const ImGuiTabBarFlags tabFlags = ImGuiTabBarFlags.FittingPolicyScroll | ImGuiTabBarFlags.Reorderable;
+        if (!ImGui.BeginTabBar("PostProcessStages", tabFlags))
+            return;
+
+        foreach (var stageTab in stageTabs)
+        {
+            if (!ImGui.BeginTabItem(stageTab.Descriptor.DisplayName))
+                continue;
+
+            DrawSchemaStageTab(stageTab, component);
+            ImGui.EndTabItem();
+        }
+
+        ImGui.EndTabBar();
+    }
+
+    private static List<PostProcessStageTabEntry> BuildOrderedStageTabs(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state)
+    {
+        List<PostProcessStageTabEntry> stageTabs = new(schema.StagesByKey.Count);
+        HashSet<string> addedStageKeys = new(StringComparer.OrdinalIgnoreCase);
 
         foreach (var category in schema.Categories)
         {
-            if (!ImGui.CollapsingHeader(category.DisplayName, ImGuiTreeNodeFlags.DefaultOpen))
-                continue;
-
-            if (!string.IsNullOrWhiteSpace(category.Description))
-                ImGui.TextDisabled(category.Description);
-
-            ImGui.PushID(category.Key);
-
             foreach (var stageKey in category.StageKeys)
             {
-                if (!schema.TryGetStage(stageKey, out PostProcessStageDescriptor? stage) ||
-                    stage is null ||
-                    !state.TryGetStage(stageKey, out PostProcessStageState? stageState) ||
-                    stageState is null)
+                if (!TryCreateStageTabEntry(schema, state, stageKey, category, out PostProcessStageTabEntry stageTab))
                     continue;
 
-                // Hide the tonemapping stage when HDR output is active
-                if (effectiveHDR && stageKey == "tonemapping")
-                {
-                    ImGui.TextDisabled("Tonemapping is disabled (HDR output active).");
+                if (!addedStageKeys.Add(stageTab.Descriptor.Key))
                     continue;
-                }
 
-                DrawSchemaStage(stage, stageState, component);
+                stageTabs.Add(stageTab);
             }
+        }
 
-            ImGui.PopID();
+        foreach (var stage in schema.StagesByKey.Values)
+        {
+            if (!addedStageKeys.Add(stage.Key))
+                continue;
+
+            if (!state.TryGetStage(stage.Key, out PostProcessStageState? stageState) || stageState is null)
+                continue;
+
+            stageTabs.Add(new PostProcessStageTabEntry(null, stage, stageState));
+        }
+
+        return stageTabs;
+    }
+
+    private static bool TryCreateStageTabEntry(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, string stageKey, PostProcessCategoryDescriptor? category, out PostProcessStageTabEntry stageTab)
+    {
+        if (!schema.TryGetStage(stageKey, out PostProcessStageDescriptor? stage) ||
+            stage is null ||
+            !state.TryGetStage(stageKey, out PostProcessStageState? stageState) ||
+            stageState is null)
+        {
+            stageTab = default;
+            return false;
+        }
+
+        stageTab = new PostProcessStageTabEntry(category, stage, stageState);
+        return true;
+    }
+
+    private static void DrawSchemaStageTab(PostProcessStageTabEntry stageTab, CameraComponent component)
+    {
+        bool effectiveHDR = component.Camera.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+        bool tonemappingDisabled = effectiveHDR && stageTab.Descriptor.Key.Equals(TonemappingStageKey, StringComparison.OrdinalIgnoreCase);
+
+        ImGui.PushID(stageTab.Descriptor.Key);
+
+        if (stageTab.Category is { } category)
+            ImGui.TextDisabled($"Category: {category.DisplayName}");
+
+        XRBase? undoTarget = (stageTab.State.BackingInstance as XRBase) ?? component;
+        if (ImGui.SmallButton("Reset To Defaults"))
+            ResetSchemaStageToDefaults(stageTab.Descriptor, stageTab.State, undoTarget);
+
+        if (!string.IsNullOrWhiteSpace(stageTab.Category?.Description))
+            ImGui.TextDisabled(stageTab.Category.Description);
+
+        if (tonemappingDisabled)
+            ImGui.TextColored(WarningTextColor, "Tonemapping is bypassed while HDR output is active.");
+
+        using (new ImGuiDisabledScope(tonemappingDisabled))
+            DrawSchemaStage(stageTab.Descriptor, stageTab.State, component, drawStageHeader: false);
+
+        ImGui.PopID();
+    }
+
+    private static void ResetSchemaStageToDefaults(PostProcessStageDescriptor stage, PostProcessStageState stageState, XRBase? undoTarget)
+    {
+        using var _ = Undo.TrackChange($"Reset {stage.DisplayName}", undoTarget);
+
+        foreach (var param in stage.Parameters)
+            ResetSchemaParameterToDefault(param, stageState);
+    }
+
+    private static void ResetSchemaParameterToDefault(PostProcessParameterDescriptor param, PostProcessStageState stageState)
+    {
+        switch (param.Kind)
+        {
+            case PostProcessParameterKind.Bool:
+                stageState.SetValue(param.Name, ExtractDefault(param, false));
+                break;
+            case PostProcessParameterKind.Int:
+                stageState.SetValue(param.Name, ExtractDefault(param, 0));
+                break;
+            case PostProcessParameterKind.Float:
+                stageState.SetValue(param.Name, ExtractDefault(param, 0.0f));
+                break;
+            case PostProcessParameterKind.Vector2:
+                stageState.SetValue(param.Name, ExtractDefault(param, Vector2.Zero));
+                break;
+            case PostProcessParameterKind.Vector3:
+                stageState.SetValue(param.Name, ExtractDefault(param, Vector3.Zero));
+                break;
+            case PostProcessParameterKind.Vector4:
+                stageState.SetValue(param.Name, ExtractDefault(param, Vector4.Zero));
+                break;
         }
     }
 
-    private static void DrawSchemaStage(PostProcessStageDescriptor stage, PostProcessStageState stageState, CameraComponent component)
+    private static void DrawSchemaStage(PostProcessStageDescriptor stage, PostProcessStageState stageState, CameraComponent component, bool drawStageHeader = true)
     {
         if (stage.Parameters.Count == 0)
             return;
 
         ImGui.PushID(stage.Key);
-        ImGui.TextDisabled($"— {stage.DisplayName} —");
+
+        if (drawStageHeader)
+            ImGui.SeparatorText(stage.DisplayName);
 
         XRBase? undoTarget = (stageState.BackingInstance as XRBase) ?? component;
 

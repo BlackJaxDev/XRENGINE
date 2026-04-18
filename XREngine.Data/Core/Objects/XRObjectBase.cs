@@ -13,11 +13,18 @@ namespace XREngine.Data.Core
     [MemoryPackable(GenerateType.NoGenerate)]
     public abstract partial class XRObjectBase : XRBase, IDisposable, IPoolable
     {
+        [ThreadStatic]
+        private static int _suppressObjectCacheRegistrationDepth;
+
         [Browsable(false)]
         public Guid ID { get; internal set; } = Guid.NewGuid();
         
         private static ConcurrentDictionary<Guid, XRObjectBase> ObjectsCacheInternal { get; } = [];
         public static IReadOnlyDictionary<Guid, XRObjectBase> ObjectsCache => ObjectsCacheInternal;
+        private bool _isRegisteredInObjectCache;
+
+        public static IDisposable SuppressObjectCacheRegistration()
+            => new ObjectCacheRegistrationSuppressionScope();
 
         public static void DestroyAllObjects()
         {
@@ -46,6 +53,12 @@ namespace XREngine.Data.Core
             ID = Guid.NewGuid();
             IsDestroyed = false;
 
+            if (_suppressObjectCacheRegistrationDepth > 0)
+            {
+                _isRegisteredInObjectCache = false;
+                return;
+            }
+
             int tries = 0;
             while (ObjectsCacheInternal.ContainsKey(ID))
             {
@@ -54,7 +67,7 @@ namespace XREngine.Data.Core
                 if (tries++ > 10)
                     throw new Exception("Failed to generate a unique ID for an object."); //Highly unlikely
             }
-            ObjectsCacheInternal.TryAdd(ID, this);
+                    _isRegisteredInObjectCache = ObjectsCacheInternal.TryAdd(ID, this);
         }
 
         /// <summary>
@@ -114,7 +127,11 @@ namespace XREngine.Data.Core
                 return;
 
             OnDestroying();
-            ObjectsCacheInternal.Remove(ID, out _);
+            if (_isRegisteredInObjectCache)
+            {
+                ObjectsCacheInternal.Remove(ID, out _);
+                _isRegisteredInObjectCache = false;
+            }
             IsDestroyed = true;
 
             Destroyed?.Invoke(this);
@@ -147,6 +164,15 @@ namespace XREngine.Data.Core
         public virtual void OnPoolableDestroyed()
         {
             Destroy();
+        }
+
+        private readonly struct ObjectCacheRegistrationSuppressionScope : IDisposable
+        {
+            public ObjectCacheRegistrationSuppressionScope()
+                => _suppressObjectCacheRegistrationDepth++;
+
+            public void Dispose()
+                => _suppressObjectCacheRegistrationDepth--;
         }
     }
 }

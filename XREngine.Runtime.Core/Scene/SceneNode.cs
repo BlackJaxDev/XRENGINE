@@ -237,7 +237,7 @@ namespace XREngine.Scene
         /// <remarks>
         /// This property is used by the YAML serializer for persistence. Do not use directly.
         /// </remarks>
-        [YamlMember(Order = 0)]
+        [YamlMember(Order = 0, Alias = "Components")]
         public EventList<XRComponent> ComponentsSerialized
         {
             get => _components;
@@ -313,6 +313,7 @@ namespace XREngine.Scene
         /// The components attached to this scene node.
         /// Use AddComponent&lt;T&gt;() and RemoveComponent&lt;T&gt;() or XRComponent.Destroy() to add and remove components.
         /// </summary>
+        [YamlIgnore]
         public IEventListReadOnly<XRComponent> Components => ComponentsInternal;
 
         /// <summary>

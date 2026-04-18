@@ -1,7 +1,7 @@
-﻿using Assimp;
+using Assimp;
 using Assimp.Configs;
 using Assimp.Unmanaged;
-using Extensions;
+using XREngine.Extensions;
 using ImageMagick;
 using System;
 using System.Collections.Concurrent;
@@ -872,7 +872,7 @@ namespace XREngine
             bool hasRoughness = roughness is not null;
             bool hasEmissive = emissive is not null;
 
-            // ── Diagnostic dump (TEMPORARY) ────────────────────────────
+            // -- Diagnostic dump (TEMPORARY) ----------------------------
             {
                 var sb = new System.Text.StringBuilder();
                 sb.Append($"[MakeMaterialDeferred] '{name}' transparency={transparencyMode} slots=[");
@@ -885,7 +885,7 @@ namespace XREngine
                 sb.Append($" flags: N={hasNormal} S={hasSpecular} A={hasAlphaMask} M={hasMetallic} R={hasRoughness} E={hasEmissive}");
                 LogImportDiagnostic(sb.ToString());
             }
-            // ── End diagnostic dump ────────────────────────────────────
+            // -- End diagnostic dump ------------------------------------
 
             mat.Shaders.Clear();
 
@@ -1041,13 +1041,13 @@ namespace XREngine
 
             mat.Name = name;
 
-            // ── Diagnostic dump (TEMPORARY) ────────────────────────────
+            // -- Diagnostic dump (TEMPORARY) ----------------------------
             {
                 string shader = mat.Shaders.Count > 0 ? mat.Shaders[0]?.Name ?? "(null)" : "(none)";
                 string texNames = string.Join(", ", (mat.Textures ?? []).Select((t, i) => $"[{i}]={t?.Name ?? "NULL"}"));
-                LogImportDiagnostic($"[MakeMaterialDeferred] '{name}' → shader={shader} textures=({texNames}) pass={mat.RenderPass}");
+                LogImportDiagnostic($"[MakeMaterialDeferred] '{name}' ? shader={shader} textures=({texNames}) pass={mat.RenderPass}");
             }
-            // ── End diagnostic dump ────────────────────────────────────
+            // -- End diagnostic dump ------------------------------------
 
             if (!transp)
             {
@@ -1661,9 +1661,9 @@ namespace XREngine
 
             FbxImportBackend selected = effectiveImportOptions.FbxBackend;
             if (selected == FbxImportBackend.Auto)
-                selected = Engine.EditorPreferences?.FbxImporterBackend ?? FbxImportBackend.AssimpLegacy;
+                selected = Engine.EditorPreferences?.FbxImporterBackend ?? FbxImportBackend.Assimp;
 
-            return selected is not FbxImportBackend.AssimpLegacy;
+            return selected is not FbxImportBackend.Assimp;
         }
 
         private bool ShouldUseNativeGltfBackend(ModelImportOptions effectiveImportOptions)
@@ -1677,7 +1677,7 @@ namespace XREngine
             if (selected == GltfImportBackend.Auto)
                 selected = Engine.EditorPreferences?.GltfImporterBackend ?? GltfImportBackend.Auto;
 
-            return selected is not GltfImportBackend.AssimpLegacy;
+            return selected is not GltfImportBackend.Assimp;
         }
 
         private void SetAssimpConfig(ModelImportOptions importOptions)

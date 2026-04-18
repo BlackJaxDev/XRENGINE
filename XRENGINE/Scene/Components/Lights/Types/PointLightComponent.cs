@@ -1,4 +1,4 @@
-ï»¿using Extensions;
+using XREngine.Extensions;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components;
@@ -70,7 +70,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             if (_useGeometryShader)
             {
-                // GS renders all 6 cubemap faces per draw call â€” one viewport
+                // GS renders all 6 cubemap faces per draw call — one viewport
                 // with the influence sphere captures objects visible from any face.
                 _viewports[0].CollectVisible(
                     collectMirrors: false,
@@ -316,7 +316,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 for (int i = 0; i < ShadowCameras.Length; ++i)
                 {
                     var cam = ShadowCameras[i];
-                    // Precompute VP on CPU â€” avoids per-vertex inverse() in the geometry shader.
+                    // Precompute VP on CPU — avoids per-vertex inverse() in the geometry shader.
                     Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
                     Matrix4x4 vp = viewMatrix * cam.ProjectionMatrix;
                     program.Uniform($"ViewProjectionMatrices[{i}]", vp);

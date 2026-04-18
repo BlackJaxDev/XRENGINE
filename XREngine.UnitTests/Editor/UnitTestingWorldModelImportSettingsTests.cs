@@ -72,8 +72,8 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model, []);
 
         options.ShouldNotBeNull();
-        options!.FbxBackend.ShouldBe(FbxImportBackend.AssimpLegacy);
-        options.GltfBackend.ShouldBe(GltfImportBackend.AssimpLegacy);
+        options!.FbxBackend.ShouldBe(FbxImportBackend.Assimp);
+        options.GltfBackend.ShouldBe(GltfImportBackend.Assimp);
         options.PostProcessSteps.ShouldBe(model.ImportFlags);
         options.ScaleConversion.ShouldBe(model.Scale);
         options.ZUp.ShouldBeTrue();

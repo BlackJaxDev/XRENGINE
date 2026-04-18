@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using XREngine.Core;
 using XREngine.Core.Files;
 using YamlDotNet.Core;
@@ -62,6 +63,16 @@ namespace XREngine
                 }
 
                 return innerDeserializer.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
+            }
+            catch (YamlException ex)
+            {
+                string parserEvent = reader.Current?.GetType().Name ?? "<null>";
+                string expectedTypeName = expectedType.FullName ?? expectedType.Name;
+                throw new YamlException(
+                    ex.Start,
+                    ex.End,
+                    $"{ex.Message} [ExpectedType={expectedTypeName}, ParserEvent={parserEvent}, Depth={_depth}]",
+                    ex);
             }
             finally
             {
@@ -127,7 +138,7 @@ namespace XREngine
                 // Nested XRAsset - probe the exact { ID: guid } shape without consuming the full node.
                 // Replaying an entire subtree breaks YamlDotNet alias resolution because the replay parser
                 // does not carry the original parser's anchor context.
-                if (TryDeserializeNestedReferenceMapping(reader, expectedType, out value, out var deferredParser))
+                if (TryDeserializeNestedReferenceMapping(reader, expectedType, out value, out var deferredParser, out Type? replayType))
                 {
                     return true;
                 }
@@ -135,7 +146,7 @@ namespace XREngine
                 _isReplaying = true;
                 try
                 {
-                    value = nestedObjectDeserializer(deferredParser!, expectedType);
+                    value = nestedObjectDeserializer(deferredParser!, replayType ?? expectedType);
                 }
                 finally
                 {
@@ -176,7 +187,21 @@ namespace XREngine
             if (TryResolveAssetPathFromScalar(candidate, out var resolvedPath))
             {
                 reader.Consume<Scalar>();
-                value = Engine.Assets.LoadImmediate(resolvedPath, expectedType);
+                if (DeferredAssetReferenceContext.TryDeferAssetLoad(resolvedPath, expectedType, out XRAsset? deferredAsset))
+                {
+                    value = deferredAsset;
+                    return true;
+                }
+
+                AssetLoadProgressContext.BeginReferencedAssetLoad(resolvedPath, expectedType);
+                try
+                {
+                    value = Engine.Assets.LoadImmediate(resolvedPath, expectedType);
+                }
+                finally
+                {
+                    AssetLoadProgressContext.CompleteReferencedAssetLoad(resolvedPath, expectedType);
+                }
                 return true;
             }
 
@@ -237,10 +262,15 @@ namespace XREngine
             return false;
         }
 
-        private static bool TryDeserializeNestedReferenceMapping(IParser reader, Type expectedType, out object? value, out IParser? deferredParser)
+        private static bool TryDeserializeNestedReferenceMapping(IParser reader,
+                                                                 Type expectedType,
+                                                                 out object? value,
+                                                                 out IParser? deferredParser,
+                                                                 out Type? replayType)
         {
             value = null;
             deferredParser = null;
+            replayType = null;
 
             List<ParsingEvent> consumedEvents = [];
 
@@ -256,6 +286,24 @@ namespace XREngine
             }
 
             consumedEvents.Add(keyScalar);
+
+            if ((expectedType.IsAbstract || expectedType.IsInterface)
+                && string.Equals(keyScalar.Value, PolymorphicTypeGraphVisitor.TypeKey, StringComparison.Ordinal))
+            {
+                if (!reader.TryConsume<Scalar>(out var typeScalar))
+                {
+                    deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                    return false;
+                }
+
+                consumedEvents.Add(typeScalar);
+                if (!TryResolveNestedAssetDiscriminator(typeScalar.Value, expectedType, out replayType))
+                    throw new YamlException(
+                        $"XRAsset polymorphic discriminator '{typeScalar.Value}' could not be resolved for '{expectedType.FullName}'.");
+
+                deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                return false;
+            }
 
             if (!string.Equals(keyScalar.Value, "ID", StringComparison.OrdinalIgnoreCase))
             {
@@ -287,6 +335,27 @@ namespace XREngine
             return true;
         }
 
+        private static bool TryResolveNestedAssetDiscriminator(string? typeName, Type expectedType, out Type? concreteType)
+        {
+            concreteType = null;
+            if (string.IsNullOrWhiteSpace(typeName))
+                return false;
+
+            string rewrittenTypeName = XRTypeRedirectRegistry.RewriteTypeName(typeName);
+            concreteType = AotRuntimeMetadataStore.ResolveType(rewrittenTypeName);
+            if (concreteType is null && !XRRuntimeEnvironment.IsAotRuntimeBuild)
+            {
+                foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    concreteType = assembly.GetType(rewrittenTypeName, throwOnError: false, ignoreCase: false);
+                    if (concreteType is not null)
+                        break;
+                }
+            }
+
+            return concreteType is not null && expectedType.IsAssignableFrom(concreteType);
+        }
+
         private static XRAsset? ResolveExternalReference(Guid guid, Type expectedType)
         {
             // First prefer already-loaded assets.
@@ -310,7 +379,18 @@ namespace XREngine
                     return null;
             }
 
-            return Engine.Assets.LoadImmediate(assetPath, loadType);
+            if (DeferredAssetReferenceContext.TryDeferAssetLoad(assetPath, loadType, out XRAsset? deferredAsset))
+                return deferredAsset;
+
+            AssetLoadProgressContext.BeginReferencedAssetLoad(assetPath, loadType);
+            try
+            {
+                return Engine.Assets.LoadImmediate(assetPath, loadType);
+            }
+            finally
+            {
+                AssetLoadProgressContext.CompleteReferencedAssetLoad(assetPath, loadType);
+            }
         }
 
         private static bool TryResolveConcreteAssetType(string assetPath, out Type type)

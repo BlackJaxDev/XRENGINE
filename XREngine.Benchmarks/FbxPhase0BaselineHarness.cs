@@ -6,6 +6,8 @@ using System.Text;
 using System.Text.Json;
 using XREngine.Fbx;
 
+namespace XREngine.Benchmarks;
+
 public static class FbxPhase0BaselineHarness
 {
     public static int Run(string[] args)

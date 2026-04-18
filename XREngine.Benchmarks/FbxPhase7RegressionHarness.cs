@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using XREngine.Fbx;
 
+namespace XREngine.Benchmarks;
+
 public static class FbxPhase7RegressionHarness
 {
     private static readonly IReadOnlyDictionary<string, FbxPhase7Budget> Budgets = new Dictionary<string, FbxPhase7Budget>(StringComparer.Ordinal)

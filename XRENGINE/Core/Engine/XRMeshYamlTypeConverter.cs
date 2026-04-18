@@ -51,7 +51,10 @@ public sealed class XRMeshYamlTypeConverter : IYamlTypeConverter
         if (!Engine.Assets.TryResolveAssetPathById(id, referenceAssetPath, out string? assetPath) || string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
             return null;
 
-        return Engine.Assets.LoadImmediate(assetPath, typeof(XRMesh)) as XRMesh;
+        if (DeferredAssetReferenceContext.TryDeferAssetLoad(assetPath, typeof(XRMesh), out XRAsset? deferredAsset))
+            return deferredAsset as XRMesh;
+
+        return Engine.Assets.LoadImmediate<XRMesh>(assetPath);
     }
 
     public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)

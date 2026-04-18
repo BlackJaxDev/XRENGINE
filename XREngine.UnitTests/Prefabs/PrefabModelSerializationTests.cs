@@ -4,10 +4,12 @@ using System.IO;
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Engine;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -213,6 +215,72 @@ public sealed class PrefabModelSerializationTests
     }
 
     [Test]
+    public async Task PreparePrefabPartialLoadAsync_BuildsHierarchyWithoutLoadingExternalModelOrRegisteringTempObjects()
+    {
+        string assetsRoot = Engine.Assets.GameAssetsPath;
+        string metadataRoot = Engine.Assets.GameMetadataPath.ShouldNotBeNull();
+        string relativeFolder = Path.Combine("_PrefabModelSerializationTests", Guid.NewGuid().ToString("N"));
+        string assetDirectory = Path.Combine(assetsRoot, relativeFolder);
+        string metadataDirectory = Path.Combine(metadataRoot, relativeFolder);
+
+        Directory.CreateDirectory(assetDirectory);
+
+        string modelPath = Path.Combine(assetDirectory, "ExternalModel.asset");
+        string prefabPath = Path.Combine(assetDirectory, "PartialPrefab.asset");
+
+        try
+        {
+            Model externalModel = CreateTriangleModel(modelName: "PartialLoadModel", subMeshName: "PartialLoadSubMesh");
+            externalModel.FilePath = modelPath;
+            externalModel.SourceAsset = externalModel;
+
+            XRAssetGraphUtility.RefreshAssetGraph(externalModel);
+            externalModel.SerializeTo(modelPath, AssetManager.Serializer);
+            WriteMetadataForGameAsset(modelPath, externalModel.ID);
+
+            XRPrefabSource prefab = new()
+            {
+                RootNode = CreateSceneNodeWithModel(externalModel),
+                FilePath = prefabPath,
+            };
+            prefab.SourceAsset = prefab;
+
+            XRAssetGraphUtility.RefreshAssetGraph(prefab);
+            prefab.SerializeTo(prefabPath, AssetManager.Serializer);
+            WriteMetadataForGameAsset(prefabPath, prefab.ID);
+
+            ClearAssetCaches();
+
+            PrefabPartialLoadPlan partialPlan = (await Engine.Assets.PreparePrefabPartialLoadAsync(prefabPath)).ShouldNotBeNull();
+
+            partialPlan.ExternalReferences.Count.ShouldBe(1);
+            partialPlan.ExternalReferences[0].AssetPath.ShouldBe(Path.GetFullPath(modelPath));
+            partialPlan.ExternalReferences[0].AssetType.ShouldBe(typeof(Model));
+
+            XRPrefabSource partialPrefab = partialPlan.PartialPrefab;
+            partialPrefab.RootNode.ShouldNotBeNull();
+            partialPrefab.FilePath.ShouldBe(Path.GetFullPath(prefabPath));
+            if (XRObjectBase.ObjectsCache.TryGetValue(partialPrefab.ID, out XRObjectBase? cachedPrefabObject))
+                ReferenceEquals(cachedPrefabObject, partialPrefab).ShouldBeFalse();
+            if (XRObjectBase.ObjectsCache.TryGetValue(partialPrefab.RootNode.ID, out XRObjectBase? cachedRootNodeObject))
+                ReferenceEquals(cachedRootNodeObject, partialPrefab.RootNode).ShouldBeFalse();
+
+            ModelComponent component = partialPrefab.RootNode.GetComponent<ModelComponent>().ShouldNotBeNull();
+            if (component.Model is not null)
+                component.Model.Meshes.Count.ShouldBe(0);
+
+            Engine.Assets.TryGetAssetByPath(modelPath, out XRAsset? loadedModel).ShouldBeFalse();
+            loadedModel.ShouldBeNull();
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(assetDirectory);
+            DeleteDirectoryIfExists(metadataDirectory);
+            ClearAssetCaches();
+        }
+    }
+
+    [Test]
     public void ModelYaml_ExternalSubMesh_EmitsIdReferenceInsteadOfInlineBody()
     {
         string assetsRoot = Engine.Assets.GameAssetsPath;
@@ -348,10 +416,12 @@ public sealed class PrefabModelSerializationTests
         referenceYaml.ShouldContain($"RootTransform:{Environment.NewLine}  ID: {root.Transform.EffectiveSerializedReferenceId}");
 
         SceneNode freshNode = new("FreshTransformNode");
+        ((Transform)freshNode.Transform).Translation = new Vector3(1.0f, 2.0f, 3.0f);
         string yaml = AssetManager.Serializer.Serialize(freshNode);
 
-        yaml.ShouldContain("$value:");
-        yaml.ShouldNotContain($"Transform:{Environment.NewLine}  ID: {freshNode.Transform.EffectiveSerializedReferenceId}");
+        yaml.ShouldNotContain("$value:");
+        yaml.ShouldContain($"Transform:{Environment.NewLine}  ID: {freshNode.Transform.EffectiveSerializedReferenceId}");
+        yaml.ShouldContain("Translation:");
     }
 
         [Test]
@@ -379,6 +449,231 @@ $value:
                 transform.Name.ShouldBe("ComplexMetadataTransform");
                 transform.Translation.ShouldBe(new Vector3(1.0f, 2.0f, 3.0f));
         }
+
+        [Test]
+        public void TransformYaml_WrappedNestedCameraTransform_DoesNotConsumeSiblingProperties()
+        {
+                string transformTypeName = typeof(Transform).AssemblyQualifiedName.ShouldNotBeNull();
+                Guid transformId = Guid.NewGuid();
+                string yaml = $$"""
+Transform:
+    $type: {{transformTypeName}}
+    $value:
+        ID: {{transformId}}
+ShadowCollectMaxDistance: .inf
+CullingMask:
+    Value: -1
+""";
+
+                XRCamera camera = AssetManager.Deserializer.Deserialize<XRCamera>(yaml).ShouldNotBeNull();
+
+                camera.Transform.EffectiveSerializedReferenceId.ShouldBe(transformId);
+                camera.ShadowCollectMaxDistance.ShouldBe(float.PositiveInfinity);
+                camera.CullingMask.Value.ShouldBe(-1);
+        }
+
+            [Test]
+            public void LayerMaskYaml_Mapping_DeserializesAsRoot()
+            {
+                string yaml = """
+        Value: -1
+        """;
+
+                LayerMask mask = AssetManager.Deserializer.Deserialize<LayerMask>(yaml);
+
+                mask.Value.ShouldBe(-1);
+            }
+
+            [Test]
+            public void LayerMaskYaml_Mapping_DeserializesAsSimpleProperty()
+            {
+                string yaml = """
+        Mask:
+            Value: -1
+        """;
+
+                LayerMaskContainer container = AssetManager.Deserializer.Deserialize<LayerMaskContainer>(yaml).ShouldNotBeNull();
+
+                container.Mask.Value.ShouldBe(-1);
+            }
+
+    [Test]
+    public void LayerMaskYaml_Mapping_DeserializesWithTransformConstructor()
+    {
+        string transformTypeName = typeof(Transform).AssemblyQualifiedName.ShouldNotBeNull();
+        Guid transformId = Guid.NewGuid();
+        string yaml = $$"""
+Transform:
+    $type: {{transformTypeName}}
+    $value:
+        ID: {{transformId}}
+ShadowCollectMaxDistance: .inf
+CullingMask:
+    Value: -1
+""";
+
+        TransformConstructorLayerMaskContainer container = AssetManager.Deserializer.Deserialize<TransformConstructorLayerMaskContainer>(yaml).ShouldNotBeNull();
+
+        container.Transform.EffectiveSerializedReferenceId.ShouldBe(transformId);
+        container.ShadowCollectMaxDistance.ShouldBe(float.PositiveInfinity);
+        container.CullingMask.Value.ShouldBe(-1);
+    }
+
+    [Test]
+    public void LayerMaskYaml_Mapping_DeserializesWithTransformProperty()
+    {
+        string transformTypeName = typeof(Transform).AssemblyQualifiedName.ShouldNotBeNull();
+        Guid transformId = Guid.NewGuid();
+        string yaml = $$"""
+Transform:
+    $type: {{transformTypeName}}
+    $value:
+        ID: {{transformId}}
+ShadowCollectMaxDistance: .inf
+CullingMask:
+    Value: -1
+""";
+
+        TransformLayerMaskContainer container = AssetManager.Deserializer.Deserialize<TransformLayerMaskContainer>(yaml).ShouldNotBeNull();
+
+        container.Transform.EffectiveSerializedReferenceId.ShouldBe(transformId);
+        container.ShadowCollectMaxDistance.ShouldBe(float.PositiveInfinity);
+        container.CullingMask.Value.ShouldBe(-1);
+    }
+
+    [Test]
+    public void RenderPipelineYaml_PolymorphicMapping_DeserializesConcretePipeline()
+    {
+        string yaml = """
+__type: XREngine.Rendering.DefaultRenderPipeline
+EnableDeferredMsaa: true
+CommandChain: []
+""";
+
+        RenderPipeline pipeline = AssetManager.Deserializer.Deserialize<RenderPipeline>(yaml).ShouldNotBeNull();
+
+        pipeline.ShouldBeOfType<DefaultRenderPipeline>();
+        ((DefaultRenderPipeline)pipeline).EnableDeferredMsaa.ShouldBeTrue();
+    }
+
+    [Test]
+    public void RenderPipelineYaml_NestedCameraPipelineAsset_DeserializesConcretePipelineFromFile()
+    {
+        string assetsRoot = Engine.Assets.GameAssetsPath;
+        string metadataRoot = Engine.Assets.GameMetadataPath.ShouldNotBeNull();
+        string relativeFolder = Path.Combine("_PrefabModelSerializationTests", Guid.NewGuid().ToString("N"));
+        string assetDirectory = Path.Combine(assetsRoot, relativeFolder);
+        string metadataDirectory = Path.Combine(metadataRoot, relativeFolder);
+        string assetPath = Path.Combine(assetDirectory, "CameraPipeline.asset");
+        Guid assetId = Guid.NewGuid();
+
+        Directory.CreateDirectory(assetDirectory);
+
+        try
+        {
+            string yaml = string.Join('\n',
+            [
+                $"ID: {assetId}",
+                "Camera:",
+                "  RenderPipeline:",
+                "    __type: XREngine.Rendering.DefaultRenderPipeline",
+                "    EnableDeferredMsaa: true",
+                "    CommandChain: &o40",
+                "    - __type: XREngine.Rendering.Pipelines.Commands.VPRC_IfElse",
+                "      TrueCommands: &o0",
+                "      - __type: XREngine.Rendering.Pipelines.Commands.VPRC_Switch",
+                "        Cases:",
+                "          0: &o1",
+                "          - __type: XREngine.Rendering.Pipelines.Commands.VPRC_CacheOrCreateTexture",
+                "            Name: BRDF",
+                "            CommandContainer: *o1",
+                "            ShouldExecute: true",
+                "        CommandContainer: *o0",
+                "        ShouldExecute: true",
+                "      FalseCommands: []",
+                "      CommandContainer: *o40",
+                "      ShouldExecute: true",
+                string.Empty,
+            ]);
+
+            File.WriteAllText(assetPath, yaml);
+            WriteMetadataForGameAsset(assetPath, assetId);
+            ClearAssetCaches();
+
+            RenderPipelineCameraAsset asset = Engine.Assets.Load<RenderPipelineCameraAsset>(assetPath, bypassJobThread: true).ShouldNotBeNull();
+
+            asset.Camera.RenderPipeline.ShouldBeOfType<DefaultRenderPipeline>();
+            DefaultRenderPipeline pipeline = (DefaultRenderPipeline)asset.Camera.RenderPipeline;
+            pipeline.EnableDeferredMsaa.ShouldBeTrue();
+            pipeline.CommandChain.Count.ShouldBe(1);
+        }
+        finally
+        {
+            ClearAssetCaches();
+            DeleteDirectoryIfExists(assetDirectory);
+            DeleteDirectoryIfExists(metadataDirectory);
+        }
+    }
+
+    [Test]
+    public void RenderPipelineYaml_UICanvasCamera2DAsset_DeserializesConcretePipelineFromFile()
+    {
+        string assetsRoot = Engine.Assets.GameAssetsPath;
+        string metadataRoot = Engine.Assets.GameMetadataPath.ShouldNotBeNull();
+        string relativeFolder = Path.Combine("_PrefabModelSerializationTests", Guid.NewGuid().ToString("N"));
+        string assetDirectory = Path.Combine(assetsRoot, relativeFolder);
+        string metadataDirectory = Path.Combine(metadataRoot, relativeFolder);
+        string assetPath = Path.Combine(assetDirectory, "CanvasPipeline.asset");
+        Guid assetId = Guid.NewGuid();
+
+        Directory.CreateDirectory(assetDirectory);
+
+        try
+        {
+            string yaml = string.Join('\n',
+            [
+                $"ID: {assetId}",
+                "Canvas:",
+                "  Camera2D:",
+                "    RenderPipeline:",
+                "      __type: XREngine.Rendering.DefaultRenderPipeline",
+                "      EnableDeferredMsaa: true",
+                "      CommandChain: &o40",
+                "      - __type: XREngine.Rendering.Pipelines.Commands.VPRC_IfElse",
+                "        TrueCommands: &o0",
+                "        - __type: XREngine.Rendering.Pipelines.Commands.VPRC_Switch",
+                "          Cases:",
+                "            0: &o1",
+                "            - __type: XREngine.Rendering.Pipelines.Commands.VPRC_CacheOrCreateTexture",
+                "              Name: BRDF",
+                "              CommandContainer: *o1",
+                "              ShouldExecute: true",
+                "          CommandContainer: *o0",
+                "          ShouldExecute: true",
+                "        FalseCommands: []",
+                "        CommandContainer: *o40",
+                "        ShouldExecute: true",
+                string.Empty,
+            ]);
+
+            File.WriteAllText(assetPath, yaml);
+            WriteMetadataForGameAsset(assetPath, assetId);
+            ClearAssetCaches();
+
+            UICanvasCameraPipelineAsset asset = Engine.Assets.Load<UICanvasCameraPipelineAsset>(assetPath, bypassJobThread: true).ShouldNotBeNull();
+
+            asset.Canvas.Camera2D.RenderPipeline.ShouldBeOfType<DefaultRenderPipeline>();
+            DefaultRenderPipeline pipeline = (DefaultRenderPipeline)asset.Canvas.Camera2D.RenderPipeline;
+            pipeline.EnableDeferredMsaa.ShouldBeTrue();
+            pipeline.CommandChain.Count.ShouldBe(1);
+        }
+        finally
+        {
+            ClearAssetCaches();
+            DeleteDirectoryIfExists(assetDirectory);
+            DeleteDirectoryIfExists(metadataDirectory);
+        }
+    }
 
     [Test]
     public void SceneNodeYaml_ExternalSkinnedSubMesh_RebindsBonesAndPreservesBlendshapes()
@@ -912,5 +1207,47 @@ $value:
 
         File.SetAttributes(directoryPath, FileAttributes.Normal);
         Directory.Delete(directoryPath, recursive: true);
+    }
+
+    private sealed class LayerMaskContainer
+    {
+        public LayerMask Mask { get; set; }
+    }
+
+    private sealed class RenderPipelineCameraAsset : XRAsset
+    {
+        public XRCamera Camera { get; set; } = new();
+    }
+
+    private sealed class UICanvasCameraPipelineAsset : XRAsset
+    {
+        public UICanvasComponent Canvas { get; set; } = new();
+    }
+
+    private sealed class TransformConstructorLayerMaskContainer
+    {
+        public TransformConstructorLayerMaskContainer()
+        {
+        }
+
+        public TransformConstructorLayerMaskContainer(TransformBase transform)
+        {
+            Transform = transform;
+        }
+
+        public TransformBase Transform { get; set; } = new Transform();
+
+        public float ShadowCollectMaxDistance { get; set; }
+
+        public LayerMask CullingMask { get; set; }
+    }
+
+    private sealed class TransformLayerMaskContainer
+    {
+        public TransformBase Transform { get; set; } = new Transform();
+
+        public float ShadowCollectMaxDistance { get; set; }
+
+        public LayerMask CullingMask { get; set; }
     }
 }

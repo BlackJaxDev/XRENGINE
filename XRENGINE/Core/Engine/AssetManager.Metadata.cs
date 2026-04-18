@@ -1,16 +1,13 @@
-using System;
-using System.Diagnostics.CodeAnalysis;
-using System.IO;
-using System.Threading;
 using XREngine.Core.Engine;
-using XREngine.Core.Files;
-using XREngine.Data;
-using XREngine.Diagnostics;
 
 namespace XREngine
 {
     public partial class AssetManager
     {
+        /// <summary>
+        /// Ensures that for every file and directory under the GameAssetsPath, there is a corresponding metadata file under GameMetadataPath.
+        /// Also prunes metadata files that no longer have a corresponding asset.
+        /// </summary>
         public void SyncMetadataWithAssets()
         {
             if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(GameMetadataPath))
@@ -32,6 +29,12 @@ namespace XREngine
                 EnsureMetadataForAssetPath(file, false);
         }
 
+        /// <summary>
+        /// Deletes metadata files that no longer have a corresponding asset file or directory.
+        /// Also deletes transient metadata files (e.g. from temp files during import).
+        /// </summary>
+        /// <param name="assetsRoot">The root directory of the assets.</param>
+        /// <param name="metadataRoot">The root directory of the metadata.</param>
         private void PruneStaleMetadataEntries(string assetsRoot, string metadataRoot)
         {
             lock (_metadataLock)
@@ -59,6 +62,10 @@ namespace XREngine
             }
         }
 
+        /// <summary>
+        /// Ensures that there is a metadata file for the given asset path, creating or updating it as necessary.
+        /// </summary>
+        /// <param name="path">The path of the asset.</param>
         private void HandleMetadataCreated(string path)
         {
             if (!IsPathUnderGameAssets(path))
@@ -67,6 +74,10 @@ namespace XREngine
             EnsureMetadataForAssetPath(path, SafeIsDirectory(path));
         }
 
+        /// <summary>
+        /// Ensures that there is a metadata file for the given asset path, creating or updating it as necessary.
+        /// </summary>
+        /// <param name="path">The path of the asset.</param>
         private void HandleMetadataChanged(string path)
         {
             if (!IsPathUnderGameAssets(path))
@@ -75,17 +86,34 @@ namespace XREngine
             EnsureMetadataForAssetPath(path, SafeIsDirectory(path));
         }
 
+        /// <summary>
+        /// Deletes the metadata file for the given asset path if it exists.
+        /// If the asset is a directory, also deletes metadata for all nested assets.
+        /// Also prunes empty metadata directories up the hierarchy.
+        /// </summary>
+        /// <param name="path">The path of the asset.</param>
         private void HandleMetadataDeleted(string path)
         {
             RemoveMetadataForPath(path, SafeIsDirectory(path));
         }
 
+        /// <summary>
+        /// Moves the metadata file for the given asset path if it exists, otherwise creates a new metadata file for the new path.
+        /// If the asset is a directory, also moves metadata for all nested assets.
+        /// </summary>
+        /// <param name="oldPath">The old path of the asset.</param>
+        /// <param name="newPath">The new path of the asset.</param>
         private void HandleMetadataRenamed(string oldPath, string newPath)
         {
             bool isDirectory = SafeIsDirectory(newPath) || SafeIsDirectory(oldPath);
             MoveMetadataForPath(oldPath, newPath, isDirectory);
         }
 
+        /// <summary>
+        /// Determines whether the given path is under the GameAssetsPath, accounting for relative paths, symbolic links, and case sensitivity.
+        /// </summary>
+        /// <param name="path">The path to check.</param>
+        /// <returns>True if the path is under the GameAssetsPath; otherwise, false.</returns>
         private bool IsPathUnderGameAssets(string path)
         {
             if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(path))
@@ -108,6 +136,11 @@ namespace XREngine
             }
         }
 
+        /// <summary>
+        /// Determines whether the given path is a directory, accounting for the possibility that the path may not exist (e.g. deleted or renamed assets during watcher events).
+        /// </summary>
+        /// <param name="path">The path to check.</param>
+        /// <returns>True if the path is a directory; otherwise, false.</returns>
         private static bool SafeIsDirectory(string path)
         {
             try
@@ -127,6 +160,13 @@ namespace XREngine
             }
         }
 
+        /// <summary>
+        /// Attempts to get the corresponding metadata file path for a given asset path, returning false if the asset path is not under the GameAssetsPath.
+        /// </summary>
+        /// <param name="assetPath">The path of the asset.</param>
+        /// <param name="metadataPath">The corresponding metadata file path.</param>
+        /// <param name="relativePath">The relative path of the asset within the GameAssetsPath.</param>
+        /// <returns>True if the metadata path was successfully determined; otherwise, false.</returns>
         private bool TryGetMetadataPath(string assetPath, out string metadataPath, out string relativePath)
         {
             metadataPath = string.Empty;
@@ -146,6 +186,13 @@ namespace XREngine
             return true;
         }
 
+        /// <summary>
+        /// Ensures that there is a metadata file for the given asset path, creating or updating it as necessary.
+        /// If the asset is a file, also attempts to extract the GUID from the asset file if it is an .asset file.
+        /// If the asset is a directory, ensures it has a GUID and does not have import metadata.
+        /// </summary>
+        /// <param name="assetPath">The path of the asset.</param>
+        /// <param name="isDirectory">Indicates whether the asset is a directory.</param>
         private void EnsureMetadataForAssetPath(string assetPath, bool isDirectory)
         {
             if (!TryGetMetadataPath(assetPath, out string metaPath, out string relativePath))
@@ -200,6 +247,12 @@ namespace XREngine
             }
         }
 
+        /// <summary>
+        /// Deletes the metadata file for the given asset path if it exists.
+        /// If the asset is a directory, also deletes metadata for all nested assets.
+        /// </summary>
+        /// <param name="assetPath">The path of the asset.</param>
+        /// <param name="isDirectory">Indicates whether the asset is a directory.</param>
         private void RemoveMetadataForPath(string assetPath, bool isDirectory)
         {
             if (!TryGetMetadataPath(assetPath, out string metaPath, out _))
@@ -214,6 +267,13 @@ namespace XREngine
             }
         }
 
+        /// <summary>
+        /// Moves the metadata file for the given asset path if it exists, otherwise creates a new metadata file for the new path.
+        /// If the asset is a directory, also moves metadata for all nested assets.
+        /// </summary>
+        /// <param name="oldPath">The current path of the asset.</param>
+        /// <param name="newPath">The new path of the asset.</param>
+        /// <param name="isDirectory">Indicates whether the asset is a directory.</param>
         private void MoveMetadataForPath(string oldPath, string newPath, bool isDirectory)
         {
             if (!TryGetMetadataPath(oldPath, out string oldMeta, out _))
@@ -253,6 +313,12 @@ namespace XREngine
             EnsureMetadataForAssetPath(newPath, isDirectory);
         }
 
+        /// <summary>
+        /// Ensures that for every file and directory under the GameAssetsPath, there is a corresponding metadata file under GameMetadataPath.
+        /// Also prunes metadata files that no longer have a corresponding asset.
+        /// </summary>
+        /// <param name="metaPath">The path of the metadata file.</param>
+        /// <returns>The deserialized metadata if it exists and is valid; otherwise, null.</returns>
         private static AssetMetadata? TryReadMetadata(string metaPath)
         {
             if (!File.Exists(metaPath))
@@ -269,6 +335,11 @@ namespace XREngine
             }
         }
 
+        /// <summary>
+        /// Writes the given metadata to the specified metadata file path, creating or overwriting it as necessary.
+        /// </summary>
+        /// <param name="metaPath">The path of the metadata file.</param>
+        /// <param name="meta">The metadata to write.</param>
         private static void WriteMetadataFile(string metaPath, AssetMetadata meta)
         {
             string? directory = Path.GetDirectoryName(metaPath);
@@ -279,6 +350,14 @@ namespace XREngine
             File.WriteAllText(metaPath, yaml);
         }
 
+        /// <summary>
+        /// Determines whether the given metadata file should be deleted due to not having a corresponding asset or being a transient metadata file (e.g. from temp files during import).
+        /// Accounts for the possibility that the asset file or directory may not exist (e.g. deleted or renamed assets during watcher events).
+        /// Also accounts for the possibility that the metadata file may be malformed or missing required information.
+        /// </summary>
+        /// <param name="metaPath">The path of the metadata file.</param>
+        /// <param name="assetsRoot">The root directory of the assets.</param>
+        /// <returns>True if the metadata file should be deleted; otherwise, false.</returns>
         private static bool ShouldDeleteMetadataFile(string metaPath, string assetsRoot)
         {
             if (IsTransientMetadataPath(metaPath))
@@ -292,9 +371,19 @@ namespace XREngine
             return !File.Exists(candidate) && !Directory.Exists(candidate);
         }
 
+        /// <summary>
+        /// Determines whether the given path is a transient metadata file, such as those created from temporary files during asset import.
+        /// </summary>
+        /// <param name="metaPath">The path of the metadata file.</param>
+        /// <returns>True if the metadata file is transient; otherwise, false.</returns>
         private static bool IsTransientMetadataPath(string metaPath)
             => Path.GetFileName(metaPath).EndsWith(".tmp.meta", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Attempts to extract a GUID from the given asset file if it is an .asset file, returning Guid.Empty if the GUID cannot be extracted.
+        /// </summary>
+        /// <param name="assetPath">The path of the asset file.</param>
+        /// <returns>The extracted GUID if successful; otherwise, Guid.Empty.</returns>
         private static Guid TryExtractGuidFromAsset(string assetPath)
         {
             if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
@@ -347,6 +436,12 @@ namespace XREngine
             return Guid.Empty;
         }
 
+        /// <summary>
+        /// Safely gets the last write time of the specified file in UTC, returning null if the file does not exist or an error occurs.
+        /// </summary>
+        /// <param name="path">The path of the file.</param>
+        /// <returns>The last write time in UTC if available; otherwise, null.</returns>
+        /// <remarks>This method accounts for the possibility that the file may be transiently locked or deleted during asset import, and avoids throwing exceptions in those cases.</remarks>
         private static DateTime? SafeGetLastWriteTimeUtc(string path)
         {
             try
@@ -358,8 +453,18 @@ namespace XREngine
             {
                 return null;
             }
+            catch (UnauthorizedAccessException)
+            {
+                return null;
+            }
         }
 
+        /// <summary>
+        /// Resolves the importer type name for a given file extension, returning null if the extension is null, empty, or does not have a registered importer.
+         /// The extension should be provided with or without a leading dot (e.g. "fbx" or ".fbx").
+        /// </summary>
+        /// <param name="extension">The file extension.</param>
+        /// <returns>The fully qualified name of the importer type if found; otherwise, null.</returns>
         private static string? ResolveImporterNameForExtension(string extension)
         {
             if (string.IsNullOrWhiteSpace(extension))
@@ -373,6 +478,10 @@ namespace XREngine
                 : null;
         }
 
+        /// <summary>
+        /// Attempts to prune empty metadata directories up the hierarchy starting from the specified directory, stopping when a non-empty directory is found or the GameMetadataPath root is reached.
+        /// </summary>
+        /// <param name="directory">The starting directory to attempt pruning.</param>
         private void TryPruneEmptyMetadataDirectories(string? directory)
         {
             if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(GameMetadataPath))

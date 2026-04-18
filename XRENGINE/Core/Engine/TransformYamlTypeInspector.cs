@@ -61,21 +61,24 @@ internal sealed class TransformYamlTypeInspector(ITypeInspector inner, bool appl
     {
         YamlTransformReferenceAttribute? referenceAttribute = descriptor.GetCustomAttribute<YamlTransformReferenceAttribute>();
         bool interceptIdProperty = interceptSerializedId && string.Equals(descriptor.Name, nameof(XREngine.Data.Core.XRObjectBase.ID), StringComparison.Ordinal);
+        bool suppressRedundantNameProperty = interceptSerializedId && string.Equals(descriptor.Name, nameof(XREngine.Data.Core.XRObjectBase.Name), StringComparison.Ordinal);
 
-        if (!interceptIdProperty && referenceAttribute is null)
+        if (!interceptIdProperty && !suppressRedundantNameProperty && referenceAttribute is null)
             return descriptor;
 
-        return new TransformYamlPropertyDescriptor(descriptor, interceptIdProperty, referenceAttribute, _applyReferenceOnRead);
+        return new TransformYamlPropertyDescriptor(descriptor, interceptIdProperty, suppressRedundantNameProperty, referenceAttribute, _applyReferenceOnRead);
     }
 
     private sealed class TransformYamlPropertyDescriptor(
         IPropertyDescriptor inner,
         bool interceptIdProperty,
+        bool suppressRedundantNameProperty,
         YamlTransformReferenceAttribute? referenceAttribute,
         bool applyReferenceOnRead) : IPropertyDescriptor
     {
         private readonly IPropertyDescriptor _inner = inner;
         private readonly bool _interceptIdProperty = interceptIdProperty;
+        private readonly bool _suppressRedundantNameProperty = suppressRedundantNameProperty;
         private readonly YamlTransformReferenceAttribute? _referenceAttribute = referenceAttribute;
         private readonly bool _applyReferenceOnRead = applyReferenceOnRead;
 
@@ -150,6 +153,19 @@ internal sealed class TransformYamlTypeInspector(ITypeInspector inner, bool appl
                     typeof(Guid),
                     typeof(Guid),
                     ScalarStyle.Any);
+            }
+
+            if (_suppressRedundantNameProperty && target is XREngine.Scene.Transforms.TransformBase namedTransform)
+            {
+                var sceneNode = namedTransform.SceneNode;
+                if (sceneNode is not null && string.Equals(namedTransform.Name, sceneNode.Name, StringComparison.Ordinal))
+                {
+                    return new ObjectDescriptor(
+                        null,
+                        typeof(string),
+                        typeof(string),
+                        ScalarStyle.Any);
+                }
             }
 
             IObjectDescriptor descriptor = _inner.Read(target);

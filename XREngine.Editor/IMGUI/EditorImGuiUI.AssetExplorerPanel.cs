@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using ImGuiNET;
 using XREngine;
@@ -16,6 +17,9 @@ using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
+using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 using YamlDotNet.RepresentationModel;
 
 namespace XREngine.Editor;
@@ -1160,75 +1164,612 @@ public static partial class EditorImGuiUI
 
             Debug.Out($"[AssetExplorer] ResolveAssetTypeForPath returned descriptor: {descriptor.FullName}");
             bool isNativeAsset = string.Equals(Path.GetExtension(path), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase);
-            object inspectorTarget;
-            string displayTitle;
             if (!isNativeAsset)
             {
                 // Avoid importing large 3rd-party assets (e.g. models) on click; we only need the
                 // resolved XRAsset type to show/edit import settings.
-                inspectorTarget = new ThirdPartyImportSelection(path, descriptor.Type);
-                displayTitle = descriptor.DisplayName;
+                object inspectorTarget = new ThirdPartyImportSelection(path, descriptor.Type);
+                SetInspectorStandaloneTarget(inspectorTarget, BuildAssetInspectorTitle(path, descriptor, null), null);
+                return true;
             }
-            else
-            {
-                XRAsset? asset = LoadAssetForInspector(descriptor, path);
-                if (asset is null)
-                {
-                    Debug.Out($"[AssetExplorer] LoadAssetForInspector returned null for path='{path}'");
-                    return false;
-                }
 
-                Debug.Out($"[AssetExplorer] LoadAssetForInspector succeeded: {asset.GetType().Name}");
-                inspectorTarget = asset;
-                displayTitle = string.IsNullOrWhiteSpace(asset.Name)
-                    ? descriptor.DisplayName
-                    : asset.Name!;
+            var assets = Engine.Assets;
+            if (assets is null)
+            {
+                Debug.Out("[AssetExplorer] TryShowAssetInInspector: Engine.Assets is null");
+                return false;
             }
+
+            if (assets.TryGetAssetByPath(path, out XRAsset? cachedAsset))
+            {
+                Debug.Out($"[AssetExplorer] TryShowAssetInInspector: Using cached asset for path='{path}'");
+                SetInspectorStandaloneTarget(cachedAsset, BuildAssetInspectorTitle(path, descriptor, cachedAsset), null);
+                return true;
+            }
+
+            Guid trackingId = EditorJobTracker.TrackOperation(
+                BuildTrackedAssetLabel("Inspect Asset", path),
+                BuildTrackedAssetLoadingStatus(path));
+            var loadState = new AssetExplorerInspectorLoadState(
+                path,
+                descriptor,
+                trackingId,
+                BuildTrackedAssetLoadingStatus(path),
+                TryCreateInitialInspectorPreview(descriptor, path));
+            SetInspectorStandaloneTarget(loadState, BuildAssetInspectorTitle(path, descriptor, null), null);
+            _ = CompleteAssetExplorerInspectorLoadAsync(loadState);
+            return true;
+        }
+
+        private static PrefabHierarchyPreview? TryCreateInitialInspectorPreview(AssetTypeDescriptor descriptor, string path)
+            => null;
+
+        private static string BuildTrackedAssetLabel(string actionLabel, string path)
+        {
+            string fileLabel = Path.GetFileName(path);
+            return string.IsNullOrWhiteSpace(fileLabel)
+                ? actionLabel
+                : string.Concat(actionLabel, ": ", fileLabel);
+        }
+
+        private static string BuildTrackedAssetLoadingStatus(string path)
+        {
+            string fileLabel = Path.GetFileName(path);
+            return string.IsNullOrWhiteSpace(fileLabel)
+                ? "Loading asset..."
+                : string.Concat("Loading ", fileLabel, "...");
+        }
+
+        private static string BuildAssetInspectorTitle(string path, AssetTypeDescriptor descriptor, XRAsset? asset)
+        {
+            string displayTitle = asset is not null && !string.IsNullOrWhiteSpace(asset.Name)
+                ? asset.Name!
+                : descriptor.DisplayName;
 
             string fileLabel = Path.GetFileName(path);
             if (!string.IsNullOrEmpty(fileLabel))
                 displayTitle = string.Concat(displayTitle, " [", fileLabel, "]");
 
-            SetInspectorStandaloneTarget(inspectorTarget, displayTitle, null);
-            return true;
+            return displayTitle;
         }
 
+        private static async Task CompleteAssetExplorerInspectorLoadAsync(AssetExplorerInspectorLoadState loadState)
+        {
+            if (typeof(XRPrefabSource).IsAssignableFrom(loadState.Descriptor.Type))
+            {
+                await CompletePrefabInspectorLoadAsync(loadState).ConfigureAwait(false);
+                return;
+            }
 
+            XRAsset? asset = await LoadAssetAsync(
+                loadState.Descriptor,
+                loadState.Path,
+                nameof(CompleteAssetExplorerInspectorLoadAsync),
+                CreateTrackedAssetProgressHandler(loadState.TrackingId, loadState)).ConfigureAwait(false);
+            _ = Engine.InvokeOnMainThread(() =>
+            {
+                if (asset is null)
+                {
+                    string failureMessage = $"Failed to load '{Path.GetFileName(loadState.Path)}'. See the log for details.";
+                    if (ReferenceEquals(_inspectorStandaloneTarget, loadState))
+                        loadState.SetFailure(failureMessage);
 
-        private static XRAsset? LoadAssetForInspector(AssetTypeDescriptor descriptor, string path)
+                    EditorJobTracker.Fault(loadState.TrackingId, failureMessage);
+                    return;
+                }
+
+                if (!ReferenceEquals(_inspectorStandaloneTarget, loadState))
+                {
+                    EditorJobTracker.Complete(loadState.TrackingId, $"Loaded {Path.GetFileName(loadState.Path)}");
+                    return;
+                }
+
+                SetInspectorStandaloneTarget(asset, BuildAssetInspectorTitle(loadState.Path, loadState.Descriptor, asset), null);
+                EditorJobTracker.Complete(loadState.TrackingId, $"Inspector ready: {Path.GetFileName(loadState.Path)}");
+            }, "Asset Explorer: Inspector asset ready");
+        }
+
+        private static async Task CompletePrefabInspectorLoadAsync(AssetExplorerInspectorLoadState loadState)
         {
             var assets = Engine.Assets;
             if (assets is null)
             {
-                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Engine.Assets is null");
+                _ = Engine.InvokeOnMainThread(() =>
+                {
+                    const string failureMessage = "Engine asset services are unavailable.";
+                    if (ReferenceEquals(_inspectorStandaloneTarget, loadState))
+                        loadState.SetFailure(failureMessage);
+
+                    EditorJobTracker.Fault(loadState.TrackingId, failureMessage);
+                }, "Asset Explorer: Prefab load unavailable");
+                return;
+            }
+
+            UpdateTrackedAssetLoadProgress(
+                loadState.TrackingId,
+                loadState,
+                AssetLoadProgressStage.ParsingAssetGraph,
+                0.08f,
+                "Reading prefab hierarchy and collecting referenced assets...");
+
+            PrefabPartialLoadPlan? partialPlan;
+            try
+            {
+                partialPlan = await assets.PreparePrefabPartialLoadAsync(loadState.Path).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to build a partial prefab view for '{loadState.Path}'.");
+                partialPlan = null;
+            }
+
+            if (partialPlan?.PartialPrefab is not XRPrefabSource partialPrefab)
+            {
+                _ = Engine.InvokeOnMainThread(() =>
+                {
+                    string failureMessage = $"Failed to load '{Path.GetFileName(loadState.Path)}'. See the log for details.";
+                    if (ReferenceEquals(_inspectorStandaloneTarget, loadState))
+                        loadState.SetFailure(failureMessage);
+
+                    EditorJobTracker.Fault(loadState.TrackingId, failureMessage);
+                }, "Asset Explorer: Partial prefab failed");
+                return;
+            }
+
+            int totalReferences = partialPlan.ExternalReferences.Count;
+            _ = Engine.InvokeOnMainThread(() =>
+            {
+                loadState.SetPartialPrefab(partialPrefab);
+                UpdateTrackedAssetLoadProgress(
+                    loadState.TrackingId,
+                    loadState,
+                    AssetLoadProgressStage.ParsingAssetGraph,
+                    totalReferences == 0 ? 0.32f : 0.22f,
+                    totalReferences == 0
+                        ? "Prefab hierarchy is ready. No external asset references were found."
+                        : $"Prefab hierarchy is ready. Found {totalReferences} referenced assets.",
+                    0,
+                    totalReferences);
+
+                if (ReferenceEquals(_inspectorStandaloneTarget, loadState))
+                    SetInspectorStandaloneTarget(loadState, BuildAssetInspectorTitle(loadState.Path, loadState.Descriptor, partialPrefab), null);
+            }, "Asset Explorer: Partial prefab ready");
+
+            await PreloadPrefabReferencesAsync(loadState, partialPlan.ExternalReferences).ConfigureAwait(false);
+
+            UpdateTrackedAssetLoadProgress(
+                loadState.TrackingId,
+                loadState,
+                AssetLoadProgressStage.Finalizing,
+                0.88f,
+                "Finalizing prefab from cached referenced assets...",
+                totalReferences,
+                totalReferences);
+
+            XRAsset? asset = null;
+            try
+            {
+                asset = await assets.LoadAsync(
+                    loadState.Path,
+                    loadState.Descriptor.Type,
+                    CreatePrefabFinalizeProgressHandler(loadState.TrackingId, loadState)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to finish loading prefab '{loadState.Path}'.");
+            }
+
+            _ = Engine.InvokeOnMainThread(() =>
+            {
+                if (asset is null)
+                {
+                    string failureMessage = $"Failed to fully load '{Path.GetFileName(loadState.Path)}'. The partial prefab view is still available.";
+                    if (ReferenceEquals(_inspectorStandaloneTarget, loadState))
+                        loadState.SetFailure(failureMessage);
+
+                    EditorJobTracker.Fault(loadState.TrackingId, failureMessage);
+                    return;
+                }
+
+                if (!ReferenceEquals(_inspectorStandaloneTarget, loadState))
+                {
+                    EditorJobTracker.Complete(loadState.TrackingId, $"Loaded {Path.GetFileName(loadState.Path)}");
+                    return;
+                }
+
+                SetInspectorStandaloneTarget(asset, BuildAssetInspectorTitle(loadState.Path, loadState.Descriptor, asset), null);
+                EditorJobTracker.Complete(loadState.TrackingId, $"Inspector ready: {Path.GetFileName(loadState.Path)}");
+            }, "Asset Explorer: Prefab asset ready");
+        }
+
+        private static async Task PreloadPrefabReferencesAsync(AssetExplorerInspectorLoadState loadState, IReadOnlyList<DeferredAssetLoadReference> references)
+        {
+            if (references.Count == 0)
+                return;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return;
+
+            const int maxConcurrency = 4;
+            int total = references.Count;
+            int completed = 0;
+            using var gate = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+            Task[] tasks = new Task[references.Count];
+
+            for (int i = 0; i < references.Count; i++)
+            {
+                DeferredAssetLoadReference reference = references[i];
+                tasks[i] = Task.Run(async () =>
+                {
+                    await gate.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        if (!assets.TryGetAssetByPath(reference.AssetPath, out _))
+                            _ = await assets.LoadAsync(reference.AssetPath, reference.AssetType).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex, $"Failed to preload referenced asset '{reference.AssetPath}' while loading prefab '{loadState.Path}'.");
+                    }
+                    finally
+                    {
+                        gate.Release();
+                        int completedCount = Interlocked.Increment(ref completed);
+                        string fileLabel = Path.GetFileName(reference.AssetPath);
+                        UpdateTrackedAssetLoadProgress(
+                            loadState.TrackingId,
+                            loadState,
+                            AssetLoadProgressStage.ResolvingDependencies,
+                            0.22f + (completedCount / (float)total) * 0.58f,
+                            $"Loading referenced assets ({completedCount}/{total}). Last: {fileLabel}",
+                            completedCount,
+                            total);
+                    }
+                });
+            }
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+
+        private static Action<AssetLoadProgress> CreatePrefabFinalizeProgressHandler(Guid trackingId, AssetExplorerInspectorLoadState loadState)
+            => progress =>
+            {
+                float mappedProgress = progress.Stage switch
+                {
+                    AssetLoadProgressStage.CheckingCache => 0.88f,
+                    AssetLoadProgressStage.OpeningFile => 0.91f,
+                    AssetLoadProgressStage.ParsingAssetGraph => 0.95f,
+                    AssetLoadProgressStage.ResolvingDependencies => 0.97f,
+                    AssetLoadProgressStage.Finalizing => 0.99f,
+                    AssetLoadProgressStage.Completed => 1.0f,
+                    AssetLoadProgressStage.Failed => 1.0f,
+                    _ => Math.Max(loadState.ProgressFraction, 0.88f)
+                };
+
+                string status = progress.Stage switch
+                {
+                    AssetLoadProgressStage.CheckingCache => "Checking prefab cache...",
+                    AssetLoadProgressStage.OpeningFile => "Reopening prefab with cached referenced assets...",
+                    AssetLoadProgressStage.ParsingAssetGraph => "Binding cached referenced assets into the prefab...",
+                    AssetLoadProgressStage.ResolvingDependencies => "Resolving cached referenced assets...",
+                    AssetLoadProgressStage.Finalizing => "Finalizing prefab asset...",
+                    AssetLoadProgressStage.Completed => "Prefab ready.",
+                    AssetLoadProgressStage.Failed => "Prefab load failed.",
+                    _ => FormatTrackedAssetProgressStatus(progress)
+                };
+
+                UpdateTrackedAssetLoadProgress(
+                    trackingId,
+                    loadState,
+                    progress.Stage,
+                    mappedProgress,
+                    status,
+                    loadState.TotalDependencyLoads,
+                    loadState.TotalDependencyLoads);
+            };
+
+        private static void UpdateTrackedAssetLoadProgress(Guid trackingId, AssetExplorerInspectorLoadState loadState, AssetLoadProgressStage stage, float progress, string status, int completedDependencyLoads = 0, int totalDependencyLoads = 0)
+        {
+            loadState.SetManualProgress(stage, progress, status, completedDependencyLoads, totalDependencyLoads);
+            EditorJobTracker.Report(trackingId, progress, status);
+        }
+
+        private static Action<AssetLoadProgress> CreateTrackedAssetProgressHandler(Guid trackingId, AssetExplorerInspectorLoadState? loadState)
+            => progress =>
+            {
+                string status = FormatTrackedAssetProgressStatus(progress);
+
+                loadState?.SetProgress(progress, status);
+
+                EditorJobTracker.Report(trackingId, progress.Progress, status);
+            };
+
+        private static string FormatTrackedAssetProgressStatus(AssetLoadProgress progress)
+        {
+            if (!string.IsNullOrWhiteSpace(progress.Status))
+                return progress.Status;
+
+            string fileLabel = Path.GetFileName(progress.AssetPath);
+            if (string.IsNullOrWhiteSpace(fileLabel))
+                fileLabel = Path.GetFileName(progress.RootAssetPath);
+
+            return progress.Stage switch
+            {
+                AssetLoadProgressStage.CheckingCache => string.Concat("Checking cache for ", fileLabel, "..."),
+                AssetLoadProgressStage.OpeningFile => string.Concat("Opening ", fileLabel, "..."),
+                AssetLoadProgressStage.ParsingAssetGraph => string.Concat("Parsing ", fileLabel, "..."),
+                AssetLoadProgressStage.ResolvingDependencies when progress.TotalDependencyLoads > 0
+                    => string.Concat("Resolving referenced assets (", progress.CompletedDependencyLoads.ToString(CultureInfo.InvariantCulture), "/", progress.TotalDependencyLoads.ToString(CultureInfo.InvariantCulture), ")..."),
+                AssetLoadProgressStage.ResolvingDependencies => "Resolving referenced assets...",
+                AssetLoadProgressStage.ImportingThirdParty => string.Concat("Importing ", fileLabel, "..."),
+                AssetLoadProgressStage.Finalizing => "Finalizing asset graph...",
+                AssetLoadProgressStage.Completed => "Asset ready.",
+                AssetLoadProgressStage.Failed => "Asset load failed.",
+                _ => BuildTrackedAssetLoadingStatus(progress.RootAssetPath)
+            };
+        }
+
+        private static async Task<XRAsset?> LoadAssetAsync(AssetTypeDescriptor descriptor, string path, string operationName, Action<AssetLoadProgress>? progressCallback = null)
+        {
+            var assets = Engine.Assets;
+            if (assets is null)
+            {
+                Debug.Out($"[AssetExplorer] {operationName}: Engine.Assets is null");
                 return null;
             }
 
             if (assets.TryGetAssetByPath(path, out XRAsset? cached))
             {
-                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Found cached asset for path='{path}'");
+                Debug.Out($"[AssetExplorer] {operationName}: Found cached asset for path='{path}'");
                 return cached;
             }
 
-            Debug.Out($"[AssetExplorer] LoadAssetForInspector: Loading asset from disk, path='{path}', type={descriptor.FullName}");
+            Debug.Out($"[AssetExplorer] {operationName}: Loading asset asynchronously, path='{path}', type={descriptor.FullName}");
             try
             {
-                var loaded = assets.Load(path, descriptor.Type);
+                var loaded = await assets.LoadAsync(path, descriptor.Type, progressCallback).ConfigureAwait(false);
                 if (loaded is not null)
                 {
-                    Debug.Out($"[AssetExplorer] LoadAssetForInspector: Successfully loaded asset");
+                    Debug.Out($"[AssetExplorer] {operationName}: Successfully loaded asset");
                     return loaded;
                 }
 
-                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Load returned null");
+                Debug.Out($"[AssetExplorer] {operationName}: Load returned null");
             }
             catch (Exception ex)
             {
-                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Exception: {ex.Message}");
-                Debug.LogException(ex, $"Failed to load asset '{path}' as '{descriptor.FullName}'.");;
+                Debug.Out($"[AssetExplorer] {operationName}: Exception: {ex.Message}");
+                Debug.LogException(ex, $"Failed to load asset '{path}' as '{descriptor.FullName}'.");
             }
 
             return null;
+        }
+
+        private static void QueueAssetContextMenuAction(string actionLabel, MethodInfo handler, AssetTypeDescriptor descriptor, string path)
+        {
+            Guid trackingId = EditorJobTracker.TrackOperation(
+                BuildTrackedAssetLabel(actionLabel, path),
+                BuildTrackedAssetLoadingStatus(path));
+            _ = CompleteAssetContextMenuActionAsync(trackingId, actionLabel, handler, descriptor, path);
+        }
+
+        private static async Task CompleteAssetContextMenuActionAsync(Guid trackingId, string actionLabel, MethodInfo handler, AssetTypeDescriptor descriptor, string path)
+        {
+            XRAsset? asset = await LoadAssetAsync(
+                descriptor,
+                path,
+                nameof(CompleteAssetContextMenuActionAsync),
+                CreateTrackedAssetProgressHandler(trackingId, null)).ConfigureAwait(false);
+            _ = Engine.InvokeOnMainThread(() =>
+            {
+                EditorJobTracker.SetStatus(trackingId, $"Invoking {actionLabel}...");
+                XRAssetContextMenuContext context = new(path, asset);
+                if (!InvokeAssetContextMenuHandler(handler, actionLabel, context, out string? errorMessage))
+                {
+                    EditorJobTracker.Fault(trackingId, errorMessage);
+                    return;
+                }
+
+                EditorJobTracker.Complete(trackingId, $"Completed {actionLabel}");
+            }, $"Asset Explorer: {actionLabel}");
+        }
+
+        private static bool InvokeAssetContextMenuHandler(MethodInfo handler, string actionLabel, XRAssetContextMenuContext context, out string? errorMessage)
+        {
+            try
+            {
+                handler.Invoke(null, new object[] { context });
+                errorMessage = null;
+                return true;
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException is not null)
+            {
+                errorMessage = ex.InnerException.Message;
+                Debug.LogException(ex.InnerException, $"Asset context menu action '{actionLabel}' failed for '{context.AssetPath}'.");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+                Debug.LogException(ex, $"Asset context menu action '{actionLabel}' failed for '{context.AssetPath}'.");
+                return false;
+            }
+        }
+
+        private static PrefabHierarchyPreview? TryReadPrefabHierarchyPreview(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return null;
+
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(fs);
+                var parser = new Parser(reader);
+
+                while (parser.MoveNext())
+                {
+                    if (parser.Current is MappingStart)
+                        return ParsePrefabHierarchyPreview(parser);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.Out($"[AssetExplorer] Failed to read prefab hierarchy preview for '{path}': {ex.Message}");
+            }
+
+            return null;
+        }
+
+        private static PrefabHierarchyPreview? ParsePrefabHierarchyPreview(IParser parser)
+        {
+            _ = parser.Consume<MappingStart>();
+
+            PrefabHierarchyPreviewNode? rootNode = null;
+            while (!parser.Accept<MappingEnd>(out _))
+            {
+                string key = parser.Consume<Scalar>().Value ?? string.Empty;
+                if (string.Equals(key, "RootNode", StringComparison.Ordinal))
+                {
+                    rootNode = ParsePrefabHierarchyPreviewNode(parser);
+                }
+                else
+                {
+                    SkipYamlNode(parser);
+                }
+            }
+
+            _ = parser.Consume<MappingEnd>();
+            if (rootNode is null)
+                return null;
+
+            PrefabHierarchyPreviewNode rootedNode = AttachPrefabHierarchyPreviewPaths(rootNode, parentPath: null);
+            return new PrefabHierarchyPreview(rootedNode, CountPrefabHierarchyPreviewNodes(rootedNode));
+        }
+
+        private static PrefabHierarchyPreviewNode? ParsePrefabHierarchyPreviewNode(IParser parser)
+        {
+            if (parser.Accept<Scalar>(out var scalar) && IsNullYamlScalar(scalar.Value))
+            {
+                _ = parser.Consume<Scalar>();
+                return null;
+            }
+
+            _ = parser.Consume<MappingStart>();
+
+            string name = "<unnamed>";
+            Guid nodeId = Guid.Empty;
+            List<PrefabHierarchyPreviewNode> children = [];
+
+            while (!parser.Accept<MappingEnd>(out _))
+            {
+                string key = parser.Consume<Scalar>().Value ?? string.Empty;
+                switch (key)
+                {
+                    case "Name":
+                    {
+                        string? value = parser.Consume<Scalar>().Value;
+                        if (!string.IsNullOrWhiteSpace(value))
+                            name = value;
+                        break;
+                    }
+                    case "ID":
+                    {
+                        string? value = parser.Consume<Scalar>().Value;
+                        _ = Guid.TryParse(value, out nodeId);
+                        break;
+                    }
+                    case "ChildNodes":
+                    {
+                        ParsePrefabHierarchyPreviewChildren(parser, children);
+                        break;
+                    }
+                    default:
+                    {
+                        SkipYamlNode(parser);
+                        break;
+                    }
+                }
+            }
+
+            _ = parser.Consume<MappingEnd>();
+            return new PrefabHierarchyPreviewNode(nodeId, name, string.Empty, children);
+        }
+
+        private static void ParsePrefabHierarchyPreviewChildren(IParser parser, List<PrefabHierarchyPreviewNode> children)
+        {
+            if (parser.Accept<Scalar>(out var scalar) && IsNullYamlScalar(scalar.Value))
+            {
+                _ = parser.Consume<Scalar>();
+                return;
+            }
+
+            _ = parser.Consume<SequenceStart>();
+            while (!parser.Accept<SequenceEnd>(out _))
+            {
+                PrefabHierarchyPreviewNode? child = ParsePrefabHierarchyPreviewNode(parser);
+                if (child is not null)
+                    children.Add(child);
+            }
+            _ = parser.Consume<SequenceEnd>();
+        }
+
+        private static int CountPrefabHierarchyPreviewNodes(PrefabHierarchyPreviewNode node)
+        {
+            int count = 1;
+            for (int i = 0; i < node.Children.Count; i++)
+                count += CountPrefabHierarchyPreviewNodes(node.Children[i]);
+            return count;
+        }
+
+        private static PrefabHierarchyPreviewNode AttachPrefabHierarchyPreviewPaths(PrefabHierarchyPreviewNode node, string? parentPath)
+        {
+            string displayName = string.IsNullOrWhiteSpace(node.DisplayName) ? "<unnamed>" : node.DisplayName;
+            string path = string.IsNullOrWhiteSpace(parentPath)
+                ? displayName
+                : string.Concat(parentPath, "/", displayName);
+
+            if (node.Children.Count == 0)
+                return new PrefabHierarchyPreviewNode(node.NodeId, displayName, path, []);
+
+            List<PrefabHierarchyPreviewNode> children = new(node.Children.Count);
+            for (int i = 0; i < node.Children.Count; i++)
+                children.Add(AttachPrefabHierarchyPreviewPaths(node.Children[i], path));
+
+            return new PrefabHierarchyPreviewNode(node.NodeId, displayName, path, children);
+        }
+
+        private static bool IsNullYamlScalar(string? value)
+            => value is null || value == "~" || string.Equals(value, "null", StringComparison.OrdinalIgnoreCase);
+
+        private static void SkipYamlNode(IParser parser)
+        {
+            if (parser.Accept<Scalar>(out _))
+            {
+                _ = parser.Consume<Scalar>();
+                return;
+            }
+
+            if (parser.Accept<SequenceStart>(out _))
+            {
+                _ = parser.Consume<SequenceStart>();
+                while (!parser.Accept<SequenceEnd>(out _))
+                    SkipYamlNode(parser);
+                _ = parser.Consume<SequenceEnd>();
+                return;
+            }
+
+            if (!parser.Accept<MappingStart>(out _))
+                return;
+
+            _ = parser.Consume<MappingStart>();
+            while (!parser.Accept<MappingEnd>(out _))
+            {
+                _ = parser.Consume<Scalar>();
+                SkipYamlNode(parser);
+            }
+            _ = parser.Consume<MappingEnd>();
         }
 
         private static AssetTypeDescriptor? ResolveAssetTypeForPath(string path)
@@ -2366,6 +2907,85 @@ public static partial class EditorImGuiUI
             return _assetTypeDescriptors;
         }
 
+        private sealed class PrefabHierarchyPreview(PrefabHierarchyPreviewNode rootNode, int nodeCount)
+        {
+            public PrefabHierarchyPreviewNode RootNode { get; } = rootNode;
+            public int NodeCount { get; } = nodeCount;
+        }
+
+        private sealed class PrefabHierarchyPreviewNode(Guid nodeId, string displayName, string path, IReadOnlyList<PrefabHierarchyPreviewNode> children)
+        {
+            public Guid NodeId { get; } = nodeId;
+            public string DisplayName { get; } = displayName;
+            public string Path { get; } = path;
+            public IReadOnlyList<PrefabHierarchyPreviewNode> Children { get; } = children;
+        }
+
+        private sealed class PrefabHierarchyPreviewState
+        {
+            public Guid SelectedNodeId;
+            public string? SelectedNodePath;
+            public string SearchText = string.Empty;
+        }
+
+        private sealed class AssetExplorerInspectorLoadState(
+            string path,
+            AssetTypeDescriptor descriptor,
+            Guid trackingId,
+            string initialStatus,
+            PrefabHierarchyPreview? prefabPreview)
+        {
+            public string Path { get; } = path;
+            public AssetTypeDescriptor Descriptor { get; } = descriptor;
+            public Guid TrackingId { get; } = trackingId;
+            public string StatusMessage { get; private set; } = initialStatus;
+            public float ProgressFraction { get; private set; } = 0.02f;
+            public AssetLoadProgressStage ProgressStage { get; private set; } = AssetLoadProgressStage.CheckingCache;
+            public int CompletedDependencyLoads { get; private set; }
+            public int TotalDependencyLoads { get; private set; }
+            public XRPrefabSource? PartialPrefab { get; private set; }
+            public PrefabHierarchyPreview? PrefabPreview { get; } = prefabPreview;
+            public PrefabHierarchyPreviewState? PrefabPreviewState { get; } = prefabPreview is null ? null : new PrefabHierarchyPreviewState();
+            public string? ErrorMessage { get; private set; }
+
+            public void SetStatus(string statusMessage)
+            {
+                if (!string.IsNullOrWhiteSpace(statusMessage))
+                    StatusMessage = statusMessage;
+            }
+
+            public void SetProgress(AssetLoadProgress progress, string statusMessage)
+            {
+                ProgressStage = progress.Stage;
+                ProgressFraction = Math.Clamp(progress.Progress, 0.0f, 1.0f);
+                CompletedDependencyLoads = Math.Max(0, progress.CompletedDependencyLoads);
+                TotalDependencyLoads = Math.Max(CompletedDependencyLoads, progress.TotalDependencyLoads);
+                SetStatus(statusMessage);
+            }
+
+            public void SetManualProgress(AssetLoadProgressStage stage, float progress, string statusMessage, int completedDependencyLoads = 0, int totalDependencyLoads = 0)
+            {
+                ProgressStage = stage;
+                ProgressFraction = Math.Clamp(progress, 0.0f, 1.0f);
+                CompletedDependencyLoads = Math.Max(0, completedDependencyLoads);
+                TotalDependencyLoads = Math.Max(CompletedDependencyLoads, totalDependencyLoads);
+                SetStatus(statusMessage);
+            }
+
+            public void SetPartialPrefab(XRPrefabSource partialPrefab)
+            {
+                PartialPrefab = partialPrefab;
+            }
+
+            public void SetFailure(string errorMessage)
+            {
+                ProgressStage = AssetLoadProgressStage.Failed;
+                ProgressFraction = 1.0f;
+                ErrorMessage = errorMessage;
+                SetStatus(errorMessage);
+            }
+        }
+
         private sealed class AssetTypeDescriptor
         {
             public AssetTypeDescriptor(
@@ -2429,11 +3049,6 @@ public static partial class EditorImGuiUI
             if (descriptor.ContextMenuAttributes.Count == 0)
                 return false;
 
-            XRAsset? assetInstance = null;
-            bool assetLoaded = false;
-            XRAssetContextMenuContext context = default;
-            bool contextReady = false;
-
             foreach (var attribute in descriptor.ContextMenuAttributes)
             {
                 MethodInfo? handler = ResolveAssetContextMenuHandler(attribute.HandlerTypeName, attribute.HandlerMethodName);
@@ -2445,36 +3060,21 @@ public static partial class EditorImGuiUI
                 if (handler is null)
                     continue;
 
-                EnsureContext();
-
-                try
+                var assets = Engine.Assets;
+                if (assets is not null && assets.TryGetAssetByPath(path, out XRAsset? cachedAsset))
                 {
-                    handler.Invoke(null, new object[] { context });
+                    XRAssetContextMenuContext context = new(path, cachedAsset);
+                    _ = InvokeAssetContextMenuHandler(handler, attribute.Label, context, out _);
                 }
-                catch (Exception ex)
+                else
                 {
-                    Debug.LogException(ex, $"Asset context menu action '{attribute.Label}' failed for '{path}'.");
+                    QueueAssetContextMenuAction(attribute.Label, handler, descriptor, path);
                 }
 
                 return true;
             }
 
             return false;
-
-            void EnsureContext()
-            {
-                if (contextReady)
-                    return;
-
-                if (!assetLoaded)
-                {
-                    assetInstance = LoadAssetForInspector(descriptor, path);
-                    assetLoaded = true;
-                }
-
-                context = new XRAssetContextMenuContext(path, assetInstance);
-                contextReady = true;
-            }
         }
 
         private static MethodInfo? ResolveAssetContextMenuHandler(string typeName, string methodName)

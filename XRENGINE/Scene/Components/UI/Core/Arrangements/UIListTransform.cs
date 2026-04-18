@@ -5,6 +5,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UIListTransformEditor")]
     public partial class UIListTransform : UIBoundableTransform
     {
         private float? _childSize = null;

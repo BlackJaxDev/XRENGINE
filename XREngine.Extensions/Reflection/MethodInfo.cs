@@ -1,8 +1,8 @@
-﻿using System.Reflection;
+using System.Reflection;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class MethodInfoExtension
+    public static class MethodInfoExtensions
     {
         public static bool IsAttributeDefined(this MemberInfo info, Type attributeType)
             => info.IsDefined(attributeType);

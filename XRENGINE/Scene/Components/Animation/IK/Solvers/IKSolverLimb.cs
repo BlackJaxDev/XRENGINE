@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using MathNet.Numerics;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
@@ -119,7 +119,7 @@ namespace XREngine.Components.Animation
 
             // A default T-pose arm can be near-colinear, producing a zero cross product.
             // Build a stable fallback normal orthogonal to the limb direction.
-            // Fallback order: Up → Right → Forward.
+            // Fallback order: Up ? Right ? Forward.
             // Right is tried before Forward so that vertical limbs (legs) get a
             // bend normal along +X, which via Cross(+X, -Y) = -Z produces a
             // forward-pointing yDirection in GetBendDirection (knees bend forward).

@@ -1,8 +1,8 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class StreamExtension
+    public static class StreamExtensions
     {
         public static async Task<T> ReadAsync<T>(this Stream stream) where T : unmanaged
         {

@@ -1,5 +1,5 @@
-﻿
-using Extensions;
+
+using XREngine.Extensions;
 using XREngine.Animation;
 
 namespace XREngine.Components.Animation

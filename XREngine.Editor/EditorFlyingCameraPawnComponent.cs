@@ -1,4 +1,4 @@
-using Extensions;
+using XREngine.Extensions;
 using ImageMagick;
 using System.Collections.Concurrent;
 using System.ComponentModel;

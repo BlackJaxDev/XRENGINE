@@ -23,9 +23,10 @@ public static class EditorJobTracker
         DateTime UpdatedAt,
         bool IsDeterminate);
 
-    private sealed class TrackedJob(Job job, string label, Func<object?, string?>? payloadFormatter)
+    private sealed class TrackedJob(Guid id, Job? job, string label, Func<object?, string?>? payloadFormatter)
     {
-        public Job Job { get; } = job;
+        public Guid Id { get; } = id;
+        public Job? Job { get; } = job;
         public string Label { get; } = label;
         public float Progress { get; set; }
         public bool HasDeterminateProgress { get; set; }
@@ -57,14 +58,14 @@ public static class EditorJobTracker
             if (_trackedJobs.ContainsKey(job.Id))
                 return;
 
-            var tracked = new TrackedJob(job, label, payloadFormatter);
+            var tracked = new TrackedJob(job.Id, job, label, payloadFormatter);
             _trackedJobs[job.Id] = tracked;
 
-            tracked.ProgressHandler = (j, value) => UpdateTrackedInternal(j, value, null);
-            tracked.ProgressWithPayloadHandler = (j, value, payload) => UpdateTrackedInternal(j, value, payload);
-            tracked.CompletedHandler = j => MarkState(j, TrackedJobState.Completed, "Completed");
-            tracked.CanceledHandler = j => MarkState(j, TrackedJobState.Canceled, "Canceled");
-            tracked.FaultedHandler = (j, ex) => MarkState(j, TrackedJobState.Faulted, ex.Message);
+            tracked.ProgressHandler = (j, value) => UpdateTrackedInternal(j.Id, value, null);
+            tracked.ProgressWithPayloadHandler = (j, value, payload) => UpdateTrackedInternal(j.Id, value, payload);
+            tracked.CompletedHandler = j => MarkState(j.Id, TrackedJobState.Completed, "Completed");
+            tracked.CanceledHandler = j => MarkState(j.Id, TrackedJobState.Canceled, "Canceled");
+            tracked.FaultedHandler = (j, ex) => MarkState(j.Id, TrackedJobState.Faulted, ex.Message);
 
             job.ProgressChanged += tracked.ProgressHandler;
             job.ProgressWithPayload += tracked.ProgressWithPayloadHandler;
@@ -74,16 +75,49 @@ public static class EditorJobTracker
         }
     }
 
+    public static Guid TrackOperation(string label, string? initialStatus = null)
+    {
+        if (string.IsNullOrWhiteSpace(label))
+            label = "Background Operation";
+
+        Guid operationId = Guid.NewGuid();
+        lock (_lock)
+        {
+            var tracked = new TrackedJob(operationId, null, label, null)
+            {
+                Status = string.IsNullOrWhiteSpace(initialStatus) ? label : initialStatus
+            };
+            _trackedJobs[operationId] = tracked;
+        }
+
+        return operationId;
+    }
+
     public static void Report(Job job, float progress, string? status = null)
     {
         ArgumentNullException.ThrowIfNull(job);
-        UpdateTrackedInternal(job, progress, status);
+        UpdateTrackedInternal(job.Id, progress, status);
     }
+
+    public static void Report(Guid operationId, float progress, string? status = null)
+        => UpdateTrackedInternal(operationId, progress, status);
+
+    public static void SetStatus(Guid operationId, string? status)
+        => UpdateTrackedInternal(operationId, float.NaN, status);
+
+    public static void Complete(Guid operationId, string? status = null)
+        => MarkState(operationId, TrackedJobState.Completed, status ?? "Completed");
+
+    public static void Fault(Guid operationId, string? status)
+        => MarkState(operationId, TrackedJobState.Faulted, string.IsNullOrWhiteSpace(status) ? "Failed" : status);
+
+    public static void Cancel(Guid operationId, string? status = null)
+        => MarkState(operationId, TrackedJobState.Canceled, status ?? "Canceled");
 
     public static void SetStatus(Job job, string? status)
     {
         ArgumentNullException.ThrowIfNull(job);
-        UpdateTrackedInternal(job, float.NaN, status);
+        UpdateTrackedInternal(job.Id, float.NaN, status);
     }
 
     public static IReadOnlyList<TrackedJobSnapshot> GetSnapshots()
@@ -96,7 +130,7 @@ public static class EditorJobTracker
                 .OrderByDescending(t => t.State == TrackedJobState.Running)
                 .ThenByDescending(t => t.LastUpdated)
                 .Select(t => new TrackedJobSnapshot(
-                    t.Job.Id,
+                    t.Id,
                     t.Label,
                     t.State == TrackedJobState.Running ? t.Progress : 1f,
                     t.Status,
@@ -106,11 +140,11 @@ public static class EditorJobTracker
         }
     }
 
-    private static void UpdateTrackedInternal(Job job, float progress, object? payload)
+    private static void UpdateTrackedInternal(Guid trackedId, float progress, object? payload)
     {
         lock (_lock)
         {
-            if (!_trackedJobs.TryGetValue(job.Id, out var tracked))
+            if (!_trackedJobs.TryGetValue(trackedId, out var tracked))
                 return;
 
             if (!float.IsNaN(progress))
@@ -140,11 +174,11 @@ public static class EditorJobTracker
             _ => payload.ToString()
         };
 
-    private static void MarkState(Job job, TrackedJobState state, string? status)
+    private static void MarkState(Guid trackedId, TrackedJobState state, string? status)
     {
         lock (_lock)
         {
-            if (!_trackedJobs.TryGetValue(job.Id, out var tracked))
+            if (!_trackedJobs.TryGetValue(trackedId, out var tracked))
                 return;
 
             tracked.State = state;
@@ -160,6 +194,9 @@ public static class EditorJobTracker
     private static void DetachHandlers(TrackedJob tracked)
     {
         var job = tracked.Job;
+        if (job is null)
+            return;
+
         if (tracked.ProgressHandler is not null)
             job.ProgressChanged -= tracked.ProgressHandler;
         if (tracked.ProgressWithPayloadHandler is not null)

@@ -1,5 +1,5 @@
-﻿using System;
-using Extensions;
+using System;
+using XREngine.Extensions;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 

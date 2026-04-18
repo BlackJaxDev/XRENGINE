@@ -1,6 +1,6 @@
-﻿namespace Extensions
+namespace XREngine.Extensions
 {
-    public static partial class UInt32Extension
+    public static partial class UInt32Extensions
     {
         public static UInt32 Reverse(this UInt32 value)
         {

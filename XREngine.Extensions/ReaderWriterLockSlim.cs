@@ -1,6 +1,6 @@
-﻿namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class LockingExtension
+    public static class LockingExtensions
     {
         private sealed class ReadLockToken : IDisposable
         {

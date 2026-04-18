@@ -1,4 +1,4 @@
-using Extensions;
+using XREngine.Extensions;
 using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Scene.Transforms;
@@ -8,6 +8,7 @@ namespace XREngine.Rendering.UI
     /// <summary>
     /// A transform that splits its children into regions based on the specified arrangement.
     /// </summary>
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UIMultiSplitTransformEditor")]
     public class UIMultiSplitTransform : UIBoundableTransform
     {
         private UISplitArrangement _arrangement = UISplitArrangement.LeftMiddleRight;

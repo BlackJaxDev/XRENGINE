@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using System.Numerics;
 using FloatingPoint = System.Single;
 
@@ -341,8 +341,8 @@ namespace XREngine.Maths
         /// <summary>
         /// Sets the j'th Euclidean coordinate of the i'th point to the given value.
         /// </summary>
-        /// <param name="i">the number of the point, 0 ≤ i < size</param>
-        /// <param name="j">the dimension of the coordinate of interest, 0 ≤ j ≤ dimension</param>
+        /// <param name="i">the number of the point, 0 = i < size</param>
+        /// <param name="j">the dimension of the coordinate of interest, 0 = j = dimension</param>
         /// <param name="v">the value to set</param>
         public void SetValue(int i, int j, FloatingPoint v)
         {
@@ -798,7 +798,7 @@ namespace XREngine.Maths
         /// the radius of the computed miniball.
         /// Notice that getMaxOverlength() == 0 if and only if all points are contained in the
         /// miniball.
-        /// @return the maximal over-length, a number ≥ 0
+        /// @return the maximal over-length, a number = 0
         /// </summary>
         public FloatingPoint MaxOverlength => maxOverlength;
         /// <summary>
@@ -808,7 +808,7 @@ namespace XREngine.Maths
         /// maximal such under-length, divided by the radius of the computed miniball.
         /// Notice that in theory MaxUnderlength should be zero, otherwise the computed
         /// miniball is enclosing but not minimal.
-        /// Returns the maximal under-length, a number ≥ 0.
+        /// Returns the maximal under-length, a number = 0.
         /// </summary>
         public FloatingPoint MaxUnderlength => maxUnderlength;
         /// <summary>

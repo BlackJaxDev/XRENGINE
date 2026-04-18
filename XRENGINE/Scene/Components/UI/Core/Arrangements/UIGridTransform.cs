@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using System.ComponentModel;
 using XREngine.Core;
 using XREngine.Data.Core;
@@ -7,6 +7,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UIGridTransformEditor")]
     public partial class UIGridTransform : UIBoundableTransform
     {
         private EventList<UISizingDefinition> _rows;

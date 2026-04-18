@@ -7,6 +7,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UICanvasTransformEditor")]
     public class UICanvasTransform : UIBoundableTransform
     {
         public event Action<UICanvasTransform>? LayoutingStarted;

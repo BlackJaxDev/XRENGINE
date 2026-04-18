@@ -1,4 +1,4 @@
-ï»¿using Extensions;
+using XREngine.Extensions;
 using System;
 using System.Collections;
 using System.ComponentModel;
@@ -867,7 +867,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private static readonly string[] AntiAliasingFrameBufferDependencies =
     [
         // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
-        // so it must not be destroyed here â€” the AO pass owns its lifecycle.
+        // so it must not be destroyed here — the AO pass owns its lifecycle.
         LightCombineFBOName,
         ForwardPassFBOName,
         PostProcessOutputFBOName,
@@ -914,7 +914,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private static readonly string[] ResizeRecoveryFrameBufferDependencies =
     [
         // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
-        // so it must not be destroyed here â€” the AO pass owns its lifecycle.
+        // so it must not be destroyed here — the AO pass owns its lifecycle.
         SceneCopyFBOName,
         TransparentSceneCopyFBOName,
         DeferredTransparencyBlurFBOName,

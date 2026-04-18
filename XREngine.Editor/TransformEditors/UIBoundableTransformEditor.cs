@@ -29,6 +29,8 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         DrawLayout(ui, transformLabel);
         DrawAnchors(ui, transformLabel);
         DrawBoxModel(ui, transformLabel);
+        DrawBehavior(ui, transformLabel);
+        DrawAdvanced(ui, visited);
     }
 
     private static void DrawLayout(UIBoundableTransform ui, string transformLabel)
@@ -36,15 +38,20 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         if (!ImGui.CollapsingHeader("Layout", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        ImGui.TextDisabled($"Actual Size: {ui.ActualWidth.ToString("0.##", CultureInfo.InvariantCulture)} x {ui.ActualHeight.ToString("0.##", CultureInfo.InvariantCulture)}");
+        DrawReadOnlyField(
+            "Actual Size",
+            $"{ui.ActualWidth.ToString("0.##", CultureInfo.InvariantCulture)} x {ui.ActualHeight.ToString("0.##", CultureInfo.InvariantCulture)}");
+        DrawReadOnlyField(
+            "Actual Position",
+            $"{ui.ActualLocalBottomLeftTranslation.X.ToString("0.##", CultureInfo.InvariantCulture)}, {ui.ActualLocalBottomLeftTranslation.Y.ToString("0.##", CultureInfo.InvariantCulture)}");
 
-        DrawOptionalFloat("Width", ui.Width, set => ui.Width = set, $"Set Width {transformLabel}", ui);
-        DrawOptionalFloat("Height", ui.Height, set => ui.Height = set, $"Set Height {transformLabel}", ui);
+        DrawOptionalFloat("Width", ui.Width, set => ui.Width = set, $"Set Width {transformLabel}", ui, LayoutDragSpeed);
+        DrawOptionalFloat("Height", ui.Height, set => ui.Height = set, $"Set Height {transformLabel}", ui, LayoutDragSpeed);
 
-        DrawOptionalFloat("Min Width", ui.MinWidth, set => ui.MinWidth = set, $"Set Min Width {transformLabel}", ui);
-        DrawOptionalFloat("Min Height", ui.MinHeight, set => ui.MinHeight = set, $"Set Min Height {transformLabel}", ui);
-        DrawOptionalFloat("Max Width", ui.MaxWidth, set => ui.MaxWidth = set, $"Set Max Width {transformLabel}", ui);
-        DrawOptionalFloat("Max Height", ui.MaxHeight, set => ui.MaxHeight = set, $"Set Max Height {transformLabel}", ui);
+        DrawOptionalFloat("Min Width", ui.MinWidth, set => ui.MinWidth = set, $"Set Min Width {transformLabel}", ui, LayoutDragSpeed);
+        DrawOptionalFloat("Min Height", ui.MinHeight, set => ui.MinHeight = set, $"Set Min Height {transformLabel}", ui, LayoutDragSpeed);
+        DrawOptionalFloat("Max Width", ui.MaxWidth, set => ui.MaxWidth = set, $"Set Max Width {transformLabel}", ui, LayoutDragSpeed);
+        DrawOptionalFloat("Max Height", ui.MaxHeight, set => ui.MaxHeight = set, $"Set Max Height {transformLabel}", ui, LayoutDragSpeed);
 
         Vector2 pivot = ui.NormalizedPivot;
         ImGui.AlignTextToFramePadding();
@@ -59,6 +66,13 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
             ui.NormalizedPivot = pivot;
             var queued = pivot;
             EnqueueSceneEdit(() => ui.NormalizedPivot = queued);
+        }
+
+        if (ImGui.Button("Stretch To Parent"))
+        {
+            ImGuiUndoHelper.TrackDragUndo($"Stretch {transformLabel} To Parent", ui);
+            ui.StretchToParent();
+            EnqueueSceneEdit(ui.StretchToParent);
         }
 
         ImGui.Spacing();
@@ -138,63 +152,21 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         ImGui.Spacing();
     }
 
-    private readonly struct ImGuiDisabledScope : IDisposable
+    private static void DrawBehavior(UIBoundableTransform ui, string transformLabel)
     {
-        private readonly bool _disabled;
+        if (!ImGui.CollapsingHeader("Behavior"))
+            return;
 
-        public ImGuiDisabledScope(bool disabled)
-        {
-            _disabled = disabled;
-            if (_disabled)
-                ImGui.BeginDisabled();
-        }
+        DrawCheckbox("Blocks Input Behind", ui.BlocksInputBehind, value => ui.BlocksInputBehind = value, $"Set Input Blocking {transformLabel}", ui);
+        DrawCheckbox("Exclude From Auto Width", ui.ExcludeFromParentAutoCalcWidth, value => ui.ExcludeFromParentAutoCalcWidth = value, $"Exclude Width Auto Calc {transformLabel}", ui);
+        DrawCheckbox("Exclude From Auto Height", ui.ExcludeFromParentAutoCalcHeight, value => ui.ExcludeFromParentAutoCalcHeight = value, $"Exclude Height Auto Calc {transformLabel}", ui);
 
-        public void Dispose()
-        {
-            if (_disabled)
-                ImGui.EndDisabled();
-        }
+        ImGui.Spacing();
     }
 
-    private static void DrawOptionalFloat(string label, float? value, Action<float?> setValue, string undoLabel, UIBoundableTransform target)
+    private static void DrawAdvanced(UIBoundableTransform ui, HashSet<object> visited)
     {
-        ImGui.PushID(label);
-
-        bool enabled = value.HasValue;
-        if (ImGui.Checkbox("##Enabled", ref enabled))
-        {
-            ImGuiUndoHelper.TrackDragUndo(undoLabel, target);
-            float? next = enabled ? 0f : null;
-            setValue(next);
-            var queued = next;
-            EnqueueSceneEdit(() => setValue(queued));
-        }
-        else
-        {
-            ImGuiUndoHelper.TrackDragUndo(undoLabel, target);
-        }
-
-        ImGui.SameLine();
-
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted(label);
-        ImGui.SameLine();
-
-        float v = value ?? 0f;
-        using (new ImGuiDisabledScope(!enabled))
-        {
-            ImGui.SetNextItemWidth(-1f);
-            bool edited = ImGui.DragFloat("##Value", ref v, LayoutDragSpeed);
-            ImGuiUndoHelper.TrackDragUndo(undoLabel, target);
-            if (edited)
-            {
-                float? next = enabled ? v : null;
-                setValue(next);
-                var queued = next;
-                EnqueueSceneEdit(() => setValue(queued));
-            }
-        }
-
-        ImGui.PopID();
+        if (ImGui.CollapsingHeader("Advanced"))
+            DrawDefaultTransformInspector(ui, visited);
     }
 }

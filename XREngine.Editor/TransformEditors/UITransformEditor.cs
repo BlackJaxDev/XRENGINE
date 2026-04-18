@@ -22,6 +22,7 @@ public sealed class UITransformEditor : IXRTransformEditor
         string transformLabel = TransformEditorUtil.GetTransformDisplayName(ui);
 
         DrawStyling(ui, transformLabel);
+        DrawVisibility(ui, transformLabel);
         DrawTranslation(ui, transformLabel);
         DrawDepth(ui, transformLabel);
         DrawScale(ui, transformLabel);
@@ -60,6 +61,11 @@ public sealed class UITransformEditor : IXRTransformEditor
         }
 
         ImGui.Spacing();
+    }
+
+    private static void DrawVisibility(UITransform ui, string transformLabel)
+    {
+        DrawEnumCombo("Visibility", ui.Visibility, value => ui.Visibility = value, $"Set Visibility {transformLabel}", ui);
     }
 
     private static void DrawTranslation(UITransform ui, string transformLabel)

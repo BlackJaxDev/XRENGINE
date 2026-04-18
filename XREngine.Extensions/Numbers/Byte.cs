@@ -1,6 +1,6 @@
-﻿namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class ByteExtension
+    public static class ByteExtensions
     {
         /// <summary>
         /// Finds the first differing bit starting from the lsb.

@@ -1,8 +1,8 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
 namespace XREngine.Extensions
 {
-    public static class MarshalExtension
+    public static class MarshalExtensions
     {
         public static CoTaskMemoryHandle CopyToCoTaskMem(this byte[] array)
         {

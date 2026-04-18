@@ -1,6 +1,6 @@
-﻿namespace Extensions
+namespace XREngine.Extensions
 {
-    public static partial class TaskExtension
+    public static partial class TaskExtensions
     {
         private static readonly TaskFactory Factory = new(
             CancellationToken.None,

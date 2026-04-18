@@ -1,6 +1,6 @@
-﻿namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class Int64Extension
+    public static class Int64Extensions
     {
         public static Int64 Reverse(this Int64 value)
         {

@@ -1,4 +1,4 @@
-ï»¿using Extensions;
+using XREngine.Extensions;
 using ImageMagick;
 using ImGuiNET;
 using Silk.NET.OpenGL;
@@ -247,7 +247,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 Engine.Rendering.State.HasOvrMultiViewExtension |= hasExtMultiview;
 
-                // Probe for GL_ARB_parallel_shader_compile â€” enables non-blocking CompileShader/LinkProgram.
+                // Probe for GL_ARB_parallel_shader_compile — enables non-blocking CompileShader/LinkProgram.
                 bool hasParallelShaderCompile = extensions.Any(
                     e => string.Equals(e, "GL_ARB_parallel_shader_compile", StringComparison.Ordinal));
                 Engine.Rendering.State.HasParallelShaderCompile = hasParallelShaderCompile;
@@ -255,7 +255,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     // Request unlimited driver shader-compiler threads.
                     parallelExt.MaxShaderCompilerThreads(0xFFFF_FFFF);
-                    Debug.OpenGL("GL_ARB_parallel_shader_compile enabled â€” shader compilation is non-blocking.");
+                    Debug.OpenGL("GL_ARB_parallel_shader_compile enabled — shader compilation is non-blocking.");
                 }
 
                 InitializeSparseTextureSupport(extensions);
@@ -465,7 +465,7 @@ namespace XREngine.Rendering.OpenGL
             bool shouldTrack = type == GLEnum.DebugTypeError;
             RecordOpenGLError(id, FormatSource(source), FormatType(type), FormatSeverity(severity), messageStr, shouldTrack);
 
-            // OOM errors leave the driver in a corrupted state â€” flag it so draw calls are skipped for the rest of this frame.
+            // OOM errors leave the driver in a corrupted state — flag it so draw calls are skipped for the rest of this frame.
             if (id == 1285 || messageStr.Contains("out of memory", StringComparison.OrdinalIgnoreCase))
             {
                 if (Current is OpenGLRenderer renderer)
@@ -660,7 +660,7 @@ namespace XREngine.Rendering.OpenGL
         /// <summary>
         /// Set by the debug callback when the NVIDIA driver reports GL_OUT_OF_MEMORY.
         /// Consumed (cleared) at the start of each frame by <see cref="ProcessPendingUploads"/>.
-        /// Do NOT use this to suppress draw calls â€” use <see cref="SuppressDrawsForOomRecovery"/> instead.
+        /// Do NOT use this to suppress draw calls — use <see cref="SuppressDrawsForOomRecovery"/> instead.
         /// </summary>
         internal volatile bool _oomDetectedThisFrame;
 
@@ -773,7 +773,7 @@ namespace XREngine.Rendering.OpenGL
             if (driverReportedOom)
             {
                 if (_oomCooldownFrames == 0)
-                    Debug.OpenGLWarning($"[OOM Recovery] Entering {OomCooldownDuration}-frame cooldown â€” suspending GPU allocations.");
+                    Debug.OpenGLWarning($"[OOM Recovery] Entering {OomCooldownDuration}-frame cooldown — suspending GPU allocations.");
                 _oomCooldownFrames = OomCooldownDuration;
             }
 
@@ -3483,7 +3483,7 @@ void main()
             if (!_blitErrorWarned.Add((srcId, dstId)))
                 return;
             Debug.OpenGLWarning(
-                $"BlitNamedFramebuffer FBO {srcId}â†’{dstId} raised {error}. " +
+                $"BlitNamedFramebuffer FBO {srcId}?{dstId} raised {error}. " +
                 $"Subsequent errors for this pair will be suppressed.");
         }
 
@@ -3493,7 +3493,7 @@ void main()
             if (!_blitSkipWarned.Add((srcId, dstId)))
                 return;
             Debug.OpenGLWarning(
-                $"Skipping blit: FBO {srcId}â†’{dstId} incomplete " +
+                $"Skipping blit: FBO {srcId}?{dstId} incomplete " +
                 $"(src={srcStatus}, dst={dstStatus}).");
         }
 

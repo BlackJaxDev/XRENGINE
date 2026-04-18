@@ -420,3 +420,5 @@ Build/TempValidation/
 Build/Dependencies/MsdfAtlasGen/
 Cache/
 XREngine.Gltf/runtimes/
+_verify_temp/
+Build/_AgentValidation/

@@ -1,7 +1,7 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.InteropServices;
-using Extensions;
+using XREngine.Extensions;
 using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;

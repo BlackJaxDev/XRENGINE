@@ -63,7 +63,26 @@ namespace XREngine.Scene.Prefabs
                 ?? throw new InvalidOperationException("Failed to deserialize prefab hierarchy");
 
             DetachWorldRecursive(clone);
+            NotifyYamlHierarchyDeserialized(clone);
             return clone;
+        }
+
+        /// <summary>
+        /// Mirrors the cooked-binary <c>IPostCookedBinaryDeserialize</c> hook for YAML-deserialized
+        /// hierarchies. YamlDotNet reads <c>Components</c> (Order=0) before <c>Transform</c> and does
+        /// not invoke <c>NotifyOwningSceneNodePostDeserialize</c> itself, which leaves components
+        /// that build runtime state from transform-dependent data (e.g. <see cref="Mesh.ModelComponent"/>
+        /// rebuilding <c>RenderableMesh</c> instances) with their rebuild deferred and never retried.
+        /// Running this pass once the full tree is assembled lets each component resolve its sibling
+        /// transforms and rebind serialized bone references against the completed hierarchy.
+        /// </summary>
+        internal static void NotifyYamlHierarchyDeserialized(SceneNode root)
+        {
+            ArgumentNullException.ThrowIfNull(root);
+
+            foreach (SceneNode node in EnumerateHierarchy(root))
+                foreach (XREngine.Components.XRComponent component in node.Components)
+                    component.NotifyOwningSceneNodePostDeserialize();
         }
 
         /// <summary>

@@ -9,7 +9,7 @@ using System.Runtime.CompilerServices;
 using System.IO;
 using XREngine.Core.Files;
 using XREngine.Core.Reflection.Attributes;
-using Extensions;
+using XREngine.Extensions;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Editor.ComponentEditors;

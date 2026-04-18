@@ -1,10 +1,10 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static partial class ListExtension
+    public static partial class ListExtensions
     {
         public static Type? DetermineElementType(this Type listType)
         {

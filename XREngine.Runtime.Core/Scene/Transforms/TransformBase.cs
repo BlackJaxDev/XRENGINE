@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using MemoryPack;
 using System.Collections.Concurrent;
 using System.Buffers;
@@ -370,7 +370,7 @@ namespace XREngine.Scene.Transforms
 
         /// <summary>
         /// Snapshot of cached basis vectors and rotations for a spatial coordinate space.
-        /// Zero heap allocations — this is a value type copied under lock.
+        /// Zero heap allocations � this is a value type copied under lock.
         /// </summary>
         public readonly struct SpaceSnapshot
         {

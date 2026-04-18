@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Scene.Transforms;
@@ -9,6 +9,7 @@ namespace XREngine.Rendering.UI
     /// A transform that splits two children into two regions.
     /// The user can drag the splitter to resize the regions.
     /// </summary>
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UIDualSplitTransformEditor")]
     public class UIDualSplitTransform : UIBoundableTransform
     {
         private bool _verticalSplit = false;
@@ -154,7 +155,7 @@ namespace XREngine.Rendering.UI
 
         /// <summary>
         /// Old layout path: called from OnLocalMatrixChanged.
-        /// Kept for compatibility — the new ArrangeChildren path handles arrangement during the layout system pass.
+        /// Kept for compatibility � the new ArrangeChildren path handles arrangement during the layout system pass.
         /// When OnResizeChildComponents fires after ArrangeChildren, FitLayout calls will early-exit
         /// because children were already arranged with the same bounds.
         /// </summary>

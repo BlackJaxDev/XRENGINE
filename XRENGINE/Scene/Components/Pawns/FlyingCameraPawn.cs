@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
@@ -236,7 +236,7 @@ namespace XREngine.Components
             // Render thread, so directly writing RenderMatrix here races with mid-frame
             // reads (deferred pass vs AO resolve see different camera positions, producing
             // AO clipping artifacts during motion). The normal double-buffered path
-            // (EnqueueRenderTransformChange → GlobalSwapBuffers) is race-free.
+            // (EnqueueRenderTransformChange ? GlobalSwapBuffers) is race-free.
             tfm.RecalculateMatrices(forceWorldRecalc: true);
         }
 

@@ -26,16 +26,14 @@ public enum FbxImportBackend
 {
     Auto,
     Native,
-    AssimpLegacy,
-    Assimp = AssimpLegacy,
+    Assimp,
 }
 
 public enum GltfImportBackend
 {
     Auto,
     Native,
-    AssimpLegacy,
-    Assimp = AssimpLegacy,
+    Assimp,
 }
 
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions

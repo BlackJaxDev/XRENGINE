@@ -30,10 +30,15 @@ namespace XREngine.Scene.Prefabs
         public Guid? PrefabAssetIdSerialized
         {
             get => IsPrefabRoot || PrefabAssetId == Guid.Empty ? PrefabAssetId : null;
-            set => PrefabAssetId = value ?? Guid.Empty;
+            set
+            {
+                PrefabAssetId = value ?? Guid.Empty;
+                IsPrefabRoot = value is Guid prefabAssetId && prefabAssetId != Guid.Empty;
+            }
         }
 
         public Guid PrefabNodeId { get; set; }
+        [YamlIgnore]
         [DefaultValue(false)]
         public bool IsPrefabRoot { get; set; }
         public Dictionary<string, SceneNodePrefabPropertyOverride> PropertyOverrides { get; set; } = new(StringComparer.Ordinal);

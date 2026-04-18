@@ -5,7 +5,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using Extensions;
+using XREngine.Extensions;
 using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Animation;

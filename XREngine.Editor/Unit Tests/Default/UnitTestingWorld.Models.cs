@@ -1,5 +1,5 @@
-ï»¿using Assimp;
-using Extensions;
+using Assimp;
+using XREngine.Extensions;
 using System.Numerics;
 using XREngine;
 using XREngine.Animation;
@@ -87,14 +87,14 @@ public static partial class EditorUnitTests
         private static FbxImportBackend ResolveFbxBackend(Settings.ModelImportSettings model)
             => model.ImporterBackend switch
             {
-                ModelImportBackendPreference.AssimpOnly => FbxImportBackend.AssimpLegacy,
+                ModelImportBackendPreference.AssimpOnly => FbxImportBackend.Assimp,
                 _ => FbxImportBackend.Auto,
             };
 
         private static GltfImportBackend ResolveGltfBackend(Settings.ModelImportSettings model)
             => model.ImporterBackend switch
             {
-                ModelImportBackendPreference.AssimpOnly => GltfImportBackend.AssimpLegacy,
+                ModelImportBackendPreference.AssimpOnly => GltfImportBackend.Assimp,
                 _ => GltfImportBackend.Auto,
             };
 
@@ -371,7 +371,7 @@ public static partial class EditorUnitTests
             var spawners = rootNode.FindAllDescendantComponents<LightProbeGridSpawnerComponent>();
             if (spawners.Length == 0)
             {
-                Debug.Out("[LightProbeGrid] No LightProbeGridSpawnerComponent found â€” skipping model-bounds wiring.");
+                Debug.Out("[LightProbeGrid] No LightProbeGridSpawnerComponent found — skipping model-bounds wiring.");
                 return;
             }
 
@@ -381,7 +381,7 @@ public static partial class EditorUnitTests
 
             if (models.Count == 0)
             {
-                Debug.Out("[LightProbeGrid] No ModelComponents found under imported static models â€” skipping model-bounds wiring.");
+                Debug.Out("[LightProbeGrid] No ModelComponents found under imported static models — skipping model-bounds wiring.");
                 return;
             }
 

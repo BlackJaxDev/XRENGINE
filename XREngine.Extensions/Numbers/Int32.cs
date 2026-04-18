@@ -1,6 +1,6 @@
-﻿namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class Int32Extension
+    public static class Int32Extensions
     {
         public static Int32 Reverse(this Int32 value)
         {

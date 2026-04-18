@@ -1,11 +1,11 @@
-ï»¿using System.Numerics;
+using System.Numerics;
 using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Animation;
 using XREngine.Scene.Transforms;
-using Extensions;
+using XREngine.Extensions;
 using System.Diagnostics;
 
 namespace XREngine.Components.Animation
@@ -537,7 +537,7 @@ namespace XREngine.Components.Animation
 
                 if (fullWeight)
                 {
-                    // Fast path: skip LerpValue entirely â€” lerp(x, y, 1.0) == y.
+                    // Fast path: skip LerpValue entirely — lerp(x, y, 1.0) == y.
                     // ApplyRuntimeClipRemaps only affects Method members, so skip for field/property.
                     if (member.MemberType == EAnimationMemberType.Method)
                         ApplyRuntimeClipRemaps(member, ref animatedValue);
@@ -1166,7 +1166,7 @@ namespace XREngine.Components.Animation
         private void SetPlaybackTimeTicks(long playbackTimeTicks)
         {
             _playbackTimeTicks = Math.Max(0L, playbackTimeTicks);
-            // Bypass SetField â€” PlaybackTime fires change notifications every frame for no subscribers.
+            // Bypass SetField — PlaybackTime fires change notifications every frame for no subscribers.
             _playbackTime = StopwatchTicksToSeconds(_playbackTimeTicks);
         }
 

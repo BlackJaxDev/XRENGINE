@@ -3,6 +3,8 @@ using XREngine;
 using XREngine.Editor;
 using ActionType = OpenVR.NET.Manifest.ActionType;
 
+namespace XREngine.Editor;
+
 internal static class EditorVR
 {
    public static void ApplyOpenVRSettings(VRGameStartupSettings<EVRActionCategory, EVRGameAction> settings)

@@ -142,9 +142,9 @@
   // Adds a jiggle physics chain to the character pawn.
   "PhysicsChain": false,
   // Enables or disables AddPhysics.
-  "AddPhysics": true,
+  "AddPhysics": false,
   // The number of physics balls to add to the scene.
-  "PhysicsBallCount": 10,
+  "PhysicsBallCount": 0,
   // Generated from ModelsToImport on Settings.
   "ModelsToImport": [
     {
@@ -162,7 +162,7 @@
       // ImporterBackend: PreferNativeThenAssimp, AssimpOnly
       "ImporterBackend": "AssimpOnly",
       // Generated from Path on ModelImportSettings.
-      "Path": "misc\\jax2026.fbx",
+      "Path": "misc\\Mitsuki.fbx",
       // Comma-separated PostProcessSteps flag names.
       "ImportFlags": "Triangulate, FlipUVs, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
       // Generated from Scale on ModelImportSettings.

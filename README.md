@@ -13,7 +13,7 @@ If you want the fastest way in: build the editor, launch the Unit Testing World,
 - **Audio:** OpenAL (Soft) via Silk.NET, with NAudio and LAME for codec support. Video audio goes through FFmpeg.
 - **Scene graph:** Traditional scene node tree with an attached component model. Nodes form a parent-child transform hierarchy, and components derive from `XRBase` for change tracking.
 - **Animation:** Skeletal animation with blend support, humanoid IK (VRIK for VR), and Assimp-based clip import.
-- **Asset import:** FBX uses the native `XREngine.Fbx` importer by default. Other model formats still load through Assimp (via AssimpNetter).
+- **Asset import:** FBX uses the native `XREngine.Fbx` importer and glTF/GLB uses the native `XREngine.Gltf` importer by default. Other model formats still load through Assimp (via AssimpNetter).
 - **Networking:** Client/server and P2P topologies with entity replication and pose sync for multiplayer testing.
 - **XR:** OpenXR and SteamVR/OpenVR paths. OpenVR is the one that's actually tested today.
 - **Editor UI:** ImGui is the day-to-day interface. A native UI pipeline is under development as the intended production UI.
@@ -76,9 +76,15 @@ If you are contributing code, the best follow-up docs are `docs/features/unit-te
 | `XREngine.Editor/` | Desktop editor |
 | `XREngine.Server/` | Dedicated server |
 | `XREngine.VRClient/` | Legacy OpenVR companion app. Keeps the SteamVR/OpenVR connection isolated from the main engine process, forwards player input to the main app through a pipe, and displays per-eye frames streamed back from the engine. |
-| `XREngine.Animation/`, `XREngine.Audio/`, etc. | Supporting modules |
+| `XREngine.Animation/`, `XREngine.Audio/`, `XREngine.Input/`, `XREngine.Modeling/`, `XREngine.Extensions/` | Supporting modules |
+| `XREngine.Data/` | Shared data types and serialization primitives |
+| `XREngine.Fbx/`, `XREngine.Gltf/` | Native FBX and glTF importers |
+| `XREngine.Runtime.*/` | Runtime integration layers (Core, Bootstrap, Rendering, AnimationIntegration, AudioIntegration, InputIntegration, ModelingBridge) |
+| `XREngine.Profiler/`, `XREngine.Profiler.UI/` | Standalone profiler app and UI |
+| `XREngine.Benchmarks/` | Performance benchmarks |
 | `XREngine.UnitTests/` | Automated tests |
-| `Build/Submodules/` | Third-party dependencies (OpenVR.NET, MagicPhysX, CoACD, OscCore, rive-sharp) |
+| `Submodules/` | Git submodule: MagicPhysX |
+| `Build/Submodules/` | Git submodules: OpenVR.NET, CoACD, OscCore-NET9, rive-sharp |
 
 ## Running and debugging
 

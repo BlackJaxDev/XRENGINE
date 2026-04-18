@@ -58,6 +58,9 @@ public sealed class XRTexture2DYamlTypeConverter : IYamlTypeConverter
         if (!Engine.Assets.TryResolveAssetPathById(id, referenceAssetPath, out string? assetPath) || string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
             return null;
 
+        if (DeferredAssetReferenceContext.TryDeferAssetLoad(assetPath, typeof(XRTexture2D), out XRAsset? deferredAsset))
+            return deferredAsset as XRTexture2D;
+
         return Engine.Assets.LoadImmediate(assetPath, typeof(XRTexture2D)) as XRTexture2D;
     }
 

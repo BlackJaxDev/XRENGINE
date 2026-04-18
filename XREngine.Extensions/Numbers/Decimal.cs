@@ -1,6 +1,6 @@
-﻿namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class DecimalExtension
+    public static class DecimalExtensions
     {
         public static Decimal Clamp(this Decimal value, Decimal min, Decimal max)
         {

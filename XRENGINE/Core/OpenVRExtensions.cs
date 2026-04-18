@@ -1,6 +1,8 @@
 ﻿using System.Numerics;
 using Valve.VR;
 
+namespace XREngine.Core;
+
 public static class OpenVRExtensions
 {
     public static Matrix4x4 ToNumerics(this HmdMatrix33_t matrix)
