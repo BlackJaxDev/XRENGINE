@@ -52,7 +52,15 @@ namespace XREngine.Components
     public class CameraComponent : XRComponent
     {
         private readonly Lazy<XRCamera> _camera;
+        private XRCameraParameters? _cameraParameters;
         public XRCamera Camera => _camera.Value;
+
+        [Browsable(false)]
+        public XRCameraParameters CameraParameters
+        {
+            get => _cameraParameters ?? SetFieldReturn(ref _cameraParameters, new XRPerspectiveCameraParameters(0.1f, 10000.0f))!;
+            set => SetField(ref _cameraParameters, value ?? throw new ArgumentNullException(nameof(value)));
+        }
 
         private XRFrameBuffer? _defaultRenderTarget = null;
         /// <summary>
@@ -301,19 +309,20 @@ namespace XREngine.Components
 
         private XRCamera CameraFactory()
         {
-            var cam = new XRCamera(Transform);
+            XRCameraParameters parameters = CameraParameters;
+            var cam = new XRCamera(Transform, parameters);
             cam.DepthMode = Engine.Rendering.ResolveSceneCameraDepthModePreference();
             cam.PropertyChanged += CameraPropertyChanged;
             cam.ViewportAdded += ViewportAdded;
             cam.ViewportRemoved += ViewportRemoved;
-            cam.Parameters.PropertyChanged += CameraParameterPropertyChanged;
+            parameters.PropertyChanged += CameraParameterPropertyChanged;
             if (cam.Viewports.Count > 0)
             {
                 foreach (var vp in cam.Viewports)
                     ViewportAdded(cam, vp);
                 ViewportResized(cam.Viewports[0]); //TODO: support rendering in screenspace to more than one viewport?
             }
-            CameraResized(cam.Parameters);
+            CameraResized(parameters);
             return cam;
         }
 
@@ -428,6 +437,21 @@ namespace XREngine.Components
                         }
                     }
                     break;
+                case nameof(CameraParameters):
+                    if (!_camera.IsValueCreated)
+                        break;
+
+                    XRCameraParameters currentParameters = CameraParameters;
+                    if (prev is XRCameraParameters previousParameters && !ReferenceEquals(previousParameters, currentParameters))
+                        previousParameters.PropertyChanged -= CameraParameterPropertyChanged;
+
+                    if (!ReferenceEquals(Camera.Parameters, currentParameters))
+                        Camera.Parameters = currentParameters;
+
+                    currentParameters.PropertyChanged -= CameraParameterPropertyChanged;
+                    currentParameters.PropertyChanged += CameraParameterPropertyChanged;
+                    CameraResized(currentParameters);
+                    break;
                 case nameof(InternalResolutionMode):
                 case nameof(InternalResolutionScale):
                 case nameof(ManualInternalWidth):
@@ -517,7 +541,7 @@ namespace XREngine.Components
         /// <param name="nearPlane"></param>
         /// <param name="farPlane"></param>
         public void SetOrthographic(float width, float height, float nearPlane, float farPlane)
-            => Camera.Parameters = new XROrthographicCameraParameters(width, height, nearPlane, farPlane);
+            => CameraParameters = new XROrthographicCameraParameters(width, height, nearPlane, farPlane);
 
         /// <summary>
         /// Helper method to set the camera to perspective projection.
@@ -527,7 +551,7 @@ namespace XREngine.Components
         /// <param name="farPlane"></param>
         /// <param name="aspectRatio"></param>
         public void SetPerspective(float verticalFieldOfView, float nearPlane, float farPlane, float? aspectRatio = null)
-            => Camera.Parameters = new XRPerspectiveCameraParameters(verticalFieldOfView, aspectRatio, nearPlane, farPlane);
+            => CameraParameters = new XRPerspectiveCameraParameters(verticalFieldOfView, aspectRatio, nearPlane, farPlane);
 
         //private void SceneNodePropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         //{

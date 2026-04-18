@@ -17,14 +17,8 @@ namespace XREngine.Components.Capture.Lights.Types
     [Description("Emits omnidirectional light with optional shadow maps for local illumination.")]
     public class PointLightComponent : LightComponent
     {
-        protected readonly XRViewport[] _viewports = new XRViewport[6].Fill(x => new(null, 1024, 1024)
-        {
-            RenderPipeline = new ShadowRenderPipeline(),
-            SetRenderPipelineFromCamera = false,
-            AutomaticallyCollectVisible = false,
-            AutomaticallySwapBuffers = false,
-            AllowUIRender = false,
-        });
+        private XRViewport[] _viewports = [];
+        private XRCamera[] _shadowCameras = [];
 
         private bool _useGeometryShader = true;
         private XRFrameBuffer? _perFaceFbo;
@@ -50,16 +44,74 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         public float ShadowNearPlaneDistance
-            => ShadowCameras is { Length: > 0 }
-                ? ShadowCameras[0].NearZ
+            => _shadowCameras is { Length: > 0 }
+                ? _shadowCameras[0].NearZ
                 : PointShadowNearPlaneDistanceDefault;
+
+        public XRCamera[] ShadowCameras => _shadowCameras;
+
+        private XRViewport CreateShadowViewport(uint resolution)
+            => new(null, resolution, resolution)
+            {
+                RenderPipeline = new ShadowRenderPipeline(),
+                SetRenderPipelineFromCamera = false,
+                AutomaticallyCollectVisible = false,
+                AutomaticallySwapBuffers = false,
+                AllowUIRender = false,
+            };
+
+        private void EnsureShadowResources()
+        {
+            if (_viewports.Length == 6 && _shadowCameras.Length == 6)
+                return;
+
+            uint resolution = ShadowMapResolutionWidth > ShadowMapResolutionHeight
+                ? ShadowMapResolutionWidth
+                : ShadowMapResolutionHeight;
+            if (resolution == 0)
+                resolution = 1024u;
+
+            _viewports = new XRViewport[6].Fill(_ => CreateShadowViewport(resolution));
+            _shadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(PointShadowNearPlaneDistanceDefault, _influenceVolume.Radius, true, _shadowCameraParentTransform);
+
+            if (SceneNode is not null && !SceneNode.IsTransformNull)
+                _shadowCameraParentTransform.Parent = Transform;
+
+            for (int i = 0; i < _shadowCameras.Length; i++)
+            {
+                XRCamera cam = _shadowCameras[i];
+                cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
+                if (SceneNode is not null && !SceneNode.IsTransformNull)
+                    cam.Transform.Parent = _shadowCameraParentTransform;
+
+                _viewports[i].Camera = cam;
+
+                var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
+                if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
+                {
+                    grading.AutoExposure = false;
+                    grading.Exposure = 1.0f;
+                }
+                else
+                {
+                    colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
+                    colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
+                }
+
+                _viewports[i].WorldInstanceOverride = IsActiveInHierarchy
+                    ? WorldAs<XREngine.Rendering.XRWorldInstance>()
+                    : null;
+            }
+        }
 
         private void RecreateShadowMapMaterial()
         {
             if (ShadowMap is null)
                 return;
 
-            uint res = (uint)_viewports[0].Width;
+            uint res = _viewports.Length > 0 ? (uint)_viewports[0].Width : ShadowMapResolutionWidth;
+            if (res == 0)
+                res = 1024u;
             ShadowMap = new XRMaterialFrameBuffer(GetShadowMapMaterial(res, res));
         }
 
@@ -68,9 +120,11 @@ namespace XREngine.Components.Capture.Lights.Types
             if (!CastsShadows || ShadowMap is null)
                 return;
 
+            EnsureShadowResources();
+
             if (_useGeometryShader)
             {
-                // GS renders all 6 cubemap faces per draw call — one viewport
+                // GS renders all 6 cubemap faces per draw call ï¿½ one viewport
                 // with the influence sphere captures objects visible from any face.
                 _viewports[0].CollectVisible(
                     collectMirrors: false,
@@ -88,6 +142,8 @@ namespace XREngine.Components.Capture.Lights.Types
             if (!CastsShadows || ShadowMap is null)
                 return;
 
+            EnsureShadowResources();
+
             if (_useGeometryShader)
             {
                 _viewports[0].SwapBuffers();
@@ -103,6 +159,8 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             if (!CastsShadows || ShadowMap is null)
                 return;
+
+            EnsureShadowResources();
 
             if (collectVisibleNow)
             {
@@ -157,7 +215,7 @@ namespace XREngine.Components.Capture.Lights.Types
             set
             {
                 SetField(ref _influenceVolume, new Sphere(_influenceVolume.Center, value));
-                foreach (var cam in ShadowCameras)
+                foreach (XRCamera cam in _shadowCameras)
                     cam.FarZ = value;
 
                 if (SceneNode is not null && !SceneNode.IsTransformNull)
@@ -177,7 +235,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             base.SetShadowMapResolution(max, max);
 
-            foreach (var vp in _viewports)
+            foreach (XRViewport vp in _viewports)
                 vp.Resize(max, max);
         }
 
@@ -199,8 +257,6 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override XRMesh GetWireframeMesh()
             => XRMesh.Shapes.WireframeSphere(Vector3.Zero, Radius, 32);
 
-        public XRCamera[] ShadowCameras { get; private set; }
-
         private Sphere _influenceVolume;
 
         public PointLightComponent()
@@ -212,32 +268,16 @@ namespace XREngine.Components.Capture.Lights.Types
             // attached to an owning SceneNode, so Transform is not available here.
             _influenceVolume = new Sphere(Vector3.Zero, radius);
             Brightness = brightness;
-
-            ShadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(0.1f, radius, true, _shadowCameraParentTransform);
-            for (int i = 0; i < ShadowCameras.Length; i++)
-            {
-                var cam = ShadowCameras[i];
-                cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
-                _viewports[i].Camera = cam;
-                var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
-                if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
-                {
-                    grading.AutoExposure = false;
-                    grading.Exposure = 1.0f;
-                }
-                else
-                {
-                    colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
-                    colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
-                }
-            }
         }
 
         protected override void OnTransformChanged()
         {
-            _shadowCameraParentTransform.Parent = Transform;
-            foreach (var cam in ShadowCameras)
-                cam.Transform.Parent = _shadowCameraParentTransform;
+            if (_shadowCameras.Length > 0)
+            {
+                _shadowCameraParentTransform.Parent = Transform;
+                foreach (XRCamera cam in _shadowCameras)
+                    cam.Transform.Parent = _shadowCameraParentTransform;
+            }
 
             MeshCenterAdjustMatrix = Matrix4x4.CreateScale(_influenceVolume.Radius);
             base.OnTransformChanged();
@@ -252,6 +292,8 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+
+            EnsureShadowResources();
 
             for (int i = 0; i < _viewports.Length; i++)
                 _viewports[i].WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
@@ -313,10 +355,10 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform("LightPos", Transform.RenderTranslation);
             if (_useGeometryShader)
             {
-                for (int i = 0; i < ShadowCameras.Length; ++i)
+                for (int i = 0; i < _shadowCameras.Length; ++i)
                 {
-                    var cam = ShadowCameras[i];
-                    // Precompute VP on CPU — avoids per-vertex inverse() in the geometry shader.
+                    XRCamera cam = _shadowCameras[i];
+                    // Precompute VP on CPU ï¿½ avoids per-vertex inverse() in the geometry shader.
                     Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
                     Matrix4x4 vp = viewMatrix * cam.ProjectionMatrix;
                     program.Uniform($"ViewProjectionMatrices[{i}]", vp);
@@ -373,12 +415,12 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             output.Clear();
 
-            if (ShadowCameras is null || ShadowCameras.Length == 0)
+            if (_shadowCameras.Length == 0)
                 return;
 
-            for (int i = 0; i < ShadowCameras.Length; i++)
+            for (int i = 0; i < _shadowCameras.Length; i++)
             {
-                var cam = ShadowCameras[i];
+                XRCamera cam = _shadowCameras[i];
                 output.Add(cam.WorldFrustum().Prepare());
             }
         }

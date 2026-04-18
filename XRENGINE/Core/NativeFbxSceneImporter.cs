@@ -152,13 +152,12 @@ internal static class NativeFbxSceneImporter
         {
             foreach (AnimationMember child in parent.Children)
             {
-                if (child.MemberName != methodName || child.MemberType != EAnimationMemberType.Method)
+                if (child.MemberName != methodName || 
+                    child.MemberType != EAnimationMemberType.Method || 
+                    child.AnimatedMethodArgumentIndex != animatedArgIndex || 
+                    child.MethodArguments.Length != methodArgs.Length)
                     continue;
-                if (child.AnimatedMethodArgumentIndex != animatedArgIndex)
-                    continue;
-                if (child.MethodArguments.Length != methodArgs.Length)
-                    continue;
-
+                
                 bool matches = true;
                 for (int index = 0; index < methodArgs.Length; index++)
                 {
@@ -235,7 +234,7 @@ internal static class NativeFbxSceneImporter
 
                 List<XRMaterial> createdMaterials = [];
                 List<XRMesh> createdMeshes = [];
-                Dictionary<long, XRMaterial> materialCache = new();
+                Dictionary<long, XRMaterial> materialCache = [];
                 object materialCacheSync = new();
                 object createdAssetsSync = new();
 
@@ -291,7 +290,7 @@ internal static class NativeFbxSceneImporter
                             IReadOnlyList<FbxIntermediateMaterial> nodeMaterials = materialsByModelObjectId.TryGetValue(modelObjectId, out FbxIntermediateMaterial[]? resolvedNodeMaterials)
                                 && resolvedNodeMaterials is not null
                                 ? resolvedNodeMaterials
-                                : Array.Empty<FbxIntermediateMaterial>();
+                                : [];
 
                             IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint =
                                 hasSkinBinding
@@ -317,49 +316,47 @@ internal static class NativeFbxSceneImporter
 
                 if (workItems.Count > 0)
                 {
-                    using (IDisposable? executeMeshBuildScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.ExecuteMeshBuilds"))
+                    using IDisposable? executeMeshBuildScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.ExecuteMeshBuilds");
+                    int completedWorkItems = 0;
+                    ParallelOptions parallelOptions = new()
                     {
-                        int completedWorkItems = 0;
-                        ParallelOptions parallelOptions = new()
-                        {
-                            CancellationToken = cancellationToken,
-                            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1),
-                        };
+                        CancellationToken = cancellationToken,
+                        MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1),
+                    };
 
-                        Parallel.For(0, workItems.Count, parallelOptions, workItemIndex =>
-                        {
-                            MeshBuildWorkItem workItem = workItems[workItemIndex];
-                            List<SubMesh> subMeshes = BuildSubMeshesForNode(
-                                importer,
-                                sourceFilePath,
-                                semantic,
-                                workItem.Mesh,
-                                workItem.MeshGeometry,
-                                workItem.IntermediateNode,
-                                workItem.NodeMaterials,
-                                workItem.SkinWeightsByControlPoint,
-                                workItem.BlendShapeChannels,
-                                createdMaterials,
-                                createdMeshes,
-                                materialCache,
-                                materialCacheSync,
-                                createdAssetsSync,
-                                flipUvY,
-                                cancellationToken,
-                                rootNode.Transform,
-                                generateMeshRenderersAsync);
+                    Parallel.For(0, workItems.Count, parallelOptions, workItemIndex =>
+                    {
+                        MeshBuildWorkItem workItem = workItems[workItemIndex];
+                        List<SubMesh> subMeshes = BuildSubMeshesForNode(
+                            importer,
+                            sourceFilePath,
+                            semantic,
+                            workItem.Mesh,
+                            workItem.MeshGeometry,
+                            workItem.IntermediateNode,
+                            workItem.NodeMaterials,
+                            workItem.SkinWeightsByControlPoint,
+                            workItem.BlendShapeChannels,
+                            createdMaterials,
+                            createdMeshes,
+                            materialCache,
+                            materialCacheSync,
+                            createdAssetsSync,
+                            flipUvY,
+                            cancellationToken,
+                            rootNode.Transform,
+                            generateMeshRenderersAsync);
 
-                            buildResults[workItemIndex] = new MeshBuildResult(
-                                workItem.ModelObjectId,
-                                workItem.SceneNode,
-                                workItem.Mesh.Name,
-                                subMeshes,
-                                workItem.BlendShapeChannels);
+                        buildResults[workItemIndex] = new MeshBuildResult(
+                            workItem.ModelObjectId,
+                            workItem.SceneNode,
+                            workItem.Mesh.Name,
+                            subMeshes,
+                            workItem.BlendShapeChannels);
 
-                            int completed = Interlocked.Increment(ref completedWorkItems);
-                            onProgress?.Invoke(completed / (float)workItems.Count);
-                        });
-                    }
+                        int completed = Interlocked.Increment(ref completedWorkItems);
+                        onProgress?.Invoke(completed / (float)workItems.Count);
+                    });
                 }
 
                 using (IDisposable? attachBuiltMeshesScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.AttachBuiltMeshes"))
@@ -399,10 +396,8 @@ internal static class NativeFbxSceneImporter
     {
         int count = 1;
         foreach (TransformBase child in rootNode.Transform.Children)
-        {
             if (child.SceneNode is not null)
                 count += CountSceneNodes(child.SceneNode);
-        }
 
         return count;
     }
@@ -1147,11 +1142,12 @@ internal static class NativeFbxSceneImporter
         List<TextureSlot> textureSlots = [];
         foreach (FbxConnection connection in semantic.Connections)
         {
-            if (connection.Destination.Id != materialObjectId || connection.Source.Id is not long textureObjectId)
+            if (connection.Destination.Id != materialObjectId ||
+                connection.Source.Id is not long textureObjectId || 
+                !semantic.TryGetObject(textureObjectId, out FbxSceneObject textureObject) ||
+                textureObject.Category != FbxObjectCategory.Texture)
                 continue;
-            if (!semantic.TryGetObject(textureObjectId, out FbxSceneObject textureObject) || textureObject.Category != FbxObjectCategory.Texture)
-                continue;
-
+            
             string? filePath = ResolveTextureFilePath(semantic, textureObject);
             if (string.IsNullOrWhiteSpace(filePath))
                 continue;

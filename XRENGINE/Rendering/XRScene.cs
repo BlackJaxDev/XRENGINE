@@ -1,5 +1,7 @@
 using MemoryPack;
 using XREngine.Core.Files;
+using XREngine.Data;
+using XREngine.Scene.Importers;
 using XREngine.Rendering;
 
 namespace XREngine.Scene
@@ -7,6 +9,7 @@ namespace XREngine.Scene
     /// <summary>
     /// Defines a collection of root scene nodes that can be loaded in and out of a world.
     /// </summary>
+    [XR3rdPartyExtensions(typeof(XRDefault3rdPartyImportOptions), "unity")]
     [MemoryPackable]
     public partial class XRScene : XRAsset
     {
@@ -47,6 +50,27 @@ namespace XREngine.Scene
         {
             get => _rootObjects;
             set => SetField(ref _rootObjects, value);
+        }
+
+        public override bool Load3rdParty(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+                return false;
+
+            try
+            {
+                Name = Path.GetFileNameWithoutExtension(filePath);
+                RootNodes = [.. UnitySceneImporter.Import(filePath)];
+                return true;
+            }
+            catch (Exception ex)
+            {
+                string exceptionText = ex.ToString()
+                    .Replace("\r", " ", StringComparison.Ordinal)
+                    .Replace("\n", " | ", StringComparison.Ordinal);
+                Debug.LogWarning($"Failed to import Unity scene '{filePath}': {exceptionText}");
+                return false;
+            }
         }
     }
 }

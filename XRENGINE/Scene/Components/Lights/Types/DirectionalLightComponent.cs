@@ -112,7 +112,7 @@ namespace XREngine.Components.Lights
         protected override void OnTransformChanged()
         {
             base.OnTransformChanged();
-            ShadowCameraTransform.Parent = Transform;
+            _shadowCameraTransform?.Parent = Transform;
         }
 
         protected override void RegisterDynamicLight(XRWorldInstance world)

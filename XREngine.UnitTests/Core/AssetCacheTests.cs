@@ -6,6 +6,7 @@ using XREngine;
 using XREngine.Animation;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Rendering;
 using TestContext = NUnit.Framework.TestContext;
 
 namespace XREngine.UnitTests.Core;
@@ -99,6 +100,73 @@ AnimationClip:
             cachedClip.ShouldNotBeNull();
             cachedClip.Name.ShouldBe("CacheBypassClip");
             cachedClip.LengthInSeconds.ShouldBe(1.0f, "fresh cache should satisfy reloads without re-importing the source");
+        }
+        finally
+        {
+            manager.Dispose();
+        }
+    }
+
+    [Test]
+    public void LoadEngineShaderAsset_LoadsShaderSourceAndCreatesEngineCacheAsset()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        var manager = new AssetManager();
+        manager.MonitorGameAssetsForChanges = false;
+        try
+        {
+            manager.GameAssetsPath = sandbox.AssetsPath;
+            manager.GameCachePath = sandbox.CachePath;
+
+            string shaderPath = manager.ResolveEngineAssetPath("Shaders", "Uber", "UberShader.frag");
+            File.Exists(shaderPath).ShouldBeTrue();
+
+            XRShader? shader = manager.Load<XRShader>(shaderPath);
+            shader.ShouldNotBeNull();
+            shader.FilePath.ShouldBe(shaderPath);
+            shader.Source.FilePath.ShouldBe(shaderPath);
+            string shaderSource = shader.Source.Text ?? string.Empty;
+            shaderSource.Length.ShouldBeGreaterThan(0);
+            shaderSource.ShouldContain("void main");
+
+            string cacheRoot = Path.Combine(sandbox.CachePath, "Engine");
+            string[] cacheFiles = [.. Directory.EnumerateFiles(cacheRoot, "*.asset", SearchOption.AllDirectories)];
+            cacheFiles.ShouldContain(path => path.EndsWith("UberShader.frag.XREngine.Rendering.XRShader.asset", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            manager.Dispose();
+        }
+    }
+
+    [Test]
+    public void LoadEngineShaderAsset_IgnoresMismatchedPathCacheEntry()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        var manager = new AssetManager();
+        manager.MonitorGameAssetsForChanges = false;
+        try
+        {
+            manager.GameAssetsPath = sandbox.AssetsPath;
+            manager.GameCachePath = sandbox.CachePath;
+
+            string shaderPath = manager.ResolveEngineAssetPath("Shaders", "Scene3D", "PostProcess.fs");
+            File.Exists(shaderPath).ShouldBeTrue();
+
+            StubThirdPartyAsset staleAsset = new()
+            {
+                FilePath = shaderPath,
+                OriginalPath = shaderPath,
+            };
+            manager.EnsureTracked(staleAsset);
+
+            XRShader? shader = manager.Load<XRShader>(shaderPath);
+            shader.ShouldNotBeNull();
+            manager.TryGetAssetByPath(shaderPath, out XRAsset? cached).ShouldBeTrue();
+            cached.ShouldBeOfType<XRShader>();
+            cached.ShouldBeSameAs(shader);
+            shader.Source.FilePath.ShouldBe(shaderPath);
+            (shader.Source.Text ?? string.Empty).ShouldContain("void");
         }
         finally
         {

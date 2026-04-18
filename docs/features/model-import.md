@@ -2,6 +2,23 @@
 
 Model imports can route through a native format-specific importer or the older Assimp compatibility path.
 
+## Unity scene import
+
+- `.unity` files now import into `XRScene` assets through the standard third-party asset pipeline.
+- `.prefab` files now import into `XRPrefabSource` assets through the same Unity YAML importer.
+- `GameObject` documents map to `SceneNode`, and `Transform` / `RectTransform` documents map to the engine's default `Transform` type.
+- Root ordering is preserved through Unity `SceneRoots`, authored child order, and prefab-instance `m_RootOrder` overrides.
+- Prefab instances are expanded by resolving prefab GUIDs through the source Unity project's `.meta` files, then applying scene-level name, active-state, layer, and local transform overrides.
+- Supported Unity component documents now map into engine components for `Camera`, `Light`, `MeshFilter` + `MeshRenderer`, and `SkinnedMeshRenderer`.
+- Renderer meshes resolve from Unity built-in primitives, serialized Unity `.asset` mesh files, or third-party model assets by matching imported node paths.
+- Scene and prefab transforms use a direct Unity left-handed to engine right-handed conversion by flipping the local `Z` axis. This path does not apply the extra Assimp-facing compensation used by the `.anim` importer.
+
+Current limitations:
+
+- Non-hierarchy scene settings such as `RenderSettings`, `LightmapSettings`, `NavMeshSettings`, and `OcclusionCullingSettings` are currently skipped.
+- Material import currently covers the common `_BaseColor` / `_Color` tint and `_BaseMap` / `_MainTex` texture paths, but does not attempt shader-specific Unity material feature parity.
+- Serialized Unity mesh assets currently import the common uncompressed vertex layouts used for positions, normals, tangents, colors, and UV0. More exotic compressed or multi-stream layouts may still need fallback handling.
+
 ## Default routing
 
 - `.fbx` files route through the native `XREngine.Fbx` importer by default.

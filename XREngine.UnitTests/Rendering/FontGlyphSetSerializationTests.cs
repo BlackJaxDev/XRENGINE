@@ -48,6 +48,25 @@ public sealed class FontGlyphSetSerializationTests
         atlas.Mipmaps[0].Data.ShouldNotBeNull().GetBytes().ShouldBe(originalBytes);
     }
 
+    [Test]
+    public void GetQuads_WhenAtlasIsMissing_DoesNotThrowAndReturnsNoGlyphs()
+    {
+        FontGlyphSet font = new()
+        {
+            Characters = ["A"],
+            Glyphs = new Dictionary<string, FontGlyphSet.Glyph>
+            {
+                ["A"] = new(new Vector2(8.0f, 8.0f), Vector2.Zero)
+            },
+            LayoutEmSize = 8.0f,
+        };
+
+        List<(Vector4 transform, Vector4 uvs)> quads = [];
+
+        Should.NotThrow(() => font.GetQuads("A", quads, 8.0f, float.MaxValue, float.MaxValue));
+        quads.ShouldBeEmpty();
+    }
+
     private static FontGlyphSet CreateFontWithEmbeddedAtlas()
     {
         string tempRoot = Path.Combine(Path.GetTempPath(), "FontGlyphSetSerializationTests");

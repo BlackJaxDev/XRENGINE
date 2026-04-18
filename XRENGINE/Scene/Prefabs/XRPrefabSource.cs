@@ -12,6 +12,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Data.Rendering;
+using XREngine.Scene.Importers;
 
 namespace XREngine.Scene.Prefabs
 {
@@ -64,6 +65,7 @@ namespace XREngine.Scene.Prefabs
         "off",
         "ogex",
         "ply",
+        "prefab",
         "pmx",
         "prj",
         "q3o",
@@ -170,6 +172,12 @@ namespace XREngine.Scene.Prefabs
         {
             if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
                 return false;
+
+            if (string.Equals(Path.GetExtension(filePath), ".prefab", StringComparison.OrdinalIgnoreCase))
+            {
+                RootNode = UnitySceneImporter.ImportPrefab(filePath);
+                return RootNode is not null;
+            }
 
             var opts = importOptions as ModelImportOptions ?? new ModelImportOptions();
             bool importOptionsChanged = false;

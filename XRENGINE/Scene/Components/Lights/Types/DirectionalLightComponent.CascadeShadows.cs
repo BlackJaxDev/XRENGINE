@@ -706,7 +706,7 @@ namespace XREngine.Components.Lights
                 return;
 
             if (ShouldCollectPrimaryShadowViewport())
-                _viewport.CollectVisible(false);
+                PrimaryShadowViewport.CollectVisible(false);
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
@@ -720,7 +720,7 @@ namespace XREngine.Components.Lights
                 return;
 
             if (ShouldCollectPrimaryShadowViewport())
-                _viewport.SwapBuffers();
+                PrimaryShadowViewport.SwapBuffers();
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
@@ -745,7 +745,7 @@ namespace XREngine.Components.Lights
             XRMaterial? shadowMaterial = shadowMap?.Material;
 
             if (ShouldCollectPrimaryShadowViewport() && shadowMap is not null && shadowMaterial is not null)
-                _viewport.Render(shadowMap, null, null, true, shadowMaterial);
+                PrimaryShadowViewport.Render(shadowMap, null, null, true, shadowMaterial);
 
             if (shadowMaterial is null)
                 return;

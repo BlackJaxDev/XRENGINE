@@ -172,17 +172,23 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             _lastMovedTicks = 0L;
 
-            XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(0.0f, 1.0f, 0.0f, 0.0f));
-            mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-            mat.RenderOptions.DepthTest.Enabled = Rendering.Models.Materials.ERenderParamUsage.Disabled;
-            _shadowVolumeRC.Mesh = new XRMeshRenderer(GetWireframeMesh(), mat);
-
             RenderInfo = RenderInfo3D.New(this, _shadowVolumeRC);
             RenderInfo.IsVisible = _previewBoundingVolume;
             RenderInfo.CastsShadows = false;
             RenderInfo.ReceivesShadows = false;
             RenderInfo.VisibleInLightingProbes = false;
             RenderedObjects = [RenderInfo];
+        }
+
+        private void EnsurePreviewVolumeMesh()
+        {
+            if (_shadowVolumeRC.Mesh is not null)
+                return;
+
+            XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(0.0f, 1.0f, 0.0f, 0.0f));
+            mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            mat.RenderOptions.DepthTest.Enabled = Rendering.Models.Materials.ERenderParamUsage.Disabled;
+            _shadowVolumeRC.Mesh = new XRMeshRenderer(GetWireframeMesh(), mat);
         }
 
         protected abstract XRMesh GetWireframeMesh();
@@ -284,6 +290,9 @@ namespace XREngine.Components.Capture.Lights.Types
             get => _previewBoundingVolume;
             set
             {
+                if (value)
+                    EnsurePreviewVolumeMesh();
+
                 if (SetField(ref _previewBoundingVolume, value))
                     RenderInfo.IsVisible = value || (World is not null && Engine.EditorPreferences.Debug.VisualizeDirectionalLightVolumes);
             }
