@@ -50,6 +50,7 @@ namespace XREngine.Rendering
         private const float DefaultMsdfDistanceRangeMiddle = 0.5f;
         private const string FontDiagnosticsLogName = "font-diagnostics.log";
         private static readonly ConcurrentDictionary<string, byte> ForcedReloadAttemptedPaths = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, byte> MissingAtlasRecoveryAttemptedKeys = new(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, Lazy<FontGlyphSet>> DirectEngineFontCache = new(StringComparer.OrdinalIgnoreCase);
 
         private List<string> _characters = [];
@@ -764,7 +765,6 @@ namespace XREngine.Rendering
         /// <param name="offset"></param>
         /// <param name="fontSize"></param>
         /// <param name="spacing"></param>
-        /// <exception cref="InvalidOperationException"></exception>
         public void GetQuads(
             string? str,
             List<(Vector4 transform, Vector4 uvs)> quads,
@@ -773,16 +773,16 @@ namespace XREngine.Rendering
             float spacing = 0.0f,
             float lineSpacing = 5.0f)
         {
-            if (Glyphs is null)
-                throw new InvalidOperationException("Glyphs are not initialized.");
-
-            if (Atlas is null)
-                throw new InvalidOperationException("Atlas is not initialized.");
+            if (!EnsureLayoutResourcesReady())
+            {
+                quads.Clear();
+                return;
+            }
 
             GetQuads(
                 str,
                 Glyphs,
-                new IVector2((int)Atlas.Width, (int)Atlas.Height),
+                new IVector2((int)Atlas!.Width, (int)Atlas.Height),
                 LayoutEmSize,
                 quads,
                 offset,
@@ -891,6 +891,39 @@ namespace XREngine.Rendering
                 spacing,
                 lineSpacing);
 
+        private bool EnsureLayoutResourcesReady()
+        {
+            if (Glyphs is not null && Atlas is not null)
+                return true;
+
+            string recoveryKey = !string.IsNullOrWhiteSpace(OriginalPath)
+                ? OriginalPath!
+                : !string.IsNullOrWhiteSpace(FilePath)
+                    ? FilePath!
+                    : ID != Guid.Empty
+                        ? ID.ToString()
+                        : Name ?? nameof(FontGlyphSet);
+
+            if (MissingAtlasRecoveryAttemptedKeys.TryAdd(recoveryKey, 0))
+            {
+                try
+                {
+                    string? sourcePath = !string.IsNullOrWhiteSpace(OriginalPath) ? OriginalPath : FilePath;
+                    if (!string.IsNullOrWhiteSpace(sourcePath) && File.Exists(sourcePath))
+                    {
+                        XRFontImportOptions options = ResolveImportOptions(sourcePath);
+                        ImportFont(sourcePath, options, auxiliaryFileName => ResolveFallbackAuxiliaryPath(sourcePath, auxiliaryFileName));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"Font layout recovery failed for '{OriginalPath ?? FilePath ?? Name ?? "<unknown>"}': {ex}");
+                }
+            }
+
+            return Glyphs is not null && Atlas is not null;
+        }
+
         /// <summary>
         /// Retrieves quads for rendering a string of text.
         /// </summary>
@@ -902,7 +935,6 @@ namespace XREngine.Rendering
         /// <param name="maxHeight"></param>
         /// <param name="wrap"></param>
         /// <param name="spacing"></param>
-        /// <exception cref="InvalidOperationException"></exception>
         public void GetQuads(
             string? str,
             List<(Vector4 transform, Vector4 uvs)> quads,
@@ -914,16 +946,16 @@ namespace XREngine.Rendering
             float spacing = 0.0f,
             float lineSpacing = 5.0f)
         {
-            if (Glyphs is null)
-                throw new InvalidOperationException("Glyphs are not initialized.");
-
-            if (Atlas is null)
-                throw new InvalidOperationException("Atlas is not initialized.");
+            if (!EnsureLayoutResourcesReady())
+            {
+                quads.Clear();
+                return;
+            }
 
             GetQuads(
                 str,
                 Glyphs,
-                new IVector2((int)Atlas.Width, (int)Atlas.Height),
+                new IVector2((int)Atlas!.Width, (int)Atlas.Height),
                 LayoutEmSize,
                 quads,
                 offset,

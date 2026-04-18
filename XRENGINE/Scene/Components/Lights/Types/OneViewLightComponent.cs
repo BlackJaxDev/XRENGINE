@@ -13,31 +13,45 @@ namespace XREngine.Components.Capture.Lights.Types
     {
         private const uint DefaultResolution = 4096u;
 
-        protected readonly XRViewport _viewport = new(null, DefaultResolution, DefaultResolution)
+        // Shadow resources are created lazily so light components can be imported
+        // or deserialized in headless contexts without pulling in render pipelines.
+        private XRViewport? _primaryShadowViewport;
+
+        protected XRViewport PrimaryShadowViewport => _primaryShadowViewport ??= CreateShadowViewport();
+
+        protected XRViewport? PrimaryShadowViewportOrNull => _primaryShadowViewport;
+
+        private XRViewport CreateShadowViewport()
         {
-            RenderPipeline = new ShadowRenderPipeline(),
-            SetRenderPipelineFromCamera = false,
-            AutomaticallyCollectVisible = false,
-            AutomaticallySwapBuffers = false,
-            AllowUIRender = false,
-            CullWithFrustum = true,
-        };
+            uint width = ShadowMapResolutionWidth > 0 ? ShadowMapResolutionWidth : DefaultResolution;
+            uint height = ShadowMapResolutionHeight > 0 ? ShadowMapResolutionHeight : DefaultResolution;
+            return new XRViewport(null, width, height)
+            {
+                RenderPipeline = new ShadowRenderPipeline(),
+                SetRenderPipelineFromCamera = false,
+                AutomaticallyCollectVisible = false,
+                AutomaticallySwapBuffers = false,
+                AllowUIRender = false,
+                CullWithFrustum = true,
+            };
+        }
 
         public override void SetShadowMapResolution(uint width, uint height)
         {
             base.SetShadowMapResolution(width, height);
-            _viewport.Resize(width, height);
+            _primaryShadowViewport?.Resize(width, height);
         }
 
         protected abstract XRCameraParameters GetCameraParameters();
 
-        public XRCamera? ShadowCamera => _viewport.Camera;
+        public XRCamera? ShadowCamera => _primaryShadowViewport?.Camera;
 
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
-            _viewport.WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
+            XRViewport viewport = PrimaryShadowViewport;
+            viewport.WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
             XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters());
             cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
             var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
@@ -51,7 +65,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
                 colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
             }
-            _viewport.Camera = cam;
+            viewport.Camera = cam;
 
             if (Type == ELightType.Dynamic && CastsShadows && ShadowMap is null)
                 SetShadowMapResolution(DefaultResolution, DefaultResolution);
@@ -62,8 +76,11 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override void OnComponentDeactivated()
         {
-            _viewport.WorldInstanceOverride = null;
-            _viewport.Camera = null;
+            if (_primaryShadowViewport is not null)
+            {
+                _primaryShadowViewport.WorldInstanceOverride = null;
+                _primaryShadowViewport.Camera = null;
+            }
 
             base.OnComponentDeactivated();
         }
@@ -73,7 +90,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (!CastsShadows || ShadowMap is null)
                 return;
 
-            _viewport.SwapBuffers();
+            PrimaryShadowViewport.SwapBuffers();
             lightmapBaker?.ProcessDynamicCachedAutoBake(this);
         }
         public override void CollectVisibleItems()
@@ -81,7 +98,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (!CastsShadows || ShadowMap is null)
                 return;
 
-            _viewport.CollectVisible(false);
+            PrimaryShadowViewport.CollectVisible(false);
         }
 
         private static bool _loggedShadowRenderOnce = false;
@@ -103,7 +120,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 SwapBuffers();
             }
 
-            _viewport.Render(ShadowMap, null, null, true, ShadowMap.Material);
+            PrimaryShadowViewport.Render(ShadowMap, null, null, true, ShadowMap.Material);
         }
 
         internal override void BuildShadowFrusta(List<PreparedFrustum> output)

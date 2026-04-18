@@ -3,8 +3,8 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using XREngine.Core.Files;
 using XREngine.Data;
-using XREngine.Diagnostics;
 using XREngine.Data.Core;
+using XREngine.Diagnostics;
 using XRAsset = XREngine.Core.Files.XRAsset;
 
 namespace XREngine
@@ -13,6 +13,29 @@ namespace XREngine
     {
         private object GetAssetLoadGate(string filePath)
             => _assetLoadGates.GetOrAdd(filePath, static _ => new object());
+
+        private void EvictMismatchedPathCacheEntry(string filePath, XRAsset existingAsset, Type requestedType)
+        {
+            Debug.LogWarning(
+                $"Reloading asset at '{filePath}' because the path cache contains '{existingAsset.GetType().Name}' " +
+                $"but '{requestedType.Name}' was requested.");
+
+            LoadedAssetsByPathInternal.TryRemove(filePath, out _);
+
+            if (!string.IsNullOrWhiteSpace(existingAsset.OriginalPath)
+                && string.Equals(Path.GetFullPath(existingAsset.OriginalPath), filePath, StringComparison.OrdinalIgnoreCase))
+            {
+                LoadedAssetsByOriginalPathInternal.TryRemove(existingAsset.OriginalPath, out _);
+            }
+
+            if (existingAsset.ID != Guid.Empty
+                && LoadedAssetsByIDInternal.TryGetValue(existingAsset.ID, out XRAsset? cachedById)
+                && ReferenceEquals(cachedById, existingAsset))
+            {
+                LoadedAssetsByIDInternal.TryRemove(existingAsset.ID, out _);
+                DirtyAssets.TryRemove(existingAsset.ID, out _);
+            }
+        }
 
         private T? LoadCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
         {
@@ -29,8 +52,13 @@ namespace XREngine
                     AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.CheckingCache, "Checking asset cache...", 0.05f);
                     if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
                     {
-                        AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Using cached asset.", 1.0f);
-                        return existingAsset is T tAsset ? tAsset : null;
+                        if (existingAsset is T tAsset)
+                        {
+                            AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Using cached asset.", 1.0f);
+                            return tAsset;
+                        }
+
+                        EvictMismatchedPathCacheEntry(filePath, existingAsset, typeof(T));
                     }
 
                     string extension = Path.GetExtension(filePath);
@@ -94,8 +122,13 @@ namespace XREngine
                     AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.CheckingCache, "Checking asset cache...", 0.05f);
                     if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
                     {
-                        AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Using cached asset.", 1.0f);
-                        return existingAsset.GetType().IsAssignableTo(type) ? existingAsset : null;
+                        if (existingAsset.GetType().IsAssignableTo(type))
+                        {
+                            AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Using cached asset.", 1.0f);
+                            return existingAsset;
+                        }
+
+                        EvictMismatchedPathCacheEntry(filePath, existingAsset, type);
                     }
 
                     string extension = Path.GetExtension(filePath);
