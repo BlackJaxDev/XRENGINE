@@ -31,7 +31,9 @@ namespace XREngine
         private static readonly TimeSpan StarvationWarningThreshold = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan StarvationLogInterval = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan BackpressureLogInterval = TimeSpan.FromSeconds(1);
+        private static readonly TimeSpan SlowRenderThreadJobLogInterval = TimeSpan.FromSeconds(1);
         private static readonly long StarvationWarningTicks = (long)(StarvationWarningThreshold.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+        private static readonly long SlowRenderThreadJobTicks = (long)(System.Diagnostics.Stopwatch.Frequency / 1000.0);
         private static readonly TimeSpan RemoteWorkerIdleTimeout = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan ShutdownWorkerJoinTimeout = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan ShutdownTaskWaitTimeout = TimeSpan.FromSeconds(2);
@@ -79,6 +81,7 @@ namespace XREngine
         private readonly List<Job> _active = new();
         private readonly object _activeLock = new();
         private readonly ConcurrentDictionary<string, long> _lastStarvationLogTicksByLabel = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, long> _lastSlowRenderThreadLogTicksByLabel = new(StringComparer.Ordinal);
 
         private readonly int[] _pendingCounts = new int[PriorityLevels];
         private readonly int[] _pendingMainThreadCounts = new int[PriorityLevels];
@@ -584,6 +587,47 @@ namespace XREngine
             }
         }
 
+        private bool ShouldLogSlowRenderThreadJob(string label, JobPriority priority, long now)
+        {
+            string key = $"{priority}|{label}";
+
+            while (true)
+            {
+                if (_lastSlowRenderThreadLogTicksByLabel.TryGetValue(key, out long lastLogTick))
+                {
+                    if (TicksToTimeSpan(now - lastLogTick) < SlowRenderThreadJobLogInterval)
+                        return false;
+
+                    if (_lastSlowRenderThreadLogTicksByLabel.TryUpdate(key, now, lastLogTick))
+                        return true;
+
+                    continue;
+                }
+
+                if (_lastSlowRenderThreadLogTicksByLabel.TryAdd(key, now))
+                    return true;
+            }
+        }
+
+        private void MaybeLogSlowRenderThreadJob(Job job, string label, long elapsedTicks, double budgetMilliseconds)
+        {
+            if (elapsedTicks < SlowRenderThreadJobTicks)
+                return;
+
+            long now = Stopwatch.GetTimestamp();
+            if (!ShouldLogSlowRenderThreadJob(label, job.Priority, now))
+                return;
+
+            double elapsedMilliseconds = elapsedTicks * 1000.0 / Stopwatch.Frequency;
+            int queuedRenderJobs = SnapshotQueuedMainThreadJobs();
+            string budgetText = budgetMilliseconds > 0.0
+                ? $", budget={budgetMilliseconds:F1} ms"
+                : string.Empty;
+            Log(
+                $"[RenderThreadJobs] Slow render-thread job '{label}' [{job.Priority}] took {elapsedMilliseconds:F2} ms in ProcessMainThreadJobs "
+                + $"(queuedRender={queuedRenderJobs}{budgetText}).");
+        }
+
         private static TimeSpan TicksToTimeSpan(long ticks)
             => TimeSpan.FromSeconds(ticks / (double)System.Diagnostics.Stopwatch.Frequency);
 
@@ -870,10 +914,13 @@ namespace XREngine
                 RecordWait(job, bucket);
                 string label = job.GetProfilerLabel();
                 JobDispatchObserver?.Invoke(JobAffinity.RenderThread, label);
+                long jobStart = Stopwatch.GetTimestamp();
                 using (StartProfilerScope($"MainThreadJobs.{job.Priority}.{label}"))
                 {
                     ExecuteJob(job);
                 }
+                long jobElapsedTicks = Stopwatch.GetTimestamp() - jobStart;
+                MaybeLogSlowRenderThreadJob(job, label, jobElapsedTicks, budgetMilliseconds);
                 processed++;
 
                 // Check time budget after each job completes.

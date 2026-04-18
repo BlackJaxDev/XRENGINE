@@ -125,7 +125,7 @@ public static class GltfPhase0BaselineHarness
         WarmUp(assetPath);
 
         BackendMeasurement nativeMeasurement = MeasureBackend(assetPath, GltfImportBackend.Native, iterations);
-        BackendMeasurement assimpMeasurement = MeasureBackend(assetPath, GltfImportBackend.AssimpLegacy, iterations);
+        BackendMeasurement assimpMeasurement = MeasureBackend(assetPath, GltfImportBackend.Assimp, iterations);
         double speedup = nativeMeasurement.AverageMilliseconds > 0.0
             ? assimpMeasurement.AverageMilliseconds / nativeMeasurement.AverageMilliseconds
             : 0.0;
@@ -144,7 +144,7 @@ public static class GltfPhase0BaselineHarness
     private static void WarmUp(string assetPath)
     {
         ImportAndSummarize(assetPath, GltfImportBackend.Native);
-        ImportAndSummarize(assetPath, GltfImportBackend.AssimpLegacy);
+        ImportAndSummarize(assetPath, GltfImportBackend.Assimp);
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();

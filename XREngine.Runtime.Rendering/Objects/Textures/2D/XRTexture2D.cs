@@ -346,6 +346,14 @@ namespace XREngine.Rendering
         /// (either immediately if on the render thread, or at the next swap point).
         /// This does NOT block - the onCompleted callback is invoked when the upload finishes.
         /// </summary>
+        private static string GetRenderThreadTextureJobLabel(XRTexture2D texture, string operation)
+        {
+            string textureName = string.IsNullOrWhiteSpace(texture.Name)
+                ? Path.GetFileNameWithoutExtension(texture.FilePath) ?? "UnnamedTexture"
+                : texture.Name;
+            return $"{operation}[{textureName}]";
+        }
+
         private static void ScheduleGpuUpload(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted = null)
         {
             if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
@@ -422,7 +430,9 @@ namespace XREngine.Rendering
             }
             else
             {
-                RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(UploadAction);
+                RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                    UploadAction,
+                    GetRenderThreadTextureJobLabel(texture, "XRTexture2D.UploadMipmaps"));
             }
         }
 
@@ -440,33 +450,35 @@ namespace XREngine.Rendering
                 RuntimeRenderingHostServices.Current.LogOutput(
                     $"[UploadMipmaps] Deferring progressive upload for '{texture.Name}' (previous still registered). active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
 
-                RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(() =>
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                        return;
-
-                    // If yet another upload superseded us, bail out.
-                    if (uploadToken != Volatile.Read(ref texture._progressiveUploadToken))
+                RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                    () =>
                     {
-                        onCompleted?.Invoke();
-                        return;
-                    }
+                        if (cancellationToken.IsCancellationRequested)
+                            return;
 
-                    // Force-evict the stale entry (the old coroutine should have cleaned up by now).
-                    _progressiveUploads.TryRemove(texture, out _);
+                        // If yet another upload superseded us, bail out.
+                        if (uploadToken != Volatile.Read(ref texture._progressiveUploadToken))
+                        {
+                            onCompleted?.Invoke();
+                            return;
+                        }
 
-                    if (!_progressiveUploads.TryAdd(texture, 0))
-                    {
-                        // Still can't register — another upload is active. Let the caller know
-                        // so ClearPendingTransition runs and the next Evaluate cycle re-queues.
-                        RuntimeRenderingHostServices.Current.LogWarning(
-                            $"[UploadMipmaps] Could not register progressive upload for '{texture.Name}' after deferred retry. Clearing pending transition.");
-                        onCompleted?.Invoke();
-                        return;
-                    }
+                        // Force-evict the stale entry (the old coroutine should have cleaned up by now).
+                        _progressiveUploads.TryRemove(texture, out _);
 
-                    StartProgressiveCoroutine(texture, uploadToken, cancellationToken, onCompleted);
-                });
+                        if (!_progressiveUploads.TryAdd(texture, 0))
+                        {
+                            // Still can't register — another upload is active. Let the caller know
+                            // so ClearPendingTransition runs and the next Evaluate cycle re-queues.
+                            RuntimeRenderingHostServices.Current.LogWarning(
+                                $"[UploadMipmaps] Could not register progressive upload for '{texture.Name}' after deferred retry. Clearing pending transition.");
+                            onCompleted?.Invoke();
+                            return;
+                        }
+
+                        StartProgressiveCoroutine(texture, uploadToken, cancellationToken, onCompleted);
+                    },
+                    GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ProgressiveUploadRetry"));
                 return;
             }
 
@@ -474,7 +486,8 @@ namespace XREngine.Rendering
                 StartProgressiveCoroutine(texture, uploadToken, cancellationToken, onCompleted);
             else
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
-                    () => StartProgressiveCoroutine(texture, uploadToken, cancellationToken, onCompleted));
+                    () => StartProgressiveCoroutine(texture, uploadToken, cancellationToken, onCompleted),
+                    GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ProgressiveUploadStart"));
         }
 
         private static void StartProgressiveCoroutine(XRTexture2D texture, int uploadToken, CancellationToken cancellationToken, Action? onCompleted)

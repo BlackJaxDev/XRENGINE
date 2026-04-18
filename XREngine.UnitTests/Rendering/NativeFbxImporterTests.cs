@@ -413,6 +413,24 @@ public sealed class NativeFbxImporterTests
     }
 
     [Test]
+    public void ModelImportOptions_LegacyBackendYamlAliases_MapToAssimpBackends()
+    {
+        const string yaml = """
+            FbxBackend: AssimpLegacy
+            GltfBackend: AssimpLegacy
+            """;
+
+        var deserializer = new DeserializerBuilder()
+            .IgnoreUnmatchedProperties()
+            .Build();
+
+        ModelImportOptions options = deserializer.Deserialize<ModelImportOptions>(yaml);
+
+        options.FbxBackend.ShouldBe(FbxImportBackend.Assimp);
+        options.GltfBackend.ShouldBe(GltfImportBackend.Assimp);
+    }
+
+    [Test]
     public void NativeFbxSkinWeights_UseImportedMeshBindPoseInsteadOfClusterTransformMatrix()
     {
         SceneNode rootNode = new("Root");

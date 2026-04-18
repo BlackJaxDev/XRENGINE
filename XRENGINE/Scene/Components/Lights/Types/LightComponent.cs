@@ -60,7 +60,8 @@ namespace XREngine.Components.Capture.Lights.Types
         /// Seconds since the last observed movement of this light.
         /// </summary>
         [Browsable(false)]
-        public float TimeSinceLastMovement => TimeSinceLastMovementSeconds(Engine.ElapsedTicks, _lastMovedTicks);
+        public float TimeSinceLastMovement
+            => World is null ? 0.0f : TimeSinceLastMovementSeconds(Engine.ElapsedTicks, _lastMovedTicks);
 
         /// <summary>
         /// This matrix is the location of the center of the light source. Used for rendering the light mesh.
@@ -74,6 +75,14 @@ namespace XREngine.Components.Capture.Lights.Types
 
         [Browsable(false)]
         public Matrix4x4 LightMeshMatrix => _lightMatrix;
+
+        private void UpdateLightMatrix(Matrix4x4 renderMatrix)
+        {
+            _lightMatrix = MeshCenterAdjustMatrix * renderMatrix;
+
+            if (World is not null)
+                _shadowVolumeRC.WorldMatrix = _lightMatrix;
+        }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
@@ -90,7 +99,8 @@ namespace XREngine.Components.Capture.Lights.Types
                     }
                     break;
                 case nameof(MeshCenterAdjustMatrix):
-                    _lightMatrix = MeshCenterAdjustMatrix * Transform.RenderMatrix;
+                    if (SceneNode is not null && !SceneNode.IsTransformNull)
+                        UpdateLightMatrix(Transform.RenderMatrix);
                     break;
                 case nameof(ShadowMap):
                     if (ShadowMap?.Material is not null)
@@ -98,6 +108,8 @@ namespace XREngine.Components.Capture.Lights.Types
                     break;
                 case nameof(World):
                     SyncDynamicWorldRegistration();
+                    if (World is not null)
+                        _shadowVolumeRC.WorldMatrix = _lightMatrix;
                     break;
                 case nameof(Type):
                     if (Type == ELightType.Dynamic)
@@ -158,7 +170,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public LightComponent() : base()
         {
-            _lastMovedTicks = Engine.ElapsedTicks;
+            _lastMovedTicks = 0L;
 
             XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(0.0f, 1.0f, 0.0f, 0.0f));
             mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
@@ -166,7 +178,7 @@ namespace XREngine.Components.Capture.Lights.Types
             _shadowVolumeRC.Mesh = new XRMeshRenderer(GetWireframeMesh(), mat);
 
             RenderInfo = RenderInfo3D.New(this, _shadowVolumeRC);
-            RenderInfo.IsVisible = Engine.EditorPreferences.Debug.VisualizeDirectionalLightVolumes;
+            RenderInfo.IsVisible = _previewBoundingVolume;
             RenderInfo.CastsShadows = false;
             RenderInfo.ReceivesShadows = false;
             RenderInfo.VisibleInLightingProbes = false;
@@ -177,9 +189,10 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            _lastMovedTicks = Engine.ElapsedTicks;
+            if (World is not null)
+                _lastMovedTicks = Engine.ElapsedTicks;
             unchecked { _movementVersion++; }
-            _shadowVolumeRC.WorldMatrix = _lightMatrix = MeshCenterAdjustMatrix * renderMatrix;
+            UpdateLightMatrix(renderMatrix);
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 
@@ -272,7 +285,7 @@ namespace XREngine.Components.Capture.Lights.Types
             set
             {
                 if (SetField(ref _previewBoundingVolume, value))
-                    RenderInfo.IsVisible = value || Engine.EditorPreferences.Debug.VisualizeDirectionalLightVolumes;
+                    RenderInfo.IsVisible = value || (World is not null && Engine.EditorPreferences.Debug.VisualizeDirectionalLightVolumes);
             }
         }
 

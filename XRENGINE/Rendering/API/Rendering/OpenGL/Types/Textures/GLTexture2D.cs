@@ -20,6 +20,7 @@ namespace XREngine.Rendering.OpenGL
         /// synchronous path, but asset textures defer uploads across frames.
         /// </summary>
         private const long ProgressivePushDataThresholdBytes = 4 * 1024;
+        private const long ProgressiveMipUploadChunkBytes = 256 * 1024;
 
         private static bool? _supportsTextureFilterAnisotropic;
         private static float _maxSupportedTextureAnisotropy = 1.0f;
@@ -303,10 +304,15 @@ namespace XREngine.Rendering.OpenGL
             int mipCount = Mipmaps!.Length;
             int smallestResidentMip = mipCount - 1;
             int nextMip = smallestResidentMip;
+            int nextMipRow = 0;
+            string textureName = string.IsNullOrWhiteSpace(Data.Name)
+                ? BindingId.ToString()
+                : Data.Name;
+            string progressiveUploadLabel = $"GLTexture2D.ProgressiveMipUpload[{textureName}]";
 
             Engine.AddRenderThreadCoroutine(() =>
             {
-                using var sample = Engine.Profiler.Start("GLTexture2D.ProgressiveMipUpload");
+                using var sample = Engine.Profiler.Start(progressiveUploadLabel);
                 if (!IsGenerated)
                 {
                     // Texture was destroyed before the coroutine finished.
@@ -320,17 +326,26 @@ namespace XREngine.Rendering.OpenGL
                 if (nextMip >= 0)
                 {
                     // Upload from smallest to largest so early frames only pay for tiny mips.
-                    // Clamp sampling to the currently resident range until the full chain arrives.
+                    // Clamp sampling to fully uploaded mips until the current mip is complete.
                     if (!IsMultisampleTarget)
                     {
-                        int residentBaseLevel = nextMip + mipLevelOffset;
+                        int residentBaseLevel = Math.Min(nextMip + 1, smallestResidentMip) + mipLevelOffset;
                         int residentMaxLevel = smallestResidentMip + mipLevelOffset;
                         Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in residentBaseLevel);
                         Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in residentMaxLevel);
                     }
 
-                    PushMipmap(glTarget, nextMip + mipLevelOffset, Mipmaps![nextMip], internalFormatForce);
-                    nextMip--;
+                    if (!TryPushProgressiveMipChunk(glTarget, nextMip + mipLevelOffset, Mipmaps![nextMip], internalFormatForce, ref nextMipRow))
+                    {
+                        PushMipmap(glTarget, nextMip + mipLevelOffset, Mipmaps![nextMip], internalFormatForce);
+                        nextMip--;
+                        nextMipRow = 0;
+                    }
+                    else if (nextMipRow <= 0)
+                    {
+                        nextMip--;
+                    }
+
                     Unbind();
                     return false; // continue — more mips to upload
                 }
@@ -340,7 +355,72 @@ namespace XREngine.Rendering.OpenGL
                 IsPushing = false;
                 Unbind();
                 return true; // done
-            });
+            }, progressiveUploadLabel);
+        }
+
+        private unsafe bool TryPushProgressiveMipChunk(
+            GLEnum glTarget,
+            int mipLevel,
+            MipmapInfo info,
+            EPixelInternalFormat? internalFormatForce,
+            ref int nextRow)
+        {
+            Mipmap2D mip = info.Mipmap;
+            DataSource? data = mip.Data;
+            XRDataBuffer? pbo = mip.StreamingPBO;
+            if (data is null
+                || data.Length <= 0
+                || pbo is not null
+                || Data.MultiSample
+                || mip.Height == 0)
+            {
+                nextRow = 0;
+                return false;
+            }
+
+            long rowBytes = data.Length / (long)mip.Height;
+            if (rowBytes <= 0 || rowBytes * mip.Height != data.Length)
+            {
+                nextRow = 0;
+                return false;
+            }
+
+            int remainingRows = (int)mip.Height - nextRow;
+            if (remainingRows <= 0)
+            {
+                info.NeedsFullPush = false;
+                nextRow = 0;
+                return true;
+            }
+
+            int rowsPerChunk = Math.Clamp((int)(ProgressiveMipUploadChunkBytes / rowBytes), 1, remainingRows);
+
+            GLEnum pixelFormat = ToGLEnum(mip.PixelFormat);
+            GLEnum pixelType = ToGLEnum(mip.PixelType);
+            InternalFormat internalPixelFormat = ToInternalFormat(internalFormatForce ?? mip.InternalFormat);
+
+            using var uploadSample = Engine.Profiler.Start("GLTexture2D.PushMipmap.UploadChunk");
+            PushWithDataRows(
+                glTarget,
+                mipLevel,
+                mip.Width,
+                mip.Height,
+                pixelFormat,
+                pixelType,
+                internalPixelFormat,
+                data,
+                nextRow,
+                rowsPerChunk,
+                info.NeedsFullPush);
+
+            nextRow += rowsPerChunk;
+            if (nextRow >= mip.Height)
+            {
+                info.NeedsFullPush = false;
+                nextRow = 0;
+            }
+
+            return true;
         }
 
         private EPixelInternalFormat? EnsureStorageAllocated()
@@ -523,7 +603,10 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Engine.IsRenderThread)
             {
-                Engine.EnqueueMainThreadTask(() => PushPreparedMipLevel(mipIndex));
+                string textureName = string.IsNullOrWhiteSpace(Data.Name) ? "UnnamedTexture" : Data.Name;
+                Engine.EnqueueMainThreadTask(
+                    () => PushPreparedMipLevel(mipIndex),
+                    $"GLTexture2D.PushPreparedMipLevel[{textureName}].Mip{mipIndex}");
                 return;
             }
 
@@ -728,6 +811,33 @@ namespace XREngine.Rendering.OpenGL
                 Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, null);
                 pbo?.Unbind();
             }
+        }
+
+        private unsafe void PushWithDataRows(
+            GLEnum glTarget,
+            int i,
+            uint w,
+            uint h,
+            GLEnum pixelFormat,
+            GLEnum pixelType,
+            InternalFormat internalPixelFormat,
+            DataSource data,
+            int startRow,
+            int rowCount,
+            bool fullPush)
+        {
+            if (rowCount <= 0)
+                return;
+
+            if (fullPush && !StorageSet)
+            {
+                Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, data.Address.Pointer);
+                return;
+            }
+
+            long rowBytes = data.Length / (long)Math.Max(1u, h);
+            byte* rowPointer = (byte*)data.Address.Pointer + (startRow * rowBytes);
+            Api.TexSubImage2D(glTarget, i, 0, startRow, w, (uint)rowCount, pixelFormat, pixelType, rowPointer);
         }
 
         protected override void SetParameters()

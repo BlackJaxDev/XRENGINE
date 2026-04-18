@@ -65,11 +65,22 @@ public sealed class SecondaryPassShaderContractTests
 
         source.ShouldContain("vec2 SafeNormalize2(vec2 v)");
         source.ShouldContain("vec3 SafeNormalize3(vec3 v)");
+        source.ShouldContain("vec2 DirectionToOctahedralPlane(vec3 dir)");
         source.ShouldContain("vec3 dir = SafeNormalize3(FragWorldDir);");
-        source.ShouldContain("SafeNormalize2(dir.xz)");
-        source.ShouldContain("SafeNormalize2(max(abs(dir.y), 0.06) * dir.xz)");
         source.ShouldNotContain("vec2 st = normalize(dir.xz)");
         source.ShouldNotContain("vec2 cloudUv = normalize(max(abs(dir.y), 0.06) * dir.xz)");
+        source.ShouldNotContain("SafeNormalize2(dir.xz)");
+        source.ShouldNotContain("SafeNormalize2(max(abs(dir.y), 0.06) * dir.xz)");
+    }
+
+    [Test]
+    public void SkyboxDynamic_UsesPoleSafeStarAndCloudMapping()
+    {
+        string source = LoadShaderSource(Path.Combine("Scene3D", "SkyboxDynamic.fs"));
+
+        source.ShouldContain("vec2 starUv = DirectionToOctahedralPlane(dir) * 256.0");
+        source.ShouldContain("vec2 cloudUv = DirectionToOctahedralPlane(dir) * SkyCloudScale;");
+        source.ShouldContain("float cloudMask = smoothstep(-0.08, 0.12, dir.y);");
     }
 
     [Test]
@@ -94,11 +105,22 @@ public sealed class SecondaryPassShaderContractTests
 
         source.ShouldContain("vec2 SafeNormalize2(vec2 v)");
         source.ShouldContain("vec3 SafeNormalize3(vec3 v)");
+        source.ShouldContain("vec2 DirectionToOctahedralPlane(vec3 dir)");
         source.ShouldContain("vec3 dir = SafeNormalize3(FragWorldDir);");
-        source.ShouldContain("SafeNormalize2(dir.xz)");
-        source.ShouldContain("SafeNormalize2(max(abs(dir.y), 0.06) * dir.xz)");
         source.ShouldNotContain("vec2 st = normalize(dir.xz)");
         source.ShouldNotContain("vec2 cloudUv = normalize(max(abs(dir.y), 0.06) * dir.xz)");
+        source.ShouldNotContain("SafeNormalize2(dir.xz)");
+        source.ShouldNotContain("SafeNormalize2(max(abs(dir.y), 0.06) * dir.xz)");
+    }
+
+    [Test]
+    public void SkyboxComponent_FallbackDynamicSource_UsesPoleSafeStarAndCloudMapping()
+    {
+        string source = ReadWorkspaceFile(Path.Combine("XRENGINE", "Scene", "Components", "Misc", "SkyboxComponent.cs"));
+
+        source.ShouldContain("vec2 starUv = DirectionToOctahedralPlane(dir) * 256.0");
+        source.ShouldContain("vec2 cloudUv = DirectionToOctahedralPlane(dir) * SkyCloudScale;");
+        source.ShouldContain("float cloudMask = smoothstep(-0.08, 0.12, dir.y);");
     }
 
     private static string LoadShaderSource(string shaderRelativePath)

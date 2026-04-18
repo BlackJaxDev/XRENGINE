@@ -155,10 +155,14 @@ namespace XREngine.Rendering
             //uint channels = p.Channels;
             //uint colors = image.TotalColors;
             PixelType = EPixelType.Float;
-            //Why does magickimage not have a method to do this normalization? did I miss it?
+            // Keep normalization on the current worker thread. Imported texture decoding
+            // is already concurrency-limited upstream, and nested Parallel.For calls here
+            // oversubscribe the thread pool during large FBX imports.
             Data = DataSource.Allocate<float>((uint)p!.Length);
             float* pixels = (float*)Data.Address;
-            Parallel.For(0, p.Length, i => pixels[i] = p[i] / ushort.MaxValue);
+            const float normalizeU16 = 1.0f / ushort.MaxValue;
+            for (int i = 0; i < p.Length; i++)
+                pixels[i] = p[i] * normalizeU16;
 
             Width = image.Width;
             Height = image.Height;

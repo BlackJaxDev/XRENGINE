@@ -55,12 +55,54 @@ namespace XREngine.Rendering.OpenGL
                     case nameof(XRMeshRenderer.Mesh):
                         OnMeshChanged(Mesh);
                         break;
+                    case nameof(XRMeshRenderer.Material):
+                        OnMaterialChanged();
+                        break;
                 }
             }
 
             private void OnMeshRendererPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
             {
                 
+            }
+
+            private void OnMaterialChanged()
+            {
+                Dbg("OnMaterialChanged", "Lifecycle");
+
+                _shadowVariantKey = null;
+                _shadowMaterialCache = null;
+                Data.ResetVertexShaderSource();
+
+                if (Engine.IsRenderThread)
+                    RegenerateProgramsAndBuffers();
+                else
+                    Engine.EnqueueMainThreadTask(RegenerateProgramsAndBuffers, "GLMeshRenderer.MaterialChanged");
+            }
+
+            private void RegenerateProgramsAndBuffers()
+            {
+                _combinedProgram?.Destroy();
+                _combinedProgram = null;
+
+                _separatedVertexProgram?.Destroy();
+                _separatedVertexProgram = null;
+
+                _forcedGeneratedVertexProgram?.Destroy();
+                _forcedGeneratedVertexProgram = null;
+
+                _pipeline?.Destroy();
+                _pipeline = null;
+
+                BuffersBound = false;
+
+                if (!IsGenerated)
+                    return;
+
+                if (MeshRenderer.GenerateAsync)
+                    Task.Run(GenProgramsAndBuffers);
+                else
+                    GenProgramsAndBuffers();
             }
 
             private void OnMeshChanged(XRMesh? mesh)

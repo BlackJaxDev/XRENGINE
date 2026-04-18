@@ -121,7 +121,7 @@ public static class GltfPhase0Decisions
         new(GltfFeatureArea.MorphTargets, GltfSupportLevel.Supported, "Supports morph target deltas, target names, default weights, and animated weights."),
         new(GltfFeatureArea.AnimationClips, GltfSupportLevel.Supported, "Supports translation, rotation, scale, and weight animation channels with linear, step, and cubic spline sampling."),
         new(GltfFeatureArea.ExtrasAndUnknownExtensions, GltfSupportLevel.Supported, "Managed JSON POCOs retain extras and unknown extension payloads as JsonElement dictionaries for future features."),
-        new(GltfFeatureArea.CompatibilityFallback, GltfSupportLevel.Supported, "Auto uses the native path first and falls back to Assimp before scene publication when native import fails; AssimpLegacy remains the explicit escape hatch."),
+        new(GltfFeatureArea.CompatibilityFallback, GltfSupportLevel.Supported, "Auto uses the native path first and falls back to Assimp before scene publication when native import fails; Assimp remains the explicit escape hatch. Legacy YAML may still use the older AssimpLegacy spelling."),
     ];
 
     public static IReadOnlyList<GltfExtensionSupport> ExtensionMatrix { get; } =
@@ -131,8 +131,8 @@ public static class GltfPhase0Decisions
         new("EXT_meshopt_compression", GltfSupportLevel.Supported, "Handled by fastgltf when loading and copying accessor-backed data."),
         new("EXT_texture_webp", GltfSupportLevel.Supported, "Managed image decode keeps EXT_texture_webp textures on the existing texture loading path."),
         new("KHR_texture_transform", GltfSupportLevel.Partial, "texCoord overrides are honored. Offset, scale, and rotation are rejected with a diagnostic so results are never silently wrong."),
-        new("KHR_texture_basisu", GltfSupportLevel.UnsupportedWithDiagnostic, "The native path rejects basisu/KTX2 textures with a diagnostic and points users to AssimpLegacy for compatibility."),
-        new("KHR_draco_mesh_compression", GltfSupportLevel.UnsupportedWithDiagnostic, "The native path rejects Draco-compressed primitives with a diagnostic and points users to AssimpLegacy for compatibility."),
+        new("KHR_texture_basisu", GltfSupportLevel.UnsupportedWithDiagnostic, "The native path rejects basisu/KTX2 textures with a diagnostic and points users to Assimp for compatibility."),
+        new("KHR_draco_mesh_compression", GltfSupportLevel.UnsupportedWithDiagnostic, "The native path rejects Draco-compressed primitives with a diagnostic and points users to Assimp for compatibility."),
     ];
 
     public static IReadOnlyList<GltfCorpusScenario> RequiredCorpusCoverage { get; } =

@@ -616,6 +616,31 @@ CommandChain: []
     }
 
     [Test]
+    public void RenderPipelineYaml_CameraAssetRoundTrip_PreservesConcretePipelineType()
+    {
+        RenderPipelineCameraAsset asset = new()
+        {
+            Camera = new XRCamera
+            {
+                RenderPipeline = new DefaultRenderPipeline
+                {
+                    EnableDeferredMsaa = true
+                }
+            }
+        };
+
+        string yaml = AssetManager.Serializer.Serialize(asset);
+
+        yaml.ShouldContain("RenderPipeline:");
+        yaml.ShouldContain("__type: XREngine.Rendering.DefaultRenderPipeline");
+
+        RenderPipelineCameraAsset clone = AssetManager.Deserializer.Deserialize<RenderPipelineCameraAsset>(yaml).ShouldNotBeNull();
+
+        clone.Camera.RenderPipeline.ShouldBeOfType<DefaultRenderPipeline>();
+        ((DefaultRenderPipeline)clone.Camera.RenderPipeline).EnableDeferredMsaa.ShouldBeTrue();
+    }
+
+    [Test]
     public void RenderPipelineYaml_UICanvasCamera2DAsset_DeserializesConcretePipelineFromFile()
     {
         string assetsRoot = Engine.Assets.GameAssetsPath;
@@ -1221,7 +1246,12 @@ CommandChain: []
 
     private sealed class UICanvasCameraPipelineAsset : XRAsset
     {
-        public UICanvasComponent Canvas { get; set; } = new();
+        public UICanvasCameraContainer Canvas { get; set; } = new();
+    }
+
+    private sealed class UICanvasCameraContainer
+    {
+        public XRCamera Camera2D { get; set; } = new();
     }
 
     private sealed class TransformConstructorLayerMaskContainer

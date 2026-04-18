@@ -1073,7 +1073,7 @@ internal static class NativeGltfSceneImporter
         if (Uri.TryCreate(image.Uri, UriKind.Absolute, out Uri? absoluteUri))
         {
             if (!absoluteUri.IsFile)
-                throw new NotSupportedException($"glTF image uri '{image.Uri}' in '{sourceFilePath}' is not a local file path. Use local relative paths or data URIs, or force AssimpLegacy for compatibility.");
+                throw new NotSupportedException($"glTF image uri '{image.Uri}' in '{sourceFilePath}' is not a local file path. Use local relative paths or data URIs, or force Assimp for compatibility.");
 
             return File.ReadAllBytes(absoluteUri.LocalPath);
         }
@@ -1638,14 +1638,14 @@ internal static class NativeGltfSceneImporter
         if (unsupportedRequiredExtensions.Count > 0)
         {
             string extensions = string.Join(", ", unsupportedRequiredExtensions.OrderBy(static extension => extension, StringComparer.Ordinal));
-            throw new NotSupportedException($"glTF asset '{sourceFilePath}' requires extensions that the native importer does not currently support: {extensions}. Use GltfBackend=AssimpLegacy for the compatibility path.");
+            throw new NotSupportedException($"glTF asset '{sourceFilePath}' requires extensions that the native importer does not currently support: {extensions}. Use GltfBackend=Assimp for the compatibility path.");
         }
 
         for (int textureIndex = 0; textureIndex < document.Textures.Count; textureIndex++)
         {
             GltfTexture texture = document.Textures[textureIndex];
             if (texture.Extensions?.ContainsKey("KHR_texture_basisu") == true)
-                throw new NotSupportedException($"glTF asset '{sourceFilePath}' uses KHR_texture_basisu on texture {textureIndex}. The native importer does not decode basisu/KTX2 textures yet. Use GltfBackend=AssimpLegacy for compatibility.");
+                throw new NotSupportedException($"glTF asset '{sourceFilePath}' uses KHR_texture_basisu on texture {textureIndex}. The native importer does not decode basisu/KTX2 textures yet. Use GltfBackend=Assimp for compatibility.");
         }
 
         for (int meshIndex = 0; meshIndex < document.Meshes.Count; meshIndex++)
@@ -1655,12 +1655,12 @@ internal static class NativeGltfSceneImporter
             {
                 GltfPrimitive primitive = mesh.Primitives[primitiveIndex];
                 if (primitive.Extensions?.ContainsKey("KHR_draco_mesh_compression") == true)
-                    throw new NotSupportedException($"glTF asset '{sourceFilePath}' uses KHR_draco_mesh_compression on mesh {meshIndex} primitive {primitiveIndex}. The native importer does not decode Draco-compressed primitives yet. Use GltfBackend=AssimpLegacy for compatibility.");
+                    throw new NotSupportedException($"glTF asset '{sourceFilePath}' uses KHR_draco_mesh_compression on mesh {meshIndex} primitive {primitiveIndex}. The native importer does not decode Draco-compressed primitives yet. Use GltfBackend=Assimp for compatibility.");
             }
         }
 
         if (UsesUnsupportedTextureTransform(document))
-            throw new NotSupportedException($"glTF asset '{sourceFilePath}' uses KHR_texture_transform offset/scale/rotation data that the native importer does not yet apply. Use GltfBackend=AssimpLegacy for compatibility.");
+            throw new NotSupportedException($"glTF asset '{sourceFilePath}' uses KHR_texture_transform offset/scale/rotation data that the native importer does not yet apply. Use GltfBackend=Assimp for compatibility.");
     }
 
     private static bool UsesUnsupportedTextureTransform(GltfRoot document)

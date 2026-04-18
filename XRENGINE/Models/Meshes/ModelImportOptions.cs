@@ -27,6 +27,10 @@ public enum FbxImportBackend
     Auto,
     Native,
     Assimp,
+
+    [Browsable(false)]
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    AssimpLegacy = Assimp,
 }
 
 public enum GltfImportBackend
@@ -34,6 +38,10 @@ public enum GltfImportBackend
     Auto,
     Native,
     Assimp,
+
+    [Browsable(false)]
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    AssimpLegacy = Assimp,
 }
 
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions
@@ -131,13 +139,15 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
 
     /// <summary>
     /// Selects how .fbx files are imported. Auto uses the native importer by default,
-    /// while AssimpLegacy preserves the older compatibility path.
+    /// while Assimp preserves the older compatibility path. Legacy YAML may still spell
+    /// this value as AssimpLegacy.
     /// </summary>
     public FbxImportBackend FbxBackend { get; set; } = FbxImportBackend.Auto;
 
     /// <summary>
     /// Selects how .gltf and .glb files are imported. Auto uses the native importer by default,
-    /// while AssimpLegacy preserves the older compatibility path.
+    /// while Assimp preserves the older compatibility path. Legacy YAML may still spell
+    /// this value as AssimpLegacy.
     /// </summary>
     public GltfImportBackend GltfBackend { get; set; } = GltfImportBackend.Auto;
 

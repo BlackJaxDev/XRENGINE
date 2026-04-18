@@ -37,7 +37,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string RMSETextureName { get; set; } = "RMSE";
         public string TransformIdTextureName { get; set; } = "TransformId";
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
-        public IReadOnlyList<string> DependentFboNames { get; set; } = Array.Empty<string>();
+        public string[] DependentFboNames { get; set; } = Array.Empty<string>();
 
         public bool Stereo { get; set; }
 
@@ -361,7 +361,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void InvalidateDependentFbos(XRRenderPipelineInstance instance)
         {
-            if (DependentFboNames.Count == 0)
+            if (DependentFboNames.Length == 0)
                 return;
 
             foreach (string name in DependentFboNames)

@@ -223,7 +223,7 @@ namespace XREngine.Components.Lights
                     break;
                 case nameof(Scale):
                     MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Scale);
-                    ShadowCameraTransform.Translation = Globals.Backward * Scale.Z * 0.5f;
+                    _shadowCameraTransform?.Translation = Globals.Backward * Scale.Z * 0.5f;
                     if (ShadowCamera is not null)
                     {
                         if (ShadowCamera.Parameters is not XROrthographicCameraParameters p)

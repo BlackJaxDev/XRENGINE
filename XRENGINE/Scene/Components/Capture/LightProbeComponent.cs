@@ -312,6 +312,7 @@ namespace XREngine.Components.Capture.Lights
         private XRTextureCube? _irradianceTextureCubemap;
         private XRTextureCube? _prefilterTextureCubemap;
         private XRMeshRenderer? _previewSphere;
+        private Matrix4x4 _previewRenderMatrix = Matrix4x4.Identity;
         private bool _previewSphereDirty = true;
         private XRTexture2D? _environmentTextureEquirect;
         private bool _useCubemapConvolution;

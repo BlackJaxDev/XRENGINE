@@ -1,4 +1,5 @@
 using ImageMagick;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using XREngine.Data.Rendering;
@@ -8,8 +9,12 @@ namespace XREngine.Rendering;
 public partial class XRTexture2D
 {
     internal const uint ImportedPreviewMaxDimensionInternal = 64;
+    internal const double ImportedTextureTimingLogThresholdMilliseconds = 5.0;
 
     internal static bool ShouldSuppressTextureStreamingCacheWarmup
+        => ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports;
+
+    internal static bool ShouldLogImportedTextureTiming
         => ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports;
 
     public static IDisposable EnterImportedTextureStreamingScope()
@@ -84,6 +89,47 @@ public partial class XRTexture2D
     internal static void ScheduleGpuUploadInternal(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted = null)
         => ScheduleGpuUpload(texture, cancellationToken, onCompleted);
 
+    internal static long StartImportedTextureTiming()
+        => ShouldLogImportedTextureTiming ? Stopwatch.GetTimestamp() : 0L;
+
+    internal static double CompleteImportedTextureTiming(long startTimestamp)
+    {
+        if (startTimestamp == 0L)
+            return 0.0;
+
+        long elapsedTicks = Stopwatch.GetTimestamp() - startTimestamp;
+        return elapsedTicks * 1000.0 / Stopwatch.Frequency;
+    }
+
+    internal static void LogImportedTextureTiming(
+        string? sourceLabel,
+        uint sourceWidth,
+        uint sourceHeight,
+        uint requestedResidentMaxDimension,
+        uint residentMaxDimension,
+        bool includeMipChain,
+        int mipCount,
+        double decodeMilliseconds,
+        double cloneMilliseconds,
+        double resizeMilliseconds,
+        double mipBuildMilliseconds)
+    {
+        if (!ShouldLogImportedTextureTiming || string.IsNullOrWhiteSpace(sourceLabel))
+            return;
+
+        double totalMilliseconds = decodeMilliseconds + cloneMilliseconds + resizeMilliseconds + mipBuildMilliseconds;
+        if (totalMilliseconds < ImportedTextureTimingLogThresholdMilliseconds
+            && decodeMilliseconds < ImportedTextureTimingLogThresholdMilliseconds
+            && resizeMilliseconds < ImportedTextureTimingLogThresholdMilliseconds
+            && mipBuildMilliseconds < ImportedTextureTimingLogThresholdMilliseconds)
+        {
+            return;
+        }
+
+        RuntimeRenderingHostServices.Current.LogOutput(
+            $"[ImportedTextureTiming] '{sourceLabel}' source={sourceWidth}x{sourceHeight} requestedMax={requestedResidentMaxDimension} resident={residentMaxDimension} includeMipChain={includeMipChain} mips={mipCount} decode={decodeMilliseconds:F1}ms clone={cloneMilliseconds:F1}ms resize={resizeMilliseconds:F1}ms mipBuild={mipBuildMilliseconds:F1}ms total={totalMilliseconds:F1}ms");
+    }
+
     internal static TextureStreamingResidentData BuildResidentDataFromLoadedTexture(
         XRTexture2D texture,
         uint maxResidentDimension,
@@ -110,21 +156,43 @@ public partial class XRTexture2D
     internal static TextureStreamingResidentData BuildResidentDataFromImage(
         MagickImage image,
         uint maxResidentDimension,
-        bool includeMipChain)
+        bool includeMipChain,
+        string? timingLabel = null,
+        double decodeMilliseconds = 0.0)
     {
         uint sourceWidth = image.Width;
         uint sourceHeight = image.Height;
 
+        long cloneStartTimestamp = StartImportedTextureTiming();
         using MagickImage residentImage = (MagickImage)image.Clone();
-        ResizePreviewIfNeeded(residentImage, Math.Max(1u, maxResidentDimension));
+        double cloneMilliseconds = CompleteImportedTextureTiming(cloneStartTimestamp);
 
+        long resizeStartTimestamp = StartImportedTextureTiming();
+        ResizePreviewIfNeeded(residentImage, Math.Max(1u, maxResidentDimension));
+        double resizeMilliseconds = CompleteImportedTextureTiming(resizeStartTimestamp);
+
+        long mipBuildStartTimestamp = StartImportedTextureTiming();
         Mipmap2D[] mipmaps = includeMipChain
             ? GetMipmapsFromImage(residentImage)
             : [new Mipmap2D(residentImage)];
+        double mipBuildMilliseconds = CompleteImportedTextureTiming(mipBuildStartTimestamp);
 
         uint residentMaxDimension = mipmaps.Length > 0
             ? Math.Max(mipmaps[0].Width, mipmaps[0].Height)
             : 0u;
+
+        LogImportedTextureTiming(
+            timingLabel,
+            sourceWidth,
+            sourceHeight,
+            maxResidentDimension,
+            residentMaxDimension,
+            includeMipChain,
+            mipmaps.Length,
+            decodeMilliseconds,
+            cloneMilliseconds,
+            resizeMilliseconds,
+            mipBuildMilliseconds);
 
         return new TextureStreamingResidentData(
             mipmaps,

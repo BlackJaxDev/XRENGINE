@@ -1,10 +1,11 @@
 using System.IO;
+using System.Numerics;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
 using XREngine;
-using XREngine.Components;
 using XREngine.Components.Capture.Lights.Types;
+using XREngine.Components.Lights;
 using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -14,7 +15,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.UnitTests.Scene;
 
 [TestFixture]
-public sealed class PointLightComponentSerializationTests : GpuTestBase
+public sealed class LightComponentYamlDeserializationTests : GpuTestBase
 {
     private IRuntimeShaderServices? _previousShaderServices;
 
@@ -30,64 +31,39 @@ public sealed class PointLightComponentSerializationTests : GpuTestBase
         => RuntimeShaderServices.Current = _previousShaderServices;
 
     [Test]
-    public void CookedBinarySerializer_RoundTrips_Unattached_PointLightComponent()
+    public void YamlSerializer_RoundTrips_SceneNodeWithDirectionalLight_WhenScaleRestoresBeforeOwnerAttachment()
     {
-        PointLightComponent original = new(12.5f, 3.0f);
-
-        byte[] bytes = CookedBinarySerializer.Serialize(original);
-        bytes.Length.ShouldBeGreaterThan(0);
-
-        PointLightComponent? clone = CookedBinarySerializer.Deserialize(typeof(PointLightComponent), bytes) as PointLightComponent;
-
-        clone.ShouldNotBeNull();
-        clone!.Radius.ShouldBe(12.5f);
-        clone.Brightness.ShouldBe(3.0f);
-        clone.ShadowCameras.Length.ShouldBe(6);
-    }
-
-    [Test]
-    public void CookedBinarySerializer_RoundTrips_SceneNodeWithPointLight_RebindsShadowCameraParents()
-    {
-        SceneNode original = new("PointLightNode", new Transform());
-        PointLightComponent light = original.AddComponent<PointLightComponent>()!;
-        light.Radius = 18.0f;
-        light.Brightness = 2.5f;
-
-        byte[] bytes = CookedBinarySerializer.Serialize(original);
-        bytes.Length.ShouldBeGreaterThan(0);
-
-        SceneNode? cloneNode = CookedBinarySerializer.Deserialize(typeof(SceneNode), bytes) as SceneNode;
-        cloneNode.ShouldNotBeNull();
-
-        PointLightComponent? clone = cloneNode!.GetComponent<PointLightComponent>();
-        clone.ShouldNotBeNull();
-        clone!.Radius.ShouldBe(18.0f);
-        clone.Brightness.ShouldBe(2.5f);
-        clone.ShadowCameras.Length.ShouldBe(6);
-        clone.ShadowCameras[0].Transform.Parent.ShouldNotBeNull();
-        clone.ShadowCameras[0].Transform.Parent!.Parent.ShouldBeSameAs(clone.Transform);
-    }
-
-    [Test]
-    public void YamlSerializer_RoundTrips_SceneNodeComponentsAlias_WithCustomComponent()
-    {
-        SceneNode original = new("ComponentAliasNode", new Transform());
-        TestYamlSceneNodeComponent component = original.AddComponent<TestYamlSceneNodeComponent>()!;
-        component.Marker = 42;
-        component.Label = "AliasCheck";
+        SceneNode original = new("DirectionalLightNode", new Transform());
+        DirectionalLightComponent light = original.AddComponent<DirectionalLightComponent>()!;
+        light.Scale = new Vector3(12.0f, 13.0f, 14.0f);
 
         string yaml = AssetManager.Serializer.Serialize(original);
-        yaml.ShouldContain("Components:");
-        yaml.ShouldContain("__type: XREngine.UnitTests.Scene.TestYamlSceneNodeComponent");
 
         SceneNode? cloneNode = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
         cloneNode.ShouldNotBeNull();
 
-        TestYamlSceneNodeComponent? clone = cloneNode!.GetComponent<TestYamlSceneNodeComponent>();
+        DirectionalLightComponent? clone = cloneNode!.GetComponent<DirectionalLightComponent>();
         clone.ShouldNotBeNull();
         clone!.SceneNode.ShouldBeSameAs(cloneNode);
-        clone.Marker.ShouldBe(42);
-        clone.Label.ShouldBe("AliasCheck");
+        clone.Scale.ShouldBe(light.Scale);
+    }
+
+    [Test]
+    public void YamlSerializer_RoundTrips_SceneNodeWithSpotLight_WhenDistanceRestoresBeforeOwnerAttachment()
+    {
+        SceneNode original = new("SpotLightNode", new Transform());
+        SpotLightComponent light = original.AddComponent<SpotLightComponent>()!;
+        light.Distance = 42.0f;
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+
+        SceneNode? cloneNode = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+        cloneNode.ShouldNotBeNull();
+
+        SpotLightComponent? clone = cloneNode!.GetComponent<SpotLightComponent>();
+        clone.ShouldNotBeNull();
+        clone!.SceneNode.ShouldBeSameAs(cloneNode);
+        clone.Distance.ShouldBe(42.0f);
     }
 
     private sealed class FileSystemRuntimeShaderServices(string shaderBasePath) : IRuntimeShaderServices
@@ -129,10 +105,4 @@ public sealed class PointLightComponentSerializationTests : GpuTestBase
             };
         }
     }
-}
-
-public sealed class TestYamlSceneNodeComponent : XRComponent
-{
-    public int Marker { get; set; }
-    public string? Label { get; set; }
 }

@@ -44,7 +44,7 @@ namespace XREngine.Rendering.Commands
                     return;
 
                 string ownerName = _ownerPipeline?.Pipeline?.DebugName ?? _ownerPipeline?.Pipeline?.GetType().Name ?? "<no-owner>";
-                Debug.Out($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
+                System.Diagnostics.Debug.WriteLine($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
 
                 _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
                 _passSorterTypes = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value?.GetType());

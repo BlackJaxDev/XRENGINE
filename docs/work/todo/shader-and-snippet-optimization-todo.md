@@ -210,6 +210,7 @@ Implementation notes:
 - `GrabpassGaussian.frag` no longer evaluates gaussian weights or radial directions with `exp`, `sqrt`, `cos`, and `sin` in nested per-fragment loops; it now uses a truncated preweighted fixed-tap kernel with bounded sample count.
 - the shared skybox vertex shader now reconstructs and rotates the world ray once per fullscreen-triangle vertex, and the equirectangular, octahedral, cubemap, cubemap-array, gradient, and dynamic skybox fragment shaders consume the interpolated `FragWorldDir` instead of repeating inverse-matrix reconstruction per pixel.
 - the inline skybox fallback shader sources in `SkyboxComponent.cs` were updated to match the on-disk shader contract so runtime fallback behavior stays aligned.
+- dynamic skybox stars and clouds now use a pole-safe octahedral direction mapping, and OpenGL mesh renderers explicitly invalidate cached programs when a live material swap changes the active skybox mode at runtime.
 - TSR was reviewed and intentionally left unchanged in this pass: without a fresh measured bottleneck, the current `TemporalSuperResolution.fs` path avoids speculative fetch-count churn while the higher-confidence blur and skybox wins land first.
 
 ## Key Files

@@ -20,6 +20,7 @@ namespace XREngine.Components.Capture.Lights
 
                 world.Lights.AddLightProbe(this);
                 _registeredWorld = world;
+                SyncPreviewRenderCommandTransform();
             }
             if (!RealtimeCapture && AutoCaptureOnActivate)
             {
@@ -87,6 +88,9 @@ namespace XREngine.Components.Capture.Lights
                 case nameof(PreviewDisplay):
                     CachePreviewSphere();
                     break;
+                case nameof(World):
+                    SyncPreviewRenderCommandTransform();
+                    break;
                 case nameof(RealtimeCapture):
                     if (RealtimeCapture)
                         _realtimeCaptureTimer.StartMultiFire(QueueCapture, RealTimeCaptureUpdateInterval ?? TimeSpan.Zero);
@@ -105,7 +109,7 @@ namespace XREngine.Components.Capture.Lights
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            _visualRC.WorldMatrix = renderMatrix;
+            UpdatePreviewRenderMatrix(renderMatrix);
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 

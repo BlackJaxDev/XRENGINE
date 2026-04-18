@@ -1057,11 +1057,22 @@ namespace XREngine.Rendering
         {
             XRDataBuffer clone = new(target, _integral)
             {
+                _attributeName = _attributeName,
                 _componentType = _componentType,
                 _componentCount = _componentCount,
                 _elementCount = _elementCount,
                 _normalize = _normalize,
+                _padEndingToVec4 = _padEndingToVec4,
+                _mapped = _mapped,
+                _storageFlags = _storageFlags,
+                _rangeFlags = _rangeFlags,
+                _usage = _usage,
                 _clientSideSource = cloneBuffer ? _clientSideSource?.Clone() : _clientSideSource,
+                _interleavedAttributeNames = (InterleavedAttribute[])_interleavedAttributeNames.Clone(),
+                _instanceDivisor = _instanceDivisor,
+                _bindingIndexOverride = _bindingIndexOverride,
+                _resizable = _resizable,
+                _disposeOnPush = _disposeOnPush,
             };
 
             if (_gpuCompressedSource is not null)

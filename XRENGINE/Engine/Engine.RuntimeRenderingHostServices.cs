@@ -82,6 +82,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         if (glRenderer is null)
             return false;
 
+        string textureName = string.IsNullOrWhiteSpace(texture.Name) ? "UnnamedTexture" : texture.Name;
         Engine.EnqueueRenderThreadTask(() =>
         {
             try
@@ -107,7 +108,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             {
                 onError?.Invoke(ex);
             }
-        });
+        }, $"XRTexture2D.ScheduleSparseTransition[{textureName}]");
 
         return true;
     }
@@ -186,6 +187,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void EnqueueRenderThreadTask(Action task)
         => Engine.EnqueueRenderThreadTask(task);
+
+    public void EnqueueRenderThreadTask(Action task, string reason)
+        => Engine.EnqueueRenderThreadTask(task, reason);
 
     public void EnqueueRenderThreadCoroutine(Func<bool> task)
         => Engine.AddRenderThreadCoroutine(task);

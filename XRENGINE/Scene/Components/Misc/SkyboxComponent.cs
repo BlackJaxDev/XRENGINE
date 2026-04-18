@@ -465,6 +465,8 @@ namespace XREngine.Components.Scene.Mesh
 
         private void RebuildMaterial()
         {
+            _material?.SettingUniforms -= SetUniforms;
+
             XRShader? vertexShader = GetVertexShader();
             XRShader? fragmentShader = _mode switch
             {
@@ -874,6 +876,21 @@ vec3 SafeNormalize3(vec3 v)
     return lenSq > 1e-8 ? v * inversesqrt(lenSq) : vec3(0.0, 1.0, 0.0);
 }
 
+vec2 DirectionToOctahedralPlane(vec3 dir)
+{
+    vec3 n = SafeNormalize3(dir);
+    float invL1 = 1.0 / max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
+    vec2 oct = n.xz * invL1;
+
+    if (n.y < 0.0)
+    {
+        vec2 octSign = vec2(oct.x >= 0.0 ? 1.0 : -1.0, oct.y >= 0.0 ? 1.0 : -1.0);
+        oct = (1.0 - abs(oct.yx)) * octSign;
+    }
+
+    return oct;
+}
+
 float Hash(vec2 p)
 {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -905,8 +922,8 @@ vec3 NightSky(vec3 dir, float nightFactor)
 {
     float horizonFade = smoothstep(-0.1, 0.35, dir.y);
     vec3 nightGradient = mix(vec3(0.01, 0.015, 0.03), vec3(0.005, 0.007, 0.015), horizonFade);
-    vec2 st = SafeNormalize2(dir.xz) * 256.0 + vec2(dir.y * 73.0, dir.x * 41.0);
-    float stars = step(0.9975, Hash(floor(st))) * nightFactor;
+    vec2 starUv = DirectionToOctahedralPlane(dir) * 256.0 + vec2(dir.y * 73.0, dir.x * 41.0);
+    float stars = step(0.9975, Hash(floor(starUv))) * nightFactor;
     return nightGradient + stars * vec3(1.0, 0.96, 0.9) * SkyStarIntensity;
 }
 
@@ -941,10 +958,11 @@ void main()
     float horizon = 1.0 - clamp(abs(dir.y), 0.0, 1.0);
     color += vec3(0.22, 0.19, 0.15) * pow(horizon, 2.2) * SkyHorizonHaze * duskFactor;
 
-    vec2 cloudUv = SafeNormalize2(max(abs(dir.y), 0.06) * dir.xz) * SkyCloudScale;
+    vec2 cloudUv = DirectionToOctahedralPlane(dir) * SkyCloudScale;
     cloudUv += vec2(SkyCloudSpeed * SkyTimeOfDay * 240.0, SkyCloudSpeed * SkyTimeOfDay * 120.0);
+    float cloudMask = smoothstep(-0.08, 0.12, dir.y);
     float cloud = Fbm(cloudUv);
-    cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloud, SkyCloudSharpness));
+    cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloud, SkyCloudSharpness)) * cloudMask;
     vec3 cloudDay = vec3(1.0, 0.98, 0.95);
     vec3 cloudNight = vec3(0.26, 0.28, 0.35);
     vec3 cloudTint = mix(cloudNight, cloudDay, dayFactor);

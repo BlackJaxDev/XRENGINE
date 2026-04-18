@@ -213,9 +213,17 @@ namespace XREngine.Components.Capture.Lights.Types
             {
                 case nameof(Transform):
                 case nameof(Distance):
-                    UpdateCones(Transform.RenderMatrix);
+                    UpdateConesFromAttachedTransform();
                     break;
             }
+        }
+
+        private void UpdateConesFromAttachedTransform()
+        {
+            if (SceneNode is null || SceneNode.IsTransformNull)
+                return;
+
+            UpdateCones(Transform.RenderMatrix);
         }
 
         public void SetCutoffs(float innerDegrees, float outerDegrees, bool constrainInnerToOuter = true)
@@ -237,7 +245,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (ShadowCamera != null && ShadowCamera.Parameters is XRPerspectiveCameraParameters p)
                 p.VerticalFieldOfView = Math.Max(outerDegrees, innerDegrees) * 2.0f;
 
-            UpdateCones(Transform.RenderMatrix);
+            UpdateConesFromAttachedTransform();
         }
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
