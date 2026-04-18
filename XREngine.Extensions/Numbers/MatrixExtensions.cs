@@ -1,8 +1,8 @@
-﻿using System.Numerics;
+using System.Numerics;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class MatrixExtension
+    public static class MatrixExtensions
     {
         //public static Matrix4x4 ToNumerics(this Assimp.Matrix4x4 matrix)
         //    => new(

@@ -1,4 +1,4 @@
-ï»¿using Extensions;
+using XREngine.Extensions;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -7,7 +7,7 @@ namespace XREngine.Animation
 {
     public class BlendManager : XRBase
     {
-        // Cached static blend functions â€” no per-blend lambda allocation
+        // Cached static blend functions — no per-blend lambda allocation
         private static readonly Func<float, float> LinearBlend = static (time) => time;
         private static readonly Func<float, float> CosineBlend = static (time) => Interp.Cosine(0.0f, 1.0f, time);
         private static readonly Func<float, float> QuadEaseStartBlend = static (time) => Interp.QuadraticEaseStart(0.0f, 1.0f, time);
@@ -48,7 +48,7 @@ namespace XREngine.Animation
                 EAnimBlendType.CosineEaseInOut => CosineBlend,
                 EAnimBlendType.QuadraticEaseStart => QuadEaseStartBlend,
                 EAnimBlendType.QuadraticEaseEnd => QuadEaseEndBlend,
-                // Custom must capture transition reference â€” only allocation case
+                // Custom must capture transition reference — only allocation case
                 EAnimBlendType.Custom => (time) => _currentTransition.CustomBlendFunction?.GetValue(time) ?? 0.0f,
                 _ => LinearBlend,
             };
@@ -111,7 +111,7 @@ namespace XREngine.Animation
             var currMotion = _currentState?.Motion;
             var nextMotion = _nextState?.Motion;
 
-            // Typed store path: lerp directly into the layer store â€” no boxing, no snapshots
+            // Typed store path: lerp directly into the layer store — no boxing, no snapshots
             if (layer.SlotLayout is not null
                 && currMotion?.SlotLayout is not null
                 && nextMotion?.SlotLayout is not null)
@@ -154,14 +154,14 @@ namespace XREngine.Animation
                 {
                     if (v2Dict is not null && v2Dict.TryGetValue(kvp.Key, out object? v2Value))
                     {
-                        // Both have the key â€” lerp
+                        // Both have the key — lerp
                         layer.SetAnimValue(kvp.Key, LerpValue(kvp.Value, v2Value, t));
                     }
-                    // Key only in v1 â€” leave alone (don't override with nothing)
+                    // Key only in v1 — leave alone (don't override with nothing)
                 }
             }
 
-            // Keys only in v2 but not in v1 â€” leave alone as well
+            // Keys only in v2 but not in v1 — leave alone as well
         }
 
         private static object? LerpValue(object? a, object? b, float t) => a switch

@@ -116,7 +116,27 @@ public class SceneNodePrefabTests
             Assert.That(yaml, Does.Not.Contain("Scale:"), "Default Scale (1,1,1) should be omitted");
             Assert.That(yaml, Does.Not.Contain("Translation:"), "Default Translation (0,0,0) should be omitted");
             Assert.That(yaml, Does.Not.Contain("Rotation:"), "Default Rotation (identity) should be omitted");
-            Assert.That(yaml, Does.Not.Contain("IsPrefabRoot: false"), "IsPrefabRoot=false should be omitted");
+            Assert.That(yaml, Does.Not.Contain("IsPrefabRoot:"), "IsPrefabRoot should be inferred rather than serialized");
+        });
+    }
+
+    [Test]
+    public void TransformSerialization_SceneOwnedTransformName_IsOmittedAndRestoredFromNodeName()
+    {
+        const string nodeName = "OwnedTransformNode";
+        SceneNode node = new(nodeName);
+
+        string yaml = AssetManager.Serializer.Serialize(node);
+        int nameCount = yaml.Split($"Name: {nodeName}").Length - 1;
+
+        Assert.That(nameCount, Is.EqualTo(1), "Scene-owned transform name should not duplicate the scene node name in YAML.");
+
+        SceneNode deserialized = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(deserialized.Name, Is.EqualTo(nodeName));
+            Assert.That(deserialized.Transform.Name, Is.EqualTo(nodeName));
         });
     }
 
@@ -135,6 +155,7 @@ public class SceneNodePrefabTests
         Assert.That(yaml, Does.Contain("Scale:"), "Non-default Scale must appear");
         Assert.That(yaml, Does.Contain("Translation:"), "Non-default Translation must appear");
         Assert.That(yaml, Does.Contain("Rotation:"), "Non-default Rotation must appear");
+        Assert.That(yaml, Does.Not.Contain("$value:"), "Default scene-node transforms should serialize without the wrapper");
 
         // Roundtrip deserialize
         var deserialized = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
@@ -163,6 +184,7 @@ public class SceneNodePrefabTests
         string yaml = AssetManager.Serializer.Serialize(node);
 
         Assert.That(yaml, Does.Not.Contain("$type:"));
+        Assert.That(yaml, Does.Not.Contain("$value:"));
     }
 
     [Test]
@@ -227,6 +249,29 @@ public class SceneNodePrefabTests
             Assert.That(deserialized.Prefab?.PrefabAssetId, Is.EqualTo(prefabId), "Root should have PrefabAssetId after roundtrip");
             Assert.That(child.Prefab?.PrefabAssetId, Is.EqualTo(prefabId), "Child should inherit PrefabAssetId from root after roundtrip");
             Assert.That(grandChild.Prefab?.PrefabAssetId, Is.EqualTo(prefabId), "GrandChild should inherit PrefabAssetId from root after roundtrip");
+        });
+    }
+
+    [Test]
+    public void PrefabRootFlag_IsInferredFromHoistedAssetId()
+    {
+        Guid prefabId = Guid.NewGuid();
+        SceneNode root = CreatePrefabTemplate();
+        SceneNodePrefabUtility.EnsurePrefabMetadata(root, prefabId);
+
+        string yaml = AssetManager.Serializer.Serialize(root);
+
+        Assert.That(yaml, Does.Not.Contain("IsPrefabRoot:"), "IsPrefabRoot should be inferred from PrefabAssetId during deserialization.");
+
+        SceneNode deserialized = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+        SceneNode child = GetFirstChild(deserialized);
+        SceneNode grandChild = GetFirstChild(child);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(deserialized.Prefab?.IsPrefabRoot, Is.True, "Root should infer IsPrefabRoot from the hoisted PrefabAssetId.");
+            Assert.That(child.Prefab?.IsPrefabRoot, Is.False, "Child should not infer prefab-root state.");
+            Assert.That(grandChild.Prefab?.IsPrefabRoot, Is.False, "Grandchild should not infer prefab-root state.");
         });
     }
 

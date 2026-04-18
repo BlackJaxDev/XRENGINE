@@ -16,6 +16,7 @@ namespace XREngine.Components
     /// <summary>
     /// Renders a 2D canvas on top of the screen, in world space, or in camera space.
     /// </summary>
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.UICanvasComponentEditor")]
     [RequiresTransform(typeof(UICanvasTransform))]
     public class UICanvasComponent : XRComponent, IRenderable
     {

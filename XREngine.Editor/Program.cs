@@ -288,8 +288,35 @@ internal class Program
         out VRGameStartupSettings<EVRActionCategory, EVRGameAction> startupSettings,
         out GameState gameState)
     {
-        startupSettings = CreateEditorStartupSettings();
-        gameState = Engine.LoadOrGenerateGameState();
+        WriteBootstrapTrace("InitializeEditor: creating editor startup settings.");
+        Stopwatch startupSettingsStopwatch = Stopwatch.StartNew();
+        try
+        {
+            startupSettings = CreateEditorStartupSettings();
+            startupSettingsStopwatch.Stop();
+            WriteBootstrapTrace($"InitializeEditor: editor startup settings ready in {startupSettingsStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
+        }
+        catch (Exception ex)
+        {
+            startupSettingsStopwatch.Stop();
+            WriteBootstrapTrace($"InitializeEditor: creating editor startup settings threw {ex.GetType().Name} after {startupSettingsStopwatch.Elapsed.TotalMilliseconds:F0} ms: {ex.Message}");
+            throw;
+        }
+
+        WriteBootstrapTrace("InitializeEditor: loading or generating game state.");
+        Stopwatch gameStateStopwatch = Stopwatch.StartNew();
+        try
+        {
+            gameState = Engine.LoadOrGenerateGameState();
+            gameStateStopwatch.Stop();
+            WriteBootstrapTrace($"InitializeEditor: game state ready in {gameStateStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
+        }
+        catch (Exception ex)
+        {
+            gameStateStopwatch.Stop();
+            WriteBootstrapTrace($"InitializeEditor: loading or generating game state threw {ex.GetType().Name} after {gameStateStopwatch.Elapsed.TotalMilliseconds:F0} ms: {ex.Message}");
+            throw;
+        }
     }
 
     private static void UnitTest_Init()
@@ -542,21 +569,21 @@ internal class Program
 
     private static void TargetWorldInstance_AnyTransformWorldMatrixChanged(XRWorldInstance instance, TransformBase tfm, Matrix4x4 mtx)
     {
-        if (PlayMode.IsEditing && !instance.TransitioningPlay && instance.PlayState == EPlayState.Playing)
-        {
-            var sceneNode = tfm.SceneNode;
-            if (sceneNode is null)
-                return;
+        if (!PlayMode.IsEditing || instance.TransitioningPlay || instance.PlayState != EPlayState.Playing)
+            return;
+        
+        var sceneNode = tfm.SceneNode;
+        if (sceneNode is null)
+            return;
 
-            // Many transforms (e.g., skeletal bones) have no components. Refreshing play lifecycle for them
-            // is extremely expensive and can cause frame stutter when large hierarchies update.
-            if (sceneNode.ComponentsSerialized.Count == 0)
-                return;
+        // Many transforms (e.g., skeletal bones) have no components. Refreshing play lifecycle for them
+        // is extremely expensive and can cause frame stutter when large hierarchies update.
+        if (sceneNode.ComponentsSerialized.Count == 0)
+            return;
 
-            // In edit mode, refresh play lifecycle for this node when the world matrix changes
-            sceneNode.OnEndPlay();
-            sceneNode.OnBeginPlay();
-        }
+        // In edit mode, refresh play lifecycle for this node when the world matrix changes
+        sceneNode.OnEndPlay();
+        sceneNode.OnBeginPlay();
     }
 
     private static JsonSerializerSettings DefaultJsonSettings() => new()

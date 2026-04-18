@@ -1,8 +1,8 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
     public enum EGenericVarianceFlag
     {
@@ -18,7 +18,7 @@ namespace Extensions
         NewClass,           //class, new()
         NewStructOrClass,   //new()
     }
-    public static partial class TypeExtension
+    public static partial class TypeExtensions
     {
         private static readonly Dictionary<Type, string> DefaultDictionary = new()
         {

@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using MemoryPack;
 using System;
 using System.ComponentModel;
@@ -307,7 +307,7 @@ namespace XREngine.Core.Files
         /// <remarks>
         /// The default implementation delegates to <see cref="Load3rdParty(string)"/>.
         /// Override this method when your asset type generates auxiliary files during import
-        /// (e.g., font atlas textures) — use <see cref="AssetImportContext.ResolveAuxiliaryPath"/>
+        /// (e.g., font atlas textures) � use <see cref="AssetImportContext.ResolveAuxiliaryPath"/>
         /// to determine where to write them.
         /// </remarks>
         public virtual bool Load3rdParty(string filePath, AssetImportContext context)

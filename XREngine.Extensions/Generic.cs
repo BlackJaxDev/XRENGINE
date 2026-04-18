@@ -1,6 +1,6 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
     public static class GenericExtensions
     {

@@ -7,6 +7,8 @@ using System.Text;
 using XREngine;
 using XREngine.Core.Files;
 
+namespace XREngine.Editor;
+
 internal static class EditorProjectInitializer
 {
     #region Constants

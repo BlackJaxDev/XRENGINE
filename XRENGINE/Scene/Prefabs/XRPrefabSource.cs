@@ -86,6 +86,7 @@ namespace XREngine.Scene.Prefabs
         "x3d",
         "xgl",
         "zgl")]
+    [XRAssetInspector("XREngine.Editor.AssetEditors.XRPrefabSourceInspector")]
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class XRPrefabSource : XRAsset
     {

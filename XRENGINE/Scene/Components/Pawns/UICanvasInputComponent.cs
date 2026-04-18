@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using System.Collections;
 using System.ComponentModel;
 using System.Linq;
@@ -18,6 +18,7 @@ namespace XREngine.Components
     /// <summary>
     /// Enables and manages input for a UI canvas component.
     /// </summary>
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.UICanvasInputComponentEditor")]
     [RequireComponents(typeof(UICanvasComponent))]
     public class UICanvasInputComponent : XRComponent
     {
@@ -698,7 +699,7 @@ namespace XREngine.Components
                 }
                 else
                 {
-                    //Had mouse over and still does now â€” re-evaluate direct-over in case TopMost changed
+                    //Had mouse over and still does now — re-evaluate direct-over in case TopMost changed
                     bool shouldBeDirectlyOver = inter == TopMostInteractable;
                     if (inter.IsMouseDirectlyOver != shouldBeDirectlyOver)
                         inter.IsMouseDirectlyOver = shouldBeDirectlyOver;

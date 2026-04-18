@@ -1,11 +1,13 @@
 ﻿using System.Numerics;
 using XREngine.Data.Geometry;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
     /// <summary>
     /// Aligns a bounded UI component within its parent using special alignment settings.
     /// </summary>
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UIFittedTransformEditor")]
     public class UIFittedTransform : UIBoundableTransform
     {
         public enum EFitType

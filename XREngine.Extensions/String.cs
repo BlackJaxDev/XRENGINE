@@ -1,12 +1,12 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static partial class StringExtension
+    public static partial class StringExtensions
     {
         public static bool EndsWithAny(this string s, string[] values, StringComparison comparisonType)
         {

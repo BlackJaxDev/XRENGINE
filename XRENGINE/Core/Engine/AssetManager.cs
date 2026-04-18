@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using Microsoft.DotNet.PlatformAbstractions;
 using System;
 using System.Collections;
@@ -582,7 +582,7 @@ namespace XREngine
             {
                 XRAsset UpdateIDDict(Guid existingID, XRAsset existingAsset)
                 {
-                    // Same reference re-registered — no-op, skip the warning.
+                    // Same reference re-registered � no-op, skip the warning.
                     if (ReferenceEquals(existingAsset, asset))
                         return existingAsset;
 

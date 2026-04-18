@@ -1599,7 +1599,12 @@ namespace XREngine.Components.Scene.Mesh
 
         internal static void ProcessPendingRenderMatrixUpdates()
         {
-            while (_pendingRenderMatrixUpdates.TryDequeue(out var mesh))
+            // Bound draining to a snapshot of the current queue length. ApplyPendingRenderMatrixUpdates
+            // -> ProcessSkinnedBoundsRefresh may re-enqueue the same mesh while an async bounds refresh
+            // is in flight (or bounds are still being built for the first time); draining until empty
+            // would spin indefinitely. Re-enqueued meshes are picked up on the next swap.
+            int remaining = _pendingRenderMatrixUpdates.Count;
+            while (remaining-- > 0 && _pendingRenderMatrixUpdates.TryDequeue(out var mesh))
                 mesh.ApplyPendingRenderMatrixUpdates();
         }
     }

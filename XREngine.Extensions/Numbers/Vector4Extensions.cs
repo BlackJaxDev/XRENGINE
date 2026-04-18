@@ -1,6 +1,6 @@
-﻿using System.Numerics;
+using System.Numerics;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
     public static class Vector4Extensions
     {

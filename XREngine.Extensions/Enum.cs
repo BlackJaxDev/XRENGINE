@@ -1,9 +1,9 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Reflection;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static partial class EnumExtension
+    public static partial class EnumExtensions
     {
         public static string GetDescription(this Enum e)
         {

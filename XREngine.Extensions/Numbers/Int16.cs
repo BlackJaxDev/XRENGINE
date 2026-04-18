@@ -1,6 +1,6 @@
-﻿namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class Int16Extension
+    public static class Int16Extensions
     {
         public static Int16 Reverse(this Int16 value)
         {

@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using MemoryPack;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -273,7 +273,7 @@ namespace XREngine.Animation
             }
 
             // Legacy fallback: snapshot + copy
-#pragma warning disable CS0618 // Obsolete GetAnimationValuesSnapshot — legacy path only
+#pragma warning disable CS0618 // Obsolete GetAnimationValuesSnapshot � legacy path only
             CopyAnimationValuesLegacy(motion.GetAnimationValuesSnapshot());
 #pragma warning restore CS0618
         }

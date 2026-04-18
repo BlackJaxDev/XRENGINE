@@ -1,9 +1,9 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class EnumerableExtension
+    public static class EnumerableExtensions
     {
         //public static IEnumerable<T> AsThreadSafeEnumerable<T>(this IEnumerable<T> enumerable, ReaderWriterLockSlim rwlock)
         //{

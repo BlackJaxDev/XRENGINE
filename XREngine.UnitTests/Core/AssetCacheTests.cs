@@ -58,7 +58,7 @@ public sealed class AssetCacheTests
     }
 
     [Test]
-    public void LoadAnimationClip_DoesNotGenerateThirdPartyCacheAsset()
+    public void LoadAnimationClip_GeneratesAndUsesThirdPartyCacheAsset()
     {
         using var sandbox = new AssetCacheSandbox();
         var manager = new AssetManager();
@@ -84,7 +84,21 @@ AnimationClip:
             clip.ShouldNotBeNull();
             clip.LengthInSeconds.ShouldBe(1.0f);
 
-            Directory.EnumerateFiles(sandbox.CachePath, "*", SearchOption.AllDirectories).ShouldBeEmpty();
+            string[] cacheFiles = [.. Directory.EnumerateFiles(sandbox.CachePath, "*", SearchOption.AllDirectories)];
+            cacheFiles.Length.ShouldBe(1, "animation clips should now emit a cache asset");
+            string cachePath = cacheFiles[0];
+            File.Exists(cachePath).ShouldBeTrue();
+
+            DateTime cacheTimestampUtc = File.GetLastWriteTimeUtc(cachePath);
+            File.WriteAllText(sourcePath, "this is intentionally not valid animation data");
+            File.SetLastWriteTimeUtc(sourcePath, cacheTimestampUtc.AddSeconds(-1));
+
+            ClearAssetCaches(manager);
+
+            AnimationClip? cachedClip = manager.Load<AnimationClip>(sourcePath);
+            cachedClip.ShouldNotBeNull();
+            cachedClip.Name.ShouldBe("CacheBypassClip");
+            cachedClip.LengthInSeconds.ShouldBe(1.0f, "fresh cache should satisfy reloads without re-importing the source");
         }
         finally
         {

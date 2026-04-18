@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using XREngine.Core;
 using XREngine.Core.Files;
 using YamlDotNet.Core;
@@ -29,6 +30,14 @@ namespace XREngine
 
             // XRAsset has its own replay/reference mechanism; don't interfere.
             if (typeof(XRAsset).IsAssignableFrom(expectedType))
+            {
+                value = null;
+                return false;
+            }
+
+            // Let explicit YAML type converters own their types. Intercepting those nodes here
+            // can consume the mapping before TypeConverterNodeDeserializer sees it.
+            if (AssetManager.YamlTypeConverters.Any(converter => converter is not IWriteOnlyYamlTypeConverter && converter.Accepts(expectedType)))
             {
                 value = null;
                 return false;

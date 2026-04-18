@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using MemoryPack;
 using System.Numerics;
 using XREngine.Data.Core;
@@ -388,10 +388,10 @@ namespace XREngine.Animation
                 // Calculate dot product (cosine of angle between directions)
                 float dot = Vector2.Dot(targetDirNorm, childDirNorm);
 
-                // Convert to angle distance (0 = same direction, π = opposite direction)
+                // Convert to angle distance (0 = same direction, p = opposite direction)
                 float angleDist = MathF.Acos(Math.Clamp(dot, -1.0f, 1.0f));
 
-                // Only consider children in the general direction (within π/2 radians or 90 degrees)
+                // Only consider children in the general direction (within p/2 radians or 90 degrees)
                 if (angleDist <= MathF.PI / 2)
                 {
                     childDistances.Add((child, angleDist, dot));

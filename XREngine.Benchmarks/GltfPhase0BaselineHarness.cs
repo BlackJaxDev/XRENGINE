@@ -12,6 +12,8 @@ using XREngine.Rendering.Shaders.Generator;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
+namespace XREngine.Benchmarks;
+
 public static class GltfPhase0BaselineHarness
 {
     public static int Run(string[] args)

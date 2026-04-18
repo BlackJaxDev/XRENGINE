@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Animation;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Serialization;
 using YamlDotNet.Core;
@@ -11,8 +12,8 @@ using YamlDotNet.Serialization;
 namespace XREngine.Core.Engine;
 
 /// <summary>
-/// Handles TransformBase YAML using an explicit wrapper so transform graphs remain stable,
-/// while allowing property-level default types to omit the transform type marker when it matches.
+/// Handles TransformBase YAML while keeping transform graphs stable and allowing default
+/// scene-node transforms to serialize inline when the declared property type already implies Transform.
 /// </summary>
 [YamlTypeConverter]
 internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
@@ -31,37 +32,47 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
     {
         bool isReferenceMode = YamlTransformReferenceContext.ConsumeRead();
 
-        if (parser.TryConsume<Scalar>(out var scalar) && IsNullScalar(scalar))
+        if (parser.Accept<Scalar>(out Scalar? scalar) && IsNullScalar(scalar))
+        {
+            parser.Consume<Scalar>();
             return null;
+        }
 
         if (isReferenceMode)
             return ReadReferenceTransform(parser);
 
-        bool isInlineMapping = parser.TryConsume<MappingStart>(out _);
-        if (!isInlineMapping && !parser.Accept<Scalar>(out _))
+        bool hasNodeMappingStart = parser.TryConsume<MappingStart>(out _);
+        if (!hasNodeMappingStart && !parser.Accept<Scalar>(out _))
             parser.Consume<MappingStart>();
 
         Type? runtimeType = null;
         TransformBase? result = null;
         TransformBase[]? serializedChildren = null;
         bool hasSerializedChildren = false;
-        Guid referenceId = Guid.Empty;
-        string? referenceName = null;
-        bool hasReferenceFields = false;
-        bool hasExplicitValue = false;
+        bool sawRecognizedKey = false;
 
         while (!parser.TryConsume<MappingEnd>(out _))
         {
+            if (!hasNodeMappingStart)
+            {
+                if (!parser.Accept<Scalar>(out Scalar? nextKey))
+                    break;
+
+                if (!IsRecognizedTransformTopLevelKey(nextKey.Value))
+                    break;
+            }
+
             var key = parser.Consume<Scalar>().Value;
             switch (key)
             {
                 case TypeKey:
+                    sawRecognizedKey = true;
                     if (parser.TryConsume<Scalar>(out var typeScalar))
                         runtimeType = ResolveTransformType(typeScalar.Value);
                     break;
 
                 case ValueKey:
-                    hasExplicitValue = true;
+                    sawRecognizedKey = true;
                     if (runtimeType is null && !YamlDefaultTypeContext.TryConsumeRead(type, out runtimeType))
                         runtimeType = typeof(Transform);
                     if (runtimeType == typeof(Transform))
@@ -89,43 +100,23 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
                         throw new InvalidOperationException($"Deserialized type '{deserialized.GetType().FullName}' is not a {nameof(TransformBase)}.");
                     break;
 
-                case "ID":
-                    if (parser.TryConsume<Scalar>(out var idScalar) && Guid.TryParse(idScalar.Value, out Guid parsedReferenceId))
-                    {
-                        referenceId = parsedReferenceId;
-                        hasReferenceFields = true;
-                    }
-                    else
-                    {
-                        SkipNode(parser);
-                    }
-                    break;
-
-                case "Name":
-                    if (parser.TryConsume<Scalar>(out var nameScalar))
-                    {
-                        referenceName = nameScalar.Value;
-                        hasReferenceFields = true;
-                    }
-                    else
-                    {
-                        SkipNode(parser);
-                    }
-                    break;
-
                 case ChildrenKey:
+                    sawRecognizedKey = true;
                     serializedChildren = rootDeserializer(typeof(TransformBase[])) as TransformBase[];
                     hasSerializedChildren = true;
                     break;
 
                 default:
+                    if (TryReadInlineConcreteTransformProperty(key, type, ref runtimeType, ref result, rootDeserializer, parser))
+                    {
+                        sawRecognizedKey = true;
+                        break;
+                    }
+
                     SkipNode(parser);
                     break;
             }
         }
-
-        if (result is null && hasReferenceFields && !hasExplicitValue && !hasSerializedChildren)
-            return CreateReferencePlaceholder(referenceId, referenceName);
 
         result ??= new Transform();
 
@@ -161,16 +152,15 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
             emitter.Emit(new Scalar(TypeKey));
             emitter.Emit(new Scalar(runtimeType.AssemblyQualifiedName ?? runtimeType.FullName ?? runtimeType.Name));
         }
-        emitter.Emit(new Scalar(ValueKey));
-        bool previous = _skip;
-        _skip = true;
-        try
+
+        if (runtimeType == typeof(Transform) && defaultType == typeof(Transform) && value is Transform concreteTransform)
         {
-            serializer(value, runtimeType);
+            EmitFlatConcreteTransform(emitter, serializer, concreteTransform);
         }
-        finally
+        else
         {
-            _skip = previous;
+            emitter.Emit(new Scalar(ValueKey));
+            SerializeTransformValue(serializer, value, runtimeType);
         }
 
         if (value is TransformBase transform)
@@ -228,52 +218,198 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
             parser.Consume<MappingStart>();
 
         Transform transform = new();
+        if (!isInlineMapping
+            && parser.Accept<Scalar>(out Scalar? initialScalar)
+            && Guid.TryParse(initialScalar.Value, out Guid scalarId))
+        {
+            parser.Consume<Scalar>();
+            transform.SerializedReferenceId = scalarId;
+            return transform;
+        }
+
         while (!parser.TryConsume<MappingEnd>(out _))
         {
-            string? key = parser.Consume<Scalar>().Value;
-            switch (key)
+            if (!isInlineMapping)
             {
-                case "Scale":
-                    if (rootDeserializer(typeof(Vector3?)) is Vector3 scale)
-                        transform.Scale = scale;
+                if (!parser.Accept<Scalar>(out Scalar? nextKey))
                     break;
 
-                case "Translation":
-                    if (rootDeserializer(typeof(Vector3?)) is Vector3 translation)
-                        transform.Translation = translation;
-                    break;
-
-                case "Rotation":
-                    if (rootDeserializer(typeof(Quaternion?)) is Quaternion rotation)
-                        transform.Rotation = rotation;
-                    break;
-
-                case "Order":
-                    if (rootDeserializer(typeof(ETransformOrder)) is ETransformOrder order)
-                        transform.Order = order;
-                    break;
-
-                case "Name":
-                    if (parser.TryConsume<Scalar>(out Scalar? nameScalar))
-                        transform.Name = nameScalar.Value;
-                    else
-                        SkipNode(parser);
-                    break;
-
-                case "ID":
-                    if (parser.TryConsume<Scalar>(out Scalar? idScalar) && Guid.TryParse(idScalar.Value, out Guid serializedReferenceId))
-                        transform.SerializedReferenceId = serializedReferenceId;
-                    else
-                        SkipNode(parser);
-                    break;
-
-                default:
-                    SkipNode(parser);
+                if (!IsConcreteTransformPropertyKey(nextKey.Value))
                     break;
             }
+
+            string? key = parser.Consume<Scalar>().Value;
+            if (!TryReadConcreteTransformProperty(transform, key, rootDeserializer, parser))
+            {
+                SkipNode(parser);
+                continue;
+            }
+
         }
 
         return transform;
+    }
+
+    private static bool TryReadInlineConcreteTransformProperty(string? key,
+                                                               Type declaredType,
+                                                               ref Type? runtimeType,
+                                                               ref TransformBase? result,
+                                                               ObjectDeserializer rootDeserializer,
+                                                               IParser parser)
+    {
+        if (!IsConcreteTransformPropertyKey(key))
+            return false;
+
+        if (runtimeType is null && !YamlDefaultTypeContext.TryConsumeRead(declaredType, out runtimeType))
+            runtimeType = typeof(Transform);
+
+        if (runtimeType != typeof(Transform))
+            return false;
+
+        result ??= new Transform();
+        return TryReadConcreteTransformProperty((Transform)result, key, rootDeserializer, parser);
+    }
+
+    private static bool IsConcreteTransformPropertyKey(string? key)
+        => key is "Scale"
+            or "Translation"
+            or "Rotation"
+            or "Order"
+            or "Name"
+            or "ID"
+            or "TimeBetweenReplications"
+            or "ImmediateLocalMatrixRecalculation"
+            or "SmoothingSpeed";
+
+    private static bool IsRecognizedTransformTopLevelKey(string? key)
+        => key is TypeKey or ValueKey or ChildrenKey || IsConcreteTransformPropertyKey(key);
+
+    private static bool TryReadConcreteTransformProperty(Transform transform,
+                                                         string? key,
+                                                         ObjectDeserializer rootDeserializer,
+                                                         IParser parser)
+    {
+        switch (key)
+        {
+            case "Scale":
+                if (rootDeserializer(typeof(Vector3?)) is Vector3 scale)
+                    transform.Scale = scale;
+                else
+                    SkipNode(parser);
+                return true;
+
+            case "Translation":
+                if (rootDeserializer(typeof(Vector3?)) is Vector3 translation)
+                    transform.Translation = translation;
+                else
+                    SkipNode(parser);
+                return true;
+
+            case "Rotation":
+                if (rootDeserializer(typeof(Quaternion?)) is Quaternion rotation)
+                    transform.Rotation = rotation;
+                else
+                    SkipNode(parser);
+                return true;
+
+            case "Order":
+                if (rootDeserializer(typeof(ETransformOrder?)) is ETransformOrder order)
+                    transform.Order = order;
+                else
+                    SkipNode(parser);
+                return true;
+
+            case "Name":
+                if (parser.TryConsume<Scalar>(out Scalar? nameScalar))
+                    transform.Name = nameScalar.Value;
+                else
+                    SkipNode(parser);
+                return true;
+
+            case "ID":
+                if (parser.TryConsume<Scalar>(out Scalar? idScalar) && Guid.TryParse(idScalar.Value, out Guid serializedReferenceId))
+                    transform.SerializedReferenceId = serializedReferenceId;
+                else
+                    SkipNode(parser);
+                return true;
+
+            case "TimeBetweenReplications":
+                if (rootDeserializer(typeof(float?)) is float replicationInterval)
+                    transform.TimeBetweenReplicationsOverrideSerialized = replicationInterval;
+                else
+                    transform.TimeBetweenReplicationsOverrideSerialized = null;
+                return true;
+
+            case "ImmediateLocalMatrixRecalculation":
+                if (rootDeserializer(typeof(bool?)) is bool immediateRecalculation)
+                    transform.ImmediateLocalMatrixRecalculation = immediateRecalculation;
+                else
+                    SkipNode(parser);
+                return true;
+
+            case "SmoothingSpeed":
+                if (rootDeserializer(typeof(float?)) is float smoothingSpeed)
+                    transform.SmoothingSpeed = smoothingSpeed;
+                else
+                    SkipNode(parser);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private static void SerializeTransformValue(ObjectSerializer serializer, object value, Type runtimeType)
+    {
+        bool previous = _skip;
+        _skip = true;
+        try
+        {
+            serializer(value, runtimeType);
+        }
+        finally
+        {
+            _skip = previous;
+        }
+    }
+
+    private static void EmitFlatConcreteTransform(IEmitter emitter, ObjectSerializer serializer, Transform transform)
+    {
+        EmitProperty(emitter, serializer, "ID", transform.EffectiveSerializedReferenceId, typeof(Guid));
+
+        if (transform.Name is not null && !ShouldSuppressConcreteTransformName(transform))
+            EmitProperty(emitter, serializer, "Name", transform.Name, typeof(string));
+
+        if (transform.TimeBetweenReplicationsOverrideSerialized is float replicationInterval)
+            EmitProperty(emitter, serializer, "TimeBetweenReplications", replicationInterval, typeof(float));
+
+        if (!transform.ImmediateLocalMatrixRecalculation)
+            EmitProperty(emitter, serializer, "ImmediateLocalMatrixRecalculation", transform.ImmediateLocalMatrixRecalculation, typeof(bool));
+
+        if (transform.ScaleSerialized is Vector3 scale)
+            EmitProperty(emitter, serializer, "Scale", scale, typeof(Vector3));
+
+        if (transform.TranslationSerialized is Vector3 translation)
+            EmitProperty(emitter, serializer, "Translation", translation, typeof(Vector3));
+
+        if (transform.RotationSerialized is Quaternion rotation)
+            EmitProperty(emitter, serializer, "Rotation", rotation, typeof(Quaternion));
+
+        if (transform.Order != default)
+            EmitProperty(emitter, serializer, "Order", transform.Order, typeof(ETransformOrder));
+
+        if (MathF.Abs(transform.SmoothingSpeed - 0.4f) > float.Epsilon)
+            EmitProperty(emitter, serializer, "SmoothingSpeed", transform.SmoothingSpeed, typeof(float));
+    }
+
+    private static bool ShouldSuppressConcreteTransformName(Transform transform)
+        => transform.SceneNode is SceneNode sceneNode
+            && string.Equals(transform.Name, sceneNode.Name, StringComparison.Ordinal);
+
+    private static void EmitProperty(IEmitter emitter, ObjectSerializer serializer, string key, object value, Type type)
+    {
+        emitter.Emit(new Scalar(key));
+        serializer(value, type);
     }
 
     private static void EmitReferenceTransform(IEmitter emitter, TransformBase transform)

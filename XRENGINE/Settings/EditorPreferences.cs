@@ -80,7 +80,7 @@ namespace XREngine
 
         // Importer backend selection (per third-party file type).
         // Defaults favor the legacy Assimp path while the native importers stabilize.
-        private FbxImportBackend _fbxImporterBackend = FbxImportBackend.AssimpLegacy;
+        private FbxImportBackend _fbxImporterBackend = FbxImportBackend.Assimp;
         private GltfImportBackend _gltfImporterBackend = GltfImportBackend.Auto;
 
         [Category("Theme")]
@@ -633,7 +633,7 @@ namespace XREngine
 
         /// <summary>
         /// Selects which importer backend is used for .fbx third-party assets.
-        /// Default is <see cref="FbxImportBackend.AssimpLegacy"/> while the native FBX path stabilizes.
+        /// Default is <see cref="FbxImportBackend.Assimp"/> while the native FBX path stabilizes.
         /// Per-asset <c>ModelImportOptions.FbxBackend</c> overrides this default when not set to <c>Auto</c>.
         /// </summary>
         [Category("Importers")]

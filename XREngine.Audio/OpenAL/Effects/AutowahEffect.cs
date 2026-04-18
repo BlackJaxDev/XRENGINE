@@ -1,4 +1,4 @@
-﻿using Extensions;
+using XREngine.Extensions;
 using Silk.NET.OpenAL.Extensions.Creative;
 
 namespace XREngine.Audio.Effects

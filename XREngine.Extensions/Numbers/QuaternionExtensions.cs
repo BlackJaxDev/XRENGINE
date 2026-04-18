@@ -1,8 +1,8 @@
-﻿using System.Numerics;
+using System.Numerics;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class QuaternionExtension
+    public static class QuaternionExtensions
     {
         public static Matrix4x4 ToMatrix(this Quaternion quaternion)
         {

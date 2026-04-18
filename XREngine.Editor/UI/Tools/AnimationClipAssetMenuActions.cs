@@ -9,8 +9,6 @@ public static class AnimationClipAssetMenuActions
     public static void OpenInAnimationClipEditor(XRAssetContextMenuContext context)
     {
         AnimationClip? clip = context.Asset as AnimationClip;
-        if (clip is null && Engine.Assets is not null && !string.IsNullOrWhiteSpace(context.AssetPath))
-            clip = Engine.Assets.Load(context.AssetPath, typeof(AnimationClip)) as AnimationClip;
 
         if (clip is null)
         {

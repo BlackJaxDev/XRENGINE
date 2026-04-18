@@ -1,4 +1,4 @@
-锘縰sing Extensions;
+using XREngine.Extensions;
 using SimpleScene.Util.ssBVH;
 using System.Numerics;
 using XREngine.Data.Geometry;
@@ -2228,16 +2228,16 @@ namespace XREngine.Data.Core
         /// <summary>
         /// Reflects a vector across a plane defined by a normal vector.
         /// 
-        /// The reflection formula is: R = V - 2(V路N)N
+        /// The reflection formula is: R = V - 2(V種)N
         /// Where:
         /// - R is the reflected vector
         /// - V is the incident vector to reflect
         /// - N is the normal vector of the reflection plane (must be normalized)
-        /// - V路N is the dot product representing how much V points in the same direction as N
+        /// - V種 is the dot product representing how much V points in the same direction as N
         /// 
         /// The formula works by:
-        /// 1. Computing how much the vector points in the normal direction (V路N)
-        /// 2. Scaling the normal by this amount and doubling it (2(V路N)N)
+        /// 1. Computing how much the vector points in the normal direction (V種)
+        /// 2. Scaling the normal by this amount and doubling it (2(V種)N)
         /// 3. Subtracting this from the original vector to get the reflection
         /// </summary>
         /// <param name="vector">The vector to reflect</param>

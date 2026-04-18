@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
 using XREngine;
+using XREngine.Components;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Core.Files;
 using XREngine.Data.Rendering;
@@ -67,6 +68,28 @@ public sealed class PointLightComponentSerializationTests : GpuTestBase
         clone.ShadowCameras[0].Transform.Parent!.Parent.ShouldBeSameAs(clone.Transform);
     }
 
+    [Test]
+    public void YamlSerializer_RoundTrips_SceneNodeComponentsAlias_WithCustomComponent()
+    {
+        SceneNode original = new("ComponentAliasNode", new Transform());
+        TestYamlSceneNodeComponent component = original.AddComponent<TestYamlSceneNodeComponent>()!;
+        component.Marker = 42;
+        component.Label = "AliasCheck";
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+        yaml.ShouldContain("Components:");
+        yaml.ShouldContain("__type: XREngine.UnitTests.Scene.TestYamlSceneNodeComponent");
+
+        SceneNode? cloneNode = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+        cloneNode.ShouldNotBeNull();
+
+        TestYamlSceneNodeComponent? clone = cloneNode!.GetComponent<TestYamlSceneNodeComponent>();
+        clone.ShouldNotBeNull();
+        clone!.SceneNode.ShouldBeSameAs(cloneNode);
+        clone.Marker.ShouldBe(42);
+        clone.Label.ShouldBe("AliasCheck");
+    }
+
     private sealed class FileSystemRuntimeShaderServices(string shaderBasePath) : IRuntimeShaderServices
     {
         private readonly string _shaderBasePath = shaderBasePath;
@@ -106,4 +129,10 @@ public sealed class PointLightComponentSerializationTests : GpuTestBase
             };
         }
     }
+}
+
+public sealed class TestYamlSceneNodeComponent : XRComponent
+{
+    public int Marker { get; set; }
+    public string? Label { get; set; }
 }

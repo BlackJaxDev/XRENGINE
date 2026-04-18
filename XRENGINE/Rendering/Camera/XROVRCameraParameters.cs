@@ -1,7 +1,8 @@
-using Extensions;
+using XREngine.Extensions;
 using System;
 using System.Numerics;
 using Valve.VR;
+using XREngine.Core;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering

@@ -1,6 +1,6 @@
-﻿using System.Drawing;
+using System.Drawing;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
     public static class GraphicsExtensions
     {

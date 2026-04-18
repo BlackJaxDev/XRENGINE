@@ -1,4 +1,4 @@
-ï»¿using Extensions;
+using XREngine.Extensions;
 using MagicPhysX;
 using System.ComponentModel;
 using System.Drawing.Drawing2D;
@@ -291,13 +291,13 @@ namespace XREngine.Components.Movement
 
         /// <summary>
         /// Maximum height a jumping character can reach.
-        /// This is only used if invisible walls are created(â€˜invisibleWallHeightâ€™ is non zero).
+        /// This is only used if invisible walls are created(‘invisibleWallHeight’ is non zero).
         /// When a character jumps, the non-walkable triangles he might fly over are not found by the collision queries
-        /// (since the characterâ€™s bounding volume does not touch them).
+        /// (since the character’s bounding volume does not touch them).
         /// Thus those non-walkable triangles do not create invisible walls, and it is possible for a jumping character to land on a non-walkable triangle,
-        /// while he wouldnâ€™t have reached that place by just walking.
-        /// The â€˜maxJumpHeightâ€™ variable is used to extend the size of the collision volume downward.
-        /// This way, all the non-walkable triangles are properly found by the collision queries and it becomes impossible to â€˜jump overâ€™ invisible walls.
+        /// while he wouldn’t have reached that place by just walking.
+        /// The ‘maxJumpHeight’ variable is used to extend the size of the collision volume downward.
+        /// This way, all the non-walkable triangles are properly found by the collision queries and it becomes impossible to ‘jump over’ invisible walls.
         /// If the character in your game can not jump, it is safe to use 0.0 here.
         /// Otherwise it is best to keep this value as small as possible, 
         /// since a larger collision volume means more triangles to process.
@@ -365,20 +365,20 @@ namespace XREngine.Components.Movement
 
         /// <summary>
         /// Scale coefficient for underlying kinematic actor.
-        /// The CCT creates a PhysXâ€™s kinematic actor under the hood.
+        /// The CCT creates a PhysX’s kinematic actor under the hood.
         /// This controls its scale factor.
         /// This should be a number a bit smaller than 1.0.
         /// This scale factor affects how the character interacts with dynamic rigid bodies around it (e.g.pushing them, etc).
-        /// With a scale factor < 1, the underlying kinematic actor will not touch surrounding rigid bodies - they will only interact with the character controllerâ€™s shapes (capsules or boxes),
+        /// With a scale factor < 1, the underlying kinematic actor will not touch surrounding rigid bodies - they will only interact with the character controller’s shapes (capsules or boxes),
         /// and users will have full control over the interactions(i.e.they will have to push the objects with explicit forces themselves).
-        /// With a scale factor >=1, the underlying kinematic actor will touch and push surrounding rigid bodies based on PhysXâ€™s computations, 
+        /// With a scale factor >=1, the underlying kinematic actor will touch and push surrounding rigid bodies based on PhysX’s computations, 
         /// as if there would be no character controller involved.This works fine except when you push objects into a wall.
         /// PhysX has no control over kinematic actors(since they are kinematic) so they would freely push dynamic objects into walls, and make them tunnel / explode / behave badly.
-        /// With a smaller kinematic actor however, the character controllerâ€™s swept shape touches dynamic rigid bodies first, 
+        /// With a smaller kinematic actor however, the character controller’s swept shape touches dynamic rigid bodies first, 
         /// and can apply forces to them to move them away (or not, depending on what the gameplay needs).
-        /// Meanwhile the character controllerâ€™s swept shape itself is stopped by these dynamic bodies.
+        /// Meanwhile the character controller’s swept shape itself is stopped by these dynamic bodies.
         /// Setting the scale factor to 1 could still work, but it is unreliable.
-        /// Depending on FPU accuracy you could end up with either the CCTâ€™s volume or the underlying kinematic actor touching the dynamic bodies first, and this could change from one moment to the next.
+        /// Depending on FPU accuracy you could end up with either the CCT’s volume or the underlying kinematic actor touching the dynamic bodies first, and this could change from one moment to the next.
         /// </summary>
         public float ScaleCoeff
         {
@@ -761,7 +761,7 @@ namespace XREngine.Components.Movement
             _physxController = controller;
             ActiveController = new PhysxCharacterControllerAdapter(controller);
 
-            // CCT doesn't have rotation like regular physics actors, so clear the default -90Â° Z offset
+            // CCT doesn't have rotation like regular physics actors, so clear the default -90° Z offset
             // that RigidBodyTransform applies for normal PhysX actors.
             _controllerActorProxy = controllerActorProxy;
             RigidBodyTransform.PostRotationOffset = Quaternion.Identity;
@@ -1024,7 +1024,7 @@ namespace XREngine.Components.Movement
                     return;
                 
                 // Sustained jump hold adds a small amount of upward acceleration
-                // This is acceleration (m/sÂ²), so multiply by dt to get velocity change
+                // This is acceleration (m/s²), so multiply by dt to get velocity change
                 float jumpFactor = 1.0f - (_jumpElapsed / MovementModule.MaxJumpDuration);
                 delta.Y += MovementModule.JumpHoldForce * jumpFactor * dt;
                 _jumpElapsed += dt;

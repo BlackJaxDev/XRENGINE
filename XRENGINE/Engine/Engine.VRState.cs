@@ -1,5 +1,5 @@
-﻿using Assimp;
-using Extensions;
+using Assimp;
+using XREngine.Extensions;
 using OpenVR.NET;
 using OpenVR.NET.Devices;
 using OpenVR.NET.Manifest;
@@ -195,7 +195,7 @@ namespace XREngine
 
             /// <summary>
             /// Calculates the interpupillary distance (IPD) in world space,
-            /// scaling the real-world IPD to match the avatar’s in-world height.
+            /// scaling the real-world IPD to match the avatar�s in-world height.
             /// </summary>
             public static float ScaledIPD
                 => RealWorldIPD * ModelToRealWorldHeightRatio * IPDScalar;

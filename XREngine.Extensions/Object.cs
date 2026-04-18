@@ -1,6 +1,6 @@
-﻿using System.Reflection;
+using System.Reflection;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
     public static class ObjectExtensions
     {

@@ -21,7 +21,8 @@ $excludeDirs = @(
     '\docs\work\',
     '\XREngine.Editor\Build\',
     '\XREngine\Build\',
-    '\XRENGINE\Build\'
+    '\XRENGINE\Build\',
+    '\Tools\'
 )
 
 function Should-ExcludePath([string]$fullPath) {
@@ -66,7 +67,7 @@ foreach ($file in $csFiles) {
         if (-not $namespace) {
             if ($line -match "^\s*namespace\s+([A-Za-z0-9_\.]+)\s*;\s*$") {
                 $namespace = $Matches[1]
-            } elseif ($line -match "^\s*namespace\s+([A-Za-z0-9_\.]+)\s*\{\s*$") {
+            } elseif ($line -match "^\s*namespace\s+([A-Za-z0-9_\.]+)\s*(\{.*)?$") {
                 $namespace = $Matches[1]
             }
         }

@@ -1,8 +1,8 @@
-﻿using System.Drawing;
+using System.Drawing;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static partial class RectangleExtension
+    public static partial class RectangleExtensions
     {
         public static Rectangle AsIntRect(this RectangleF rect)
             => new((int)rect.X, (int)rect.Y, (int)rect.Width, (int)rect.Height);

@@ -8,6 +8,12 @@ This document summarizes the current prefab pipeline and the new utilities that 
 2. Call `SceneNodePrefabUtility.CreatePrefabAsset(rootNode, "AssetName", targetDirectory)` to clone the hierarchy, stamp prefab metadata, and write an `XRPrefabSource` asset.
 3. The generated prefab asset keeps stable GUIDs per node so overrides can be tracked later.
 
+### Serialized transform shape
+
+- Default `SceneNode.Transform` values now serialize directly under `Transform:` without the extra `$value` wrapper.
+- Derived transform types still emit `$type` and `$value` so their concrete runtime type stays explicit on disk.
+- Prefab-local transform references such as `SubMesh.RootBone` and `SubMesh.RootTransform` still serialize as compact `ID` mappings.
+
 ## Recording overrides and variants
 
 - While editing an instantiated prefab, use `SceneNodePrefabUtility.RecordPropertyOverride(node, "Transform.Position", newValue)` (or the higher-level tooling being built in the editor) to capture per-node overrides.
@@ -31,6 +37,14 @@ This document summarizes the current prefab pipeline and the new utilities that 
 
 - To replay serialized overrides on an existing hierarchy, use `SceneNodePrefabUtility.ApplyVariantOverrides(instanceRoot, variant)`.
 - To permanently detach an instance from its source asset, call `SceneNodePrefabUtility.BreakPrefabLink(instanceRoot)`, which clears all prefab metadata.
+
+## Inspecting prefab assets in the ImGui editor
+
+- Selecting an `XRPrefabSource` asset in the ImGui asset browser now shows a prefab hierarchy tree in the inspector.
+- Clicking a node in that tree opens a sub-inspector below it, reusing the standard scene-node inspector for the selected prefab node's name, transform, and components.
+- The inspector keeps its own per-prefab node selection, so browsing a prefab asset does not replace the active world hierarchy selection.
+- The prefab hierarchy tree supports search by node name or path, right-click actions for rename/add-child/duplicate/delete, and drag-drop reparenting within the prefab tree.
+- Root-node-only safeguards match prefab semantics: the root can be renamed and extended with children, but it is not offered delete or duplicate actions that would detach the prefab from its single-root structure.
 
 ## Where to integrate in the editor
 

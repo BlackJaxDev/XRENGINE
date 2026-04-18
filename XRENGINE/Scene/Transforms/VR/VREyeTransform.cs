@@ -1,6 +1,7 @@
-using Extensions;
+using XREngine.Extensions;
 using System.Numerics;
 using Valve.VR;
+using XREngine.Core;
 using XREngine.Data.Core;
 
 namespace XREngine.Scene.Transforms

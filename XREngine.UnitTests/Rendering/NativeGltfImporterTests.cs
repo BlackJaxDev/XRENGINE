@@ -52,9 +52,9 @@ public sealed class NativeGltfImporterTests
         GltfCorpusEntry staticEntry = manifest.Entries.Single(static entry => entry.Id == "external-static-scene");
         GltfCorpusEntry animatedEntry = manifest.Entries.Single(static entry => entry.Id == "skinned-morph-animated");
 
-        GltfImportTestUtilities.ImportAndSummarize(staticEntry, GltfImportBackend.AssimpLegacy).MeshCount.ShouldBeGreaterThan(0);
+        GltfImportTestUtilities.ImportAndSummarize(staticEntry, GltfImportBackend.Assimp).MeshCount.ShouldBeGreaterThan(0);
 
-        GltfImportTestUtilities.ImportAndSummarize(animatedEntry, GltfImportBackend.AssimpLegacy).ShouldSatisfyAllConditions(
+        GltfImportTestUtilities.ImportAndSummarize(animatedEntry, GltfImportBackend.Assimp).ShouldSatisfyAllConditions(
             summary => summary.MeshCount.ShouldBeGreaterThan(0),
             summary => summary.MaterialCount.ShouldBeGreaterThan(0));
     }

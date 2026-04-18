@@ -4,6 +4,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UIScrollableTransformEditor")]
     public class UIScrollableTransform : UIBoundableTransform
     {
         public UIScrollableTransform()

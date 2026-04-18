@@ -503,6 +503,12 @@ public static partial class EditorImGuiUI
 
         private static void DrawStandaloneInspectorContent(object target, HashSet<object> visited)
         {
+            if (target is AssetExplorerInspectorLoadState loadState)
+            {
+                DrawAssetExplorerInspectorLoadState(loadState, visited);
+                return;
+            }
+
             if (target is ThirdPartyImportSelection thirdParty)
             {
                 DrawThirdPartyImportSettings(thirdParty.SourcePath, thirdParty.AssetType, visited);
@@ -637,6 +643,8 @@ public static partial class EditorImGuiUI
                 return;
 
             XRAsset? assetContext = target as XRAsset;
+            if (assetContext is null && target is AssetExplorerInspectorLoadState loadState)
+                assetContext = loadState.PartialPrefab;
             using var inspectorContext = new InspectorAssetContextScope(assetContext?.SourceAsset);
 
             string title = _inspectorStandaloneTitle ?? target.GetType().Name;
@@ -648,7 +656,9 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            string typeLabel = target.GetType().FullName ?? target.GetType().Name;
+            string typeLabel = target is AssetExplorerInspectorLoadState inspectorLoadState
+                ? inspectorLoadState.Descriptor.FullName
+                : target.GetType().FullName ?? target.GetType().Name;
             ImGui.TextDisabled(typeLabel);
 
             ImGui.Separator();
@@ -680,6 +690,325 @@ public static partial class EditorImGuiUI
                 DrawStandaloneInspectorContent(target, visited);
                 ImGui.PopID();
             }
+        }
+
+        private static void DrawAssetExplorerInspectorLoadState(AssetExplorerInspectorLoadState loadState, HashSet<object> visited)
+        {
+            if (loadState.PartialPrefab is not null)
+            {
+                DrawAssetExplorerLoadProgress(loadState);
+                ImGui.Spacing();
+
+                using var _ = XRPrefabSourceInspector.EnterReadOnlyScope();
+                DrawDefaultAssetInspector(loadState.PartialPrefab, visited);
+
+                if (string.IsNullOrWhiteSpace(loadState.ErrorMessage))
+                    return;
+
+                ImGui.Spacing();
+                ImGui.TextColored(new Vector4(0.9f, 0.25f, 0.25f, 1f), "Failed to fully hydrate prefab references.");
+                ImGui.PushTextWrapPos();
+                ImGui.TextUnformatted(loadState.ErrorMessage);
+                ImGui.PopTextWrapPos();
+                return;
+            }
+
+            ImGui.TextDisabled("Path");
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(loadState.Path);
+            ImGui.PopTextWrapPos();
+
+            ImGui.Spacing();
+            DrawAssetExplorerLoadProgress(loadState);
+
+            if (loadState.PrefabPreview is not null)
+            {
+                ImGui.Spacing();
+                ImGui.PushID(loadState.Path);
+                DrawPrefabHierarchyLoadingInspector(loadState);
+                ImGui.PopID();
+                ImGui.Spacing();
+                ImGui.TextDisabled("Hierarchy is ready. Scene node details will switch to the live prefab inspector when the background load completes.");
+                ImGui.Spacing();
+            }
+
+            if (string.IsNullOrWhiteSpace(loadState.ErrorMessage))
+                return;
+
+            ImGui.TextColored(new Vector4(0.9f, 0.25f, 0.25f, 1f), "Failed to load asset.");
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(loadState.ErrorMessage);
+            ImGui.PopTextWrapPos();
+        }
+
+        private static void DrawAssetExplorerLoadProgress(AssetExplorerInspectorLoadState loadState)
+        {
+            ImGui.TextDisabled("Status");
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(loadState.StatusMessage);
+            ImGui.PopTextWrapPos();
+
+            string overlay = BuildAssetExplorerLoadProgressOverlay(loadState);
+            ImGui.ProgressBar(Math.Clamp(loadState.ProgressFraction, 0.0f, 1.0f), new Vector2(-1f, 0f), overlay);
+
+            if (loadState.TotalDependencyLoads > 0)
+                ImGui.TextDisabled($"Referenced assets: {loadState.CompletedDependencyLoads}/{loadState.TotalDependencyLoads}");
+        }
+
+        private static string BuildAssetExplorerLoadProgressOverlay(AssetExplorerInspectorLoadState loadState)
+        {
+            int percent = (int)Math.Round(Math.Clamp(loadState.ProgressFraction, 0.0f, 1.0f) * 100.0f);
+            return loadState.ProgressStage == AssetLoadProgressStage.ResolvingDependencies && loadState.TotalDependencyLoads > 0
+                ? $"{percent}%  {loadState.CompletedDependencyLoads}/{loadState.TotalDependencyLoads} refs"
+                : $"{percent}%";
+        }
+
+        private static void DrawPrefabHierarchyLoadingInspector(AssetExplorerInspectorLoadState loadState)
+        {
+            if (loadState.PrefabPreview is null || loadState.PrefabPreviewState is null)
+                return;
+
+            EnsureSelectedPrefabPreviewNode(loadState);
+
+            PrefabHierarchyPreview preview = loadState.PrefabPreview;
+            PrefabHierarchyPreviewState state = loadState.PrefabPreviewState;
+            PrefabHierarchyPreviewNode selectedNode = FindSelectedPrefabPreviewNode(preview, state) ?? preview.RootNode;
+
+            DrawPrefabPreviewSummary(loadState, preview, state, selectedNode);
+            ImGui.Separator();
+
+            Vector2 available = ImGui.GetContentRegionAvail();
+            float spacing = ImGui.GetStyle().ItemSpacing.Y;
+            const float minTreeHeight = 180.0f;
+            const float minInspectorHeight = 220.0f;
+
+            float treeHeight;
+            if (available.Y > minTreeHeight + minInspectorHeight + spacing)
+            {
+                treeHeight = Math.Clamp(available.Y * 0.42f, minTreeHeight, available.Y - minInspectorHeight - spacing);
+            }
+            else
+            {
+                treeHeight = MathF.Max(120.0f, available.Y * 0.35f);
+            }
+
+            ImGui.SetNextItemWidth(-1.0f);
+            ImGui.InputTextWithHint("##PrefabHierarchySearch", "Search prefab nodes...", ref state.SearchText, 256);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Filter nodes by name or hierarchy path.");
+
+            bool searchActive = !string.IsNullOrWhiteSpace(state.SearchText);
+            int visibleCount = CountVisiblePrefabPreviewNodes(preview.RootNode, state.SearchText);
+            string hierarchyLabel = searchActive
+                ? $"Hierarchy ({visibleCount}/{preview.NodeCount} visible)"
+                : $"Hierarchy ({preview.NodeCount} nodes)";
+            ImGui.SeparatorText(hierarchyLabel);
+            if (ImGui.BeginChild("PrefabHierarchyTree", new Vector2(-1.0f, treeHeight), ImGuiChildFlags.Border))
+                DrawPrefabHierarchyLoadingNode(preview.RootNode, state, depth: 0);
+            ImGui.EndChild();
+
+            ImGui.SeparatorText("Node Inspector");
+            if (ImGui.BeginChild("PrefabHierarchyInspector", Vector2.Zero, ImGuiChildFlags.Border))
+                DrawPrefabPreviewNodeInspector(loadState, selectedNode);
+            ImGui.EndChild();
+        }
+
+        private static void DrawPrefabPreviewSummary(AssetExplorerInspectorLoadState loadState, PrefabHierarchyPreview preview, PrefabHierarchyPreviewState state, PrefabHierarchyPreviewNode selectedNode)
+        {
+            if (!ImGui.BeginTable("PrefabSourceSummary", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                return;
+
+            DrawPrefabPreviewSummaryRow("Root Node", preview.RootNode.DisplayName);
+            DrawPrefabPreviewSummaryRow("Total Nodes", preview.NodeCount.ToString());
+            if (!string.IsNullOrWhiteSpace(state.SearchText))
+                DrawPrefabPreviewSummaryRow("Visible Nodes", CountVisiblePrefabPreviewNodes(preview.RootNode, state.SearchText).ToString());
+            DrawPrefabPreviewSummaryRow("Selected Node", selectedNode.DisplayName);
+            DrawPrefabPreviewSummaryRow("Load Stage", GetAssetLoadStageLabel(loadState));
+            if (loadState.TotalDependencyLoads > 0)
+                DrawPrefabPreviewSummaryRow("Referenced Assets", $"{loadState.CompletedDependencyLoads}/{loadState.TotalDependencyLoads}");
+            ImGui.EndTable();
+        }
+
+        private static string GetAssetLoadStageLabel(AssetExplorerInspectorLoadState loadState)
+            => loadState.ProgressStage switch
+            {
+                AssetLoadProgressStage.CheckingCache => "Checking Cache",
+                AssetLoadProgressStage.OpeningFile => "Opening File",
+                AssetLoadProgressStage.ParsingAssetGraph => "Parsing Prefab Graph",
+                AssetLoadProgressStage.ResolvingDependencies => "Resolving Referenced Assets",
+                AssetLoadProgressStage.ImportingThirdParty => "Importing Asset",
+                AssetLoadProgressStage.Finalizing => "Finalizing Asset Graph",
+                AssetLoadProgressStage.Completed => "Ready",
+                AssetLoadProgressStage.Failed => "Failed",
+                _ => "Loading"
+            };
+
+        private static void DrawPrefabPreviewSummaryRow(string label, string value)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(label);
+            ImGui.TableSetColumnIndex(1);
+            ImGui.TextUnformatted(value);
+        }
+
+        private static void DrawPrefabHierarchyLoadingNode(PrefabHierarchyPreviewNode node, PrefabHierarchyPreviewState state, int depth)
+        {
+            if (!ShouldDrawPrefabPreviewNode(node, state.SearchText))
+                return;
+
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.OpenOnDoubleClick;
+            if (depth == 0)
+                flags |= ImGuiTreeNodeFlags.DefaultOpen;
+            if (node.Children.Count == 0)
+                flags |= ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen;
+            if (IsSelectedPrefabPreviewNode(node, state))
+                flags |= ImGuiTreeNodeFlags.Selected;
+
+            string label = node.Children.Count > 0
+                ? $"{node.DisplayName} ({node.Children.Count})"
+                : node.DisplayName;
+
+            if (!string.IsNullOrWhiteSpace(state.SearchText) && PrefabPreviewNodeOrDescendantMatches(node, state.SearchText))
+                ImGui.SetNextItemOpen(true, ImGuiCond.Once);
+
+            ImGui.PushID(node.NodeId == Guid.Empty ? node.Path : node.NodeId.ToString());
+            bool open = ImGui.TreeNodeEx("##PrefabHierarchyPreviewNode", flags, label);
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+                SelectPrefabPreviewNode(state, node);
+
+            if (node.Children.Count > 0 && open)
+            {
+                for (int i = 0; i < node.Children.Count; i++)
+                    DrawPrefabHierarchyLoadingNode(node.Children[i], state, depth + 1);
+
+                ImGui.TreePop();
+            }
+            ImGui.PopID();
+        }
+
+        private static void DrawPrefabPreviewNodeInspector(AssetExplorerInspectorLoadState loadState, PrefabHierarchyPreviewNode node)
+        {
+            ImGui.TextUnformatted(node.DisplayName);
+            ImGui.TextDisabled(node.Path);
+            ImGui.Spacing();
+
+            if (!ImGui.BeginTable("PrefabPreviewNodeInspector", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                return;
+
+            DrawPrefabPreviewSummaryRow("Name", node.DisplayName);
+            DrawPrefabPreviewSummaryRow("Hierarchy Path", node.Path);
+            DrawPrefabPreviewSummaryRow("Child Nodes", node.Children.Count.ToString());
+            DrawPrefabPreviewSummaryRow("Node Status", loadState.ProgressStage >= AssetLoadProgressStage.ResolvingDependencies
+                ? "Hierarchy loaded; referenced assets are still resolving."
+                : "Hierarchy parsed from the prefab file.");
+            ImGui.EndTable();
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("Live components, transforms, and overrides will appear here once the full prefab asset finishes loading.");
+        }
+
+        private static void EnsureSelectedPrefabPreviewNode(AssetExplorerInspectorLoadState loadState)
+        {
+            if (loadState.PrefabPreview is null || loadState.PrefabPreviewState is null)
+                return;
+
+            if (FindSelectedPrefabPreviewNode(loadState.PrefabPreview, loadState.PrefabPreviewState) is not null)
+                return;
+
+            SelectPrefabPreviewNode(loadState.PrefabPreviewState, loadState.PrefabPreview.RootNode);
+        }
+
+        private static PrefabHierarchyPreviewNode? FindSelectedPrefabPreviewNode(PrefabHierarchyPreview preview, PrefabHierarchyPreviewState state)
+            => FindSelectedPrefabPreviewNode(preview.RootNode, state);
+
+        private static PrefabHierarchyPreviewNode? FindSelectedPrefabPreviewNode(PrefabHierarchyPreviewNode node, PrefabHierarchyPreviewState state)
+        {
+            if (IsSelectedPrefabPreviewNode(node, state))
+                return node;
+
+            for (int i = 0; i < node.Children.Count; i++)
+            {
+                PrefabHierarchyPreviewNode? found = FindSelectedPrefabPreviewNode(node.Children[i], state);
+                if (found is not null)
+                    return found;
+            }
+
+            return null;
+        }
+
+        private static bool IsSelectedPrefabPreviewNode(PrefabHierarchyPreviewNode node, PrefabHierarchyPreviewState state)
+        {
+            if (node.NodeId != Guid.Empty && state.SelectedNodeId != Guid.Empty)
+                return node.NodeId == state.SelectedNodeId;
+
+            return string.Equals(node.Path, state.SelectedNodePath, StringComparison.Ordinal);
+        }
+
+        private static void SelectPrefabPreviewNode(PrefabHierarchyPreviewState state, PrefabHierarchyPreviewNode node)
+        {
+            state.SelectedNodeId = node.NodeId;
+            state.SelectedNodePath = node.Path;
+        }
+
+        private static int CountVisiblePrefabPreviewNodes(PrefabHierarchyPreviewNode root, string? searchText)
+        {
+            if (string.IsNullOrWhiteSpace(searchText))
+                return CountPrefabPreviewNodes(root);
+
+            int count = 0;
+            CountVisiblePrefabPreviewNodes(root, searchText, ref count);
+            return count;
+        }
+
+        private static void CountVisiblePrefabPreviewNodes(PrefabHierarchyPreviewNode node, string searchText, ref int count)
+        {
+            if (ShouldDrawPrefabPreviewNode(node, searchText))
+                count++;
+
+            for (int i = 0; i < node.Children.Count; i++)
+                CountVisiblePrefabPreviewNodes(node.Children[i], searchText, ref count);
+        }
+
+        private static int CountPrefabPreviewNodes(PrefabHierarchyPreviewNode node)
+        {
+            int count = 1;
+            for (int i = 0; i < node.Children.Count; i++)
+                count += CountPrefabPreviewNodes(node.Children[i]);
+            return count;
+        }
+
+        private static bool ShouldDrawPrefabPreviewNode(PrefabHierarchyPreviewNode node, string? searchText)
+        {
+            if (string.IsNullOrWhiteSpace(searchText))
+                return true;
+
+            return PrefabPreviewNodeMatchesSearch(node, searchText) || PrefabPreviewNodeHasMatchingDescendant(node, searchText);
+        }
+
+        private static bool PrefabPreviewNodeHasMatchingDescendant(PrefabHierarchyPreviewNode node, string searchText)
+        {
+            for (int i = 0; i < node.Children.Count; i++)
+            {
+                PrefabHierarchyPreviewNode child = node.Children[i];
+                if (PrefabPreviewNodeMatchesSearch(child, searchText) || PrefabPreviewNodeHasMatchingDescendant(child, searchText))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool PrefabPreviewNodeOrDescendantMatches(PrefabHierarchyPreviewNode node, string searchText)
+            => PrefabPreviewNodeMatchesSearch(node, searchText) || PrefabPreviewNodeHasMatchingDescendant(node, searchText);
+
+        private static bool PrefabPreviewNodeMatchesSearch(PrefabHierarchyPreviewNode node, string searchText)
+        {
+            string trimmed = searchText.Trim();
+            if (trimmed.Length == 0)
+                return true;
+
+            return node.DisplayName.Contains(trimmed, StringComparison.OrdinalIgnoreCase)
+                || node.Path.Contains(trimmed, StringComparison.OrdinalIgnoreCase);
         }
 
         private static partial void DrawSceneNodeBasics(SceneNode node)
@@ -1558,6 +1887,12 @@ public static partial class EditorImGuiUI
 
         public static void DrawDefaultAssetInspector(InspectorTargetSet targets, HashSet<object> visited)
             => DrawInspectableObject(targets, "AssetProperties", visited);
+
+        internal static void DrawSceneNodeInspectorInline(SceneNode node)
+        {
+            ArgumentNullException.ThrowIfNull(node);
+            DrawSceneNodeInspector(node);
+        }
 
         internal static void DrawAssetInspectorInline(XRAsset asset)
         {

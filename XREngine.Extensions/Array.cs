@@ -1,11 +1,11 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static partial class ArrayExtension
+    public static partial class ArrayExtensions
     {
         public delegate bool DelTryConvert(object? obj, out string result);
         public delegate bool DelTryConvert<T>(T? obj, out string result);

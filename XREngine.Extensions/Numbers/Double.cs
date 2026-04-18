@@ -1,4 +1,4 @@
-﻿namespace Extensions
+namespace XREngine.Extensions
 {
     public static class DoubleExtensions
     {

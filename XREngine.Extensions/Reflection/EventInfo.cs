@@ -1,8 +1,8 @@
-﻿using System.Reflection;
+using System.Reflection;
 
-namespace Extensions
+namespace XREngine.Extensions
 {
-    public static class EventInfoExtension
+    public static class EventInfoExtensions
     {
         private const BindingFlags AllInstanceFields = 
             BindingFlags.NonPublic |
