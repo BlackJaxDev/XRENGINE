@@ -45,7 +45,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string RMSETextureName { get; set; } = "RMSE";
         public string TransformIdTextureName { get; set; } = "TransformId";
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
-        public IReadOnlyList<string> DependentFboNames { get; set; } = Array.Empty<string>();
+        public string[] DependentFboNames { get; set; } = Array.Empty<string>();
 
         public int Samples { get; set; } = DefaultSamples;
         public uint NoiseWidth { get; set; } = DefaultNoiseWidth;
@@ -88,6 +88,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             public float Bias { get; init; }
             public float CellSizeMin { get; init; }
             public float Thickness { get; init; }
+            public float DistanceFade { get; init; }
             public float SamplesPerPixel { get; init; }
             public float JitterScale { get; init; }
             public uint MaxSamplesPerCell { get; init; }
@@ -248,7 +249,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ClearSpatialHashData(state);
 
             EnsureComputeProgram();
-            DispatchSpatialHashAO(state, normalTex, depthViewTex, width, height, runtimeSettings, hasTemporalData ? temporalData : default, hasTemporalData);
+            DispatchSpatialHashAO(state, normalTex, depthViewTex, transformIdTex, width, height, runtimeSettings, hasTemporalData ? temporalData : default, hasTemporalData);
         }
 
         private static void ClearSpatialHashData(InstanceState state)
@@ -311,6 +312,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Bias = settings?.Bias > 0.0f ? settings.Bias : 0.01f,
                 CellSizeMin = settings?.SpatialHashCellSize > 0.0f ? settings.SpatialHashCellSize : 0.07f,
                 Thickness = settings?.Thickness > 0.0f ? settings.Thickness : 0.5f,
+                DistanceFade = Math.Max(settings?.DistanceIntensity ?? 1.0f, 0.0f),
                 SamplesPerPixel = Math.Max(settings?.SamplesPerPixel ?? 3.0f, 1.0f),
                 JitterScale = settings?.SpatialHashJitterScale >= 0.0f ? settings.SpatialHashJitterScale : 0.35f,
                 MaxSamplesPerCell = (uint)Math.Clamp(settings?.Samples > 0 ? settings.Samples : DefaultSamples, 1, 4096),
@@ -331,6 +333,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             hash.Add(settings.Bias);
             hash.Add(settings.CellSizeMin);
             hash.Add(settings.Thickness);
+            hash.Add(settings.DistanceFade);
             hash.Add(settings.SamplesPerPixel);
             hash.Add(settings.JitterScale);
             hash.Add(settings.MaxSamplesPerCell);
@@ -648,6 +651,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             InstanceState state,
             XRTexture normalTex,
             XRTexture depthViewTex,
+            XRTexture transformIdTex,
             int width,
             int height,
             SpatialHashRuntimeSettings runtimeSettings,
@@ -670,19 +674,19 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (Stereo && layered)
             {
-                DispatchStereo(state, normalTex, depthViewTex, aoTexture, width, height,
+                DispatchStereo(state, normalTex, depthViewTex, transformIdTex, aoTexture, width, height,
                     runtimeSettings, fovY);
             }
             else
             {
-                DispatchMono(state, normalTex, depthViewTex, aoTexture, width, height,
+                DispatchMono(state, normalTex, depthViewTex, transformIdTex, aoTexture, width, height,
                     runtimeSettings, fovY, camera, temporalData, hasTemporalData);
             }
         }
 
         private void InvalidateDependentFbos(XRRenderPipelineInstance instance)
         {
-            if (DependentFboNames.Count == 0)
+            if (DependentFboNames.Length == 0)
                 return;
 
             foreach (string name in DependentFboNames)
@@ -697,7 +701,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void DispatchMono(
             InstanceState state,
-            XRTexture normalTex, XRTexture depthViewTex, XRTexture aoTexture,
+            XRTexture normalTex, XRTexture depthViewTex, XRTexture transformIdTex, XRTexture aoTexture,
             int width, int height,
             SpatialHashRuntimeSettings runtimeSettings,
             float fovY,
@@ -744,6 +748,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgram.Sampler("DepthTex", depthViewTex, 1);
             _computeProgram.Sampler("HistoryAOTex", previousHistoryAo ?? writeHistoryAo, 2);
             _computeProgram.Sampler("HistoryDepthTex", previousHistoryDepth ?? writeHistoryDepth, 3);
+            _computeProgram.Sampler("TransformIdTex", transformIdTex, 4);
             _computeProgram.BindImageTexture(0u, aoTexture, 0, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R16F);
             _computeProgram.BindImageTexture(1u, writeHistoryAo, 0, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R16F);
             _computeProgram.BindImageTexture(2u, writeHistoryDepth, 0, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R32F);
@@ -753,6 +758,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgram.Uniform("CellSizeMin", runtimeSettings.CellSizeMin);
             _computeProgram.Uniform("Bias", runtimeSettings.Bias);
             _computeProgram.Uniform("Thickness", runtimeSettings.Thickness);
+            _computeProgram.Uniform("DistanceFade", runtimeSettings.DistanceFade);
             _computeProgram.Uniform("Power", runtimeSettings.Power);
             _computeProgram.Uniform("SamplesPerPixel", runtimeSettings.SamplesPerPixel);
             _computeProgram.Uniform("JitterScale", runtimeSettings.JitterScale);
@@ -761,6 +767,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgram.Uniform("Radius", runtimeSettings.Radius);
             _computeProgram.Uniform("FieldOfViewY", fovY);
             _computeProgram.Uniform("InvResolution", new Vector2(1.0f / width, 1.0f / height));
+            _computeProgram.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)(camera?.DepthMode ?? XRCamera.EDepthMode.Normal));
             _computeProgram.Uniform("HistoryReady", historyReady);
             _computeProgram.Uniform("CurrentJitterUv", currentJitterUv);
             _computeProgram.Uniform("PreviousJitterUv", previousJitterUv);
@@ -826,7 +833,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void DispatchStereo(
             InstanceState state,
-            XRTexture normalTex, XRTexture depthViewTex, XRTexture aoTexture,
+            XRTexture normalTex, XRTexture depthViewTex, XRTexture transformIdTex, XRTexture aoTexture,
             int width, int height,
             SpatialHashRuntimeSettings runtimeSettings,
             float fovY)
@@ -868,6 +875,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgramStereo.Sampler("DepthTex", depthViewTex, 1);
             _computeProgramStereo.Sampler("HistoryAOTex", previousHistoryAo ?? writeHistoryAo, 2);
             _computeProgramStereo.Sampler("HistoryDepthTex", previousHistoryDepth ?? writeHistoryDepth, 3);
+            _computeProgramStereo.Sampler("TransformIdTex", transformIdTex, 4);
             _computeProgramStereo.BindImageTexture(0u, aoTexture, 0, true, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R16F);
             _computeProgramStereo.BindImageTexture(1u, writeHistoryAo, 0, true, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R16F);
             _computeProgramStereo.BindImageTexture(2u, writeHistoryDepth, 0, true, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R32F);
@@ -877,6 +885,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgramStereo.Uniform("CellSizeMin", runtimeSettings.CellSizeMin);
             _computeProgramStereo.Uniform("Bias", runtimeSettings.Bias);
             _computeProgramStereo.Uniform("Thickness", runtimeSettings.Thickness);
+            _computeProgramStereo.Uniform("DistanceFade", runtimeSettings.DistanceFade);
             _computeProgramStereo.Uniform("Power", runtimeSettings.Power);
             _computeProgramStereo.Uniform("SamplesPerPixel", runtimeSettings.SamplesPerPixel);
             _computeProgramStereo.Uniform("JitterScale", runtimeSettings.JitterScale);
@@ -885,6 +894,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgramStereo.Uniform("Radius", runtimeSettings.Radius);
             _computeProgramStereo.Uniform("FieldOfViewY", fovY);
             _computeProgramStereo.Uniform("InvResolution", new Vector2(1.0f / width, 1.0f / height));
+            _computeProgramStereo.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)leftCamera.DepthMode);
             _computeProgramStereo.Uniform("HistoryReady", false);
             _computeProgramStereo.Uniform("CurrentJitterUv", Vector2.Zero);
             _computeProgramStereo.Uniform("PreviousJitterUv", Vector2.Zero);
@@ -934,6 +944,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_SpatialHashAOPass), ERenderGraphPassStage.Compute);
             builder.SampleTexture(MakeTextureResource(NormalTextureName));
             builder.SampleTexture(MakeTextureResource(DepthViewTextureName));
+            builder.SampleTexture(MakeTextureResource(TransformIdTextureName));
             builder.ReadWriteTexture(MakeTextureResource(IntensityTextureName));
             builder.ReadWriteBuffer("SpatialHashKeys");
             builder.ReadWriteBuffer("SpatialHashTime");

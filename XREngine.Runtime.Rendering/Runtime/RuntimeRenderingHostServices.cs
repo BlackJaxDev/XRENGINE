@@ -105,6 +105,7 @@ public interface IRuntimeRenderingHostServices
     void SubscribePlayModeTransitions(Action callback);
     void UnsubscribePlayModeTransitions(Action callback);
     void EnqueueRenderThreadTask(Action task);
+    void EnqueueRenderThreadTask(Action task, string reason);
     void EnqueueRenderThreadCoroutine(Func<bool> task);
     TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new();
     IRuntimeRenderPipelineHost? CreateDefaultRenderPipeline();
@@ -282,6 +283,9 @@ public static class RuntimeRenderingHostServices
         }
 
         public void EnqueueRenderThreadTask(Action task)
+            => task();
+
+        public void EnqueueRenderThreadTask(Action task, string reason)
             => task();
 
         public void EnqueueRenderThreadCoroutine(Func<bool> task)

@@ -89,14 +89,17 @@ namespace XREngine
         [ThreadStatic]
         private static int _deserializeDepth;
 
-        [ThreadStatic] 
-        private static bool _isReplaying;
-
         public bool Deserialize(IParser reader, Type expectedType, Func<IParser, Type, object?> nestedObjectDeserializer, out object? value, ObjectDeserializer rootDeserializer)
         {
             AssetManager.EnsureYamlAssetRuntimeSupported();
 
             if (!typeof(XRAsset).IsAssignableFrom(expectedType))
+            {
+                value = null;
+                return false;
+            }
+
+            if (reader is PrefixReplayParser replayParser && replayParser.TryConsumeInitialInterceptSuppression())
             {
                 value = null;
                 return false;
@@ -112,14 +115,7 @@ namespace XREngine
             // Let the normal object deserializer own each file's document root. Nested
             // asset loads can occur while another YAML parse is already active, so parser
             // depth alone is not enough to identify a new document root.
-            if (!_isReplaying && AssetDeserializationContext.ConsumeRootAsset())
-            {
-                value = null;
-                return false;
-            }
-
-            // Don't intercept mapping/sequence during replay - let normal deserializer handle it
-            if (_isReplaying)
+            if (AssetDeserializationContext.ConsumeRootAsset())
             {
                 value = null;
                 return false;
@@ -143,15 +139,7 @@ namespace XREngine
                     return true;
                 }
 
-                _isReplaying = true;
-                try
-                {
-                    value = nestedObjectDeserializer(deferredParser!, replayType ?? expectedType);
-                }
-                finally
-                {
-                    _isReplaying = false;
-                }
+                value = nestedObjectDeserializer(deferredParser!, replayType ?? expectedType);
                 return true;
             }
             finally
@@ -281,18 +269,19 @@ namespace XREngine
 
             if (!reader.TryConsume<Scalar>(out var keyScalar))
             {
-                deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
                 return false;
             }
 
             consumedEvents.Add(keyScalar);
 
             if ((expectedType.IsAbstract || expectedType.IsInterface)
-                && string.Equals(keyScalar.Value, PolymorphicTypeGraphVisitor.TypeKey, StringComparison.Ordinal))
+                && (string.Equals(keyScalar.Value, PolymorphicTypeGraphVisitor.TypeKey, StringComparison.Ordinal)
+                    || string.Equals(keyScalar.Value, "__assetType", StringComparison.Ordinal)))
             {
                 if (!reader.TryConsume<Scalar>(out var typeScalar))
                 {
-                    deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                    deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
                     return false;
                 }
 
@@ -301,19 +290,19 @@ namespace XREngine
                     throw new YamlException(
                         $"XRAsset polymorphic discriminator '{typeScalar.Value}' could not be resolved for '{expectedType.FullName}'.");
 
-                deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
                 return false;
             }
 
             if (!string.Equals(keyScalar.Value, "ID", StringComparison.OrdinalIgnoreCase))
             {
-                deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
                 return false;
             }
 
             if (!reader.TryConsume<Scalar>(out var valueScalar))
             {
-                deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
                 return false;
             }
 
@@ -321,13 +310,13 @@ namespace XREngine
 
             if (!Guid.TryParse(valueScalar.Value, out var guid))
             {
-                deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
                 return false;
             }
 
             if (!reader.TryConsume<MappingEnd>(out _))
             {
-                deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
                 return false;
             }
 
@@ -460,13 +449,24 @@ namespace XREngine
             private readonly IParser _inner;
             private int _prefixIndex;
             private bool _replayingPrefix;
+            private bool _suppressInitialIntercept;
 
-            public PrefixReplayParser(IReadOnlyList<ParsingEvent> prefixEvents, IParser inner)
+            public PrefixReplayParser(IReadOnlyList<ParsingEvent> prefixEvents, IParser inner, bool suppressInitialIntercept = false)
             {
                 _prefixEvents = prefixEvents;
                 _inner = inner;
                 _prefixIndex = 0;
                 _replayingPrefix = prefixEvents.Count > 0;
+                _suppressInitialIntercept = suppressInitialIntercept;
+            }
+
+            public bool TryConsumeInitialInterceptSuppression()
+            {
+                if (!_suppressInitialIntercept)
+                    return false;
+
+                _suppressInitialIntercept = false;
+                return true;
             }
 
             public ParsingEvent Current => _replayingPrefix
@@ -595,7 +595,9 @@ namespace XREngine
             _skipConverter = true;
             try
             {
-                serializer(value, value?.GetType() ?? type);
+                // Preserve the declared type so polymorphic asset properties emit __type
+                // before the inline mapping body when the runtime value is more specific.
+                serializer(value, type);
             }
             finally
             {

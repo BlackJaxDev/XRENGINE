@@ -5,6 +5,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Scene;
 
 namespace XREngine.Components.Capture.Lights
 {
@@ -50,6 +51,33 @@ namespace XREngine.Components.Capture.Lights
             return true;
         }
 
+        private void UpdatePreviewRenderMatrix(Matrix4x4 renderMatrix)
+        {
+            _previewRenderMatrix = renderMatrix;
+            VisualRenderInfo.CullingOffsetMatrix = renderMatrix;
+
+            if (World is not null)
+                _visualRC.WorldMatrix = renderMatrix;
+        }
+
+        private bool TryGetAttachedPreviewRenderMatrix(out Matrix4x4 renderMatrix)
+        {
+            if (SceneNode is not null && !SceneNode.IsTransformNull)
+            {
+                renderMatrix = Transform.RenderMatrix;
+                return true;
+            }
+
+            renderMatrix = _previewRenderMatrix;
+            return false;
+        }
+
+        private void SyncPreviewRenderCommandTransform()
+        {
+            if (World is not null)
+                _visualRC.WorldMatrix = _previewRenderMatrix;
+        }
+
         private void CachePreviewSphere()
         {
             bool shouldMaterialize = PreviewEnabled || (AutoShowPreviewOnSelect && IsSceneNodeSelected());
@@ -61,6 +89,12 @@ namespace XREngine.Components.Capture.Lights
 
             if (!_previewSphereDirty && PreviewSphere is not null)
                 return;
+
+            if (!TryGetAttachedPreviewRenderMatrix(out Matrix4x4 renderMatrix))
+            {
+                _previewSphereDirty = true;
+                return;
+            }
 
             int pass = (int)EDefaultRenderPass.OpaqueForward;
             XRTexture? previewTexture = GetPreviewTexture();
@@ -83,16 +117,18 @@ namespace XREngine.Components.Capture.Lights
             }
 
             _visualRC.Mesh = PreviewSphere;
-            _visualRC.WorldMatrix = Transform.RenderMatrix;
             _visualRC.RenderPass = pass;
 
             VisualRenderInfo.LocalCullingVolume = SharedPreviewSphereMesh.Bounds;
-            VisualRenderInfo.CullingOffsetMatrix = Transform.RenderMatrix;
+            UpdatePreviewRenderMatrix(renderMatrix);
             _previewSphereDirty = false;
         }
 
         private bool IsSceneNodeSelected()
-            => EditorSelectionAccessor.Instance.Value?.IsNodeSelected(SceneNode) ?? false;
+        {
+            SceneNode? sceneNode = SceneNode;
+            return sceneNode is not null && (EditorSelectionAccessor.Instance.Value?.IsNodeSelected(sceneNode) ?? false);
+        }
 
         #endregion
     }

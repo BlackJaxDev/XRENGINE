@@ -54,6 +54,16 @@ public sealed class XRMeshSerializationTests
         AssertMeshesEquivalent(original, clone!);
     }
 
+    [Test]
+    public void XRMesh_Clone_PreservesBufferBindingMetadata()
+    {
+        XRMesh original = CreateSampleMesh();
+
+        XRMesh clone = original.Clone();
+
+        AssertMeshesEquivalent(original, clone);
+    }
+
     private static XRMesh CreateSampleMesh()
     {
         XRMesh mesh = new(

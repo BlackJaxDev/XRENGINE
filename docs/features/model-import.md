@@ -10,9 +10,9 @@ Model imports can route through a native format-specific importer or the older A
 
 Compatibility overrides stay explicit and per format:
 
-- `ModelImportOptions.FbxBackend = AssimpLegacy` forces the older FBX path.
-- `ModelImportOptions.GltfBackend = AssimpLegacy` forces the older glTF path.
-- Assimp `PostProcessSteps` still apply to non-native formats and the explicit `AssimpLegacy` modes.
+- `ModelImportOptions.FbxBackend = Assimp` forces the older FBX path. Legacy YAML may still spell this as `AssimpLegacy`.
+- `ModelImportOptions.GltfBackend = Assimp` forces the older glTF path. Legacy YAML may still spell this as `AssimpLegacy`.
+- Assimp `PostProcessSteps` still apply to non-native formats and the explicit `Assimp` compatibility modes.
 - `FbxPivotPolicy` and `CollapseGeneratedFbxHelperNodes` remain FBX-specific controls.
 
 The unit-testing world exposes the same high-level policy per startup import through `ModelsToImport[*].ImporterBackend` in `Assets/UnitTestingWorldSettings.jsonc`:
@@ -38,13 +38,13 @@ Extension support:
 
 - supported: `KHR_materials_unlit`, `KHR_mesh_quantization`, `EXT_meshopt_compression`, `EXT_texture_webp`
 - partial: `KHR_texture_transform` texCoord override only
-- unsupported with a diagnostic that points to `AssimpLegacy`: `KHR_draco_mesh_compression`, `KHR_texture_basisu`, and `KHR_texture_transform` offset, scale, and rotation
+- unsupported with a diagnostic that points to `Assimp`: `KHR_draco_mesh_compression`, `KHR_texture_basisu`, and `KHR_texture_transform` offset, scale, and rotation
 
 Resource and fallback rules:
 
 - native glTF accepts only local relative URIs and data URIs; network and other non-local URIs are rejected deterministically
 - `GltfBackend = Auto` falls back cleanly to Assimp if the native path fails or rejects the asset
-- `GltfBackend = AssimpLegacy` skips the native path entirely
+- `GltfBackend = Assimp` skips the native path entirely. Legacy YAML may still spell this as `AssimpLegacy`.
 
 For importer and exporter tracing, set `XRE_FBX_LOG` before launching the editor, tests, or tools:
 
@@ -88,7 +88,7 @@ Older cached import-option files that still store path-based remaps continue to 
 
 When a third-party model (e.g. `Mitsuki.fbx`) is imported to a native prefab `Mitsuki.asset`, embedded sub-assets are externalized into a sibling folder named after the root asset. The externalizer runs in three phases — **Discover**, **PreAssign & Touch**, then **Topological Write (leaves-first)** — so that every nested sub-asset already has a real file path and a zero-byte placeholder on disk before any container serializes. This lets the YAML reference-emission gate in `XRAssetYamlConverter` / `AnimationClipYamlTypeConverter` emit compact `{ID: <guid>}` references for externalized sub-assets instead of inlining their full content.
 
-```
+```text
 <import-folder>/
     Mitsuki.asset                    # XRPrefabSource (root)
     Mitsuki/

@@ -206,8 +206,10 @@ internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITex
             return XRTexture2D.BuildResidentDataFromImage(filler, maxResidentDimension, includeMipChain);
         }
 
+        long decodeStartTimestamp = XRTexture2D.StartImportedTextureTiming();
         using MagickImage sourceImage = new(sourcePath);
-        return XRTexture2D.BuildResidentDataFromImage(sourceImage, maxResidentDimension, includeMipChain);
+        double decodeMilliseconds = XRTexture2D.CompleteImportedTextureTiming(decodeStartTimestamp);
+        return XRTexture2D.BuildResidentDataFromImage(sourceImage, maxResidentDimension, includeMipChain, sourcePath, decodeMilliseconds);
     }
 }
 
@@ -1585,6 +1587,7 @@ internal sealed class ImportedTextureStreamingManager
                 if (framesSincePending < StuckPendingTransitionFrameThreshold)
                     continue;
 
+                CancellationTokenSource? pendingLoadCts;
                 lock (snapshot.Record.Sync)
                 {
                     if (snapshot.Record.PendingMaxDimension == 0)
@@ -1595,8 +1598,7 @@ internal sealed class ImportedTextureStreamingManager
                         + $"(pending={snapshot.Record.PendingMaxDimension}, resident={snapshot.Record.ResidentMaxDimension}, "
                         + $"staleFrames={framesSincePending})");
 
-                    snapshot.Record.PendingLoadCts?.Cancel();
-                    snapshot.Record.PendingLoadCts?.Dispose();
+                    pendingLoadCts = snapshot.Record.PendingLoadCts;
                     snapshot.Record.PendingLoadCts = null;
                     snapshot.Record.PendingMaxDimension = 0;
                     snapshot.Record.PendingPageSelection = SparseTextureStreamingPageSelection.Full;
@@ -1604,6 +1606,8 @@ internal sealed class ImportedTextureStreamingManager
                     snapshot.Record.PendingSparseTransitionResult = null;
                     snapshot.Record.LastTransitionFrameId = frameId;
                 }
+
+                CancelPendingLoad(pendingLoadCts);
             }
         }
 
@@ -1894,6 +1898,28 @@ internal sealed class ImportedTextureStreamingManager
             : directory;
     }
 
+    private static void CancelPendingLoad(CancellationTokenSource? cts)
+    {
+        if (cts is null)
+            return;
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        try
+        {
+            cts.Dispose();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
     private bool QueueResidentTransition(ImportedTextureStreamingSnapshot snapshot, uint targetResidentSize, SparseTextureStreamingPageSelection pageSelection, long frameId)
     {
         ImportedTextureStreamingRecord record = snapshot.Record;
@@ -1924,6 +1950,7 @@ internal sealed class ImportedTextureStreamingManager
         ITextureStreamingSource? source;
         ITextureResidencyBackend backend;
         CancellationTokenSource cts = new();
+        CancellationTokenSource? previousPendingLoadCts;
         bool includeMipChain;
         lock (record.Sync)
         {
@@ -1931,11 +1958,13 @@ internal sealed class ImportedTextureStreamingManager
             source = record.Source;
             backend = record.Backend ?? ResolveBackendForTexture(record.SourceWidth, record.SourceHeight, record.Format);
             includeMipChain = normalizedTarget > minimumResidentSize;
-            record.PendingLoadCts?.Cancel();
+            previousPendingLoadCts = record.PendingLoadCts;
             record.PendingLoadCts = cts;
             record.PendingMaxDimension = normalizedTarget;
             record.PendingPageSelection = normalizedPageSelection;
         }
+
+        CancelPendingLoad(previousPendingLoadCts);
 
         if (string.IsNullOrWhiteSpace(filePath) || source is null)
         {

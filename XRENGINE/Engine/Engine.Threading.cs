@@ -266,6 +266,12 @@ namespace XREngine
             => Jobs.Schedule(new CoroutineJob(task), JobPriority.Normal, JobAffinity.RenderThread);
 
         /// <summary>
+        /// Adds a labeled coroutine that runs on the main (render) thread.
+        /// </summary>
+        public static void AddRenderThreadCoroutine(Func<bool> task, string reason)
+            => Jobs.Schedule(new LabeledCoroutineJob(task, reason), JobPriority.Normal, JobAffinity.RenderThread);
+
+        /// <summary>
         /// Adds a coroutine that runs on the app/update thread.
         /// </summary>
         public static void AddAppThreadCoroutine(Func<bool> task)
@@ -276,6 +282,12 @@ namespace XREngine
         /// </summary>
         public static void AddMainThreadCoroutine(Func<bool> task)
             => AddRenderThreadCoroutine(task);
+
+        /// <summary>
+        /// Adds a labeled coroutine that runs on the main (render) thread.
+        /// </summary>
+        public static void AddMainThreadCoroutine(Func<bool> task, string reason)
+            => AddRenderThreadCoroutine(task, reason);
 
         /// <summary>
         /// Invokes a task on the main thread if not already on it.

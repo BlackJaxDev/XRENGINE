@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -32,6 +33,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public BranchResourceBehavior BranchResources { get; set; } = BranchResourceBehavior.PreserveResources;
 
         private RenderPipeline? _parentPipeline;
+        [YamlIgnore]
         public RenderPipeline? ParentPipeline
         {
             get => _parentPipeline;
@@ -55,7 +57,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
         }
 
-        public ViewportRenderCommandContainer(RenderPipeline? parentPipeline = null)
+        public ViewportRenderCommandContainer(RenderPipeline? parentPipeline)
         {
             ParentPipeline = parentPipeline;
         }

@@ -1,6 +1,7 @@
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -10,7 +11,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         private bool _shouldExecute = true;
         private bool _executeInShadowPass = false;
 
+        [YamlIgnore]
         public ViewportRenderCommandContainer? CommandContainer { get; internal set; }
+
+        [YamlIgnore]
         public RenderPipeline? ParentPipeline => CommandContainer?.ParentPipeline;
         public static XRRenderPipelineInstance ActivePipelineInstance => Engine.Rendering.State.CurrentRenderingPipeline!;
 

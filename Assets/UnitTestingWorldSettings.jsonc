@@ -160,9 +160,9 @@
       "UseForwardForTransparent": false,
       // Selects how this model import chooses between native format-specific importers and Assimp fallback. PreferNativeThenAssimp uses a native importer when the format has one available and falls back to Assimp otherwise. Today the native path exists for FBX and glTF.
       // ImporterBackend: PreferNativeThenAssimp, AssimpOnly
-      "ImporterBackend": "AssimpOnly",
+      "ImporterBackend": "PreferNativeThenAssimp",
       // Generated from Path on ModelImportSettings.
-      "Path": "misc\\Mitsuki.fbx",
+      "Path": "misc\\jax2026.fbx",
       // Comma-separated PostProcessSteps flag names.
       "ImportFlags": "Triangulate, FlipUVs, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
       // Generated from Scale on ModelImportSettings.

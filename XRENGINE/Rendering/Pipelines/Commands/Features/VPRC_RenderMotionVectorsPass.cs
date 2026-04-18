@@ -22,7 +22,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             (int)EDefaultRenderPass.OnTopForward,
         ];
 
-        public IReadOnlyList<int> RenderPasses { get; set; } = DefaultRenderPasses;
+        public int[] RenderPasses { get; set; } = DefaultRenderPasses;
 
         private bool _gpuDispatch = false;
         public bool GPUDispatch
@@ -35,7 +35,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             GPUDispatch = gpuDispatch;
             if (renderPasses is not null)
-                RenderPasses = renderPasses;
+                RenderPasses = [.. renderPasses];
         }
 
         protected override void Execute()
@@ -50,7 +50,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            if (RenderPasses.Count == 0)
+            if (RenderPasses.Length == 0)
             {
                 Debug.Out("[Velocity] Motion vectors pass skipped: no render passes configured.");
                 return;

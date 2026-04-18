@@ -23,7 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// Render passes that should contribute to the voxel volume.
         /// </summary>
-        public IReadOnlyList<int>? RenderPasses { get; set; }
+        public int[]? RenderPasses { get; set; }
             = [(int)EDefaultRenderPass.OpaqueDeferred, (int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward];
 
         private bool _gpuDispatch = true;
@@ -41,7 +41,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public void SetOptions(string volumeTextureName, IReadOnlyList<int> renderPasses, bool gpuDispatch, bool clearVolumeEachFrame)
         {
             VolumeTextureName = volumeTextureName;
-            RenderPasses = renderPasses;
+            RenderPasses = [.. renderPasses];
             GpuDispatch = gpuDispatch;
             ClearVolumeEachFrame = clearVolumeEachFrame;
         }
@@ -51,7 +51,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (ActivePipelineInstance.Pipeline is not DefaultRenderPipeline defaultPipeline || !defaultPipeline.UsesVoxelConeTracing)
                 return;
 
-            if (RenderPasses is null || RenderPasses.Count == 0)
+            if (RenderPasses is null || RenderPasses.Length == 0)
                 return;
 
             if (!ActivePipelineInstance.TryGetTexture(VolumeTextureName, out var texture) || texture is not XRTexture3D voxelTexture)

@@ -12,6 +12,7 @@ using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
+using YamlDotNet.Serialization;
 using static XREngine.Engine.Rendering.State;
 using static XREngine.Rendering.XRRenderPipelineInstance;
 
@@ -22,6 +23,7 @@ namespace XREngine.Rendering;
 public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHost
 {
     [Browsable(false)]
+    [YamlIgnore]
     public List<XRRenderPipelineInstance> Instances { get; } = [];
 
     /// <summary>
@@ -35,6 +37,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected abstract Lazy<XRMaterial> InvalidMaterialFactory { get; }
 
     [Browsable(false)]
+    [YamlIgnore]
     public XRMaterial InvalidMaterial
         => InvalidMaterialFactory.Value;
 
@@ -44,6 +47,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// Structured description of the post-processing controls exposed by this pipeline.
     /// </summary>
     [Browsable(false)]
+    [YamlIgnore]
     public RenderPipelinePostProcessSchema PostProcessSchema => _postProcessSchema;
 
     /// <summary>
@@ -51,6 +55,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// Derived pipelines can override this to expose a friendlier label.
     /// </summary>
     [Browsable(false)]
+    [YamlIgnore]
     public virtual string DebugName => GetType().Name;
 
     private bool _isShadowPass;
@@ -80,9 +85,11 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
                 });
         }
     }
+    [YamlIgnore]
     public Dictionary<int, IComparer<RenderCommand>?> PassIndicesAndSorters { get; protected set; }
 
     [Browsable(false)]
+    [YamlIgnore]
     public IReadOnlyCollection<RenderPassMetadata> PassMetadata { get; private set; } = Array.Empty<RenderPassMetadata>();
 
     protected RenderPipeline(bool deferCommandChainGeneration = false)
