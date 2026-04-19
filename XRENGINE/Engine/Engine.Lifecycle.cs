@@ -101,7 +101,6 @@ namespace XREngine
 
                 // Wire up event callbacks for task processing
                 Time.Timer.SwapBuffers += SwapBuffers;
-                Time.Timer.RenderFrame += DequeueMainThreadTasks;
 
                 // Wire up the external profiler UDP sender (delegates bridge XREngine.Data → Engine)
 #if !XRE_PUBLISHED

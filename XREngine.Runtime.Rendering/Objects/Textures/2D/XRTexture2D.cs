@@ -499,6 +499,7 @@ namespace XREngine.Rendering
             void CleanupProgressiveUpload()
             {
                 texture.ShouldLoadDataFromInternalPBO = false;
+                texture.StreamingLockMipLevel = -1;
 
                 if (slotAcquired)
                 {
@@ -534,6 +535,12 @@ namespace XREngine.Rendering
             int originalLargestLevel = texture.LargestMipmapLevel;
             int originalSmallestAllowedLevel = texture.SmallestAllowedMipmapLevel;
             int nextMipToUpload = smallestResidentMip;
+
+            // Lock mip: first mip uploaded to prevent old storage being destroyed before new equivalent-quality mip is ready.
+            // lockMipLevel = newMipCount - oldMipCount, which maps to the same physical resolution as old mip 0.
+            int lockMipLevel = texture.StreamingLockMipLevel;
+            bool hasLock = lockMipLevel >= 0 && lockMipLevel < smallestResidentMip;
+            bool seedUploaded = !hasLock;
 
             bool UploadProgressive()
             {
@@ -571,11 +578,26 @@ namespace XREngine.Rendering
 
                         slotAcquired = true;
                         RuntimeRenderingHostServices.Current.LogOutput(
-                            $"[UploadMipmaps] Starting progressive upload for '{texture.Name}' ({mipmaps[0].Width}x{mipmaps[0].Height}), {mipmaps.Length} mipmaps. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
+                            $"[UploadMipmaps] Starting progressive upload for '{texture.Name}' ({mipmaps[0].Width}x{mipmaps[0].Height}), {mipmaps.Length} mipmaps, lockMip={lockMipLevel}. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
+                    }
+
+                    // Seed phase: upload the lock mip first so the first EnsureStorageAllocated call
+                    // immediately has equivalent-quality data — preventing a black flash.
+                    if (!seedUploaded)
+                    {
+                        texture.LargestMipmapLevel = lockMipLevel;
+                        texture.SmallestAllowedMipmapLevel = lockMipLevel;
+                        long lockMipBytes = mipmaps[lockMipLevel].Data?.Length ?? 0;
+                        RegisterProgressiveUploadBytesForCurrentFrame(lockMipBytes);
+                        texture.PushMipLevel(lockMipLevel);
+                        mipmaps[lockMipLevel].StreamingPBO = null;
+                        seedUploaded = true;
+                        return false;
                     }
 
                     if (nextMipToUpload < 0)
                     {
+                        texture.StreamingLockMipLevel = -1;
                         texture.LargestMipmapLevel = originalLargestLevel;
                         texture.SmallestAllowedMipmapLevel = originalSmallestAllowedLevel;
                         CleanupProgressiveUpload();
@@ -584,8 +606,25 @@ namespace XREngine.Rendering
                         return true;
                     }
 
-                    texture.LargestMipmapLevel = nextMipToUpload;
-                    texture.SmallestAllowedMipmapLevel = smallestResidentMip;
+                    // Skip the lock mip — already seeded above.
+                    if (hasLock && nextMipToUpload == lockMipLevel)
+                    {
+                        nextMipToUpload--;
+                        return false;
+                    }
+
+                    // While uploading background mips, keep quality pinned at the lock level so GL
+                    // always has a complete single-level chain [lockMipLevel, lockMipLevel] to sample.
+                    if (hasLock)
+                    {
+                        texture.LargestMipmapLevel = lockMipLevel;
+                        texture.SmallestAllowedMipmapLevel = lockMipLevel;
+                    }
+                    else
+                    {
+                        texture.LargestMipmapLevel = nextMipToUpload;
+                        texture.SmallestAllowedMipmapLevel = smallestResidentMip;
+                    }
 
                     long nextMipBytes = mipmaps[nextMipToUpload].Data?.Length ?? 0;
                     long scheduledBytes = GetProgressiveUploadBytesScheduledThisFrame();
@@ -1412,6 +1451,20 @@ namespace XREngine.Rendering
 
         [MemoryPackIgnore]
         private int _progressiveUploadToken;
+
+        [MemoryPackIgnore]
+        private int _streamingLockMipLevel = -1;
+
+        /// <summary>
+        /// When >= 0, the progressive upload coroutine seeds this mip index first and holds
+        /// TextureBaseLevel at this value until all mips are uploaded. Prevents the black flash
+        /// that occurs when new (higher-res) storage is allocated. Set by ApplyResidentData.
+        /// </summary>
+        public int StreamingLockMipLevel
+        {
+            get => _streamingLockMipLevel;
+            set => _streamingLockMipLevel = value;
+        }
 
         [MemoryPackIgnore]
         private readonly ConcurrentDictionary<int, byte> _pendingPboLoadMipIndices = [];

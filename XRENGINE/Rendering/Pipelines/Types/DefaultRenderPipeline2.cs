@@ -867,7 +867,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private static readonly string[] AntiAliasingFrameBufferDependencies =
     [
         // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
-        // so it must not be destroyed here — the AO pass owns its lifecycle.
+        // so it must not be destroyed here ï¿½ the AO pass owns its lifecycle.
         LightCombineFBOName,
         ForwardPassFBOName,
         PostProcessOutputFBOName,
@@ -914,7 +914,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private static readonly string[] ResizeRecoveryFrameBufferDependencies =
     [
         // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
-        // so it must not be destroyed here — the AO pass owns its lifecycle.
+        // so it must not be destroyed here ï¿½ the AO pass owns its lifecycle.
         SceneCopyFBOName,
         TransparentSceneCopyFBOName,
         DeferredTransparencyBlurFBOName,
@@ -2019,15 +2019,24 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (material is null)
             return;
 
-        //Set stencil buffer to indicate objects that should be highlighted.
-        //material?.SetFloat("Highlighted", enabled ? 1.0f : 0.0f);
-        var refValue = enabled ? (isSelection ? StencilRefSelection : StencilRefHover) : 0;
+        // Preserve both highlight bits so hover and selection can coexist on the same material.
+        int bit = isSelection ? StencilRefSelection : StencilRefHover;
         var stencil = material.RenderOptions.StencilTest;
+        int currentRef = stencil.FrontFace.Reference;
+        int currentBits = currentRef & 0x3;
+        int nextBits = enabled ? (currentBits | bit) : (currentBits & ~bit);
+
+        if (nextBits == 0)
+        {
+            stencil.Enabled = ERenderParamUsage.Disabled;
+            return;
+        }
+
         stencil.Enabled = ERenderParamUsage.Enabled;
         stencil.FrontFace = new StencilTestFace()
         {
             Function = EComparison.Always,
-            Reference = refValue,
+            Reference = nextBits,
             ReadMask = 3,
             WriteMask = 3,
             BothFailOp = EStencilOp.Keep,
@@ -2037,7 +2046,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         stencil.BackFace = new StencilTestFace()
         {
             Function = EComparison.Always,
-            Reference = refValue,
+            Reference = nextBits,
             ReadMask = 3,
             WriteMask = 3,
             BothFailOp = EStencilOp.Keep,

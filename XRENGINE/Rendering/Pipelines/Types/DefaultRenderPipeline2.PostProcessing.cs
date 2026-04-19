@@ -13,6 +13,9 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline2
 {
+    private static readonly Vector3 HoverOutlineColor = new(1.0f, 1.0f, 0.0f);
+    private static readonly Vector3 SelectionOutlineColor = new(0.0f, 1.0f, 0.0f);
+
     private const string TemporalFeedbackMinParameterName = "FeedbackMin";
     private const string TemporalFeedbackMaxParameterName = "FeedbackMax";
     private const string TemporalVarianceGammaParameterName = "VarianceGamma";
@@ -1625,6 +1628,8 @@ public partial class DefaultRenderPipeline2
     private void PostProcessFBO_SettingUniforms(XRRenderProgram materialProgram)
     {
         materialProgram.Uniform("OutputHDR", ResolveOutputHDR());
+        materialProgram.Uniform("HoverOutlineColor", HoverOutlineColor);
+        materialProgram.Uniform("SelectionOutlineColor", SelectionOutlineColor);
 
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram);

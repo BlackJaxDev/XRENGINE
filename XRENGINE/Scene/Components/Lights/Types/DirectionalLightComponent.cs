@@ -169,13 +169,15 @@ namespace XREngine.Components.Lights
             program.Uniform($"{flatPrefix}WorldToLightSpaceMatrix", lightViewProj);  // Pre-computed for deferred shadow mapping
 
             Span<float> cascadeSplits = stackalloc float[MaxCascadeRenderCount];
+            Span<float> cascadeBlendWidths = stackalloc float[MaxCascadeRenderCount];
             Span<Matrix4x4> cascadeMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
-            CopyPublishedCascadeUniformData(cascadeSplits, cascadeMatrices, out int cascadeCount);
+            CopyPublishedCascadeUniformData(cascadeSplits, cascadeBlendWidths, cascadeMatrices, out int cascadeCount);
 
             program.Uniform($"{flatPrefix}CascadeCount", cascadeCount);
             for (int i = 0; i < MaxCascadeRenderCount; i++)
             {
                 program.Uniform($"{flatPrefix}CascadeSplits[{i}]", cascadeSplits[i]);
+                program.Uniform($"{flatPrefix}CascadeBlendWidths[{i}]", cascadeBlendWidths[i]);
                 program.Uniform($"{flatPrefix}CascadeMatrices[{i}]", cascadeMatrices[i]);
             }
 

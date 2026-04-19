@@ -46,7 +46,17 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public long TrackedVramBudgetBytes => Engine.Rendering.Stats.VramBudgetBytes;
     public ETwoPlayerPreference TwoPlayerViewportPreference => Engine.GameSettings.TwoPlayerViewportPreference;
     public EThreePlayerPreference ThreePlayerViewportPreference => Engine.GameSettings.ThreePlayerViewportPreference;
-    public RuntimeGraphicsApiKind CurrentRenderBackend => GetRendererBackend(AbstractRenderer.Current);
+    public RuntimeGraphicsApiKind CurrentRenderBackend
+    {
+        get
+        {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null)
+                renderer = Engine.Windows.FirstOrDefault()?.Renderer;
+
+            return GetRendererBackend(renderer);
+        }
+    }
 
     public void LogOutput(string message)
         => Debug.Out(message);

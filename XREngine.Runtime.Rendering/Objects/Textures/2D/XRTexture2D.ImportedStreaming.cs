@@ -206,6 +206,20 @@ public partial class XRTexture2D
         TextureStreamingResidentData residentData,
         bool includeMipChain)
     {
+        // Compute lock mip before overwriting Mipmaps. lockMipLevel = newMipCount - oldMipCount:
+        // the mip in the new chain that has the same physical resolution as old mip 0.
+        // The progressive upload coroutine seeds this level first so the new GL storage never
+        // goes through a fully-black state during promotion.
+        int lockMipLevel = -1;
+        if (includeMipChain
+            && residentData.Mipmaps.Length > 0
+            && texture.Mipmaps is { Length: > 0 }
+            && residentData.Mipmaps.Length > texture.Mipmaps.Length)
+        {
+            lockMipLevel = residentData.Mipmaps.Length - texture.Mipmaps.Length;
+        }
+        texture.StreamingLockMipLevel = lockMipLevel;
+
         texture.Mipmaps = residentData.Mipmaps;
         texture.AutoGenerateMipmaps = false;
         texture.Resizable = false;

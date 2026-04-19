@@ -572,33 +572,18 @@ float XRENGINE_ViewDepthFromWorldPos(vec3 fragPosWS)
     return abs(viewPos.z);
 }
 
-int XRENGINE_GetPrimaryDirLightCascadeIndex(vec3 fragPosWS)
-{
-    if (!UseCascadedDirectionalShadows || !EnableCascadedShadows || DirLightCount <= 0)
-        return -1;
-
-    DirLight primaryLight = DirectionalLights[0];
-    if (primaryLight.CascadeCount <= 0)
-        return -1;
-
-    float viewDepth = XRENGINE_ViewDepthFromWorldPos(fragPosWS);
-    int cascadeCount = min(primaryLight.CascadeCount, XRENGINE_MAX_CASCADES);
-    for (int i = 0; i < cascadeCount; ++i)
-    {
-        if (viewDepth <= primaryLight.CascadeSplits[i])
-            return i;
-    }
-
-    return cascadeCount - 1;
-}
-
-float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor, int cascadeIndex)
+// Returns the cascade shadow value for a specific cascade index.
+// clampToEdge: when true, UV coords are clamped to [0,1] so the last cascade's
+// shadow persists beyond its far split instead of dropping to fully-lit.
+float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor, int cascadeIndex, bool clampToEdge)
 {
     mat4 lightMatrix = DirectionalLights[0].CascadeMatrices[cascadeIndex];
     vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;
     vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
 
-    if (!XRENGINE_ShadowCoordInBounds(fragCoord))
+    if (clampToEdge)
+        fragCoord.xy = clamp(fragCoord.xy, 0.0, 1.0);
+    else if (!XRENGINE_ShadowCoordInBounds(fragCoord))
         return -1.0;
 
     float bias = XRENGINE_GetShadowBias(diffuseFactor);
@@ -639,14 +624,46 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
     if (!ShadowMapEnabled)
         return 1.0;
 
-    int cascadeIndex = XRENGINE_GetPrimaryDirLightCascadeIndex(fragPos);
-    if (cascadeIndex >= 0)
+    if (UseCascadedDirectionalShadows && EnableCascadedShadows && DirLightCount > 0)
     {
-        float cascadeShadow = XRENGINE_ReadCascadeShadowMapDir(fragPos, normal, diffuseFactor, cascadeIndex);
-        if (cascadeShadow >= 0.0)
-            return cascadeShadow;
+        DirLight primaryLight = DirectionalLights[0];
+        if (primaryLight.CascadeCount > 0)
+        {
+            float viewDepth = XRENGINE_ViewDepthFromWorldPos(fragPos);
+            int cascadeCount = min(primaryLight.CascadeCount, XRENGINE_MAX_CASCADES);
+
+            for (int i = 0; i < cascadeCount; ++i)
+            {
+                float splitFar = primaryLight.CascadeSplits[i];
+                bool isLast = (i == cascadeCount - 1);
+
+                if (viewDepth <= splitFar || isLast)
+                {
+                    // Clamp UV for the last cascade so shadows persist beyond its far split.
+                    bool clampToEdge = isLast && viewDepth > splitFar;
+                    float shadow0 = XRENGINE_ReadCascadeShadowMapDir(fragPos, normal, diffuseFactor, i, clampToEdge);
+                    if (shadow0 < 0.0) shadow0 = 1.0;
+
+                    // Blend toward next cascade across the overlap zone.
+                    if (!isLast)
+                    {
+                        float blendWidth = primaryLight.CascadeBlendWidths[i];
+                        if (blendWidth > 0.0 && viewDepth > splitFar - blendWidth)
+                        {
+                            float t = clamp((viewDepth - (splitFar - blendWidth)) / blendWidth, 0.0, 1.0);
+                            float shadow1 = XRENGINE_ReadCascadeShadowMapDir(fragPos, normal, diffuseFactor, i + 1, false);
+                            if (shadow1 < 0.0) shadow1 = shadow0;
+                            return mix(shadow0, shadow1, t);
+                        }
+                    }
+
+                    return shadow0;
+                }
+            }
+        }
     }
 
+    // Fallback: standalone (non-cascade) shadow map.
     mat4 lightMatrix = PrimaryDirLightWorldToLightProjMatrix * inverse(PrimaryDirLightWorldToLightInvViewMatrix);
     vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;
     vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);

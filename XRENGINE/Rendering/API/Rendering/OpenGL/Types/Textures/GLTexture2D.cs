@@ -20,7 +20,7 @@ namespace XREngine.Rendering.OpenGL
         /// synchronous path, but asset textures defer uploads across frames.
         /// </summary>
         private const long ProgressivePushDataThresholdBytes = 4 * 1024;
-        private const long ProgressiveMipUploadChunkBytes = 256 * 1024;
+        private const long ProgressiveMipUploadChunkBytes = 64 * 1024;
 
         private static bool? _supportsTextureFilterAnisotropic;
         private static float _maxSupportedTextureAnisotropy = 1.0f;
@@ -303,7 +303,20 @@ namespace XREngine.Rendering.OpenGL
 
             int mipCount = Mipmaps!.Length;
             int smallestResidentMip = mipCount - 1;
-            int nextMip = smallestResidentMip;
+
+            // Upload the smallest mip synchronously so the texture is never fully black
+            // for an entire frame while the coroutine queues.  A 1–4 px mip is negligible.
+            PushMipmap(glTarget, smallestResidentMip + mipLevelOffset, Mipmaps![smallestResidentMip], internalFormatForce);
+            if (!IsMultisampleTarget)
+            {
+                int seedBase = smallestResidentMip + mipLevelOffset;
+                int seedMax  = smallestResidentMip + mipLevelOffset;
+                Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in seedBase);
+                Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel,  in seedMax);
+            }
+
+            // Start the coroutine one step above the already-uploaded smallest mip.
+            int nextMip = smallestResidentMip - 1;
             int nextMipRow = 0;
             string textureName = string.IsNullOrWhiteSpace(Data.Name)
                 ? BindingId.ToString()
@@ -315,8 +328,12 @@ namespace XREngine.Rendering.OpenGL
                 using var sample = Engine.Profiler.Start(progressiveUploadLabel);
                 if (!IsGenerated)
                 {
-                    // Texture was destroyed before the coroutine finished.
+                    // Texture was destroyed before the coroutine finished — fire the
+                    // post-push callback so the streaming manager can clear the pending
+                    // transition rather than waiting for the stuck-transition timeout.
                     IsPushing = false;
+                    if (allowPostPushCallback)
+                        OnPostPushData();
                     return true;
                 }
 
@@ -365,6 +382,16 @@ namespace XREngine.Rendering.OpenGL
             EPixelInternalFormat? internalFormatForce,
             ref int nextRow)
         {
+            int glLevel = mipLevel - (Data.SparseTextureStreamingEnabled ? Data.SparseTextureStreamingResidentBaseMipLevel : 0);
+            if (!IsMipLevelInAllocatedRange(glLevel))
+            {
+                Debug.OpenGLWarning(
+                    $"[GLTexture2D] Skipping progressive mip upload for '{GetDescribingName()}', mip={mipLevel} (glLevel={glLevel}), " +
+                    $"allocatedLevels={_allocatedLevels}, sparseEnabled={Data.SparseTextureStreamingEnabled}, residentBase={Data.SparseTextureStreamingResidentBaseMipLevel}.");
+                nextRow = 0;
+                return false;
+            }
+
             Mipmap2D mip = info.Mipmap;
             DataSource? data = mip.Data;
             XRDataBuffer? pbo = mip.StreamingPBO;
@@ -399,10 +426,24 @@ namespace XREngine.Rendering.OpenGL
             GLEnum pixelType = ToGLEnum(mip.PixelType);
             InternalFormat internalPixelFormat = ToInternalFormat(internalFormatForce ?? mip.InternalFormat);
 
+            if (!CanUseProgressiveChunkUpload(pixelFormat, pixelType))
+            {
+                if (nextRow == 0)
+                {
+                    Debug.OpenGLWarning(
+                        $"[GLTexture2D] Progressive chunk upload fallback to full mip upload for '{GetDescribingName()}', mip={mipLevel}, " +
+                        $"size={mip.Width}x{mip.Height}, sized={Data.SizedInternalFormat}, internal={internalPixelFormat}, " +
+                        $"pixelFormat={pixelFormat}, pixelType={pixelType}.");
+                }
+
+                nextRow = 0;
+                return false;
+            }
+
             using var uploadSample = Engine.Profiler.Start("GLTexture2D.PushMipmap.UploadChunk");
             PushWithDataRows(
                 glTarget,
-                mipLevel,
+                glLevel,
                 mip.Width,
                 mip.Height,
                 pixelFormat,
@@ -430,7 +471,22 @@ namespace XREngine.Rendering.OpenGL
             {
                 uint w = Math.Max(1u, Data.Width);
                 uint h = Math.Max(1u, Data.Height);
-                uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
+                int requestedLevels = Math.Max(1, Data.SmallestMipmapLevel + 1);
+                if (Data.SparseTextureStreamingEnabled)
+                {
+                    int residentBaseMipLevel = Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel);
+                    int residentMipCount = Math.Max(0, Mipmaps?.Length ?? 0);
+                    int logicalMipCount = Math.Max(0, Data.SparseTextureStreamingLogicalMipCount);
+
+                    // Sparse uploads target logical mip indices (resident base + local mip index).
+                    // Storage must include the full addressed level range, not just resident mip count.
+                    int requiredSparseLevels = logicalMipCount > 0
+                        ? logicalMipCount
+                        : residentBaseMipLevel + residentMipCount;
+                    requestedLevels = Math.Max(requestedLevels, Math.Max(1, requiredSparseLevels));
+                }
+
+                uint levels = (uint)requestedLevels;
                 long requestedBytes = CalculateTextureVRAMSize(w, h, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
                 if (!Engine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
                 {
@@ -654,9 +710,18 @@ namespace XREngine.Rendering.OpenGL
         private unsafe void PushMipmap(GLEnum glTarget, int i, MipmapInfo? info, EPixelInternalFormat? internalFormatForce)
         {
             using var sample = Engine.Profiler.Start("GLTexture2D.PushMipmap");
+            int glLevel = i - (Data.SparseTextureStreamingEnabled ? Data.SparseTextureStreamingResidentBaseMipLevel : 0);
             if (!Data.Resizable && !StorageSet)
             {
                 Debug.OpenGLWarning("Texture storage not set on non-resizable texture, can't push mipmaps.");
+                return;
+            }
+
+            if (StorageSet && !IsMipLevelInAllocatedRange(glLevel))
+            {
+                Debug.OpenGLWarning(
+                    $"[GLTexture2D] Skipping mip upload outside allocated storage for '{GetDescribingName()}': mip={i}, allocatedLevels={_allocatedLevels}, " +
+                    $"sized={Data.SizedInternalFormat}, sparseEnabled={Data.SparseTextureStreamingEnabled}, residentBase={Data.SparseTextureStreamingResidentBaseMipLevel}, logicalMipCount={Data.SparseTextureStreamingLogicalMipCount}.");
                 return;
             }
 
@@ -717,12 +782,12 @@ namespace XREngine.Rendering.OpenGL
             if ((data is not null && data.Length > 0) || pbo is not null)
             {
                 using var uploadSample = Engine.Profiler.Start(fullPush ? "GLTexture2D.PushMipmap.UploadFull" : "GLTexture2D.PushMipmap.UploadSubImage");
-                PushWithData(glTarget, i, mip!.Width, mip.Height, pixelFormat, pixelType, internalPixelFormat, data, pbo, fullPush);
+                PushWithData(glTarget, glLevel, mip!.Width, mip.Height, pixelFormat, pixelType, internalPixelFormat, data, pbo, fullPush);
             }
             else
             {
                 using var uploadSample = Engine.Profiler.Start("GLTexture2D.PushMipmap.AllocateNoData");
-                PushWithNoData(glTarget, i, Data.Width >> i, Data.Height >> i, pixelFormat, pixelType, internalPixelFormat, fullPush);
+                PushWithNoData(glTarget, glLevel, Data.Width >> i, Data.Height >> i, pixelFormat, pixelType, internalPixelFormat, fullPush);
             }
 
             if (info != null)
@@ -783,6 +848,21 @@ namespace XREngine.Rendering.OpenGL
             if (pbo is not null && pbo.Target != EBufferTarget.PixelUnpackBuffer)
                 throw new ArgumentException("PBO must be of type PixelUnpackBuffer.");
 
+            bool uploadParamsAdjusted = SanitizeUploadParams(
+                i,
+                w,
+                h,
+                internalPixelFormat,
+                ref pixelFormat,
+                ref pixelType);
+            if (uploadParamsAdjusted)
+            {
+                Debug.OpenGLWarning(
+                    $"[GLTexture2D] Sanitized TexImage/TexSubImage upload parameters for '{GetDescribingName()}', mip={i}, " +
+                    $"size={w}x{h}, sized={Data.SizedInternalFormat}, internal={internalPixelFormat}, " +
+                    $"pixelFormat={pixelFormat}, pixelType={pixelType}, fullPush={fullPush}, hasPbo={pbo is not null}.");
+            }
+
             // If a non-zero named buffer object is bound to the GL_PIXEL_UNPACK_BUFFER target (see glBindBuffer) while a texture image is specified,
             // the data ptr is treated as a byte offset into the buffer object's data store.
             if (!fullPush || StorageSet)
@@ -829,6 +909,23 @@ namespace XREngine.Rendering.OpenGL
             if (rowCount <= 0)
                 return;
 
+            GLEnum originalPixelFormat = pixelFormat;
+            GLEnum originalPixelType = pixelType;
+            bool uploadParamsAdjusted = SanitizeUploadParams(
+                i,
+                w,
+                h,
+                internalPixelFormat,
+                ref pixelFormat,
+                ref pixelType);
+            if (uploadParamsAdjusted && startRow == 0)
+            {
+                Debug.OpenGLWarning(
+                    $"[GLTexture2D] Sanitized TexSubImage2D row upload parameters for '{GetDescribingName()}', mip={i}, " +
+                    $"size={w}x{h}, rows={startRow}..{startRow + rowCount - 1}, sized={Data.SizedInternalFormat}, internal={internalPixelFormat}, " +
+                    $"pixelFormat={originalPixelFormat}->{pixelFormat}, pixelType={originalPixelType}->{pixelType}.");
+            }
+
             if (fullPush && !StorageSet)
             {
                 Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, data.Address.Pointer);
@@ -837,8 +934,156 @@ namespace XREngine.Rendering.OpenGL
 
             long rowBytes = data.Length / (long)Math.Max(1u, h);
             byte* rowPointer = (byte*)data.Address.Pointer + (startRow * rowBytes);
+            Debug.OpenGLWarning(
+                $"[GLTexture2D] TexSubImage2D PRE '{GetDescribingName()}' mip={i} size={w}x{h} rows={startRow}+{rowCount} " +
+                $"format={pixelFormat} type={pixelType} internal={internalPixelFormat} sized={Data.SizedInternalFormat} storage={StorageSet}");
             Api.TexSubImage2D(glTarget, i, 0, startRow, w, (uint)rowCount, pixelFormat, pixelType, rowPointer);
         }
+
+        private bool CanUseProgressiveChunkUpload(GLEnum pixelFormat, GLEnum pixelType)
+            => IsSupportedTexImagePixelFormat(pixelFormat) && IsSupportedTexImagePixelType(pixelType);
+
+        private bool SanitizeUploadParams(
+            int mipLevel,
+            uint width,
+            uint height,
+            InternalFormat internalPixelFormat,
+            ref GLEnum pixelFormat,
+            ref GLEnum pixelType)
+        {
+            bool formatOk = IsSupportedTexImagePixelFormat(pixelFormat);
+            bool typeOk = IsSupportedTexImagePixelType(pixelType);
+            if (formatOk && typeOk)
+                return false;
+
+            (GLEnum fallbackFormat, GLEnum fallbackType) = GetSafeFallbackUploadParams();
+            if (fallbackFormat == pixelFormat && fallbackType == pixelType)
+                return false;
+
+            Debug.OpenGLWarning(
+                $"[GLTexture2D] Invalid upload format/type detected for '{GetDescribingName()}', mip={mipLevel}, size={width}x{height}, " +
+                $"sized={Data.SizedInternalFormat}, internal={internalPixelFormat}, pixelFormat={pixelFormat}, pixelType={pixelType}. " +
+                $"Using fallback pixelFormat={fallbackFormat}, pixelType={fallbackType}.");
+
+            pixelFormat = fallbackFormat;
+            pixelType = fallbackType;
+            return true;
+        }
+
+        private (GLEnum PixelFormat, GLEnum PixelType) GetSafeFallbackUploadParams()
+            => Data.SizedInternalFormat switch
+            {
+                ESizedInternalFormat.DepthComponent16 => (GLEnum.DepthComponent, GLEnum.UnsignedShort),
+                ESizedInternalFormat.DepthComponent24 => (GLEnum.DepthComponent, GLEnum.UnsignedInt),
+                ESizedInternalFormat.DepthComponent32f => (GLEnum.DepthComponent, GLEnum.Float),
+                ESizedInternalFormat.Depth24Stencil8 => (GLEnum.DepthStencil, GLEnum.UnsignedInt248),
+                ESizedInternalFormat.Depth32fStencil8 => (GLEnum.DepthStencil, GLEnum.Float32UnsignedInt248Rev),
+                ESizedInternalFormat.StencilIndex8 => (GLEnum.StencilIndex, GLEnum.UnsignedByte),
+
+                ESizedInternalFormat.R8i or
+                ESizedInternalFormat.R16i or
+                ESizedInternalFormat.R32i => (GLEnum.RedInteger, GLEnum.Int),
+                ESizedInternalFormat.R8ui or
+                ESizedInternalFormat.R16ui or
+                ESizedInternalFormat.R32ui => (GLEnum.RedInteger, GLEnum.UnsignedInt),
+
+                ESizedInternalFormat.Rg8i or
+                ESizedInternalFormat.Rg16i or
+                ESizedInternalFormat.Rg32i => (GLEnum.RGInteger, GLEnum.Int),
+                ESizedInternalFormat.Rg8ui or
+                ESizedInternalFormat.Rg16ui or
+                ESizedInternalFormat.Rg32ui => (GLEnum.RGInteger, GLEnum.UnsignedInt),
+
+                ESizedInternalFormat.Rgb8i or
+                ESizedInternalFormat.Rgb16i or
+                ESizedInternalFormat.Rgb32i => (GLEnum.RgbInteger, GLEnum.Int),
+                ESizedInternalFormat.Rgb8ui or
+                ESizedInternalFormat.Rgb16ui or
+                ESizedInternalFormat.Rgb32ui => (GLEnum.RgbInteger, GLEnum.UnsignedInt),
+
+                ESizedInternalFormat.Rgba8i or
+                ESizedInternalFormat.Rgba16i or
+                ESizedInternalFormat.Rgba32i => (GLEnum.RgbaInteger, GLEnum.Int),
+                ESizedInternalFormat.Rgba8ui or
+                ESizedInternalFormat.Rgba16ui or
+                ESizedInternalFormat.Rgba32ui => (GLEnum.RgbaInteger, GLEnum.UnsignedInt),
+
+                ESizedInternalFormat.R16f or
+                ESizedInternalFormat.R32f => (GLEnum.Red, GLEnum.Float),
+                ESizedInternalFormat.Rg16f or
+                ESizedInternalFormat.Rg32f => (GLEnum.RG, GLEnum.Float),
+                ESizedInternalFormat.Rgb16f or
+                ESizedInternalFormat.Rgb32f or
+                ESizedInternalFormat.R11fG11fB10f or
+                ESizedInternalFormat.Rgb9E5 => (GLEnum.Rgb, GLEnum.Float),
+                ESizedInternalFormat.Rgba16f or
+                ESizedInternalFormat.Rgba32f => (GLEnum.Rgba, GLEnum.Float),
+
+                ESizedInternalFormat.R8 or
+                ESizedInternalFormat.R8Snorm or
+                ESizedInternalFormat.R16 or
+                ESizedInternalFormat.R16Snorm => (GLEnum.Red, GLEnum.UnsignedByte),
+                ESizedInternalFormat.Rg8 or
+                ESizedInternalFormat.Rg8Snorm or
+                ESizedInternalFormat.Rg16 or
+                ESizedInternalFormat.Rg16Snorm => (GLEnum.RG, GLEnum.UnsignedByte),
+                ESizedInternalFormat.R3G3B2 or
+                ESizedInternalFormat.Rgb4 or
+                ESizedInternalFormat.Rgb5 or
+                ESizedInternalFormat.Rgb8 or
+                ESizedInternalFormat.Rgb8Snorm or
+                ESizedInternalFormat.Rgb10 or
+                ESizedInternalFormat.Rgb12 or
+                ESizedInternalFormat.Rgb16Snorm or
+                ESizedInternalFormat.Srgb8 => (GLEnum.Rgb, GLEnum.UnsignedByte),
+                _ => (GLEnum.Rgba, GLEnum.UnsignedByte),
+            };
+
+        private static bool IsSupportedTexImagePixelFormat(GLEnum pixelFormat)
+            => pixelFormat is
+                GLEnum.Red or
+                GLEnum.Green or
+                GLEnum.Blue or
+                GLEnum.Alpha or
+                GLEnum.RG or
+                GLEnum.Rgb or
+                GLEnum.Bgr or
+                GLEnum.Rgba or
+                GLEnum.Bgra or
+                GLEnum.RedInteger or
+                GLEnum.GreenInteger or
+                GLEnum.BlueInteger or
+                GLEnum.RGInteger or
+                GLEnum.RgbInteger or
+                GLEnum.BgrInteger or
+                GLEnum.RgbaInteger or
+                GLEnum.BgraInteger or
+                GLEnum.DepthComponent or
+                GLEnum.DepthStencil or
+                GLEnum.StencilIndex;
+
+        private bool IsMipLevelInAllocatedRange(int glLevel)
+            => glLevel >= 0 && glLevel < _allocatedLevels;
+
+        private static bool IsSupportedTexImagePixelType(GLEnum pixelType)
+            => pixelType is
+                GLEnum.UnsignedByte or
+                GLEnum.Byte or
+                GLEnum.UnsignedShort or
+                GLEnum.Short or
+                GLEnum.UnsignedInt or
+                GLEnum.Int or
+                GLEnum.HalfFloat or
+                GLEnum.Float or
+                GLEnum.UnsignedByte332 or
+                GLEnum.UnsignedShort565 or
+                GLEnum.UnsignedShort4444 or
+                GLEnum.UnsignedShort5551 or
+                GLEnum.UnsignedInt8888 or
+                GLEnum.UnsignedInt1010102 or
+                GLEnum.UnsignedInt248 or
+                GLEnum.UnsignedInt5999Rev or
+                GLEnum.Float32UnsignedInt248Rev;
 
         protected override void SetParameters()
         {

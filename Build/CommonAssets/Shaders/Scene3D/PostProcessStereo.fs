@@ -9,6 +9,8 @@ uniform sampler2DArray HDRSceneTex; //HDR scene color
 uniform sampler2DArray BloomBlurTexture; //Bloom
 uniform sampler2DArray DepthView; //Depth
 uniform usampler2DArray StencilView; //Stencil
+uniform vec3 HoverOutlineColor = vec3(1.0f, 1.0f, 0.0f);
+uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f);
 
 // 1x1 R32F texture containing the current exposure value (GPU-driven auto exposure)
 uniform sampler2D AutoExposureTex;
@@ -190,6 +192,62 @@ vec3 ApplyVignette(vec3 sceneColor, vec2 uv)
     return mix(sceneColor, Vignette.Color, vignetteFactor);
 }
 
+float GetStencilMaskBit(uint stencilValue, uint bit)
+{
+    return (stencilValue & bit) != 0u ? 1.0f : 0.0f;
+}
+
+vec2 GetStencilOutlineIntensity(vec2 uv, int viewIndex)
+{
+    int outlineSize = 3;
+    ivec2 texSize = textureSize(StencilView, 0).xy;
+    vec2 texelSize = 1.0f / vec2(texSize);
+    vec2 texelX = vec2(texelSize.x, 0.0f);
+    vec2 texelY = vec2(0.0f, texelSize.y);
+
+    uint stencilCurrent = texture(StencilView, vec3(uv, viewIndex)).r;
+    float currentHover = GetStencilMaskBit(stencilCurrent, 1u);
+    float currentSelection = GetStencilMaskBit(stencilCurrent, 2u);
+
+    float hoverOutline = 0.0f;
+    float selectionOutline = 0.0f;
+
+    vec2 zero = vec2(0.0f);
+    vec2 one = vec2(1.0f);
+
+    for (int i = 1; i <= outlineSize; ++i)
+    {
+        float step = float(i);
+        vec2 yPos = clamp(uv + texelY * step, zero, one);
+        vec2 yNeg = clamp(uv - texelY * step, zero, one);
+        vec2 xPos = clamp(uv + texelX * step, zero, one);
+        vec2 xNeg = clamp(uv - texelX * step, zero, one);
+
+        uint sYPos = texture(StencilView, vec3(yPos, viewIndex)).r;
+        uint sYNeg = texture(StencilView, vec3(yNeg, viewIndex)).r;
+        uint sXPos = texture(StencilView, vec3(xPos, viewIndex)).r;
+        uint sXNeg = texture(StencilView, vec3(xNeg, viewIndex)).r;
+
+        if (currentHover == 0.0f)
+        {
+            hoverOutline = max(hoverOutline, GetStencilMaskBit(sYPos, 1u));
+            hoverOutline = max(hoverOutline, GetStencilMaskBit(sYNeg, 1u));
+            hoverOutline = max(hoverOutline, GetStencilMaskBit(sXPos, 1u));
+            hoverOutline = max(hoverOutline, GetStencilMaskBit(sXNeg, 1u));
+        }
+
+        if (currentSelection == 0.0f)
+        {
+            selectionOutline = max(selectionOutline, GetStencilMaskBit(sYPos, 2u));
+            selectionOutline = max(selectionOutline, GetStencilMaskBit(sYNeg, 2u));
+            selectionOutline = max(selectionOutline, GetStencilMaskBit(sXPos, 2u));
+            selectionOutline = max(selectionOutline, GetStencilMaskBit(sXNeg, 2u));
+        }
+    }
+
+    return vec2(hoverOutline, selectionOutline);
+}
+
 void main()
 {
     vec2 uv = FragPos.xy;
@@ -269,6 +327,14 @@ void main()
     ldrSceneColor = ApplyHsvColorGrade(ldrSceneColor);
 
     ldrSceneColor = (ldrSceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
+
+    vec2 outline = GetStencilOutlineIntensity(uv, gl_ViewID_OVR);
+    float hoverOutline = outline.x;
+    float selectionOutline = outline.y;
+    float outlineWeight = max(hoverOutline, selectionOutline);
+    vec3 outlineColor = mix(SelectionOutlineColor, HoverOutlineColor, hoverOutline);
+    ldrSceneColor = mix(ldrSceneColor, outlineColor, outlineWeight);
+
     ldrSceneColor = ApplyVignette(ldrSceneColor, uv);
 
     // Gamma-correct

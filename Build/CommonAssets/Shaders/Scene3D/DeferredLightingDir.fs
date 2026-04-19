@@ -69,6 +69,7 @@ struct DirLight
 	mat4 WorldToLightSpaceMatrix;  // Pre-computed View * Proj for shadow mapping
 	vec3 Direction;
 	float CascadeSplits[MAX_CASCADES];
+	float CascadeBlendWidths[MAX_CASCADES];
 	mat4 CascadeMatrices[MAX_CASCADES];
 	int CascadeCount;
 };
@@ -324,21 +325,6 @@ float ViewDepthFromWorldPos(in vec3 fragPosWS)
 	return abs(viewPos.z);
 }
 
-int GetCascadeIndex(in vec3 fragPosWS)
-{
-	if (!UseCascadedDirectionalShadows || !EnableCascadedShadows || LightData.CascadeCount <= 0)
-		return -1;
-
-	float viewDepth = ViewDepthFromWorldPos(fragPosWS);
-	int cascadeCount = min(LightData.CascadeCount, MAX_CASCADES);
-	for (int i = 0; i < cascadeCount; ++i)
-	{
-		if (viewDepth <= LightData.CascadeSplits[i])
-			return i;
-	}
-
-	return cascadeCount - 1;
-}
 
 //0 is fully in shadow, 1 is fully lit
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
@@ -386,7 +372,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 			ShadowVogelTapCount) * contact;
 }
 
-float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int cascadeIndex)
+float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int cascadeIndex, in bool clampToEdge)
 {
 		if (!LightHasShadowMap)
 			return 1.0f;
@@ -397,10 +383,12 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int ca
 		vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
 		fragCoord = fragCoord * 0.5f + 0.5f;
 
-		if (fragCoord.x < 0.0f || fragCoord.x > 1.0f ||
+		if (clampToEdge)
+			fragCoord.xy = clamp(fragCoord.xy, 0.0f, 1.0f);
+		else if (fragCoord.x < 0.0f || fragCoord.x > 1.0f ||
 			fragCoord.y < 0.0f || fragCoord.y > 1.0f ||
 			fragCoord.z < 0.0f || fragCoord.z > 1.0f)
-			return ReadShadowMap2D(fragPosWS, N, NoL, LightData.WorldToLightSpaceMatrix);
+			return -1.0f;
 
 		float bias = GetShadowBias(NoL);
 		int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
@@ -475,17 +463,55 @@ in vec3 F0)
 				NoL, NoH, NoV, HoV,
 				1.0f, albedo, rms, F0);
 
-		int cascadeIndex = GetCascadeIndex(fragPosWS);
-		float shadow = cascadeIndex >= 0
-			? ReadCascadeShadowMap(fragPosWS, N, NoL, cascadeIndex)
-			: ReadShadowMap2D(fragPosWS, N, NoL, LightData.WorldToLightSpaceMatrix);
+		float shadow = 1.0f;
+		int debugCascadeIndex = -1;
+
+		if (UseCascadedDirectionalShadows && EnableCascadedShadows && LightData.CascadeCount > 0)
+		{
+			float viewDepth = ViewDepthFromWorldPos(fragPosWS);
+			int cascadeCount = min(LightData.CascadeCount, MAX_CASCADES);
+
+			for (int i = 0; i < cascadeCount; ++i)
+			{
+				float splitFar = LightData.CascadeSplits[i];
+				bool isLast = (i == cascadeCount - 1);
+
+				if (viewDepth <= splitFar || isLast)
+				{
+					bool clampToEdge = isLast && viewDepth > splitFar;
+					float s0 = ReadCascadeShadowMap(fragPosWS, N, NoL, i, clampToEdge);
+					if (s0 < 0.0f) s0 = 1.0f;
+					debugCascadeIndex = i;
+
+					if (!isLast)
+					{
+						float blendWidth = LightData.CascadeBlendWidths[i];
+						if (blendWidth > 0.0f && viewDepth > splitFar - blendWidth)
+						{
+							float t = clamp((viewDepth - (splitFar - blendWidth)) / blendWidth, 0.0f, 1.0f);
+							float s1 = ReadCascadeShadowMap(fragPosWS, N, NoL, i + 1, false);
+							if (s1 < 0.0f) s1 = s0;
+							shadow = mix(s0, s1, t);
+							break;
+						}
+					}
+
+					shadow = s0;
+					break;
+				}
+			}
+		}
+		else
+		{
+			shadow = ReadShadowMap2D(fragPosWS, N, NoL, LightData.WorldToLightSpaceMatrix);
+		}
 
 		vec3 result = color * shadow;
 
 		// Debug overlay: tint output with cascade color when enabled
-		if (DebugCascadeColors && cascadeIndex >= 0)
+		if (DebugCascadeColors && debugCascadeIndex >= 0)
 		{
-			vec3 debugColor = CascadeDebugColorTable[cascadeIndex % MAX_CASCADES];
+			vec3 debugColor = CascadeDebugColorTable[debugCascadeIndex % MAX_CASCADES];
 			result = mix(result, debugColor * max(shadow, 0.15), 0.5);
 		}
 
