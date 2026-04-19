@@ -826,7 +826,7 @@ internal sealed class ImportedTextureStreamingManager
     private const int MaxResidentTransitionsPerFrame = 4;
     private const int MaxPromotionTransitionsPerFrame = 2;
     private const int MinTransitionCooldownFrames = 2;
-    private const int PromotionFadeFrames = 10;
+    private const int PromotionFadeFrames = 60;
     private const long MaxPromotionBytesPerFrame = 24L * 1024L * 1024L;
     private const int RecordRefCompactionIntervalFrames = 600;
     private const float PageSelectionFullCoverageThreshold = 0.85f;

@@ -141,32 +141,39 @@ namespace XREngine.Rendering
         }
         public unsafe void SetFromImage(MagickImage image)
         {
-            //lock (_lock)
-            //{
-            XRTexture.GetFormat(image, false, out EPixelInternalFormat internalFormat, out EPixelFormat format, out EPixelType type);
-            InternalFormat = internalFormat;
-            PixelFormat = format;
+            // Always store as RGBA UnsignedByte. This is consistent with the Rgba8 SizedInternalFormat
+            // that ApplyResidentData hardcodes for all streaming textures. Storing as float with the
+            // source channel count causes a GL_INVALID_OPERATION on upload (type/base-format mismatch).
+            InternalFormat = EPixelInternalFormat.Rgba8;
+            PixelFormat = EPixelFormat.Rgba;
+            PixelType = EPixelType.UnsignedByte;
 
-            //PixelType = type;
-            //byte[]? bytes = image.GetPixels().ToByteArray(image.HasAlpha ? PixelMapping.RGBA : PixelMapping.RGB);
-            //Data = bytes is null ? null : new DataSource(bytes);
-
-            var p = image.GetPixels().GetValues() ?? [];
-            //uint channels = p.Channels;
-            //uint colors = image.TotalColors;
-            PixelType = EPixelType.Float;
-            // Keep normalization on the current worker thread. Imported texture decoding
+            // Keep pixel conversion on the current worker thread. Imported texture decoding
             // is already concurrency-limited upstream, and nested Parallel.For calls here
             // oversubscribe the thread pool during large FBX imports.
-            Data = DataSource.Allocate<float>((uint)p!.Length);
-            float* pixels = (float*)Data.Address;
-            const float normalizeU16 = 1.0f / ushort.MaxValue;
-            for (int i = 0; i < p.Length; i++)
-                pixels[i] = p[i] * normalizeU16;
+            var p = image.GetPixels().GetValues() ?? [];
+            int pixelCount = (int)(image.Width * image.Height);
+            int srcChannelCount = (int)image.ChannelCount;
+
+            Data = DataSource.Allocate<byte>((uint)(pixelCount * 4));
+            byte* dst = (byte*)Data.Address;
+            const float normalizeU16 = 255.0f / ushort.MaxValue;
+
+            for (int i = 0; i < pixelCount; i++)
+            {
+                int srcBase = i * srcChannelCount;
+                byte r = (byte)(p[srcBase] * normalizeU16 + 0.5f);
+                byte g = srcChannelCount > 1 ? (byte)(p[srcBase + 1] * normalizeU16 + 0.5f) : r;
+                byte b = srcChannelCount > 2 ? (byte)(p[srcBase + 2] * normalizeU16 + 0.5f) : r;
+                byte a = srcChannelCount > 3 ? (byte)(p[srcBase + 3] * normalizeU16 + 0.5f) : (byte)255;
+                dst[i * 4 + 0] = r;
+                dst[i * 4 + 1] = g;
+                dst[i * 4 + 2] = b;
+                dst[i * 4 + 3] = a;
+            }
 
             Width = image.Width;
             Height = image.Height;
-            //}
         }
 
         public MagickImage GetImage()

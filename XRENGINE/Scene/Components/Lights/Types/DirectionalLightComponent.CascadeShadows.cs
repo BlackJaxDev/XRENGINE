@@ -62,6 +62,7 @@ namespace XREngine.Components.Lights
         {
             public required int CascadeIndex { get; init; }
             public required float SplitFarDistance { get; init; }
+            public required float BlendWidth { get; init; }
             public required Vector3 Center { get; init; }
             public required Vector3 HalfExtents { get; init; }
             public required Quaternion Orientation { get; init; }
@@ -348,7 +349,7 @@ namespace XREngine.Components.Lights
             }
         }
 
-        private void CopyPublishedCascadeUniformData(Span<float> splits, Span<Matrix4x4> matrices, out int cascadeCount)
+        private void CopyPublishedCascadeUniformData(Span<float> splits, Span<float> blendWidths, Span<Matrix4x4> matrices, out int cascadeCount)
         {
             int copyCount = Math.Min(MaxCascadeRenderCount, Math.Min(splits.Length, matrices.Length));
 
@@ -360,11 +361,13 @@ namespace XREngine.Components.Lights
                     if (i < cascadeCount)
                     {
                         splits[i] = _cascadeShadowSlices[i].SplitFarDistance;
+                        blendWidths[i] = _cascadeShadowSlices[i].BlendWidth;
                         matrices[i] = _cascadeShadowSlices[i].WorldToLightSpaceMatrix;
                     }
                     else
                     {
                         splits[i] = float.MaxValue;
+                        blendWidths[i] = 0.0f;
                         matrices[i] = Matrix4x4.Identity;
                     }
                 }
@@ -634,6 +637,7 @@ namespace XREngine.Components.Lights
                     {
                         CascadeIndex = cascadeIndex,
                         SplitFarDistance = splitEnd,
+                        BlendWidth = expand,
                         Center = centerWS,
                         HalfExtents = halfExtents,
                         Orientation = lightRotation,

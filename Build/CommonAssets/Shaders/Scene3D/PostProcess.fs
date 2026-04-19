@@ -49,7 +49,8 @@ struct DirLight
 
 uniform DirLight DirectionalLights[2];
 
-uniform vec3 HighlightColor = vec3(1.0f, 0.0f, 1.0f); // Bright magenta for visibility
+uniform vec3 HoverOutlineColor = vec3(1.0f, 1.0f, 0.0f);
+uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f);
 uniform bool OutputHDR;
 
 struct VignetteStruct
@@ -464,31 +465,60 @@ vec4 ComputeVolumetricFog(vec2 uv)
 
   return vec4(accumulatedScattering, transmittance);
 }
-float GetStencilHighlightIntensity(vec2 uv)
+float GetStencilMaskBit(uint stencilValue, uint bit)
 {
-    int outlineSize = 3; // Increased from 1 to make outline more visible
-    ivec2 texSize = textureSize(HDRSceneTex, 0);
-    vec2 texelSize = 1.0f / texSize;
+  return (stencilValue & bit) != 0u ? 1.0f : 0.0f;
+}
+
+vec2 GetStencilOutlineIntensity(vec2 uv)
+{
+  int outlineSize = 3;
+  ivec2 texSize = textureSize(StencilView, 0);
+  vec2 texelSize = 1.0f / vec2(texSize);
     vec2 texelX = vec2(texelSize.x, 0.0f);
     vec2 texelY = vec2(0.0f, texelSize.y);
-    uint stencilCurrent = texture(StencilView, uv).r;
-    uint selectionBits = stencilCurrent & 1;
-    uint diff = 0;
-    vec2 zero = vec2(0.0f);
 
-    //Check neighboring stencil texels that indicate highlighted/selected
+    uint stencilCurrent = texture(StencilView, uv).r;
+  float currentHover = GetStencilMaskBit(stencilCurrent, 1u);
+  float currentSelection = GetStencilMaskBit(stencilCurrent, 2u);
+
+  float hoverOutline = 0.0f;
+  float selectionOutline = 0.0f;
+
+    vec2 zero = vec2(0.0f);
+  vec2 one = vec2(1.0f);
+
     for (int i = 1; i <= outlineSize; ++i)
     {
-          vec2 yPos = clamp(uv + texelY * i, zero, uv);
-          vec2 yNeg = clamp(uv - texelY * i, zero, uv);
-          vec2 xPos = clamp(uv + texelX * i, zero, uv);
-          vec2 xNeg = clamp(uv - texelX * i, zero, uv);
-          diff += (texture(StencilView, yPos).r & 1) - selectionBits;
-          diff += (texture(StencilView, yNeg).r & 1) - selectionBits;
-          diff += (texture(StencilView, xPos).r & 1) - selectionBits;
-          diff += (texture(StencilView, xNeg).r & 1) - selectionBits;
+      float step = float(i);
+      vec2 yPos = clamp(uv + texelY * step, zero, one);
+      vec2 yNeg = clamp(uv - texelY * step, zero, one);
+      vec2 xPos = clamp(uv + texelX * step, zero, one);
+      vec2 xNeg = clamp(uv - texelX * step, zero, one);
+
+      uint sYPos = texture(StencilView, yPos).r;
+      uint sYNeg = texture(StencilView, yNeg).r;
+      uint sXPos = texture(StencilView, xPos).r;
+      uint sXNeg = texture(StencilView, xNeg).r;
+
+      if (currentHover == 0.0f)
+      {
+        hoverOutline = max(hoverOutline, GetStencilMaskBit(sYPos, 1u));
+        hoverOutline = max(hoverOutline, GetStencilMaskBit(sYNeg, 1u));
+        hoverOutline = max(hoverOutline, GetStencilMaskBit(sXPos, 1u));
+        hoverOutline = max(hoverOutline, GetStencilMaskBit(sXNeg, 1u));
+      }
+
+      if (currentSelection == 0.0f)
+      {
+        selectionOutline = max(selectionOutline, GetStencilMaskBit(sYPos, 2u));
+        selectionOutline = max(selectionOutline, GetStencilMaskBit(sYNeg, 2u));
+        selectionOutline = max(selectionOutline, GetStencilMaskBit(sXPos, 2u));
+        selectionOutline = max(selectionOutline, GetStencilMaskBit(sXNeg, 2u));
+      }
     }
-    return clamp(float(diff), 0.0f, 1.0f);
+
+  return vec2(hoverOutline, selectionOutline);
 }
 
 // Tonemapping selector and shared tonemap operators
@@ -709,9 +739,12 @@ void main()
 	sceneColor = ApplyHsvColorGrade(sceneColor);
 	sceneColor = (sceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
-  //Apply highlight color to selected objects
-  float highlight = GetStencilHighlightIntensity(uv);
-	sceneColor = mix(sceneColor, HighlightColor, highlight);
+  vec2 outline = GetStencilOutlineIntensity(uv);
+  float hoverOutline = outline.x;
+  float selectionOutline = outline.y;
+  float outlineWeight = max(hoverOutline, selectionOutline);
+  vec3 outlineColor = mix(SelectionOutlineColor, HoverOutlineColor, hoverOutline);
+  sceneColor = mix(sceneColor, outlineColor, outlineWeight);
 
   // DEBUG: Visualize raw stencil value - uncomment to see stencil data
   // uint rawStencil = texture(StencilView, uv).r;

@@ -139,6 +139,7 @@ namespace XREngine
                 .WithTypeInspector(inner => new YamlDefaultTypeInspector(inner, applyDefaultTypeOnRead: true))
                 .WithNodeDeserializer(new ViewportRenderCommandContainerYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(new LayerMaskYamlNodeDeserializer(), w => w.OnTop())
+                .WithNodeDeserializer(new InterfaceCollectionYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(
                     inner => new DepthTrackingNodeDeserializer(inner),
                     s => s.InsteadOf<ObjectNodeDeserializer>())

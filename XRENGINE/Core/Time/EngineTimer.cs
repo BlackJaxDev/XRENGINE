@@ -332,24 +332,20 @@ namespace XREngine.Timers
         }
         /// <summary>
         /// Waits for the prerender to finish, then swaps buffers and dispatches a render.
-        /// Drains a few render-thread jobs between polls so queued GPU work
-        /// (texture uploads, property updates) is spread across the wait instead of
-        /// bursting at the start of the next frame.
+        /// Render-thread maintenance work is intentionally not drained here so the
+        /// next frame's draw work always wins over background GPU uploads.
         /// </summary>
         public void WaitToRender()
         {
             // Wait for the collect-visible thread to finish swapping buffers.
             while (!_swapDone.Wait(0))
-            {
-                Engine.ProcessMainThreadTasks();
-            }
+                Thread.Yield();
             _swapDone.Reset();
 
-            // Suspend this thread until a render is dispatched, draining queued work between polls.
+            // Suspend this thread until a render is dispatched. Keep the loop responsive,
+            // but do not steal time from the upcoming render by draining queued jobs here.
             while (!DispatchRender())
-            {
-                Engine.ProcessMainThreadTasks();
-            }
+                Thread.Yield();
 
             // Inform the update thread that the render is done
             _renderDone.Set();

@@ -886,6 +886,16 @@ namespace XREngine.Rendering
                 using var doRenderSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.DoRender");
                 Window.DoRender();
             }
+
+            if (_isDisposed || _isDisposing)
+                return;
+
+            using (var mainThreadJobsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.PostRenderMainThreadJobs"))
+            {
+                // Draw the frame first, then spend a small budget on queued GPU work.
+                // This keeps texture uploads and property updates from delaying visible rendering.
+                Engine.ProcessMainThreadTasks();
+            }
         }
 
         private bool ShouldBeRendering()

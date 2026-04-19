@@ -86,7 +86,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         // Clear previous selection highlights
         foreach (var material in _currentSelectionHighlightMaterials)
-            DefaultRenderPipeline.SetHighlighted(material, false);
+            DefaultRenderPipeline.SetHighlighted(material, false, isSelection: true);
         _currentSelectionHighlightMaterials.Clear();
 
         if (!SelectionOutlineEnabled)
@@ -369,7 +369,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private XRMeshRenderer? _stippledTriangleRenderer;
     private XRMesh? _stippledTriangleMesh;
 
-    private bool _hoverOutlineEnabled = false;
+    private bool _hoverOutlineEnabled = true;
     /// <summary>
     /// If true, renders an outline around the mesh currently under the cursor using stencil buffer.
     /// </summary>
@@ -1398,9 +1398,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                     MeshVertexPickResult vertexHit => vertexHit.FaceHit.Mesh?.CurrentLODRenderer?.Material,
                     _ => null
                 };
-                // Skip materials that are already highlighted for selection
-                if (firstHitMaterial is not null && _currentSelectionHighlightMaterials.Contains(firstHitMaterial))
-                    firstHitMaterial = null;
             }
 
             if (point is null)
