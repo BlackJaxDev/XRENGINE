@@ -597,6 +597,12 @@ namespace XREngine
         /// <returns><c>true</c> if the asset type should use the third-party caching mechanism; otherwise, <c>false</c>.</returns>
         private static bool ShouldUseThirdPartyCache(Type assetType)
         {
+            // Plain text sources already load cheaply from disk, and standalone TextFile assets
+            // intentionally serialize as raw text instead of YAML asset graphs. Routing them
+            // through the third-party cache produces invalid *.asset payloads.
+            if (typeof(TextFile).IsAssignableFrom(assetType))
+                return false;
+
             return true;
         }
 

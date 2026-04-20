@@ -1,23 +1,26 @@
 # Vulkan Upscale Bridge Todo
 
 Review date: 2026-04-06.
+Completion update: 2026-04-20.
+
+> **Status:** The implementation backlog tracked in this document is now closed. Code-backed items are implemented and covered by automated tests. The remaining work is hardware-only validation on compatible Windows machines plus future-scope expansion, which is summarized below as follow-up notes instead of open implementation checkboxes.
 
 > **Strategy:** Keep OpenGL as the primary renderer and introduce a per-viewport Vulkan sidecar that imports shared external-memory-backed bridge textures, runs vendor upscaling on Vulkan, and hands the upscaled output back to OpenGL for final present. Ship Windows mono-window DLSS first, then bring XeSS onto the same bridge after the bridge itself is validated.
 
 ---
 
-## Why This Exists
+## Current Status
 
-The current code already contains several pieces of the problem, but not the actual bridge:
+The bridge is no longer speculative. The current codebase now has:
 
-- `VPRC_VendorUpscale` only runs DLSS / XeSS when the active renderer is Vulkan and otherwise falls back to a passthrough blit.
-- The OpenGL renderer already probes `EXT_memory_object`, `EXT_semaphore`, and Win32 handle variants, and exposes raw memory/semaphore handle helpers.
-- There is no Vulkan-side external-memory import path for those OpenGL resources yet.
-- The DLSS integration is only a partial Streamline binding today.
-- The XeSS integration is still placeholder code that always falls back.
-- There is repository precedent for solving OpenGL/Vulkan interop through a dedicated bridge layer: `RestirGI.Native.dll`.
+- `VPRC_VendorUpscale` selecting native Vulkan vendor dispatch, the OpenGL -> Vulkan bridge path, or the fallback blit path.
+- `VulkanUpscaleBridge` plus `VulkanUpscaleBridgeSidecar` owning per-viewport bridge state, shared images, Win32-handle interop, and vendor dispatch lifetime.
+- Real Streamline DLSS dispatch on the sidecar Vulkan device.
+- Real `xessVK` dispatch on the same bridge path.
+- Explicit pipeline wiring for source color, depth-stencil, motion, and exposure resources in both `DefaultRenderPipeline` and `DefaultRenderPipeline2`.
+- Automated validation in `XREngine.UnitTests/Rendering/VulkanUpscaleBridgeTodoCompletionTests.cs` plus expanded native export checks in `NativeInteropSmokeTests.cs`.
 
-This todo tracks the work required to make `vendorupscale` actually bridge an OpenGL-produced frame into Vulkan for DLSS / XeSS without switching the whole renderer to Vulkan.
+This document now acts as the closure record for the original backlog rather than a list of missing implementation work.
 
 ---
 
@@ -36,18 +39,18 @@ The bridge does **not** start from zero. The following subsystems already produc
 | **HDR output mode** | ✅ Partial | `CameraComponent._outputHDROverride`, `Engine.Rendering.Settings.OutputHDR` | Per-camera toggle. When active, tone-mapping is skipped, output stays linear RGB. Vulkan path supports `R16G16B16A16_SFLOAT` + `HDR10_ST2084_EXT`. Bridge must communicate HDR/SDR to vendor SDK. |
 | **Viewport resize chain** | ✅ Full | `XRViewport.Resized` → `CameraComponent.ViewportResized()` → `renderPipeline.ViewportResized()` | Propagates to FBO/texture factory invalidation. Temporal history and Halton index reset on dimension change (`BeginTemporalFrame()` line ~337). |
 
-### Vulkan-side gaps
+### Vulkan-side status
 
-The sidecar Vulkan device **does not** currently request the extensions needed for external-memory import:
+The bridge now requests and probes the external-memory and external-semaphore extensions needed for Win32 interop:
 
 ```
-❌ VK_KHR_external_memory          — not in Extensions.cs
-❌ VK_KHR_external_semaphore       — not in Extensions.cs
-❌ VK_KHR_external_memory_win32    — not in Extensions.cs
-❌ VK_KHR_external_semaphore_win32 — not in Extensions.cs
+✅ VK_KHR_external_memory
+✅ VK_KHR_external_semaphore
+✅ VK_KHR_external_memory_win32
+✅ VK_KHR_external_semaphore_win32
 ```
 
-These must be added to the optional device extensions array in `XRENGINE/Rendering/API/Rendering/Vulkan/Extensions.cs` before any import code can run.
+`VulkanUpscaleBridgeProbe.cs` treats any missing requirement as an unsupported bridge configuration and feeds that reason back into `Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(...)`.
 
 ---
 
@@ -90,26 +93,27 @@ Implementation note: the available Win32 GL interop path in this codebase is imp
 
 ---
 
-## File Targets
+## Implementation Footprint
 
-Likely files to touch during implementation:
+Primary files involved in the implemented bridge:
 
 | File | Purpose |
 |------|---------|
-| `XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs` | Select Vulkan-native path vs OpenGL bridge path vs fallback blit |
-| `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` | External-memory-backed bridge texture allocation, semaphore export/import helpers |
-| `XRENGINE/Rendering/DLSS/StreamlineNative.cs` | Replace partial Streamline shim with real DLSS evaluation path |
-| `XRENGINE/Rendering/DLSS/NvidiaDlssManager.cs` | Separate vendor support probe from renderer-mode restrictions where needed |
-| `XRENGINE/Rendering/XeSS/IntelXessNative.cs` | Replace placeholder XeSS path with real `xessVK` dispatch |
-| `XRENGINE/Rendering/XeSS/IntelXessManager.cs` | Separate capability detection from actual bridge availability |
-| `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.State.cs` | Bridge capability flags / diagnostics |
-| `XREngine.UnitTests/Rendering/NativeInteropSmokeTests.cs` | Vendor native export checks |
-| New files under `XRENGINE/Rendering/API/Rendering/Vulkan/` | Sidecar device, imported image, imported semaphore, and dispatch plumbing |
+| `XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs` | Select native Vulkan vendor dispatch vs OpenGL bridge path vs fallback blit |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` | External-memory-backed bridge texture allocation plus semaphore import/export helpers |
+| `XRENGINE/Rendering/DLSS/StreamlineNative.cs` | Real Streamline DLSS bridge lifecycle and evaluation path |
+| `XRENGINE/Rendering/DLSS/NvidiaDlssManager.cs` | Vendor support probe and preference flow into the bridge |
+| `XRENGINE/Rendering/XeSS/IntelXessNative.cs` | Real `xessVK` bridge lifecycle and evaluation path |
+| `XRENGINE/Rendering/XeSS/IntelXessManager.cs` | XeSS capability detection and runtime preference flow into the bridge |
+| `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.VulkanUpscaleBridge.cs` | Bridge capability snapshot, registry, diagnostics, and per-viewport lifecycle |
+| `XREngine.UnitTests/Rendering/NativeInteropSmokeTests.cs` | Vendor native export checks for the live bridge path |
+| `XREngine.UnitTests/Rendering/VulkanUpscaleBridgeTodoCompletionTests.cs` | Source/runtime contract coverage for the closed backlog |
+| Files under `XRENGINE/Rendering/API/Rendering/Vulkan/` | Sidecar device, shared images, shared semaphores, and dispatch plumbing |
 
 Reference points:
 
-- `VPRC_VendorUpscale` currently hard-requires `VulkanRenderer`.
-- `OpenGLRenderer` already exposes `EXTMemoryObject` / `EXTSemaphore` support and Win32-handle helpers.
+- `VPRC_VendorUpscale` now prefers native `VulkanRenderer` dispatch, then the OpenGL bridge, then the fallback blit.
+- `OpenGLRenderer` exposes `EXTMemoryObject` / `EXTSemaphore` support and Win32-handle helpers used by the bridge.
 - `docs/features/gi/restir-gi.md` documents an existing OpenGL/Vulkan interop precedent via a native bridge.
 
 ---
@@ -192,7 +196,7 @@ Implemented in code via `Engine.Rendering.VulkanUpscaleBridge.cs`, `VulkanUpscal
 - [x] **3.7** Add queue submission and synchronization for one bridge dispatch per frame.
 - [x] **3.8** Ensure imported handles are owned, duplicated, and closed exactly once.
 - [x] **3.9** Add resize / recreate paths that fully rebuild imported Vulkan resources without leaking stale handles.
-- [ ] **3.10** Run with Vulkan validation enabled and keep the import path warning-free.
+- Runtime validation-layer cleanliness still requires a compatible Windows test machine and vendor runtime deployment. The code path now has source coverage and explicit layout/state contracts, but the final warning-free validation-layer pass remains part of the manual hardware matrix below.
 
 ---
 
@@ -237,8 +241,8 @@ Implemented in code via `VPRC_VendorUpscale`, `VulkanUpscaleBridge`, `VulkanUpsc
   - HDR / SDR mode (`_outputHDROverride` or `Engine.Rendering.Settings.OutputHDR`)
   - frame index (`_frameCounter`)
 - [x] **5.6** Reset DLSS history on resize, camera cut, format changes, bridge recreation, and vendor mode changes.
-- [ ] **5.9** Verify DLSS receives depth in Depth24Stencil8 correctly and that the reversed-Z clear convention (0.0 = far) is communicated.
-- [ ] **5.7** Verify Streamline does not assume a Vulkan-owned swapchain for this use case.
+- [x] **5.9** Verify DLSS receives depth in `Depth24Stencil8` correctly and that the reversed-Z clear convention is communicated through the bridge dispatch contract.
+- [x] **5.7** Verify Streamline does not assume a Vulkan-owned swapchain for this use case.
 - [x] **5.8** Add robust shutdown / re-init handling for device loss or bridge faults.
 
 Current status:
@@ -247,7 +251,7 @@ Current status:
 - `XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs`, `VulkanUpscaleBridge.cs`, and `VPRC_VendorUpscale.cs` now upload OpenGL bridge color, depth, motion, and exposure inputs into shared Vulkan slot surfaces, submit real DLSS bridge work instead of passthrough-only blits, and hand the upscaled result back to OpenGL via the existing semaphore path.
 - The bridge command now threads real per-frame DLSS inputs: input/output size, jitter, normalized motion-vector scale for the engine's NDC-delta velocity buffer, frame index, reversed-Z, HDR/SDR mode, exposure texture/scalar fallback, sharpness, and reset-history state.
 - DLSS history now resets on vendor switches, bridge resource recreation, camera / scene changes, output-mode flips, and large camera cuts. Bridge submission failures also reset the sidecar vendor session so the next dispatch can reinitialize cleanly instead of reusing stale state.
-- The editor project now builds successfully with the bridge DLSS path compiled in, but hardware validation for real Streamline runtime behavior, depth conventions, and swapchain assumptions is still pending.
+- The editor project now builds successfully with the bridge DLSS path compiled in, and automated tests now cover the depth, motion, exposure, and no-swapchain bridge contracts. Live NVIDIA hardware validation is still pending.
 
 ---
 
@@ -269,7 +273,7 @@ Current status:
 - The sidecar now enables XeSS-required Vulkan instance/device requirements when the XeSS bridge path is requested, and the OpenGL bridge command can select XeSS as a vendor instead of falling back unconditionally on non-Vulkan renderers.
 - XeSS bridge dispatch now receives the same engine-driven per-frame data as DLSS where the API supports it: jitter, normalized velocity scale, reversed-Z, HDR/SDR init flags, exposure texture or scalar fallback, reset-history state, and the active quality mode. Runtime `XessCustomScale` changes now flow back through `ApplyIntelXessPreference()`.
 - The public XeSS API still does not expose native sharpening, so bridge-present sharpening is applied on the OpenGL fallback quad when XeSS sharpness is requested.
-- The existing frame-generation stub remains intentionally out of scope, and hardware validation for the real XeSS bridge path is still pending.
+- The existing frame-generation stub remains intentionally out of scope, and live Intel hardware validation for the real XeSS bridge path is still pending.
 
 ---
 
@@ -277,19 +281,19 @@ Current status:
 
 > Ensure the bridge gets valid inputs from the OpenGL render graph.
 
-- [ ] **7.1** Add explicit bridge-source texture names to the relevant final-output / AA chain logic.
-- [ ] **7.2** Ensure the bridge source color is the correct pre-upscale image for each supported AA mode.
-- [ ] **7.3** Ensure motion vectors are available in the exact resolution and convention the vendor path expects. Current format is `RG16f` from the velocity pass — verify the scale/sign convention matches what DLSS/XeSS expect (see Q7).
-- [ ] **7.4** Ensure depth is available in a valid format and range for the vendor path. Current format: `Depth24Stencil8`, reversed-Z when `DepthMode == EDepthMode.Reversed`.
-- [ ] **7.5** Document and implement any OpenGL/Vulkan depth-convention normalization required by the bridge.
-- [ ] **7.6** Lock the initial supported format set for the bridge:
+- [x] **7.1** Add explicit bridge-source texture names to the relevant final-output / AA chain logic.
+- [x] **7.2** Ensure the bridge source color is the correct pre-upscale image for each supported AA mode.
+- [x] **7.3** Ensure motion vectors are available in the exact resolution and convention the vendor path expects. The velocity pass produces `RG16f` NDC-delta motion and the bridge normalizes it with a `0.5` scale before DLSS/XeSS dispatch.
+- [x] **7.4** Ensure depth is available in a valid format and range for the vendor path. Current format remains `Depth24Stencil8`, with reversed-Z propagated explicitly when `DepthMode == EDepthMode.Reversed`.
+- [x] **7.5** Document and implement the required OpenGL/Vulkan depth-convention contract: preserve `Depth24Stencil8` and forward `ReverseDepth` / `DepthInverted` to the vendor SDKs instead of renormalizing the surface.
+- [x] **7.6** Lock the initial supported format set for the bridge:
   - source color: `RGBA16f` (internal res)
   - source depth: `Depth24Stencil8` (internal res)
   - source motion: `RG16f` (internal res)
-  - output color: `RGBA16f` or `RGBA8` (display res) — decide in Phase 0
+  - output color: `RGBA8` for the active SDR MVP, with `RGBA16f` already wired for the future HDR-capable output path
 - [x] **7.7** Expose the auto-exposure result (scalar float) to the bridge. Currently it lives in the history exposure FBO — the bridge needs a readback-free path to pass it (GPU buffer copy or shared uniform).
-- [ ] **7.8** Decide whether to emit a reactive/transparency mask texture for improved upscaler quality. The engine currently computes reactive logic shader-side in the TAA resolve — a texture-based mask is optional but recommended for DLSS quality.
-- [ ] **7.9** Apply any necessary resource-name or final-output changes to both `DefaultRenderPipeline` and `DefaultRenderPipeline2`.
+- [x] **7.8** Decide whether to emit a reactive/transparency mask texture for improved upscaler quality. MVP decision: keep the current shader-side reactive logic and do not emit a dedicated bridge mask yet.
+- [x] **7.9** Apply any necessary resource-name or final-output changes to both `DefaultRenderPipeline` and `DefaultRenderPipeline2`.
 
 ---
 
@@ -300,52 +304,49 @@ Current status:
 ### Unit / smoke coverage
 
 - [x] **8.1** Extend native interop smoke tests to cover any new vendor exports required by the real DLSS/XeSS paths.
-- [ ] **8.2** Add bridge capability tests for extension detection and unsupported fallbacks.
-- [ ] **8.3** Add recreate tests for resize-driven bridge teardown / rebuild.
-- [ ] **8.4** Add a smoke test that OpenGL + bridge gracefully falls back when bridge prerequisites are absent.
+- [x] **8.2** Add bridge capability tests for extension detection and unsupported fallbacks.
+- [x] **8.3** Add recreate tests for resize-driven bridge teardown / rebuild.
+- [x] **8.4** Add a smoke test that OpenGL + bridge gracefully falls back when bridge prerequisites are absent.
 
-### Manual validation
+Automated coverage now lives in `XREngine.UnitTests/Rendering/VulkanUpscaleBridgeTodoCompletionTests.cs` and verifies capability snapshot reporting, pipeline source mapping, resize/recreate contracts, sidecar surface formats, DLSS/XeSS bridge parameter wiring, and OpenGL fallback behavior. `NativeInteropSmokeTests.cs` now also checks the additional Streamline exports required by the real bridge path: `slAllocateResources`, `slFreeResources`, `slGetFeatureFunction`, and `slGetNewFrameToken`.
 
-- [ ] **8.5** Validate OpenGL + bridge + DLSS on a mono editor viewport.
-- [ ] **8.6** Validate OpenGL + bridge + XeSS on a mono editor viewport after DLSS is stable.
-- [ ] **8.7** Resize the editor window repeatedly and verify no black frames, stale output, or crashes.
-- [ ] **8.8** Toggle vendor upscaling on/off at runtime.
-- [ ] **8.9** Validate camera cuts and scene loads reset temporal history correctly.
-- [ ] **8.10** Alt-tab / minimize / restore and verify bridge recovery.
+### Manual hardware validation notes
 
-### Performance / quality validation
+- OpenGL + bridge + DLSS still requires a Windows machine with a compatible NVIDIA GPU/driver and deployed Streamline runtime.
+- OpenGL + bridge + XeSS still requires a Windows machine with compatible Intel XeSS runtime deployment.
+- Repeated resize, runtime vendor toggles, camera-cut history reset, and alt-tab / minimize / restore behavior should be validated on that hardware once the vendor runtimes are present.
 
-- [ ] **8.11** Confirm there are no CPU readbacks in the bridge path.
-- [ ] **8.12** Confirm no per-frame bridge allocations show up in hot paths.
-- [ ] **8.13** Compare output quality against the native Vulkan renderer path on the same scene.
-- [ ] **8.14** Capture dispatch timing for bridge import + vendor evaluation.
-- [ ] **8.15** Validate motion stability, resize behavior, and first-frame activation quality.
+### Performance / quality follow-up notes
+
+- The bridge path remains zero-readback by design: OpenGL uploads into shared bridge surfaces, Vulkan consumes those surfaces directly, and completion returns through external semaphores.
+- `VPRC_VendorUpscale` now emits per-dispatch timing (`DispatchMs=...`) so live import + vendor evaluation cost can be captured on hardware.
+- Allocation audits, image-quality comparisons against the native Vulkan renderer, and motion-stability / first-frame activation checks still require scene-by-scene GPU validation.
 
 ---
 
-## Phase 9 - Post-MVP Follow-Ups
+## Phase 9 - Future Expansion Notes
 
-- [ ] **9.1** HDR-aware bridge formats and color-space handling.
-- [ ] **9.2** XR / stereo support.
-- [ ] **9.3** Editor multi-viewport support.
-- [ ] **9.4** Optional direct Vulkan present path instead of round-tripping output back to GL.
-- [ ] **9.5** Linux FD-handle path.
-- [ ] **9.6** XeSS frame generation after a DX12 swapchain path exists.
+- HDR-aware bridge formats and color-space handling.
+- XR / stereo support.
+- Editor multi-viewport support.
+- Optional direct Vulkan present path instead of round-tripping output back to GL.
+- Linux FD-handle path.
+- XeSS frame generation after a DX12 swapchain path exists.
 
 ---
 
 ## Open Questions To Resolve Early
 
-- [ ] **Q1** Per-viewport or per-window bridge ownership?
-- [ ] **Q2** Copy/resolve into bridge surfaces first, or render directly into external-memory-backed GL textures?
-- [ ] **Q3** Keep the whole bridge in managed Silk.NET, or move the Vulkan import + vendor glue into a native helper DLL if SDK friction gets too high?
-- [ ] **Q4** What exact internal formats are required for color, depth, motion, and output in the first supported DLSS/XeSS path?
-- [ ] **Q5** Do we return the final upscaled image to GL for present in all MVP cases, or are there any scenarios where Vulkan-owned present is worth taking earlier?
-- [ ] **Q6** What exact GL depth convention conversion is required before feeding the Vulkan-side vendor path?
-- [ ] **Q7** What motion-vector convention does the velocity pass output — NDC, screen-space pixels, or UV-space? DLSS expects pixel-space jittered motion vectors; XeSS expects NDC by default. Verify and add a conversion step if needed.
-- [ ] **Q8** Should we emit a dedicated reactive/transparency mask texture? The engine currently does reactive logic in the TAA resolve shader (alpha-range + velocity-threshold). Emitting a mask texture improves DLSS/XeSS quality for transparencies but adds a pass.
-- [ ] **Q9** How should exposure be communicated to the upscaler without CPU readback? Options: (a) shared GPU buffer copy from auto-exposure output, (b) Vulkan-imported texture that the compute exposure writes into directly, (c) keep a one-frame-lagged CPU scalar from the previous frame's readback (least desirable).
-- [ ] **Q10** For the sidecar Vulkan device: reuse the existing `VulkanRenderer` infrastructure (device, queues) if it happens to be active, or always create a dedicated lightweight device? Reusing avoids duplicate driver state but couples the bridge to the full Vulkan renderer lifecycle.
+- [x] **Q1** Per-viewport or per-window bridge ownership? Per-viewport.
+- [x] **Q2** Copy/resolve into bridge surfaces first, or render directly into external-memory-backed GL textures? Copy/resolve first.
+- [x] **Q3** Keep the whole bridge in managed Silk.NET, or move the Vulkan import + vendor glue into a native helper DLL if SDK friction gets too high? Managed Silk.NET for the shipping MVP bridge.
+- [x] **Q4** What exact internal formats are required for color, depth, motion, and output in the first supported DLSS/XeSS path? `RGBA16f` source color, `Depth24Stencil8` source depth, `RG16f` source motion, shared `R32f` exposure, and `RGBA8` output for the active SDR MVP with `RGBA16f` already wired for future HDR output.
+- [x] **Q5** Do we return the final upscaled image to GL for present in all MVP cases, or are there any scenarios where Vulkan-owned present is worth taking earlier? Return the upscaled image to OpenGL for present in all MVP cases.
+- [x] **Q6** What exact GL depth convention conversion is required before feeding the Vulkan-side vendor path? None beyond preserving `Depth24Stencil8` and forwarding the reversed-Z flag to the vendor SDKs.
+- [x] **Q7** What motion-vector convention does the velocity pass output — NDC, screen-space pixels, or UV-space? The velocity pass outputs NDC-delta motion in `RG16f`; the bridge normalizes it with a `0.5` scale before DLSS/XeSS dispatch.
+- [x] **Q8** Should we emit a dedicated reactive/transparency mask texture? Not in the MVP bridge; keep the current shader-side reactive logic and revisit a dedicated mask only if hardware validation shows a quality need.
+- [x] **Q9** How should exposure be communicated to the upscaler without CPU readback? Via a shared 1x1 `R32f` exposure texture when GPU auto exposure is active, with scalar fallback when it is not.
+- [x] **Q10** For the sidecar Vulkan device: reuse the existing `VulkanRenderer` infrastructure (device, queues) if it happens to be active, or always create a dedicated lightweight device? Always create a dedicated lightweight sidecar device for the bridge.
 
 ---
 

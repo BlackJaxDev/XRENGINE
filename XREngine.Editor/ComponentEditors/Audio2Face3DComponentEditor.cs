@@ -52,9 +52,9 @@ public sealed class Audio2Face3DComponentEditor : IXRComponentEditor
         else
         {
             ImGui.TextDisabled($"Live Connection: {(component.IsLiveConnected ? "Connected" : "Disconnected")}");
-            if (!Audio2Face3DLiveClientRegistry.HasAdapter)
+            if (!Audio2Face3DRegistry.HasAdapter)
             {
-                ImGui.TextWrapped(Audio2Face3DLiveClientRegistry.MissingAdapterMessage);
+                ImGui.TextWrapped(Audio2Face3DRegistry.MissingAdapterMessage);
             }
         }
 

@@ -175,6 +175,14 @@ namespace XREngine
             if (TryResolveAssetPathFromScalar(candidate, out var resolvedPath))
             {
                 reader.Consume<Scalar>();
+
+                // Backing text files (for example XRShader.Source) should stay local to the
+                // parent asset deserialize. Loading them through AssetManager would register the
+                // raw source file as a top-level asset for the same path, which then fights the
+                // owning XRShader in the global path cache.
+                if (TryLoadUntrackedTextAsset(resolvedPath, expectedType, out value))
+                    return true;
+
                 if (DeferredAssetReferenceContext.TryDeferAssetLoad(resolvedPath, expectedType, out XRAsset? deferredAsset))
                 {
                     value = deferredAsset;
@@ -198,6 +206,36 @@ namespace XREngine
             reader.Consume<Scalar>();
             value = null;
             return true;
+        }
+
+        private static bool TryLoadUntrackedTextAsset(string resolvedPath, Type expectedType, out object? value)
+        {
+            value = null;
+
+            if (!typeof(TextFile).IsAssignableFrom(expectedType))
+                return false;
+
+            try
+            {
+                if (Activator.CreateInstance(expectedType) is not TextFile textFile)
+                    return false;
+
+                textFile.OriginalPath = resolvedPath;
+                textFile.FilePath = resolvedPath;
+                textFile.Name = Path.GetFileNameWithoutExtension(resolvedPath);
+
+                if (!textFile.Load3rdParty(resolvedPath))
+                    return false;
+
+                textFile.ClearDirty();
+                value = textFile;
+                return true;
+            }
+            catch
+            {
+                value = null;
+                return false;
+            }
         }
 
         private static bool TryResolveAssetPathFromScalar(string scalar, [NotNullWhen(true)] out string? resolvedPath)

@@ -114,8 +114,8 @@ namespace XREngine.Components
             ReleaseSession(markComponentDisconnected: true, error: null);
             UnregisterTick(ETickGroup.Late, ETickOrder.Animation, PumpBridge);
 
-            if (AutoRegisterAdapter && ReferenceEquals(Audio2Face3DLiveClientRegistry.Adapter, SharedAdapter))
-                Audio2Face3DLiveClientRegistry.Adapter = null;
+            if (AutoRegisterAdapter && ReferenceEquals(Audio2Face3DRegistry.Adapter, SharedAdapter))
+                Audio2Face3DRegistry.Adapter = null;
 
             base.OnComponentDeactivated();
         }
@@ -171,13 +171,13 @@ namespace XREngine.Components
             if (!AutoRegisterAdapter)
                 return;
 
-            if (Audio2Face3DLiveClientRegistry.Adapter is null || ReferenceEquals(Audio2Face3DLiveClientRegistry.Adapter, SharedAdapter))
+            if (Audio2Face3DRegistry.Adapter is null || ReferenceEquals(Audio2Face3DRegistry.Adapter, SharedAdapter))
             {
-                Audio2Face3DLiveClientRegistry.Adapter = SharedAdapter;
+                Audio2Face3DRegistry.Adapter = SharedAdapter;
                 return;
             }
 
-            LastBridgeError = "Audio2Face3DLiveClientRegistry.Adapter is already assigned to a different live adapter. Clear that adapter or disable AutoRegisterAdapter to avoid the conflict.";
+            LastBridgeError = "Audio2Face3DRegistry.Adapter is already assigned to a different live adapter. Clear that adapter or disable AutoRegisterAdapter to avoid the conflict.";
         }
 
         private void AttachMicrophone()

@@ -2218,7 +2218,11 @@ namespace XREngine.Rendering.Commands
             if (!mapped.IsValid || !_lodTransitionBuffer.TryGetAddress(out VoidPtr cpuAddress) || !cpuAddress.IsValid)
                 return;
 
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.ShaderStorage);
+            // Collect-visible mutates the CPU-side command buffers too, but only the render thread
+            // may issue GL barriers. Off-thread callers fall back to the persistently mapped view.
+            if (Engine.IsRenderThread)
+                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.ShaderStorage);
+
             Memory.Move(cpuAddress, mapped, _lodTransitionBuffer.Length);
         }
 
@@ -2512,9 +2516,9 @@ namespace XREngine.Rendering.Commands
 
                     // Skip commands that opt out of GPU indirect dispatch (e.g., skybox, fullscreen effects)
                     var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                    if (material?.RenderOptions?.ExcludeFromGpuIndirect == true)
+                    if (meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true)
                     {
-                        SceneLog($"Skipping mesh command due to ExcludeFromGpuIndirect flag. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
+                        SceneLog($"Skipping mesh command due to CPU fallback/ExcludeFromGpuIndirect flag. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
                         continue;
                     }
 
@@ -3338,14 +3342,21 @@ namespace XREngine.Rendering.Commands
             {
                 SyncLodTransitionBufferFromGpu();
                 if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices) || indices.Count == 0)
-                    return false;
+                {
+                    var missingMaterial = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
+                    if (meshCmd.ForceCpuRendering || missingMaterial?.RenderOptions?.ExcludeFromGpuIndirect == true)
+                        return false;
+
+                    Add(renderInfo);
+                    return true;
+                }
 
                 // If this command is now excluded from GPU indirect, remove its indices.
                 var topMaterial = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                if (topMaterial?.RenderOptions?.ExcludeFromGpuIndirect == true)
+                if (meshCmd.ForceCpuRendering || topMaterial?.RenderOptions?.ExcludeFromGpuIndirect == true)
                 {
                     if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
-                        Debug.LogWarning($"[GPUScene] ExcludeFromGpuIndirect became true; removing mesh command. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
+                        Debug.LogWarning($"[GPUScene] CPU fallback/ExcludeFromGpuIndirect became true; removing mesh command. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
 
                     RemoveMeshCommandIndices(meshCmd, indices);
                     return true;

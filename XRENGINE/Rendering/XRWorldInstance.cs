@@ -136,6 +136,40 @@ namespace XREngine.Rendering
             node.World = null;
         }
 
+        private void OnRootNodeDestroying(SceneNode node)
+        {
+            if (node is null)
+                return;
+
+            _editorScene?.RootNodes.Remove(node);
+            RootNodes.RemoveDuringNodeDestroy(node);
+
+            if (_editorOnlyNodesByScene.Count > 0)
+            {
+                List<XRScene>? emptyScenes = null;
+                foreach (var pair in _editorOnlyNodesByScene)
+                {
+                    if (!pair.Value.Remove(node) || pair.Value.Count > 0)
+                        continue;
+
+                    emptyScenes ??= [];
+                    emptyScenes.Add(pair.Key);
+                }
+
+                if (emptyScenes is not null)
+                {
+                    foreach (var scene in emptyScenes)
+                        _editorOnlyNodesByScene.Remove(scene);
+                }
+            }
+
+            if (TargetWorld?.Scenes is null)
+                return;
+
+            foreach (var scene in TargetWorld.Scenes)
+                scene.RootNodes.Remove(node);
+        }
+
         /// <summary>
         /// Checks if a node belongs to the hidden editor scene.
         /// </summary>
@@ -1173,9 +1207,10 @@ namespace XREngine.Rendering
             LayerMask layerMask,
             AbstractPhysicsScene.IAbstractQueryFilter? filter,
             SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedResults,
-            Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> finishedCallback)
+            Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> finishedCallback,
+            bool useUnjitteredProjection = false)
             => RaycastPhysicsAsync(
-                cameraComponent.Camera.GetWorldSegment(normalizedScreenPoint),
+                cameraComponent.Camera.GetWorldSegment(normalizedScreenPoint, useUnjitteredProjection),
                 layerMask,
                 filter,
                 orderedResults,
@@ -1209,9 +1244,10 @@ namespace XREngine.Rendering
             Vector2 normalizedScreenPoint,
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults,
             Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback,
-            ERaycastHitMode hitMode = ERaycastHitMode.Faces)
+            ERaycastHitMode hitMode = ERaycastHitMode.Faces,
+            bool useUnjitteredProjection = false)
             => RaycastOctreeAsync(
-                cameraComponent.Camera.GetWorldSegment(normalizedScreenPoint),
+                cameraComponent.Camera.GetWorldSegment(normalizedScreenPoint, useUnjitteredProjection),
                 orderedResults,
                 finishedCallback,
                 hitMode);

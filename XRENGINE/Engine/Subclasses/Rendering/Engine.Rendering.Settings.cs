@@ -413,6 +413,7 @@ namespace XREngine
                 private bool _allowSecondaryContextSharingFallback = false;
                 private bool _transformCullingIsAxisAligned = true;
                 private bool _logMissingShaderSamplers = false;
+                private bool _logMaterialTextureBindings = false;
                 private bool _enableVramBudget = true;
                 private int _vramBudgetMB = 20 * 1024;
 
@@ -431,7 +432,21 @@ namespace XREngine
                     set => SetField(ref _logMissingShaderSamplers, value);
                 }
 
+                /// <summary>logs every material texture uniform binding (material name, sampler index, texture identity,
+                /// GL binding id, texture unit). Use to diagnose cross-material texture bleed (e.g. wrong texture rendered
+                /// on a mesh because the material's texture reference or the GL unit state is incorrect). Noisy: enable only
+                /// while reproducing.
+                /// </summary>
+                [Category("Debug")]
+                [Description("If true, logs every material texture uniform binding. Use to diagnose cross-material texture bleed. Very noisy — enable only while reproducing.")]
+                public bool LogMaterialTextureBindings
+                {
+                    get => _logMaterialTextureBindings;
+                    set => SetField(ref _logMaterialTextureBindings, value);
+                }
+
                 /// <summary>
+                /// If true, 
                 /// If true, tracked GPU allocations are blocked once the configured VRAM budget is exceeded.
                 /// </summary>
                 [Category("Performance")]

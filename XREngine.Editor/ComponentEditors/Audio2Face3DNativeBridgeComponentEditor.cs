@@ -43,7 +43,7 @@ public sealed class Audio2Face3DNativeBridgeComponentEditor : IXRComponentEditor
 
         bool nativeBridgeAvailable = Audio2Face3DNativeBridge.IsAvailable(out string? availabilityError);
 
-        ImGui.TextDisabled($"Adapter Registered: {Audio2Face3DLiveClientRegistry.HasAdapter}");
+        ImGui.TextDisabled($"Adapter Registered: {Audio2Face3DRegistry.HasAdapter}");
         ImGui.TextDisabled($"Native DLL: {(nativeBridgeAvailable ? "Available" : "Unavailable")}");
         ImGui.TextDisabled($"Live Component Connected: {bridge.Audio2Face.IsLiveConnected}");
         ImGui.TextDisabled($"Microphone Capturing: {bridge.Microphone.IsCapturing}");

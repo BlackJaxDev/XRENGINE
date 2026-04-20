@@ -26,6 +26,12 @@ namespace XREngine
         private OverrideableSetting<EditorPreferences.EViewportPresentationMode> _viewportPresentationModeOverride = new();
         private OverrideableSetting<EditorPreferences.ESceneDepthModePreference> _sceneDepthModeOverride = new();
         private OverrideableSetting<int> _scenePanelResizeDebounceMsOverride = new();
+        private OverrideableSetting<bool> _hoverOutlineEnabledOverride = new();
+        private OverrideableSetting<bool> _selectionOutlineEnabledOverride = new();
+        private OverrideableSetting<ColorF4> _hoverOutlineColorOverride = new();
+        private OverrideableSetting<ColorF4> _selectionOutlineColorOverride = new();
+        private OverrideableSetting<bool> _confirmBeforeEnteringPlayModeOverride = new();
+        private OverrideableSetting<bool> _confirmBeforeExitingPlayModeOverride = new();
         private OverrideableSetting<bool> _mcpServerEnabledOverride = new();
         private OverrideableSetting<int> _mcpServerPortOverride = new();
         private OverrideableSetting<bool> _mcpServerRequireAuthOverride = new();
@@ -89,6 +95,54 @@ namespace XREngine
         {
             get => _scenePanelResizeDebounceMsOverride;
             set => SetField(ref _scenePanelResizeDebounceMsOverride, value ?? new());
+        }
+
+        [Category("Selection Overrides")]
+        [Description("Override for hover outline enabled state.")]
+        public OverrideableSetting<bool> HoverOutlineEnabledOverride
+        {
+            get => _hoverOutlineEnabledOverride;
+            set => SetField(ref _hoverOutlineEnabledOverride, value ?? new());
+        }
+
+        [Category("Selection Overrides")]
+        [Description("Override for selection outline enabled state.")]
+        public OverrideableSetting<bool> SelectionOutlineEnabledOverride
+        {
+            get => _selectionOutlineEnabledOverride;
+            set => SetField(ref _selectionOutlineEnabledOverride, value ?? new());
+        }
+
+        [Category("Selection Overrides")]
+        [Description("Override for hover outline color.")]
+        public OverrideableSetting<ColorF4> HoverOutlineColorOverride
+        {
+            get => _hoverOutlineColorOverride;
+            set => SetField(ref _hoverOutlineColorOverride, value ?? new());
+        }
+
+        [Category("Selection Overrides")]
+        [Description("Override for selection outline color.")]
+        public OverrideableSetting<ColorF4> SelectionOutlineColorOverride
+        {
+            get => _selectionOutlineColorOverride;
+            set => SetField(ref _selectionOutlineColorOverride, value ?? new());
+        }
+
+        [Category("Play Mode Overrides")]
+        [Description("Override for showing a confirmation dialog before editor-triggered enter-play requests.")]
+        public OverrideableSetting<bool> ConfirmBeforeEnteringPlayModeOverride
+        {
+            get => _confirmBeforeEnteringPlayModeOverride;
+            set => SetField(ref _confirmBeforeEnteringPlayModeOverride, value ?? new());
+        }
+
+        [Category("Play Mode Overrides")]
+        [Description("Override for showing a confirmation dialog before editor-triggered exit-play requests.")]
+        public OverrideableSetting<bool> ConfirmBeforeExitingPlayModeOverride
+        {
+            get => _confirmBeforeExitingPlayModeOverride;
+            set => SetField(ref _confirmBeforeExitingPlayModeOverride, value ?? new());
         }
 
         [Category("MCP Server Overrides")]

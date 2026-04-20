@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using ImGuiNET;
 using XREngine.Data.Core;
 
-namespace XREngine.Editor;
+namespace XREngine.Editor.IMGUI;
 
 internal static class ImGuiUndoHelper
 {

@@ -2,7 +2,7 @@ using System;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
-namespace XREngine.Editor;
+namespace XREngine.Editor.IMGUI;
 
 /// <summary>
 /// P/Invoke helpers for Dear ImGui drag/drop APIs not exposed by ImGui.NET.

@@ -18,11 +18,7 @@ internal static class BlendTreeCookedBinarySerializer
         => type == typeof(BlendTree1D) || type == typeof(BlendTree2D) || type == typeof(BlendTreeDirect);
 
     public static void Write(CookedBinaryWriter writer, BlendTree blendTree)
-    {
-        ArgumentNullException.ThrowIfNull(writer);
-        ArgumentNullException.ThrowIfNull(blendTree);
-        writer.WriteValue(BlendTreeSerialization.CreateModel(blendTree));
-    }
+        => SerializedAssetSupport.WriteModel<BlendTree, object>(writer, blendTree, BlendTreeSerialization.CreateModel);
 
     public static BlendTree Read(Type type, CookedBinaryReader reader)
     {
@@ -40,7 +36,7 @@ internal static class BlendTreeCookedBinarySerializer
     }
 
     public static long CalculateSize(BlendTree blendTree)
-        => CookedBinarySerializer.CalculateSize(BlendTreeSerialization.CreateModel(blendTree));
+        => SerializedAssetSupport.CalculateModelSize<BlendTree, object>(blendTree, BlendTreeSerialization.CreateModel);
 }
 
 internal static class BlendTreeMemoryPackRegistration
@@ -49,46 +45,12 @@ internal static class BlendTreeMemoryPackRegistration
     [ModuleInitializer]
     internal static void Initialize()
     {
-        if (!MemoryPackFormatterProvider.IsRegistered<BlendTree1D>())
-            MemoryPackFormatterProvider.Register(new BlendTreeMemoryPackFormatter<BlendTree1D>());
-        if (!MemoryPackFormatterProvider.IsRegistered<BlendTree2D>())
-            MemoryPackFormatterProvider.Register(new BlendTreeMemoryPackFormatter<BlendTree2D>());
-        if (!MemoryPackFormatterProvider.IsRegistered<BlendTreeDirect>())
-            MemoryPackFormatterProvider.Register(new BlendTreeMemoryPackFormatter<BlendTreeDirect>());
-    }
-
-    private sealed class BlendTreeMemoryPackFormatter<TBlendTree> : MemoryPackFormatter<TBlendTree> where TBlendTree : BlendTree
-    {
-        public override void Serialize<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, scoped ref TBlendTree? value)
-        {
-            if (value is null)
-            {
-                writer.WriteNullObjectHeader();
-                return;
-            }
-
-            writer.WriteObjectHeader(1);
-            TBlendTree blendTree = value;
-            byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(blendTree));
-            writer.WriteUnmanagedArray(payload);
-        }
-
-        public override void Deserialize(ref MemoryPackReader reader, scoped ref TBlendTree? value)
-        {
-            if (!reader.TryReadObjectHeader(out byte count))
-            {
-                value = null;
-                return;
-            }
-
-            if (count != 1)
-                MemoryPackSerializationException.ThrowInvalidPropertyCount(1, count);
-
-            byte[]? payload = reader.ReadUnmanagedArray<byte>();
-            value = payload is null || payload.Length == 0
-                ? null
-                : CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Deserialize(typeof(TBlendTree), payload) as TBlendTree);
-        }
+        SerializedAssetSupport.RegisterFormatter(
+            new SerializedAssetSupport.CookedBinaryMemoryPackFormatter<BlendTree1D>(payload => SerializedAssetSupport.DeserializePayload<BlendTree1D>(payload)));
+        SerializedAssetSupport.RegisterFormatter(
+            new SerializedAssetSupport.CookedBinaryMemoryPackFormatter<BlendTree2D>(payload => SerializedAssetSupport.DeserializePayload<BlendTree2D>(payload)));
+        SerializedAssetSupport.RegisterFormatter(
+            new SerializedAssetSupport.CookedBinaryMemoryPackFormatter<BlendTreeDirect>(payload => SerializedAssetSupport.DeserializePayload<BlendTreeDirect>(payload)));
     }
 }
 

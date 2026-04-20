@@ -3,6 +3,7 @@ using ImageMagick;
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
@@ -85,27 +86,22 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void UpdateSelectionHighlight()
     {
         // Clear previous selection highlights
-        foreach (var material in _currentSelectionHighlightMaterials)
-            DefaultRenderPipeline.SetHighlighted(material, false, isSelection: true);
-        _currentSelectionHighlightMaterials.Clear();
+        foreach (var mesh in _currentSelectionHighlightMeshes)
+            DefaultRenderPipeline.SetHighlighted(mesh, false, isSelection: true);
+        _currentSelectionHighlightMeshes.Clear();
 
         if (!SelectionOutlineEnabled)
             return;
 
-        // Highlight materials of selected nodes
+        // Highlight exact renderable meshes of selected nodes.
         foreach (var node in Selection.SceneNodes)
         {
-            var modelComponent = node.GetComponent<ModelComponent>();
-            if (modelComponent is null)
-                continue;
-
-            foreach (var mesh in modelComponent.Meshes)
+            foreach (var modelComponent in node.GetComponents<ModelComponent>())
             {
-                foreach (var lod in mesh.LODs)
+                foreach (var mesh in modelComponent.Meshes)
                 {
-                    var material = lod.Renderer.Material;
-                    if (material is not null && _currentSelectionHighlightMaterials.Add(material))
-                        DefaultRenderPipeline.SetHighlighted(material, true, isSelection: true);
+                    if (_currentSelectionHighlightMeshes.Add(mesh))
+                        DefaultRenderPipeline.SetHighlighted(mesh, true, isSelection: true);
                 }
             }
         }
@@ -419,12 +415,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// <summary>
     /// The material currently highlighted for hover outline.
     /// </summary>
-    private XRMaterial? _currentHoverHighlightMaterial = null;
+    private RenderableMesh? _currentHoverHighlightMesh = null;
 
     /// <summary>
-    /// The materials currently highlighted for selection outline.
+    /// The renderable meshes currently highlighted for selection outline.
     /// </summary>
-    private readonly HashSet<XRMaterial> _currentSelectionHighlightMaterials = [];
+    private readonly HashSet<RenderableMesh> _currentSelectionHighlightMeshes = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     private const float SelectionDragThresholdPixels = 6.0f;
     private bool _selectionDragActive = false;
@@ -625,6 +621,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// Set by left-click so the click handler always has fresh results.
     /// </summary>
     private bool _forceRepick;
+    private readonly Lock _pickDispatchLock = new();
+    private bool _octreePickInFlight;
+    private bool _pendingPickAfterCurrent;
 
     protected ERaycastHitMode CurrentRaycastMode => _raycastMode;
     protected Triangle? CurrentFacePickResult => _facePickResult;
@@ -1093,6 +1092,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void Tick()
     {
         base.Tick();
+        SyncOutlinePreferences();
 
         var vp = Viewport;
         ApplyInput(vp);
@@ -1102,6 +1102,19 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             vp.Suppress3DSceneRendering = !NeedsRender();
             _viewInvalidated = false;
         }
+    }
+
+    private void SyncOutlinePreferences()
+    {
+        var prefs = Engine.EditorPreferences;
+        if (prefs is null)
+            return;
+
+        if (HoverOutlineEnabled != prefs.HoverOutlineEnabled)
+            HoverOutlineEnabled = prefs.HoverOutlineEnabled;
+
+        if (SelectionOutlineEnabled != prefs.SelectionOutlineEnabled)
+            SelectionOutlineEnabled = prefs.SelectionOutlineEnabled;
     }
 
     private void PostRender()
@@ -1143,7 +1156,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
 
         var p = GetNormalizedCursorPosition(vp);
-        _lastRaycastSegment = vp.GetWorldSegment(p);
+        _lastRaycastSegment = vp.GetWorldSegment(p, useUnjitteredProjection: true);
 
         SceneNode? tfmTool = TransformTool3D.InstanceNode;
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
@@ -1176,6 +1189,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 ClearHoverHighlight();
                 _lastPickCursorPosition = new(float.NaN, float.NaN);
             }
+
+            using (_pickDispatchLock.EnterScope())
+                _pendingPickAfterCurrent = false;
             return;
         }
 
@@ -1190,6 +1206,21 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (!shouldPick)
             return;
 
+        if (vp.CameraComponent is null || vp.World is null)
+            return;
+
+        using (_pickDispatchLock.EnterScope())
+        {
+            if (_octreePickInFlight)
+            {
+                _pendingPickAfterCurrent = true;
+                return;
+            }
+
+            _octreePickInFlight = true;
+            _pendingPickAfterCurrent = false;
+        }
+
         _pickAccumulator = 0f;
         _lastPickCursorPosition = normalizedCursorPos;
         _forceRepick = false;
@@ -1197,7 +1228,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var octreeResults = GetOctreePickResultDict();
         var physicsResults = GetPhysicsPickResultDict();
         vp.PickSceneAsync(normalizedCursorPos, false, true, true, _layerMask, _physxQueryFilter,
-            octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback, RaycastMode);
+            octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback, RaycastMode, useUnjitteredProjection: true);
     }
 
     private void PhysicsRaycastCallback(SortedDictionary<float, List<(XRComponent? item, object? data)>>? dictionary)
@@ -1233,6 +1264,20 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             _lastOctreePickResults = dictionary;
             ReturnOctreePickResultDict(old);
         }
+
+        bool requestFollowUpPick;
+        using (_pickDispatchLock.EnterScope())
+        {
+            _octreePickInFlight = false;
+            requestFollowUpPick = _pendingPickAfterCurrent;
+            _pendingPickAfterCurrent = false;
+        }
+
+        if (requestFollowUpPick)
+        {
+            _forceRepick = true;
+            InvalidateView();
+        }
     }
 
     private void TryRenderFirstRaycastResult(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dict)
@@ -1262,6 +1307,107 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     // Reusable buffer to avoid per-call allocations when copying first hit list safely.
     private readonly List<(RenderInfo3D item, object? data)> _firstHitBuffer = new();
 
+    private void ClearMeshHitVisualization()
+    {
+        using (_raycastLock.EnterScope())
+        {
+            _facePickResult = null;
+            _meshHitPoint = null;
+            _edgePickResult = null;
+            _vertexPickResult = null;
+            _meshPickResult = null;
+        }
+    }
+
+    private bool TryGetStablePrimaryHit(IReadOnlyList<(RenderInfo3D item, object? data)> hits, out (RenderInfo3D item, object? data) entry)
+    {
+        int bestIndex = -1;
+        for (int i = 0; i < hits.Count; i++)
+        {
+            if (hits[i].item.Owner is TriggerVolumeComponent or BlockingVolumeComponent)
+                continue;
+
+            if (bestIndex < 0 || CompareRaycastEntries(hits[i], hits[bestIndex]) < 0)
+                bestIndex = i;
+        }
+
+        if (bestIndex < 0)
+        {
+            entry = default;
+            return false;
+        }
+
+        entry = hits[bestIndex];
+        return true;
+    }
+
+    private int CompareRaycastEntries((RenderInfo3D item, object? data) left, (RenderInfo3D item, object? data) right)
+    {
+        int priorityCompare = GetRaycastDataPriority(left.data).CompareTo(GetRaycastDataPriority(right.data));
+        if (priorityCompare != 0)
+            return priorityCompare;
+
+        int renderableCompare = GetRaycastRenderableStableKey(left.data).CompareTo(GetRaycastRenderableStableKey(right.data));
+        if (renderableCompare != 0)
+            return renderableCompare;
+
+        int primitiveCompare = GetRaycastPrimitiveStableKey(left.data).CompareTo(GetRaycastPrimitiveStableKey(right.data));
+        if (primitiveCompare != 0)
+            return primitiveCompare;
+
+        return RuntimeHelpers.GetHashCode(left.item).CompareTo(RuntimeHelpers.GetHashCode(right.item));
+    }
+
+    private int GetRaycastDataPriority(object? data)
+        => RaycastMode switch
+        {
+            ERaycastHitMode.Lines => data switch
+            {
+                MeshEdgePickResult => 0,
+                MeshVertexPickResult => 1,
+                MeshPickResult => 2,
+                Vector3 => 3,
+                Triangle => 4,
+                _ => 5,
+            },
+            ERaycastHitMode.Points => data switch
+            {
+                MeshVertexPickResult => 0,
+                MeshEdgePickResult => 1,
+                MeshPickResult => 2,
+                Vector3 => 3,
+                Triangle => 4,
+                _ => 5,
+            },
+            _ => data switch
+            {
+                MeshPickResult => 0,
+                MeshEdgePickResult => 1,
+                MeshVertexPickResult => 2,
+                Vector3 => 3,
+                Triangle => 4,
+                _ => 5,
+            },
+        };
+
+    private static int GetRaycastRenderableStableKey(object? data)
+        => data switch
+        {
+            MeshPickResult meshHit => RuntimeHelpers.GetHashCode(meshHit.Mesh),
+            MeshEdgePickResult edgeHit => RuntimeHelpers.GetHashCode(edgeHit.FaceHit.Mesh),
+            MeshVertexPickResult vertexHit => RuntimeHelpers.GetHashCode(vertexHit.FaceHit.Mesh),
+            _ => 0,
+        };
+
+    private static int GetRaycastPrimitiveStableKey(object? data)
+        => data switch
+        {
+            MeshPickResult meshHit => meshHit.TriangleIndex,
+            MeshEdgePickResult edgeHit => edgeHit.EdgeIndex,
+            MeshVertexPickResult vertexHit => vertexHit.VertexIndex,
+            _ => 0,
+        };
+
     private void UpdateMeshHitVisualization(SortedDictionary<float, List<(RenderInfo3D item, object? data)>>? source = null)
     {
         Triangle? facePickResult = null;
@@ -1273,14 +1419,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var results = source ?? _lastOctreePickResults;
         if (results.Count == 0)
         {
-            using (_raycastLock.EnterScope())
-            {
-                _facePickResult = null;
-                _meshHitPoint = null;
-                _edgePickResult = null;
-                _vertexPickResult = null;
-                _meshPickResult = null;
-            }
+            ClearMeshHitVisualization();
             return;
         }
 
@@ -1299,13 +1438,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                     _firstHitBuffer.Clear();
                     //Copy to stable buffer (list itself may be mutated by writer). Reuses allocated list.
                     for (int i = 0; i < list.Count; i++)
-                    {
-                        var (item, _) = list[i];
-                        if (item.Owner is TriggerVolumeComponent or BlockingVolumeComponent)
-                            continue;
-
                         _firstHitBuffer.Add(list[i]);
-                    }
 
                     if (_firstHitBuffer.Count > 0)
                         break;
@@ -1318,41 +1451,39 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
         }
 
-        if (_firstHitBuffer.Count == 0)
-            return;
-
-        for (int i = 0; i < _firstHitBuffer.Count; i++)
+        if (_firstHitBuffer.Count == 0 || !TryGetStablePrimaryHit(_firstHitBuffer, out var primaryHit))
         {
-            var (_, data) = _firstHitBuffer[i];
-            switch (data)
-            {
-                case MeshPickResult meshHit:
-                    facePickResult = meshHit.WorldTriangle;
-                    meshHitPoint = meshHit.HitPoint;
-                    meshPickResult = meshHit;
-                    goto Done;
-                case MeshEdgePickResult edgeHit:
-                    facePickResult = edgeHit.WorldTriangle;
-                    meshHitPoint = edgeHit.ClosestPoint;
-                    edgePickResult = edgeHit;
-                    meshPickResult = edgeHit.FaceHit;
-                    goto Done;
-                case MeshVertexPickResult vertexHit:
-                    facePickResult = vertexHit.WorldTriangle;
-                    meshHitPoint = vertexHit.Position;
-                    vertexPickResult = vertexHit;
-                    meshPickResult = vertexHit.FaceHit;
-                    goto Done;
-                case Vector3 point:
-                    meshHitPoint = point;
-                    goto Done;
-                case Triangle triangle:
-                    facePickResult = triangle;
-                    goto Done;
-            }
+            ClearMeshHitVisualization();
+            return;
         }
 
-    Done:
+        switch (primaryHit.data)
+        {
+            case MeshPickResult meshHit:
+                facePickResult = meshHit.WorldTriangle;
+                meshHitPoint = meshHit.HitPoint;
+                meshPickResult = meshHit;
+                break;
+            case MeshEdgePickResult edgeHit:
+                facePickResult = edgeHit.WorldTriangle;
+                meshHitPoint = edgeHit.ClosestPoint;
+                edgePickResult = edgeHit;
+                meshPickResult = edgeHit.FaceHit;
+                break;
+            case MeshVertexPickResult vertexHit:
+                facePickResult = vertexHit.WorldTriangle;
+                meshHitPoint = vertexHit.Position;
+                vertexPickResult = vertexHit;
+                meshPickResult = vertexHit.FaceHit;
+                break;
+            case Vector3 point:
+                meshHitPoint = point;
+                break;
+            case Triangle triangle:
+                facePickResult = triangle;
+                break;
+        }
+
         using (_raycastLock.EnterScope())
         {
             _facePickResult = facePickResult;
@@ -1373,8 +1504,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
         }
 
-        XRMaterial? firstHitMaterial = null;
-
         //Capture stable snapshot to avoid modifications mid-iteration.
         for (int i = 0; i < list.Count; i++)
         {
@@ -1387,18 +1516,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 MeshVertexPickResult vertexHit => vertexHit.Position,
                 _ => null
             };
-
-            // Get the material from the first mesh hit for hover outline
-            if (firstHitMaterial is null && HoverOutlineEnabled)
-            {
-                firstHitMaterial = data switch
-                {
-                    MeshPickResult meshHit => meshHit.Mesh?.CurrentLODRenderer?.Material,
-                    MeshEdgePickResult edgeHit => edgeHit.FaceHit.Mesh?.CurrentLODRenderer?.Material,
-                    MeshVertexPickResult vertexHit => vertexHit.FaceHit.Mesh?.CurrentLODRenderer?.Material,
-                    _ => null
-                };
-            }
 
             if (point is null)
                 continue;
@@ -1418,27 +1535,32 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             //Engine.Rendering.Debug.RenderPoint(point.Value, ColorF4.Red);
         }
 
-        // Update hover highlight
-        UpdateHoverHighlight(firstHitMaterial);
+        RenderableMesh? firstHitMesh = null;
+        if (HoverOutlineEnabled)
+        {
+            using (_raycastLock.EnterScope())
+                firstHitMesh = _meshPickResult?.Mesh;
+        }
+
+        UpdateHoverHighlight(firstHitMesh);
     }
 
     /// <summary>
-    /// Updates the hover highlight, enabling stencil on the new material and disabling on the previous.
+    /// Updates the hover highlight, enabling stencil on the new renderable mesh and disabling on the previous.
     /// </summary>
-    private void UpdateHoverHighlight(XRMaterial? newMaterial)
+    private void UpdateHoverHighlight(RenderableMesh? newMesh)
     {
-        if (_currentHoverHighlightMaterial == newMaterial)
+        RenderableMesh? effectiveMesh = HoverOutlineEnabled ? newMesh : null;
+        if (ReferenceEquals(_currentHoverHighlightMesh, effectiveMesh))
             return;
 
-        // Disable highlight on previous material
-        if (_currentHoverHighlightMaterial is not null)
-            DefaultRenderPipeline.SetHighlighted(_currentHoverHighlightMaterial, false);
+        if (_currentHoverHighlightMesh is not null)
+            DefaultRenderPipeline.SetHighlighted(_currentHoverHighlightMesh, false);
 
-        // Enable highlight on new material
-        if (newMaterial is not null && HoverOutlineEnabled)
-            DefaultRenderPipeline.SetHighlighted(newMaterial, true);
+        if (effectiveMesh is not null)
+            DefaultRenderPipeline.SetHighlighted(effectiveMesh, true);
 
-        _currentHoverHighlightMaterial = newMaterial;
+        _currentHoverHighlightMesh = effectiveMesh;
     }
 
     /// <summary>
@@ -1446,10 +1568,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     private void ClearHoverHighlight()
     {
-        if (_currentHoverHighlightMaterial is not null)
+        if (_currentHoverHighlightMesh is not null)
         {
-            DefaultRenderPipeline.SetHighlighted(_currentHoverHighlightMaterial, false);
-            _currentHoverHighlightMaterial = null;
+            DefaultRenderPipeline.SetHighlighted(_currentHoverHighlightMesh, false);
+            _currentHoverHighlightMesh = null;
         }
     }
 
@@ -1485,7 +1607,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     private Segment GetWorldSegment(XRViewport vp)
-        => vp.GetWorldSegment(GetNormalizedCursorPosition(vp));
+        => vp.GetWorldSegment(GetNormalizedCursorPosition(vp), useUnjitteredProjection: true);
 
     private Vector2 GetNormalizedCursorPosition(XRViewport vp)
     {

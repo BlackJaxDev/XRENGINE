@@ -64,6 +64,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         private Vector3 _lastBridgeCameraPosition;
         private Vector3 _lastBridgeCameraForward;
 
+        // MotionVectors.fs writes current-minus-previous clip-space delta in the engine's NDC convention.
+        // DLSS/XeSS bridge dispatch expects a normalized clip delta, so halve the authored scale.
+        private const float BridgeMotionVectorNormalizationScale = 0.5f;
+
         private const string FallbackShaderCode = """
 #version 450
 
@@ -556,8 +560,8 @@ void main()
                 JitterOffsetY = jitter.Y,
                 HasExposureTexture = hasExposureTexture,
                 ExposureScale = exposureScale,
-                MotionVectorScaleX = 0.5f,
-                MotionVectorScaleY = 0.5f,
+                MotionVectorScaleX = BridgeMotionVectorNormalizationScale,
+                MotionVectorScaleY = BridgeMotionVectorNormalizationScale,
                 CameraViewToClip = cameraViewToClip,
                 ClipToCameraView = clipToCameraView,
                 ClipToPrevClip = currentInverseViewProjectionUnjittered * previousViewProjectionUnjittered,

@@ -46,6 +46,10 @@ namespace XREngine.Components.Scene.Mesh
         public RenderInfo3D RenderInfo { get; }
 
         private readonly RenderCommandMesh3D _rc;
+        private readonly object _highlightStateLock = new();
+        private RenderingParameters? _highlightRenderOptionsOverride;
+        private XRMaterial? _highlightSourceMaterial;
+        private int _highlightStencilBits;
 
         private readonly Dictionary<TransformBase, int> _trackedSkinnedBones = new();
         private readonly Dictionary<TransformBase, Matrix4x4> _relativeBoneMatrices = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -283,6 +287,140 @@ namespace XREngine.Components.Scene.Mesh
                 return _currentLOD?.Value?.Renderer ?? LODs.First?.Value?.Renderer;
         }
 
+        public void SetHighlightStencilBit(int stencilBit, bool enabled)
+        {
+            lock (_highlightStateLock)
+            {
+                int nextBits = enabled
+                    ? (_highlightStencilBits | stencilBit)
+                    : (_highlightStencilBits & ~stencilBit);
+
+                if (nextBits == _highlightStencilBits)
+                    return;
+
+                _highlightStencilBits = nextBits;
+                ApplyHighlightRenderOptionsOverride_NoLock(CurrentLODRenderer?.Material);
+            }
+        }
+
+        private void ApplyHighlightRenderOptionsOverride(XRMaterial? sourceMaterial)
+        {
+            lock (_highlightStateLock)
+                ApplyHighlightRenderOptionsOverride_NoLock(sourceMaterial);
+        }
+
+        private void ApplyHighlightRenderOptionsOverride_NoLock(XRMaterial? sourceMaterial)
+        {
+            if (_highlightStencilBits == 0 || sourceMaterial is null)
+            {
+                _rc.MaterialOverride = null;
+                _rc.RenderOptionsOverride = null;
+                _rc.ForceCpuRendering = false;
+                return;
+            }
+
+            if (!ReferenceEquals(_highlightSourceMaterial, sourceMaterial) || _highlightRenderOptionsOverride is null)
+            {
+                _highlightSourceMaterial = sourceMaterial;
+                _highlightRenderOptionsOverride = CloneRenderingParameters(sourceMaterial.RenderOptions);
+            }
+
+            ConfigureHighlightStencil(_highlightRenderOptionsOverride, _highlightStencilBits);
+            _rc.MaterialOverride = null;
+            _rc.RenderOptionsOverride = _highlightRenderOptionsOverride;
+            _rc.ForceCpuRendering = true;
+        }
+
+        private static RenderingParameters CloneRenderingParameters(RenderingParameters source)
+            => new()
+            {
+                RequiredEngineUniforms = source.RequiredEngineUniforms,
+                WriteRed = source.WriteRed,
+                WriteGreen = source.WriteGreen,
+                WriteBlue = source.WriteBlue,
+                WriteAlpha = source.WriteAlpha,
+                AlphaToCoverage = source.AlphaToCoverage,
+                Winding = source.Winding,
+                CullMode = source.CullMode,
+                DepthTest = CloneDepthTest(source.DepthTest),
+                StencilTest = CloneStencilTest(source.StencilTest),
+                BlendModeAllDrawBuffers = CloneBlendMode(source.BlendModeAllDrawBuffers),
+                BlendModesPerDrawBuffer = source.BlendModesPerDrawBuffer?.ToDictionary(static kvp => kvp.Key, static kvp => CloneBlendMode(kvp.Value)!),
+                ExcludeFromGpuIndirect = source.ExcludeFromGpuIndirect,
+            };
+
+        private static DepthTest CloneDepthTest(DepthTest? source)
+            => source is null
+                ? new DepthTest()
+                : new DepthTest
+                {
+                    Enabled = source.Enabled,
+                    UpdateDepth = source.UpdateDepth,
+                    Function = source.Function,
+                };
+
+        private static StencilTest CloneStencilTest(StencilTest? source)
+            => source is null
+                ? new StencilTest()
+                : new StencilTest
+                {
+                    Enabled = source.Enabled,
+                    FrontFace = CloneStencilTestFace(source.FrontFace),
+                    BackFace = CloneStencilTestFace(source.BackFace),
+                };
+
+        private static StencilTestFace CloneStencilTestFace(StencilTestFace? source)
+            => source is null
+                ? new StencilTestFace()
+                : new StencilTestFace
+                {
+                    BothFailOp = source.BothFailOp,
+                    StencilPassDepthFailOp = source.StencilPassDepthFailOp,
+                    BothPassOp = source.BothPassOp,
+                    Function = source.Function,
+                    Reference = source.Reference,
+                    ReadMask = source.ReadMask,
+                    WriteMask = source.WriteMask,
+                };
+
+        private static BlendMode? CloneBlendMode(BlendMode? source)
+            => source is null
+                ? null
+                : new BlendMode
+                {
+                    Enabled = source.Enabled,
+                    RgbEquation = source.RgbEquation,
+                    AlphaEquation = source.AlphaEquation,
+                    RgbSrcFactor = source.RgbSrcFactor,
+                    AlphaSrcFactor = source.AlphaSrcFactor,
+                    RgbDstFactor = source.RgbDstFactor,
+                    AlphaDstFactor = source.AlphaDstFactor,
+                };
+
+        private static void ConfigureHighlightStencil(RenderingParameters renderOptions, int stencilBits)
+        {
+            var stencil = renderOptions.StencilTest ?? new StencilTest();
+            stencil.Enabled = ERenderParamUsage.Enabled;
+            stencil.FrontFace = CreateHighlightStencilFace(stencil.FrontFace, stencilBits);
+            stencil.BackFace = CreateHighlightStencilFace(stencil.BackFace, stencilBits);
+            renderOptions.StencilTest = stencil;
+        }
+
+        private static StencilTestFace CreateHighlightStencilFace(StencilTestFace? source, int stencilBits)
+        {
+            source ??= new StencilTestFace();
+            return new StencilTestFace
+            {
+                Function = EComparison.Always,
+                Reference = (source.Reference & ~0x3) | (stencilBits & 0x3),
+                ReadMask = source.ReadMask | 3u,
+                WriteMask = source.WriteMask | 3u,
+                BothFailOp = EStencilOp.Keep,
+                StencilPassDepthFailOp = EStencilOp.Keep,
+                BothPassOp = EStencilOp.Replace,
+            };
+        }
+
         private void DoRenderBounds()
         {
             if (Engine.Rendering.State.IsShadowPass)
@@ -406,6 +544,8 @@ namespace XREngine.Components.Scene.Mesh
                     XRTexture2D.RecordImportedTextureStreamingUsage(mat, BuildImportedTextureStreamingUsage(rend?.Mesh, camera, distance));
                 _rc.RenderPass = mat.RenderPass;
             }
+
+            ApplyHighlightRenderOptionsOverride(mat);
 
             return true;
         }
@@ -1238,6 +1378,16 @@ namespace XREngine.Components.Scene.Mesh
             foreach (XRMesh mesh in _ownedRuntimeMeshes)
                 mesh.Destroy(now: true);
             _ownedRuntimeMeshes.Clear();
+
+            lock (_highlightStateLock)
+            {
+                _rc.MaterialOverride = null;
+                _rc.RenderOptionsOverride = null;
+                _rc.ForceCpuRendering = false;
+                _highlightRenderOptionsOverride = null;
+                _highlightSourceMaterial = null;
+                _highlightStencilBits = 0;
+            }
 
             GC.SuppressFinalize(this);
         }

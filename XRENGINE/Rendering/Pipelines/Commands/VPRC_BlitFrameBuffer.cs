@@ -53,6 +53,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (source is null || destination is null)
                 return;
 
+/*
             if ((string.Equals(SourceFBOName, DefaultRenderPipeline.MsaaLightingFBOName, StringComparison.Ordinal)
                     && string.Equals(DestinationFBOName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal))
                 || (string.Equals(SourceFBOName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal)
@@ -76,6 +77,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     destination.Width,
                     destination.Height);
             }
+*/
 
             AbstractRenderer.Current?.BlitFBOToFBO(
                 source,

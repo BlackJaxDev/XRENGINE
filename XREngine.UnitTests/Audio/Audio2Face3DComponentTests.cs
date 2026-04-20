@@ -73,7 +73,7 @@ public sealed class Audio2Face3DComponentTests
         const string csv = "timecode,JawOpen,happy,sad\n0.0,0.25,0.0,1.0\n0.5,0.75,0.5,0.25\n";
         var animation = Audio2Face3DComponent.ParseCsvText(csv);
         float[] blendshapeOutput = new float[1];
-        float[] emotionOutput = new float[Audio2Face3DEmotions.Count];
+        float[] emotionOutput = new float[Audio2Face3DRegistry.Count];
 
         animation.BlendshapeNames.ShouldBe(["JawOpen"]);
         animation.EmotionNames.ShouldBe(["happy", "sad"]);

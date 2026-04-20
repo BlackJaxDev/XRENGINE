@@ -8,13 +8,13 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class AmbientOcclusionInputNormalDefaultsTests
 {
     [Test]
-    public void DetailSensitiveAmbientOcclusionModes_DefaultToDepthDerivedNormals()
+    public void GtaoDefaultsToInputNormals_WhileHbaoPlusRemainsDepthDerived()
     {
         AmbientOcclusionSettings settings = new();
 
-        settings.GroundTruth.UseInputNormals.ShouldBeFalse();
+        settings.GroundTruth.UseInputNormals.ShouldBeTrue();
         settings.HorizonBasedPlus.UseInputNormals.ShouldBeFalse();
-        settings.GTAOUseInputNormals.ShouldBeFalse();
+        settings.GTAOUseInputNormals.ShouldBeTrue();
         settings.HBAOUseInputNormals.ShouldBeFalse();
     }
 }

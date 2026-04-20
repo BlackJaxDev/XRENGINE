@@ -140,6 +140,53 @@ AnimationClip:
     }
 
     [Test]
+    public void LoadEngineShaderAsset_FromCacheKeepsShaderInPathCacheWithoutTextFileCacheAsset()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        var manager = new AssetManager();
+        manager.MonitorGameAssetsForChanges = false;
+        try
+        {
+            manager.GameAssetsPath = sandbox.AssetsPath;
+            manager.GameCachePath = sandbox.CachePath;
+
+            string shaderPath = manager.ResolveEngineAssetPath("Shaders", "Scene3D", "PostProcess.fs");
+            File.Exists(shaderPath).ShouldBeTrue();
+
+            XRShader? firstLoad = manager.Load<XRShader>(shaderPath);
+            firstLoad.ShouldNotBeNull();
+
+            string cacheRoot = Path.Combine(sandbox.CachePath, "Engine");
+            string[] cacheFiles = Directory.Exists(cacheRoot)
+                ? [.. Directory.EnumerateFiles(cacheRoot, "*.asset", SearchOption.AllDirectories)]
+                : [];
+
+            cacheFiles.ShouldContain(path => path.EndsWith("PostProcess.fs.XREngine.Rendering.XRShader.asset", StringComparison.OrdinalIgnoreCase));
+            cacheFiles.ShouldNotContain(path => path.EndsWith("PostProcess.fs.XREngine.Core.Files.TextFile.asset", StringComparison.OrdinalIgnoreCase));
+
+            ClearAssetCaches(manager);
+
+            XRShader? secondLoad = manager.Load<XRShader>(shaderPath);
+            secondLoad.ShouldNotBeNull();
+            secondLoad.Source.FilePath.ShouldBe(shaderPath);
+            (secondLoad.Source.Text ?? string.Empty).ShouldContain("void");
+
+            manager.TryGetAssetByPath(shaderPath, out XRAsset? cached).ShouldBeTrue();
+            cached.ShouldBeOfType<XRShader>();
+            cached.ShouldBeSameAs(secondLoad);
+
+            string[] cacheFilesAfterReload = Directory.Exists(cacheRoot)
+                ? [.. Directory.EnumerateFiles(cacheRoot, "*.asset", SearchOption.AllDirectories)]
+                : [];
+            cacheFilesAfterReload.ShouldNotContain(path => path.EndsWith("PostProcess.fs.XREngine.Core.Files.TextFile.asset", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            manager.Dispose();
+        }
+    }
+
+    [Test]
     public void LoadEngineShaderAsset_IgnoresMismatchedPathCacheEntry()
     {
         using var sandbox = new AssetCacheSandbox();

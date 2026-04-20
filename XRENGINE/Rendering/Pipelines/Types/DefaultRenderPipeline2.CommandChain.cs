@@ -274,6 +274,8 @@ public partial class DefaultRenderPipeline2
     /// <summary>Caches LightCombine FBO, marks MSAA complex pixels, and renders the deferred lighting pass.</summary>
     private void AppendLightingPass(ViewportRenderCommandContainer c)
     {
+        c.Add<VPRC_SyncLightProbeResources>();
+
         //LightCombine FBO
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             LightCombineFBOName,
@@ -379,7 +381,8 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             ForwardPassFBOName,
             CreateForwardPassFBO,
-            GetDesiredFBOSizeInternal)
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateForwardPassFbo)
             .UseLifetime(RenderResourceLifetime.Transient);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
@@ -493,7 +496,7 @@ public partial class DefaultRenderPipeline2
                         EReadBufferMode.ColorAttachment0,
                         blitColor: false,
                         blitDepth: true,
-                        blitStencil: true,
+                        blitStencil: false,
                         linearFilter: false);
                     deferredChoice.TrueCommands = blitCmds;
                 }

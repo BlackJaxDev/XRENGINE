@@ -13,8 +13,8 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline
 {
-    private static readonly Vector3 HoverOutlineColor = new(1.0f, 1.0f, 0.0f);
-    private static readonly Vector3 SelectionOutlineColor = new(0.0f, 1.0f, 0.0f);
+    private static readonly Vector3 DefaultHoverOutlineColor = new(1.0f, 1.0f, 0.0f);
+    private static readonly Vector3 DefaultSelectionOutlineColor = new(0.0f, 1.0f, 0.0f);
 
     private const string TemporalFeedbackMinParameterName = "FeedbackMin";
     private const string TemporalFeedbackMaxParameterName = "FeedbackMax";
@@ -688,7 +688,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Radius),
             PostProcessParameterKind.Float,
-            0.9f,
+            AmbientOcclusionSettings.DefaultRadius,
             displayName: "Radius",
             min: 0.1f,
             max: 5.0f,
@@ -698,7 +698,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Power),
             PostProcessParameterKind.Float,
-            1.4f,
+            AmbientOcclusionSettings.DefaultPower,
             displayName: "Contrast",
             min: 0.5f,
             max: 3.0f,
@@ -708,7 +708,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Bias),
             PostProcessParameterKind.Float,
-            0.05f,
+            AmbientOcclusionSettings.DefaultBias,
             displayName: "Bias",
             min: 0.0f,
             max: 0.2f,
@@ -862,7 +862,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.SliceCount)),
             PostProcessParameterKind.Int,
-            3,
+            GroundTruthAmbientOcclusionSettings.DefaultSliceCount,
             displayName: "Slice Count",
             min: 1.0f,
             max: 8.0f,
@@ -872,7 +872,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.StepsPerSlice)),
             PostProcessParameterKind.Int,
-            6,
+            GroundTruthAmbientOcclusionSettings.DefaultStepsPerSlice,
             displayName: "Steps / Slice",
             min: 1.0f,
             max: 16.0f,
@@ -882,7 +882,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.FalloffStartRatio)),
             PostProcessParameterKind.Float,
-            0.4f,
+            GroundTruthAmbientOcclusionSettings.DefaultFalloffStartRatio,
             displayName: "Falloff Start Ratio",
             min: 0.0f,
             max: 1.0f,
@@ -892,14 +892,14 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.DenoiseEnabled)),
             PostProcessParameterKind.Bool,
-            true,
+            GroundTruthAmbientOcclusionSettings.DefaultDenoiseEnabled,
             displayName: "Denoise Enabled",
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.DenoiseRadius)),
             PostProcessParameterKind.Int,
-            4,
+            GroundTruthAmbientOcclusionSettings.DefaultDenoiseRadius,
             displayName: "Denoise Radius",
             min: 0.0f,
             max: 16.0f,
@@ -909,7 +909,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.DenoiseSharpness)),
             PostProcessParameterKind.Float,
-            4.0f,
+            GroundTruthAmbientOcclusionSettings.DefaultDenoiseSharpness,
             displayName: "Denoise Sharpness",
             min: 0.0f,
             max: 16.0f,
@@ -919,21 +919,21 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.UseInputNormals)),
             PostProcessParameterKind.Bool,
-            true,
+            GroundTruthAmbientOcclusionSettings.DefaultUseInputNormals,
             displayName: "Use Input Normals",
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.UseVisibilityBitmask)),
             PostProcessParameterKind.Bool,
-            false,
+            GroundTruthAmbientOcclusionSettings.DefaultUseVisibilityBitmask,
             displayName: "Use Visibility Bitmask",
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.VisibilityBitmaskThickness)),
             PostProcessParameterKind.Float,
-            0.15f,
+            GroundTruthAmbientOcclusionSettings.DefaultVisibilityBitmaskThickness,
             displayName: "Visibility Bitmask Thickness",
             min: 0.001f,
             max: 2.0f,
@@ -943,7 +943,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.ThicknessHeuristic)),
             PostProcessParameterKind.Float,
-            1.0f,
+            GroundTruthAmbientOcclusionSettings.DefaultThicknessHeuristic,
             displayName: "Thickness Heuristic",
             min: 0.0f,
             max: 1.0f,
@@ -953,21 +953,21 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.MultiBounceEnabled)),
             PostProcessParameterKind.Bool,
-            false,
+            GroundTruthAmbientOcclusionSettings.DefaultMultiBounceEnabled,
             displayName: "Multi-Bounce AO",
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.SpecularOcclusionEnabled)),
             PostProcessParameterKind.Bool,
-            false,
+            GroundTruthAmbientOcclusionSettings.DefaultSpecularOcclusionEnabled,
             displayName: "Specular Occlusion (GTSO)",
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.Resolution)),
             PostProcessParameterKind.Int,
-            (int)GroundTruthAmbientOcclusionSettings.EResolution.Half,
+            (int)GroundTruthAmbientOcclusionSettings.DefaultResolution,
             displayName: "Resolution",
             enumOptions: BuildEnumOptions<GroundTruthAmbientOcclusionSettings.EResolution>(),
             visibilityCondition: IsGTAO);
@@ -975,7 +975,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.UseNormalWeightedBlur)),
             PostProcessParameterKind.Bool,
-            true,
+            GroundTruthAmbientOcclusionSettings.DefaultUseNormalWeightedBlur,
             displayName: "Normal-Weighted Blur",
             visibilityCondition: IsGTAO);
 
@@ -1628,8 +1628,16 @@ public partial class DefaultRenderPipeline
     private void PostProcessFBO_SettingUniforms(XRRenderProgram materialProgram)
     {
         materialProgram.Uniform("OutputHDR", ResolveOutputHDR());
-        materialProgram.Uniform("HoverOutlineColor", HoverOutlineColor);
-        materialProgram.Uniform("SelectionOutlineColor", SelectionOutlineColor);
+
+        var prefs = Engine.EditorPreferences;
+        var hoverOutlineColor = prefs is null
+            ? DefaultHoverOutlineColor
+            : new Vector3((float)prefs.HoverOutlineColor.R, (float)prefs.HoverOutlineColor.G, (float)prefs.HoverOutlineColor.B);
+        var selectionOutlineColor = prefs is null
+            ? DefaultSelectionOutlineColor
+            : new Vector3((float)prefs.SelectionOutlineColor.R, (float)prefs.SelectionOutlineColor.G, (float)prefs.SelectionOutlineColor.B);
+        materialProgram.Uniform("HoverOutlineColor", hoverOutlineColor);
+        materialProgram.Uniform("SelectionOutlineColor", selectionOutlineColor);
 
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram);

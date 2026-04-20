@@ -21,14 +21,18 @@ namespace XREngine.Rendering.Commands
         private XRMeshRenderer? _mesh;
         private Matrix4x4 _worldMatrix = Matrix4x4.Identity;
         private XRMaterial? _materialOverride;
+        private RenderingParameters? _renderOptionsOverride;
         private uint _instances = 1;
         private bool _worldMatrixIsModelMatrix = true;
+        private bool _forceCpuRendering;
 
         private XRMeshRenderer? _renderMesh;
         private Matrix4x4 _renderWorldMatrix;
         private XRMaterial? _renderMaterialOverride;
+        private RenderingParameters? _renderRenderOptionsOverride;
         private uint _renderInstances;
         private bool _renderWorldMatrixIsModelMatrix;
+        private bool _renderForceCpuRendering;
         private Matrix4x4 _renderPrevWorldMatrix = Matrix4x4.Identity;
         private bool _renderHasPrevWorldMatrix;
         private static int s_MotionVectorLogBudget = 128;
@@ -65,10 +69,20 @@ namespace XREngine.Rendering.Commands
             get => _materialOverride;
             set => SetField(ref _materialOverride, value);
         }
+        public RenderingParameters? RenderOptionsOverride
+        {
+            get => _renderOptionsOverride;
+            set => SetField(ref _renderOptionsOverride, value);
+        }
         public uint Instances
         {
             get => _instances;
             set => SetField(ref _instances, value);
+        }
+        public bool ForceCpuRendering
+        {
+            get => _forceCpuRendering;
+            set => SetField(ref _forceCpuRendering, value);
         }
 
         public RenderCommandMesh3D() : base() { }
@@ -105,7 +119,8 @@ namespace XREngine.Rendering.Commands
                     GetModelMatrix(),
                     GetPreviousModelMatrix(),
                     _renderMaterialOverride,
-                    _renderInstances);
+                    _renderInstances,
+                    renderOptionsOverride: _renderRenderOptionsOverride);
             }
             finally
             {
@@ -129,8 +144,10 @@ namespace XREngine.Rendering.Commands
             _renderMesh = Mesh;
             _renderWorldMatrix = WorldMatrix;
             _renderMaterialOverride = MaterialOverride;
+            _renderRenderOptionsOverride = RenderOptionsOverride;
             _renderInstances = Instances;
             _renderWorldMatrixIsModelMatrix = WorldMatrixIsModelMatrix;
+            _renderForceCpuRendering = ForceCpuRendering;
             _renderGpuCommandIndex = GPUCommandIndex;
             if (_renderWorldMatrixIsModelMatrix)
             {

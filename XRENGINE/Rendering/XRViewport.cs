@@ -1538,8 +1538,8 @@ namespace XREngine.Rendering
         /// <param name="depth">The depth value (0 = near plane, 1 = far plane in typical configurations).</param>
         /// <returns>The world-space position corresponding to the screen point and depth.</returns>
         /// <exception cref="InvalidOperationException">Thrown when no camera is set to this viewport.</exception>
-        public Vector3 NormalizedViewportToWorldCoordinate(Vector2 normalizedViewportPoint, float depth)
-            => _camera?.NormalizedViewportToWorldCoordinate(normalizedViewportPoint, depth)
+        public Vector3 NormalizedViewportToWorldCoordinate(Vector2 normalizedViewportPoint, float depth, bool useUnjitteredProjection = false)
+            => _camera?.NormalizedViewportToWorldCoordinate(normalizedViewportPoint, depth, useUnjitteredProjection)
                 ?? throw new InvalidOperationException("No camera is set to this viewport.");
 
         /// <summary>
@@ -1548,8 +1548,8 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="normalizedViewportPoint">The viewport coordinate where X,Y are normalized position and Z is depth.</param>
         /// <returns>The world-space position.</returns>
-        public Vector3 NormalizedViewportToWorldCoordinate(Vector3 normalizedViewportPoint)
-            => NormalizedViewportToWorldCoordinate(new Vector2(normalizedViewportPoint.X, normalizedViewportPoint.Y), normalizedViewportPoint.Z);
+        public Vector3 NormalizedViewportToWorldCoordinate(Vector3 normalizedViewportPoint, bool useUnjitteredProjection = false)
+            => NormalizedViewportToWorldCoordinate(new Vector2(normalizedViewportPoint.X, normalizedViewportPoint.Y), normalizedViewportPoint.Z, useUnjitteredProjection);
 
         /// <summary>
         /// Converts a world-space position to normalized viewport coordinates.
@@ -1652,8 +1652,8 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="normalizedViewportPoint">The normalized [0,1] viewport coordinates.</param>
         /// <returns>A segment from near plane to far plane through the screen point, or zero segment if no camera.</returns>
-        public Segment GetWorldSegment(Vector2 normalizedViewportPoint)
-            => _camera?.GetWorldSegment(normalizedViewportPoint)
+        public Segment GetWorldSegment(Vector2 normalizedViewportPoint, bool useUnjitteredProjection = false)
+            => _camera?.GetWorldSegment(normalizedViewportPoint, useUnjitteredProjection)
                 ?? new Segment(Vector3.Zero, Vector3.Zero);
 
         //TODO: provide PickScene with a List<(XRComponent item, object? data)> pool to take from and release to. As few allocations as possible for constant picking every frame.
@@ -1697,6 +1697,7 @@ namespace XREngine.Rendering
             Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> octreeFinishedCallback,
             Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
             ERaycastHitMode octreeHitMode = ERaycastHitMode.Faces,
+            bool useUnjitteredProjection = false,
             params XRComponent[] ignored)
         {
             if (CameraComponent is null)
@@ -1730,7 +1731,8 @@ namespace XREngine.Rendering
                     normalizedViewportPosition,
                     orderedOctreeResults,
                     octreeFinishedCallback,
-                    octreeHitMode);
+                    octreeHitMode,
+                    useUnjitteredProjection);
             }
 
             if (testScenePhysics)
@@ -1741,7 +1743,8 @@ namespace XREngine.Rendering
                     layerMask,
                     filter,
                     orderedPhysicsResults,
-                    physicsFinishedCallback);
+                    physicsFinishedCallback,
+                    useUnjitteredProjection);
             }
         }
 

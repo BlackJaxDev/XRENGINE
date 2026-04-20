@@ -38,12 +38,48 @@ public static class EditorState
     /// </summary>
     public static void EnterPlayMode()
         => Engine.EnqueueUpdateThreadTask(() => _ = Engine.PlayMode.EnterPlayModeAsync());
+
+    /// <summary>
+    /// Requests entering play mode from an editor-facing interaction.
+    /// Respects the configured enter-play confirmation preference.
+    /// </summary>
+    public static void RequestEnterPlayMode()
+    {
+        if (!Engine.PlayMode.IsEditing || Engine.PlayMode.IsTransitioning)
+            return;
+
+        if (Engine.EditorPreferences?.ConfirmBeforeEnteringPlayMode ?? true)
+        {
+            EditorPlayModeConfirmationPrompt.RequestEnterPlayMode();
+            return;
+        }
+
+        EnterPlayMode();
+    }
     
     /// <summary>
     /// Exits play mode. Editor state will be restored based on configuration.
     /// </summary>
     public static void ExitPlayMode()
         => Engine.EnqueueUpdateThreadTask(() => _ = Engine.PlayMode.ExitPlayModeAsync());
+
+    /// <summary>
+    /// Requests exiting play mode from an editor-facing interaction.
+    /// Respects the configured exit-play confirmation preference.
+    /// </summary>
+    public static void RequestExitPlayMode()
+    {
+        if ((!Engine.PlayMode.IsPlaying && !Engine.PlayMode.IsPaused) || Engine.PlayMode.IsTransitioning)
+            return;
+
+        if (Engine.EditorPreferences?.ConfirmBeforeExitingPlayMode ?? true)
+        {
+            EditorPlayModeConfirmationPrompt.RequestExitPlayMode();
+            return;
+        }
+
+        ExitPlayMode();
+    }
     
     /// <summary>
     /// Toggles between edit and play mode.

@@ -5,7 +5,7 @@ using XREngine.Components.Scene;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Runtime.AnimationIntegration;
+namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapAnimationWorldBuilder
 {

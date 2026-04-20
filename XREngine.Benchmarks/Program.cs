@@ -1,4 +1,5 @@
 using BenchmarkDotNet.Running;
+using XREngine.Benchmarks;
 
 if (args.Contains("--frame-budget", StringComparer.OrdinalIgnoreCase))
 {

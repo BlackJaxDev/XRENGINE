@@ -12,16 +12,16 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2D Normal;
 uniform sampler2D DepthView;
 
-uniform float Radius = 2.0f;
-uniform float Bias = 0.05f;
-uniform float Power = 1.0f; // Unused in gather — applied post-denoise in DeferredLightCombine
-uniform int SliceCount = 3;
-uniform int StepsPerSlice = 6;
+uniform float Radius = 4.052f;
+uniform float Bias = 0.1054f;
+uniform float Power = 2.503f; // Unused in gather — applied post-denoise in DeferredLightCombine
+uniform int SliceCount = 5;
+uniform int StepsPerSlice = 10;
 uniform float FalloffStartRatio = 0.4f;
 uniform float ThicknessHeuristic = 1.0f; // 0 = disabled, 1 = full thin-occluder correction
 uniform bool UseInputNormals = true;
-uniform bool UseVisibilityBitmask = false;
-uniform float VisibilityBitmaskThickness = 0.15f;
+uniform bool UseVisibilityBitmask = true;
+uniform float VisibilityBitmaskThickness = 1.5002f;
 
 uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
@@ -189,6 +189,8 @@ void main()
 
         // Signed normal angle from view direction within the slice plane
         float gamma = atan(dot(projN, sliceTangent), dot(projN, viewDir));
+        // Visibility-bitmask sector mapping uses the original GTAO N handedness.
+        float visibilityBitmaskNormalAngle = -gamma;
 
         // Horizon angles: initialized to pi/2 (unoccluded)
         float h1 = HALF_PI;
@@ -215,7 +217,7 @@ void main()
                     {
                         if (UseVisibilityBitmask)
                         {
-                            occludedSectors = AccumulateVisibilitySectors(delta, viewDir, gamma, 1.0f, bitmaskThickness, occludedSectors);
+                            occludedSectors = AccumulateVisibilitySectors(delta, viewDir, visibilityBitmaskNormalAngle, 1.0f, bitmaskThickness, occludedSectors);
                         }
                         else
                         {
@@ -261,7 +263,7 @@ void main()
                     {
                         if (UseVisibilityBitmask)
                         {
-                            occludedSectors = AccumulateVisibilitySectors(delta, viewDir, gamma, -1.0f, bitmaskThickness, occludedSectors);
+                            occludedSectors = AccumulateVisibilitySectors(delta, viewDir, visibilityBitmaskNormalAngle, -1.0f, bitmaskThickness, occludedSectors);
                         }
                         else
                         {

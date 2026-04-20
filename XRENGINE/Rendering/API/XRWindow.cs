@@ -1047,6 +1047,13 @@ namespace XREngine.Rendering
                     PostRenderViewportsCallback?.Invoke();
                 }
 
+                // Tick render-thread coroutines (e.g. progressive texture uploads) while the renderer
+                // is still marked active so that IsRendererActive guards inside those coroutines pass.
+                using (var inFrameJobsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.InFrameMainThreadJobs"))
+                {
+                    Engine.ProcessMainThreadTasks();
+                }
+
                 // Successful frame: clear circuit breaker state (viewport failures don't block present).
                 if (!viewportRenderFailed)
                 {

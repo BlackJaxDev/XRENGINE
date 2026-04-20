@@ -7,7 +7,7 @@ using XREngine.Core.Files;
 namespace XREngine;
 
 [SuppressMessage("Usage", "CA2255:The 'ModuleInitializer' attribute is only intended to be used in application code or advanced source generator scenarios", Justification = "Published cooked asset serializers must register when the engine assembly loads.")]
-internal static class PublishedCookedAssetRegistryRegistration
+internal static class EnginePublishedCookedAssetRegistryRegistration
 {
     [ModuleInitializer]
     internal static void Register()

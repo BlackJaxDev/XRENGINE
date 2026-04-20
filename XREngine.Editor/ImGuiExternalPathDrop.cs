@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using XREngine.Core.Reflection.Attributes;
 
-namespace XREngine.Editor;
+namespace XREngine.Editor.IMGUI;
 
 internal static class ImGuiExternalPathDrop
 {

@@ -28,6 +28,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.OpenGL;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;

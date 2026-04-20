@@ -425,7 +425,7 @@ public partial class DefaultRenderPipeline2
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(sceneCopyMat, false);
+        var fbo = new XRQuadFrameBuffer(sceneCopyMat, useTriangle: false, deriveRenderTargetsFromMaterial: false);
 
         IFrameBufferAttachement hdrAttach = (IFrameBufferAttachement)hdrSceneTex;
         IFrameBufferAttachement dsAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);

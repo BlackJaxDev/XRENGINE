@@ -1,44 +1,43 @@
 ﻿# Static Classes
 
-Generated: 2026-04-17
+Generated: 2026-04-19
 
 Total rows (before de-dup): 464
-Unique static classes: 332
-Top-level: 273
+Unique static classes: 331
+Top-level: 272
 Nested: 59
 
 ## Top-level static classes
 
 | Namespace | Class | File | Line | Partials |
 | --- | --- | --- | --- | --- |
-| GeneratedLauncher | Program | Samples/MonkeyBallVR/Intermediate/VR_MonkeyBall_Sample/Launcher/Program.cs | 7 |  |
 | XREngine | AnimationClipCookedBinarySerializer | XRENGINE/Core/Engine/AnimationClipSerialization.cs | 17 |  |
-| XREngine | AnimationClipMemoryPackRegistration | XRENGINE/Core/Engine/AnimationClipSerialization.cs | 46 |  |
-| XREngine | AnimationClipSerialization | XRENGINE/Core/Engine/AnimationClipSerialization.cs | 138 |  |
+| XREngine | AnimationClipMemoryPackRegistration | XRENGINE/Core/Engine/AnimationClipSerialization.cs | 32 |  |
+| XREngine | AnimationClipSerialization | XRENGINE/Core/Engine/AnimationClipSerialization.cs | 82 |  |
 | XREngine | AnimationPropertySerialization | XRENGINE/Core/Engine/AnimationPropertySerialization.cs | 13 |  |
 | XREngine | AnimStateMachineCookedBinarySerializer | XRENGINE/Core/Engine/AnimStateMachineSerialization.cs | 19 |  |
-| XREngine | AnimStateMachineMemoryPackRegistration | XRENGINE/Core/Engine/AnimStateMachineSerialization.cs | 48 |  |
-| XREngine | AnimStateMachineSerialization | XRENGINE/Core/Engine/AnimStateMachineSerialization.cs | 137 |  |
+| XREngine | AnimStateMachineMemoryPackRegistration | XRENGINE/Core/Engine/AnimStateMachineSerialization.cs | 34 |  |
+| XREngine | AnimStateMachineSerialization | XRENGINE/Core/Engine/AnimStateMachineSerialization.cs | 81 |  |
 | XREngine | AotRuntimeMetadataStore | XREngine.Runtime.Core/AotRuntimeMetadataStore.cs | 9 |  |
 | XREngine | ArchiveExtractor | XREngine.Data/ArchiveExtractor.cs | 7 |  |
 | XREngine | AssetDeserializationContext | XRENGINE/Core/Engine/Loading/AssetLoading.Contexts.cs | 281 |  |
 | XREngine | AssetLoadProgressContext | XRENGINE/Core/Engine/Loading/AssetLoading.Contexts.cs | 121 |  |
 | XREngine | BlendTreeCookedBinarySerializer | XRENGINE/Core/Engine/BlendTreeSerialization.cs | 15 |  |
-| XREngine | BlendTreeMemoryPackRegistration | XRENGINE/Core/Engine/BlendTreeSerialization.cs | 46 |  |
-| XREngine | BlendTreeSerialization | XRENGINE/Core/Engine/BlendTreeSerialization.cs | 135 |  |
+| XREngine | BlendTreeMemoryPackRegistration | XRENGINE/Core/Engine/BlendTreeSerialization.cs | 42 |  |
+| XREngine | BlendTreeSerialization | XRENGINE/Core/Engine/BlendTreeSerialization.cs | 97 |  |
 | XREngine | DeferredAssetReferenceContext | XRENGINE/Core/Engine/Loading/AssetLoading.Contexts.cs | 12 |  |
 | XREngine | Engine | XRENGINE/Engine/Engine.cs | 66 | 31 |
+| XREngine | EnginePublishedCookedAssetRegistryRegistration | XRENGINE/Core/Files/PublishedCookedAssetRegistryRegistration.cs | 10 |  |
 | XREngine | Globals | XREngine.Data/Globals.cs | 6 |  |
 | XREngine | MotionSerialization | XRENGINE/Core/Engine/MotionSerialization.cs | 8 |  |
 | XREngine | NativeFbxSceneImporter | XRENGINE/Core/NativeFbxSceneImporter.cs | 21 |  |
 | XREngine | NativeGltfSceneImporter | XRENGINE/Core/NativeGltfSceneImporter.cs | 22 |  |
 | XREngine | PolymorphicYamlFallbackRegistry | XRENGINE/Core/Engine/PolymorphicYamlFallbackRegistry.cs | 14 |  |
 | XREngine | ProjectionMatrixCombiner | XREngine.Runtime.Core/ProjectionMatrixCombiner.cs | 11 |  |
-| XREngine | PublishedCookedAssetRegistryRegistration | XRENGINE/Core/Files/PublishedCookedAssetRegistryRegistration.cs | 10 |  |
 | XREngine | RuntimeWorldObjectServices | XREngine.Runtime.Core/World/RuntimeWorldObjectBase.cs | 47 |  |
 | XREngine | SnapshotBinarySerializer | XRENGINE/Core/SnapshotBinarySerializer.cs | 10 |  |
 | XREngine | SnapshotYamlSerializer | XRENGINE/Core/SnapshotYamlSerializer.cs | 7 |  |
-| XREngine | TryWriteAsReference | XRENGINE/Core/Engine/XRAssetYamlTypeConverter.cs | 574 |  |
+| XREngine | TryWriteAsReference | XRENGINE/Core/Engine/XRAssetYamlTypeConverter.cs | 659 |  |
 | XREngine | XREngineJsonRuntime | XRENGINE/Core/Serialization/XREngineJsonSerialization.cs | 34 |  |
 | XREngine | XRRuntimeEnvironment | XREngine.Runtime.Core/XRRuntimeEnvironment.cs | 15 |  |
 | XREngine | YamlDefaultTypeContext | XRENGINE/Core/Engine/YamlDefaultTypeInspector.cs | 148 |  |
@@ -48,13 +47,12 @@ Nested: 59
 | XREngine.Audio | AudioSettings | XREngine.Audio/AudioSettings.cs | 11 |  |
 | XREngine.Audio | XRAudioUtil | XREngine.Audio/XRAudioUtil.cs | 7 |  |
 | XREngine.Audio.Steam | Phonon | XREngine.Audio/Steam/Phonon.cs | 5 |  |
-| XREngine.Benchmarks | FbxPhase0BaselineHarness | XREngine.Benchmarks/FbxPhase0BaselineHarness.cs | 11 |  |
+| XREngine.Benchmarks | FbxPhase0BaselineHarness | XREngine.Benchmarks/FbxPhase0BaselineHarness.cs | 13 |  |
 | XREngine.Benchmarks | FbxPhase7RegressionHarness | XREngine.Benchmarks/FbxPhase7RegressionHarness.cs | 7 |  |
 | XREngine.Benchmarks | GltfPhase0BaselineHarness | XREngine.Benchmarks/GltfPhase0BaselineHarness.cs | 17 |  |
-| XREngine.Components | Audio2Face3DEmotions | XRENGINE/Scene/Components/Audio/Audio2Face3DComponent.cs | 34 |  |
-| XREngine.Components | Audio2Face3DLiveClientRegistry | XRENGINE/Scene/Components/Audio/Audio2Face3DComponent.cs | 70 |  |
 | XREngine.Components | Audio2Face3DNativeBridge | XRENGINE/Scene/Components/Audio/Audio2Face3DNativeBridge.cs | 108 |  |
 | XREngine.Components | Audio2Face3DNativeBridgeAudioConverter | XRENGINE/Scene/Components/Audio/Audio2Face3DNativeBridge.cs | 30 |  |
+| XREngine.Components | Audio2Face3DRegistry | XRENGINE/Scene/Components/Audio/Audio2Face3DComponent.cs | 34 |  |
 | XREngine.Components | OVRLipSync | XRENGINE/Scene/Components/Audio/OVRLipSync.cs | 9 |  |
 | XREngine.Components.Animation | AvatarHumanoidProfileBuilder | XRENGINE/Scene/Components/Animation/AvatarHumanoidProfileBuilder.cs | 15 |  |
 | XREngine.Components.Animation | EyeTrackingBlendTrees | XRENGINE/Scene/Components/Animation/EyeTrackingBlendTrees.cs | 6 |  |
@@ -113,11 +111,6 @@ Nested: 59
 | XREngine.Editor | EditorState | XREngine.Editor/EditorState.cs | 9 |  |
 | XREngine.Editor | EditorUnitTests | XREngine.Editor/Unit Tests/Audio/UnitTestingWorld.AudioTesting.cs | 15 | 15 |
 | XREngine.Editor | EditorVR | XREngine.Editor/EditorVR.cs | 8 |  |
-| XREngine.Editor | ImGuiAssetUtilities | XREngine.Editor/ImGuiAssetUtilities.cs | 24 |  |
-| XREngine.Editor | ImGuiDragDropNative | XREngine.Editor/IMGUI/ImGuiDragDropNative.cs | 10 |  |
-| XREngine.Editor | ImGuiEditorUtilities | XREngine.Editor/ImGuiEditorUtilities.cs | 9 |  |
-| XREngine.Editor | ImGuiExternalPathDrop | XREngine.Editor/ImGuiExternalPathDrop.cs | 7 |  |
-| XREngine.Editor | ImGuiUndoHelper | XREngine.Editor/Undo/ImGuiUndoHelper.cs | 8 |  |
 | XREngine.Editor | InspectorPropertyEditors | XREngine.Editor/UI/Panels/Inspector/Editors/DataTransformers/InspectorPropertyEditors.LayerMaskTransformer.cs | 5 | 11 |
 | XREngine.Editor | ProjectBuilder | XREngine.Editor/ProjectBuilder.cs | 24 |  |
 | XREngine.Editor | Selection | XREngine.Editor/Selection.cs | 8 |  |
@@ -130,6 +123,11 @@ Nested: 59
 | XREngine.Editor.ComponentEditors | JointEditorShared | XREngine.Editor/ComponentEditors/JointComponentEditors.cs | 13 |  |
 | XREngine.Editor.ComponentEditors | LightComponentEditorShared | XREngine.Editor/ComponentEditors/LightComponentEditorShared.cs | 18 |  |
 | XREngine.Editor.ComponentEditors | RigidBodyEditorShared | XREngine.Editor/ComponentEditors/RigidBodyComponentEditors.cs | 16 |  |
+| XREngine.Editor.IMGUI | ImGuiAssetUtilities | XREngine.Editor/ImGuiAssetUtilities.cs | 24 |  |
+| XREngine.Editor.IMGUI | ImGuiDragDropNative | XREngine.Editor/IMGUI/ImGuiDragDropNative.cs | 10 |  |
+| XREngine.Editor.IMGUI | ImGuiEditorUtilities | XREngine.Editor/ImGuiEditorUtilities.cs | 9 |  |
+| XREngine.Editor.IMGUI | ImGuiExternalPathDrop | XREngine.Editor/ImGuiExternalPathDrop.cs | 7 |  |
+| XREngine.Editor.IMGUI | ImGuiUndoHelper | XREngine.Editor/Undo/ImGuiUndoHelper.cs | 8 |  |
 | XREngine.Editor.Mcp | McpToolRegistry | XREngine.Editor/Mcp/McpToolRegistry.cs | 14 |  |
 | XREngine.Editor.Mcp | McpWorldResolver | XREngine.Editor/Mcp/McpWorldResolver.cs | 5 |  |
 | XREngine.Editor.TransformEditors | TransformEditorUtil | XREngine.Editor/TransformEditors/TransformEditorUtil.cs | 8 |  |
@@ -137,36 +135,36 @@ Nested: 59
 | XREngine.Editor.UI | EditorUI | XREngine.Editor/UI/EditorStyles.cs | 6 |  |
 | XREngine.Editor.UI | ImGuiFileBrowser | XREngine.Editor/UI/ImGuiFileBrowser.cs | 19 |  |
 | XREngine.Editor.UI | NativeUIElements | XREngine.Editor/UI/NativeUIElements.cs | 12 |  |
-| XREngine.Extensions | ArrayExtension | XREngine.Extensions/Array.cs | 8 |  |
-| XREngine.Extensions | ByteExtension | XREngine.Extensions/Numbers/Byte.cs | 3 |  |
+| XREngine.Extensions | ArrayExtensions | XREngine.Extensions/Array.cs | 8 |  |
+| XREngine.Extensions | ByteExtensions | XREngine.Extensions/Numbers/Byte.cs | 3 |  |
 | XREngine.Extensions | ColorExtensions | XREngine.Extensions/Numbers/ColorExtensions.cs | 5 |  |
-| XREngine.Extensions | DecimalExtension | XREngine.Extensions/Numbers/Decimal.cs | 3 |  |
+| XREngine.Extensions | DecimalExtensions | XREngine.Extensions/Numbers/Decimal.cs | 3 |  |
 | XREngine.Extensions | DoubleExtensions | XREngine.Extensions/Numbers/Double.cs | 3 |  |
-| XREngine.Extensions | EnumerableExtension | XREngine.Extensions/Enumerable.cs | 6 |  |
-| XREngine.Extensions | EnumExtension | XREngine.Extensions/Enum.cs | 6 |  |
-| XREngine.Extensions | EventInfoExtension | XREngine.Extensions/Reflection/EventInfo.cs | 5 |  |
+| XREngine.Extensions | EnumerableExtensions | XREngine.Extensions/Enumerable.cs | 6 |  |
+| XREngine.Extensions | EnumExtensions | XREngine.Extensions/Enum.cs | 6 |  |
+| XREngine.Extensions | EventInfoExtensions | XREngine.Extensions/Reflection/EventInfo.cs | 5 |  |
 | XREngine.Extensions | GenericExtensions | XREngine.Extensions/Generic.cs | 5 |  |
 | XREngine.Extensions | GraphicsExtensions | XRENGINE/Core/Extensions/GraphicsExtension.cs | 5 |  |
-| XREngine.Extensions | Int16Extension | XREngine.Extensions/Numbers/Int16.cs | 3 |  |
-| XREngine.Extensions | Int32Extension | XREngine.Extensions/Numbers/Int32.cs | 3 |  |
-| XREngine.Extensions | Int64Extension | XREngine.Extensions/Numbers/Int64.cs | 3 |  |
-| XREngine.Extensions | ListExtension | XREngine.Extensions/List.cs | 7 |  |
-| XREngine.Extensions | LockingExtension | XREngine.Extensions/ReaderWriterLockSlim.cs | 3 |  |
-| XREngine.Extensions | MarshalExtension | XREngine.Extensions/Memory/MarshalExtension.cs | 5 |  |
-| XREngine.Extensions | MatrixExtension | XREngine.Extensions/Numbers/MatrixExtension.cs | 5 |  |
-| XREngine.Extensions | MethodInfoExtension | XREngine.Extensions/Reflection/MethodInfo.cs | 5 |  |
+| XREngine.Extensions | Int16Extensions | XREngine.Extensions/Numbers/Int16.cs | 3 |  |
+| XREngine.Extensions | Int32Extensions | XREngine.Extensions/Numbers/Int32.cs | 3 |  |
+| XREngine.Extensions | Int64Extensions | XREngine.Extensions/Numbers/Int64.cs | 3 |  |
+| XREngine.Extensions | ListExtensions | XREngine.Extensions/List.cs | 7 |  |
+| XREngine.Extensions | LockingExtensions | XREngine.Extensions/ReaderWriterLockSlim.cs | 3 |  |
+| XREngine.Extensions | MarshalExtensions | XREngine.Extensions/Memory/MarshalExtensions.cs | 5 |  |
+| XREngine.Extensions | MatrixExtensions | XREngine.Extensions/Numbers/MatrixExtensions.cs | 5 |  |
+| XREngine.Extensions | MethodInfoExtensions | XREngine.Extensions/Reflection/MethodInfo.cs | 5 |  |
 | XREngine.Extensions | ObjectExtensions | XREngine.Extensions/Object.cs | 5 |  |
-| XREngine.Extensions | QuaternionExtension | XREngine.Extensions/Numbers/QuaternionExtension.cs | 5 |  |
-| XREngine.Extensions | RectangleExtension | XREngine.Extensions/RectangleF.cs | 5 |  |
-| XREngine.Extensions | SByteExtension | XREngine.Extensions/Numbers/SByte.cs | 3 |  |
+| XREngine.Extensions | QuaternionExtensions | XREngine.Extensions/Numbers/QuaternionExtensions.cs | 5 |  |
+| XREngine.Extensions | RectangleExtensions | XREngine.Extensions/RectangleF.cs | 5 |  |
+| XREngine.Extensions | SByteExtensions | XREngine.Extensions/Numbers/SByte.cs | 3 |  |
 | XREngine.Extensions | SingleExtensions | XREngine.Extensions/Numbers/Single.cs | 3 |  |
-| XREngine.Extensions | StreamExtension | XREngine.Extensions/Stream.cs | 5 |  |
-| XREngine.Extensions | StringExtension | XREngine.Extensions/String.cs | 9 |  |
-| XREngine.Extensions | TaskExtension | XREngine.Extensions/Code/Task.cs | 3 |  |
-| XREngine.Extensions | TypeExtension | XREngine.Extensions/Reflection/Type.cs | 21 |  |
-| XREngine.Extensions | UInt16Extension | XREngine.Extensions/Numbers/UInt16.cs | 3 |  |
-| XREngine.Extensions | UInt32Extension | XREngine.Extensions/Numbers/UInt32.cs | 3 |  |
-| XREngine.Extensions | UInt64Extension | XREngine.Extensions/Numbers/UInt64.cs | 3 |  |
+| XREngine.Extensions | StreamExtensions | XREngine.Extensions/Stream.cs | 5 |  |
+| XREngine.Extensions | StringExtensions | XREngine.Extensions/String.cs | 9 |  |
+| XREngine.Extensions | TaskExtensions | XREngine.Extensions/Code/Task.cs | 3 |  |
+| XREngine.Extensions | TypeExtensions | XREngine.Extensions/Reflection/Type.cs | 21 |  |
+| XREngine.Extensions | UInt16Extensions | XREngine.Extensions/Numbers/UInt16.cs | 3 |  |
+| XREngine.Extensions | UInt32Extensions | XREngine.Extensions/Numbers/UInt32.cs | 3 |  |
+| XREngine.Extensions | UInt64Extensions | XREngine.Extensions/Numbers/UInt64.cs | 3 |  |
 | XREngine.Extensions | Vector2Extensions | XREngine.Extensions/Numbers/Vector2Extensions.cs | 5 |  |
 | XREngine.Extensions | Vector3Extensions | XREngine.Extensions/Numbers/Vector3Extensions.cs | 5 |  |
 | XREngine.Extensions | Vector4Extensions | XREngine.Extensions/Numbers/Vector4Extensions.cs | 5 |  |
@@ -204,12 +202,12 @@ Nested: 59
 | XREngine.Rendering | ExactTransparencyShaderBindings | XRENGINE/Rendering/API/Rendering/Objects/Materials/ExactTransparencyShaderBindings.cs | 5 |  |
 | XREngine.Rendering | GpuDispatchLogger | XRENGINE/Rendering/GpuDispatchLogger.cs | 20 |  |
 | XREngine.Rendering | GpuStatsLayout | XRENGINE/Rendering/GpuStatsLayout.cs | 6 |  |
-| XREngine.Rendering | RuntimeRenderingHostServices | XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs | 151 |  |
+| XREngine.Rendering | RuntimeRenderingHostServices | XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs | 152 |  |
 | XREngine.Rendering | RuntimeRenderObjectServices | XREngine.Runtime.Rendering/RenderObjects/IRenderApiWrapperOwner.cs | 21 |  |
 | XREngine.Rendering | RuntimeShaderServices | XREngine.Runtime.Rendering/Resources/Shaders/RuntimeShaderServices.cs | 13 |  |
 | XREngine.Rendering | ShaderCrossCompiler | XRENGINE/Rendering/API/Rendering/ShaderCrossCompiler.cs | 15 |  |
 | XREngine.Rendering | ShaderSourceResolver | XREngine.Runtime.Rendering/Resources/Shaders/ShaderSourceResolver.cs | 29 |  |
-| XREngine.Rendering | TextureStreamingSourceFactory | XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs | 131 |  |
+| XREngine.Rendering | TextureStreamingSourceFactory | XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs | 134 |  |
 | XREngine.Rendering.Commands | GpuBackendParity | XRENGINE/Rendering/Commands/GPURendering/Validation/GpuBackendParityValidator.cs | 26 |  |
 | XREngine.Rendering.Commands | GPUBatchingBindings | XRENGINE/Rendering/Commands/GPURendering/Resources/GPUBatchingResources.cs | 30 |  |
 | XREngine.Rendering.Commands | GPUBatchingLayout | XRENGINE/Rendering/Commands/GPURendering/Resources/GPUBatchingResources.cs | 74 |  |
@@ -261,25 +259,26 @@ Nested: 59
 | XREngine.Rendering.Vulkan | VulkanFeatureProfile | XRENGINE/Rendering/API/Rendering/Vulkan/VulkanFeatureProfile.cs | 25 |  |
 | XREngine.Rendering.Vulkan | VulkanShaderAutoUniforms | XRENGINE/Rendering/API/Rendering/Vulkan/VulkanShaderTools.cs | 57 |  |
 | XREngine.Rendering.XeSS | IntelXessManager | XRENGINE/Rendering/XeSS/IntelXessManager.cs | 12 | 2 |
-| XREngine.Runtime.AnimationIntegration | BootstrapAnimationWorldBuilder | XREngine.Runtime.AnimationIntegration/BootstrapAnimationWorldBuilder.cs | 10 |  |
-| XREngine.Runtime.AudioIntegration | BootstrapAudioWorldBuilder | XREngine.Runtime.AudioIntegration/BootstrapAudioWorldBuilder.cs | 7 |  |
-| XREngine.Runtime.Bootstrap | BootstrapEditorBridge | XREngine.Runtime.Bootstrap/BootstrapEditorHooks.cs | 13 |  |
-| XREngine.Runtime.Bootstrap | BootstrapLightingBuilder | XREngine.Runtime.Bootstrap/BootstrapLightingBuilder.cs | 12 |  |
-| XREngine.Runtime.Bootstrap | BootstrapModelBuilder | XREngine.Runtime.Bootstrap/BootstrapModelBuilder.cs | 9 |  |
-| XREngine.Runtime.Bootstrap | BootstrapModelImportBridge | XREngine.Runtime.Bootstrap/BootstrapEditorHooks.cs | 33 |  |
+| XREngine.Runtime.Bootstrap | BootstrapEditorBridge | XREngine.Runtime.Bootstrap/BootstrapEditorBridge.cs | 13 |  |
+| XREngine.Runtime.Bootstrap | BootstrapModelImportBridge | XREngine.Runtime.Bootstrap/BootstrapModelImportBridge.cs | 10 |  |
 | XREngine.Runtime.Bootstrap | BootstrapNetworkingWorldProfiles | XREngine.Runtime.Bootstrap/BootstrapNetworkingWorldProfiles.cs | 3 |  |
-| XREngine.Runtime.Bootstrap | BootstrapPawnFactory | XREngine.Runtime.Bootstrap/BootstrapPawnFactory.cs | 20 |  |
-| XREngine.Runtime.Bootstrap | BootstrapPhysicsBuilder | XREngine.Runtime.Bootstrap/BootstrapPhysicsBuilder.cs | 19 |  |
 | XREngine.Runtime.Bootstrap | BootstrapRenderSettings | XREngine.Runtime.Bootstrap/BootstrapRenderSettings.cs | 7 |  |
 | XREngine.Runtime.Bootstrap | BootstrapStartupWork | XREngine.Runtime.Bootstrap/BootstrapStartupWork.cs | 6 |  |
-| XREngine.Runtime.Bootstrap | BootstrapWaterBuilder | XREngine.Runtime.Bootstrap/BootstrapWaterBuilder.cs | 16 |  |
-| XREngine.Runtime.Bootstrap | BootstrapWorldBridge | XREngine.Runtime.Bootstrap/BootstrapEditorHooks.cs | 23 |  |
-| XREngine.Runtime.Bootstrap | BootstrapWorldFactory | XREngine.Runtime.Bootstrap/BootstrapWorldFactory.cs | 21 |  |
+| XREngine.Runtime.Bootstrap | BootstrapWorldBridge | XREngine.Runtime.Bootstrap/BootstrapWorldBridge.cs | 10 |  |
 | XREngine.Runtime.Bootstrap | RuntimeBootstrapState | XREngine.Runtime.Bootstrap/RuntimeBootstrapState.cs | 3 |  |
 | XREngine.Runtime.Bootstrap | UnitTestingWorldSettingsStore | XREngine.Runtime.Bootstrap/UnitTestingWorldSettingsStore.cs | 6 |  |
-| XREngine.Runtime.InputIntegration | BootstrapFlyableCameraFactory | XREngine.Runtime.InputIntegration/BootstrapFlyableCameraFactory.cs | 16 |  |
+| XREngine.Runtime.Bootstrap.Builders | BootstrapAnimationWorldBuilder | XREngine.Runtime.AnimationIntegration/BootstrapAnimationWorldBuilder.cs | 10 |  |
+| XREngine.Runtime.Bootstrap.Builders | BootstrapAudioWorldBuilder | XREngine.Runtime.AudioIntegration/BootstrapAudioWorldBuilder.cs | 7 |  |
+| XREngine.Runtime.Bootstrap.Builders | BootstrapFlyableCameraFactory | XREngine.Runtime.InputIntegration/BootstrapFlyableCameraFactory.Builders.cs | 7 |  |
+| XREngine.Runtime.Bootstrap.Builders | BootstrapLightingBuilder | XREngine.Runtime.Bootstrap/BootstrapLightingBuilder.cs | 13 |  |
+| XREngine.Runtime.Bootstrap.Builders | BootstrapModelBuilder | XREngine.Runtime.Bootstrap/BootstrapModelBuilder.cs | 10 |  |
+| XREngine.Runtime.Bootstrap.Builders | BootstrapPawnFactory | XREngine.Runtime.Bootstrap/BootstrapPawnFactory.cs | 21 |  |
+| XREngine.Runtime.Bootstrap.Builders | BootstrapPhysicsBuilder | XREngine.Runtime.Bootstrap/BootstrapPhysicsBuilder.cs | 19 |  |
+| XREngine.Runtime.Bootstrap.Builders | BootstrapWaterBuilder | XREngine.Runtime.Bootstrap/BootstrapWaterBuilder.cs | 16 |  |
+| XREngine.Runtime.Bootstrap.Builders | BootstrapWorldFactory | XREngine.Runtime.Bootstrap/BootstrapWorldFactory.cs | 20 |  |
 | XREngine.Runtime.InputIntegration | BootstrapInputBridge | XREngine.Runtime.InputIntegration/BootstrapFlyableCameraFactory.cs | 11 |  |
 | XREngine.Scene | RuntimeSceneNodeServices | XREngine.Runtime.Core/Scene/RuntimeSceneNodeServices.cs | 12 |  |
+| XREngine.Scene.Importers | UnitySceneImporter | XRENGINE/Scene/Importers/UnitySceneImporter.Components.cs | 20 | 2 |
 | XREngine.Scene.Physics.Jolt | JoltBootstrap | XRENGINE/Scene/Physics/Jolt/JoltBootstrap.cs | 12 |  |
 | XREngine.Scene.Prefabs | SceneNodePrefabUtility | XRENGINE/Scene/Prefabs/SceneNodePrefabUtility.cs | 16 |  |
 | XREngine.Scene.Transforms | RuntimeTransformServices | XREngine.Runtime.Core/Scene/Transforms/RuntimeTransformServices.cs | 42 |  |
@@ -309,7 +308,7 @@ Nested: 59
 | XREngine.Components.Lights | LightVolumeComponent | Registry | XRENGINE/Scene/Components/Lights/LightVolumeComponent.cs | 120 |  |
 | XREngine.Components.Lights | RadianceCascadeComponent | Registry | XRENGINE/Scene/Components/Lights/RadianceCascadeComponents.cs | 229 |  |
 | XREngine.Components.Scene.Mesh | GaussianSplatComponent | GaussianMaterialFactory | XRENGINE/Scene/Components/Mesh/GaussianSplatComponent.cs | 222 |  |
-| XREngine.Components.Scene.Mesh | RenderableMesh | MeshTextureStreamingMetricsCache | XRENGINE/Scene/Components/Mesh/RenderableMesh.cs | 476 |  |
+| XREngine.Components.Scene.Mesh | RenderableMesh | MeshTextureStreamingMetricsCache | XRENGINE/Scene/Components/Mesh/RenderableMesh.cs | 616 |  |
 | XREngine.Components.Scene.Volumes | VolumetricFogVolumeComponent | Registry | XRENGINE/Scene/Components/Volumes/VolumetricFog.cs | 194 |  |
 | XREngine.Core.Files | CookedBinarySerializer | CookedBinarySchemaFormatter | XRENGINE/Core/Files/CookedBinary/CookedBinarySerializer.Schema.cs | 512 |  |
 | XREngine.Core.Files | CookedBinarySerializer | TypeMetadataCache | XRENGINE/Core/Files/CookedBinary/CookedBinarySerializer.cs | 2023 |  |
@@ -320,7 +319,6 @@ Nested: 59
 | XREngine.Data.Geometry | PreparedFrustum | FrustumIntersection | XREngine.Data/Geometry/PreparedFrustum.cs | 111 |  |
 | XREngine.Data.Geometry | GeoUtil | Intersect | XREngine.Data/Geometry/GeoUtil.Intersect.cs | 12 |  |
 | XREngine.Data.Geometry | GeoUtil | Nearest | XREngine.Data/Geometry/GeoUtil.Nearest.cs | 10 |  |
-| XREngine.Editor | ImGuiAssetUtilities | AssetReferenceAnalyzer | XREngine.Editor/ImGuiAssetUtilities.cs | 1022 |  |
 | XREngine.Editor | EditorUnitTests | Audio | XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Audio.cs | 12 |  |
 | XREngine.Editor | InspectorPropertyEditors | CollectionTypes | XREngine.Editor/UI/Panels/Inspector/Editors/InspectorPropertyEditors.CollectionTypes.cs | 19 |  |
 | XREngine.Editor | InspectorPropertyEditors | EngineTypes | XREngine.Editor/UI/Panels/Inspector/Editors/InspectorPropertyEditors.EngineTypes.cs | 9 |  |
@@ -331,6 +329,7 @@ Nested: 59
 | XREngine.Editor | EditorUnitTests | Physics | XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Physics.cs | 22 |  |
 | XREngine.Editor | InspectorPropertyEditors | PrimitiveTypes | XREngine.Editor/UI/Panels/Inspector/Editors/InspectorPropertyEditors.PrimitiveTypes.cs | 13 |  |
 | XREngine.Editor | EditorUnitTests | UserInterface | XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs | 29 |  |
+| XREngine.Editor.IMGUI | ImGuiAssetUtilities | AssetReferenceAnalyzer | XREngine.Editor/ImGuiAssetUtilities.cs | 1022 |  |
 | XREngine.Editor.UI | EditorUI | Styles | XREngine.Editor/UI/EditorStyles.cs | 8 |  |
 | XREngine.Native | NativeMethods | OSX | XREngine.Data/Native/NativeMethods.OSX.cs | 7 |  |
 | XREngine.Native | NativeMethods | UNIX | XREngine.Data/Native/NativeMethods.UNIX.cs | 7 |  |

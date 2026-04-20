@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Commands
 {
@@ -10,5 +11,7 @@ namespace XREngine.Rendering.Commands
         Matrix4x4 WorldMatrix { get; set; }
         bool WorldMatrixIsModelMatrix { get; set; }
         XRMaterial? MaterialOverride { get; set; }
+        RenderingParameters? RenderOptionsOverride { get; set; }
+        bool ForceCpuRendering { get; set; }
     }
 }

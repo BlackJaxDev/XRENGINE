@@ -31,6 +31,12 @@ public partial class GLTexture2D
 
         Generate();
 
+        Debug.OpenGL(
+            $"[GLTexture2D.Sparse] Applying sparse transition for '{GetDescribingName()}': binding={BindingId} " +
+            $"logicalDims={request.LogicalWidth}x{request.LogicalHeight} logicalMips={request.LogicalMipCount} " +
+            $"requestedBase={request.RequestedBaseMipLevel} residentMips={request.ResidentMipmaps.Length} " +
+            $"sized={request.SizedInternalFormat} pageSelection={request.PageSelection.Normalize()}.");
+
         IGLTexture? previousTexture = Renderer.BoundTexture;
         bool restorePrevious = previousTexture is not null && !ReferenceEquals(previousTexture, this);
         Api.BindTexture(ToGLEnum(TextureTarget), BindingId);
@@ -38,7 +44,7 @@ public partial class GLTexture2D
 
         try
         {
-            Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+            ResetUnpackStateForTextureUpload();
 
             SparseTextureStreamingSupport support = Renderer.GetSparseTextureStreamingSupport(request.SizedInternalFormat);
             if (!support.IsAvailable)
@@ -369,6 +375,7 @@ public partial class GLTexture2D
         int numSparseLevels)
     {
         GLEnum target = ToGLEnum(TextureTarget);
+        ResetUnpackStateForTextureUpload();
         Mipmap2D[] residentMipmaps = request.ResidentMipmaps;
         bool usePartialPages = selection.IsPartial;
         int tailFirstMipLevel = Math.Min(Math.Max(0, numSparseLevels), request.LogicalMipCount);

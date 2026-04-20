@@ -83,21 +83,27 @@ aoSettings.Type = AmbientOcclusionSettings.EType.HorizonBasedPlus;
 
 ## Ground-Truth Ambient Occlusion (GTAO)
 
-GTAO now has a real slice-based horizon gather and edge-aware denoise path. It also exposes an optional visibility-bitmask gather variant inspired by horizon-based SSAO visibility sectors, which helps thin occluders and reduces some halo cases without changing the default path. This toggle currently applies only to GTAO.
+GTAO now has a real slice-based horizon gather and edge-aware denoise path. It defaults to the visibility-bitmask gather variant inspired by horizon-based SSAO visibility sectors, which helps thin occluders and reduces some halo cases. You can still disable that toggle to return to the classic horizon-accumulation path. This toggle currently applies only to GTAO.
 
 ```csharp
 aoSettings.Type = AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion;
+aoSettings.Radius = 4.052f;
+aoSettings.Bias = 0.1054f;
+aoSettings.Power = 2.503f;
 
 // GTAO-specific settings
-aoSettings.GTAOSliceCount = 3;
-aoSettings.GTAOStepsPerSlice = 6;
-aoSettings.GTAOFalloffStartRatio = 0.4f;
+aoSettings.GTAOSliceCount = 5;
+aoSettings.GTAOStepsPerSlice = 10;
 aoSettings.GTAODenoiseEnabled = true;
-aoSettings.GTAODenoiseRadius = 4;
-aoSettings.GTAODenoiseSharpness = 4.0f;
+aoSettings.GTAODenoiseRadius = 8;
+aoSettings.GTAODenoiseSharpness = 14.02f;
 aoSettings.GTAOUseInputNormals = true;
 aoSettings.GTAOUseVisibilityBitmask = true;
-aoSettings.GTAOVisibilityBitmaskThickness = 0.15f;
+aoSettings.GTAOVisibilityBitmaskThickness = 1.5002f;
+aoSettings.GTAOMultiBounceEnabled = true;
+aoSettings.GTAOSpecularOcclusionEnabled = true;
+aoSettings.GTAOResolution = GroundTruthAmbientOcclusionSettings.EResolution.Half;
+aoSettings.GTAOUseNormalWeightedBlur = true;
 ```
 
 When visibility-bitmask mode is enabled, GTAO replaces the classic falloff-driven horizon accumulation with hemisphere sector coverage using a constant thickness value. `GTAOFalloffStartRatio` and `GTAOThicknessHeuristic` only affect the classic horizon mode.

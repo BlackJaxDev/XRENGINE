@@ -14,10 +14,10 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
     {
         AmbientOcclusionSettings settings = new();
 
-        settings.GroundTruth.UseVisibilityBitmask.ShouldBeFalse();
-        settings.GTAOUseVisibilityBitmask.ShouldBeFalse();
-        settings.GroundTruth.VisibilityBitmaskThickness.ShouldBe(0.15f, 0.0001f);
-        settings.GTAOVisibilityBitmaskThickness.ShouldBe(0.15f, 0.0001f);
+        settings.GroundTruth.UseVisibilityBitmask.ShouldBeTrue();
+        settings.GTAOUseVisibilityBitmask.ShouldBeTrue();
+        settings.GroundTruth.VisibilityBitmaskThickness.ShouldBe(1.5002f, 0.0001f);
+        settings.GTAOVisibilityBitmaskThickness.ShouldBe(1.5002f, 0.0001f);
 
         settings.GTAOUseVisibilityBitmask = true;
         settings.GroundTruth.UseVisibilityBitmask.ShouldBeTrue();
@@ -47,7 +47,7 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
     {
         string settingsSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/GroundTruthAmbientOcclusionSettings.cs").Replace("\r\n", "\n");
         settingsSource.ShouldContain("program.Uniform(\"UseVisibilityBitmask\", UseVisibilityBitmask);");
-        settingsSource.ShouldContain("program.Uniform(\"VisibilityBitmaskThickness\", PositiveOr(VisibilityBitmaskThickness, 0.15f));");
+        settingsSource.ShouldContain("program.Uniform(\"VisibilityBitmaskThickness\", PositiveOr(VisibilityBitmaskThickness, DefaultVisibilityBitmaskThickness));");
 
         AssertShaderContainsVisibilityBitmaskPath("Build/CommonAssets/Shaders/Scene3D/GTAOGen.fs");
         AssertShaderContainsVisibilityBitmaskPath("Build/CommonAssets/Shaders/Scene3D/GTAOGenStereo.fs");
@@ -56,11 +56,12 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
     private static void AssertShaderContainsVisibilityBitmaskPath(string relativePath)
     {
         string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
-        source.ShouldContain("uniform bool UseVisibilityBitmask = false;");
-        source.ShouldContain("uniform float VisibilityBitmaskThickness = 0.15f;");
+        source.ShouldContain("uniform bool UseVisibilityBitmask = true;");
+        source.ShouldContain("uniform float VisibilityBitmaskThickness = 1.5002f;");
         source.ShouldContain("const uint VISIBILITY_BITMASK_SECTOR_COUNT = 32u;");
         source.ShouldContain("uint UpdateSectors(float minHorizon, float maxHorizon, uint globalOccludedBitfield)");
         source.ShouldContain("uint AccumulateVisibilitySectors(vec3 deltaPos, vec3 viewDir, float normalAngle, float samplingDirection, float thickness, uint occludedSectors)");
+        source.ShouldContain("float visibilityBitmaskNormalAngle = -gamma;");
         source.ShouldContain("bitCount(occludedSectors)");
     }
 

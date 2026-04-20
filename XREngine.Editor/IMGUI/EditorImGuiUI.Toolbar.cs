@@ -218,7 +218,7 @@ public static partial class EditorImGuiUI
             // Show Play button
             Vector4 playColor = new(0.3f, 0.8f, 0.3f, 1.0f);
             if (DrawToolbarActionButton("▶", "Play (F5)", playColor, SvgEditorIcons.IconPlay))
-                EditorState.EnterPlayMode();
+                EditorState.RequestEnterPlayMode();
         }
         else if (isPlaying)
         {
@@ -245,7 +245,7 @@ public static partial class EditorImGuiUI
                 : new Vector4(0.9f, 0.3f, 0.3f, 1.0f);
             
             if (DrawToolbarActionButton("⏹", "Stop (Shift+F5)", stopColor, SvgEditorIcons.IconStop))
-                EditorState.ExitPlayMode();
+                EditorState.RequestExitPlayMode();
         }
         ImGui.EndDisabled();
         

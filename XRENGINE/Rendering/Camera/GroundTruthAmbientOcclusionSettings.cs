@@ -15,20 +15,35 @@ namespace XREngine.Rendering
             Quarter = 4,
         }
 
-        private int _sliceCount = 3;
-        private int _stepsPerSlice = 6;
-        private bool _denoiseEnabled = true;
-        private int _denoiseRadius = 4;
-        private float _denoiseSharpness = 4.0f;
-        private bool _useInputNormals = false;
-        private float _falloffStartRatio = 0.4f;
-        private float _thicknessHeuristic = 1.0f;
-        private bool _multiBounceEnabled = true;
-        private bool _specularOcclusionEnabled = true;
-        private EResolution _resolution = EResolution.Half;
-        private bool _useNormalWeightedBlur = true;
-        private bool _useVisibilityBitmask;
-        private float _visibilityBitmaskThickness = 0.15f;
+        public const int DefaultSliceCount = 5;
+        public const int DefaultStepsPerSlice = 10;
+        public const bool DefaultDenoiseEnabled = true;
+        public const int DefaultDenoiseRadius = 8;
+        public const float DefaultDenoiseSharpness = 14.02f;
+        public const bool DefaultUseInputNormals = true;
+        public const float DefaultFalloffStartRatio = 0.4f;
+        public const float DefaultThicknessHeuristic = 1.0f;
+        public const bool DefaultMultiBounceEnabled = true;
+        public const bool DefaultSpecularOcclusionEnabled = true;
+        public const EResolution DefaultResolution = EResolution.Half;
+        public const bool DefaultUseNormalWeightedBlur = true;
+        public const bool DefaultUseVisibilityBitmask = true;
+        public const float DefaultVisibilityBitmaskThickness = 1.5002f;
+
+        private int _sliceCount = DefaultSliceCount;
+        private int _stepsPerSlice = DefaultStepsPerSlice;
+        private bool _denoiseEnabled = DefaultDenoiseEnabled;
+        private int _denoiseRadius = DefaultDenoiseRadius;
+        private float _denoiseSharpness = DefaultDenoiseSharpness;
+        private bool _useInputNormals = DefaultUseInputNormals;
+        private float _falloffStartRatio = DefaultFalloffStartRatio;
+        private float _thicknessHeuristic = DefaultThicknessHeuristic;
+        private bool _multiBounceEnabled = DefaultMultiBounceEnabled;
+        private bool _specularOcclusionEnabled = DefaultSpecularOcclusionEnabled;
+        private EResolution _resolution = DefaultResolution;
+        private bool _useNormalWeightedBlur = DefaultUseNormalWeightedBlur;
+        private bool _useVisibilityBitmask = DefaultUseVisibilityBitmask;
+        private float _visibilityBitmaskThickness = DefaultVisibilityBitmaskThickness;
 
         public int SliceCount
         {
@@ -129,19 +144,19 @@ namespace XREngine.Rendering
 
         public override void ApplyUniforms(XRRenderProgram program)
         {
-            program.Uniform("Radius", PositiveOr(Owner.Radius, 2.0f));
-            program.Uniform("Bias", PositiveOr(Owner.Bias, 0.05f));
-            program.Uniform("Power", PositiveOr(Owner.Power, 1.0f));
-            program.Uniform("SliceCount", PositiveOr(SliceCount, 3));
-            program.Uniform("StepsPerSlice", PositiveOr(StepsPerSlice, 6));
-            program.Uniform("FalloffStartRatio", PositiveOr(FalloffStartRatio, 0.4f));
+            program.Uniform("Radius", PositiveOr(Owner.Radius, AmbientOcclusionSettings.DefaultRadius));
+            program.Uniform("Bias", PositiveOr(Owner.Bias, AmbientOcclusionSettings.DefaultBias));
+            program.Uniform("Power", PositiveOr(Owner.Power, AmbientOcclusionSettings.DefaultPower));
+            program.Uniform("SliceCount", PositiveOr(SliceCount, DefaultSliceCount));
+            program.Uniform("StepsPerSlice", PositiveOr(StepsPerSlice, DefaultStepsPerSlice));
+            program.Uniform("FalloffStartRatio", PositiveOr(FalloffStartRatio, DefaultFalloffStartRatio));
             program.Uniform("ThicknessHeuristic", Math.Clamp(ThicknessHeuristic, 0.0f, 1.0f));
             program.Uniform("DenoiseEnabled", DenoiseEnabled);
             program.Uniform("DenoiseRadius", Math.Clamp(DenoiseRadius, 0, 16));
-            program.Uniform("DenoiseSharpness", PositiveOr(DenoiseSharpness, 4.0f));
+            program.Uniform("DenoiseSharpness", PositiveOr(DenoiseSharpness, DefaultDenoiseSharpness));
             program.Uniform("UseInputNormals", UseInputNormals);
             program.Uniform("UseVisibilityBitmask", UseVisibilityBitmask);
-            program.Uniform("VisibilityBitmaskThickness", PositiveOr(VisibilityBitmaskThickness, 0.15f));
+            program.Uniform("VisibilityBitmaskThickness", PositiveOr(VisibilityBitmaskThickness, DefaultVisibilityBitmaskThickness));
         }
     }
 }

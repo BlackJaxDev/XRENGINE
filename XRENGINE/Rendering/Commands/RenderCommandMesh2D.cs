@@ -2,6 +2,7 @@ using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Models.Materials;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Commands
@@ -18,8 +19,10 @@ namespace XREngine.Rendering.Commands
         private XRMeshRenderer? _mesh;
         private Matrix4x4 _worldMatrix = Matrix4x4.Identity;
         private XRMaterial? _materialOverride;
+        private RenderingParameters? _renderOptionsOverride;
         private uint _instances = 1;
         private BoundingRectangle? _worldCropRegion = null;
+        private bool _forceCpuRendering;
 
         /// <summary>
         /// The mesh to render.
@@ -47,6 +50,11 @@ namespace XREngine.Rendering.Commands
             get => _materialOverride;
             set => SetField(ref _materialOverride, value);
         }
+        public RenderingParameters? RenderOptionsOverride
+        {
+            get => _renderOptionsOverride;
+            set => SetField(ref _renderOptionsOverride, value);
+        }
         /// <summary>
         /// The number of instances to tell the GPU to render.
         /// </summary>
@@ -54,6 +62,11 @@ namespace XREngine.Rendering.Commands
         {
             get => _instances;
             set => SetField(ref _instances, value);
+        }
+        public bool ForceCpuRendering
+        {
+            get => _forceCpuRendering;
+            set => SetField(ref _forceCpuRendering, value);
         }
         /// <summary>
         /// If not null, the mesh will be cropped to this region before rendering.
@@ -89,7 +102,7 @@ namespace XREngine.Rendering.Commands
 
             OnPreRender();
             BeginCrop(WorldCropRegion);
-            Mesh.Render(WorldMatrix, WorldMatrix, MaterialOverride, Instances);
+            Mesh.Render(WorldMatrix, WorldMatrix, MaterialOverride, Instances, renderOptionsOverride: RenderOptionsOverride);
             EndCrop();
             OnPostRender();
         }

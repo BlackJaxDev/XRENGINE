@@ -5,11 +5,15 @@ namespace XREngine.Rendering
 {
     public partial class AmbientOcclusionSettings : PostProcessSettings
     {
+        public const float DefaultRadius = 4.052f;
+        public const float DefaultPower = 2.503f;
+        public const float DefaultBias = 0.1054f;
+
         private bool _enabled = true;
         private EType _type = EType.GroundTruthAmbientOcclusion;
-        private float _radius = 0.9f;
-        private float _power = 1.4f;
-        private float _bias = 0.05f;
+        private float _radius = DefaultRadius;
+        private float _power = DefaultPower;
+        private float _bias = DefaultBias;
 
         public enum EType
         {
@@ -42,9 +46,9 @@ namespace XREngine.Rendering
             SpatialHash = new SpatialHashAmbientOcclusionSettings(this);
 
             _enabled = true;
-            _radius = 2.0f;
-            _power = 1.0f;
-            _bias = 0.05f;
+            _radius = DefaultRadius;
+            _power = DefaultPower;
+            _bias = DefaultBias;
         }
 
         public bool Enabled

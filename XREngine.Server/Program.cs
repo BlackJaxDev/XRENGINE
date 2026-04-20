@@ -18,6 +18,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Networking.LoadBalance;

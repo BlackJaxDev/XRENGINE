@@ -1055,17 +1055,17 @@ namespace XREngine.Rendering
         /// <summary>
         /// Takes an X, Y coordinate relative to the camera's origin along with the normalized depth (0.0f - 1.0f) from NearDepth (0.0f) to FarDepth (1.0f), and returns a position in the world.
         /// </summary>
-        public Vector3 NormalizedViewportToWorldCoordinate(Vector2 normalizedViewportPoint, float depth)
-            => NormalizedViewportToWorldCoordinate(normalizedViewportPoint.X, normalizedViewportPoint.Y, depth);
+        public Vector3 NormalizedViewportToWorldCoordinate(Vector2 normalizedViewportPoint, float depth, bool useUnjitteredProjection = false)
+            => NormalizedViewportToWorldCoordinate(normalizedViewportPoint.X, normalizedViewportPoint.Y, depth, useUnjitteredProjection);
         /// <summary>
         /// Takes an X, Y coordinate relative to the camera's Origin along with the normalized depth (0.0f - 1.0f) from NearDepth (0.0f) to FarDepth (1.0f), and returns a position in the world.
         /// </summary>
-        public Vector3 NormalizedViewportToWorldCoordinate(float normalizedX, float normalizedY, float depth)
-            => NormalizedViewportToWorldCoordinate(new Vector3(normalizedX, normalizedY, depth));
+        public Vector3 NormalizedViewportToWorldCoordinate(float normalizedX, float normalizedY, float depth, bool useUnjitteredProjection = false)
+            => NormalizedViewportToWorldCoordinate(new Vector3(normalizedX, normalizedY, depth), useUnjitteredProjection: useUnjitteredProjection);
         /// <summary>
         /// Takes an X, Y coordinate relative to the camera's Origin, with Z being the normalized depth (0.0f - 1.0f) from NearDepth (0.0f) to FarDepth (1.0f), and returns a position in the world.
         /// </summary>
-        public Vector3 NormalizedViewportToWorldCoordinate(Vector3 normalizedPointDepth, ERange xyRange = ERange.ZeroToOne, ERange depthRange = ERange.ZeroToOne)
+        public Vector3 NormalizedViewportToWorldCoordinate(Vector3 normalizedPointDepth, ERange xyRange = ERange.ZeroToOne, ERange depthRange = ERange.ZeroToOne, bool useUnjitteredProjection = false)
         {
             Vector3 clipSpacePos = normalizedPointDepth;
 
@@ -1090,7 +1090,8 @@ namespace XREngine.Rendering
             if (depthRange == ERange.ZeroToOne)
                 clipSpacePos.Z = normalizedPointDepth.Z * 2.0f - 1.0f;
 
-            Vector4 viewSpacePos = Vector4.Transform(clipSpacePos, InverseProjectionMatrix * Transform.WorldMatrix);
+            Matrix4x4 inverseProjection = useUnjitteredProjection ? InverseProjectionMatrixUnjittered : InverseProjectionMatrix;
+            Vector4 viewSpacePos = Vector4.Transform(clipSpacePos, inverseProjection * Transform.WorldMatrix);
             if (viewSpacePos.W != 0.0f)
                 viewSpacePos /= viewSpacePos.W;
             return viewSpacePos.XYZ();
@@ -1392,12 +1393,12 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="normalizedScreenPoint">Normalized screen coordinates in [0,1] range.</param>
         /// <returns>A segment from near plane to far plane through the screen point.</returns>
-        public Segment GetWorldSegment(Vector2 normalizedScreenPoint)
+        public Segment GetWorldSegment(Vector2 normalizedScreenPoint, bool useUnjitteredProjection = false)
         {
             float nearDepth = GetNearDepthValue();
             float farDepth = GetFarDepthValue();
-            Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, nearDepth);
-            Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, farDepth);
+            Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, nearDepth, useUnjitteredProjection);
+            Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, farDepth, useUnjitteredProjection);
             return new Segment(start, end);
         }
 
@@ -1407,12 +1408,12 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="normalizedScreenPoint">Normalized screen coordinates in [0,1] range.</param>
         /// <returns>A ray from near plane through the screen point into the scene.</returns>
-        public Ray GetWorldRay(Vector2 normalizedScreenPoint)
+        public Ray GetWorldRay(Vector2 normalizedScreenPoint, bool useUnjitteredProjection = false)
         {
             float nearDepth = GetNearDepthValue();
             float farDepth = GetFarDepthValue();
-            Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, nearDepth);
-            Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, farDepth);
+            Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, nearDepth, useUnjitteredProjection);
+            Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, farDepth, useUnjitteredProjection);
             return new Ray(start, end - start);
         }
 
@@ -1422,8 +1423,8 @@ namespace XREngine.Rendering
         /// <param name="normalizedScreenPoint">Normalized screen coordinates in [0,1] range.</param>
         /// <param name="depth">Normalized depth (0 = near plane, 1 = far plane).</param>
         /// <returns>World-space position at the specified depth.</returns>
-        public Vector3 GetPointAtDepth(Vector2 normalizedScreenPoint, float depth)
-            => NormalizedViewportToWorldCoordinate(normalizedScreenPoint, depth);
+        public Vector3 GetPointAtDepth(Vector2 normalizedScreenPoint, float depth, bool useUnjitteredProjection = false)
+            => NormalizedViewportToWorldCoordinate(normalizedScreenPoint, depth, useUnjitteredProjection);
 
         /// <summary>
         /// Gets the world-space position at a specific distance along the view ray.
@@ -1432,8 +1433,8 @@ namespace XREngine.Rendering
         /// <param name="normalizedScreenPoint">Normalized screen coordinates in [0,1] range.</param>
         /// <param name="distance">Linear distance from the camera in world units.</param>
         /// <returns>World-space position at the specified distance.</returns>
-        public Vector3 GetPointAtDistance(Vector2 normalizedScreenPoint, float distance)
-            => GetWorldSegment(normalizedScreenPoint).PointAtLineDistance(distance);
+        public Vector3 GetPointAtDistance(Vector2 normalizedScreenPoint, float distance, bool useUnjitteredProjection = false)
+            => GetWorldSegment(normalizedScreenPoint, useUnjitteredProjection).PointAtLineDistance(distance);
 
         /// <summary>
         /// Sets RenderDistance by calculating the distance between the provided camera and point.

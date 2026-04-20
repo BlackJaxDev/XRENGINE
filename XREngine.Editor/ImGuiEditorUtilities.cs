@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Numerics;
 
-namespace XREngine.Editor;
+namespace XREngine.Editor.IMGUI;
 
 public static class ImGuiEditorUtilities
 {

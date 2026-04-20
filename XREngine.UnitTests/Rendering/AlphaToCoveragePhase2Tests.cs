@@ -17,7 +17,7 @@ public sealed class AlphaToCoveragePhase2Tests
     public void AlphaToCoverageTransparency_RoutesToMaskedPass_AndRequestsA2CState()
     {
         XRMaterial material = new();
-        material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+        material.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
 
         material.TransparencyMode = ETransparencyMode.AlphaToCoverage;
 
@@ -74,13 +74,13 @@ public sealed class AlphaToCoveragePhase2Tests
         glSource.ShouldContain("RenderingTargetOutputFBO");
 
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
-        pipelineSource.ShouldContain("public bool EnableDeferredMsaa { get; set; } = false;");
+        pipelineSource.ShouldContain("public bool EnableDeferredMsaa { get; set; } = true;");
         pipelineSource.ShouldContain("&& (Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
         pipelineSource.ShouldContain("public const string ForwardPassMsaaDepthViewTextureName = \"ForwardPassMsaaDepthView\";");
         pipelineSource.ShouldContain("depthViewTextureName: ForwardPassMsaaDepthViewTextureName");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs");
-        pipeline2Source.ShouldContain("public bool EnableDeferredMsaa { get; set; } = false;");
+        pipeline2Source.ShouldContain("public bool EnableDeferredMsaa { get; set; } = true;");
         pipeline2Source.ShouldContain("&& (Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline2)?.EnableDeferredMsaa == true;");
         pipeline2Source.ShouldContain("public const string ForwardPassMsaaDepthViewTextureName = \"ForwardPassMsaaDepthView\";");
 
@@ -197,23 +197,26 @@ public sealed class AlphaToCoveragePhase2Tests
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("public const string DeferredGBufferFBOName = \"DeferredGBufferFBO\";");
         pipelineSource.ShouldContain("private bool NeedsRecreateDeferredGBufferFbo(XRFrameBuffer fbo)");
-        pipelineSource.ShouldContain("x.DynamicName = () => RuntimeEnableMsaaDeferred ? MsaaGBufferFBOName : DeferredGBufferFBOName;");
-        pipelineSource.ShouldContain("CreateDeferredGBufferFBO,\n                GetDesiredFBOSizeInternal,\n                NeedsRecreateDeferredGBufferFbo);");
-        pipelineSource.ShouldContain("MsaaGBufferFBOName,\n                        DeferredGBufferFBOName,");
-        pipelineSource.ShouldNotContain("x.DynamicName = () => RuntimeEnableMsaaDeferred ? MsaaGBufferFBOName : AmbientOcclusionFBOName;");
+
+        string pipelineCommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        pipelineCommandChainSource.ShouldContain("x.DynamicName = () => RuntimeEnableMsaaDeferred ? MsaaGBufferFBOName : DeferredGBufferFBOName;");
+        pipelineCommandChainSource.ShouldContain("CreateDeferredGBufferFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateDeferredGBufferFbo);");
+        pipelineCommandChainSource.ShouldContain("MsaaGBufferFBOName,");
+        pipelineCommandChainSource.ShouldContain("DeferredGBufferFBOName,");
+        pipelineCommandChainSource.ShouldNotContain("x.DynamicName = () => RuntimeEnableMsaaDeferred ? MsaaGBufferFBOName : AmbientOcclusionFBOName;");
 
         string pipelineFboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs");
         pipelineFboSource.ShouldContain("private XRFrameBuffer CreateDeferredGBufferFBO()");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("public const string DeferredGBufferFBOName = \"DeferredGBufferFBO\";");
-        pipeline2Source.ShouldContain("DeferredGBufferFBOName,");
         pipeline2Source.ShouldContain("private bool NeedsRecreateDeferredGBufferFbo(XRFrameBuffer fbo)");
 
         string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
         pipeline2CommandChainSource.ShouldContain("x.DynamicName = () => RuntimeEnableMsaaDeferred ? MsaaGBufferFBOName : DeferredGBufferFBOName;");
         pipeline2CommandChainSource.ShouldContain("CreateDeferredGBufferFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateDeferredGBufferFbo);");
-        pipeline2CommandChainSource.ShouldContain("MsaaGBufferFBOName,\n                    DeferredGBufferFBOName,");
+        pipeline2CommandChainSource.ShouldContain("MsaaGBufferFBOName,");
+        pipeline2CommandChainSource.ShouldContain("DeferredGBufferFBOName,");
         pipeline2CommandChainSource.ShouldNotContain("x.DynamicName = () => RuntimeEnableMsaaDeferred ? MsaaGBufferFBOName : AmbientOcclusionFBOName;");
 
         string pipeline2FboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs");
@@ -226,8 +229,10 @@ public sealed class AlphaToCoveragePhase2Tests
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("private bool NeedsRecreateMsaaLightCombineFbo(XRFrameBuffer fbo)");
         pipelineSource.ShouldContain("if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)");
-        pipelineSource.ShouldContain("MsaaLightCombineFBOName,\n                CreateMsaaLightCombineFBO,\n                GetDesiredFBOSizeInternal,\n                NeedsRecreateMsaaLightCombineFbo);");
-        pipelineSource.ShouldNotContain("MsaaLightCombineFBOName,\n                CreateMsaaLightCombineFBO,\n                GetDesiredFBOSizeInternal,\n                NeedsRecreateMsaaFbo);");
+
+        string pipelineCommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        pipelineCommandChainSource.ShouldContain("MsaaLightCombineFBOName,\n            CreateMsaaLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateMsaaLightCombineFbo);");
+        pipelineCommandChainSource.ShouldNotContain("MsaaLightCombineFBOName,\n            CreateMsaaLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateMsaaFbo);");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("private bool NeedsRecreateMsaaLightCombineFbo(XRFrameBuffer fbo)");
@@ -244,7 +249,9 @@ public sealed class AlphaToCoveragePhase2Tests
         pipelineSource.ShouldContain("private bool NeedsRecreateLightCombineFbo(XRFrameBuffer fbo)");
         pipelineSource.ShouldContain("if (!HasSingleColorTarget(fbo, DiffuseTextureName))");
         pipelineSource.ShouldContain("!ReferenceEquals(textures[5], GetTexture<XRTexture>(DiffuseTextureName))");
-        pipelineSource.ShouldContain("LightCombineFBOName,\n                CreateLightCombineFBO,\n                GetDesiredFBOSizeInternal,\n                NeedsRecreateLightCombineFbo)\n                .UseLifetime(RenderResourceLifetime.Transient);");
+
+        string pipelineCommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        pipelineCommandChainSource.ShouldContain("LightCombineFBOName,\n            CreateLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightCombineFbo)\n            .UseLifetime(RenderResourceLifetime.Transient);");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("private bool NeedsRecreateLightCombineFbo(XRFrameBuffer fbo)");
@@ -263,6 +270,36 @@ public sealed class AlphaToCoveragePhase2Tests
 
         string pipeline2FboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs");
         pipeline2FboSource.ShouldContain("new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false)");
+    }
+
+    [Test]
+    public void ForwardPassQuad_UsesAttachmentIdentityPredicate_InsteadOfSizeOnlyCache()
+    {
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("private bool NeedsRecreateForwardPassFbo(XRFrameBuffer fbo)");
+        pipelineSource.ShouldContain("HasTextureAttachment(targets[0], HDRSceneTextureName, EFrameBufferAttachment.ColorAttachment0)");
+        pipelineSource.ShouldContain("HasTextureAttachment(targets[1], DepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment)");
+
+        string pipelineCommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        pipelineCommandChainSource.ShouldContain("ForwardPassFBOName,\n            CreateForwardPassFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateForwardPassFbo)");
+
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("private bool NeedsRecreateForwardPassFbo(XRFrameBuffer fbo)");
+        pipeline2Source.ShouldContain("HasTextureAttachment(targets[0], HDRSceneTextureName, EFrameBufferAttachment.ColorAttachment0)");
+        pipeline2Source.ShouldContain("HasTextureAttachment(targets[1], DepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment)");
+
+        string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        pipeline2CommandChainSource.ShouldContain("ForwardPassFBOName,\n            CreateForwardPassFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateForwardPassFbo)");
+    }
+
+    [Test]
+    public void ForwardPassQuad_DisablesMaterialDerivedTargets_ToMatchItsRecreateValidator()
+    {
+        string pipelineFboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs");
+        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(sceneCopyMat, useTriangle: false, deriveRenderTargetsFromMaterial: false)");
+
+        string pipeline2FboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs");
+        pipeline2FboSource.ShouldContain("new XRQuadFrameBuffer(sceneCopyMat, useTriangle: false, deriveRenderTargetsFromMaterial: false)");
     }
 
     [Test]
@@ -330,11 +367,57 @@ public sealed class AlphaToCoveragePhase2Tests
         temporalSource.ShouldContain("state.HistoryExposureReady = false;");
         temporalSource.ShouldContain("state.PendingHistoryReady = false;");
 
+        string helperSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/RenderPipelineAntiAliasingResources.cs").Replace("\r\n", "\n");
+        helperSource.ShouldContain("internal static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance, string reason = \"AntiAliasingSettingsChanged\")");
+        helperSource.ShouldContain("VPRC_TemporalAccumulationPass.ResetHistory(instance);");
+        helperSource.ShouldContain("foreach (string name in AntiAliasingFrameBufferDependencies)");
+        helperSource.ShouldContain("foreach (string name in AntiAliasingTextureDependencies)");
+
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        pipelineSource.ShouldContain("VPRC_TemporalAccumulationPass.ResetHistory(instance);");
+        pipelineSource.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
-        pipeline2Source.ShouldContain("VPRC_TemporalAccumulationPass.ResetHistory(instance);");
+        pipeline2Source.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);");
+    }
+
+    [Test]
+    public void ProbeSyncCommand_MovesPerFrameWork_OutOfLiveBindPath()
+    {
+        string syncCommandSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/VPRC_SyncLightProbeResources.cs").Replace("\r\n", "\n");
+        syncCommandSource.ShouldContain("public sealed class VPRC_SyncLightProbeResources : ViewportRenderCommand");
+        syncCommandSource.ShouldContain("pipeline.SyncPbrLightingResourcesForFrame();");
+
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("internal void SyncPbrLightingResourcesForFrame()");
+        pipelineSource.ShouldContain("if (_probeBindingStateFrameId != Engine.Rendering.State.RenderFrameId)");
+        pipelineSource.ShouldNotContain("UpdatePbrLightingResourcesForFrame(");
+
+        string pipelineCommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        pipelineCommandChainSource.ShouldContain("c.Add<VPRC_SyncLightProbeResources>();");
+        pipelineCommandChainSource.ShouldContain("private void AppendLightingPass(ViewportRenderCommandContainer c)");
+
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("internal void SyncPbrLightingResourcesForFrame()");
+        pipeline2Source.ShouldContain("if (_probeBindingStateFrameId != Engine.Rendering.State.RenderFrameId)");
+        pipeline2Source.ShouldNotContain("UpdatePbrLightingResourcesForFrame(");
+
+        string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        pipeline2CommandChainSource.ShouldContain("c.Add<VPRC_SyncLightProbeResources>();");
+    }
+
+    [Test]
+    public void V1CommandChain_UsesDedicatedPartial_WithNamedAppendHelpers()
+    {
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("GenerateCommandChainLegacy()");
+        pipelineSource.ShouldContain("CreateFBOTargetCommandsLegacy()");
+        pipelineSource.ShouldContain("CreateViewportTargetCommandsLegacy()");
+
+        string commandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        commandChainSource.ShouldContain("protected override ViewportRenderCommandContainer GenerateCommandChain()");
+        commandChainSource.ShouldContain("private void AppendAmbientOcclusionSwitch(ViewportRenderCommandContainer c, bool enableComputePasses)");
+        commandChainSource.ShouldContain("private void AppendLightingPass(ViewportRenderCommandContainer c)");
+        commandChainSource.ShouldContain("private void AppendForwardPass(ViewportRenderCommandContainer c, bool enableComputePasses)");
     }
 
 
@@ -346,36 +429,26 @@ public sealed class AlphaToCoveragePhase2Tests
         instanceSource.ShouldContain("pipeline.HandleViewportResized(this, width, height);");
         instanceSource.ShouldContain("case DefaultRenderPipeline2 pipeline:");
 
+        string helperSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/RenderPipelineAntiAliasingResources.cs").Replace("\r\n", "\n");
+        helperSource.ShouldContain("internal static void InvalidateViewportResizeResources(XRRenderPipelineInstance instance)");
+        helperSource.ShouldContain("const string reason = \"ViewportResized\";");
+        helperSource.ShouldContain("InvalidateAntiAliasingResources(instance, reason);");
+        helperSource.ShouldContain("HDRSceneTextureName");
+        helperSource.ShouldContain("BloomBlurTextureName");
+        helperSource.ShouldContain("PostProcessOutputTextureName");
+        helperSource.ShouldContain("FxaaOutputTextureName");
+        helperSource.ShouldContain("SceneCopyFBOName");
+        helperSource.ShouldContain("PostProcessOutputFBOName");
+        helperSource.ShouldContain("FxaaFBOName");
+
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)");
-        pipelineSource.ShouldContain("const string reason = \"ViewportResized\";");
-        pipelineSource.ShouldContain("foreach (string name in AntiAliasingFrameBufferDependencies)");
-        pipelineSource.ShouldContain("foreach (string name in ResizeRecoveryFrameBufferDependencies)");
-        pipelineSource.ShouldContain("foreach (string name in AntiAliasingTextureDependencies)");
-        pipelineSource.ShouldContain("foreach (string name in ResizeRecoveryTextureDependencies)");
-        pipelineSource.ShouldContain("HDRSceneTextureName");
-        pipelineSource.ShouldContain("BloomBlurTextureName");
-        pipelineSource.ShouldContain("PostProcessOutputTextureName");
-        pipelineSource.ShouldContain("FxaaOutputTextureName");
-        pipelineSource.ShouldContain("SceneCopyFBOName");
-        pipelineSource.ShouldContain("PostProcessOutputFBOName");
-        pipelineSource.ShouldContain("FxaaFBOName");
+        pipelineSource.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);");
         pipelineSource.ShouldContain("RequestRenderStateRecheck(resetCircuitBreaker: true);");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)");
-        pipeline2Source.ShouldContain("const string reason = \"ViewportResized\";");
-        pipeline2Source.ShouldContain("foreach (string name in AntiAliasingFrameBufferDependencies)");
-        pipeline2Source.ShouldContain("foreach (string name in ResizeRecoveryFrameBufferDependencies)");
-        pipeline2Source.ShouldContain("foreach (string name in AntiAliasingTextureDependencies)");
-        pipeline2Source.ShouldContain("foreach (string name in ResizeRecoveryTextureDependencies)");
-        pipeline2Source.ShouldContain("HDRSceneTextureName");
-        pipeline2Source.ShouldContain("BloomBlurTextureName");
-        pipeline2Source.ShouldContain("PostProcessOutputTextureName");
-        pipeline2Source.ShouldContain("FxaaOutputTextureName");
-        pipeline2Source.ShouldContain("SceneCopyFBOName");
-        pipeline2Source.ShouldContain("PostProcessOutputFBOName");
-        pipeline2Source.ShouldContain("FxaaFBOName");
+        pipeline2Source.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);");
         pipeline2Source.ShouldContain("RequestRenderStateRecheck(resetCircuitBreaker: true);");
     }
 
@@ -392,7 +465,7 @@ public sealed class AlphaToCoveragePhase2Tests
     [Test]
     public void PostProcessOutput_IsMaterialized_BeforeFinalPresentation()
     {
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);");
         pipelineSource.ShouldContain("upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessOutputFBOName, bypassVendorUpscale);");
 
@@ -461,6 +534,7 @@ public sealed class AlphaToCoveragePhase2Tests
         pipelineSource.ShouldContain("private static bool NeedsRecreatePostProcessTextureFullSize(XRTexture texture)");
         pipelineSource.ShouldContain("private static bool NeedsRecreateFboDueToPostProcessIntermediateFormat(XRFrameBuffer fbo)");
         pipelineSource.ShouldContain("NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo)");
+
         pipelineSource.ShouldContain("PostProcessOutputTextureName,\n            CreatePostProcessOutputTexture,\n            NeedsRecreatePostProcessTextureInternalSize,");
         pipelineSource.ShouldContain("FxaaOutputTextureName,\n                CreateFxaaOutputTexture,\n                NeedsRecreatePostProcessTextureFullSize,");
         pipelineSource.ShouldContain("TsrHistoryColorTextureName,\n                CreateTsrHistoryColorTexture,\n                NeedsRecreatePostProcessTextureFullSize,");
@@ -501,13 +575,11 @@ public sealed class AlphaToCoveragePhase2Tests
     [Test]
     public void DeferredMsaaComposite_UsesResolvedLightCombineQuad()
     {
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        pipelineSource.ShouldContain("Present the resolved deferred light buffer for both standard and MSAA modes.");
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;");
         pipelineSource.ShouldNotContain("msaaCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = MsaaLightCombineFBOName;");
 
         string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
-        pipeline2CommandChainSource.ShouldContain("Present the resolved deferred light buffer for both standard and MSAA modes.");
         pipeline2CommandChainSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;");
         pipeline2CommandChainSource.ShouldNotContain("msaaCmds.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = MsaaLightCombineFBOName;");
     }

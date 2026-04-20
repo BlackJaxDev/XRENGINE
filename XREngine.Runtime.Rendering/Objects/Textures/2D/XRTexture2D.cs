@@ -438,6 +438,9 @@ namespace XREngine.Rendering
 
         private static void ScheduleProgressiveOpenGlUpload(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted)
         {
+            texture.RuntimeManagedProgressiveUploadActive = true;
+            texture.RuntimeManagedProgressiveFinalizePending = false;
+
             // Increment the upload token before TryAdd so that any existing coroutine
             // detects the supersede on its next tick and cleans up.
             int uploadToken = Interlocked.Increment(ref texture._progressiveUploadToken);
@@ -454,11 +457,15 @@ namespace XREngine.Rendering
                     () =>
                     {
                         if (cancellationToken.IsCancellationRequested)
+                        {
+                            texture.RuntimeManagedProgressiveUploadActive = false;
                             return;
+                        }
 
                         // If yet another upload superseded us, bail out.
                         if (uploadToken != Volatile.Read(ref texture._progressiveUploadToken))
                         {
+                            texture.RuntimeManagedProgressiveUploadActive = false;
                             onCompleted?.Invoke();
                             return;
                         }
@@ -470,6 +477,7 @@ namespace XREngine.Rendering
                         {
                             // Still can't register — another upload is active. Let the caller know
                             // so ClearPendingTransition runs and the next Evaluate cycle re-queues.
+                            texture.RuntimeManagedProgressiveUploadActive = false;
                             RuntimeRenderingHostServices.Current.LogWarning(
                                 $"[UploadMipmaps] Could not register progressive upload for '{texture.Name}' after deferred retry. Clearing pending transition.");
                             onCompleted?.Invoke();
@@ -496,10 +504,15 @@ namespace XREngine.Rendering
             bool waitLogged = false;
             bool budgetWaitLogged = false;
 
-            void CleanupProgressiveUpload()
+            void CleanupProgressiveUpload(bool releaseRuntimeOwnership = true)
             {
                 texture.ShouldLoadDataFromInternalPBO = false;
                 texture.StreamingLockMipLevel = -1;
+                if (releaseRuntimeOwnership)
+                {
+                    texture.RuntimeManagedProgressiveUploadActive = false;
+                    texture.RuntimeManagedProgressiveFinalizePending = false;
+                }
 
                 if (slotAcquired)
                 {
@@ -526,6 +539,7 @@ namespace XREngine.Rendering
             var mipmaps = texture.Mipmaps;
             if (mipmaps is null || mipmaps.Length == 0)
             {
+                texture.RuntimeManagedProgressiveUploadActive = false;
                 _progressiveUploads.TryRemove(texture, out _);
                 onCompleted?.Invoke();
                 return;
@@ -585,6 +599,9 @@ namespace XREngine.Rendering
                     // immediately has equivalent-quality data — preventing a black flash.
                     if (!seedUploaded)
                     {
+                        RuntimeRenderingHostServices.Current.LogOutput(
+                            $"[UploadMipmaps] Seeding lockMip={lockMipLevel} for '{texture.Name}': pinning Largest/SmallestAllowed={lockMipLevel} " +
+                            $"(originalLargest={originalLargestLevel}, originalSmallestAllowed={originalSmallestAllowedLevel}, mipmapCount={mipmaps.Length}, smallestResidentMip={smallestResidentMip}).");
                         texture.LargestMipmapLevel = lockMipLevel;
                         texture.SmallestAllowedMipmapLevel = lockMipLevel;
                         long lockMipBytes = mipmaps[lockMipLevel].Data?.Length ?? 0;
@@ -600,8 +617,12 @@ namespace XREngine.Rendering
                         texture.StreamingLockMipLevel = -1;
                         texture.LargestMipmapLevel = originalLargestLevel;
                         texture.SmallestAllowedMipmapLevel = originalSmallestAllowedLevel;
-                        CleanupProgressiveUpload();
-                        RuntimeRenderingHostServices.Current.LogOutput($"[UploadMipmaps] Completed progressive upload for '{texture.Name}'");
+                        // Keep runtime ownership until GL applies the final restored mip range.
+                        texture.RuntimeManagedProgressiveFinalizePending = true;
+                        CleanupProgressiveUpload(releaseRuntimeOwnership: false);
+                        RuntimeRenderingHostServices.Current.LogOutput(
+                            $"[UploadMipmaps] Completed progressive upload for '{texture.Name}': restored Largest={originalLargestLevel} " +
+                            $"SmallestAllowed={originalSmallestAllowedLevel} mipmapCount={mipmaps.Length}.");
                         onCompleted?.Invoke();
                         return true;
                     }
@@ -1455,6 +1476,12 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         private int _streamingLockMipLevel = -1;
 
+        [MemoryPackIgnore]
+        private bool _runtimeManagedProgressiveUploadActive;
+
+        [MemoryPackIgnore]
+        private bool _runtimeManagedProgressiveFinalizePending;
+
         /// <summary>
         /// When >= 0, the progressive upload coroutine seeds this mip index first and holds
         /// TextureBaseLevel at this value until all mips are uploaded. Prevents the black flash
@@ -1464,6 +1491,27 @@ namespace XREngine.Rendering
         {
             get => _streamingLockMipLevel;
             set => _streamingLockMipLevel = value;
+        }
+
+        /// <summary>
+        /// True while the XRTexture2D OpenGL runtime coroutine owns progressive mip uploads.
+        /// GLTexture2D uses this to avoid starting a second progressive uploader.
+        /// </summary>
+        public bool RuntimeManagedProgressiveUploadActive
+        {
+            get => _runtimeManagedProgressiveUploadActive;
+            set => _runtimeManagedProgressiveUploadActive = value;
+        }
+
+        /// <summary>
+        /// Set when runtime progressive upload has finished writing mip data and restored the
+        /// intended mip range, but GL still needs one final parameter application before
+        /// runtime ownership is released.
+        /// </summary>
+        public bool RuntimeManagedProgressiveFinalizePending
+        {
+            get => _runtimeManagedProgressiveFinalizePending;
+            set => _runtimeManagedProgressiveFinalizePending = value;
         }
 
         [MemoryPackIgnore]

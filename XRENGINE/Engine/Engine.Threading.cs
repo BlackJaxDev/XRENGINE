@@ -311,7 +311,6 @@ namespace XREngine
 
             var queuedEntry = LogMainThreadInvoke(reason, MainThreadInvokeMode.Queued);
             long queuedAtTimestamp = Stopwatch.GetTimestamp();
-            Debug.Out($"[MainThreadInvoke] {reason} (queued)");
             EnqueueRenderThreadTask(() => ExecuteLoggedMainThreadInvoke(task, queuedEntry, queuedAtTimestamp), reason);
             return true;
         }

@@ -26,8 +26,12 @@ public class NativeInteropSmokeTests
             Assert.That(TryGetExport(handle, "slShutdown", out _), Is.True, "sl.interposer.dll is missing slShutdown; update to a newer Streamline build.");
             Assert.That(TryGetExport(handle, "slSetVulkanInfo", out _), Is.True, "sl.interposer.dll is missing slSetVulkanInfo; Vulkan bridge DLSS cannot initialize.");
             Assert.That(TryGetExport(handle, "slEvaluateFeature", out _), Is.True, "sl.interposer.dll is missing slEvaluateFeature; DLSS dispatch cannot execute.");
+            Assert.That(TryGetExport(handle, "slAllocateResources", out _), Is.True, "sl.interposer.dll is missing slAllocateResources; bridge-side DLSS resource allocation cannot execute.");
+            Assert.That(TryGetExport(handle, "slFreeResources", out _), Is.True, "sl.interposer.dll is missing slFreeResources; bridge-side DLSS resource teardown cannot execute.");
             Assert.That(TryGetExport(handle, "slSetTagForFrame", out _), Is.True, "sl.interposer.dll is missing slSetTagForFrame; DLSS resource tagging cannot execute.");
             Assert.That(TryGetExport(handle, "slSetConstants", out _), Is.True, "sl.interposer.dll is missing slSetConstants; DLSS camera constants cannot be uploaded.");
+            Assert.That(TryGetExport(handle, "slGetFeatureFunction", out _), Is.True, "sl.interposer.dll is missing slGetFeatureFunction; DLSS feature-function resolution cannot execute.");
+            Assert.That(TryGetExport(handle, "slGetNewFrameToken", out _), Is.True, "sl.interposer.dll is missing slGetNewFrameToken; bridge-side DLSS frame token allocation cannot execute.");
 
             bool hasSetOptions = TryGetExport(handle, "slDLSSSetOptions", out _);
             if (!hasSetOptions)
