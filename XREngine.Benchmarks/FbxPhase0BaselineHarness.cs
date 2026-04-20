@@ -8,6 +8,8 @@ using XREngine.Fbx;
 
 namespace XREngine.Benchmarks;
 
+using AssimpScene = Assimp.Scene;
+
 public static class FbxPhase0BaselineHarness
 {
     public static int Run(string[] args)
@@ -48,7 +50,7 @@ public static class FbxPhase0BaselineHarness
         (FbxTransportEncoding encoding, string? versionText) = ReadHeader(assetPath);
 
         using AssimpContext context = new();
-        Scene? scene = context.ImportFile(assetPath, PostProcessSteps.None);
+        AssimpScene? scene = context.ImportFile(assetPath, PostProcessSteps.None);
         if (scene is null || scene.RootNode is null)
             throw new InvalidDataException($"Assimp did not return a valid scene for '{assetPath}'.");
 

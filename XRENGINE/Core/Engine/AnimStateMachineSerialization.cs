@@ -22,27 +22,13 @@ internal static class AnimStateMachineCookedBinarySerializer
         => type == typeof(AnimStateMachine);
 
     public static void Write(CookedBinaryWriter writer, AnimStateMachine stateMachine)
-    {
-        ArgumentNullException.ThrowIfNull(writer);
-        ArgumentNullException.ThrowIfNull(stateMachine);
-        writer.WriteValue(AnimStateMachineSerialization.CreateModel(stateMachine));
-    }
+        => SerializedAssetSupport.WriteModel<AnimStateMachine, AnimStateMachineSerializedModel>(writer, stateMachine, AnimStateMachineSerialization.CreateModel);
 
     public static AnimStateMachine Read(CookedBinaryReader reader)
-    {
-        ArgumentNullException.ThrowIfNull(reader);
-
-        AnimStateMachineSerializedModel? model = reader.ReadValue<AnimStateMachineSerializedModel>();
-        AnimStateMachine stateMachine = new();
-        AnimStateMachineSerialization.ApplyModel(stateMachine, model);
-        return stateMachine;
-    }
+        => SerializedAssetSupport.ReadModel<AnimStateMachine, AnimStateMachineSerializedModel>(reader, static () => new AnimStateMachine(), AnimStateMachineSerialization.ApplyModel);
 
     public static long CalculateSize(AnimStateMachine stateMachine)
-    {
-        ArgumentNullException.ThrowIfNull(stateMachine);
-        return CookedBinarySerializer.CalculateSize(AnimStateMachineSerialization.CreateModel(stateMachine));
-    }
+        => SerializedAssetSupport.CalculateModelSize<AnimStateMachine, AnimStateMachineSerializedModel>(stateMachine, AnimStateMachineSerialization.CreateModel);
 }
 
 internal static class AnimStateMachineMemoryPackRegistration
@@ -50,51 +36,9 @@ internal static class AnimStateMachineMemoryPackRegistration
     [SuppressMessage("Usage", "CA2255:Module initializers should not be used in libraries", Justification = "AnimStateMachine needs formatter registration before direct MemoryPack serialization.")]
     [ModuleInitializer]
     internal static void Initialize()
-    {
-        if (!MemoryPackFormatterProvider.IsRegistered<AnimStateMachine>())
-            MemoryPackFormatterProvider.Register(new AnimStateMachineMemoryPackFormatter());
-    }
-
-    private sealed class AnimStateMachineMemoryPackFormatter : MemoryPackFormatter<AnimStateMachine>
-    {
-        public override void Serialize<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, scoped ref AnimStateMachine? value)
-        {
-            if (value is null)
-            {
-                writer.WriteNullObjectHeader();
-                return;
-            }
-
-            writer.WriteObjectHeader(1);
-            AnimStateMachine stateMachine = value;
-            byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(stateMachine));
-            writer.WriteUnmanagedArray(payload);
-        }
-
-        public override void Deserialize(ref MemoryPackReader reader, scoped ref AnimStateMachine? value)
-        {
-            if (!reader.TryReadObjectHeader(out byte count))
-            {
-                value = null;
-                return;
-            }
-
-            if (count != 1)
-                MemoryPackSerializationException.ThrowInvalidPropertyCount(1, count);
-
-            byte[]? payload = reader.ReadUnmanagedArray<byte>();
-            if (payload is null || payload.Length == 0)
-            {
-                value = new AnimStateMachine();
-                return;
-            }
-
-            AnimStateMachine? stateMachine = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
-                () => CookedBinarySerializer.Deserialize(typeof(AnimStateMachine), payload) as AnimStateMachine);
-
-            value = stateMachine ?? new AnimStateMachine();
-        }
-    }
+        => SerializedAssetSupport.RegisterFormatter(
+            new SerializedAssetSupport.CookedBinaryMemoryPackFormatter<AnimStateMachine>(
+                payload => SerializedAssetSupport.DeserializePayload(payload, static () => new AnimStateMachine())));
 }
 
 [YamlTypeConverter]

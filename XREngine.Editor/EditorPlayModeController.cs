@@ -296,7 +296,7 @@ public static class EditorPlayModeController
             // Shift+F5 = Stop
             if (Engine.PlayMode.IsPlaying || Engine.PlayMode.IsPaused)
             {
-                EditorState.ExitPlayMode();
+                EditorState.RequestExitPlayMode();
             }
         }
         else
@@ -304,7 +304,7 @@ public static class EditorPlayModeController
             // F5 = Toggle play/pause
             if (Engine.PlayMode.IsEditing)
             {
-                EditorState.EnterPlayMode();
+                EditorState.RequestEnterPlayMode();
             }
             else if (Engine.PlayMode.IsPlaying)
             {
@@ -321,7 +321,7 @@ public static class EditorPlayModeController
     {
         if (Engine.PlayMode.IsPlaying || Engine.PlayMode.IsPaused)
         {
-            EditorState.ExitPlayMode();
+            EditorState.RequestExitPlayMode();
         }
     }
 

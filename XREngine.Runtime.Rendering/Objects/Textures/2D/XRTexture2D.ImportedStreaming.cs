@@ -206,6 +206,10 @@ public partial class XRTexture2D
         TextureStreamingResidentData residentData,
         bool includeMipChain)
     {
+        int previousMipmapCount = texture.Mipmaps?.Length ?? 0;
+        uint previousWidth = texture.Mipmaps is { Length: > 0 } ? texture.Mipmaps[0].Width : 0u;
+        uint previousHeight = texture.Mipmaps is { Length: > 0 } ? texture.Mipmaps[0].Height : 0u;
+
         // Compute lock mip before overwriting Mipmaps. lockMipLevel = newMipCount - oldMipCount:
         // the mip in the new chain that has the same physical resolution as old mip 0.
         // The progressive upload coroutine seeds this level first so the new GL storage never
@@ -232,6 +236,14 @@ public partial class XRTexture2D
             ? ETexMinFilter.LinearMipmapLinear
             : ETexMinFilter.Linear;
         texture.MagFilter = ETexMagFilter.Linear;
+
+        uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
+        uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;
+        RuntimeRenderingHostServices.Current.LogOutput(
+            $"[ApplyResidentData] '{texture.Name}' includeMipChain={includeMipChain} " +
+            $"previous={previousWidth}x{previousHeight}({previousMipmapCount}mips) -> " +
+            $"new={newWidth}x{newHeight}({residentData.Mipmaps.Length}mips) " +
+            $"lockMipLevel={lockMipLevel} SmallestAllowedMipmapLevel={texture.SmallestAllowedMipmapLevel}.");
     }
 
     internal static uint GetPreviewResidentSize(uint sourceMaxDimension)

@@ -224,6 +224,20 @@ namespace XREngine.Rendering.Vulkan
             return null;
         }
 
+        private static ColorComponentFlags ToVulkanColorWriteMask(RenderingParameters parameters)
+        {
+            ColorComponentFlags mask = 0;
+            if (parameters.WriteRed)
+                mask |= ColorComponentFlags.RBit;
+            if (parameters.WriteGreen)
+                mask |= ColorComponentFlags.GBit;
+            if (parameters.WriteBlue)
+                mask |= ColorComponentFlags.BBit;
+            if (parameters.WriteAlpha)
+                mask |= ColorComponentFlags.ABit;
+            return mask;
+        }
+
         private static CullModeFlags ToVulkanCullMode(ECullMode mode)
             => mode switch
             {

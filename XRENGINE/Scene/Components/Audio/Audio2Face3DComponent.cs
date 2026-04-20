@@ -31,7 +31,7 @@ namespace XREngine.Components
         Sad,
     }
 
-    public static class Audio2Face3DEmotions
+    public static class Audio2Face3DRegistry
     {
         public const int Count = 6;
 
@@ -65,11 +65,7 @@ namespace XREngine.Components
             index = -1;
             return false;
         }
-    }
-
-    public static class Audio2Face3DLiveClientRegistry
-    {
-        public const string MissingAdapterMessage = "No Audio2Face-3D live client adapter is registered. Add an Audio2Face3DNativeBridgeComponent beside the runtime component or register a custom adapter through Audio2Face3DLiveClientRegistry.Adapter.";
+        public const string MissingAdapterMessage = "No Audio2Face-3D live client adapter is registered. Add an Audio2Face3DNativeBridgeComponent beside the runtime component or register a custom adapter through Audio2Face3DRegistry.Adapter.";
 
         public static IAudio2Face3DLiveClientAdapter? Adapter { get; set; }
         public static bool HasAdapter => Adapter is not null;
@@ -344,7 +340,7 @@ namespace XREngine.Components
         [Browsable(false)]
         public int EmotionCurveCount => SourceMode == EAudio2Face3DSourceMode.CsvPlayback
             ? _animation?.EmotionCount ?? 0
-            : _liveEmotionWeights is null ? 0 : Audio2Face3DEmotions.Count;
+            : _liveEmotionWeights is null ? 0 : Audio2Face3DRegistry.Count;
 
         [Browsable(false)]
         public string LastLoadError { get; private set; } = string.Empty;
@@ -639,8 +635,8 @@ namespace XREngine.Components
             _animation = animation;
             _targetWeights = animation.BlendshapeNames.Length == 0 ? null : new float[animation.BlendshapeNames.Length];
             _appliedWeights = animation.BlendshapeNames.Length == 0 ? null : new float[animation.BlendshapeNames.Length];
-            _targetEmotionWeights = animation.EmotionCount == 0 ? null : new float[Audio2Face3DEmotions.Count];
-            _appliedEmotionWeights = animation.EmotionCount == 0 ? null : new float[Audio2Face3DEmotions.Count];
+            _targetEmotionWeights = animation.EmotionCount == 0 ? null : new float[Audio2Face3DRegistry.Count];
+            _appliedEmotionWeights = animation.EmotionCount == 0 ? null : new float[Audio2Face3DRegistry.Count];
             _playbackTime = 0.0f;
             _isPlaying = false;
             InvalidateOutputBlendshapeMapping(clearCurrentWeights: false);
@@ -656,10 +652,10 @@ namespace XREngine.Components
 
             DisconnectLiveClient();
 
-            IAudio2Face3DLiveClientAdapter? adapter = Audio2Face3DLiveClientRegistry.Adapter;
+            IAudio2Face3DLiveClientAdapter? adapter = Audio2Face3DRegistry.Adapter;
             if (adapter is null)
             {
-                LastLiveError = Audio2Face3DLiveClientRegistry.MissingAdapterMessage;
+                LastLiveError = Audio2Face3DRegistry.MissingAdapterMessage;
                 return false;
             }
 
@@ -678,7 +674,7 @@ namespace XREngine.Components
         public void DisconnectLiveClient()
         {
             if (_isLiveConnected)
-                Audio2Face3DLiveClientRegistry.Adapter?.Disconnect(this);
+                Audio2Face3DRegistry.Adapter?.Disconnect(this);
 
             _isLiveConnected = false;
         }
@@ -758,10 +754,10 @@ namespace XREngine.Components
                 return false;
             }
 
-            float[] mappedWeights = new float[Audio2Face3DEmotions.Count];
+            float[] mappedWeights = new float[Audio2Face3DRegistry.Count];
             for (int i = 0; i < emotionNames.Count; i++)
             {
-                if (!Audio2Face3DEmotions.TryGetIndex(emotionNames[i], out int emotionIndex))
+                if (!Audio2Face3DRegistry.TryGetIndex(emotionNames[i], out int emotionIndex))
                 {
                     error = $"Unsupported Audio2Emotion channel '{emotionNames[i]}'.";
                     return false;
@@ -867,8 +863,8 @@ namespace XREngine.Components
 
         private void EnsureEmotionWeightBuffers()
         {
-            if (_appliedEmotionWeights is null || _appliedEmotionWeights.Length != Audio2Face3DEmotions.Count)
-                _appliedEmotionWeights = new float[Audio2Face3DEmotions.Count];
+            if (_appliedEmotionWeights is null || _appliedEmotionWeights.Length != Audio2Face3DRegistry.Count)
+                _appliedEmotionWeights = new float[Audio2Face3DRegistry.Count];
         }
 
         private void ApplyCombinedBlendshapeWeights(ModelComponent model, string[]? sourceBlendshapeNames, float[]? sourceWeights, float[]? emotionWeights)
@@ -1071,7 +1067,7 @@ namespace XREngine.Components
 
         private static string[][] CreateEmotionTargetNameCache()
         {
-            string[][] result = new string[Audio2Face3DEmotions.Count][];
+            string[][] result = new string[Audio2Face3DRegistry.Count][];
             for (int i = 0; i < result.Length; i++)
                 result[i] = [];
             return result;
@@ -1079,7 +1075,7 @@ namespace XREngine.Components
 
         private static int[][] CreateEmotionOutputIndexCache()
         {
-            int[][] result = new int[Audio2Face3DEmotions.Count][];
+            int[][] result = new int[Audio2Face3DRegistry.Count][];
             for (int i = 0; i < result.Length; i++)
                 result[i] = [];
             return result;
@@ -1177,14 +1173,14 @@ namespace XREngine.Components
 
             var blendshapeNames = new List<string>(headerColumns.Length - 1);
             var blendshapeColumnIndices = new List<int>(headerColumns.Length - 1);
-            bool[] activeEmotionColumns = new bool[Audio2Face3DEmotions.Count];
+            bool[] activeEmotionColumns = new bool[Audio2Face3DRegistry.Count];
             int[] emotionColumnIndices = new int[headerColumns.Length];
             Array.Fill(emotionColumnIndices, -1);
 
             for (int columnIndex = 1; columnIndex < headerColumns.Length; columnIndex++)
             {
                 string columnName = headerColumns[columnIndex];
-                if (Audio2Face3DEmotions.TryGetIndex(columnName, out int emotionIndex))
+                if (Audio2Face3DRegistry.TryGetIndex(columnName, out int emotionIndex))
                 {
                     if (activeEmotionColumns[emotionIndex])
                     {
@@ -1242,7 +1238,7 @@ namespace XREngine.Components
                 }
 
                 float[] blendshapeFrame = new float[blendshapeNames.Count];
-                float[]? emotionFrame = emotionFrames is null ? null : new float[Audio2Face3DEmotions.Count];
+                float[]? emotionFrame = emotionFrames is null ? null : new float[Audio2Face3DRegistry.Count];
                 for (int columnIndex = 1; columnIndex < values.Length; columnIndex++)
                 {
                     if (!float.TryParse(values[columnIndex], NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out float weight))
@@ -1277,7 +1273,7 @@ namespace XREngine.Components
 
             string[] emotionNames = emotionCount == 0
                 ? []
-                : [.. Audio2Face3DEmotions.Names.Where((_, emotionIndex) => activeEmotionColumns[emotionIndex])];
+                : [.. Audio2Face3DRegistry.Names.Where((_, emotionIndex) => activeEmotionColumns[emotionIndex])];
 
             animation = new Audio2Face3DAnimation([.. blendshapeNames], emotionNames, [.. timecodes], [.. blendshapeFrames], emotionFrames is null ? null : [.. emotionFrames]);
             return true;
@@ -1329,7 +1325,7 @@ namespace XREngine.Components
 
         public void SampleEmotions(float timecode, float[] output)
         {
-            if (output.Length != Audio2Face3DEmotions.Count)
+            if (output.Length != Audio2Face3DRegistry.Count)
                 throw new ArgumentException("Emotion output buffer length must match the supported Audio2Emotion channel count.", nameof(output));
 
             if (_emotionFrames is null || FrameCount == 0)

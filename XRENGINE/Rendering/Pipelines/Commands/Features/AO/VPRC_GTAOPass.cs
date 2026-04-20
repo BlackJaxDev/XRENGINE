@@ -374,8 +374,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             var settings = GetCurrentSettings();
             program.Uniform("BlurDirection", direction);
-            program.Uniform("DenoiseRadius", Math.Clamp(settings?.GTAODenoiseRadius ?? 4, 0, 16));
-            program.Uniform("DenoiseSharpness", settings?.GTAODenoiseSharpness is > 0.0f ? settings.GTAODenoiseSharpness : 4.0f);
+            program.Uniform("DenoiseRadius", Math.Clamp(settings?.GTAODenoiseRadius ?? GroundTruthAmbientOcclusionSettings.DefaultDenoiseRadius, 0, 16));
+            program.Uniform("DenoiseSharpness", settings?.GTAODenoiseSharpness is > 0.0f ? settings.GTAODenoiseSharpness : GroundTruthAmbientOcclusionSettings.DefaultDenoiseSharpness);
             program.Uniform("DenoiseEnabled", settings?.GTAODenoiseEnabled ?? true);
             program.Uniform("UseInputNormals", settings?.GTAOUseInputNormals ?? true);
             program.Uniform("UseNormalWeightedBlur", settings?.GTAOUseNormalWeightedBlur ?? true);

@@ -11,6 +11,16 @@ The editor/play mode system provides:
 4. **Physics simulation control** that only runs during play mode
 5. **GameMode lifecycle management** with proper begin/end play hooks
 6. **Startup world configuration** for determining what loads when play begins
+7. **Optional user confirmation prompts** for editor-triggered enter/exit requests before the transition starts
+
+## Editor Confirmation Prompts
+
+User-triggered play mode requests from the ImGui editor, including `F5`, `Shift+F5`, the toolbar buttons, and the State panel, can be gated by confirmation prompts.
+
+- `Confirm Before Entering Play Mode` controls whether editor-triggered enter-play requests open a confirmation dialog.
+- `Confirm Before Exiting Play Mode` controls whether editor-triggered exit-play requests open a confirmation dialog.
+
+These settings live on the top-level editor preferences asset and can also be overridden through editor preference overrides. Programmatic transitions that call `EditorState.EnterPlayMode()` or `EditorState.ExitPlayMode()` directly, including MCP workflow actions, bypass the UI prompt so automation is not blocked by modal dialogs.
 
 ## Mode States
 

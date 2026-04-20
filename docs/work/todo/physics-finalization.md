@@ -69,6 +69,7 @@ This document tracks what remains for **full physics integration surfaced throug
 ### A) Joint / constraint integration
 
 #### PhysX — completed
+
 - [x] Joint component family is editor-authorable (Fixed, Distance, Hinge, Prismatic, Spherical, D6).
 - [x] Component lifecycle owns native joint creation/destruction and rebind.
 - [x] Joint settings mirrored as component properties and pushed to native joints.
@@ -76,6 +77,7 @@ This document tracks what remains for **full physics integration surfaced throug
 - [ ] Migrate remaining ad hoc gameplay constraint creation paths to componentized workflows.
 
 #### Jolt — core done, lifecycle TBD
+
 - [x] Jolt-side wrappers for fixed, hinge, slider/prismatic, distance/spring, and D6-equivalent constraints.
 - [x] Abstract constraint interfaces usable by both backends.
 - [x] XRComponent joint components instantiate Jolt constraints through scene joint factory.
@@ -103,9 +105,11 @@ This document tracks what remains for **full physics integration surfaced throug
 ### C) Geometry / shape support
 
 #### PhysX — done
+
 Shape cooking, compound bodies, and convex decomposition are functional through native PhysX pipelines.
 
 #### Jolt — fallbacks in place, full fidelity TBD
+
 - [x] ConvexMesh, TriangleMesh, HeightField, TetrahedronMesh, ParticleSystem fallback paths added.
 - [ ] Shape scale/rotation behavior fully parity-validated against PhysX-authored content.
 - [ ] True mesh-based Jolt shapes where native data transfer is feasible.
@@ -117,9 +121,11 @@ Shape cooking, compound bodies, and convex decomposition are functional through 
 ### D) Rigid-body property parity
 
 #### PhysX — done
+
 Broad property synchronization (damping, mass, flags, collision metadata) is present.
 
 #### Jolt — baseline done, full mapping TBD
+
 - [x] Gravity toggle, damping, mass scaling, lock axes, motion-quality/CCD flag, object-layer updates.
 - [x] Sleep semantics use Jolt active-state checks.
 - [ ] Solver-iteration equivalent tuning and complete feature mapping matrix.
@@ -132,9 +138,11 @@ Broad property synchronization (damping, mass, flags, collision metadata) is pre
 ### E) Collision filtering / layer mapping
 
 #### PhysX — done
+
 Layer-based filtering is production-ready.
 
 #### Jolt — baseline done, matrix parity TBD
+
 - [x] Coherent mask-based object-layer mapping.
 - [x] Layer-mask filtering applied in Jolt query handling.
 - [x] Deterministic tests for layer mapping and raycast layer filtering.
@@ -194,10 +202,12 @@ Layer-based filtering is production-ready.
 **Problem:** Low-level capability exists, but full production integration needs deterministic and network-safe behavior.
 
 #### PhysX progress
+
 - Joint component verification exists (defaults, mutation, lifecycle safety, VR grab workflow tests).
 - Remaining gap: broader end-to-end serialization/networking/reload hardening.
 
 #### Both backends
+
 - [ ] Verify all physics component fields serialize/deserialize cleanly (joint references, limits) across full scene save/load.
 - [ ] Define replication ownership rules for rigid bodies, controllers, and joints.
 - [ ] XRComponent integration tests for joint lifecycle and serialization (deeper runtime/create-simulate-destroy coverage).
@@ -212,10 +222,12 @@ Layer-based filtering is production-ready.
 ### J) Editor / tooling / test coverage
 
 #### PhysX
+
 - Joint inspectors, gizmos, break callbacks are implemented.
 - Debug visualization has basic support.
 
 #### Jolt
+
 - [x] Focused regression tests for layer mapping + joint lifecycle.
 - [ ] Physics debug visualization parity (contacts, constraints, shapes).
 - [ ] Inspector UX communicating supported/unsupported Jolt features.
@@ -232,30 +244,36 @@ Layer-based filtering is production-ready.
 ### Completed Phases
 
 #### Phase 1 — Componentize constraints (PhysX) ✅
+
 1. Added XRComponents for core joints (Fixed, Hinge/Revolute, Prismatic, Distance, D6).
 2. Added serialized references for ConnectedBody / Anchor frames / auto-anchor options.
 3. Added lifecycle ownership + robust rebind when bodies are recreated.
 
 #### Phase 2 — Backend-neutral contracts ✅
+
 1. Introduced `IAbstractJoint` and typed joint interfaces in common physics namespace.
 2. Moved component APIs to abstract types; PhysX extensions kept internal.
 3. Added adapter layer mapping abstract contracts to PhysX wrappers.
 
 #### Phase 3 — Editor + diagnostics (PhysX) ✅
+
 1. Added component editors for joint limits/drives.
 2. Added in-editor gizmos for anchors/axes/limits.
 3. Routed PhysX constraint-break callbacks to component events/logging UI.
 
 #### Phase 4 — Verification (initial pass) ✅
+
 1. Comprehensive joint component tests (defaults, round-trip, lifecycle, VR grab workflow).
 2. Runtime integration tests (create → simulate → destroy).
 
 #### Jolt Phase 1 — Rigid-body scene viability ✅
+
 1. [x] Completed `AsJoltShape()` for all `IPhysicsGeometry` types (safe fallback paths).
 2. [x] Baseline layer/object/broadphase mapping with layer-filter tests.
 3. [x] Baseline rigid-body property mapping (gravity, damping, mass, lock flags, CCD, sleep).
 
 #### Jolt Phase 2 — Joint architecture ✅
+
 1. [x] Implemented Jolt joint adapters for all core constraint types.
 2. [x] Wired `JoltScene` joint factory for create/remove.
 3. [x] XRComponent joint components instantiate through abstract factory on both backends.
@@ -266,18 +284,21 @@ Layer-based filtering is production-ready.
 ### Current / Upcoming Phases
 
 #### Phase 5 — API de-PhysXing and cross-backend parity
+
 1. Define backend-neutral API boundaries and audit remaining PhysX concrete type leaks.
 2. Refactor public component APIs to abstractions; isolate PhysX-specific tuning behind adapter extensions.
 3. Move physics material and collider authoring contracts to backend-agnostic namespaces.
 4. Implement first-class compound collider authoring and robust runtime shape rebuild flows.
 
 #### Phase 6 — Controller parity and gameplay decoupling
+
 1. Introduce reusable `CharacterControllerComponent` contracts; decouple movement from controller ownership.
 2. Add backend-agnostic controller collision/contact event contracts for gameplay scripting.
 3. Remove PhysX-only public exposure from character movement API.
 4. Add parity tests for movement behavior across PhysX and Jolt.
 
 #### Phase 7 — Production hardening
+
 1. Define replication ownership/authority rules for rigid bodies, controllers, and joints.
 2. Expand integration tests for scene reload, activation-order rebind, native leak detection.
 3. Add controller integration behavior tests.
@@ -289,6 +310,7 @@ Layer-based filtering is production-ready.
 ## Prioritized Execution Plan (P0 / P1 / P2)
 
 ### P0 — unblock backend-neutral gameplay API surface (do first)
+
 - Define neutral physics API boundaries.
 - Audit PhysX type leaks.
 - Refactor public components to abstractions.
@@ -300,6 +322,7 @@ Layer-based filtering is production-ready.
 **Exit criteria:** gameplay-facing physics components compile and run without direct public dependency on PhysX concrete types; Jolt produces equivalent filtering/query behavior for shared features.
 
 ### P1 — component parity for controllers and collider/material authoring
+
 - Create `CharacterControllerComponent` base component.
 - Split movement from controller ownership.
 - Add controller contact event contracts.
@@ -310,6 +333,7 @@ Layer-based filtering is production-ready.
 **Exit criteria:** controllers and collider/material workflows are authorable via reusable backend-neutral XRComponents with stable runtime rebuild behavior.
 
 ### P2 — hardening for production / runtime safety
+
 - Define physics replication ownership rules.
 - Add scene reload leak tests.
 - Add activation-order rebind tests.

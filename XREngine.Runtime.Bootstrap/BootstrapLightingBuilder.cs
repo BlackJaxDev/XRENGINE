@@ -6,8 +6,9 @@ using XREngine.Components.Lights;
 using XREngine.Data.Vectors;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Runtime.Bootstrap;
 
-namespace XREngine.Runtime.Bootstrap;
+namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapLightingBuilder
 {

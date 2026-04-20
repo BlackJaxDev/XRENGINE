@@ -11,8 +11,8 @@ uniform sampler2DArray DepthView;
 uniform sampler2DArray Normal;
 
 uniform vec2 BlurDirection = vec2(1.0f, 0.0f);
-uniform int DenoiseRadius = 4;
-uniform float DenoiseSharpness = 4.0f;
+uniform int DenoiseRadius = 8;
+uniform float DenoiseSharpness = 14.02f;
 uniform bool DenoiseEnabled = true;
 uniform bool UseInputNormals = true;
 uniform bool UseNormalWeightedBlur = true;

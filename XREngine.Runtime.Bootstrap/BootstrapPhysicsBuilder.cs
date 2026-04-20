@@ -14,7 +14,7 @@ using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
 using Quaternion = System.Numerics.Quaternion;
 
-namespace XREngine.Runtime.Bootstrap;
+namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapPhysicsBuilder
 {

@@ -19,7 +19,7 @@ using XREngine.Rendering.Models;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
-namespace XREngine.Editor;
+namespace XREngine.Editor.IMGUI;
 
 internal static class ImGuiAssetUtilities
 {

@@ -10,12 +10,13 @@ using XREngine.Data.Components.Scene;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
 
-namespace XREngine.Runtime.Bootstrap;
+namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapPawnFactory
 {

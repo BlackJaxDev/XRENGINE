@@ -158,7 +158,7 @@ public partial class GLTexture2D
 
         try
         {
-            Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+            ResetUnpackStateForTextureUpload();
 
             SparseTextureStreamingSupport support = Renderer.GetSparseTextureStreamingSupport(request.SizedInternalFormat);
             if (!support.IsAvailable || !support.IsPageAligned(request.LogicalWidth, request.LogicalHeight))
@@ -241,7 +241,7 @@ public partial class GLTexture2D
         try
         {
             gl.BindTexture(textureTarget, textureBindingId);
-            gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+            ResetUnpackStateForTextureUpload(gl);
 
             CommitDesiredSparseCoverage(
                 prepared.Support,
@@ -290,6 +290,7 @@ public partial class GLTexture2D
         int numSparseLevels)
     {
         GLEnum target = ToGLEnum(ETextureTarget.Texture2D);
+        ResetUnpackStateForTextureUpload(gl);
         Mipmap2D[] residentMipmaps = request.ResidentMipmaps;
         bool usePartialPages = selection.IsPartial;
         int tailFirstMipLevel = Math.Min(Math.Max(0, numSparseLevels), request.LogicalMipCount);

@@ -171,6 +171,63 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void DestroyingEditorSceneRoot_RemovesItFromEditorAndRuntimeRootCollections()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode root = new("EditorOnlyRoot");
+        root.AddComponent<DirectionalLightComponent>();
+
+        world.AddToEditorScene(root);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(world.EditorScene.RootNodes, Does.Contain(root));
+            Assert.That(world.RootNodes, Does.Contain(root));
+            Assert.That(world.Lights.DynamicDirectionalLights.Count, Is.EqualTo(1));
+        });
+
+        root.Destroy();
+        XREngine.Data.Core.XRObjectBase.ProcessPendingDestructions();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.IsDestroyed, Is.True);
+            Assert.That(world.EditorScene.RootNodes, Does.Not.Contain(root));
+            Assert.That(world.RootNodes, Does.Not.Contain(root));
+            Assert.That(world.Lights.DynamicDirectionalLights, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void DestroyingLoadedSceneRoot_RemovesItFromSceneAndRuntimeRootCollections()
+    {
+        SceneNode root = new("SceneRoot");
+        root.AddComponent<DirectionalLightComponent>();
+
+        XRScene scene = new("RuntimeScene", root);
+        XRWorld targetWorld = new("TestWorld", scene);
+        XRWorldInstance world = new(targetWorld, new VisualScene3D(), new JitterScene());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(scene.RootNodes, Does.Contain(root));
+            Assert.That(world.RootNodes, Does.Contain(root));
+            Assert.That(world.Lights.DynamicDirectionalLights.Count, Is.EqualTo(1));
+        });
+
+        root.Destroy();
+        XREngine.Data.Core.XRObjectBase.ProcessPendingDestructions();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.IsDestroyed, Is.True);
+            Assert.That(scene.RootNodes, Does.Not.Contain(root));
+            Assert.That(world.RootNodes, Does.Not.Contain(root));
+            Assert.That(world.Lights.DynamicDirectionalLights, Is.Empty);
+        });
+    }
+
+    [Test]
     public void Constructor_UsesRuntimeSceneNodeService_DefaultTransformFactory()
     {
         IRuntimeSceneNodeServices previous = RuntimeSceneNodeServices.Current;

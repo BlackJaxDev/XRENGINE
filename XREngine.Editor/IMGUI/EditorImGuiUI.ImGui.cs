@@ -619,6 +619,8 @@ public static partial class EditorImGuiUI
             UI.Tools.ShaderCrossCompilerWindow.Instance.Render();
             UI.Tools.McpAssistantWindow.Instance.Render();
 
+            EditorPlayModeConfirmationPrompt.Render();
+
             // MCP permission prompt (modal overlay — must render after all other windows)
             UI.Tools.McpPermissionPromptUI.Render();
 

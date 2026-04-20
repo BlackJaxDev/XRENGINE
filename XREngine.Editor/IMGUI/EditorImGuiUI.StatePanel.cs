@@ -69,7 +69,7 @@ public static partial class EditorImGuiUI
                 if (isEditing)
                 {
                         if (ImGui.Button("▶ Play", new Vector2(80, 0)))
-                            EditorState.EnterPlayMode();
+                        EditorState.RequestEnterPlayMode();
                 }
                 else if (isPlaying)
                 {
@@ -77,7 +77,7 @@ public static partial class EditorImGuiUI
                             EditorState.Pause();
                     ImGui.SameLine();
                     if (ImGui.Button("⏹ Stop", new Vector2(80, 0)))
-                            EditorState.ExitPlayMode();
+                        EditorState.RequestExitPlayMode();
                 }
                 else if (isPaused)
                 {
@@ -85,7 +85,7 @@ public static partial class EditorImGuiUI
                             EditorState.Resume();
                     ImGui.SameLine();
                     if (ImGui.Button("⏹ Stop", new Vector2(80, 0)))
-                            EditorState.ExitPlayMode();
+                        EditorState.RequestExitPlayMode();
                     ImGui.SameLine();
                     if (ImGui.Button("⏭ Step", new Vector2(80, 0)))
                             EditorState.StepFrame();

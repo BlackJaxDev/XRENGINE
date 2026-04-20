@@ -10,13 +10,12 @@ using XREngine.Components.Scene.Volumes;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
-using XREngine.Runtime.AnimationIntegration;
-using XREngine.Runtime.AudioIntegration;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using Quaternion = System.Numerics.Quaternion;
 
-namespace XREngine.Runtime.Bootstrap;
+namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapWorldFactory
 {

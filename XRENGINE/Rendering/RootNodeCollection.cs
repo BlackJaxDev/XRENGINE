@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Scene;
 
 namespace XREngine.Rendering
@@ -36,24 +37,7 @@ namespace XREngine.Rendering
 
             public void Remove(SceneNode node)
             {
-                if (node is null)
-                    return;
-
-                if (!_rootNodes.Remove(node))
-                    return;
-
-                if (_world.IsPlaySessionActive)
-                {
-                    if (node.IsActiveSelf)
-                        node.OnDeactivated();
-                    if (node.HasBegunPlay)
-                        node.OnEndPlay();
-                }
-
-                UncacheComponents(node);
-
-                if (node.Transform?.Parent is null && ReferenceEquals(node.World, _world))
-                    node.World = null;
+                RemoveInternal(node, notifyLifecycle: true, clearWorld: true);
             }
 
             public void Add(SceneNode node)
@@ -61,6 +45,8 @@ namespace XREngine.Rendering
                 if (node is null)
                     return;
 
+                node.Destroying -= RootNodeDestroying;
+                node.Destroying += RootNodeDestroying;
                 node.World = _world;
 
                 _rootNodes.Add(node);
@@ -74,6 +60,43 @@ namespace XREngine.Rendering
                         node.OnActivated();
                 }
             }
+
+            private bool RootNodeDestroying(XRObjectBase obj)
+            {
+                if (obj is SceneNode node)
+                    _world.OnRootNodeDestroying(node);
+
+                return true;
+            }
+
+            private bool RemoveInternal(SceneNode node, bool notifyLifecycle, bool clearWorld)
+            {
+                if (node is null)
+                    return false;
+
+                if (!_rootNodes.Remove(node))
+                    return false;
+
+                node.Destroying -= RootNodeDestroying;
+
+                if (notifyLifecycle && _world.IsPlaySessionActive)
+                {
+                    if (node.IsActiveSelf)
+                        node.OnDeactivated();
+                    if (node.HasBegunPlay)
+                        node.OnEndPlay();
+                }
+
+                UncacheComponents(node);
+
+                if (clearWorld && node.Transform?.Parent is null && ReferenceEquals(node.World, _world))
+                    node.World = null;
+
+                return true;
+            }
+
+            internal bool RemoveDuringNodeDestroy(SceneNode node)
+                => RemoveInternal(node, notifyLifecycle: false, clearWorld: false);
 
             private void CacheComponents(SceneNode node)
                 => node.IterateHierarchy(c =>

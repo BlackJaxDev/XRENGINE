@@ -20,27 +20,13 @@ internal static class AnimationClipCookedBinarySerializer
         => type == typeof(AnimationClip);
 
     public static void Write(CookedBinaryWriter writer, AnimationClip clip)
-    {
-        ArgumentNullException.ThrowIfNull(writer);
-        ArgumentNullException.ThrowIfNull(clip);
-        writer.WriteValue(AnimationClipSerialization.CreateModel(clip));
-    }
+        => SerializedAssetSupport.WriteModel<AnimationClip, AnimationClipSerializedModel>(writer, clip, AnimationClipSerialization.CreateModel);
 
     public static AnimationClip Read(CookedBinaryReader reader)
-    {
-        ArgumentNullException.ThrowIfNull(reader);
-
-        AnimationClipSerializedModel? model = reader.ReadValue<AnimationClipSerializedModel>();
-        AnimationClip clip = new();
-        AnimationClipSerialization.ApplyModel(clip, model);
-        return clip;
-    }
+        => SerializedAssetSupport.ReadModel<AnimationClip, AnimationClipSerializedModel>(reader, static () => new AnimationClip(), AnimationClipSerialization.ApplyModel);
 
     public static long CalculateSize(AnimationClip clip)
-    {
-        ArgumentNullException.ThrowIfNull(clip);
-        return CookedBinarySerializer.CalculateSize(AnimationClipSerialization.CreateModel(clip));
-    }
+        => SerializedAssetSupport.CalculateModelSize<AnimationClip, AnimationClipSerializedModel>(clip, AnimationClipSerialization.CreateModel);
 }
 
 internal static class AnimationClipMemoryPackRegistration
@@ -48,51 +34,9 @@ internal static class AnimationClipMemoryPackRegistration
     [SuppressMessage("Usage", "CA2255:Module initializers should not be used in libraries", Justification = "AnimationClip needs formatter registration before direct MemoryPack serialization.")]
     [ModuleInitializer]
     internal static void Initialize()
-    {
-        if (!MemoryPackFormatterProvider.IsRegistered<AnimationClip>())
-            MemoryPackFormatterProvider.Register(new AnimationClipMemoryPackFormatter());
-    }
-
-    private sealed class AnimationClipMemoryPackFormatter : MemoryPackFormatter<AnimationClip>
-    {
-        public override void Serialize<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, scoped ref AnimationClip? value)
-        {
-            if (value is null)
-            {
-                writer.WriteNullObjectHeader();
-                return;
-            }
-
-            writer.WriteObjectHeader(1);
-            AnimationClip clip = value;
-            byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(clip));
-            writer.WriteUnmanagedArray(payload);
-        }
-
-        public override void Deserialize(ref MemoryPackReader reader, scoped ref AnimationClip? value)
-        {
-            if (!reader.TryReadObjectHeader(out byte count))
-            {
-                value = null;
-                return;
-            }
-
-            if (count != 1)
-                MemoryPackSerializationException.ThrowInvalidPropertyCount(1, count);
-
-            byte[]? payload = reader.ReadUnmanagedArray<byte>();
-            if (payload is null || payload.Length == 0)
-            {
-                value = new AnimationClip();
-                return;
-            }
-
-            AnimationClip? clip = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
-                () => CookedBinarySerializer.Deserialize(typeof(AnimationClip), payload) as AnimationClip);
-
-            value = clip ?? new AnimationClip();
-        }
-    }
+        => SerializedAssetSupport.RegisterFormatter(
+            new SerializedAssetSupport.CookedBinaryMemoryPackFormatter<AnimationClip>(
+                payload => SerializedAssetSupport.DeserializePayload(payload, static () => new AnimationClip())));
 }
 
 [YamlTypeConverter]

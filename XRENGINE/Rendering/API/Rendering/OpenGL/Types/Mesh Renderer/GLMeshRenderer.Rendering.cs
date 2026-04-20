@@ -120,6 +120,7 @@ namespace XREngine.Rendering.OpenGL
                 Matrix4x4 modelMatrix,
                 Matrix4x4 prevModelMatrix,
                 XRMaterial? materialOverride,
+                RenderingParameters? renderOptionsOverride,
                 uint instances,
                 EMeshBillboardMode billboardMode)
             {
@@ -221,6 +222,8 @@ namespace XREngine.Rendering.OpenGL
                     using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms"))
                     {
                         material.SetUniforms(mat);
+                        if (renderOptionsOverride is not null)
+                            Renderer.ApplyRenderParameters(renderOptionsOverride);
                     }
 
                     OnSettingUniforms(vtx!, mat!);

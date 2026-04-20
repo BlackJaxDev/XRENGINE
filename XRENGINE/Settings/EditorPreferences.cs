@@ -36,6 +36,12 @@ namespace XREngine
         private EViewportPresentationMode _viewportPresentationMode = EViewportPresentationMode.FullViewportBehindImGuiUI;
         private ESceneDepthModePreference _sceneDepthMode = ESceneDepthModePreference.UseProjectDefault;
         private int _scenePanelResizeDebounceMs = 0;
+        private bool _hoverOutlineEnabled = true;
+        private bool _selectionOutlineEnabled = true;
+        private ColorF4 _hoverOutlineColor = ColorF4.Yellow;
+        private ColorF4 _selectionOutlineColor = ColorF4.Green;
+        private bool _confirmBeforeEnteringPlayMode = true;
+        private bool _confirmBeforeExitingPlayMode = true;
         private EditorThemeSettings _theme = new();
         private EditorDebugOptions _debug = new();
         private bool _mcpServerEnabled = false;
@@ -136,6 +142,60 @@ namespace XREngine
         {
             get => _scenePanelResizeDebounceMs;
             set => SetField(ref _scenePanelResizeDebounceMs, Math.Max(0, value));
+        }
+
+        [Category("Selection")]
+        [DisplayName("Hover Outline Enabled")]
+        [Description("Enable stencil-based hover outline on the submesh under the cursor.")]
+        public bool HoverOutlineEnabled
+        {
+            get => _hoverOutlineEnabled;
+            set => SetField(ref _hoverOutlineEnabled, value);
+        }
+
+        [Category("Selection")]
+        [DisplayName("Selection Outline Enabled")]
+        [Description("Enable stencil-based outline for selected meshes.")]
+        public bool SelectionOutlineEnabled
+        {
+            get => _selectionOutlineEnabled;
+            set => SetField(ref _selectionOutlineEnabled, value);
+        }
+
+        [Category("Selection")]
+        [DisplayName("Hover Outline Color")]
+        [Description("Outline color used for hovered submeshes.")]
+        public ColorF4 HoverOutlineColor
+        {
+            get => _hoverOutlineColor;
+            set => SetField(ref _hoverOutlineColor, value);
+        }
+
+        [Category("Selection")]
+        [DisplayName("Selection Outline Color")]
+        [Description("Outline color used for selected meshes.")]
+        public ColorF4 SelectionOutlineColor
+        {
+            get => _selectionOutlineColor;
+            set => SetField(ref _selectionOutlineColor, value);
+        }
+
+        [Category("Play Mode")]
+        [DisplayName("Confirm Before Entering Play Mode")]
+        [Description("When enabled, editor-triggered requests to enter play mode show a confirmation dialog before the transition starts.")]
+        public bool ConfirmBeforeEnteringPlayMode
+        {
+            get => _confirmBeforeEnteringPlayMode;
+            set => SetField(ref _confirmBeforeEnteringPlayMode, value);
+        }
+
+        [Category("Play Mode")]
+        [DisplayName("Confirm Before Exiting Play Mode")]
+        [Description("When enabled, editor-triggered requests to exit play mode show a confirmation dialog before the transition starts.")]
+        public bool ConfirmBeforeExitingPlayMode
+        {
+            get => _confirmBeforeExitingPlayMode;
+            set => SetField(ref _confirmBeforeExitingPlayMode, value);
         }
 
         /// <summary>
@@ -668,6 +728,12 @@ namespace XREngine
             Debug.CopyFrom(source.Debug);
             ViewportPresentationMode = source.ViewportPresentationMode;
             ScenePanelResizeDebounceMs = source.ScenePanelResizeDebounceMs;
+            HoverOutlineEnabled = source.HoverOutlineEnabled;
+            SelectionOutlineEnabled = source.SelectionOutlineEnabled;
+            HoverOutlineColor = source.HoverOutlineColor;
+            SelectionOutlineColor = source.SelectionOutlineColor;
+            ConfirmBeforeEnteringPlayMode = source.ConfirmBeforeEnteringPlayMode;
+            ConfirmBeforeExitingPlayMode = source.ConfirmBeforeExitingPlayMode;
             McpServerEnabled = source.McpServerEnabled;
             McpServerPort = source.McpServerPort;
             McpServerRequireAuth = source.McpServerRequireAuth;
@@ -725,6 +791,24 @@ namespace XREngine
 
             if (overrides.ScenePanelResizeDebounceMsOverride is { HasOverride: true } debounceOverride)
                 ScenePanelResizeDebounceMs = Math.Max(0, debounceOverride.Value);
+
+            if (overrides.HoverOutlineEnabledOverride is { HasOverride: true } hoverOutlineEnabledOverride)
+                HoverOutlineEnabled = hoverOutlineEnabledOverride.Value;
+
+            if (overrides.SelectionOutlineEnabledOverride is { HasOverride: true } selectionOutlineEnabledOverride)
+                SelectionOutlineEnabled = selectionOutlineEnabledOverride.Value;
+
+            if (overrides.HoverOutlineColorOverride is { HasOverride: true } hoverOutlineColorOverride)
+                HoverOutlineColor = hoverOutlineColorOverride.Value;
+
+            if (overrides.SelectionOutlineColorOverride is { HasOverride: true } selectionOutlineColorOverride)
+                SelectionOutlineColor = selectionOutlineColorOverride.Value;
+
+            if (overrides.ConfirmBeforeEnteringPlayModeOverride is { HasOverride: true } confirmEnterOverride)
+                ConfirmBeforeEnteringPlayMode = confirmEnterOverride.Value;
+
+            if (overrides.ConfirmBeforeExitingPlayModeOverride is { HasOverride: true } confirmExitOverride)
+                ConfirmBeforeExitingPlayMode = confirmExitOverride.Value;
 
             if (overrides.McpServerEnabledOverride is { HasOverride: true } mcpEnabledOverride)
                 McpServerEnabled = mcpEnabledOverride.Value;

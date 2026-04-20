@@ -56,7 +56,7 @@ public partial class XRTexture2D
 
     [YamlIgnore]
     [MemoryPackIgnore]
-    private int _sparseTextureStreamingResidentBaseMipLevel;
+    private int _sparseTextureStreamingResidentBaseMipLevel = int.MaxValue;
 
     [YamlIgnore]
     [MemoryPackIgnore]
@@ -127,7 +127,7 @@ public partial class XRTexture2D
         SparseTextureStreamingLogicalWidth = 0;
         SparseTextureStreamingLogicalHeight = 0;
         SparseTextureStreamingLogicalMipCount = 0;
-        SparseTextureStreamingResidentBaseMipLevel = 0;
+        SparseTextureStreamingResidentBaseMipLevel = int.MaxValue;
         SparseTextureStreamingCommittedBaseMipLevel = int.MaxValue;
         SparseTextureStreamingNumSparseLevels = 0;
         SparseTextureStreamingCommittedBytes = 0L;

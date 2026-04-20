@@ -460,7 +460,7 @@ public unsafe partial class VulkanRenderer
             _descriptorDirty = true;
         }
 
-        private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode)
+        private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode)
         {
             if (!IsActive)
                 Generate();
@@ -477,7 +477,7 @@ public unsafe partial class VulkanRenderer
             // pipeline key captures per-material state (CullMode, DepthTest, etc.)
             // instead of inheriting stale values from the global state tracker.
             XRMaterial? effectiveMaterial = materialOverride ?? MeshRenderer.Material;
-            RenderingParameters? matOpts = effectiveMaterial?.RenderOptions;
+            RenderingParameters? matOpts = renderOptionsOverride ?? effectiveMaterial?.RenderOptions;
 
             // ── CullMode ──
             CullModeFlags cullMode;
@@ -543,6 +543,39 @@ public unsafe partial class VulkanRenderer
                 dstAlpha = Renderer.GetDstAlphaBlendFactor();
             }
 
+            bool stencilTestEnabled;
+            StencilOpState frontStencilState;
+            StencilOpState backStencilState;
+            uint stencilWriteMask;
+            if (matOpts?.StencilTest is { } stencilTest && stencilTest.Enabled != ERenderParamUsage.Unchanged)
+            {
+                if (stencilTest.Enabled == ERenderParamUsage.Enabled)
+                {
+                    stencilTestEnabled = true;
+                    frontStencilState = ToVulkanStencilState(stencilTest.FrontFace);
+                    backStencilState = ToVulkanStencilState(stencilTest.BackFace);
+                    stencilWriteMask = stencilTest.FrontFace.WriteMask;
+                }
+                else
+                {
+                    stencilTestEnabled = false;
+                    frontStencilState = default;
+                    backStencilState = default;
+                    stencilWriteMask = 0u;
+                }
+            }
+            else
+            {
+                stencilTestEnabled = Renderer.GetStencilTestEnabled();
+                frontStencilState = Renderer.GetFrontStencilState();
+                backStencilState = Renderer.GetBackStencilState();
+                stencilWriteMask = Renderer.GetStencilWriteMask();
+            }
+
+            ColorComponentFlags colorWriteMask = matOpts is not null
+                ? ToVulkanColorWriteMask(matOpts)
+                : Renderer.GetColorWriteMask();
+
             var draw = new PendingMeshDraw(
                 this,
                 Renderer.GetCurrentViewport(),
@@ -551,11 +584,11 @@ public unsafe partial class VulkanRenderer
                 depthTestEnabled,
                 depthWriteEnabled,
                 depthCompareOp,
-                Renderer.GetStencilTestEnabled(),
-                Renderer.GetFrontStencilState(),
-                Renderer.GetBackStencilState(),
-                Renderer.GetStencilWriteMask(),
-                Renderer.GetColorWriteMask(),
+                stencilTestEnabled,
+                frontStencilState,
+                backStencilState,
+                stencilWriteMask,
+                colorWriteMask,
                 cullMode,
                 frontFace,
                 blendEnabled,

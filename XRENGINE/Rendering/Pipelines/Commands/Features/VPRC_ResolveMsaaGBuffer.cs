@@ -108,6 +108,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (renderer is null)
                 return;
 
+/*
             Debug.RenderingEvery(
                 $"ResolveMsaaGBuffer.{ActivePipelineInstance.GetHashCode()}.{SourceMsaaFBOName}.{DestinationFBOName}",
                 TimeSpan.FromSeconds(1),
@@ -122,6 +123,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 source.Height,
                 destination.Width,
                 destination.Height);
+*/
 
             // Resolve each color attachment individually
             int count = Math.Min(ColorAttachmentCount, ColorAttachments.Length);
@@ -151,6 +153,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_depthResolveQuad is null)
                 return;
 
+/*
             Debug.RenderingEvery(
                 $"ResolveMsaaGBuffer.Depth.{ActivePipelineInstance.GetHashCode()}.{SourceMsaaFBOName}.{DestinationFBOName}",
                 TimeSpan.FromSeconds(1),
@@ -160,6 +163,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 DepthViewTextureName,
                 source.EffectiveSampleCount,
                 destination.EffectiveSampleCount);
+*/
 
             using var areaScope = ActivePipelineInstance.RenderState.PushRenderArea((int)destination.Width, (int)destination.Height);
             _depthResolveQuad.Render(destination);

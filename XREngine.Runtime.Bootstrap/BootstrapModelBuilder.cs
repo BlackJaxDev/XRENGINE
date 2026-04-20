@@ -2,9 +2,10 @@ using System;
 using System.Collections.Generic;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 
-namespace XREngine.Runtime.Bootstrap;
+namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapModelBuilder
 {

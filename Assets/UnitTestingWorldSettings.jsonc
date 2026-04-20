@@ -149,7 +149,7 @@
   "ModelsToImport": [
     {
       // Enables or disables Enabled.
-      "Enabled": true,
+      "Enabled": false,
       // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Animated",
@@ -187,7 +187,7 @@
     },
     {
       // Enables or disables Enabled.
-      "Enabled": false,
+      "Enabled": true,
       // Selects the Kind enum value.
       // Kind: Static, Animated
       "Kind": "Static",
@@ -334,7 +334,7 @@
   // Imports a VMD animation clip for testing.
   "AnimationClipVMD": false,
   // Imports a .anim clip for testing.
-  "AnimationClipAnim": false,
+  "AnimationClipAnim": true,
   // Generated from AnimClipPath on Settings.
   "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
   // Enables or disables AnimLooped.

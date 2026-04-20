@@ -273,6 +273,21 @@ namespace XREngine.Rendering.OpenGL
                 if (program is null)
                     return;
 
+                if (Engine.Rendering.Settings.LogMaterialTextureBindings)
+                {
+                    // Opt-in diagnostic: record every material → texture → unit mapping so the exact
+                    // cross-material texture-bleed culprit (e.g. lion diffuse rendering on sponza roof)
+                    // can be identified post-hoc from the log.
+                    string matName = Data?.Name ?? "<unnamed-material>";
+                    string texName = texture.Data?.Name ?? "<unnamed-texture>";
+                    uint texId = texture is GLObjectBase glob && glob.TryGetBindingId(out uint id)
+                        ? id
+                        : 0;
+                    Debug.OpenGL(
+                        $"[GLMaterial.Bind] material='{matName}' slot={textureIndex} unit={textureUnit} " +
+                        $"texture='{texName}' glId={texId} target={texture.TextureTarget} program='{program.Data?.Name}'.");
+                }
+
                 string resolvedSamplerName = texture.ResolveSamplerName(textureIndex, samplerNameOverride);
                 program.Sampler(resolvedSamplerName, texture, textureUnit);
 

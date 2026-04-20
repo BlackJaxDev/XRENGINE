@@ -99,6 +99,7 @@ internal interface ITextureResidencyBackend
     uint PreviewMaxDimension { get; }
     int ActiveDecodeCount { get; }
     int QueuedDecodeCount { get; }
+    int ActiveGpuUploadCount { get; }
     long UploadBytesScheduledThisFrame { get; }
     long EstimateCommittedBytes(uint sourceWidth, uint sourceHeight, uint residentMaxDimension, ESizedInternalFormat format = ESizedInternalFormat.Rgba8, int sparseNumLevels = 0, SparseTextureStreamingPageSelection pageSelection = default);
     uint GetNextLowerResidentSize(uint sourceMaxDimension, uint currentResidentSize);
@@ -111,6 +112,7 @@ internal interface ITextureResidencyBackend
         Action<Exception>? onError = null,
         Action? onCanceled = null,
         Action<float>? onProgress = null,
+        Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
         JobPriority priority = JobPriority.Low);
     EnumeratorJob ScheduleResidentLoad(
@@ -124,6 +126,7 @@ internal interface ITextureResidencyBackend
         Action<XRTexture2D>? onFinished = null,
         Action<Exception>? onError = null,
         Action? onCanceled = null,
+        Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
         JobPriority priority = JobPriority.Low);
 }
@@ -240,6 +243,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
     public uint PreviewMaxDimension => XRTexture2D.ImportedPreviewMaxDimensionInternal;
     public int ActiveDecodeCount => Volatile.Read(ref s_activeDecodeCount);
     public int QueuedDecodeCount => Volatile.Read(ref s_queuedDecodeCount);
+    public int ActiveGpuUploadCount => XRTexture2D.QueuedProgressiveUploadCount;
     public long UploadBytesScheduledThisFrame => GetUploadBytesScheduledThisFrame();
 
     public long EstimateCommittedBytes(uint sourceWidth, uint sourceHeight, uint residentMaxDimension, ESizedInternalFormat format = ESizedInternalFormat.Rgba8, int sparseNumLevels = 0, SparseTextureStreamingPageSelection pageSelection = default)
@@ -274,6 +278,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         Action<Exception>? onError = null,
         Action? onCanceled = null,
         Action<float>? onProgress = null,
+        Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
         JobPriority priority = JobPriority.Low)
         => ScheduleResidentLoad(
@@ -287,6 +292,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
             onFinished,
             onError,
             onCanceled,
+            shouldAcceptResult,
             cancellationToken,
             priority,
             onProgress);
@@ -302,6 +308,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         Action<XRTexture2D>? onFinished = null,
         Action<Exception>? onError = null,
         Action? onCanceled = null,
+        Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
         JobPriority priority = JobPriority.Low)
         => ScheduleResidentLoad(
@@ -315,6 +322,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
             onFinished,
             onError,
             onCanceled,
+            shouldAcceptResult,
             cancellationToken,
             priority,
             onProgress: null);
@@ -330,6 +338,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         Action<XRTexture2D>? onFinished,
         Action<Exception>? onError,
         Action? onCanceled,
+        Func<bool>? shouldAcceptResult,
         CancellationToken cancellationToken,
         JobPriority priority,
         Action<float>? onProgress)
@@ -366,28 +375,55 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     }
                 }
 
-                onPrepared?.Invoke(residentData);
-                XRTexture2D.ApplyResidentData(target, residentData, includeMipChain);
-                onProgress?.Invoke(0.5f);
-
-                if (cancellationToken.IsCancellationRequested)
+                void ApplyResidentDataOnRenderThread()
                 {
-                    onCanceled?.Invoke();
-                    return;
-                }
-
-                long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
-                XRTexture2D.ScheduleGpuUploadInternal(target, cancellationToken, () =>
-                {
-                    if (cancellationToken.IsCancellationRequested)
+                    if (cancellationToken.IsCancellationRequested
+                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
                     {
                         onCanceled?.Invoke();
                         return;
                     }
 
-                    onProgress?.Invoke(1.0f);
-                    onFinished?.Invoke(target);
-                });
+                    onPrepared?.Invoke(residentData);
+
+                    if (cancellationToken.IsCancellationRequested
+                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                    {
+                        onCanceled?.Invoke();
+                        return;
+                    }
+
+                    XRTexture2D.ApplyResidentData(target, residentData, includeMipChain);
+                    onProgress?.Invoke(0.5f);
+
+                    if (cancellationToken.IsCancellationRequested
+                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                    {
+                        onCanceled?.Invoke();
+                        return;
+                    }
+
+                    long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
+                    XRTexture2D.ScheduleGpuUploadInternal(target, cancellationToken, () =>
+                    {
+                        if (cancellationToken.IsCancellationRequested
+                            || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                        {
+                            onCanceled?.Invoke();
+                            return;
+                        }
+
+                        onProgress?.Invoke(1.0f);
+                        onFinished?.Invoke(target);
+                    });
+                }
+
+                if (RuntimeRenderingHostServices.Current.IsRenderThread)
+                    ApplyResidentDataOnRenderThread();
+                else
+                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                        ApplyResidentDataOnRenderThread,
+                        $"TextureStreaming.ApplyResidentData[{target.Name}]");
             }
             catch (OperationCanceledException)
             {
@@ -472,6 +508,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
     public uint PreviewMaxDimension => XRTexture2D.ImportedPreviewMaxDimensionInternal;
     public int ActiveDecodeCount => Volatile.Read(ref s_activeDecodeCount);
     public int QueuedDecodeCount => Volatile.Read(ref s_queuedDecodeCount);
+    public int ActiveGpuUploadCount => Volatile.Read(ref s_inFlightUploadCount);
     public long UploadBytesScheduledThisFrame => GetUploadBytesScheduledThisFrame();
 
     public long EstimateCommittedBytes(uint sourceWidth, uint sourceHeight, uint residentMaxDimension, ESizedInternalFormat format = ESizedInternalFormat.Rgba8, int sparseNumLevels = 0, SparseTextureStreamingPageSelection pageSelection = default)
@@ -525,6 +562,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         Action<Exception>? onError = null,
         Action? onCanceled = null,
         Action<float>? onProgress = null,
+        Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
         JobPriority priority = JobPriority.Low)
         => ScheduleResidentLoad(
@@ -538,6 +576,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
             onFinished,
             onError,
             onCanceled,
+            shouldAcceptResult,
             cancellationToken,
             priority,
             onProgress);
@@ -553,6 +592,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         Action<XRTexture2D>? onFinished = null,
         Action<Exception>? onError = null,
         Action? onCanceled = null,
+        Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
         JobPriority priority = JobPriority.Low)
         => ScheduleResidentLoad(
@@ -566,6 +606,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
             onFinished,
             onError,
             onCanceled,
+            shouldAcceptResult,
             cancellationToken,
             priority,
             onProgress: null);
@@ -581,6 +622,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         Action<XRTexture2D>? onFinished,
         Action<Exception>? onError,
         Action? onCanceled,
+        Func<bool>? shouldAcceptResult,
         CancellationToken cancellationToken,
         JobPriority priority,
         Action<float>? onProgress)
@@ -623,82 +665,122 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     }
                 }
 
-                onPrepared?.Invoke(residentData);
-                onProgress?.Invoke(0.5f);
-
-                if (cancellationToken.IsCancellationRequested)
+                void ContinueOnRenderThread()
                 {
-                    onCanceled?.Invoke();
-                    return;
-                }
-
-                long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
-
-                SparseTextureStreamingTransitionRequest transitionRequest = BuildSparseTransitionRequest(residentData, pageSelection);
-
-                void CompleteSparseTransition(SparseTextureStreamingTransitionResult transitionResult)
-                {
-                    if (transitionResult.ExposureDeferred)
-                    {
-                        onDeferred?.Invoke(transitionRequest, transitionResult);
-                        return;
-                    }
-
-                    if (cancellationToken.IsCancellationRequested)
+                    if (cancellationToken.IsCancellationRequested
+                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
                     {
                         onCanceled?.Invoke();
                         return;
                     }
 
-                    if (!transitionResult.Applied || !transitionResult.UsedSparseResidency)
-                    {
-                        target.ClearSparseTextureStreamingState();
-                        XRTexture2D.ApplyResidentData(target, residentData, includeMipChain: true);
-                        XRTexture2D.ScheduleGpuUploadInternal(target, cancellationToken, () =>
-                        {
-                            if (cancellationToken.IsCancellationRequested)
-                            {
-                                onCanceled?.Invoke();
-                                return;
-                            }
+                    onPrepared?.Invoke(residentData);
+                    onProgress?.Invoke(0.5f);
 
-                            onProgress?.Invoke(1.0f);
-                            onFinished?.Invoke(target);
-                        });
+                    if (cancellationToken.IsCancellationRequested
+                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                    {
+                        onCanceled?.Invoke();
                         return;
                     }
 
-                    onProgress?.Invoke(1.0f);
-                    onFinished?.Invoke(target);
+                    long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
+
+                    SparseTextureStreamingTransitionRequest transitionRequest = BuildSparseTransitionRequest(residentData, pageSelection);
+
+                    void CompleteSparseTransition(SparseTextureStreamingTransitionResult transitionResult)
+                    {
+                        if (cancellationToken.IsCancellationRequested
+                            || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                        {
+                            onCanceled?.Invoke();
+                            return;
+                        }
+
+                        if (transitionResult.ExposureDeferred)
+                        {
+                            onDeferred?.Invoke(transitionRequest, transitionResult);
+                            return;
+                        }
+
+                        if (!transitionResult.Applied || !transitionResult.UsedSparseResidency)
+                        {
+                            target.ClearSparseTextureStreamingState();
+                            XRTexture2D.ApplyResidentData(target, residentData, includeMipChain: true);
+                            XRTexture2D.ScheduleGpuUploadInternal(target, cancellationToken, () =>
+                            {
+                                if (cancellationToken.IsCancellationRequested
+                                    || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                                {
+                                    onCanceled?.Invoke();
+                                    return;
+                                }
+
+                                onProgress?.Invoke(1.0f);
+                                onFinished?.Invoke(target);
+                            });
+                            return;
+                        }
+
+                        onProgress?.Invoke(1.0f);
+                        onFinished?.Invoke(target);
+                    }
+
+                    // A promotion (requesting a finer mip than what is currently resident) can use
+                    // the async upload path. SparseTextureStreamingResidentBaseMipLevel defaults to
+                    // int.MaxValue ("nothing resident"), so this correctly evaluates to true for every
+                    // initial load and avoids blocking a thread-pool thread on the render thread.
+                    bool allowAsyncUpload = transitionRequest.RequestedBaseMipLevel < target.SparseTextureStreamingResidentBaseMipLevel && TryEnterSharedUpload();
+                    if (allowAsyncUpload)
+                    {
+                        RecordUploadBytes(uploadBytes);
+                        bool asyncScheduled = RuntimeRenderingHostServices.Current.TryScheduleSparseTextureStreamingTransitionAsync(
+                            target,
+                            transitionRequest,
+                            cancellationToken,
+                            transitionResult =>
+                            {
+                                ExitSharedUpload();
+                                if (RuntimeRenderingHostServices.Current.IsRenderThread)
+                                    CompleteSparseTransition(transitionResult);
+                                else
+                                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                                        () => CompleteSparseTransition(transitionResult),
+                                        $"TextureStreaming.CompleteSparseTransition[{target.Name}]");
+                            },
+                            ex =>
+                            {
+                                ExitSharedUpload();
+                                onError?.Invoke(ex);
+                            });
+                        if (asyncScheduled)
+                            return;
+
+                        ExitSharedUpload();
+                    }
+
+                    // Sync render-thread path: increment s_inFlightUploadCount so that
+                    // anyGpuUploadActive is true while this thread is blocked, preventing
+                    // the stuck-transition detector from firing prematurely.
+                    Interlocked.Increment(ref s_inFlightUploadCount);
+                    try
+                    {
+                        RecordUploadBytes(uploadBytes);
+                        SparseTextureStreamingTransitionResult transitionResult = target.ApplySparseTextureStreamingTransition(transitionRequest);
+                        CompleteSparseTransition(transitionResult);
+                    }
+                    finally
+                    {
+                        ExitSharedUpload();
+                    }
                 }
 
-                bool allowAsyncUpload = transitionRequest.RequestedBaseMipLevel < target.SparseTextureStreamingResidentBaseMipLevel && TryEnterSharedUpload();
-                if (allowAsyncUpload)
-                {
-                    RecordUploadBytes(uploadBytes);
-                    bool asyncScheduled = RuntimeRenderingHostServices.Current.TryScheduleSparseTextureStreamingTransitionAsync(
-                        target,
-                        transitionRequest,
-                        cancellationToken,
-                        transitionResult =>
-                        {
-                            ExitSharedUpload();
-                            CompleteSparseTransition(transitionResult);
-                        },
-                        ex =>
-                        {
-                            ExitSharedUpload();
-                            onError?.Invoke(ex);
-                        });
-                    if (asyncScheduled)
-                        return;
-
-                    ExitSharedUpload();
-                }
-
-                RecordUploadBytes(uploadBytes);
-                SparseTextureStreamingTransitionResult transitionResult = RunSparseTransitionOnRenderThread(target, transitionRequest, cancellationToken);
-                CompleteSparseTransition(transitionResult);
+                if (RuntimeRenderingHostServices.Current.IsRenderThread)
+                    ContinueOnRenderThread();
+                else
+                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                        ContinueOnRenderThread,
+                        $"TextureStreaming.ScheduleSparseTransition[{target.Name}]");
             }
             catch (OperationCanceledException)
             {
@@ -728,35 +810,6 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
             Routine,
             priority,
             cancellationToken: CancellationToken.None);
-    }
-
-    private static SparseTextureStreamingTransitionResult RunSparseTransitionOnRenderThread(
-        XRTexture2D target,
-        SparseTextureStreamingTransitionRequest request,
-        CancellationToken cancellationToken)
-    {
-        TaskCompletionSource<SparseTextureStreamingTransitionResult> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(() =>
-        {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                tcs.TrySetCanceled(cancellationToken);
-                return;
-            }
-
-            try
-            {
-                target.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-                SparseTextureStreamingTransitionResult result = target.ApplySparseTextureStreamingTransition(request);
-                tcs.TrySetResult(result);
-            }
-            catch (Exception ex)
-            {
-                tcs.TrySetException(ex);
-            }
-        });
-
-        return tcs.Task.GetAwaiter().GetResult();
     }
 
     private static SparseTextureStreamingTransitionRequest BuildSparseTransitionRequest(TextureStreamingResidentData residentData, SparseTextureStreamingPageSelection pageSelection)
@@ -1030,6 +1083,7 @@ internal sealed class ImportedTextureStreamingManager
             onError,
             onCanceled,
             onProgress,
+                shouldAcceptResult: null,
             cancellationToken,
             priority);
     }
@@ -1566,14 +1620,16 @@ internal sealed class ImportedTextureStreamingManager
             currentManagedBytes += snapshots[i].CurrentCommittedBytes;
 
         // Recovery pass: detect and force-clear stuck pending transitions.
-        // A pending transition is "stuck" when its async load should have completed
-        // but ClearPendingTransition was never called (e.g., progressive upload
-        // coroutine threw an exception before the try/catch fix, or callback dropped).
+        // A pending transition is "stuck" when its async load / upload should have
+        // completed but ClearPendingTransition was never called (e.g., a callback
+        // dropped after decode/upload work finished).
         bool anyDecodeActive = _tieredBackend.ActiveDecodeCount > 0
             || _tieredBackend.QueuedDecodeCount > 0
             || _sparseBackend.ActiveDecodeCount > 0
             || _sparseBackend.QueuedDecodeCount > 0;
-        if (!anyDecodeActive)
+        bool anyGpuUploadActive = _tieredBackend.ActiveGpuUploadCount > 0
+            || _sparseBackend.ActiveGpuUploadCount > 0;
+        if (!anyDecodeActive && !anyGpuUploadActive)
         {
             for (int i = 0; i < snapshots.Count; i++)
             {
@@ -1966,6 +2022,12 @@ internal sealed class ImportedTextureStreamingManager
 
         CancelPendingLoad(previousPendingLoadCts);
 
+        bool IsCurrentTransition()
+        {
+            lock (record.Sync)
+                return ReferenceEquals(record.PendingLoadCts, cts) && !cts.IsCancellationRequested;
+        }
+
         if (string.IsNullOrWhiteSpace(filePath) || source is null)
         {
             ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId);
@@ -2006,6 +2068,7 @@ internal sealed class ImportedTextureStreamingManager
                 RuntimeRenderingHostServices.Current.LogException(ex, $"Failed to stream imported texture '{filePath}' to resident size {normalizedTarget}.");
             },
             () => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId),
+            shouldAcceptResult: IsCurrentTransition,
             cancellationToken: cts.Token);
 
         return true;

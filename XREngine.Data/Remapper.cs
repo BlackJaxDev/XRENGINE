@@ -5,6 +5,21 @@ namespace XREngine
 {
     public class Remapper
     {
+        private readonly struct RemapKey<T>(T value) : IEquatable<RemapKey<T>>
+        {
+            private readonly T _value = value;
+            private readonly bool _hasValue = value is not null;
+
+            public bool Equals(RemapKey<T> other)
+                => _hasValue == other._hasValue && (!_hasValue || EqualityComparer<T>.Default.Equals(_value, other._value));
+
+            public override bool Equals(object? obj)
+                => obj is RemapKey<T> other && Equals(other);
+
+            public override int GetHashCode()
+                => !_hasValue ? 0 : EqualityComparer<T>.Default.GetHashCode(_value!);
+        }
+
         internal object? _source;
         internal int[]? _impTable;
         internal int[]? _remapTable;
@@ -32,12 +47,11 @@ namespace XREngine
         }
 
         public void Remap<T>(IList<T> source) => Remap(source, null);
-        private static readonly object NullKey = new();
 
         public void Remap<T>(IList<T> source, Comparison<T>? comp)
         {
             int count = source.Count;
-            Dictionary<object, int> cache = new();
+            Dictionary<RemapKey<T>, int> cache = new();
 
             _source = source;
             _remapTable = new int[count];
@@ -49,7 +63,7 @@ namespace XREngine
             {
                 T t = source[i];
 
-                object key = t is null ? NullKey : t;
+                var key = new RemapKey<T>(t);
 
                 if (cache.TryGetValue(key, out int cachedIndex))
                 {

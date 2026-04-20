@@ -1,5 +1,7 @@
 # DefaultRenderPipeline2 — Phased Implementation Todo
 
+> **Audit note (2026-04-19):** This is now a historical phased plan. The current condensed backlog lives in [default-render-pipeline-follow-up-2026-04-20.md](./default-render-pipeline-follow-up-2026-04-20.md). The corrections below keep this file aligned with the current V1/V2 source layout so it can still be read safely.
+
 > **Strategy:** Create a parallel `DefaultRenderPipeline2` (with matching partial files) alongside the existing `DefaultRenderPipeline`. No changes to the original — it remains the active pipeline until V2 is validated and swapped in via a preference or launch flag.
 
 **Reference:** [design/default-render-pipeline-improvement-plan.md](../design/default-render-pipeline-improvement-plan.md)
@@ -12,19 +14,21 @@ New files to create (all under `XRENGINE/Rendering/Pipelines/Types/`):
 
 | File | Copied From | Purpose |
 |------|-------------|---------|
-| `DefaultRenderPipeline2.cs` | `DefaultRenderPipeline.cs` | Class declaration, constants, fields, constructor, settings helpers |
-| `DefaultRenderPipeline2.CommandChain.cs` | — (new) | Decomposed `CreateViewportTargetCommands()` with named `Append*` sub-builders |
-| `DefaultRenderPipeline2.Textures.cs` | `DefaultRenderPipeline.Textures.cs` | Texture factory methods (grouped by subsystem) |
-| `DefaultRenderPipeline2.FBOs.cs` | `DefaultRenderPipeline.FBOs.cs` | FBO factories — SettingUniforms subscriptions removed |
-| `DefaultRenderPipeline2.PostProcessing.cs` | `DefaultRenderPipeline.PostProcessing.cs` | Post-process schema + uniforms as shader globals helpers |
-| `DefaultRenderPipeline2.ExactTransparency.cs` | `DefaultRenderPipeline.ExactTransparency.cs` | PPLL/depth-peel — no VPRC_Manual, buffers in-chain |
+| `DefaultRenderPipeline2.cs` | `DefaultRenderPipeline.cs` | Class declaration, constants, fields, constructor, settings helpers, and runtime invalidation hooks |
+| `DefaultRenderPipeline2.CommandChain.cs` | — (new) | Decomposed command-chain builder with named `Append*` sub-builders plus grouped `CacheTextures()` helpers |
+| `DefaultRenderPipeline2.Textures.cs` | `DefaultRenderPipeline.Textures.cs` | Texture/view factory helpers |
+| `DefaultRenderPipeline2.FBOs.cs` | `DefaultRenderPipeline.FBOs.cs` | FBO factories plus the current `SettingUniforms` callbacks that later phases aim to remove |
+| `DefaultRenderPipeline2.PostProcessing.cs` | `DefaultRenderPipeline.PostProcessing.cs` | Post-process schema and parameter metadata helpers; shader-global migration is still future work |
+| `DefaultRenderPipeline2.ExactTransparency.cs` | `DefaultRenderPipeline.ExactTransparency.cs` | Current PPLL/depth-peel implementation; still uses `VPRC_Manual` and material/FBO `SettingUniforms` hooks |
+
+Audit note: V1 now also has `DefaultRenderPipeline.ResourceLogging.cs`. V2 does not currently mirror that diagnostics-only partial.
 
 ---
 
 ## Phase 0 — Scaffolding ✅
 > Copy the existing pipeline to V2 files, rename the class, verify it compiles and can be hot-swapped.
 
-- [x] **0.1** Copy all 5 `DefaultRenderPipeline*.cs` partial files to `DefaultRenderPipeline2*.cs`
+- [x] **0.1** Copy the then-current 5 `DefaultRenderPipeline*.cs` source partial files to `DefaultRenderPipeline2*.cs` (audit note: V1 later gained `DefaultRenderPipeline.ResourceLogging.cs`, which V2 does not mirror)
 - [x] **0.2** Rename class to `DefaultRenderPipeline2 : RenderPipeline` across all partials
 - [x] **0.3** Add `DefaultRenderPipeline2` to the pipeline registry / factory so the engine can instantiate it
 - [x] **0.4** Add env var `XRE_USE_PIPELINE_V2=1` to swap between V1 and V2 at startup (in `NewRenderPipeline()` + `ApplyRenderPipelinePreference()` + `ApplyGlobalIlluminationModePreference()`)
@@ -41,7 +45,7 @@ New files to create (all under `XRENGINE/Rendering/Pipelines/Types/`):
 ---
 
 ## Phase 1 — Structural Decomposition (Readability)
-> Break the 500-line `CreateViewportTargetCommands()` into named sub-builders. No behavioral changes.
+> Break the then-~500-line `CreateViewportTargetCommands()` into named sub-builders. V1 has continued evolving since this was written and is now roughly 820 lines again. No behavioral changes.
 
 ### 1A: Create CommandChain partial file
 - [x] **1A.1** Create `DefaultRenderPipeline2.CommandChain.cs`
@@ -53,7 +57,7 @@ New files to create (all under `XRENGINE/Rendering/Pipelines/Types/`):
 - [x] **1B.3** Extract `AppendDeferredGBufferPass(c)` — GBuffer geometry + MSAA GBuffer FBO caching + conditional resolve
 - [x] **1B.4** Extract `AppendForwardDepthPrePass(c)` — Forward pre-pass IfElse (shared vs separate)
 - [x] **1B.5** Extract `AppendAmbientOcclusionResolve(c)` — AO resolve VPRC_Switch (HBAO+ / GTAO / default)
-- [x] **1B.6** Extract `AppendLightingPass(c, enableCompute)` — LightCombine FBO, MSAA mark, MSAA/non-MSAA lighting branch
+- [x] **1B.6** Extract `AppendLightingPass(c)` — LightCombine FBO, MSAA mark, MSAA/non-MSAA lighting branch
 - [x] **1B.7** Extract `AppendForwardPass(c, enableCompute)` — MSAA FBO caching, bind forward pass, opaque/masked/GI/debug shapes
 - [x] **1B.8** Extract `AppendTransparencyPasses(c)` — WB-OIT accum/resolve + exact transparency
 - [x] **1B.9** Extract `AppendVelocityPass(c)` — velocity FBO caching, clear, motion vector render
@@ -70,7 +74,7 @@ New files to create (all under `XRENGINE/Rendering/Pipelines/Types/`):
 - [x] **1B.20** Extract `AppendFinalOutput(c, bypassVendorUpscale)` — output FBO bind, debug viz / vendor upscale / AA output selection
 
 ### 1C: Group CacheTextures
-- [x] **1C.1** Split `CacheTextures()` into: `CacheGBufferTextures`, `CacheMsaaDeferredTextures`, `CacheLightingTextures`, `CacheVelocityTextures`, `CacheTemporalTextures`, `CachePostProcessTextures`, `CacheTransparencyTextures`, `CacheGITextures` (8 sub-methods; `CacheExactTransparencyTextures` already existed in ExactTransparency partial)
+- [x] **1C.1** Split `CacheTextures()` into: `CacheGBufferTextures`, `CacheMsaaDeferredTextures`, `CacheLightingTextures`, `CacheTemporalTextures` (including velocity/history), `CachePostProcessTextures`, `CacheTransparencyTextures`, `CacheGITextures` (`CacheExactTransparencyTextures` still lives in the ExactTransparency partial)
 
 ### 1D: Validate
 - [x] **1D.1** Build — zero new errors/warnings
@@ -125,6 +129,8 @@ New files to create (all under `XRENGINE/Rendering/Pipelines/Types/`):
 ## Phase 4 — Migrate Simple SettingUniforms to Command Chain
 > Replace the low-complexity SettingUniforms callbacks with VPRC_PushShaderGlobals / VPRC_BindTexture scopes.
 
+> Audit note: the current V1/V2 `SettingUniforms +=` surface is broader than the bullets below. V2 still has additional hooks for `MotionVectorsMaterial`, standard/MSAA `LightCombine`, `RestirComposite`, `SurfelGIComposite`, `LightVolumeComposite`, `RadianceCascadeComposite`, `PpllResolveMaterial`, `DepthPeelingResolveMaterial`, and `DepthPeelingDebugMaterial`. If the end goal remains zero `SettingUniforms +=`, expand the checklist before treating 9.2 as complete.
+
 ### 4A: FXAA (2 uniforms)
 - [ ] **4A.1** Add `VPRC_PushShaderGlobals` before FXAA quad render with `FxaaTexelStep` vector2
 - [ ] **4A.2** Remove `FxaaFBO_SettingUniforms` event handler
@@ -147,9 +153,11 @@ New files to create (all under `XRENGINE/Rendering/Pipelines/Types/`):
 
 ### 4E: PPLL Resolve (2 samplers + 3 uniforms)
 - [ ] **4E.1** Add `VPRC_BindTexture` ×2 + `VPRC_PushShaderGlobals` before PPLL resolve quad render
-- [ ] **4E.2** Remove `PpllResolveFBO_SettingUniforms`
-- [ ] **4E.3** Remove `PpllFragmentCountDebugFBO_SettingUniforms`
-- [ ] **4E.4** Remove subscriptions in PPLL FBO factories
+- [ ] **4E.2** Remove `PpllResolveMaterial_SettingUniforms`
+- [ ] **4E.3** Remove `PpllResolveFBO_SettingUniforms`
+- [ ] **4E.4** Remove `PpllFragmentCountDebugFBO_SettingUniforms`
+- [ ] **4E.5** Add bindings/globals for depth-peeling resolve/debug materials; remove `DepthPeelingResolveMaterial_SettingUniforms` and `DepthPeelingDebugMaterial_SettingUniforms`
+- [ ] **4E.6** Remove subscriptions in PPLL/depth-peeling factories
 
 ### 4F: BrightPass / Bloom (~5 uniforms)
 - [ ] **4F.1** Add `VPRC_PushShaderGlobals` before bright pass quad render
@@ -197,7 +205,7 @@ New files to create (all under `XRENGINE/Rendering/Pipelines/Types/`):
 - [ ] **6.6** Add `VPRC_BindBuffer` scopes (bindings 0–4) + `VPRC_BindTexture` scopes (units 7–8) around LightCombine pass
 - [ ] **6.7** Add `VPRC_PushShaderGlobals` for AO uniforms (UseAmbientOcclusion, Power, MultiBounce, SpecularOcclusion) + probe uniforms (ProbeCount, UseProbeGrid, GridOrigin, GridCellSize, GridDims, TetraCount)
 - [ ] **6.8** Remove `LightCombineFBO_SettingUniforms` event handler
-- [ ] **6.9** Remove `SettingUniforms +=` subscription in `CreateLightCombineFBO()`
+- [ ] **6.9** Remove `SettingUniforms +=` subscriptions in `CreateLightCombineFBO()` and `CreateMsaaLightCombineFBO()`
 - [ ] **6.10** Remove private SSBO fields: `_probePositionBuffer`, `_probeParamBuffer`, `_probeTetraBuffer`, `_probeGridCellBuffer`, `_probeGridIndexBuffer`, `_probeIrradianceArray`, `_probePrefilterArray`
 - [ ] **6.11** Build — zero new errors/warnings
 - [ ] **6.12** Run editor with light probes in scene — confirm GI lighting renders correctly
@@ -243,7 +251,7 @@ New files to create (all under `XRENGINE/Rendering/Pipelines/Types/`):
 ## Phase 9 — Final Cleanup & Validation
 
 - [ ] **9.1** Verify zero `VPRC_Manual` commands remain in V2 pipeline
-- [ ] **9.2** Verify zero `SettingUniforms +=` subscriptions remain in V2 FBO factories
+- [ ] **9.2** Verify zero `SettingUniforms +=` subscriptions remain in V2 FBO/material factories (including GI composite and exact-transparency helpers)
 - [ ] **9.3** Verify zero raw `BindTo()` SSBO calls remain outside the command chain
 - [ ] **9.4** Verify `CreateViewportTargetCommands()` is ≤80 lines
 - [ ] **9.5** Full build of solution — zero new errors/warnings

@@ -311,7 +311,7 @@ namespace XREngine.Rendering.Commands
                     // Skip mesh commands that should go through GPU dispatch.
                     // Optionally allow opt-out meshes to keep rendering on CPU for diagnostics.
                     var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                    bool excludedFromGpuIndirect = material?.RenderOptions?.ExcludeFromGpuIndirect == true;
+                    bool excludedFromGpuIndirect = meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;
                     if (!excludedFromGpuIndirect)
                     {
                         cpuCmdIndex++;
@@ -434,7 +434,7 @@ namespace XREngine.Rendering.Commands
                         continue;
 
                     var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                    if (material?.RenderOptions?.ExcludeFromGpuIndirect == true)
+                    if (meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true)
                         continue;
 
                     return true;

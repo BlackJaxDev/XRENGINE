@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Silk.NET.OpenGL;
 using System.Numerics;
 using XREngine.Data.Colors;
@@ -69,8 +70,11 @@ namespace XREngine.Rendering.OpenGL
             All = MinLOD | MaxLOD | LargestMipmapLevel | SmallestAllowedMipmapLevel
         }
 
+        private static readonly ConcurrentQueue<GLTexture<T>> s_pendingPropertyUpdateTextures = new();
+        private static int s_propertyUpdateBatchQueued;
+
         private int _pendingPropertyUpdates;
-        private int _propertyUpdateQueued;
+        private int _propertyUpdateEnqueued;
 
         private void QueuePropertyUpdate(string? propertyName)
         {
@@ -90,15 +94,38 @@ namespace XREngine.Rendering.OpenGL
 
             Interlocked.Or(ref _pendingPropertyUpdates, (int)mask);
 
-            if (Interlocked.Exchange(ref _propertyUpdateQueued, 1) == 1)
+            if (Interlocked.Exchange(ref _propertyUpdateEnqueued, 1) == 0)
+                s_pendingPropertyUpdateTextures.Enqueue(this);
+
+            QueuePropertyUpdateBatchFlush();
+        }
+
+        private static void QueuePropertyUpdateBatchFlush()
+        {
+            if (Interlocked.Exchange(ref s_propertyUpdateBatchQueued, 1) == 1)
                 return;
 
-            Engine.InvokeOnMainThread(FlushPropertyUpdates, "GLTexture.UpdateProperty", true);
+            // Batch texture parameter updates into one render-thread job so large
+            // streaming bursts do not flood the queue with one invoke per texture.
+            Engine.EnqueueMainThreadTask(FlushQueuedPropertyUpdates, "GLTexture.UpdateProperty");
+        }
+
+        private static void FlushQueuedPropertyUpdates()
+        {
+            Interlocked.Exchange(ref s_propertyUpdateBatchQueued, 0);
+
+            while (s_pendingPropertyUpdateTextures.TryDequeue(out GLTexture<T>? texture))
+            {
+                Interlocked.Exchange(ref texture._propertyUpdateEnqueued, 0);
+                texture.FlushPropertyUpdates();
+            }
+
+            if (!s_pendingPropertyUpdateTextures.IsEmpty)
+                QueuePropertyUpdateBatchFlush();
         }
 
         private void FlushPropertyUpdates()
         {
-            Interlocked.Exchange(ref _propertyUpdateQueued, 0);
             TexturePropertyUpdateMask mask = (TexturePropertyUpdateMask)Interlocked.Exchange(ref _pendingPropertyUpdates, 0);
 
             if (mask == TexturePropertyUpdateMask.None)
@@ -149,6 +176,8 @@ namespace XREngine.Rendering.OpenGL
 
         private void SetParametersInternal()
         {
+            Interlocked.Exchange(ref _pendingPropertyUpdates, 0);
+
             int param;
             if (!IsMultisampleTarget)
             {
@@ -204,16 +233,47 @@ namespace XREngine.Rendering.OpenGL
         {
             uint id = BindingId;
             if (id == InvalidBindingId)
+            {
+                // CRITICAL: do NOT silently return — the caller (e.g. GLRenderProgram.Sampler) has
+                // already issued glActiveTexture(unit) for the sampler unit we are about to populate.
+                // If we return without binding anything, the unit keeps whatever texture was bound on
+                // this target by the previous draw, causing cross-material texture bleed (e.g. the
+                // lion diffuse rendering on the sponza roof after a DataResized/immutable-recreate
+                // race dropped this wrapper's GL name just before a draw).
+                //
+                // Explicitly zero-bind the active unit's target so the stale residue cannot be
+                // sampled, and emit a loud diagnostic identifying the affected unit + wrapper.
+                Api.BindTexture(ToGLEnum(TextureTarget), 0);
+                Renderer.SetBoundTexture(TextureTarget, null);
+                Debug.OpenGLWarning(
+                    $"[GLTexture.Bind] Binding SKIPPED (id=InvalidBindingId) for '{Data?.Name ?? GetType().Name}' " +
+                    $"on active unit {Renderer.ActiveTextureUnit}, target={TextureTarget}. " +
+                    $"Unit cleared to 0 to prevent stale-texture bleed.");
                 return;
+            }
 
             // Even if our engine-side tracking believes this texture is already bound, perform the GL bind.
             // This prevents state drift (or new texture names from `glGenTextures`) from leaving the object
             // non-existent/uninitialized for DSA calls (e.g. `glTextureStorage2D`, `glTextureView`, FBO attach).
+            // Note: GetBoundTexture is tracked per-target globally, not per-unit, so this check is only a
+            // "best effort" fast path for back-to-back state queries — we still always issue glBindTexture
+            // below because the caller may have switched the active unit since the last bind of this wrapper.
             bool alreadyTrackedBound = ReferenceEquals(Renderer.GetBoundTexture(TextureTarget), this);
             if (!alreadyTrackedBound)
             {
                 if (!OnPreBind())
+                {
+                    // Pre-bind callback vetoed the bind. The active unit currently targets whatever
+                    // the previous draw left there — leaving it bound is unsafe (see above). Unbind
+                    // the target on the current unit and warn.
+                    Api.BindTexture(ToGLEnum(TextureTarget), 0);
+                    Renderer.SetBoundTexture(TextureTarget, null);
+                    Debug.OpenGLWarning(
+                        $"[GLTexture.Bind] Binding VETOED by OnPreBind for '{Data?.Name ?? GetType().Name}' " +
+                        $"on active unit {Renderer.ActiveTextureUnit}, target={TextureTarget}. " +
+                        $"Unit cleared to 0 to prevent stale-texture bleed.");
                     return;
+                }
             }
 
             Api.BindTexture(ToGLEnum(TextureTarget), id);

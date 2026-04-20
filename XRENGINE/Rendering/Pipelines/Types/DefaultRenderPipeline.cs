@@ -453,6 +453,38 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
 
+    private bool NeedsRecreateForwardPassFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo.Targets is not { Length: 2 } targets)
+            return true;
+
+        if (!HasTextureAttachment(targets[0], HDRSceneTextureName, EFrameBufferAttachment.ColorAttachment0)
+            || !HasTextureAttachment(targets[1], DepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment))
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1 || !ReferenceEquals(textures[0], GetTexture<XRTexture>(HDRSceneTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, SceneCopyShaderName()),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
     private bool HasSingleColorTarget(XRFrameBuffer fbo, string textureName)
     {
         if (fbo.Targets is not { Length: 1 })
@@ -838,86 +870,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private const string FogStageKey = "fog";
     private const string VolumetricFogStageKey = "volumetricFog";
 
-    private static readonly string[] AntiAliasingTextureDependencies =
-    [
-        PostProcessOutputTextureName,
-        FxaaOutputTextureName,
-        SmaaOutputTextureName,
-        HistoryColorTextureName,
-        HistoryDepthStencilTextureName,
-        HistoryDepthViewTextureName,
-        TemporalColorInputTextureName,
-        TemporalExposureVarianceTextureName,
-        HistoryExposureVarianceTextureName,
-        TsrHistoryColorTextureName,
-        MsaaAlbedoOpacityTextureName,
-        MsaaNormalTextureName,
-        MsaaRMSETextureName,
-        MsaaDepthStencilTextureName,
-        MsaaDepthViewTextureName,
-        MsaaTransformIdTextureName,
-        MsaaLightingTextureName,
-        ForwardPassMsaaDepthStencilTextureName,
-        ForwardPassMsaaDepthViewTextureName,
-    ];
-
-    private static readonly string[] AntiAliasingFrameBufferDependencies =
-    [
-        // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
-        // so it must not be destroyed here — the AO pass owns its lifecycle.
-        LightCombineFBOName,
-        ForwardPassFBOName,
-        PostProcessOutputFBOName,
-        PostProcessFBOName,
-        FxaaFBOName,
-        SmaaFBOName,
-        TsrHistoryColorFBOName,
-        TsrUpscaleFBOName,
-        HistoryCaptureFBOName,
-        TemporalInputFBOName,
-        TemporalAccumulationFBOName,
-        HistoryExposureFBOName,
-        DepthPreloadFBOName,
-        ForwardPassMsaaFBOName,
-        SceneCopyFBOName,
-        TransparentSceneCopyFBOName,
-        DeferredTransparencyBlurFBOName,
-        TransparentAccumulationFBOName,
-        TransparentResolveFBOName,
-        VelocityFBOName,
-        DeferredGBufferFBOName,
-        MsaaGBufferFBOName,
-        MsaaLightingFBOName,
-        MsaaLightCombineFBOName,
-        MsaaDeferredResolveAlbedoFBOName,
-        MsaaDeferredResolveNormalFBOName,
-        MsaaDeferredResolveRmseFBOName,
-    ];
-
-    private static readonly string[] ResizeRecoveryTextureDependencies =
-    [
-        AmbientOcclusionIntensityTextureName,
-        DepthViewTextureName,
-        StencilViewTextureName,
-        DiffuseTextureName,
-        HDRSceneTextureName,
-        BloomBlurTextureName,
-        AutoExposureTextureName,
-        TransparentSceneCopyTextureName,
-        TransparentAccumTextureName,
-        TransparentRevealageTextureName,
-    ];
-
-    private static readonly string[] ResizeRecoveryFrameBufferDependencies =
-    [
-        // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
-        // so it must not be destroyed here — the AO pass owns its lifecycle.
-        SceneCopyFBOName,
-        TransparentSceneCopyFBOName,
-        DeferredTransparencyBlurFBOName,
-        TransparentAccumulationFBOName,
-        TransparentResolveFBOName,
-    ];
+    private static readonly string[] AntiAliasingTextureDependencies = RenderPipelineAntiAliasingResources.AntiAliasingTextureDependencies;
+    private static readonly string[] AntiAliasingFrameBufferDependencies = RenderPipelineAntiAliasingResources.AntiAliasingFrameBufferDependencies;
+    private static readonly string[] ResizeRecoveryTextureDependencies = RenderPipelineAntiAliasingResources.ResizeRecoveryTextureDependencies;
+    private static readonly string[] ResizeRecoveryFrameBufferDependencies = RenderPipelineAntiAliasingResources.ResizeRecoveryFrameBufferDependencies;
 
     public DefaultRenderPipeline() : this(false)
     {
@@ -1016,17 +972,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     }
 
     private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
-    {
-        const string reason = "AntiAliasingSettingsChanged";
-
-        VPRC_TemporalAccumulationPass.ResetHistory(instance);
-
-        foreach (string name in AntiAliasingFrameBufferDependencies)
-            instance.RemoveFrameBufferResource(name, reason);
-
-        foreach (string name in AntiAliasingTextureDependencies)
-            instance.RemoveTextureResource(name, reason);
-    }
+        => RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);
 
     internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
     {
@@ -1037,21 +983,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         // for the current frame. Explicitly evict the post-process/present source chain so
         // the next pass/frame rebuilds from fresh descriptors instead of presenting torn-down
         // attachments from the pre-resize generation.
-        const string reason = "ViewportResized";
-
-        VPRC_TemporalAccumulationPass.ResetHistory(instance);
-
-        foreach (string name in AntiAliasingFrameBufferDependencies)
-            instance.RemoveFrameBufferResource(name, reason);
-
-        foreach (string name in ResizeRecoveryFrameBufferDependencies)
-            instance.RemoveFrameBufferResource(name, reason);
-
-        foreach (string name in AntiAliasingTextureDependencies)
-            instance.RemoveTextureResource(name, reason);
-
-        foreach (string name in ResizeRecoveryTextureDependencies)
-            instance.RemoveTextureResource(name, reason);
+        RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);
 
         instance.RenderState.WindowViewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
     }
@@ -1087,13 +1019,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     #region Command Chain Generation
 
-    protected override ViewportRenderCommandContainer GenerateCommandChain()
+    private ViewportRenderCommandContainer GenerateCommandChainLegacy()
     {
         ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
         ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
-        ifElse.TrueCommands = CreateViewportTargetCommands();
-        ifElse.FalseCommands = CreateFBOTargetCommands();
+        ifElse.TrueCommands = CreateViewportTargetCommandsLegacy();
+        ifElse.FalseCommands = CreateFBOTargetCommandsLegacy();
         return c;
     }
 
@@ -1122,7 +1054,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
     }
 
-    public ViewportRenderCommandContainer CreateFBOTargetCommands()
+    public ViewportRenderCommandContainer CreateFBOTargetCommandsLegacy()
     {
         ViewportRenderCommandContainer c = new(this);
         bool enableComputePasses = EnableComputeDependentPasses;
@@ -1161,7 +1093,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     }
 
 
-    private ViewportRenderCommandContainer CreateViewportTargetCommands()
+    private ViewportRenderCommandContainer CreateViewportTargetCommandsLegacy()
     {
         ViewportRenderCommandContainer c = new(this);
         bool enableComputePasses = EnableComputeDependentPasses;
@@ -2856,7 +2788,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             return false;
         }
 
-        UpdatePbrLightingResourcesForFrame(brdfTexture);
+        if (_probeBindingStateFrameId != Engine.Rendering.State.RenderFrameId)
+            SyncPbrLightingResourcesForFrame(brdfTexture);
 
         program.Uniform("ForwardPbrResourcesEnabled", _probeBindingResourcesEnabled);
         if (!_probeBindingResourcesEnabled)
@@ -2902,7 +2835,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return true;
     }
 
-    private void UpdatePbrLightingResourcesForFrame(XRTexture? brdfTexture)
+    internal void SyncPbrLightingResourcesForFrame()
+        => SyncPbrLightingResourcesForFrame(GetTexture<XRTexture>(BRDFTextureName));
+
+    private void SyncPbrLightingResourcesForFrame(XRTexture? brdfTexture)
     {
         ulong frameId = Engine.Rendering.State.RenderFrameId;
         if (_probeBindingStateFrameId == frameId)
@@ -3785,13 +3721,23 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     /// <summary>
     /// This pipeline is set up to use the stencil buffer to highlight objects.
+    /// This will highlight the given renderable mesh without mutating its shared source material.
+    /// </summary>
+    /// <param name="mesh">The renderable mesh to highlight.</param>
+    /// <param name="enabled">Whether to enable or disable highlighting.</param>
+    /// <param name="isSelection">If true, uses the selection stencil value; otherwise uses hover stencil value.</param>
+    public static void SetHighlighted(RenderableMesh? mesh, bool enabled, bool isSelection = false)
+        => mesh?.SetHighlightStencilBit(isSelection ? StencilRefSelection : StencilRefHover, enabled);
+
+    /// <summary>
+    /// This pipeline is set up to use the stencil buffer to highlight objects.
     /// This will highlight the given model.
     /// </summary>
     /// <param name="model">The model component to highlight.</param>
     /// <param name="enabled">Whether to enable or disable highlighting.</param>
     /// <param name="isSelection">If true, uses the selection stencil value; otherwise uses hover stencil value.</param>
     public static void SetHighlighted(ModelComponent? model, bool enabled, bool isSelection = false)
-        => model?.Meshes.ForEach(m => m.LODs.ForEach(lod => SetHighlighted(lod.Renderer.Material, enabled, isSelection)));
+        => model?.Meshes.ForEach(m => SetHighlighted(m, enabled, isSelection));
 
     /// <summary>
     /// This pipeline is set up to use the stencil buffer to highlight objects.

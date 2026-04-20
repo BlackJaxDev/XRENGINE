@@ -2,7 +2,7 @@ using XREngine.Components;
 using XREngine.Data;
 using XREngine.Scene;
 
-namespace XREngine.Runtime.AudioIntegration;
+namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapAudioWorldBuilder
 {
