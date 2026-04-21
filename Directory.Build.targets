@@ -1,11 +1,36 @@
 <Project>
   <PropertyGroup>
     <YtDlpRepositoryPath Condition="'$(YtDlpRepositoryPath)' == ''">$(MSBuildThisFileDirectory)Build\Dependencies\YoutubeDL\yt-dlp.exe</YtDlpRepositoryPath>
+    <NvidiaSdkRuntimeDir Condition="'$(NvidiaSdkRuntimeDir)' == '' and Exists('$(MSBuildThisFileDirectory)ThirdParty\NVIDIA\SDK\win-x64\')">$(MSBuildThisFileDirectory)ThirdParty\NVIDIA\SDK\win-x64\</NvidiaSdkRuntimeDir>
+    <NvidiaSdkRuntimeDir Condition="'$(NvidiaSdkRuntimeDir)' == '' and Exists('$(MSBuildThisFileDirectory)XRENGINE\nvngx_dlss.dll')">$(MSBuildThisFileDirectory)XRENGINE\</NvidiaSdkRuntimeDir>
   </PropertyGroup>
 
   <ItemGroup Condition="('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe') and Exists('$(YtDlpRepositoryPath)')">
     <Content Include="$(YtDlpRepositoryPath)">
       <Link>yt-dlp.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup Condition="('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe') and '$(NvidiaSdkRuntimeDir)' != ''">
+    <Content Include="$(NvidiaSdkRuntimeDir)nvngx_*.dll">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="$(NvidiaSdkRuntimeDir)sl.*.dll">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="$(NvidiaSdkRuntimeDir)NvLowLatencyVk.dll" Condition="Exists('$(NvidiaSdkRuntimeDir)NvLowLatencyVk.dll')">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="$(NvidiaSdkRuntimeDir)*.license.txt">
+      <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

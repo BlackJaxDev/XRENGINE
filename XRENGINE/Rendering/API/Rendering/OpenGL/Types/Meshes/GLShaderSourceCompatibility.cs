@@ -13,9 +13,13 @@ namespace XREngine.Rendering.OpenGL
         [GeneratedRegex(@"\bout\s+gl_PerVertex\b", RegexOptions.Compiled)]
         private static partial Regex OutGlPerVertexRegex();
 
+        [GeneratedRegex(@"^\s*#extension\s+GL_ARB_separate_shader_objects\s*:\s*(enable|required)\b", RegexOptions.Compiled | RegexOptions.Multiline)]
+        private static partial Regex SeparateShaderObjectsExtensionRegex();
+
         public static string InjectMissingGLPerVertexBlocks(string source, EShaderType shaderType, bool separableProgram)
         {
-            if (!separableProgram || string.IsNullOrWhiteSpace(source))
+            bool requiresCompatibility = separableProgram || SeparateShaderObjectsExtensionRegex().IsMatch(source);
+            if (!requiresCompatibility || string.IsNullOrWhiteSpace(source))
                 return source;
 
             string newLine = DetectNewLine(source);

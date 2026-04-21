@@ -68,7 +68,6 @@ namespace XREngine.Rendering.OpenGL
         }
         public OpenGLRenderer(XRWindow window, bool shouldLinkWindow = true) : base(window, shouldLinkWindow)
         {
-            var api = Api;
             ESApi = Silk.NET.OpenGLES.GL.GetApi(Window.GLContext);
 
             EXTMemoryObject = ESApi.TryGetExtension<ExtMemoryObject>(out var ext) ? ext : null;
@@ -77,6 +76,8 @@ namespace XREngine.Rendering.OpenGL
             EXTSemaphoreWin32 = ESApi.TryGetExtension<ExtSemaphoreWin32>(out var ext4) ? ext4 : null;
             EXTMemoryObjectFd = ESApi.TryGetExtension<ExtMemoryObjectFd>(out var ext5) ? ext5 : null;
             EXTSemaphoreFd = ESApi.TryGetExtension<ExtSemaphoreFd>(out var ext6) ? ext6 : null;
+
+            var api = Api;
 
             OVRMultiView = api.TryGetExtension(out OvrMultiview ext7) ? ext7 : null;
             Engine.Rendering.State.HasOvrMultiViewExtension = OVRMultiView is not null;
@@ -247,7 +248,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 Engine.Rendering.State.HasOvrMultiViewExtension |= hasExtMultiview;
 
-                // Probe for GL_ARB_parallel_shader_compile — enables non-blocking CompileShader/LinkProgram.
+                // Probe for GL_ARB_parallel_shader_compile ï¿½ enables non-blocking CompileShader/LinkProgram.
                 bool hasParallelShaderCompile = extensions.Any(
                     e => string.Equals(e, "GL_ARB_parallel_shader_compile", StringComparison.Ordinal));
                 Engine.Rendering.State.HasParallelShaderCompile = hasParallelShaderCompile;
@@ -255,7 +256,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     // Request unlimited driver shader-compiler threads.
                     parallelExt.MaxShaderCompilerThreads(0xFFFF_FFFF);
-                    Debug.OpenGL("GL_ARB_parallel_shader_compile enabled — shader compilation is non-blocking.");
+                    Debug.OpenGL("GL_ARB_parallel_shader_compile enabled ï¿½ shader compilation is non-blocking.");
                 }
 
                 InitializeSparseTextureSupport(extensions);
@@ -465,7 +466,7 @@ namespace XREngine.Rendering.OpenGL
             bool shouldTrack = type == GLEnum.DebugTypeError;
             RecordOpenGLError(id, FormatSource(source), FormatType(type), FormatSeverity(severity), messageStr, shouldTrack);
 
-            // OOM errors leave the driver in a corrupted state — flag it so draw calls are skipped for the rest of this frame.
+            // OOM errors leave the driver in a corrupted state ï¿½ flag it so draw calls are skipped for the rest of this frame.
             if (id == 1285 || messageStr.Contains("out of memory", StringComparison.OrdinalIgnoreCase))
             {
                 if (Current is OpenGLRenderer renderer)
@@ -660,7 +661,7 @@ namespace XREngine.Rendering.OpenGL
         /// <summary>
         /// Set by the debug callback when the NVIDIA driver reports GL_OUT_OF_MEMORY.
         /// Consumed (cleared) at the start of each frame by <see cref="ProcessPendingUploads"/>.
-        /// Do NOT use this to suppress draw calls — use <see cref="SuppressDrawsForOomRecovery"/> instead.
+        /// Do NOT use this to suppress draw calls ï¿½ use <see cref="SuppressDrawsForOomRecovery"/> instead.
         /// </summary>
         internal volatile bool _oomDetectedThisFrame;
 
@@ -773,7 +774,7 @@ namespace XREngine.Rendering.OpenGL
             if (driverReportedOom)
             {
                 if (_oomCooldownFrames == 0)
-                    Debug.OpenGLWarning($"[OOM Recovery] Entering {OomCooldownDuration}-frame cooldown — suspending GPU allocations.");
+                    Debug.OpenGLWarning($"[OOM Recovery] Entering {OomCooldownDuration}-frame cooldown ï¿½ suspending GPU allocations.");
                 _oomCooldownFrames = OomCooldownDuration;
             }
 

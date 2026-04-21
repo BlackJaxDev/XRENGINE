@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
 using XREngine.Data.Rendering;
@@ -90,6 +91,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
     private string? _lastStateReason;
     private string? _pendingRecreateReason;
     private string? _lastFaultFingerprint;
+    private readonly HashSet<string> _loggedStateFingerprints = [];
     private VulkanUpscaleBridgeSidecar? _sidecar;
     private VulkanUpscaleBridgeFrameSlot[] _frameSlots = [];
     private int _frameSlotIndex = -1;
@@ -525,7 +527,15 @@ public sealed class VulkanUpscaleBridge : IDisposable
         _state = newState;
         _lastStateReason = reason;
 
+        if (newState is EVulkanUpscaleBridgeState.Initializing or EVulkanUpscaleBridgeState.NeedsRecreate or EVulkanUpscaleBridgeState.Ready)
+            _loggedStateFingerprints.Clear();
+
         if (!log)
+            return;
+
+        string reasonText = string.IsNullOrWhiteSpace(reason) ? "<none>" : reason;
+        string logFingerprint = string.Concat(newState.ToString(), "|", reasonText);
+        if (!_loggedStateFingerprints.Add(logFingerprint))
             return;
 
         XREngine.Debug.Rendering(
@@ -533,7 +543,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
             DescribeViewport(),
             _state,
             QueueModel,
-            reason ?? "<none>",
+            reasonText,
             SidecarDeviceOwned ? 1 : 0);
     }
 
@@ -578,7 +588,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
     {
         if (!Engine.Rendering.VulkanUpscaleBridgeRequested)
         {
-            reason = "experimental bridge disabled";
+            reason = $"{Engine.Rendering.VulkanUpscaleBridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge";
             return EVulkanUpscaleBridgeState.Disabled;
         }
 

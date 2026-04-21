@@ -42,6 +42,7 @@ internal class Program
     private static XRWindow? s_startupWindow;
     private static int s_startupWindowHooked;
     private static int s_captureInFlight;
+    private static int s_startupRenderedFrameCount;
     private static int s_deferredStartupWorkFlushed;
     private static int s_fontPrewarmStarted;
     private static int s_textShaderPrewarmStarted;
@@ -85,7 +86,8 @@ internal class Program
         if (TryRunDefaultRenderPipelineScriptExportCommand(args))
             return;
 
-        //Begin tracking how long editor startup takes, and log the time when the first non-black frame is rendered.
+        //Begin tracking how long editor startup takes, preferring the first non-black frame but
+        //falling back to the first stable rendered frame so dark scenes do not keep the timer running indefinitely.
         StartEditorStartupTimer();
         WriteBootstrapTrace("Startup timer initialized.");
 
@@ -390,6 +392,7 @@ internal class Program
             s_startupWindow = null;
             s_startupWindowHooked = 0;
             s_captureInFlight = 0;
+            s_startupRenderedFrameCount = 0;
             s_deferredStartupWorkFlushed = 0;
             s_fontPrewarmStarted = 0;
             s_textShaderPrewarmStarted = 0;
@@ -492,6 +495,13 @@ internal class Program
         var viewport = window.Viewports.FirstOrDefault();
         if (viewport is null)
             return;
+
+        int renderedFrameCount = Interlocked.Increment(ref s_startupRenderedFrameCount);
+        if (renderedFrameCount >= 2)
+        {
+            StopStartupTimer(window, "Editor startup first rendered frame");
+            return;
+        }
 
         if (Interlocked.CompareExchange(ref s_captureInFlight, 1, 0) != 0)
             return;

@@ -448,10 +448,7 @@ namespace XREngine.Rendering
             Separable = separable;
             Shaders.AddRange(shaders);
             if (linkNow)
-            {
-                Generate();
                 Link();
-            }
         }
 
         public IEnumerator<XRShader> GetEnumerator()
@@ -1395,7 +1392,7 @@ namespace XREngine.Rendering
                         declaration.ArrayLengthExpression);
                     _uniforms[declaration.Name] = accumulator;
                 }
-                else if (!accumulator.Merge(declaration))
+                else if (!accumulator.Merge(declaration) && !accumulator.IsDeclaredInStage(shader.Type))
                 {
                     RuntimeRenderObjectServices.Current?.LogWarning($"Uniform '{declaration.Name}' has conflicting declarations in shader '{GetShaderDisplayName(shader)}'.");
                 }
@@ -1414,7 +1411,7 @@ namespace XREngine.Rendering
                         declaration.ArrayLengthExpression);
                     _textures[declaration.Name] = accumulator;
                 }
-                else if (!accumulator.Merge(declaration))
+                else if (!accumulator.Merge(declaration) && !accumulator.IsDeclaredInStage(shader.Type))
                 {
                     RuntimeRenderObjectServices.Current?.LogWarning($"Texture '{declaration.Name}' has conflicting declarations in shader '{GetShaderDisplayName(shader)}'.");
                 }
@@ -1439,6 +1436,9 @@ namespace XREngine.Rendering
                 public int? ArrayLength { get; }
                 public string? ArrayExpression { get; private set; }
                 private readonly HashSet<EShaderType> _stages = new();
+
+                public bool IsDeclaredInStage(EShaderType stage)
+                    => _stages.Contains(stage);
 
                 public void RegisterStage(EShaderType stage)
                     => _stages.Add(stage);
@@ -1477,6 +1477,9 @@ namespace XREngine.Rendering
                 public int? ArrayLength { get; }
                 public string? ArrayExpression { get; private set; }
                 private readonly HashSet<EShaderType> _stages = new();
+
+                public bool IsDeclaredInStage(EShaderType stage)
+                    => _stages.Contains(stage);
 
                 public void RegisterStage(EShaderType stage)
                     => _stages.Add(stage);

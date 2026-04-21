@@ -32,7 +32,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
                 string reason = global::XREngine.Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(null, hdrRequested: false);
                 string bridgeEnvVar = global::XREngine.Engine.Rendering.VulkanUpscaleBridgeEnvVar;
 
-                reason.ShouldContain($"experimental bridge disabled (set {bridgeEnvVar}=1 to opt in)");
+                reason.ShouldContain($"{bridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge");
                 reason.ShouldContain("GL_EXT_memory_object is unavailable");
                 reason.ShouldContain("GL_EXT_memory_object_win32 is unavailable");
                 reason.ShouldContain("GL_EXT_semaphore is unavailable");
@@ -168,6 +168,12 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         bridgeSource.ShouldContain("_viewport.InternalResolutionResized += HandleInternalResolutionResized;");
         bridgeSource.ShouldContain("private void HandleViewportResized(XRViewport _)\n        => MarkNeedsRecreate(ViewportResizeReason);");
         bridgeSource.ShouldContain("private void HandleInternalResolutionResized(XRViewport _)\n        => MarkNeedsRecreate(InternalResolutionResizeReason);");
+        bridgeSource.ShouldContain("private readonly HashSet<string> _loggedStateFingerprints = [];");
+        bridgeSource.ShouldContain("if (!_loggedStateFingerprints.Add(logFingerprint))");
+
+        string bridgeEnvSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.VulkanUpscaleBridge.cs").Replace("\r\n", "\n");
+        bridgeEnvSource.ShouldContain("public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar, defaultValue: true);");
+        bridgeEnvSource.ShouldContain("disabled the OpenGL->Vulkan upscale bridge");
 
         string engineRenderingSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.cs").Replace("\r\n", "\n");
         engineRenderingSource.ShouldContain("InvalidateAllVulkanUpscaleBridges(\"anti-aliasing settings changed\");");
@@ -179,6 +185,89 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         vendorUpscaleSource.ShouldContain("if (TryRunBridge(openGlRenderer, viewport, sourceFrameBuffer, resolvedColorTexture, out string bridgeFailure))");
         vendorUpscaleSource.ShouldContain("ReportBridgeFallback(viewport, bridgeFailure);");
         vendorUpscaleSource.ShouldContain("Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(viewport, ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false)");
+        vendorUpscaleSource.ShouldContain("requires Vulkan or the OpenGL->Vulkan upscale bridge");
+        vendorUpscaleSource.ShouldNotContain("experimental OpenGL->Vulkan bridge");
+    }
+
+    [Test]
+    public void WindowCloseRequests_AreDeferredToTheFrameBoundary()
+    {
+        string windowSource = ReadWorkspaceFile("XRENGINE/Rendering/API/XRWindow.cs").Replace("\r\n", "\n");
+        string editorSource = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.ImGui.cs").Replace("\r\n", "\n");
+        string engineLifecycleSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.Lifecycle.cs").Replace("\r\n", "\n");
+
+        windowSource.ShouldContain("private int _pendingCloseRequested;");
+        windowSource.ShouldContain("public void RequestClose()");
+        windowSource.ShouldContain("if (Engine.IsDispatchingRenderFrame)");
+        windowSource.ShouldContain("ProcessDeferredCloseRequest();");
+        editorSource.ShouldContain("window.RequestClose();");
+        engineLifecycleSource.ShouldContain("window.RequestClose();");
+    }
+
+    [Test]
+    public void OpenGlRenderer_LoadsBridgeInteropBeforeFirstCapabilitySnapshot()
+    {
+        string rendererSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs").Replace("\r\n", "\n");
+
+        int extMemoryIndex = rendererSource.IndexOf("EXTMemoryObject = ESApi.TryGetExtension<ExtMemoryObject>(out var ext) ? ext : null;", StringComparison.Ordinal);
+        int extSemaphoreWin32Index = rendererSource.IndexOf("EXTSemaphoreWin32 = ESApi.TryGetExtension<ExtSemaphoreWin32>(out var ext4) ? ext4 : null;", StringComparison.Ordinal);
+        int apiIndex = rendererSource.IndexOf("var api = Api;", StringComparison.Ordinal);
+
+        extMemoryIndex.ShouldBeGreaterThanOrEqualTo(0);
+        extSemaphoreWin32Index.ShouldBeGreaterThanOrEqualTo(0);
+        apiIndex.ShouldBeGreaterThanOrEqualTo(0);
+        extMemoryIndex.ShouldBeLessThan(apiIndex);
+        extSemaphoreWin32Index.ShouldBeLessThan(apiIndex);
+        rendererSource.ShouldContain("Engine.Rendering.RefreshVulkanUpscaleBridgeCapabilitySnapshot(this);");
+    }
+
+    [Test]
+    public void ExternalMemoryImports_UseExplicitMipLevelContract()
+    {
+        string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/XRTexture.cs").Replace("\r\n", "\n");
+        textureSource.ShouldContain("private uint _openGlExternalMemoryImportMipLevels = 1;");
+        textureSource.ShouldContain("public uint OpenGlExternalMemoryImportMipLevels");
+        textureSource.ShouldContain("OpenGlExternalMemoryImportMipLevels = 1;");
+        textureSource.ShouldContain("public void SetOpenGlExternalMemoryImport(nint handle, ulong size, string? label = null, uint mipLevels = 1)");
+        textureSource.ShouldContain("OpenGlExternalMemoryImportMipLevels = Math.Max(1u, mipLevels);");
+
+        string storageSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.Storage.cs").Replace("\r\n", "\n");
+        storageSource.ShouldContain("uint importedLevels = Math.Max(1u, Data.OpenGlExternalMemoryImportMipLevels);");
+        storageSource.ShouldContain("levels = importedLevels;");
+
+        string bridgeSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
+        bridgeSource.ShouldContain("texture.SetOpenGlExternalMemoryImport(glHandle, memoryRequirements.Size, name, mipLevels: 1);");
+    }
+
+    [Test]
+    public void ExecutableBuilds_CopyNvidiaVendorRuntimeDllsFromFallbackLocations()
+    {
+        string targetsSource = ReadWorkspaceFile("Directory.Build.targets").Replace("\r\n", "\n");
+
+        targetsSource.ShouldContain("<NvidiaSdkRuntimeDir Condition=\"'$(NvidiaSdkRuntimeDir)' == '' and Exists('$(MSBuildThisFileDirectory)ThirdParty\\NVIDIA\\SDK\\win-x64\\')\">$(MSBuildThisFileDirectory)ThirdParty\\NVIDIA\\SDK\\win-x64\\</NvidiaSdkRuntimeDir>");
+        targetsSource.ShouldContain("<NvidiaSdkRuntimeDir Condition=\"'$(NvidiaSdkRuntimeDir)' == '' and Exists('$(MSBuildThisFileDirectory)XRENGINE\\nvngx_dlss.dll')\">$(MSBuildThisFileDirectory)XRENGINE\\</NvidiaSdkRuntimeDir>");
+        targetsSource.ShouldContain("<Content Include=\"$(NvidiaSdkRuntimeDir)nvngx_*.dll\">");
+        targetsSource.ShouldContain("<Content Include=\"$(NvidiaSdkRuntimeDir)sl.*.dll\">");
+        targetsSource.ShouldContain("<Content Include=\"$(NvidiaSdkRuntimeDir)NvLowLatencyVk.dll\" Condition=\"Exists('$(NvidiaSdkRuntimeDir)NvLowLatencyVk.dll')\">");
+    }
+
+    [Test]
+    public void StreamlineDlssBridge_QueriesVulkanRequirementsBeforeCreatingTheSidecarDevice()
+    {
+        string dlssSource = ReadWorkspaceFile("XRENGINE/Rendering/DLSS/StreamlineNative.cs").Replace("\r\n", "\n");
+        dlssSource.ShouldContain("internal static bool TryGetRequiredVulkanRequirements(");
+        dlssSource.ShouldContain("StreamlineResult requirementsResult = _getFeatureRequirements!(FeatureDlss, ref requirements);");
+        dlssSource.ShouldContain("if (_vulkanInfoInitialized && !MatchesBoundDevice(sidecar))");
+        dlssSource.ShouldContain("if (!_vulkanInfoInitialized)");
+        dlssSource.ShouldContain("_boundDeviceHandle = sidecar.Device.Handle;");
+        dlssSource.ShouldContain("private static readonly StreamlineStructType FeatureRequirementsStructType");
+
+        string bridgeSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
+        bridgeSource.ShouldContain("NvidiaDlssManager.Native.TryGetRequiredVulkanRequirements(");
+        bridgeSource.ShouldContain("minApiVersion = DetermineMinimumApiVersionForRequestedFeatureSets(deviceFeatures12, deviceFeatures13);");
+        bridgeSource.ShouldContain("ResolveStreamlineQueueConfiguration(");
+        bridgeSource.ShouldContain("BuildRequestedVulkanFeatures(");
+        bridgeSource.ShouldContain("TryInvokeUserDefinedConversion(");
     }
 
     private static void AssertSourceTextureMapping(Type pipelineType, string sourceFboName, string? expectedTextureName)

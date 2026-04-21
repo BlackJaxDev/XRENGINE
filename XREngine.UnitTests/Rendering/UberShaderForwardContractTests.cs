@@ -166,6 +166,17 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void ImportedUberFragmentVariant_TrimsLocalShadowUniformSurface()
+    {
+        XRShader fragment = ShaderHelper.UberImportFragForward();
+        string resolvedSource = fragment.GetResolvedSource();
+
+        resolvedSource.ShouldContain("#define XRENGINE_FORWARD_DISABLE_LOCAL_LIGHT_SHADOWS 1");
+        resolvedSource.ShouldNotContain("uniform int PointLightShadowSlots[");
+        resolvedSource.ShouldNotContain("uniform int SpotLightShadowSlots[");
+    }
+
+    [Test]
     public void DefaultUberMaterialContract_RequestsForwardEngineUniforms_AndFeatureDefaults()
     {
         ShaderVar[] parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters();

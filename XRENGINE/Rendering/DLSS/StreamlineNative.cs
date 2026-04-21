@@ -11,7 +11,7 @@ namespace XREngine.Rendering.DLSS
         internal static class Native
         {
             private const string StreamlineLibrary = "sl.interposer.dll";
-            private const ulong StreamlineSdkVersion = 0x0002000A0003FEDC;
+            private const ulong StreamlineSdkVersion = 0x000200090000FEDC;
             private const uint FeatureDlss = 0;
             private const uint BufferTypeDepth = 0;
             private const uint BufferTypeMotionVectors = 1;
@@ -23,13 +23,18 @@ namespace XREngine.Rendering.DLSS
 
             private static bool _initialized;
             private static bool _runtimeInitialized;
+            private static bool _vulkanInfoInitialized;
             private static bool _featureFunctionsResolved;
             private static int _activeBridgeSessions;
+            private static nint _boundDeviceHandle;
+            private static nint _boundInstanceHandle;
+            private static nint _boundPhysicalDeviceHandle;
             private static IntPtr _libraryHandle;
             private static string? _lastError;
 
             private static SlInitDelegate? _init;
             private static SlShutdownDelegate? _shutdown;
+            private static SlGetFeatureRequirementsDelegate? _getFeatureRequirements;
             private static SlSetVulkanInfoDelegate? _setVulkanInfo;
             private static SlEvaluateFeatureDelegate? _evaluateFeature;
             private static SlAllocateResourcesDelegate? _allocateResources;
@@ -59,6 +64,72 @@ namespace XREngine.Rendering.DLSS
                         EnsureLibraryLoaded();
                         return _lastError;
                     }
+                }
+            }
+
+            internal readonly struct StreamlineQueueRequirements
+            {
+                public StreamlineQueueRequirements(uint graphicsQueues, uint computeQueues, uint opticalFlowQueues)
+                {
+                    GraphicsQueues = graphicsQueues;
+                    ComputeQueues = computeQueues;
+                    OpticalFlowQueues = opticalFlowQueues;
+                }
+
+                public uint GraphicsQueues { get; }
+                public uint ComputeQueues { get; }
+                public uint OpticalFlowQueues { get; }
+            }
+
+            internal static bool TryGetRequiredVulkanRequirements(
+                out string[] instanceExtensions,
+                out string[] deviceExtensions,
+                out string[] featureNames12,
+                out string[] featureNames13,
+                out StreamlineQueueRequirements queueRequirements,
+                out string failureReason)
+            {
+                instanceExtensions = [];
+                deviceExtensions = [];
+                featureNames12 = [];
+                featureNames13 = [];
+                queueRequirements = default;
+                failureReason = string.Empty;
+
+                lock (Sync)
+                {
+                    if (!EnsureRuntimeInitialized(out failureReason))
+                        return false;
+
+                    StreamlineFeatureRequirements requirements = new()
+                    {
+                        Base = CreateBase(FeatureRequirementsStructType, 2),
+                    };
+
+                    StreamlineResult requirementsResult = _getFeatureRequirements!(FeatureDlss, ref requirements);
+                    if (requirementsResult != StreamlineResult.Ok)
+                    {
+                        failureReason = $"slGetFeatureRequirements failed with {requirementsResult}.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    if ((requirements.Flags & StreamlineFeatureRequirementFlags.VulkanSupported) == 0)
+                    {
+                        failureReason = "Streamline DLSS reported no Vulkan support for the current runtime configuration.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    instanceExtensions = MarshalStringArray(requirements.VkInstanceExtensions, requirements.VkNumInstanceExtensions);
+                    deviceExtensions = MarshalStringArray(requirements.VkDeviceExtensions, requirements.VkNumDeviceExtensions);
+                    featureNames12 = MarshalStringArray(requirements.VkFeatures12, requirements.VkNumFeatures12);
+                    featureNames13 = MarshalStringArray(requirements.VkFeatures13, requirements.VkNumFeatures13);
+                    queueRequirements = new StreamlineQueueRequirements(
+                        requirements.VkNumGraphicsQueuesRequired,
+                        requirements.VkNumComputeQueuesRequired,
+                        requirements.VkNumOpticalFlowQueuesRequired);
+                    return true;
                 }
             }
 
@@ -99,44 +170,38 @@ namespace XREngine.Rendering.DLSS
             {
                 failureReason = string.Empty;
 
-                if (!EnsureLibraryLoaded())
-                {
-                    failureReason = _lastError ?? "Streamline could not be loaded.";
+                if (!EnsureRuntimeInitialized(out failureReason))
                     return false;
+
+                if (_vulkanInfoInitialized && !MatchesBoundDevice(sidecar))
+                {
+                    if (_activeBridgeSessions != 0)
+                    {
+                        failureReason = "Streamline runtime is already bound to a different Vulkan sidecar device.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    ShutdownRuntimeUnsafe();
+                    if (!EnsureRuntimeInitialized(out failureReason))
+                        return false;
                 }
 
-                if (!_runtimeInitialized)
+                if (!_vulkanInfoInitialized)
                 {
-                    uint feature = FeatureDlss;
-                    StreamlinePreferences preferences = CreatePreferences(&feature, 1);
-                    try
+                    StreamlineVulkanInfo info = CreateVulkanInfo(sidecar);
+                    StreamlineResult setInfoResult = _setVulkanInfo!(ref info);
+                    if (setInfoResult != StreamlineResult.Ok)
                     {
-                        StreamlineResult initResult = _init!(ref preferences, StreamlineSdkVersion);
-                        if (initResult != StreamlineResult.Ok)
-                        {
-                            failureReason = $"slInit failed with {initResult}.";
-                            _lastError = failureReason;
-                            return false;
-                        }
-
-                        _runtimeInitialized = true;
+                        failureReason = $"slSetVulkanInfo failed with {setInfoResult}.";
+                        _lastError = failureReason;
+                        return false;
                     }
-                    finally
-                    {
-                        if (preferences.EngineVersion != IntPtr.Zero)
-                            Marshal.FreeHGlobal(preferences.EngineVersion);
-                        if (preferences.ProjectId != IntPtr.Zero)
-                            Marshal.FreeHGlobal(preferences.ProjectId);
-                    }
-                }
 
-                StreamlineVulkanInfo info = CreateVulkanInfo(sidecar);
-                StreamlineResult setInfoResult = _setVulkanInfo!(ref info);
-                if (setInfoResult != StreamlineResult.Ok)
-                {
-                    failureReason = $"slSetVulkanInfo failed with {setInfoResult}.";
-                    _lastError = failureReason;
-                    return false;
+                    _vulkanInfoInitialized = true;
+                    _boundDeviceHandle = sidecar.Device.Handle;
+                    _boundInstanceHandle = sidecar.Instance.Handle;
+                    _boundPhysicalDeviceHandle = sidecar.PhysicalDevice.Handle;
                 }
 
                 if (!_featureFunctionsResolved && !ResolveFeatureFunctions(out failureReason))
@@ -146,6 +211,45 @@ namespace XREngine.Rendering.DLSS
                 }
 
                 return true;
+            }
+
+            private static unsafe bool EnsureRuntimeInitialized(out string failureReason)
+            {
+                failureReason = string.Empty;
+
+                if (!EnsureLibraryLoaded())
+                {
+                    failureReason = _lastError ?? "Streamline could not be loaded.";
+                    return false;
+                }
+
+                if (_runtimeInitialized)
+                    return true;
+
+                uint feature = FeatureDlss;
+                StreamlinePreferences preferences = CreatePreferences(&feature, 1);
+                try
+                {
+                    StreamlineResult initResult = _init!(ref preferences, StreamlineSdkVersion);
+                    if (initResult != StreamlineResult.Ok)
+                    {
+                        failureReason = $"slInit failed with {initResult}.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    _runtimeInitialized = true;
+                    _vulkanInfoInitialized = false;
+                    _featureFunctionsResolved = false;
+                    return true;
+                }
+                finally
+                {
+                    if (preferences.EngineVersion != IntPtr.Zero)
+                        Marshal.FreeHGlobal(preferences.EngineVersion);
+                    if (preferences.ProjectId != IntPtr.Zero)
+                        Marshal.FreeHGlobal(preferences.ProjectId);
+                }
             }
 
             private static bool EnsureLibraryLoaded()
@@ -166,6 +270,7 @@ namespace XREngine.Rendering.DLSS
 
                     if (!TryLoadExport("slInit", out _init)
                         || !TryLoadExport("slShutdown", out _shutdown)
+                        || !TryLoadExport("slGetFeatureRequirements", out _getFeatureRequirements)
                         || !TryLoadExport("slSetVulkanInfo", out _setVulkanInfo)
                         || !TryLoadExport("slEvaluateFeature", out _evaluateFeature)
                         || !TryLoadExport("slAllocateResources", out _allocateResources)
@@ -223,18 +328,21 @@ namespace XREngine.Rendering.DLSS
                     return true;
                 }
 
-                if (_getFeatureFunction is not null
-                    && _getFeatureFunction(FeatureDlss, name, out IntPtr functionPtr) == StreamlineResult.Ok
-                    && functionPtr != IntPtr.Zero)
+                StreamlineResult featureResult = StreamlineResult.ErrorFeatureMissing;
+                if (_getFeatureFunction is not null)
                 {
-                    del = Marshal.GetDelegateForFunctionPointer<T>(functionPtr);
-                    return true;
+                    featureResult = _getFeatureFunction(FeatureDlss, name, out IntPtr functionPtr);
+                    if (featureResult == StreamlineResult.Ok && functionPtr != IntPtr.Zero)
+                    {
+                        del = Marshal.GetDelegateForFunctionPointer<T>(functionPtr);
+                        return true;
+                    }
                 }
 
                 if (!required)
                     return true;
 
-                _lastError = $"Failed to resolve Streamline feature export '{name}'.";
+                _lastError = $"Failed to resolve Streamline feature export '{name}' ({featureResult}).";
                 return false;
             }
 
@@ -273,11 +381,11 @@ namespace XREngine.Rendering.DLSS
                     Device = sidecar.Device,
                     Instance = sidecar.Instance,
                     PhysicalDevice = sidecar.PhysicalDevice,
-                    ComputeQueueIndex = sidecar.GraphicsQueueIndex,
+                    ComputeQueueIndex = sidecar.StreamlineComputeQueueIndex,
                     ComputeQueueFamily = sidecar.GraphicsQueueFamilyIndex,
-                    GraphicsQueueIndex = sidecar.GraphicsQueueIndex,
+                    GraphicsQueueIndex = sidecar.StreamlineGraphicsQueueIndex,
                     GraphicsQueueFamily = sidecar.GraphicsQueueFamilyIndex,
-                    OpticalFlowQueueIndex = 0,
+                    OpticalFlowQueueIndex = sidecar.StreamlineOpticalFlowQueueIndex,
                     OpticalFlowQueueFamily = 0,
                     UseNativeOpticalFlowMode = 0,
                     ComputeQueueCreateFlags = 0,
@@ -296,11 +404,7 @@ namespace XREngine.Rendering.DLSS
                     if (_activeBridgeSessions != 0)
                         return;
 
-                    if (_runtimeInitialized && _shutdown is not null)
-                        _shutdown();
-
-                    _runtimeInitialized = false;
-                    _featureFunctionsResolved = false;
+                    ShutdownRuntimeUnsafe();
                 }
             }
 
@@ -336,8 +440,42 @@ namespace XREngine.Rendering.DLSS
                 _setConstants = null;
                 _getFeatureFunction = null;
                 _getNewFrameToken = null;
+                _getFeatureRequirements = null;
                 _setOptions = null;
                 _getOptimalSettings = null;
+            }
+
+            private static bool MatchesBoundDevice(VulkanUpscaleBridgeSidecar sidecar)
+                => _boundDeviceHandle == sidecar.Device.Handle
+                    && _boundInstanceHandle == sidecar.Instance.Handle
+                    && _boundPhysicalDeviceHandle == sidecar.PhysicalDevice.Handle;
+
+            private static void ShutdownRuntimeUnsafe()
+            {
+                if (_runtimeInitialized && _shutdown is not null)
+                    _shutdown();
+
+                _runtimeInitialized = false;
+                _vulkanInfoInitialized = false;
+                _featureFunctionsResolved = false;
+                _boundDeviceHandle = 0;
+                _boundInstanceHandle = 0;
+                _boundPhysicalDeviceHandle = 0;
+            }
+
+            private static string[] MarshalStringArray(IntPtr names, uint count)
+            {
+                if (names == IntPtr.Zero || count == 0)
+                    return [];
+
+                string[] results = new string[count];
+                for (int index = 0; index < count; index++)
+                {
+                    IntPtr entry = Marshal.ReadIntPtr(names, index * IntPtr.Size);
+                    results[index] = Marshal.PtrToStringAnsi(entry) ?? string.Empty;
+                }
+
+                return results;
             }
 
             private static StreamlineBaseStructure CreateBase(StreamlineStructType type, nuint version)
@@ -371,6 +509,7 @@ namespace XREngine.Rendering.DLSS
             private static readonly StreamlineStructType ConstantsStructType = CreateStructType(0xDCD35AD7, 0x4E4A, 0x4BAD, 0xA9, 0x0C, 0xE0, 0xC4, 0x9E, 0xB2, 0x3A, 0xFE);
             private static readonly StreamlineStructType VulkanInfoStructType = CreateStructType(0x0EED6FD5, 0x82CD, 0x43A9, 0xBD, 0xB5, 0x47, 0xA5, 0xBA, 0x2F, 0x45, 0xD6);
             private static readonly StreamlineStructType DlssOptionsStructType = CreateStructType(0x6AC826E4, 0x4C61, 0x4101, 0xA9, 0x2D, 0x63, 0x8D, 0x42, 0x10, 0x57, 0xB8);
+            private static readonly StreamlineStructType FeatureRequirementsStructType = CreateStructType(0x66714097, 0xAC6D, 0x4BC6, 0x89, 0x15, 0x1E, 0x0F, 0x55, 0xA6, 0xB6, 0x1F);
 
             internal sealed class BridgeSession : IDisposable
             {
@@ -684,6 +823,9 @@ namespace XREngine.Rendering.DLSS
             private delegate StreamlineResult SlShutdownDelegate();
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate StreamlineResult SlGetFeatureRequirementsDelegate(uint feature, ref StreamlineFeatureRequirements requirements);
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
             private delegate StreamlineResult SlSetVulkanInfoDelegate(ref StreamlineVulkanInfo info);
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -716,6 +858,45 @@ namespace XREngine.Rendering.DLSS
             private enum StreamlineResult
             {
                 Ok = 0,
+                ErrorIO,
+                ErrorDriverOutOfDate,
+                ErrorOSOutOfDate,
+                ErrorOSDisabledHWS,
+                ErrorDeviceNotCreated,
+                ErrorNoSupportedAdapterFound,
+                ErrorAdapterNotSupported,
+                ErrorNoPlugins,
+                ErrorVulkanAPI,
+                ErrorDXGIAPI,
+                ErrorD3DAPI,
+                ErrorNRDAPI,
+                ErrorNVAPI,
+                ErrorReflexAPI,
+                ErrorNGXFailed,
+                ErrorJSONParsing,
+                ErrorMissingProxy,
+                ErrorMissingResourceState,
+                ErrorInvalidIntegration,
+                ErrorMissingInputParameter,
+                ErrorNotInitialized,
+                ErrorComputeFailed,
+                ErrorInitNotCalled,
+                ErrorExceptionHandler,
+                ErrorInvalidParameter,
+                ErrorMissingConstants,
+                ErrorDuplicatedConstants,
+                ErrorMissingOrInvalidAPI,
+                ErrorCommonConstantsMissing,
+                ErrorUnsupportedInterface,
+                ErrorFeatureMissing,
+                ErrorFeatureNotSupported,
+                ErrorFeatureMissingHooks,
+                ErrorFeatureFailedToLoad,
+                ErrorFeatureWrongPriority,
+                ErrorFeatureMissingDependency,
+                ErrorFeatureManagerInvalidState,
+                ErrorInvalidState,
+                WarnOutOfVRAM,
             }
 
             private enum StreamlineLogLevel : uint
@@ -732,6 +913,16 @@ namespace XREngine.Rendering.DLSS
                 DisableDebugText = 1UL << 1,
                 UseManualHooking = 1UL << 2,
                 UseFrameBasedResourceTagging = 1UL << 7,
+            }
+
+            [Flags]
+            private enum StreamlineFeatureRequirementFlags : uint
+            {
+                D3D11Supported = 1u << 0,
+                D3D12Supported = 1u << 1,
+                VulkanSupported = 1u << 2,
+                VSyncOffRequired = 1u << 3,
+                HardwareSchedulingRequired = 1u << 4,
             }
 
             private enum StreamlineEngineType : uint
@@ -825,6 +1016,40 @@ namespace XREngine.Rendering.DLSS
                 public IntPtr EngineVersion;
                 public IntPtr ProjectId;
                 public StreamlineRenderApi RenderApi;
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct StreamlineVersion
+            {
+                public uint Major;
+                public uint Minor;
+                public uint Build;
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct StreamlineFeatureRequirements
+            {
+                public StreamlineBaseStructure Base;
+                public StreamlineFeatureRequirementFlags Flags;
+                public uint MaxNumCpuThreads;
+                public uint MaxNumViewports;
+                public uint NumRequiredTags;
+                public IntPtr RequiredTags;
+                public StreamlineVersion OsVersionDetected;
+                public StreamlineVersion OsVersionRequired;
+                public StreamlineVersion DriverVersionDetected;
+                public StreamlineVersion DriverVersionRequired;
+                public uint VkNumComputeQueuesRequired;
+                public uint VkNumGraphicsQueuesRequired;
+                public uint VkNumDeviceExtensions;
+                public IntPtr VkDeviceExtensions;
+                public uint VkNumInstanceExtensions;
+                public IntPtr VkInstanceExtensions;
+                public uint VkNumFeatures12;
+                public IntPtr VkFeatures12;
+                public uint VkNumFeatures13;
+                public IntPtr VkFeatures13;
+                public uint VkNumOpticalFlowQueuesRequired;
             }
 
             [StructLayout(LayoutKind.Sequential)]

@@ -66,6 +66,19 @@ public partial class GLTexture2D
             }
 
             uint levels = (uint)requestedLevels;
+            if (Data.UsesOpenGlExternalMemoryImport)
+            {
+                uint importedLevels = Math.Max(1u, Data.OpenGlExternalMemoryImportMipLevels);
+                if (levels != importedLevels)
+                {
+                    Debug.OpenGL(
+                        $"[GLTexture2D] Clamping external-memory import levels for '{GetDescribingName()}' from {levels} to {importedLevels}. " +
+                        $"ImportLabel={Data.OpenGlExternalMemoryLabel ?? Data.Name ?? BindingId.ToString()} dims={width}x{height}.");
+                }
+
+                levels = importedLevels;
+            }
+
             long requestedBytes = CalculateTextureVRAMSize(width, height, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
             if (!Engine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
             {

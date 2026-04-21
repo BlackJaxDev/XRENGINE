@@ -89,6 +89,7 @@ namespace XREngine.Rendering
 
         private bool _isDisposing;
         private bool _isDisposed;
+        private int _pendingCloseRequested;
 
         private Exception? _lastRenderException;
         private int _consecutiveRenderFailures;
@@ -199,6 +200,22 @@ namespace XREngine.Rendering
                     $"XRWindow.ApplyVSync[{GetHashCode()}]");
         }
 
+        public void RequestClose()
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+
+            if (Engine.IsRenderThread)
+            {
+                RequestCloseOnRenderThread();
+                return;
+            }
+
+            Engine.EnqueueRenderThreadTask(
+                RequestCloseOnRenderThread,
+                $"Viewport.CloseWindow[{GetHashCode()}]");
+        }
+
         private void ApplyVSyncModeOnRenderThread(EVSyncMode globalVSyncMode)
         {
             if (_isDisposed || _isDisposing)
@@ -241,6 +258,39 @@ namespace XREngine.Rendering
                     "[XRWindow] Failed to apply VSync policy for window {0}. {1}",
                     GetHashCode(),
                     ex.Message);
+            }
+        }
+
+        private void RequestCloseOnRenderThread()
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+
+            if (Engine.IsDispatchingRenderFrame)
+            {
+                Interlocked.Exchange(ref _pendingCloseRequested, 1);
+                return;
+            }
+
+            PerformCloseRequest();
+        }
+
+        private void ProcessDeferredCloseRequest()
+        {
+            if (Interlocked.Exchange(ref _pendingCloseRequested, 0) == 0)
+                return;
+
+            PerformCloseRequest();
+        }
+
+        private void PerformCloseRequest()
+        {
+            try
+            {
+                Window.Close();
+            }
+            catch
+            {
             }
         }
 
@@ -896,6 +946,13 @@ namespace XREngine.Rendering
                 // This keeps texture uploads and property updates from delaying visible rendering.
                 Engine.ProcessMainThreadTasks();
             }
+
+            if (_isDisposed || _isDisposing)
+                return;
+
+            // Window.Close must not run inside the active DoRender callback or the render-thread
+            // job pump for the current frame; defer it until the frame boundary is complete.
+            ProcessDeferredCloseRequest();
         }
 
         private bool ShouldBeRendering()
@@ -1440,6 +1497,7 @@ namespace XREngine.Rendering
             }
             finally
             {
+                Interlocked.Exchange(ref _pendingCloseRequested, 0);
                 _isDisposed = true;
                 _isDisposing = false;
                 GC.SuppressFinalize(this);

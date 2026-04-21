@@ -107,7 +107,6 @@ void XRENGINE_WriteForwardFragment(vec4 shadedColor)
 struct ToonMesh {
     vec3 worldNormal;
     vec3 vertexNormal;
-    vec3 tangentSpaceNormal;
     vec3 worldPos;
     vec3 localPos;
     vec3 viewDir;
@@ -756,6 +755,7 @@ void main() {
     
     // Flip normal for back faces
     mesh.vertexNormal *= mesh.isFrontFace;
+    mesh.worldNormal = mesh.vertexNormal;
     
     // Build TBN matrix from the generated vertex contract.
     mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);

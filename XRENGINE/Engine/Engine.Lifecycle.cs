@@ -156,7 +156,7 @@ namespace XREngine
         {
             var windows = _windows.ToArray();
             foreach (var window in windows)
-                window.Window.Close();
+                window.RequestClose();
         }
 
         /// <summary>

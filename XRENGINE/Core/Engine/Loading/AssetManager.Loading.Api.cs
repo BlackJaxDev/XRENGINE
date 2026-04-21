@@ -118,6 +118,12 @@ namespace XREngine
             return Load<T>(path);
         }
 
+        public T? LoadGameAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(JobPriority priority, bool bypassJobThread, params string[] relativePathFolders) where T : XRAsset, new()
+        {
+            string path = ResolveGameAssetPath(relativePathFolders);
+            return Load<T>(path, priority, bypassJobThread);
+        }
+
         public async Task<T?> LoadGameAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
         {
             string path = ResolveGameAssetPath(relativePathFolders);

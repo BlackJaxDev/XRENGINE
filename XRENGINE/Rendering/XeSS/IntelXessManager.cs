@@ -62,7 +62,7 @@ namespace XREngine.Rendering.XeSS
             bool usingBridge = !usingVulkan && TryIsBridgeCapable(out bridgeFailure);
             if (!usingVulkan && !usingBridge)
             {
-                _lastError = bridgeFailure ?? "XeSS requires a Vulkan renderer or the experimental OpenGL->Vulkan bridge.";
+                _lastError = bridgeFailure ?? "XeSS requires a Vulkan renderer or the OpenGL->Vulkan bridge.";
                 _cachedIsSupported = false;
                 return;
             }
@@ -79,7 +79,7 @@ namespace XREngine.Rendering.XeSS
 
             if (!Engine.Rendering.VulkanUpscaleBridgeRequested || !snapshot.EnvironmentEnabled)
             {
-                failureReason = $"experimental bridge disabled (set {Engine.Rendering.VulkanUpscaleBridgeEnvVar}=1 to opt in)";
+                failureReason = $"{Engine.Rendering.VulkanUpscaleBridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge (clear it or set it to 1 to re-enable)";
                 return false;
             }
 

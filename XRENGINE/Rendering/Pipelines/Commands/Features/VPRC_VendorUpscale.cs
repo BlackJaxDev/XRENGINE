@@ -742,13 +742,13 @@ void main()
             if (Engine.EffectiveSettings.EnableIntelXess && !_reportedXessApiMismatch)
             {
                 _reportedXessApiMismatch = true;
-                Debug.LogWarning($"Intel XeSS requires Vulkan or the experimental OpenGL->Vulkan bridge. {reason}. Falling back to standard blit.");
+                Debug.LogWarning($"Intel XeSS requires Vulkan or the OpenGL->Vulkan upscale bridge. {reason}. Falling back to standard blit.");
             }
 
             if (Engine.EffectiveSettings.EnableNvidiaDlss && !_reportedDlssApiMismatch)
             {
                 _reportedDlssApiMismatch = true;
-                Debug.LogWarning($"NVIDIA DLSS requires Vulkan or the experimental OpenGL->Vulkan bridge. {reason}. Falling back to standard blit.");
+                Debug.LogWarning($"NVIDIA DLSS requires Vulkan or the OpenGL->Vulkan upscale bridge. {reason}. Falling back to standard blit.");
             }
         }
 

@@ -133,16 +133,22 @@ namespace XREngine
             bool allowLoading,
             params string[] folderNames) where T : XRAsset, new()
         {
+            // Bypass the JobManager for startup-time asset loads/saves. These are invoked on the editor
+            // main thread before any windows or render threads exist, and the job worker pool is sized
+            // very small at startup (ProcessorCount - reserved, capped at 16). Cascaded loads inside
+            // LoadCore can themselves call RunOnJobThreadBlocking, which saturates the pool and deadlocks
+            // the main thread waiting on tcs.Task.GetAwaiter().GetResult(). Running inline avoids that.
             T? asset = null;
             if (allowLoading)
             {
-                asset = Assets.LoadGameAsset<T>([.. folderNames, assetName]);
+                asset = Assets.LoadGameAsset<T>(JobPriority.Normal, bypassJobThread: true, [.. folderNames, assetName]);
                 if (asset != null)
                     return asset;
             }
             asset = generateFactory?.Invoke() ?? Activator.CreateInstance<T>();
             asset.Name = assetName;
-            /*Task.Run(() => */Assets.SaveGameAssetTo(asset, folderNames)/*)*/;
+            string saveDirectory = System.IO.Path.Combine(Assets.GameAssetsPath, System.IO.Path.Combine(folderNames));
+            Assets.SaveToImmediate(asset, saveDirectory);
             return asset;
         }
 

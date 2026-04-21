@@ -863,6 +863,7 @@ uniform float SkySunDiscSize = 0.9994;
 uniform float SkyMoonDiscSize = 0.99965;
 
 const float PI = 3.14159265359;
+const float TAU = 6.28318530718;
 
 vec2 SafeNormalize2(vec2 v)
 {
@@ -896,6 +897,13 @@ float Hash(vec2 p)
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
 
+float Hash3(vec3 p)
+{
+    p = fract(p * vec3(443.8975, 397.2973, 491.1871));
+    p += dot(p, p.yzx + 19.19);
+    return fract((p.x + p.y) * p.z);
+}
+
 float Noise(vec2 p)
 {
     vec2 i = floor(p);
@@ -903,6 +911,23 @@ float Noise(vec2 p)
     vec2 u = f * f * (3.0 - 2.0 * f);
     return mix(mix(Hash(i + vec2(0.0, 0.0)), Hash(i + vec2(1.0, 0.0)), u.x),
                mix(Hash(i + vec2(0.0, 1.0)), Hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float Noise3(vec3 p)
+{
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    float n000 = Hash3(i);
+    float n100 = Hash3(i + vec3(1.0, 0.0, 0.0));
+    float n010 = Hash3(i + vec3(0.0, 1.0, 0.0));
+    float n110 = Hash3(i + vec3(1.0, 1.0, 0.0));
+    float n001 = Hash3(i + vec3(0.0, 0.0, 1.0));
+    float n101 = Hash3(i + vec3(1.0, 0.0, 1.0));
+    float n011 = Hash3(i + vec3(0.0, 1.0, 1.0));
+    float n111 = Hash3(i + vec3(1.0, 1.0, 1.0));
+    return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+               mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
 }
 
 float Fbm(vec2 p)
@@ -918,69 +943,220 @@ float Fbm(vec2 p)
     return v;
 }
 
-vec3 NightSky(vec3 dir, float nightFactor)
+float Fbm6(vec2 p)
 {
-    float horizonFade = smoothstep(-0.1, 0.35, dir.y);
-    vec3 nightGradient = mix(vec3(0.01, 0.015, 0.03), vec3(0.005, 0.007, 0.015), horizonFade);
-    vec2 starUv = DirectionToOctahedralPlane(dir) * 256.0 + vec2(dir.y * 73.0, dir.x * 41.0);
-    float stars = step(0.9975, Hash(floor(starUv))) * nightFactor;
-    return nightGradient + stars * vec3(1.0, 0.96, 0.9) * SkyStarIntensity;
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 6; ++i)
+    {
+        v += a * Noise(p);
+        p = p * 2.17 + vec2(4.3, 9.1);
+        a *= 0.55;
+    }
+    return v;
+}
+
+float Fbm3(vec3 p)
+{
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 5; ++i)
+    {
+        v += a * Noise3(p);
+        p = p * 2.03 + vec3(17.0, 11.0, 5.3);
+        a *= 0.5;
+    }
+    return v;
+}
+
+float Fbm3_6(vec3 p)
+{
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 6; ++i)
+    {
+        v += a * Noise3(p);
+        p = p * 2.17 + vec3(4.3, 9.1, 2.7);
+        a *= 0.55;
+    }
+    return v;
+}
+
+vec3 Atmosphere(vec3 viewDir, vec3 sunDir)
+{
+    float cosZen = max(viewDir.y, -0.1);
+    float cosSunZen = max(sunDir.y, -0.1);
+    float mu = dot(viewDir, sunDir);
+
+    float viewPath = 1.0 / (cosZen + 0.15);
+    float sunPath = 1.0 / (cosSunZen + 0.15);
+
+    float rayleighPhase = 0.75 * (1.0 + mu * mu);
+    float g = 0.76;
+    float g2 = g * g;
+    float miePhase = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5);
+    miePhase *= 0.0597;
+
+    vec3 rayleighCoeff = vec3(0.58, 1.35, 3.31);
+    vec3 mieCoeff = vec3(2.1);
+
+    vec3 sunExt = exp(-rayleighCoeff * sunPath * 0.22 - mieCoeff * sunPath * 0.08);
+    vec3 viewExt = exp(-rayleighCoeff * viewPath * 0.10 - mieCoeff * viewPath * 0.06);
+
+    float sunStrength = smoothstep(-0.14, 0.25, sunDir.y);
+
+    vec3 rayleighIn = rayleighCoeff * rayleighPhase * sunExt * (1.0 - viewExt);
+    vec3 mieIn = mieCoeff * miePhase * sunExt * (1.0 - viewExt) * 0.35;
+
+    return (rayleighIn + mieIn) * sunStrength;
+}
+
+vec3 ShadeMoon(vec3 dir, vec3 moonDir, vec3 sunDir, float nightFactor)
+{
+    vec3 up = abs(moonDir.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = SafeNormalize3(cross(up, moonDir));
+    vec3 bitangent = cross(moonDir, tangent);
+
+    float d = dot(dir, moonDir);
+    if (d <= SkyMoonDiscSize)
+    {
+        float corona = pow(max(d, 0.0), 96.0) * 0.35 + pow(max(d, 0.0), 24.0) * 0.05;
+        return vec3(0.74, 0.79, 0.94) * corona * nightFactor;
+    }
+
+    float t = dot(dir, tangent) / max(d, 1e-3);
+    float b = dot(dir, bitangent) / max(d, 1e-3);
+    float discRadius = sqrt(max(1.0 - SkyMoonDiscSize * SkyMoonDiscSize, 1e-6)) * 1.15;
+    vec2 local = vec2(t, b);
+    float rn = clamp(dot(local, local) / (discRadius * discRadius), 0.0, 1.0);
+
+    float z = sqrt(max(1.0 - rn, 0.0));
+    vec3 surfaceN = SafeNormalize3(tangent * (local.x / discRadius)
+                                 + bitangent * (local.y / discRadius)
+                                 + moonDir * z);
+
+    float phase = clamp(dot(surfaceN, sunDir), 0.0, 1.0);
+
+    vec2 surfUv = local / discRadius;
+    float maria = smoothstep(0.40, 0.58, Fbm(surfUv * 2.1 + vec2(7.3, 1.9)));
+    float craters = mix(0.72, 1.0, Fbm6(surfUv * 5.5) * 0.5 + 0.5);
+
+    vec3 moonAlbedo = mix(vec3(0.82, 0.83, 0.86), vec3(0.45, 0.49, 0.58), maria);
+    vec3 moonLit = moonAlbedo * craters * (0.06 + phase * 1.15);
+
+    float edgeSoft = smoothstep(1.0, 0.85, rn);
+    vec3 moonColor = moonLit * edgeSoft;
+
+    float coronaFalloff = max(d, 0.0);
+    float corona = pow(coronaFalloff, 96.0) * 0.40 + pow(coronaFalloff, 24.0) * 0.06;
+    moonColor += vec3(0.74, 0.79, 0.94) * corona;
+
+    return moonColor * nightFactor;
 }
 
 void main()
 {
     vec3 dir = SafeNormalize3(FragWorldDir);
 
-    float angle = SkyTimeOfDay * PI * 2.0;
-    vec3 sunDir = normalize(vec3(cos(angle), sin(angle), 0.2));
-    vec3 moonDir = -sunDir;
-    float sunHeight = sunDir.y;
+    float angle = SkyTimeOfDay * TAU;
+    vec3 sunDir = SafeNormalize3(vec3(cos(angle), sin(angle), 0.18));
+    float moonAngle = angle + PI + 0.25 * sin(SkyTimeOfDay * TAU * 0.3);
+    vec3 moonDir = SafeNormalize3(vec3(cos(moonAngle), sin(moonAngle), -0.22));
 
-    float dayFactor = smoothstep(-0.18, 0.1, sunHeight);
+    float dayFactor = smoothstep(-0.18, 0.12, sunDir.y);
     float nightFactor = 1.0 - dayFactor;
-    float duskFactor = 1.0 - abs(sunHeight) / 0.22;
-    duskFactor = clamp(duskFactor, 0.0, 1.0);
+    float duskFactor = clamp(exp(-sunDir.y * sunDir.y * 38.0), 0.0, 1.0);
 
-    float h = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3 dayHorizon = vec3(0.73, 0.84, 1.0);
-    vec3 dayZenith = vec3(0.15, 0.42, 0.95);
-    vec3 duskHorizon = vec3(1.0, 0.45, 0.18);
-    vec3 duskZenith = vec3(0.26, 0.08, 0.32);
-    vec3 skyDay = mix(dayHorizon, dayZenith, pow(h, 0.45));
-    vec3 skyDusk = mix(duskHorizon, duskZenith, pow(h, 0.65));
-    vec3 skyBase = mix(skyDusk, skyDay, dayFactor);
+    vec3 skyBase = Atmosphere(dir, sunDir);
 
-    float mie = pow(max(dot(dir, sunDir), 0.0), 18.0);
-    float rayleigh = pow(max(dot(dir, sunDir), 0.0), 3.0);
-    vec3 sunsetScatter = (vec3(1.0, 0.34, 0.16) * mie + vec3(0.45, 0.56, 1.0) * rayleigh * 0.4) * duskFactor;
-    vec3 color = skyBase + sunsetScatter;
+    float horizonT = 1.0 - clamp(abs(dir.y), 0.0, 1.0);
+    vec3 horizonGlow = vec3(1.15, 0.55, 0.22) * pow(horizonT, 3.0) * duskFactor * SkyHorizonHaze;
 
-    float horizon = 1.0 - clamp(abs(dir.y), 0.0, 1.0);
-    color += vec3(0.22, 0.19, 0.15) * pow(horizon, 2.2) * SkyHorizonHaze * duskFactor;
+    vec2 flatSun = SafeNormalize2(vec2(sunDir.x, sunDir.z));
+    vec2 flatDir = SafeNormalize2(vec2(dir.x, dir.z));
+    float antiSun = max(-dot(flatDir, flatSun), 0.0);
+    vec3 beltOfVenus = vec3(0.78, 0.55, 0.68) * pow(horizonT, 2.2) * antiSun * duskFactor * 0.45;
 
-    vec2 cloudUv = DirectionToOctahedralPlane(dir) * SkyCloudScale;
-    cloudUv += vec2(SkyCloudSpeed * SkyTimeOfDay * 240.0, SkyCloudSpeed * SkyTimeOfDay * 120.0);
+    vec3 color = skyBase + horizonGlow + beltOfVenus;
+    color *= mix(vec3(1.0), vec3(1.20, 0.88, 0.78), duskFactor * 0.55);
+
+    float starDensity = 256.0;
+    vec3 starP = dir * starDensity;
+    vec3 starCell = floor(starP);
+    float starHash = Hash3(starCell);
+    float twinkle = 0.65 + 0.35 * sin(TAU * (SkyTimeOfDay * 360.0 + starHash * 53.0));
+    float smallStar = step(0.9975, starHash) * (0.55 + 0.45 * fract(starHash * 17.3)) * twinkle;
+
+    float bigDensity = 64.0;
+    vec3 bigP = dir * bigDensity;
+    vec3 bigCell = floor(bigP);
+    float bigHash = Hash3(bigCell);
+    vec3 bigOffset = fract(bigP) - 0.5;
+    float bigStar = step(0.997, bigHash) * exp(-dot(bigOffset, bigOffset) * 60.0);
+    bigStar *= 0.6 + 0.4 * sin(TAU * (SkyTimeOfDay * 180.0 + bigHash * 91.0));
+    float hueSeed = Hash3(starCell + vec3(11.0, 23.0, 7.0));
+    vec3 starColor = mix(vec3(0.85, 0.90, 1.10), vec3(1.10, 0.95, 0.78), hueSeed);
+
+    vec3 stars = (smallStar + bigStar * 2.4) * starColor;
+
+    vec3 galacticUp = SafeNormalize3(vec3(0.35, 0.22, 0.91));
+    float bandCoord = dot(dir, galacticUp);
+    float band = exp(-bandCoord * bandCoord * 38.0);
+    float mwDetail = smoothstep(0.35, 0.95, Fbm3_6(dir * 6.2));
+    vec3 milkyWay = mix(vec3(0.06, 0.08, 0.15), vec3(0.22, 0.18, 0.28), mwDetail) * band * mwDetail * 0.35;
+
+    float starHorizonFade = smoothstep(-0.05, 0.22, dir.y);
+    vec3 starField = (stars + milkyWay) * SkyStarIntensity * starHorizonFade;
+
+    vec3 nightBase = vec3(0.006, 0.009, 0.022) * (0.4 + 0.6 * smoothstep(-0.12, 0.4, dir.y));
+
+    vec3 night = nightBase + starField * nightFactor;
+    color = mix(night, color + night * 0.15, clamp(dayFactor + duskFactor * 0.35, 0.0, 1.0));
+
+    float timeAdvect = SkyCloudSpeed * SkyTimeOfDay * 240.0;
+    float flowAngle = SkyTimeOfDay * 0.35;
+    vec3 flow = vec3(cos(flowAngle), 0.0, sin(flowAngle)) * timeAdvect * 0.25;
+    vec3 cloudP = dir * SkyCloudScale * 3.0 + flow;
+
+    vec3 warp = vec3(Fbm3(cloudP * 1.3 + vec3(3.2, 7.1, 0.5)),
+                     Fbm3(cloudP * 1.3 + vec3(1.7, 9.3, 4.2)),
+                     Fbm3(cloudP * 1.3 + vec3(6.1, 2.8, 8.4))) - 0.5;
+    vec3 warped = cloudP + warp * 1.2;
+    float cloudBase = Fbm3_6(warped);
+    float cloudDetail = Fbm3(warped * 3.7 - flow * 0.3);
+    float cloudShape = cloudBase * 0.75 + cloudDetail * 0.25;
+
     float cloudMask = smoothstep(-0.08, 0.12, dir.y);
-    float cloud = Fbm(cloudUv);
-    cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloud, SkyCloudSharpness)) * cloudMask;
-    vec3 cloudDay = vec3(1.0, 0.98, 0.95);
-    vec3 cloudNight = vec3(0.26, 0.28, 0.35);
-    vec3 cloudTint = mix(cloudNight, cloudDay, dayFactor);
-    color = mix(color, cloudTint + sunsetScatter * 0.35, cloud * (0.25 + 0.55 * dayFactor));
+    float cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloudShape, SkyCloudSharpness)) * cloudMask;
 
-    float sunDisc = smoothstep(SkySunDiscSize, 1.0, dot(dir, sunDir));
-    float sunHalo = pow(max(dot(dir, sunDir), 0.0), 64.0);
-    color += vec3(1.0, 0.92, 0.78) * (sunDisc * 12.0 + sunHalo * 0.75) * dayFactor;
+    float muSun = dot(dir, sunDir);
+    float silver = pow(max(muSun, 0.0), 8.0);
+    float powder = 1.0 - exp(-cloud * 2.5);
+    vec3 cloudLit = mix(vec3(0.45, 0.48, 0.55), vec3(1.00, 0.98, 0.93), dayFactor);
+    vec3 cloudShadow = mix(vec3(0.04, 0.05, 0.09), vec3(0.58, 0.63, 0.75), dayFactor);
+    vec3 cloudColor = mix(cloudShadow, cloudLit, powder);
+    cloudColor += vec3(1.30, 0.55, 0.22) * silver * duskFactor * 1.2;
+    cloudColor = mix(cloudColor, color, smoothstep(0.5, 0.03, dir.y) * 0.55);
 
-    float moonDisc = smoothstep(SkyMoonDiscSize, 1.0, dot(dir, moonDir));
-    float moonGlow = pow(max(dot(dir, moonDir), 0.0), 48.0);
-    color += vec3(0.74, 0.79, 0.94) * (moonDisc * 2.8 + moonGlow * 0.35) * nightFactor;
+    color = mix(color, cloudColor, cloud);
 
-    float skyBlend = clamp(dayFactor + duskFactor * 0.35, 0.0, 1.0);
-    vec3 fallbackColor = mix(NightSky(dir, nightFactor), skyBase, skyBlend);
-    color = mix(NightSky(dir, nightFactor), color, skyBlend);
+    float cosSun = dot(dir, sunDir);
+    float sunDisc = smoothstep(SkySunDiscSize, 1.0, cosSun);
+    float limbT = clamp((cosSun - SkySunDiscSize) / max(1.0 - SkySunDiscSize, 1e-4), 0.0, 1.0);
+    float limbDark = mix(0.55, 1.0, pow(limbT, 0.5));
+    vec3 sunColor = mix(vec3(1.4, 0.55, 0.18), vec3(1.0, 0.96, 0.88), smoothstep(-0.05, 0.35, sunDir.y));
+    float sunAureole = pow(max(cosSun, 0.0), 96.0) * 0.80 + pow(max(cosSun, 0.0), 32.0) * 0.12;
+    float sunOcclusion = 1.0 - cloud * 0.85;
+    color += sunColor * (sunDisc * 18.0 * limbDark + sunAureole) * dayFactor * sunOcclusion;
+
+    vec3 moonContribution = ShadeMoon(dir, moonDir, sunDir, nightFactor);
+    color += moonContribution * (1.0 - cloud * 0.9);
+
     if (any(isnan(color)) || any(isinf(color)))
-        color = fallbackColor;
+    {
+        float h = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+        color = mix(vec3(0.05, 0.08, 0.15), vec3(0.30, 0.50, 0.85), h);
+    }
 
     OutColor = max(color, vec3(0.0)) * SkyboxIntensity;
 }

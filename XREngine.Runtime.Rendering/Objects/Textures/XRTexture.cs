@@ -379,6 +379,15 @@ namespace XREngine.Rendering
         }
 
         [MemoryPackIgnore]
+        private uint _openGlExternalMemoryImportMipLevels = 1;
+        [MemoryPackIgnore]
+        public uint OpenGlExternalMemoryImportMipLevels
+        {
+            get => _openGlExternalMemoryImportMipLevels;
+            set => SetField(ref _openGlExternalMemoryImportMipLevels, value);
+        }
+
+        [MemoryPackIgnore]
         private string? _openGlExternalMemoryLabel;
         [MemoryPackIgnore]
         public string? OpenGlExternalMemoryLabel
@@ -395,13 +404,15 @@ namespace XREngine.Rendering
         {
             OpenGlExternalMemoryImportHandle = 0;
             OpenGlExternalMemoryImportSize = 0;
+            OpenGlExternalMemoryImportMipLevels = 1;
             OpenGlExternalMemoryLabel = null;
         }
 
-        public void SetOpenGlExternalMemoryImport(nint handle, ulong size, string? label = null)
+        public void SetOpenGlExternalMemoryImport(nint handle, ulong size, string? label = null, uint mipLevels = 1)
         {
             OpenGlExternalMemoryImportHandle = handle;
             OpenGlExternalMemoryImportSize = size;
+            OpenGlExternalMemoryImportMipLevels = Math.Max(1u, mipLevels);
             OpenGlExternalMemoryLabel = label;
         }
 

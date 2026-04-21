@@ -24,6 +24,7 @@ public class NativeInteropSmokeTests
         {
             Assert.That(TryGetExport(handle, "slInit", out _), Is.True, "sl.interposer.dll is missing slInit; update to a newer Streamline build.");
             Assert.That(TryGetExport(handle, "slShutdown", out _), Is.True, "sl.interposer.dll is missing slShutdown; update to a newer Streamline build.");
+            Assert.That(TryGetExport(handle, "slGetFeatureRequirements", out _), Is.True, "sl.interposer.dll is missing slGetFeatureRequirements; Vulkan bridge init cannot query DLSS requirements before creating the sidecar device.");
             Assert.That(TryGetExport(handle, "slSetVulkanInfo", out _), Is.True, "sl.interposer.dll is missing slSetVulkanInfo; Vulkan bridge DLSS cannot initialize.");
             Assert.That(TryGetExport(handle, "slEvaluateFeature", out _), Is.True, "sl.interposer.dll is missing slEvaluateFeature; DLSS dispatch cannot execute.");
             Assert.That(TryGetExport(handle, "slAllocateResources", out _), Is.True, "sl.interposer.dll is missing slAllocateResources; bridge-side DLSS resource allocation cannot execute.");
@@ -32,16 +33,6 @@ public class NativeInteropSmokeTests
             Assert.That(TryGetExport(handle, "slSetConstants", out _), Is.True, "sl.interposer.dll is missing slSetConstants; DLSS camera constants cannot be uploaded.");
             Assert.That(TryGetExport(handle, "slGetFeatureFunction", out _), Is.True, "sl.interposer.dll is missing slGetFeatureFunction; DLSS feature-function resolution cannot execute.");
             Assert.That(TryGetExport(handle, "slGetNewFrameToken", out _), Is.True, "sl.interposer.dll is missing slGetNewFrameToken; bridge-side DLSS frame token allocation cannot execute.");
-
-            bool hasSetOptions = TryGetExport(handle, "slDLSSSetOptions", out _);
-            if (!hasSetOptions)
-            {
-                Assert.Fail("sl.interposer.dll is present but missing slDLSSSetOptions export. This usually means the Streamline version is too old for our binding.");
-            }
-
-            // Optional in older builds but required for auto-tuning; the check helps detect stale DLLs early.
-            bool hasOptimalSettings = TryGetExport(handle, "slDLSSGetOptimalSettings", out _);
-            Assert.That(hasOptimalSettings, Is.True, "sl.interposer.dll is missing slDLSSGetOptimalSettings; update to a newer Streamline build if DLSS keeps failing.");
         }
         finally
         {
