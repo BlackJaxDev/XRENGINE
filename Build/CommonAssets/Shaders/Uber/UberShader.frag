@@ -1,4 +1,21 @@
-// Uber Shader - Fragment Shader
+// =============================================================================
+// Uber Shader - Fragment Stage
+// =============================================================================
+// A single specialization-heavy fragment shader that serves every mesh pass
+// in the engine. Pass-specific #defines (set by the C# pipeline when the
+// variant is compiled) strip whole feature blocks out of this file so that
+// one source can cover:
+//
+//   * Opaque / cutout / transparent forward shading (stylized or PBR)
+//   * Depth+normal prepass (for SSAO / SSR / motion)
+//   * Shadow caster pass (depth-only)
+//   * Weighted-Blended OIT, Per-Pixel Linked-List OIT, and Depth Peeling
+//     for order-independent transparency
+//
+// Most of the XRENGINE_UBER_DISABLE_* macros below are active for this
+// variant, stripping the stylized/rim/matcap/dissolve/etc. blocks out at
+// compile time so we only pay for what we use.
+// =============================================================================
 
 #version 450 core
 
@@ -17,6 +34,8 @@
 #define XRENGINE_UBER_DISABLE_DISSOLVE 1
 #define XRENGINE_UBER_DISABLE_PARALLAX 1
 
+// When materials come from an external import path (glTF/FBX), a handful of
+// engine-specific features don't map cleanly, so disable them as well.
 #ifdef XRENGINE_UBER_IMPORT_MATERIAL
 #define XRENGINE_UBER_DISABLE_MATERIAL_AO 1
 #define XRENGINE_UBER_DISABLE_EMISSION 1
@@ -24,52 +43,84 @@
 #define XRENGINE_UBER_DISABLE_RENDER_TIME 1
 #endif
 
+// Shared engine headers:
+//   common.glsl   - math helpers, color space conversions, hashes, noise, ...
+//   uniforms.glsl - the full uniform block (material params, camera, lights)
 #include "common.glsl"
 #include "uniforms.glsl"
+// common.glsl defines PI; undef before the snippets below to avoid redef warnings.
 #undef PI
+// #pragma snippet pulls in engine-managed GLSL fragments that provide
+// implementations for direct/indirect lighting, AO sampling, and normal
+// encoding for the prepass.
 #pragma snippet "ForwardLighting"
 #pragma snippet "AmbientOcclusionSampling"
 #pragma snippet "NormalEncoding"
 
+// Transparency algorithm snippets. These are mutually exclusive with each
+// other and with the weighted-blended path which is inlined below.
 #if defined(XRENGINE_FORWARD_PPLL)
-#pragma snippet "ExactTransparencyPpll"
+#pragma snippet "ExactTransparencyPpll"         // per-pixel linked-list OIT
 #elif defined(XRENGINE_FORWARD_DEPTH_PEEL)
-#pragma snippet "ExactTransparencyDepthPeel"
+#pragma snippet "ExactTransparencyDepthPeel"    // depth-peeling OIT
 #endif
 
 // ============================================
 // Fragment Inputs
 // ============================================
-layout(location = 0) in vec3 FragPos;
-layout(location = 1) in vec3 FragNorm;
-layout(location = 4) in vec2 FragUV0;
-layout(location = 12) in vec4 FragColor0;
-layout(location = 20) in vec3 FragPosLocal;
+// Locations must agree with the vertex stage's out contract. The gaps
+// (0,1,4,12,20) are intentional: other slots are reserved for optional
+// attributes (tangents, extra UVs, skin weights, ...) that this variant
+// doesn't consume.
+layout(location = 0)  in vec3 FragPos;        // world-space position
+layout(location = 1)  in vec3 FragNorm;       // world-space geometric normal
+layout(location = 4)  in vec2 FragUV0;        // primary texture coordinates
+layout(location = 12) in vec4 FragColor0;     // per-vertex RGBA color
+layout(location = 20) in vec3 FragPosLocal;   // object-space position
 
 // ============================================
 // Fragment Output
 // ============================================
+// Exactly one of these output configurations is active per compilation, based
+// on which pass we're being compiled for. The rest of the shader routes its
+// final color through XRENGINE_WriteForwardFragment() so it doesn't need to
+// know which one is live.
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
-layout(location = 0) out vec2 Normal;
+layout(location = 0) out vec2 Normal;         // octahedral-encoded world normal
 #elif defined(XRENGINE_SHADOW_CASTER_PASS)
-layout(location = 0) out float Depth;
+layout(location = 0) out float Depth;         // depth written into the shadow map
 #elif defined(XRENGINE_FORWARD_WEIGHTED_OIT)
-layout(location = 0) out vec4 OutAccum;
-layout(location = 1) out vec4 OutRevealage;
+layout(location = 0) out vec4 OutAccum;       // sum of premultiplied color*weight
+layout(location = 1) out vec4 OutRevealage;   // running 1-alpha product (mul blend)
 #else
-layout(location = 0) out vec4 FragColor;
+layout(location = 0) out vec4 FragColor;      // ordinary shaded RGBA
 #endif
 
+// -----------------------------------------------------------------------------
+// Weighted-Blended OIT (McGuire & Bavoil 2013).
+//
+// Each transparent fragment contributes to two render targets:
+//   OutAccum     += vec4(rgb * alpha, alpha) * weight
+//   OutRevealage *= (1 - alpha)     (via destination-mul blending in the FBO)
+// and a later resolve pass composites them to approximate back-to-front
+// ordering without any per-fragment sorting.
+// -----------------------------------------------------------------------------
 #if defined(XRENGINE_FORWARD_WEIGHTED_OIT)
+// Depth-aware weight: closer fragments (smaller gl_FragCoord.z) get a larger
+// weight so they dominate the blend, which keeps the resolve visually
+// consistent with traditional back-to-front ordering.
 float XRE_ComputeOitWeight(float alpha)
 {
     float depthWeight = clamp(1.0 - gl_FragCoord.z * 0.85, 0.05, 1.0);
     return clamp(alpha * (0.25 + depthWeight * depthWeight * 4.0), 1e-2, 8.0);
 }
 
+// Writes both MRT outputs used by the weighted-blended resolve pass.
 void XRE_WriteWeightedBlendedOit(vec4 shadedColor)
 {
     float alpha = clamp(shadedColor.a, 0.0, 1.0);
+    // Fully transparent fragments contribute nothing; discard so we don't
+    // touch revealage with a no-op and so early-z can still do its job.
     if (alpha <= 0.0001)
         discard;
 
@@ -80,6 +131,9 @@ void XRE_WriteWeightedBlendedOit(vec4 shadedColor)
 }
 #endif
 
+// Called at the top of main() for color passes. For depth peeling, this lets
+// the snippet cull fragments that don't belong to the current peel layer.
+// Non-peeling builds get a no-op.
 void XRENGINE_BeginForwardFragmentOutput()
 {
 #if defined(XRENGINE_FORWARD_DEPTH_PEEL)
@@ -88,6 +142,8 @@ void XRENGINE_BeginForwardFragmentOutput()
 #endif
 }
 
+// Single dispatch point for the final color so the rest of the shader is
+// indifferent to which transparency technique this variant uses.
 void XRENGINE_WriteForwardFragment(vec4 shadedColor)
 {
 #if defined(XRENGINE_FORWARD_WEIGHTED_OIT)
@@ -95,6 +151,7 @@ void XRENGINE_WriteForwardFragment(vec4 shadedColor)
 #elif defined(XRENGINE_FORWARD_PPLL)
     XRE_StorePerPixelLinkedListFragment(shadedColor);
 #elif defined(XRENGINE_DEPTH_NORMAL_PREPASS) || defined(XRENGINE_SHADOW_CASTER_PASS)
+    // Prepass/shadow outputs were written earlier in main(); nothing to do.
     return;
 #else
     FragColor = shadedColor;
@@ -104,51 +161,69 @@ void XRENGINE_WriteForwardFragment(vec4 shadedColor)
 // ============================================
 // Internal Data Structures
 // ============================================
+// Plain-old-data bundles passed between helpers. Keeping them grouped means
+// feature blocks can read/write everything they need via one parameter,
+// which keeps function signatures short and register pressure predictable.
+
+// Geometry + surface info for the current fragment. The name "Toon" is
+// historical; the PBR path uses the same struct.
 struct ToonMesh {
-    vec3 worldNormal;
-    vec3 vertexNormal;
-    vec3 worldPos;
-    vec3 localPos;
-    vec3 viewDir;
-    vec4 vertexColor;
-    vec2 uv[4];
-    float isFrontFace;
-    mat3 TBN;
+    vec3 worldNormal;     // final shading normal (after normal mapping)
+    vec3 vertexNormal;    // interpolated vertex normal, flipped for back faces
+    vec3 worldPos;        // world-space position
+    vec3 localPos;        // object-space position (used by local-space effects)
+    vec3 viewDir;         // normalized fragment -> camera direction
+    vec4 vertexColor;     // interpolated per-vertex color
+    vec2 uv[4];           // up to 4 UV channels
+    float isFrontFace;    // +1 front-facing, -1 back-facing
+    mat3 TBN;             // tangent/bitangent/normal basis for normal maps
 };
 
+// Lighting context for the primary (directional) light in the stylized path,
+// plus the precomputed dot products lighting helpers reuse.
 struct ToonLight {
-    vec3 direction;
-    vec3 color;
-    float attenuation;
-    vec3 indirectColor;
-    float nDotL;
+    vec3 direction;       // unit vector from fragment toward the light
+    vec3 color;           // light color * diffuse intensity
+    float attenuation;    // distance falloff (1.0 for directional)
+    vec3 indirectColor;   // ambient / IBL contribution
+    float nDotL;          // saturate(dot(N,L)) not applied here — raw dot
     float nDotV;
     float nDotH;
     float lDotH;
-    vec3 halfDir;
-    float lightMap;
-    vec3 reflectionDir;
-    vec3 finalLighting;
+    vec3 halfDir;         // normalize(L + V)
+    float lightMap;       // NdotL remapped per the selected lighting mode
+    vec3 reflectionDir;   // reflect(-V, N), used by matcap / reflections
+    vec3 finalLighting;   // populated by the chosen shading mode
 };
 
+// Running composite as the fragment walks through feature blocks.
 struct FragmentData {
-    vec3 baseColor;
-    vec3 finalColor;
+    vec3 baseColor;       // albedo after color/detail adjustments
+    vec3 finalColor;      // lit color being accumulated
     float alpha;
-    vec3 emission;
+    vec3 emission;        // additive emissive term added on top at the end
 };
 
+// Classic PBR inputs for the forward PBR path.
 struct PBRData {
     float metallic;
-    float roughness;
-    float perceptualRoughness;
-    float reflectionMask;
-    float specularMask;
-    vec3 F0;
-    vec3 diffuseColor;
-    vec3 specularColor;
+    float roughness;              // Disney/linear roughness (perceptual^2)
+    float perceptualRoughness;    // artist-facing roughness in [0,1]
+    float reflectionMask;         // IBL strength scalar
+    float specularMask;           // direct specular strength scalar
+    vec3 F0;                      // normal-incidence Fresnel reflectance
+    vec3 diffuseColor;            // albedo * (1 - metallic)
+    vec3 specularColor;           // specular lobe tint
 };
 
+// -----------------------------------------------------------------------------
+// Build a world-space TBN from screen-space derivatives of position and UV.
+// This is the Mittring/Schueler "cotangent frame" technique: it lets us
+// support normal mapping on meshes that didn't ship with baked tangents.
+// If the UV derivatives are degenerate (collapsed UVs), we fall back to an
+// arbitrary orthonormal basis around the normal so normal mapping still
+// produces sensible results instead of NaNs.
+// -----------------------------------------------------------------------------
 mat3 computeWorldTbn(vec3 normal, vec3 worldPos, vec2 uv)
 {
     vec3 n = normalize(normal);
@@ -159,11 +234,14 @@ mat3 computeWorldTbn(vec3 normal, vec3 worldPos, vec2 uv)
 
     float det = duv1.x * duv2.y - duv1.y * duv2.x;
     if (abs(det) < 1e-6) {
+        // Degenerate UVs -> synthesize any orthonormal frame around n.
         vec3 tangent = normalize(abs(n.z) < 0.999 ? cross(n, vec3(0.0, 0.0, 1.0)) : cross(n, vec3(0.0, 1.0, 0.0)));
         vec3 bitangent = normalize(cross(n, tangent));
         return mat3(tangent, bitangent, n);
     }
 
+    // Solve the 2x2 system that maps UV axes into world space, then lazily
+    // orthonormalize via a common inverse-sqrt scale.
     vec3 dp2perp = cross(dp2, n);
     vec3 dp1perp = cross(n, dp1);
     vec3 tangent = dp2perp * duv1.x + dp1perp * duv2.x;
@@ -175,6 +253,13 @@ mat3 computeWorldTbn(vec3 normal, vec3 worldPos, vec2 uv)
 // ============================================
 // UV Selection Helper
 // ============================================
+// Many material inputs can pick which UV channel (or synthesized projection)
+// they sample from. The integer index selects one of:
+//   0-3 : mesh UV sets 0..3
+//   4   : panoramic (spherical) based on view direction
+//   5   : world XZ projection (good for floors/terrain)
+//   6   : polar projection around the world up axis
+//   8   : local-space XY (object-anchored)
 vec2 getUV(int uvIndex, ToonMesh mesh) {
     switch(uvIndex) {
         case 0: return mesh.uv[0];
@@ -192,26 +277,36 @@ vec2 getUV(int uvIndex, ToonMesh mesh) {
 // ============================================
 // Normal Mapping
 // ============================================
+// Samples the bump/normal map, decodes it into a tangent-space vector, and
+// rotates it into world space via the fragment's TBN. When _BumpScale is
+// effectively zero we skip the work entirely and keep the vertex normal.
 vec3 calculateNormal(ToonMesh mesh) {
     if (abs(_BumpScale) <= EPSILON) {
         return mesh.vertexNormal;
     }
 
+    // UV helpers:
+    //   transformUV -> apply tiling/offset from the _ST (scale/translation) vec4
+    //   panUV       -> add a time-based scroll to animate textures
     vec2 normalUV = transformUV(getUV(_BumpMapUV, mesh), _BumpMap_ST);
     normalUV = panUV(normalUV, _BumpMapPan, u_Time);
-    
+
     vec4 normalTex = texture(_BumpMap, normalUV);
     vec3 tangentNormal = unpackNormal(normalTex, _BumpScale);
-    
-    // Transform from tangent space to world space
+
+    // Rotate from tangent space to world space with the per-fragment TBN.
     vec3 worldNormal = normalize(mesh.TBN * tangentNormal);
-    
+
     return worldNormal;
 }
 
 // ============================================
 // Base Color Calculation
 // ============================================
+// Computes the unshaded albedo (plus alpha) for the fragment: main texture
+// multiplied by the material tint, optionally further tinted by interpolated
+// vertex colors. Vertex colors can be authored in sRGB or linear space, so
+// the material declares which.
 vec4 calculateBaseColor(ToonMesh mesh) {
     // Sample main texture
     vec2 mainUV = transformUV(getUV(_MainTexUV, mesh), _MainTex_ST);
@@ -236,6 +331,10 @@ vec4 calculateBaseColor(ToonMesh mesh) {
 // ============================================
 // Color Adjustments
 // ============================================
+// HSV-style tweaks (saturation, brightness, hue shift) driven by a mask
+// texture whose channels gate each effect (R=hue, G=brightness, B=saturation).
+// Hue shift can run in classic HSV or in Oklab for a more perceptually uniform
+// result. Disabled in this variant.
 vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
 #ifdef XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS
     return color;
@@ -276,6 +375,9 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
 // ============================================
 // Alpha Handling
 // ============================================
+// Combines the main texture's alpha with an optional alpha-mask texture
+// (replace / multiply / add / subtract), applies a global alpha bias, and
+// finally respects a hard "force opaque" override.
 float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
     float alpha = baseColor.a;
     
@@ -315,6 +417,11 @@ float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
 // ============================================
 // Forward Lighting Helpers
 // ============================================
+// Populates a PBRData from the coarse material knobs exposed by this uber
+// variant. There's no metallic/roughness map here, so we derive a reasonable
+// dielectric default from _SpecularSmoothness. The 0.04 floor keeps the
+// surface from becoming a perfect mirror, which would break most BRDF math
+// and image-based-lighting filtering.
 PBRData buildSurfacePbrData(vec2 uv, vec3 baseColor) {
     PBRData pbr;
     pbr.metallic = 0.0;
@@ -322,7 +429,7 @@ PBRData buildSurfacePbrData(vec2 uv, vec3 baseColor) {
     pbr.roughness = pbr.perceptualRoughness * pbr.perceptualRoughness;
     pbr.reflectionMask = 1.0;
     pbr.specularMask = 1.0;
-    pbr.F0 = vec3(0.04);
+    pbr.F0 = vec3(0.04);             // generic dielectric Fresnel at normal incidence
     pbr.diffuseColor = baseColor;
     pbr.specularColor = vec3(1.0);
     return pbr;
@@ -332,6 +439,8 @@ float resolveSpecularIntensity(PBRData pbr) {
     return max(_SpecularStrength * pbr.specularMask, 0.0);
 }
 
+// ForwardLighting snippet takes an (r, m, s) triple per fragment:
+//   r = perceptual roughness, m = metallic, s = direct specular intensity.
 vec3 resolveSurfaceRms(PBRData pbr) {
     return vec3(
         clamp(pbr.perceptualRoughness, 0.0, 1.0),
@@ -339,6 +448,8 @@ vec3 resolveSurfaceRms(PBRData pbr) {
         resolveSpecularIntensity(pbr));
 }
 
+// Samples a material-baked AO map (crevices, contact shadows) and lerps it
+// toward fully lit by _LightDataAOStrengthR.
 float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
 #ifdef XRENGINE_UBER_DISABLE_MATERIAL_AO
     return 1.0;
@@ -354,6 +465,8 @@ float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
 #endif
 }
 
+// Indirect / IBL term. Receives the combined screen+material AO so corners
+// and baked crevices correctly darken ambient light.
 vec3 calculateForwardAmbientLighting(ToonMesh mesh, vec3 baseColor, vec3 normal, PBRData pbr, float ambientOcclusion) {
     return XRENGINE_CalculateAmbientPbr(
         normal,
@@ -364,6 +477,9 @@ vec3 calculateForwardAmbientLighting(ToonMesh mesh, vec3 baseColor, vec3 normal,
         ambientOcclusion);
 }
 
+// Sum of all directional light contributions. `skipPrimaryDirectional` lets
+// the stylized path own the primary directional (via a toon ramp / cel etc.)
+// while still picking up any additional directionals here.
 vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, PBRData pbr, bool skipPrimaryDirectional) {
     vec3 totalLight = vec3(0.0);
     vec3 rms = resolveSurfaceRms(pbr);
@@ -377,17 +493,23 @@ vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseCo
             baseColor,
             rms,
             pbr.F0,
-            i == 0);
+            i == 0);   // only the primary directional samples the sun shadow cascade
     }
 
     return totalLight;
 }
 
+// Point + spot lights. Two dispatch paths:
+//   * Forward+ : reads a precomputed per-tile list of visible lights from
+//                SSBOs. Scales cleanly to hundreds of onscreen lights.
+//   * Classic  : iterates every light in the scene. Fine for small counts.
 vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, PBRData pbr) {
     vec3 totalLight = vec3(0.0);
     vec3 rms = resolveSurfaceRms(pbr);
 
     if (ForwardPlusEnabled) {
+        // Find which screen-space tile we're in, then index into the tile's
+        // visible-light list.
         ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;
         int tileCountX = (int(ForwardPlusScreenSize.x) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
         int tileIndex = tileCoord.y * tileCountX + tileCoord.x;
@@ -396,10 +518,11 @@ vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, P
         for (int o = 0; o < ForwardPlusMaxLightsPerTile; ++o) {
             int lightIndex = ForwardPlusVisibleIndices[baseIndex + o];
             if (lightIndex < 0) {
-                break;
+                break; // sentinel: end of this tile's light list
             }
 
             ForwardPlusLocalLight l = ForwardPlusLocalLights[lightIndex];
+            // Color_Type.w encodes the light kind: 0 = point, 1 = spot.
             totalLight += (l.Color_Type.w < 0.5)
                 ? XRENGINE_CalcForwardPlusPointLight(l, normal, mesh.worldPos, baseColor, rms, pbr.F0)
                 : XRENGINE_CalcForwardPlusSpotLight(l, normal, mesh.worldPos, baseColor, rms, pbr.F0);
@@ -408,6 +531,7 @@ vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, P
         return totalLight;
     }
 
+    // Classic forward fallback: iterate every scene light.
     for (int i = 0; i < PointLightCount; ++i) {
         totalLight += XRENGINE_CalcPointLight(i, PointLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0);
     }
@@ -419,27 +543,37 @@ vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, P
     return totalLight;
 }
 
+// Convenience: directional + local direct lighting in one call.
 vec3 calculateForwardDirectLighting(ToonMesh mesh, vec3 baseColor, vec3 normal, PBRData pbr, bool skipPrimaryDirectional) {
     return calculateForwardDirectionalLighting(mesh, normal, baseColor, pbr, skipPrimaryDirectional)
         + calculateForwardLocalLighting(mesh, normal, baseColor, pbr);
 }
 
 // ============================================
-// Lighting Calculation
+// Lighting Calculation (stylized / shared setup)
 // ============================================
+// Builds the ToonLight context. In the stylized path, it also remaps NdotL
+// into a `lightMap` value used to index toon ramps / cel bands. In the PBR
+// path the early #ifdef short-circuits the fancy remap and only fills the
+// raw dot products.
 ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
     ToonLight light;
-    
+
     if (DirLightCount > 0) {
+        // Engine convention: DirectionalLights[i].Direction points *from* the
+        // light, so flip it to get L (fragment -> light).
         light.direction = normalize(-DirectionalLights[0].Direction);
         light.color = DirectionalLights[0].Base.Color * DirectionalLights[0].Base.DiffuseIntensity;
     } else {
+        // No directional light in the scene -> use a harmless default so
+        // downstream dot products stay well-defined.
         light.direction = vec3(0.0, 1.0, 0.0);
         light.color = vec3(0.0);
     }
     light.attenuation = 1.0;
 
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    // PBR path: we just need the raw dot products; no ramp remap.
     light.indirectColor = indirectColor;
     light.nDotL = dot(normal, light.direction);
     light.nDotV = dot(normal, mesh.viewDir);
@@ -451,10 +585,11 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
     return light;
 #else
     
-    // Indirect/ambient lighting
+    // Stylized path: optional hemisphere ambient tint + ramp-driven remap.
     light.indirectColor = indirectColor;
     if (_LightingIndirectUsesNormals > 0.0) {
-        // Simple hemisphere lighting
+        // Simple hemisphere lighting: upward-facing surfaces brighten,
+        // downward-facing surfaces darken.
         float upFactor = dot(normal, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
         light.indirectColor *= mix(0.5, 1.0, upFactor);
     }
@@ -467,22 +602,16 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
     light.lDotH = dot(light.direction, light.halfDir);
     light.reflectionDir = reflect(-mesh.viewDir, normal);
     
-    // Calculate light map based on mode
+    // Remap NdotL into a [0,1] light intensity per the selected mode.
+    //   0 Poi Custom / 1 Normalized: map [-1,1] -> [0,1] ("half-Lambert" style)
+    //   2 Saturated: standard Lambert clamp
+    //   3 Shadows-only: always fully lit; only cast shadows darken it
     float lightMap = light.nDotL;
-    
     switch(_LightingMapMode) {
-        case 0: // Poi Custom
-            lightMap = light.nDotL * 0.5 + 0.5;
-            break;
-        case 1: // Normalized NDotL
-            lightMap = light.nDotL * 0.5 + 0.5;
-            break;
-        case 2: // Saturated NDotL
-            lightMap = saturate(light.nDotL);
-            break;
-        case 3: // Casted shadows only
-            lightMap = 1.0;
-            break;
+        case 0: lightMap = light.nDotL * 0.5 + 0.5; break;
+        case 1: lightMap = light.nDotL * 0.5 + 0.5; break;
+        case 2: lightMap = saturate(light.nDotL); break;
+        case 3: lightMap = 1.0; break;
     }
     
     light.lightMap = lightMap;
@@ -494,6 +623,8 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
 // ============================================
 // Shadow Map Sampling
 // ============================================
+// Thin wrapper around the directional-shadow snippet; returns 1.0 (fully lit)
+// when there is no directional light to sample.
 float sampleShadowMap(vec3 worldPos, vec3 normal, float nDotL) {
     if (DirLightCount <= 0)
         return 1.0;
@@ -501,14 +632,17 @@ float sampleShadowMap(vec3 worldPos, vec3 normal, float nDotL) {
 }
 
 // ============================================
-// Shading Modes
+// Shading Modes (stylized primary light)
 // ============================================
+// Applies one of several stylized lighting models to the primary directional
+// light. If stylized shading is disabled for this variant we fall through to
+// a plain Lambert + ambient composition and skip everything below.
 vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     return baseColor * (light.color * saturate(light.nDotL) + light.indirectColor);
 #else
+    // Artist flag to bypass all shading (pure unlit * light color).
     if (_ShadingEnabled < 0.5) {
-        // No shading - just apply light color
         return baseColor * (light.color + light.indirectColor);
     }
     
@@ -518,6 +652,8 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
     vec3 finalLight;
     float shadow = 1.0;
     
+    // Each case builds `shadow` (in [0,1]) and `finalLight`, which are then
+    // composed together after the switch.
     switch(_LightingMode) {
         case 0: // Texture Ramp
         {
@@ -552,7 +688,7 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
         
         case 5: // Flat
         {
-            // Flat lighting - minimal shading
+            // Either a hard binary step or the raw remapped lightMap.
             if (_ForceFlatRampedLightmap > 0.5) {
                 shadow = step(0.5, light.lightMap);
             } else {
@@ -561,10 +697,9 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
             finalLight = light.color * shadow + light.indirectColor * (1.0 - shadow);
             break;
         }
-        
-        case 6: // Realistic
+
+        case 6: // Realistic (plain Lambert)
         {
-            // Simple Lambert
             shadow = saturate(light.nDotL);
             finalLight = light.color * shadow + light.indirectColor;
             break;
@@ -578,31 +713,33 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
         }
     }
     
-    // Apply shadow map factor from directional light
+    // Fold directional shadow-map occlusion into the shadow term.
     shadow *= shadowMapFactor;
-    
-    // Apply shadow strength
+
+    // Artist-friendly softening toward fully lit.
     shadow = mix(1.0, shadow, _ShadowStrength);
-    
-    // Apply shadow color tint
+
+    // Colored tint in shadowed regions (e.g. cool blue shadows).
     vec3 shadowTint = mix(_LightingShadowColor, vec3(1.0), shadow);
-    
-    // Combine
+
+    // Compose: albedo * light * shadow tint.
     vec3 result = baseColor * finalLight * shadowTint;
-    
-    // Apply lighting cap
+
+    // Optional hard ceiling on lit brightness to keep highlights readable
+    // under strong lights.
     if (_LightingCapEnabled > 0.5) {
         float maxBrightness = _LightingCap;
         result = min(result, baseColor * maxBrightness);
     }
-    
-    // Apply minimum brightness
+
+    // Enforce a minimum brightness by rescaling luminance — avoids pitch
+    // black regions in stylized renders.
     float currentBrightness = luminance(result);
     if (currentBrightness < _LightingMinLightBrightness) {
         result *= _LightingMinLightBrightness / max(currentBrightness, EPSILON);
     }
-    
-    // Grayscale lighting option
+
+    // Partial desaturation while preserving lighting detail.
     if (_LightingMonochromatic > 0.0) {
         float gray = luminance(result);
         result = mix(result, baseColor * gray, _LightingMonochromatic);
@@ -615,6 +752,8 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
 // ============================================
 // Emission
 // ============================================
+// Self-illumination: texture * color * strength. Does not interact with
+// lighting — it's added on top at the end so it survives tonemap/bloom.
 vec3 calculateEmission(ToonMesh mesh, ToonLight light) {
 #ifdef XRENGINE_UBER_DISABLE_EMISSION
     return vec3(0.0);
@@ -639,6 +778,9 @@ vec3 calculateEmission(ToonMesh mesh, ToonLight light) {
 // ============================================
 // Matcap
 // ============================================
+// A "material capture" is a small sphere-rendered texture sampled by the
+// view-space normal. It bakes a specific lighting look cheaply and requires
+// no runtime light evaluation.
 vec3 calculateMatcap(ToonMesh mesh, vec3 normal, ToonLight light, inout vec3 emission) {
 #ifdef XRENGINE_UBER_DISABLE_MATCAP
     return vec3(0.0);
@@ -692,6 +834,8 @@ vec3 calculateMatcap(ToonMesh mesh, vec3 normal, ToonLight light, inout vec3 emi
 // ============================================
 // Rim Lighting
 // ============================================
+// Fresnel-style edge highlight. Three curve shapes are offered to match the
+// common Poiyomi/UTS/LilToon looks familiar to the VRChat avatar community.
 vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
 #ifdef XRENGINE_UBER_DISABLE_RIM_LIGHTING
     return vec3(0.0);
@@ -739,9 +883,20 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
 // ============================================
 // Main Fragment Function
 // ============================================
+// High-level flow:
+//   1. Assemble ToonMesh (positions, normal, TBN, UVs, face orientation).
+//   2. Depth-peel early-discard if we're on a hidden peel layer.
+//   3. Apply parallax (optional) then normal mapping.
+//   4. Sample base color + alpha; run color adjustments; test cutout.
+//   5. Apply dissolve; on prepass/shadow pass, emit their outputs and exit.
+//   6. Detail textures, then ambient + direct lighting (PBR or stylized).
+//   7. Back-face override, SSS, matcap, rim, glitter, flipbook, emission.
+//   8. Force alpha=1 for opaque/cutout; route through the pass-specific writer.
 void main() {
-    // Initialize mesh data
+    // ---- 1. Build ToonMesh --------------------------------------------------
     ToonMesh mesh;
+    // This variant only streams UV0; mirror it into the other UV slots so
+    // features that request a higher channel still get something sensible.
     mesh.uv[0] = FragUV0;
     mesh.uv[1] = FragUV0;
     mesh.uv[2] = FragUV0;
@@ -752,26 +907,33 @@ void main() {
     mesh.vertexColor = FragColor0;
     mesh.viewDir = normalize(u_CameraPosition - FragPos);
     mesh.isFrontFace = gl_FrontFacing ? 1.0 : -1.0;
-    
-    // Flip normal for back faces
+
+    // Flip the interpolated normal when shading the back of a double-sided
+    // surface (e.g. hair cards) so lighting reads correctly from both sides.
     mesh.vertexNormal *= mesh.isFrontFace;
     mesh.worldNormal = mesh.vertexNormal;
-    
-    // Build TBN matrix from the generated vertex contract.
+
+    // TBN built from screen-space derivatives — works even when the mesh has
+    // no baked tangents.
     mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);
 
+    // ---- 2. Depth-peel gate -------------------------------------------------
 #if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS)
     XRENGINE_BeginForwardFragmentOutput();
 #endif
-    
-    // Apply parallax mapping to UVs (before any texture sampling)
+
+    // ---- 3. Parallax --------------------------------------------------------
+    // Parallax occlusion mapping warps UVs along the view ray through a height
+    // map to simulate depth. SPOM (silhouette-preserving) additionally
+    // discards fragments whose ray steps off the base UV rectangle so the
+    // displaced surface also looks correct at grazing angles.
 #ifndef XRENGINE_UBER_DISABLE_PARALLAX
     if (_EnableParallax > 0.5) {
         int parallaxMode = int(_ParallaxMode);
         float parallaxValid = 1.0;
         vec2 parallaxUV = applyParallaxWithValidity(mesh.uv[0], mesh.worldPos, mesh.viewDir, mesh.TBN, parallaxMode, parallaxValid);
 
-        // SPOM: discard fragments when the ray marches outside the base UV [0,1] bounds.
+        // SPOM: discard when the ray marches outside the base UV [0,1] bounds.
         if (parallaxMode == PARALLAX_SILHOUETTE_OCCLUSION && parallaxValid < 0.5) {
             discard;
         }
@@ -779,33 +941,30 @@ void main() {
         mesh.uv[0] = parallaxUV;
     }
 #endif
-    
-    // Calculate world normal (with normal mapping)
+
+    // Normal map sampling uses the (possibly parallax-warped) UV0.
     mesh.worldNormal = calculateNormal(mesh);
-    
-    // Initialize fragment data
+
+    // ---- 4. Base color, color adjustments, alpha ----------------------------
     FragmentData fragData;
     fragData.emission = vec3(0.0);
-    
-    // Calculate base color
+
     vec4 baseColor = calculateBaseColor(mesh);
-    
-    // Apply color adjustments
     baseColor.rgb = applyColorAdjustments(baseColor.rgb, mesh);
-    
-    // Calculate alpha
     fragData.alpha = calculateAlpha(baseColor, mesh);
-    
-    // Alpha cutoff (cutout mode)
+
+    // Alpha-test cutout: throw out the fragment before writing anything.
     if (_Mode == BLEND_MODE_CUTOUT) {
         if (fragData.alpha < _Cutoff) {
             discard;
         }
     }
-    
+
     fragData.baseColor = baseColor.rgb;
-    
-    // Apply dissolve effect (early out if dissolved)
+
+    // ---- 5. Dissolve + early prepass/shadow outputs -------------------------
+    // Dissolve may rewrite baseColor/emission/alpha and can discard entirely
+    // for fully-dissolved fragments.
 #ifndef XRENGINE_UBER_DISABLE_DISSOLVE
     if (_EnableDissolve > 0.5) {
         if (applyDissolve(mesh.uv[0], mesh.worldPos, mesh.localPos, fragData.baseColor, fragData.emission, fragData.alpha)) {
@@ -814,6 +973,8 @@ void main() {
     }
 #endif
 
+    // Cheap outputs for non-color passes. Done *after* cutout/dissolve so
+    // shadow maps and the depth/normal prepass respect those discards.
 #if defined(XRENGINE_SHADOW_CASTER_PASS)
     Depth = gl_FragCoord.z;
     return;
@@ -821,8 +982,10 @@ void main() {
     Normal = XRENGINE_EncodeNormal(mesh.worldNormal);
     return;
 #endif
-    
-    // Apply detail textures (before lighting)
+
+    // ---- 6. Detail textures + lighting --------------------------------------
+    // Detail textures run before lighting so shading responds to the detail-
+    // modulated albedo rather than tinting an already-lit result.
 #ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
     if (_DetailEnabled > 0.5) {
         vec2 detailUV = transformUV(mesh.uv[0], _DetailTex_ST);
@@ -837,15 +1000,16 @@ void main() {
     }
 #endif
     
-    // Calculate lighting
+    // Occlusion = screen-space SSAO * material-baked AO.
     float screenAmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
     float materialAmbientOcclusion = sampleMaterialAmbientOcclusion(mesh);
     float combinedAmbientOcclusion = saturate(screenAmbientOcclusion * materialAmbientOcclusion);
     PBRData surfacePbr = buildSurfacePbrData(mesh.uv[0], fragData.baseColor);
     vec3 ambientLighting = calculateForwardAmbientLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, combinedAmbientOcclusion);
     ToonLight light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
-    
-    // Apply back face coloring
+
+    // ---- 7. Feature overlays (back face, SSS, matcap, rim, etc.) ----------
+    // Separate material for the back side of double-sided geometry.
 #ifndef XRENGINE_UBER_DISABLE_BACKFACE
     if (_EnableBackFace > 0.5) {
         if (mesh.isFrontFace < 0.0) {
@@ -858,7 +1022,10 @@ void main() {
     }
 #endif
     
-    // Apply shading
+    // Shading dispatch. PBR always evaluates every light (including the
+    // primary directional). The stylized path handles the primary directional
+    // via a ramp/cel/wrapped model and adds secondary directionals + all
+    // local lights on top.
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
 #else
@@ -871,7 +1038,9 @@ void main() {
     }
 #endif
     
-    // Apply subsurface scattering
+    // Subsurface scattering (wrap-lighting approximation): backlit direction
+    // times a view-aligned falloff, modulated by a thickness map. Produces
+    // the classic "glow through ears / leaves" look.
 #ifndef XRENGINE_UBER_DISABLE_SUBSURFACE
     if (_EnableSSS > 0.5) {
         float backLight = max(0.0, dot(-mesh.worldNormal, light.direction));
@@ -883,11 +1052,10 @@ void main() {
     }
 #endif
     
-    // Calculate matcap
+    // Matcap compositing — can replace, multiply, and/or add independently.
 #ifndef XRENGINE_UBER_DISABLE_MATCAP
     vec3 matcapColor = calculateMatcap(mesh, mesh.worldNormal, light, fragData.emission);
 
-    // Apply matcap blending
     if (_MatcapEnable > 0.5) {
         fragData.finalColor = mix(fragData.finalColor, matcapColor, _MatcapReplace);
         fragData.finalColor *= mix(vec3(1.0), matcapColor, _MatcapMultiply);
@@ -895,14 +1063,15 @@ void main() {
     }
 #endif
     
-    // Calculate rim lighting
+    // Rim light. Also contributes to emission so it survives bloom.
 #ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
     vec3 rimColor = calculateRimLight(mesh, mesh.worldNormal, light);
     fragData.finalColor += rimColor;
     fragData.emission += rimColor * _RimEmission;
 #endif
-    
-    // Apply glitter/sparkle
+
+    // Sparkle: hashed noise gated by view angle and an optional mask,
+    // scrolling over time. Contributes to both color and emission.
 #ifndef XRENGINE_UBER_DISABLE_GLITTER
     if (_EnableGlitter > 0.5) {
         vec2 glitterUV = mesh.uv[0] * max(_GlitterDensity, 0.001);
@@ -917,7 +1086,7 @@ void main() {
     }
 #endif
     
-    // Apply flipbook animation (additive blend)
+    // Flipbook (sprite-sheet) additive overlay.
 #ifndef XRENGINE_UBER_DISABLE_FLIPBOOK
     if (_EnableFlipbook > 0.5 && _FlipbookBlendMode > 0.5) {
         vec4 flipbookColor = simpleFlipbook(
@@ -932,19 +1101,21 @@ void main() {
     }
 #endif
     
-    // Calculate emission
+    // Authored emission (texture * color * strength).
 #ifndef XRENGINE_UBER_DISABLE_EMISSION
     fragData.emission += calculateEmission(mesh, light);
 #endif
-    
-    // Add emission to final color
+
+    // Final composite: emission is always added on top of lit color so it
+    // remains bright through tonemap and bloom.
     fragData.finalColor += fragData.emission;
 
-    // Final output
+    // ---- 8. Final write -----------------------------------------------------
     vec4 shadedColor = vec4(fragData.finalColor, fragData.alpha);
 
-    // Handle transparency modes — opaque and cutout should always output full alpha
-    // so MSAA resolve and post-processing compositing don't see partial transparency.
+    // Opaque and cutout passes must emit alpha=1. Partial alpha in those
+    // passes would confuse MSAA resolve and downstream compositing (bloom /
+    // tonemap), producing dark halos around cutout edges.
     if (_Mode == BLEND_MODE_OPAQUE || _Mode == BLEND_MODE_CUTOUT) {
         shadedColor.a = 1.0;
     }

@@ -1,15 +1,37 @@
-// Uber Shader - Vertex Shader (NV Stereo)
+// =============================================================================
+// Uber Shader - Vertex Stage (NVIDIA Single-Pass Stereo)
+// =============================================================================
+// Stereo variant that uses NVIDIA's single-pass stereo rendering extensions
+// (GL_NV_stereo_view_rendering + GL_NV_viewport_array2). Unlike OVR_multiview,
+// this runs main() exactly *once* per vertex and outputs two clip-space
+// positions: the standard gl_Position for the left eye and
+// gl_SecondaryPositionNV for the right. The GPU automatically dispatches
+// each triangle to two viewports / layers.
+//
+// Trade-off vs. OVR_multiview:
+//   + Cheaper vertex work (one shader invocation instead of two).
+//   + Works on NVIDIA hardware with a simple secondary-position output.
+//   - Only one set of varyings is interpolated, so per-eye fragment data
+//     must be computed in the fragment stage (we just flag eye 0 here).
+//
+// This path is typically selected on desktop/PCVR NVIDIA GPUs when
+// OVR_multiview is unavailable or slower.
+// =============================================================================
 
 #version 450 core
 #extension GL_NV_viewport_array2 : require
 #extension GL_NV_stereo_view_rendering : require
 
+// Separable-program interface block declaration.
 out gl_PerVertex {
 	vec4 gl_Position;
 	float gl_PointSize;
 	float gl_ClipDistance[];
 };
 
+// Tell the driver the right eye's layer = left eye's layer + 1. Combined with
+// gl_Layer = 0 below this sends the left eye to layer 0 and the right eye to
+// layer 1 of a stereo FBO.
 layout(secondary_view_offset = 1) out highp int gl_Layer;
 
 // ============================================
@@ -43,6 +65,12 @@ layout(location = 22) out float FragViewIndex;
 // ============================================
 #include "uniforms.glsl"
 
+// Per-eye view and projection matrices. Unlike the OVR path, we need the
+// forward view matrices too because we don't re-invert — both eyes' clip
+// positions are computed directly in a single pass.
+//
+// The InverseView matrices are still provided for convenience (used to get
+// the camera origin for the view direction without another matrix inverse).
 uniform mat4 LeftEyeViewMatrix_VTX;
 uniform mat4 RightEyeViewMatrix_VTX;
 uniform mat4 LeftEyeInverseViewMatrix_VTX;
@@ -71,22 +99,33 @@ void main() {
 #endif
 	float tanSign = Tangent.w;
 
+	// Object -> world (shared by both eyes).
 	vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);
 	v_WorldPos = worldPosition.xyz;
 	v_LocalPos = pos;
 
-	gl_Position = LeftEyeProjMatrix_VTX * LeftEyeViewMatrix_VTX * worldPosition;
+	// Emit both eye clip positions from a single vertex invocation. The NV
+	// stereo extension then routes each eye to its own viewport/layer.
+	gl_Position            = LeftEyeProjMatrix_VTX  * LeftEyeViewMatrix_VTX  * worldPosition;
 	gl_SecondaryPositionNV = RightEyeProjMatrix_VTX * RightEyeViewMatrix_VTX * worldPosition;
+	// Left eye = layer 0; secondary_view_offset = 1 places right eye on layer 1.
 	gl_Layer = 0;
 
+	// Inverse-transpose of model for correct normals under non-uniform scale.
 	mat3 normalMatrix = mat3(transpose(inverse(u_ModelMatrix)));
-	v_WorldNormal = normalize(normalMatrix * norm);
+	v_WorldNormal  = normalize(normalMatrix * norm);
 	v_WorldTangent = normalize(normalMatrix * tan);
-	v_TangentSign = tanSign;
+	v_TangentSign  = tanSign;
 
 	v_Uv01 = vec4(TexCoord0, TexCoord1);
 	v_Uv23 = vec4(TexCoord2, TexCoord3);
 	v_VertexColor = Color0;
+	// Only one set of varyings is interpolated across both eyes, so we just
+	// use the left eye's camera position for the view direction. Per-eye
+	// specular / matcap offsets are handled in the fragment stage if needed.
 	v_ViewDir = normalize(LeftEyeInverseViewMatrix_VTX[3].xyz - worldPosition.xyz);
+	// FragViewIndex is not per-eye in this single-pass path (we only run
+	// main() once), so leave it at 0; the fragment stage can derive the eye
+	// from gl_Layer if it cares.
 	FragViewIndex = 0.0;
 }
