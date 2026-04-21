@@ -9,7 +9,7 @@ using XREngine.Rendering.Info;
 namespace XREngine.Scene
 {
     public delegate void DelRender(RenderCommandCollection renderingPasses, XRCamera camera, XRViewport viewport, XRFrameBuffer? target);
-    public abstract class VisualScene : XRBase, IEnumerable<RenderInfo>
+    public abstract class VisualScene : XRBase, IEnumerable<RenderInfo>, IRuntimeRenderCommandSceneContext
     {
         public abstract IRenderTree GenericRenderTree { get; }
         public GPUScene GPUCommands { get; } = new();
@@ -22,13 +22,13 @@ namespace XREngine.Scene
         /// </summary>
         public abstract void CollectRenderedItems(
             RenderCommandCollection meshRenderCommands,
-            XRCamera? activeCamera,
+            IRuntimeCullingCamera? activeCamera,
             bool cullWithFrustum,
-            Func<XRCamera>? cullingCameraOverride,
+            Func<IRuntimeCullingCamera>? cullingCameraOverride,
             IVolume? collectionVolumeOverride,
             bool collectMirrors);
 
-        public virtual void DebugRender(XRCamera? camera, bool onlyContainingItems = false)
+        public virtual void DebugRender(IRuntimeCullingCamera? camera, bool onlyContainingItems = false)
         {
 
         }
@@ -72,6 +72,16 @@ namespace XREngine.Scene
         public void Destroy()
         {
             GPUCommands.Destroy();
+        }
+
+        public virtual void RenderGpuPass(IRuntimeGpuRenderPassHost gpuPass)
+        {
+            if (gpuPass is GPURenderPassCollection renderPass)
+                renderPass.Render(GPUCommands);
+        }
+
+        public virtual void RecordGpuVisibility(uint draws, uint instances)
+        {
         }
 
         public abstract IEnumerator<RenderInfo> GetEnumerator();

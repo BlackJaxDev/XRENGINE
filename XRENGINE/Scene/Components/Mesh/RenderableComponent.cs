@@ -1,5 +1,6 @@
 using XREngine.Extensions;
 using XREngine.Core.Files;
+using XREngine.Rendering;
 using XREngine.Rendering.Info;
 
 namespace XREngine.Components.Scene.Mesh
@@ -59,7 +60,7 @@ namespace XREngine.Components.Scene.Mesh
             
             RenderedObjects = [.. RenderedObjects.Where((_, x) => x != i)];
 
-            if (IsActive && ri.WorldInstance == World)
+            if (IsActive && ReferenceEquals(ri.WorldInstance, World))
                 ri.WorldInstance = null;
         }
 
@@ -80,7 +81,7 @@ namespace XREngine.Components.Scene.Mesh
             RenderedObjects = [.. RenderedObjects, ri];
 
             if (IsActive)
-                ri.WorldInstance = WorldAs<XREngine.Rendering.XRWorldInstance>();
+                ri.WorldInstance = World as IRuntimeRenderInfo3DRegistrationTarget;
         }
 
         public EventList<RenderableMesh> Meshes { get; private set; } = new EventList<RenderableMesh>() { ThreadSafe = true };
@@ -106,7 +107,7 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void SyncRenderedObjectsWithWorld()
         {
-            var world = WorldAs<XREngine.Rendering.XRWorldInstance>();
+            var world = World as IRuntimeRenderInfo3DRegistrationTarget;
             foreach (var ri in RenderedObjects)
             {
                 if (IsActive && world is not null)

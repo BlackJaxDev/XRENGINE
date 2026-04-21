@@ -1,6 +1,7 @@
-﻿using XREngine.Players;
+﻿using XREngine.Input;
+using XREngine.Players;
 
-namespace XREngine.Input
+namespace XREngine.Runtime.InputIntegration
 {
     public abstract class PlayerControllerBase : PawnController, IPawnController
     {

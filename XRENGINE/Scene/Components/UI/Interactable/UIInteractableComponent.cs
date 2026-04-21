@@ -12,7 +12,7 @@ namespace XREngine.Rendering.UI
     /// Bounded UI component that can be interacted with by the player.
     /// </summary>
     [RequiresTransform(typeof(UIBoundableTransform))]
-    public abstract class UIInteractableComponent : UIComponent, IRenderable
+    public abstract class UIInteractableComponent : UIComponent, IRenderable, IRuntimeFocusedInteractable
     {
         public UIInteractableComponent()
         {

@@ -5,12 +5,13 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Info
 {
-    public class RenderInfo3D : RenderInfo, IOctreeItem
+    public class RenderInfo3D : RenderInfo, IOctreeItem, IRuntimeRenderInfo3DRegistrationItem
     {
         public override ITreeNode? TreeNode => OctreeNode;
 
@@ -142,12 +143,12 @@ namespace XREngine.Rendering.Info
         public virtual bool AllowRender(
             IVolume? cullingVolume,
             RenderCommandCollection passes,
-            XRCamera? camera,
+            IRuntimeCullingCamera? camera,
             bool containsOnly,
             bool collectMirrors) => 
             (!passes.IsShadowPass || CastsShadows) && 
             (collectMirrors || Owner is not MirrorCaptureComponent) &&
-            (camera is null || camera.CullingMask.Contains(_layer)) &&
+            (camera is null || camera.RendersLayer(_layer)) &&
             Intersects(cullingVolume, containsOnly);
 
         public bool Intersects(IVolume? cullingVolume, bool containsOnly)
@@ -168,17 +169,17 @@ namespace XREngine.Rendering.Info
                 case nameof(WorldInstance):
                     if (IsVisible)
                     {
-                        if (prev is XRWorldInstance prevInstance)
-                            prevInstance.VisualScene?.RemoveRenderable(this);
-                        if (field is XRWorldInstance newInstance)
-                            newInstance.VisualScene?.AddRenderable(this);
+                        if (prev is IRuntimeRenderInfo3DRegistrationTarget prevInstance)
+                            prevInstance.RemoveRenderable3D(this);
+                        if (field is IRuntimeRenderInfo3DRegistrationTarget newInstance)
+                            newInstance.AddRenderable3D(this);
                     }
                     break;
                 case (nameof(IsVisible)):
                     if (IsVisible)
-                        WorldInstance?.VisualScene?.AddRenderable(this);
+                        WorldInstance?.AddRenderable3D(this);
                     else
-                        WorldInstance?.VisualScene?.RemoveRenderable(this);
+                        WorldInstance?.RemoveRenderable3D(this);
                     break;
                 case nameof(CullingOffsetMatrix):
                 case nameof(LocalCullingVolume):
@@ -193,7 +194,7 @@ namespace XREngine.Rendering.Info
             if (box is null)
                 return;
 
-            Engine.Rendering.Debug.RenderBox(box.Value.HalfExtents, box.Value.Center, CullingOffsetMatrix, false, ColorF4.Red);
+            RuntimeRenderingHostServices.Current.RenderDebugBox(box.Value.HalfExtents, box.Value.Center, CullingOffsetMatrix, false, ColorF4.Red);
         }
 
         private void TryQueueOctreeMove()
@@ -207,7 +208,7 @@ namespace XREngine.Rendering.Info
 
             if (_lastQueuedWorldBounds.HasValue && BoxNearlyEqual(_lastQueuedWorldBounds.Value, worldBounds.Value))
             {
-                Engine.Rendering.Stats.RecordOctreeSkippedMove();
+                RuntimeRenderingHostServices.Current.RecordOctreeSkippedMove();
                 return;
             }
 

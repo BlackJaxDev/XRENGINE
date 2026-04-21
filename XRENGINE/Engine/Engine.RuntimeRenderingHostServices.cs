@@ -3,7 +3,9 @@ using System.IO;
 using System.Numerics;
 using System.Threading;
 using XREngine.Core.Files;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
@@ -35,6 +37,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool IsShadowPass => Engine.Rendering.State.IsShadowPass;
     public bool IsStereoPass => Engine.Rendering.State.IsStereoPass;
     public bool IsSceneCapturePass => Engine.Rendering.State.IsSceneCapturePass;
+    public bool RenderCullingVolumesEnabled => Engine.EditorPreferences.Debug.RenderCullingVolumes;
     public bool IsNvidia => Engine.Rendering.State.IsNVIDIA;
     public string AssetFileExtension => AssetManager.AssetExtension;
     public string? TextureFallbackPath => Path.Combine(Engine.GameSettings.TexturesFolder, "Filler.png");
@@ -44,6 +47,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public long LastRenderTimestampTicks => Engine.Time.Timer.Render.LastTimestampTicks;
     public long TrackedVramBytes => Engine.Rendering.Stats.AllocatedVRAMBytes;
     public long TrackedVramBudgetBytes => Engine.Rendering.Stats.VramBudgetBytes;
+    public bool EnableGpuIndirectDebugLogging => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
     public ETwoPlayerPreference TwoPlayerViewportPreference => Engine.GameSettings.TwoPlayerViewportPreference;
     public EThreePlayerPreference ThreePlayerViewportPreference => Engine.GameSettings.ThreePlayerViewportPreference;
     public RuntimeGraphicsApiKind CurrentRenderBackend
@@ -58,8 +62,26 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         }
     }
 
+    public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState
+        => Engine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+
+    public IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext
+        => Engine.Rendering.State.CurrentRenderingPipeline;
+
+    public bool IsPlayModeTransitioning => Engine.PlayMode.IsTransitioning;
+    public string PlayModeStateName => Engine.PlayMode.State.ToString();
+    public EAntiAliasingMode DefaultAntiAliasingMode => Engine.EffectiveSettings.AntiAliasingMode;
+    public uint DefaultMsaaSampleCount => Engine.EffectiveSettings.MsaaSampleCount;
+    public bool DefaultOutputHDR => Engine.Rendering.Settings.OutputHDR;
+    public float DefaultTsrRenderScale => Engine.Rendering.Settings.TsrRenderScale;
+
     public void LogOutput(string message)
         => Debug.Out(message);
+
+    public IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline)
+        => pipeline is XRRenderPipelineInstance instance
+            ? Engine.Rendering.State.PushRenderingPipeline(instance)
+            : null;
 
     public void LogWarning(string message)
         => Debug.LogWarning(message);
@@ -204,6 +226,18 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void EnqueueRenderThreadCoroutine(Func<bool> task)
         => Engine.AddRenderThreadCoroutine(task);
 
+    public IDisposable? PushTransformId(uint transformId)
+        => Engine.Rendering.State.PushTransformId(transformId);
+
+    public void RecordOctreeSkippedMove()
+        => Engine.Rendering.Stats.RecordOctreeSkippedMove();
+
+    public void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color)
+        => Engine.Rendering.Debug.RenderRect2D(rectangle, solid, color);
+
+    public void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
+        => Engine.Rendering.Debug.RenderBox(halfExtents, center, transform, solid, color);
+
     public TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new()
         => Engine.Assets?.Load<TAsset>(filePath);
 
@@ -267,12 +301,23 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             StringComparison.Ordinal);
 
     public bool RenderWindowsWhileInVR => Engine.Rendering.Settings.RenderWindowsWhileInVR;
+    public bool EnableVrFoveatedViewSet => Engine.Rendering.Settings.EnableVrFoveatedViewSet;
     public bool IsInVR => Engine.VRState.IsInVR;
     public bool IsOpenXRActive => Engine.VRState.IsOpenXRActive;
     public bool VrMirrorComposeFromEyeTextures => Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures;
+    public Vector2 VrFoveationCenterUv => Engine.Rendering.Settings.VrFoveationCenterUv;
+    public float VrFoveationInnerRadius => Engine.Rendering.Settings.VrFoveationInnerRadius;
+    public float VrFoveationOuterRadius => Engine.Rendering.Settings.VrFoveationOuterRadius;
+    public Vector3 VrFoveationShadingRates => Engine.Rendering.Settings.VrFoveationShadingRates;
+    public float VrFoveationVisibilityMargin => Engine.Rendering.Settings.VrFoveationVisibilityMargin;
+    public bool VrFoveationForceFullResForUiAndNearField => Engine.Rendering.Settings.VrFoveationForceFullResForUiAndNearField;
+    public float VrFoveationFullResNearDistanceMeters => Engine.Rendering.Settings.VrFoveationFullResNearDistanceMeters;
 
     public void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
         => _ = Engine.VRState.OpenXRApi?.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
+
+    public void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
+        => Engine.Rendering.Stats.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
 
     public void DestroyObjectsForRenderer(IRuntimeRendererHost renderer)
     {
@@ -292,6 +337,12 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public IRuntimeRenderPipelineHost? CreateDebugOpaquePipelineOverride()
         => new DebugOpaqueRenderPipeline();
+
+    public void PrepareUpscaleBridgeForFrame(IRuntimeViewportHost viewport, IRuntimeRenderPipelineFrameContext pipeline)
+    {
+        if (viewport is XRViewport xrViewport && pipeline is XRRenderPipelineInstance instance)
+            Engine.Rendering.PrepareVulkanUpscaleBridgeForFrame(xrViewport, instance);
+    }
 
     public void ConfigureMaterialProgram(XRMaterialBase material, XRRenderProgram program)
         => ExactTransparencyShaderBindings.ConfigureMaterialProgram(material, program);

@@ -6,14 +6,30 @@ namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapFlyableCameraFactory
 {
-    public static PawnComponent CreateFlyableCameraPawn(SceneNode cameraNode, bool allowEditorPawn)
+    private const string DefaultFlyableCameraPawnTypeName = "XREngine.Components.FlyingCameraPawnComponent, XREngine";
+
+    public static XRComponent CreateFlyableCameraPawn(SceneNode cameraNode, bool allowEditorPawn)
     {
         ArgumentNullException.ThrowIfNull(cameraNode);
 
-        PawnComponent? pawn = allowEditorPawn
+        XRComponent? pawn = allowEditorPawn
             ? BootstrapInputBridge.Current?.CreateFlyableCameraPawn(cameraNode)
             : null;
 
-        return pawn ?? cameraNode.AddComponent<FlyingCameraPawnComponent>()!;
+        return pawn ?? CreateDefaultFlyableCameraPawn(cameraNode);
+    }
+
+    private static XRComponent CreateDefaultFlyableCameraPawn(SceneNode cameraNode)
+    {
+        Type? pawnType = Type.GetType(DefaultFlyableCameraPawnTypeName, throwOnError: false);
+        if (pawnType is null || !typeof(XRComponent).IsAssignableFrom(pawnType))
+        {
+            throw new InvalidOperationException(
+                $"Default flyable camera pawn type '{DefaultFlyableCameraPawnTypeName}' could not be resolved. " +
+                "Ensure the XRENGINE runtime assembly is referenced by the host application.");
+        }
+
+        return cameraNode.AddComponent(pawnType)
+            ?? throw new InvalidOperationException($"Failed to create flyable camera pawn of type '{pawnType.FullName}'.");
     }
 }

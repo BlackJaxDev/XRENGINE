@@ -17,7 +17,7 @@ namespace XREngine.Components
         public delegate void DelDebugRenderCallback(DebugVisualize2DComponent comp);
         public event DelDebugRenderCallback? DebugRender;
 
-        public delegate void DelPreRenderCallback(DebugVisualize2DComponent comp, RenderInfo info, RenderCommand command, XRCamera? camera);
+        public delegate void DelPreRenderCallback(DebugVisualize2DComponent comp, RenderInfo info, RenderCommand command, IRuntimeRenderCamera? camera);
         public event DelPreRenderCallback? PreRenderCallback;
 
         public delegate void DelSwapBuffersCallback(DebugVisualize2DComponent comp, RenderInfo info, RenderCommand command);
@@ -38,7 +38,7 @@ namespace XREngine.Components
             _renderInfo.SwapBuffersCallback -= RenderInfo_SwapBuffersCallback;
         }
 
-        protected virtual void RenderInfo_PreRenderCallback(RenderInfo info, RenderCommand command, XRCamera? camera)
+        protected virtual void RenderInfo_PreRenderCallback(RenderInfo info, RenderCommand command, IRuntimeRenderCamera? camera)
             => PreRenderCallback?.Invoke(this, info, command, camera);
 
         protected virtual void RenderInfo_SwapBuffersCallback(RenderInfo info, RenderCommand command)

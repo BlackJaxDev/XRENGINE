@@ -36,11 +36,15 @@ public static class ShaderHelper
         "UnlitTexturedForward.fs",
         "UnlitTexturedStereoForward.fs",
         "UnlitAlphaTexturedForward.fs",
+        "UberShader.frag",
     };
 
     private static IRuntimeShaderServices Services
         => RuntimeShaderServices.Current
         ?? throw new InvalidOperationException("RuntimeShaderServices.Current has not been configured.");
+
+    private static XRShader UberFragForward()
+        => LoadEngineShader(Path.Combine("Uber", "UberShader.frag"), EShaderType.Fragment);
 
     private readonly record struct DefinedVariantCacheKey(string DefineName, string SourceText);
     private readonly record struct DefinedVariantShaderCacheKey(string DefineName, EShaderType ShaderType, string SourceText, string? FilePath, string? SourceName);
@@ -82,7 +86,7 @@ public static class ShaderHelper
     /// </summary>
     public static XRShader UberImportFragForward()
         => CreateDefinedShaderVariant(
-            LoadEngineShader(Path.Combine("Uber", "UberShader.frag"), EShaderType.Fragment),
+            UberFragForward(),
             UberImportMaterialDefine)!;
 
     #region Forward Lit Shaders
@@ -387,6 +391,13 @@ public static class ShaderHelper
             sourceText.Contains($"#define {DepthPeelingDefine}", StringComparison.Ordinal);
     }
 
+    private static bool HasDefine(XRShader? shader, string defineName)
+    {
+        string? sourceText = shader?.Source?.Text;
+        return !string.IsNullOrWhiteSpace(sourceText) &&
+            sourceText.Contains($"#define {defineName}", StringComparison.Ordinal);
+    }
+
     private static XRShader? LoadStandardForwardShaderByFileName(string fileName)
         => fileName switch
         {
@@ -404,6 +415,7 @@ public static class ShaderHelper
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForward(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForward(),
             "UnlitColoredForward.fs" => UnlitColorFragForward(),
+            "UberShader.frag" => UberFragForward(),
             "DeferredDecal.fs" => XRShader.EngineShader(Path.Combine("Scene3D", "DeferredDecal.fs"), EShaderType.Fragment),
             _ => null,
         };
@@ -525,6 +537,7 @@ public static class ShaderHelper
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForwardWeightedOit(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardWeightedOit(),
             "UnlitColoredForward.fs" => UnlitColorFragForwardWeightedOit(),
+            "UberShader.frag" => CreateDefinedShaderVariant(sourceShader, WeightedBlendedOitDefine),
             "DeferredDecal.fs" => DeferredDecalForwardWeightedOit(),
             // Deferred → lit forward WBOIT variants
             "TexturedDeferred.fs" => LitTextureFragForwardWeightedOit(),
@@ -560,6 +573,7 @@ public static class ShaderHelper
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForwardPerPixelLinkedList(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardPerPixelLinkedList(),
             "UnlitColoredForward.fs" => UnlitColorFragForwardPerPixelLinkedList(),
+            "UberShader.frag" => CreateDefinedShaderVariant(sourceShader, PerPixelLinkedListDefine),
             // Deferred → lit forward PPLL variants
             "TexturedDeferred.fs" => LitTextureFragForwardPerPixelLinkedList(),
             "TexturedNormalDeferred.fs" => LitTextureNormalFragForwardPerPixelLinkedList(),
@@ -594,6 +608,7 @@ public static class ShaderHelper
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForwardDepthPeeling(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardDepthPeeling(),
             "UnlitColoredForward.fs" => UnlitColorFragForwardDepthPeeling(),
+            "UberShader.frag" => CreateDefinedShaderVariant(sourceShader, DepthPeelingDefine),
             // Deferred → lit forward depth-peeling variants
             "TexturedDeferred.fs" => LitTextureFragForwardDepthPeeling(),
             "TexturedNormalDeferred.fs" => LitTextureNormalFragForwardDepthPeeling(),
@@ -662,6 +677,9 @@ public static class ShaderHelper
             return null;
 
         string fileName = Path.GetFileName(path);
+        if (fileName.Equals("UberShader.frag", StringComparison.OrdinalIgnoreCase) && HasTransparencyForwardVariantDefine(shader))
+            return HasDefine(shader, UberImportMaterialDefine) ? UberImportFragForward() : UberFragForward();
+
         if (TryGetStandardForwardFileName(fileName, out string standardFileName))
             return LoadStandardForwardShaderByFileName(standardFileName);
 
@@ -698,6 +716,7 @@ public static class ShaderHelper
             "UnlitTexturedArraySliceForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "UnlitAlphaTexturedForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "UnlitColoredForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "UberShader.frag" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             _ => null,
         };
     }
@@ -718,6 +737,7 @@ public static class ShaderHelper
             "LitTexturedNormalAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
             "LitTexturedNormalSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
             "UnlitAlphaTexturedForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
+            "UberShader.frag" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
             _ => null,
         };
     }

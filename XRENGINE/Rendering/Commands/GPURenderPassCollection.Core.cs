@@ -336,7 +336,7 @@ namespace XREngine.Rendering.Commands
             }
         }
         
-        private XRRenderPipelineInstance? _ownerPipeline;
+        private IRuntimeRenderPipelineDebugContext? _ownerPipeline;
 
         [System.Diagnostics.Conditional("DEBUG")]
         private void Dbg(string msg, string cat = "General")
@@ -382,12 +382,12 @@ namespace XREngine.Rendering.Commands
 
         private string FormatDebugPrefix(string cat)
         {
-            XRRenderPipelineInstance? pipeline = _ownerPipeline ?? Engine.Rendering.State.CurrentRenderingPipeline;
+            IRuntimeRenderPipelineDebugContext? pipeline = _ownerPipeline ?? Engine.Rendering.State.CurrentRenderingPipeline as IRuntimeRenderPipelineDebugContext;
             string descriptor = pipeline?.DebugDescriptor ?? "Pipeline=<none>";
             return $"[GPURenderPass/{cat}] {descriptor} Pass={RenderPass}";
         }
 
-        internal void SetDebugContext(XRRenderPipelineInstance? pipeline, int passIndex)
+        internal void SetDebugContext(IRuntimeRenderPipelineDebugContext? pipeline, int passIndex)
         {
             _ownerPipeline = pipeline;
             RenderPass = passIndex;
@@ -647,7 +647,7 @@ namespace XREngine.Rendering.Commands
         public void SetMaterialTable(GPUMaterialTable table) => _materialTable = table;
     }
 
-    public sealed partial class GPURenderPassCollection
+    public sealed partial class GPURenderPassCollection : IRuntimeGpuRenderPassHost
     {
         // GPU-generated sort keys (uint4 per visible command): packed pass/pipeline/state, material, mesh, source index.
         private XRDataBuffer? _keyIndexBufferA;

@@ -4,12 +4,13 @@ using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Trees;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Info
 {
-    public class RenderInfo2D : RenderInfo, IQuadtreeItem, IComparable<RenderInfo2D>
+    public class RenderInfo2D : RenderInfo, IQuadtreeItem, IComparable<RenderInfo2D>, IRuntimeRenderInfo2DRegistrationItem
     {
         private int _layerIndex = 0;
         private int _indexWithinLayer = 0;
@@ -73,7 +74,7 @@ namespace XREngine.Rendering.Info
             return false;
         }
 
-        public virtual bool AllowRender(BoundingRectangleF? cullingVolume, RenderCommandCollection passes, XRCamera camera)
+        public virtual bool AllowRender(BoundingRectangleF? cullingVolume, RenderCommandCollection passes, IRuntimeCullingCamera? camera)
             => IsVisible && (cullingVolume is null || CullingVolume is null || cullingVolume.Value.Intersects(CullingVolume.Value));
 
         public bool Intersects(BoundingRectangleF cullingVolume, bool containsOnly)
@@ -105,17 +106,17 @@ namespace XREngine.Rendering.Info
                 case nameof(UserInterfaceCanvas):
                     if (IsVisible)
                     {
-                        if (prev is UICanvasComponent prevInstance)
-                            prevInstance.VisualScene2D?.RemoveRenderable(this);
-                        if (field is UICanvasComponent newInstance)
-                            newInstance.VisualScene2D?.AddRenderable(this);
+                        if (prev is IRuntimeRenderInfo2DRegistrationTarget prevInstance)
+                            prevInstance.RemoveRenderable2D(this);
+                        if (field is IRuntimeRenderInfo2DRegistrationTarget newInstance)
+                            newInstance.AddRenderable2D(this);
                     }
                     break;
                 case (nameof(IsVisible)):
                     if (IsVisible)
-                        UserInterfaceCanvas?.VisualScene2D?.AddRenderable(this);
+                        UserInterfaceCanvas?.AddRenderable2D(this);
                     else
-                        UserInterfaceCanvas?.VisualScene2D?.RemoveRenderable(this);
+                        UserInterfaceCanvas?.RemoveRenderable2D(this);
                     break;
                 case nameof(CullingVolume):
                     QuadtreeNode?.QueueItemMoved(this);
@@ -161,10 +162,7 @@ namespace XREngine.Rendering.Info
             if (cullingVolume is null)
                 return;
 
-            Engine.Rendering.Debug.RenderRect2D(
-                cullingVolume.Value,
-                false,
-                ColorF4.White);
+            RuntimeRenderingHostServices.Current.RenderDebugRect2D(cullingVolume.Value, false, ColorF4.White);
         }
     }
 }

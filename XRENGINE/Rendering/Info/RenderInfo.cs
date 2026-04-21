@@ -2,6 +2,7 @@ using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using YamlDotNet.Serialization;
 
@@ -24,7 +25,7 @@ namespace XREngine.Rendering.Info
         public override string ToString()
             => $"{Owner?.ToString() ?? "Unknown"}";
 
-        public delegate void DelPreRenderCallback(RenderInfo info, RenderCommand command, XRCamera? camera);
+        public delegate void DelPreRenderCallback(RenderInfo info, RenderCommand command, IRuntimeRenderCamera? camera);
         /// <summary>
         /// This callback is called when the engine is collecting render commands for the render pass, and this render info is added.
         /// </summary>
@@ -36,7 +37,7 @@ namespace XREngine.Rendering.Info
         /// </summary>
         public event DelSwapBuffersCallback? SwapBuffersCallback;
 
-        public delegate bool DelAddRenderCommandsCallback(RenderInfo info, RenderCommandCollection passes, XRCamera? camera);
+        public delegate bool DelAddRenderCommandsCallback(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera);
         /// <summary>
         /// This callback is called before render commands are added to the render pass.
         /// Return false to skip adding render commands.
@@ -67,7 +68,7 @@ namespace XREngine.Rendering.Info
         private void SwapBuffers(RenderCommand command)
             => SwapBuffersCallback?.Invoke(this, command);
 
-        private void CollectedForRender(RenderCommand command, XRCamera? camera)
+        private void CollectedForRender(RenderCommand command, IRuntimeRenderCamera? camera)
             => CollectedForRenderCallback?.Invoke(this, command, camera);
 
         protected abstract void RenderCullingVolume();
@@ -94,24 +95,25 @@ namespace XREngine.Rendering.Info
         /// </summary>
         public virtual bool ShouldRender => true;
 
-        private XRWorldInstance? _worldInstance;
+        private IRuntimeRenderInfo3DRegistrationTarget? _worldInstance;
         /// <summary>
         /// This is the world instance that this render info is part of.
         /// It is set automatically when the render info is added to a 3D visual scene.
         /// </summary>
         [YamlIgnore]
-        public XRWorldInstance? WorldInstance
+        public IRuntimeRenderInfo3DRegistrationTarget? WorldInstance
         {
             get => _worldInstance;
             internal set => SetField(ref _worldInstance, value);
         }
 
-        private UICanvasComponent? _userInterfaceCanvas;
+        private IRuntimeRenderInfo2DRegistrationTarget? _userInterfaceCanvas;
         /// <summary>
         /// This is the user interface canvas that this render info is part of.
         /// It is set automatically when the render info is added to a 2D visual scene.
         /// </summary>
-        public UICanvasComponent? UserInterfaceCanvas
+        [YamlIgnore]
+        public IRuntimeRenderInfo2DRegistrationTarget? UserInterfaceCanvas
         {
             get => _userInterfaceCanvas;
             set => SetField(ref _userInterfaceCanvas, value);
@@ -119,7 +121,7 @@ namespace XREngine.Rendering.Info
 
         IRenderableBase? ITreeItem.Owner => Owner;
 
-        public void CollectCommands(RenderCommandCollection passes, XRCamera? camera)
+        public void CollectCommands(RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
             if (!(PreCollectCommandsCallback?.Invoke(this, passes, camera) ?? true))
                 return;
@@ -137,7 +139,7 @@ namespace XREngine.Rendering.Info
                 passes.AddCPU(cmd);
             }
 
-            if (Engine.EditorPreferences.Debug.RenderCullingVolumes)
+            if (RuntimeRenderingHostServices.Current.RenderCullingVolumesEnabled)
                 RenderCullingVolume();
         }
     }

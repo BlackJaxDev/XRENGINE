@@ -394,7 +394,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 if (handlers.ContainsKey(mesh))
                     continue;
 
-                RenderInfo.DelPreRenderCallback handler = (info, command, camera) => RenderBvhPreviewForMesh(mesh, command, camera, state);
+                RenderInfo.DelPreRenderCallback handler = (info, command, camera) => RenderBvhPreviewForMesh(mesh, command, camera as XRCamera, state);
                 mesh.RenderInfo.CollectedForRenderCallback += handler;
                 handlers.Add(mesh, handler);
             }

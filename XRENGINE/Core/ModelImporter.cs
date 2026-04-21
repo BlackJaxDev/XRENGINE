@@ -1463,17 +1463,21 @@ namespace XREngine
                 diffuseIndex = 0;
 
             int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out _);
+            int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
 
             XRTexture? diffuseSrc = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
             XRTexture? normalSrc = normalIndex >= 0 && normalIndex < textureList.Length ? textureList[normalIndex] : null;
+            XRTexture? alphaMaskSrc = alphaMaskIndex >= 0 && alphaMaskIndex < textureList.Length ? textureList[alphaMaskIndex] : null;
 
             string? diffusePath = (diffuseSrc as XRTexture2D)?.FilePath;
             string? normalPath = (normalSrc as XRTexture2D)?.FilePath;
+            string? alphaMaskPath = (alphaMaskSrc as XRTexture2D)?.FilePath;
 
             XRTexture2D main = diffusePath is not null
                 ? GetOrCreateUberSamplerTexture(diffusePath, "_MainTex")
                 : GetOrCreateDefaultUberSamplerTexture("_MainTex", ColorF4.White);
             XRTexture2D bump = GetOrCreateDefaultUberSamplerTexture("_BumpMap", new ColorF4(0.5f, 0.5f, 1.0f, 1.0f));
+            XRTexture2D? alphaMask = null;
             float bumpScale = 0.0f;
             if (normalPath is not null)
             {
@@ -1481,7 +1485,10 @@ namespace XREngine
                 bumpScale = 1.0f;
             }
 
-            mat.Textures = [main, bump];
+            if (alphaMaskPath is not null)
+                alphaMask = GetOrCreateUberSamplerTexture(alphaMaskPath, "_AlphaMask");
+
+            mat.Textures = alphaMask is null ? [main, bump] : [main, bump, alphaMask];
 
             XRShader frag = ShaderHelper.UberImportFragForward();
 
@@ -1489,10 +1496,14 @@ namespace XREngine
             mat.Shaders.Add(frag);
 
             mat.Parameters = CreateDefaultForwardPlusUberShaderParameters(bumpScale);
+            if (alphaMask is not null)
+                mat.Parameter<ShaderInt>("_MainAlphaMaskMode")?.SetValue(2);
 
             mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
             mat.Name = name;
             mat.RenderOptions = CreateForwardPlusUberShaderRenderOptions();
+
+            ConfigureImportedTransparency(mat, textureList, textures);
         }
 
         public static XRMaterial MakeMaterialForwardPlusUberShader(XRTexture[] textureList, List<TextureSlot> textures, string name)

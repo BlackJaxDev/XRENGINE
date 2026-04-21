@@ -18,7 +18,7 @@ namespace XREngine.Components
     /// </summary>
     [XRComponentEditor("XREngine.Editor.ComponentEditors.UICanvasComponentEditor")]
     [RequiresTransform(typeof(UICanvasTransform))]
-    public class UICanvasComponent : XRComponent, IRenderable
+    public class UICanvasComponent : XRComponent, IRenderable, IRuntimeRenderInfo2DRegistrationTarget, IRuntimeScreenSpaceUserInterface
     {
         private const float DefaultAutoWorldCanvasDistance = 1500.0f;
 
@@ -203,19 +203,35 @@ namespace XREngine.Components
             private set => SetField(ref _visualScene2D, value);
         }
 
+        void IRuntimeRenderInfo2DRegistrationTarget.AddRenderable2D(IRuntimeRenderInfo2DRegistrationItem renderable)
+        {
+            if (renderable is RenderInfo2D renderInfo)
+                VisualScene2D.AddRenderable(renderInfo);
+        }
+
+        void IRuntimeRenderInfo2DRegistrationTarget.RemoveRenderable2D(IRuntimeRenderInfo2DRegistrationItem renderable)
+        {
+            if (renderable is RenderInfo2D renderInfo)
+                VisualScene2D.RemoveRenderable(renderInfo);
+        }
+
         /// <summary>
         /// Gets the user input component. Not a necessary component, so may be null.
         /// </summary>
         /// <returns></returns>
         public UICanvasInputComponent? GetInputComponent() => GetSiblingComponent<UICanvasInputComponent>();
 
+        bool IRuntimeScreenSpaceUserInterface.IsScreenSpace => CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen;
+
         //private int _screenRenderDiagCount = 0;
-        public void RenderScreenSpace(XRViewport? viewport, XRFrameBuffer? outputFBO)
+        public void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO)
         {
             if (!IsActive)
                 return;
 
-            EnsureScreenCanvasSize(viewport);
+            XRViewport? concreteViewport = viewport as XRViewport;
+
+            EnsureScreenCanvasSize(concreteViewport);
 
             //if (_screenRenderDiagCount < 20 || _screenRenderDiagCount % 300 == 0)
             //{
@@ -228,7 +244,7 @@ namespace XREngine.Components
                 VisualScene2D,
                 Camera2D,
                 null,
-                viewport,
+                concreteViewport,
                 outputFBO,
                 null,
                 false,
@@ -462,7 +478,7 @@ namespace XREngine.Components
             //_swapDiagCount++;
         }
 
-        private bool ShouldRenderWorldSpaceQuad(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
+        private bool ShouldRenderWorldSpaceQuad(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
             if (!IsActive)
                 return false;

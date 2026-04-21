@@ -96,7 +96,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        internal void SetIndirectSourceViewId(uint viewId)
+        public void SetIndirectSourceViewId(uint viewId)
         {
             if (_activeViewCount == 0u)
             {

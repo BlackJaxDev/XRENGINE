@@ -11,9 +11,7 @@ using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
-using XREngine.Rendering.UI;
 using XREngine.Scene;
-using static XREngine.Engine.Rendering.State;
 
 namespace XREngine.Rendering;
 
@@ -21,7 +19,7 @@ namespace XREngine.Rendering;
 /// This class is the base class for all render pipelines.
 /// A render pipeline is responsible for all rendering operations to render a scene to a viewport.
 /// </summary>
-public sealed partial class XRRenderPipelineInstance : XRBase
+public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPipelineDebugContext, IRuntimeRenderPipelineFrameContext
 {
     public XRRenderPipelineInstance()
     {
@@ -73,6 +71,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         set => SetField(ref _pipeline, value);
     }
 
+    IRuntimeRenderPipelineHost? IRuntimeRenderPipelineFrameContext.PipelineHost => Pipeline;
+    IRuntimeRenderCommandExecutionState IRuntimeRenderPipelineFrameContext.RenderState => RenderState;
+    IRuntimeRenderCamera? IRuntimeRenderPipelineFrameContext.LastSceneCamera => LastSceneCamera;
+    IRuntimeRenderCamera? IRuntimeRenderPipelineFrameContext.LastRenderingCamera => LastRenderingCamera;
+    IRuntimeViewportHost? IRuntimeRenderPipelineFrameContext.LastWindowViewport => LastWindowViewport;
+
+    public string DebugName
+        => _pipeline?.DebugName ?? _pipeline?.GetType().Name ?? "UnknownPipeline";
+
     /// <summary>
     /// Builds a human-readable descriptor for debugging the active pipeline state.
     /// </summary>
@@ -81,7 +88,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         get
         {
             RenderPipeline? pipeline = _pipeline ?? Pipeline;
-            string pipelineName = pipeline?.DebugName ?? "UnknownPipeline";
+            string pipelineName = pipeline?.DebugName ?? DebugName;
 
             XRCamera? cam = RenderState.SceneCamera ?? RenderState.RenderingCamera ?? LastSceneCamera ?? LastRenderingCamera;
             string cameraDescription = cam is { }
@@ -278,12 +285,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         XRCamera? stereoRightEyeCamera,
         XRViewport? viewport,
         XRFrameBuffer? targetFBO = null,
-        UICanvasComponent? userInterface = null,
+        IRuntimeScreenSpaceUserInterface? userInterface = null,
         bool shadowPass = false,
         bool stereoPass = false,
         XRMaterial? shadowMaterial = null,
         RenderCommandCollection? meshRenderCommandsOverride = null)
     {
+        IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+
         if (Pipeline is null)
         {
             Debug.RenderingWarningEvery(
@@ -296,14 +305,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             return;
         }
 
-        if (Engine.PlayMode.IsTransitioning)
+        if (hostServices.IsPlayModeTransitioning)
         {
             Debug.RenderingEvery(
                 $"XRRenderPipelineInstance.Render.TransitionSuspended.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
                 "[RenderDiag] Pipeline execution skipped during play-mode transition. Pipeline={0} State={1} Camera={2} Viewport={3}",
                 Pipeline.DebugName ?? "<null>",
-                Engine.PlayMode.State,
+                hostServices.PlayModeStateName,
                 camera?.Transform.SceneNode?.Name ?? stereoRightEyeCamera?.Transform.SceneNode?.Name ?? "<null>",
                 viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}");
             return;
@@ -315,16 +324,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         LastWindowViewport = viewport;
         XRCamera? effectiveAntiAliasingCamera = camera ?? stereoRightEyeCamera;
         EAntiAliasingMode effectiveAntiAliasingMode = effectiveAntiAliasingCamera?.AntiAliasingModeOverride
-            ?? Engine.EffectiveSettings.AntiAliasingMode;
+            ?? hostServices.DefaultAntiAliasingMode;
         EffectiveOutputHDRThisFrame = camera?.OutputHDROverride
             ?? (camera is null ? stereoRightEyeCamera?.OutputHDROverride : null)
-            ?? Engine.Rendering.Settings.OutputHDR;
+            ?? hostServices.DefaultOutputHDR;
         EffectiveAntiAliasingModeThisFrame = effectiveAntiAliasingMode;
         EffectiveMsaaSampleCountThisFrame = Math.Max(1u,
-            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount);
+            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ?? hostServices.DefaultMsaaSampleCount);
         EffectiveTsrRenderScaleThisFrame = effectiveAntiAliasingMode == EAntiAliasingMode.Tsr
             ? Math.Clamp(
-                effectiveAntiAliasingCamera?.TsrRenderScaleOverride ?? Engine.Rendering.Settings.TsrRenderScale,
+                effectiveAntiAliasingCamera?.TsrRenderScaleOverride ?? hostServices.DefaultTsrRenderScale,
                 0.5f,
                 1.0f)
             : null;
@@ -366,10 +375,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase
                 viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
             }
 
-            Engine.Rendering.PrepareVulkanUpscaleBridgeForFrame(viewport, this);
+            hostServices.PrepareUpscaleBridgeForFrame(viewport, this);
         }
 
-        using (PushRenderingPipeline(this))
+        using (hostServices.PushRenderingPipeline(this))
         {
             using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands))
             {
@@ -640,12 +649,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         Resources.BindRenderBuffer(renderBuffer, descriptor);
     }
 
-    private void WarnIfScreenSpaceUiHasNoRenderCommand(UICanvasComponent? userInterface, XRViewport? viewport)
+    private void WarnIfScreenSpaceUiHasNoRenderCommand(IRuntimeScreenSpaceUserInterface? userInterface, XRViewport? viewport)
     {
         if (Pipeline?.CommandChain is null || userInterface is null)
             return;
 
-        if (userInterface.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+        if (!userInterface.IsScreenSpace)
             return;
 
         if (ContainsScreenSpaceUiRenderCommand(Pipeline.CommandChain))

@@ -4,7 +4,6 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using System.Text.Json;
 using XREngine.Animation;
-using XREngine.Components.Animation;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
@@ -1401,10 +1400,8 @@ internal static class NativeGltfSceneImporter
                 TotalAnimCount = CountAnimatedMembers(builder.Root),
             };
 
-            AnimationClipComponent component = rootNode.AddComponent<AnimationClipComponent>()!;
-            component.Name = clip.Name;
-            component.Animation = clip;
-            attachedClipCount++;
+            if (RuntimeAnimationComponentActivator.AddAnimationClipComponent(rootNode, clip) is not null)
+                attachedClipCount++;
         }
 
         return attachedClipCount;

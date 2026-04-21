@@ -233,7 +233,7 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
-        private bool ProxyPreCollect(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
+        private bool ProxyPreCollect(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
             if (!_built || !Enabled || _proxyRenderer is null)
                 return false;
@@ -244,7 +244,7 @@ namespace XREngine.Components.Scene.Mesh
             return IsProxyActive(camera);
         }
 
-        private bool IsProxyActive(XRCamera camera)
+        private bool IsProxyActive(IRuntimeRenderCamera camera)
         {
             if (!Enabled || !_built)
                 return false;
@@ -268,7 +268,7 @@ namespace XREngine.Components.Scene.Mesh
             return cameraDistance >= threshold;
         }
 
-        private bool IsImposterActive(XRCamera camera)
+        private bool IsImposterActive(IRuntimeRenderCamera camera)
             => IsImposterActive(camera.DistanceFromRenderNearPlane(Transform.RenderTranslation));
 
         private bool ShouldHideSources(float cameraDistance)
@@ -416,7 +416,7 @@ namespace XREngine.Components.Scene.Mesh
             _imposterBillboard.ApplyCaptureResult(result, matchBounds: true);
         }
 
-        private bool ImposterPreCollect(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
+        private bool ImposterPreCollect(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
             if (!_built || !Enabled)
                 return false;

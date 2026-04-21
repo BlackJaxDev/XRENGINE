@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using XREngine.Audio;
 using XREngine.Components;
@@ -188,10 +189,10 @@ namespace XREngine.Rendering.UI
         // ═══════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Optional sibling <see cref="AudioSourceComponent"/> used for audio playback.
+        /// Optional sibling <see cref="IAudioStreamingComponent"/> used for audio playback.
         /// Attach one to the same entity to enable audio.
         /// </summary>
-        public AudioSourceComponent? AudioSource => GetSiblingComponent<AudioSourceComponent>();
+        public IAudioStreamingComponent? AudioSource => ResolveAudioSource();
 
         /// <summary>
         /// Present-time drift in milliseconds for the most recently presented frame.
@@ -406,11 +407,11 @@ namespace XREngine.Rendering.UI
         // ═══════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Cached reference to the sibling <see cref="AudioSourceComponent"/>, set when
+        /// Cached reference to the sibling <see cref="IAudioStreamingComponent"/>, set when
         /// the streaming pipeline starts and cleared when it stops. Avoids a
-        /// <c>GetSiblingComponent</c> lookup on every render-thread drain cycle.
+        /// component scan on every render-thread drain cycle.
         /// </summary>
-        private AudioSourceComponent? _cachedAudioSource;
+        private IAudioStreamingComponent? _cachedAudioSource;
 
         /// <summary>
         /// Running total of submitted audio duration in ticks. Used with
@@ -427,6 +428,9 @@ namespace XREngine.Rendering.UI
 
         /// <summary>Whether the last submitted audio buffer was stereo (for format-change detection).</summary>
         private bool _lastSubmittedAudioStereo;
+
+        private IAudioStreamingComponent? ResolveAudioSource()
+            => SceneNode.GetComponents<XRComponent>().OfType<IAudioStreamingComponent>().FirstOrDefault();
 
         /// <summary>
         /// Tracks whether any OpenAL source was playing last cycle. Used to

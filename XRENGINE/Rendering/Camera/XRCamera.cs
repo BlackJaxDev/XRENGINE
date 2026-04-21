@@ -93,7 +93,7 @@ namespace XREngine.Rendering
     /// Projection jitter is supported via a stack so multiple systems can apply temporary jitter
     /// (e.g. temporal AA, temporal upscalers) without stomping one another.
     /// </summary>
-    public class XRCamera : XRBase
+    public class XRCamera : XRBase, IRuntimeRenderCamera, IRuntimeCullingCamera
     {
         #region Fields
 
@@ -328,6 +328,9 @@ namespace XREngine.Rendering
             set => SetField(ref _transform, value);
         }
 
+        public bool? StereoEyeLeft
+            => Parameters is XROVRCameraParameters ovrParameters ? ovrParameters.LeftEye : null;
+
         /// <summary>
         /// Maximum distance from this camera to consider a light for shadow-map collection.
         /// Used by shadow-culling in <see cref="Scene.Lights3DCollection"/>.
@@ -406,6 +409,9 @@ namespace XREngine.Rendering
             set => SetField(ref _cullingMask, value);
         }
 
+        public bool RendersLayer(int layer)
+            => _cullingMask.Contains(layer);
+
         #endregion
 
         #region Post-processing state
@@ -422,14 +428,14 @@ namespace XREngine.Rendering
 
         private RenderPipeline? ResolveRenderContextPostProcessPipeline()
         {
-            XRRenderPipelineInstance? currentPipeline = Engine.Rendering.State.CurrentRenderingPipeline;
-            var renderState = currentPipeline?.RenderState;
+            IRuntimeRenderPipelineFrameContext? currentPipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext;
+            IRuntimeRenderCommandExecutionState? renderState = currentPipeline?.RenderState;
             bool isActiveRenderCamera = ReferenceEquals(renderState?.SceneCamera, this)
                 || ReferenceEquals(renderState?.RenderingCamera, this)
                 || ReferenceEquals(currentPipeline?.LastSceneCamera, this)
                 || ReferenceEquals(currentPipeline?.LastRenderingCamera, this);
 
-            return isActiveRenderCamera ? currentPipeline?.Pipeline : null;
+            return isActiveRenderCamera ? currentPipeline?.PipelineHost as RenderPipeline : null;
         }
 
         /// <summary>

@@ -90,8 +90,8 @@ namespace XREngine.Input
     /// </summary>
     public static class RuntimePlayerControllerServices
     {
-        private const string DefaultLocalControllerTypeName = "XREngine.Input.LocalPlayerController, XREngine.Runtime.InputIntegration";
-        private const string DefaultRemoteControllerTypeName = "XREngine.Input.RemotePlayerController, XREngine.Runtime.InputIntegration";
+        private const string DefaultLocalControllerTypeName = "XREngine.Runtime.InputIntegration.LocalPlayerController, XREngine.Runtime.InputIntegration";
+        private const string DefaultRemoteControllerTypeName = "XREngine.Runtime.InputIntegration.RemotePlayerController, XREngine.Runtime.InputIntegration";
 
         private static Type? _defaultLocalControllerType;
         private static Type? _defaultRemoteControllerType;

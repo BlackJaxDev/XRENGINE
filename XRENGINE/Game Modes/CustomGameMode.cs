@@ -19,7 +19,7 @@ namespace XREngine
 
         /// <summary>
         /// Controller type instantiated for local players when this GameMode ensures controller availability.
-        /// Defaults to <see cref="LocalPlayerController"/>.
+        /// Defaults to the runtime input integration's local player controller type.
         /// </summary>
         [Description("Controller type instantiated for local players when this GameMode ensures controller availability.")]
         public Type? DefaultPlayerControllerClass

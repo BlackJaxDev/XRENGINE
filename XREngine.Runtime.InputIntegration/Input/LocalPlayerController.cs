@@ -1,10 +1,11 @@
 ﻿using XREngine.Components;
+using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
-using XREngine.Rendering.UI;
+using Silk.NET.Input;
 using YamlDotNet.Serialization;
 
-namespace XREngine.Input
+namespace XREngine.Runtime.InputIntegration
 {
     //TODO: handle sending controller input packets to the server
     public class LocalPlayerController : PlayerController<LocalInputInterface>
@@ -19,20 +20,20 @@ namespace XREngine.Input
             internal set => SetField(ref _index, value);
         }
 
-        private XRViewport? _viewport = null;
+        private IRuntimeLocalPlayerViewport? _viewport = null;
         [YamlIgnore]
-        public XRViewport? Viewport
+        public IRuntimeLocalPlayerViewport? Viewport
         {
             get => _viewport;
             internal set => SetField(ref _viewport, value);
         }
 
-        private UIInteractableComponent? _focusedUIComponent = null;
+        private IRuntimeFocusedInteractable? _focusedUIComponent = null;
         /// <summary>
         /// The UI component that currently has focus by this local player.
         /// Use for allowing or denying inputs to other components.
         /// </summary>
-        public UIInteractableComponent? FocusedUIComponent
+        public IRuntimeFocusedInteractable? FocusedUIComponent
         {
             get => _focusedUIComponent;
             internal set => SetField(ref _focusedUIComponent, value);
@@ -53,18 +54,18 @@ namespace XREngine.Input
         public LocalPlayerController(ELocalPlayerIndex index) : base(new LocalInputInterface((int)index))
         {
             _index = index;
-            Engine.VRState.ActionsChanged += OnActionsChanged;
+            RuntimeVrInputServices.ActionsChanged += OnActionsChanged;
         }
         public LocalPlayerController() : base(new LocalInputInterface(0))
         {
-            Engine.VRState.ActionsChanged += OnActionsChanged;
+            RuntimeVrInputServices.ActionsChanged += OnActionsChanged;
         }
 
         // --- IPawnController virtual dispatch overrides ---
         protected override object? GetViewportCore() => _viewport;
-        protected override void SetViewportCore(object? value) => Viewport = value as XRViewport;
+        protected override void SetViewportCore(object? value) => Viewport = value as IRuntimeLocalPlayerViewport;
         protected override object? GetFocusedInteractableCore() => _focusedUIComponent;
-        protected override void SetFocusedInteractableCore(object? value) => FocusedUIComponent = value as UIInteractableComponent;
+        protected override void SetFocusedInteractableCore(object? value) => FocusedUIComponent = value as IRuntimeFocusedInteractable;
         protected override ELocalPlayerIndex? GetLocalPlayerIndexCore() => _index;
 
         private void OnActionsChanged(Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> dictionary)
@@ -98,29 +99,16 @@ namespace XREngine.Input
         {
             if (_viewport is not null)
             {
-                var pawn = _controlledPawn;
-                var pawnCamera = pawn?.GetCamera();
-
-                Debug.Out($"[LocalPlayerController] UpdateViewportCamera: VP={_viewport.GetHashCode()} Pawn={pawn?.Name ?? "<null>"} PawnCamera={(pawnCamera is null ? "NULL" : pawnCamera.Name ?? pawnCamera.GetHashCode().ToString())}");
-
-                _viewport.CameraComponent = pawnCamera;
-                // Even if the CameraComponent reference didn't change, snapshot restore or play-mode transitions
-                // can leave the viewport missing from XRCamera.Viewports.
-                _viewport.EnsureViewportBoundToCamera();
-                
-                // Extended diagnostic: capture camera's XRCamera object and its transform details
-                var xrCam = _viewport.CameraComponent?.Camera;
-                var camTfm = xrCam?.Transform;
-                Debug.Out($"[LocalPlayerController] After setting CameraComponent: VP.CameraComponent={((_viewport.CameraComponent is null) ? "NULL" : _viewport.CameraComponent.Name ?? _viewport.CameraComponent.GetHashCode().ToString())} VP.ActiveCamera={((_viewport.ActiveCamera is null) ? "NULL" : _viewport.ActiveCamera.GetHashCode().ToString())} XRCam={xrCam?.GetHashCode().ToString() ?? "NULL"} CamTfm={camTfm?.GetHashCode().ToString() ?? "NULL"} CamWorldPos={camTfm?.WorldTranslation.ToString() ?? "NULL"} CamRenderPos={camTfm?.RenderTranslation.ToString() ?? "NULL"}");
-                
-                Input.UpdateDevices(_viewport.Window?.Input, Engine.VRState.Actions);
+                System.Diagnostics.Debug.WriteLine($"[LocalPlayerController] UpdateViewportCamera: VP={_viewport.GetHashCode()} Pawn={_controlledPawn?.Name ?? "<null>"}");
+                _viewport.RefreshControlledPawnCamera(_controlledPawn);
+                Input.UpdateDevices(_viewport.InputContext as IInputContext, RuntimeVrInputServices.Actions);
             }
             else
             {
                 // Viewport not yet assigned — this is normal during early startup
                 // when possession happens before window/viewport creation. The camera
                 // will be bound once the Viewport property is set.
-                Input.UpdateDevices(null, Engine.VRState.Actions);
+                Input.UpdateDevices(null, RuntimeVrInputServices.Actions);
             }
         }
 
@@ -130,7 +118,7 @@ namespace XREngine.Input
         /// </summary>
         public void RefreshViewportCamera()
         {
-            Debug.Out($"[LocalPlayerController] RefreshViewportCamera called. VP={(Viewport is null ? "NULL" : Viewport.GetHashCode().ToString())} Pawn={ControlledPawn?.Name ?? "<null>"}");
+            System.Diagnostics.Debug.WriteLine($"[LocalPlayerController] RefreshViewportCamera called. VP={(Viewport is null ? "NULL" : Viewport.GetHashCode().ToString())} Pawn={ControlledPawn?.Name ?? "<null>"}");
             UpdateViewportCamera();
         }
 
@@ -162,16 +150,8 @@ namespace XREngine.Input
         protected override void OnDestroying()
         {
             base.OnDestroying();
+            RuntimeVrInputServices.ActionsChanged -= OnActionsChanged;
             Viewport = null;
-        }
-
-        protected override void RegisterInputEvents(PawnComponent c)
-        {
-            base.RegisterInputEvents(c);
-        }
-        protected override void UnregisterInputEvents(PawnComponent c)
-        {
-            base.UnregisterInputEvents(c);
         }
     }
 }

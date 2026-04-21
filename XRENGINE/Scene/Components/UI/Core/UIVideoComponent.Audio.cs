@@ -54,7 +54,7 @@ namespace XREngine.Rendering.UI
         /// <c>false</c> on any other failure (no listeners, bad frame — caller may continue).
         /// </param>
         /// <returns><c>true</c> if the frame was successfully queued.</returns>
-        private bool SubmitDecodedAudioFrame(DecodedAudioFrame frame, AudioSourceComponent? audioSource, out bool queueFull)
+        private bool SubmitDecodedAudioFrame(DecodedAudioFrame frame, IAudioStreamingComponent? audioSource, out bool queueFull)
         {
             queueFull = false;
 
@@ -174,7 +174,7 @@ namespace XREngine.Rendering.UI
         /// whenever the source changes. Called each drain cycle from
         /// <see cref="SuppressAutoPlayOnAudioSources"/>.
         /// </summary>
-        private void UpdatePrimaryAudioSource(AudioSourceComponent? audioSource)
+        private void UpdatePrimaryAudioSource(IAudioStreamingComponent? audioSource)
         {
             AudioSource? candidate = null;
             if (audioSource is not null)
@@ -253,7 +253,7 @@ namespace XREngine.Rendering.UI
         /// Stops all active OpenAL sources, flushes their buffers, and resets
         /// the clock accounting state. Called on audio format changes.
         /// </summary>
-        private void FlushAudioQueue(AudioSourceComponent audioSource)
+        private void FlushAudioQueue(IAudioStreamingComponent audioSource)
         {
             foreach (var source in audioSource.ActiveListeners.Values)
             {
@@ -294,7 +294,7 @@ namespace XREngine.Rendering.UI
         /// across all active OpenAL listener sources. Returns 0 when no sources
         /// are active.
         /// </summary>
-        private static int GetPlayableAudioBuffers(AudioSourceComponent? audioSource)
+        private static int GetPlayableAudioBuffers(IAudioStreamingComponent? audioSource)
         {
             if (audioSource is null || audioSource.ActiveListeners.IsEmpty)
                 return 0;
@@ -314,7 +314,7 @@ namespace XREngine.Rendering.UI
         /// count and the average duration per submitted buffer.
         /// Used only for the drain-stop condition and playback-start gate.
         /// </summary>
-        private long GetEstimatedQueuedAudioDurationTicks(AudioSourceComponent? audioSource)
+        private long GetEstimatedQueuedAudioDurationTicks(IAudioStreamingComponent? audioSource)
         {
             int playable = GetPlayableAudioBuffers(audioSource);
             if (playable <= 0 || _totalAudioBuffersSubmitted <= 0)
@@ -333,7 +333,7 @@ namespace XREngine.Rendering.UI
         /// buffer management. Also refreshes the primary source subscription for
         /// the hardware clock and emits a periodic diagnostic log.
         /// </summary>
-        private void SuppressAutoPlayOnAudioSources(AudioSourceComponent? audioSource)
+        private void SuppressAutoPlayOnAudioSources(IAudioStreamingComponent? audioSource)
         {
             if (audioSource is null)
                 return;

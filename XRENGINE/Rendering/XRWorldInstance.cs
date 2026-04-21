@@ -31,7 +31,7 @@ namespace XREngine.Rendering
     /// This class handles all information pertaining to the rendering of a world.
     /// This object is assigned to a window and the window's renderer is responsible for applying the world's render data to the rendering API for that window.
     /// </summary>
-    public partial class XRWorldInstance : XRObjectBase, IRuntimeWorldContext
+    public partial class XRWorldInstance : XRObjectBase, IRuntimeWorldContext, IRuntimeRenderInfo3DRegistrationTarget
     {
         private const float EdgeBarycentricThreshold = 0.12f;
         private const float VertexBarycentricThreshold = 0.08f;
@@ -52,6 +52,18 @@ namespace XREngine.Rendering
 
         protected VisualScene3D _visualScene;
         public VisualScene3D VisualScene => _visualScene;
+
+        void IRuntimeRenderInfo3DRegistrationTarget.AddRenderable3D(IRuntimeRenderInfo3DRegistrationItem renderable)
+        {
+            if (renderable is RenderInfo3D renderInfo)
+                VisualScene.AddRenderable(renderInfo);
+        }
+
+        void IRuntimeRenderInfo3DRegistrationTarget.RemoveRenderable3D(IRuntimeRenderInfo3DRegistrationItem renderable)
+        {
+            if (renderable is RenderInfo3D renderInfo)
+                VisualScene.RemoveRenderable(renderInfo);
+        }
 
         protected AbstractPhysicsScene _physicsScene;
         public AbstractPhysicsScene PhysicsScene => _physicsScene;

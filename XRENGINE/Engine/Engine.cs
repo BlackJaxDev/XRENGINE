@@ -237,9 +237,12 @@ namespace XREngine
             RuntimeRenderObjectServices.Current = new EngineRuntimeRenderObjectServices();
             RuntimeShaderServices.Current = new EngineRuntimeShaderServices();
             RuntimeRenderingHostServices.Current = new EngineRuntimeRenderingHostServices();
+            RuntimeVrRenderingServices.Current = new EngineRuntimeVrRenderingServices();
             RuntimeRenderingHostServices.GameCachePath = ConvexHullDiskCache.ResolveCacheRoot();
             RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
             RuntimePlayerControllerServices.Current = new EngineRuntimePlayerControllerServices();
+            RuntimeVrInputServices.Current = new EngineRuntimeVrInputServices();
+            RuntimeVrStateServices.Current = new EngineRuntimeVrStateServices();
 
             // Connect external profiling hooks for subsystems
             XREvent.ProfilingHook = ExternalProfilingHook;

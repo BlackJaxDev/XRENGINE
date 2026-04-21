@@ -269,6 +269,20 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            public bool HasActiveSamplerUniforms()
+            {
+                if (!IsLinked || _uniformMetadata.Count == 0)
+                    return false;
+
+                foreach (var pair in _uniformMetadata)
+                {
+                    if (IsSamplerType(pair.Value.Type))
+                        return true;
+                }
+
+                return false;
+            }
+
             private bool MarkUniformBinding(int location)
             {
                 if (location < 0)

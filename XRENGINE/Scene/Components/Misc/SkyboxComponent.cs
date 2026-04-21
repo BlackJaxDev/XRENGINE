@@ -418,7 +418,7 @@ namespace XREngine.Components.Scene.Mesh
             _debugHooksAttached = false;
         }
 
-        private void OnCollectedForRender(RenderInfo info, RenderCommand command, XRCamera? camera)
+        private void OnCollectedForRender(RenderInfo info, RenderCommand command, IRuntimeRenderCamera? camera)
         {
             if (_loggedCollected)
                 return;

@@ -55,7 +55,7 @@ namespace XREngine.Rendering.Commands
             {
                 SetField(ref _worldMatrix, value);
 
-                if (Engine.IsRenderThread)
+                if (RuntimeRenderingHostServices.Current.IsRenderThread)
                     ApplyLateRenderThreadWorldMatrix(value);
             }
         }
@@ -110,10 +110,10 @@ namespace XREngine.Rendering.Commands
             {
                 if (!_renderHasPrevWorldMatrix && s_MotionVectorLogBudget-- > 0)
                 {
-                    Debug.Out($"[MotionVectors] Missing prev model; treating as static. WorldIsModel={_renderWorldMatrixIsModelMatrix}, Instances={_renderInstances}");
+                    RuntimeRenderingHostServices.Current.LogOutput($"[MotionVectors] Missing prev model; treating as static. WorldIsModel={_renderWorldMatrixIsModelMatrix}, Instances={_renderInstances}");
                 }
 
-                using var _ = Engine.Rendering.State.PushTransformId(_renderGpuCommandIndex == uint.MaxValue ? 0u : _renderGpuCommandIndex);
+                using var _ = RuntimeRenderingHostServices.Current.PushTransformId(_renderGpuCommandIndex == uint.MaxValue ? 0u : _renderGpuCommandIndex);
 
                 mesh.Render(
                     GetModelMatrix(),
@@ -128,7 +128,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        public override void CollectedForRender(XRCamera? camera)
+        public override void CollectedForRender(IRuntimeRenderCamera? camera)
         {
             base.CollectedForRender(camera);
             // Update render distance for proper sorting.

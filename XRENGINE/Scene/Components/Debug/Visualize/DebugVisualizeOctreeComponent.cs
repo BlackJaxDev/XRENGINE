@@ -35,7 +35,7 @@ namespace XREngine.Components
             //    cameraNodes.SwapBuffers();
         }
 
-        protected override void RenderInfo_PreRenderCallback(RenderInfo info, RenderCommand command, XRCamera? camera)
+        protected override void RenderInfo_PreRenderCallback(RenderInfo info, RenderCommand command, IRuntimeRenderCamera? camera)
         {
             //if (Engine.Rendering.State.IsShadowPass)
             //    return;

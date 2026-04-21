@@ -103,8 +103,11 @@ namespace XREngine.Components.Capture.Lights.Types
                         UpdateLightMatrix(Transform.RenderMatrix);
                     break;
                 case nameof(ShadowMap):
+                    if (prev is XRMaterialFrameBuffer previousShadowMap && previousShadowMap.Material is not null)
+                        previousShadowMap.Material.SettingShadowUniforms -= SetShadowMapUniforms;
+
                     if (ShadowMap?.Material is not null)
-                        ShadowMap.Material.SettingUniforms += SetShadowMapUniforms;
+                        ShadowMap.Material.SettingShadowUniforms += SetShadowMapUniforms;
                     break;
                 case nameof(World):
                     SyncDynamicWorldRegistration();

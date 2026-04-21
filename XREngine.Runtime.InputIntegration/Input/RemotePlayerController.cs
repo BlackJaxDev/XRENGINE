@@ -4,7 +4,7 @@ using XREngine.Input.Devices;
 using XREngine.Networking;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Input
+namespace XREngine.Runtime.InputIntegration
 {
     /// <summary>
     /// Represents a player that is controlled remotely by another client.

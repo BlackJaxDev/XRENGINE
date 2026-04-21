@@ -296,12 +296,12 @@ namespace XREngine.Components
             set => SetField(ref _directionalShadowRenderingMode, value);
         }
 
-        private Func<XRCamera>? _cullingCameraOverride = null;
+        private Func<IRuntimeCullingCamera>? _cullingCameraOverride = null;
         /// <summary>
         /// When CullWithFrustum is true and this property is not null, this method retrieves the camera frustum to cull with.
         /// </summary>
         [Browsable(false)]
-        public Func<XRCamera>? CullingCameraOverride
+        public Func<IRuntimeCullingCamera>? CullingCameraOverride
         {
             get => _cullingCameraOverride;
             set => SetField(ref _cullingCameraOverride, value);

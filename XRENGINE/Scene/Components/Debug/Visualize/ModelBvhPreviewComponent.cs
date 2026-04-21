@@ -115,7 +115,7 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
         if (!info.IsVisible || !info.ShouldRender)
             return false;
 
-        if (info.WorldInstance != World)
+        if (!ReferenceEquals(info.WorldInstance, World))
             return false;
 
         if (frustum is not null && !info.Intersects(frustum, false))

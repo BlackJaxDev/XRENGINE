@@ -13,7 +13,6 @@ using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using YamlDotNet.Serialization;
-using static XREngine.Engine.Rendering.State;
 using static XREngine.Rendering.XRRenderPipelineInstance;
 
 namespace XREngine.Rendering;
@@ -184,15 +183,18 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     {
     }
 
+    private static XRRenderPipelineInstance? TryCurrentPipeline
+        => RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance;
+
     private static RenderingState? TryState
-        => CurrentRenderingPipeline?.RenderState;
+        => TryCurrentPipeline?.RenderState;
 
     public static RenderingState State
         => TryState ?? throw new InvalidOperationException("Rendering pipeline state is not available.");
 
     private static XRCamera? ResolveEffectiveCameraForFrame()
     {
-        XRRenderPipelineInstance? pipeline = CurrentRenderingPipeline;
+        XRRenderPipelineInstance? pipeline = TryCurrentPipeline;
         if (pipeline is not null)
         {
             return pipeline.RenderState.SceneCamera
@@ -201,56 +203,57 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
                 ?? pipeline.LastRenderingCamera;
         }
 
-        return Engine.Rendering.State.RenderingPipelineState?.SceneCamera
-            ?? Engine.Rendering.State.RenderingCamera;
+        IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+        return renderState?.SceneCamera as XRCamera
+            ?? renderState?.RenderingCamera as XRCamera;
     }
 
     internal static EAntiAliasingMode ResolveEffectiveAntiAliasingModeForFrame()
     {
-        if (CurrentRenderingPipeline?.EffectiveAntiAliasingModeThisFrame is EAntiAliasingMode latched)
+        if (TryCurrentPipeline?.EffectiveAntiAliasingModeThisFrame is EAntiAliasingMode latched)
             return latched;
 
         return ResolveEffectiveCameraForFrame()?.AntiAliasingModeOverride
-            ?? Engine.EffectiveSettings.AntiAliasingMode;
+            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
     }
 
     internal static uint ResolveEffectiveMsaaSampleCountForFrame()
     {
-        if (CurrentRenderingPipeline?.EffectiveMsaaSampleCountThisFrame is uint latched)
+        if (TryCurrentPipeline?.EffectiveMsaaSampleCountThisFrame is uint latched)
             return Math.Max(1u, latched);
 
         return Math.Max(1u,
-            ResolveEffectiveCameraForFrame()?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount);
+            ResolveEffectiveCameraForFrame()?.MsaaSampleCountOverride ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
     }
 
     internal static float ResolveEffectiveTsrRenderScaleForFrame()
     {
-        if (CurrentRenderingPipeline?.EffectiveTsrRenderScaleThisFrame is float latched)
+        if (TryCurrentPipeline?.EffectiveTsrRenderScaleThisFrame is float latched)
             return Math.Clamp(latched, 0.5f, 1.0f);
 
         return Math.Clamp(
-            ResolveEffectiveCameraForFrame()?.TsrRenderScaleOverride ?? Engine.Rendering.Settings.TsrRenderScale,
+            ResolveEffectiveCameraForFrame()?.TsrRenderScaleOverride ?? RuntimeRenderingHostServices.Current.DefaultTsrRenderScale,
             0.5f,
             1.0f);
     }
 
     public static T? GetTexture<T>(string name) where T : XRTexture
-        => CurrentRenderingPipeline!.GetTexture<T>(name);
+        => TryCurrentPipeline!.GetTexture<T>(name);
 
     public static bool TryGetTexture(string name, out XRTexture? texture)
-        => CurrentRenderingPipeline!.TryGetTexture(name, out texture);
+        => TryCurrentPipeline!.TryGetTexture(name, out texture);
 
     public static void SetTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null)
-        => CurrentRenderingPipeline!.SetTexture(texture, descriptor);
+        => TryCurrentPipeline!.SetTexture(texture, descriptor);
 
     public static T? GetFBO<T>(string name) where T : XRFrameBuffer
-        => CurrentRenderingPipeline!.GetFBO<T>(name);
+        => TryCurrentPipeline!.GetFBO<T>(name);
 
     public static bool TryGetFBO(string name, out XRFrameBuffer? fbo)
-        => CurrentRenderingPipeline!.TryGetFBO(name, out fbo);
+        => TryCurrentPipeline!.TryGetFBO(name, out fbo);
 
     public static void SetFBO(XRFrameBuffer fbo, FrameBufferResourceDescriptor? descriptor = null)
-        => CurrentRenderingPipeline!.SetFBO(fbo, descriptor);
+        => TryCurrentPipeline!.SetFBO(fbo, descriptor);
 
     // OpenGL (and most GPU APIs) disallow 0-sized textures. During startup or when a window is
     // minimized, the viewport can temporarily report 0; clamp to 1 to avoid invalid allocations.
@@ -269,7 +272,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         uint h = InternalHeight;
         if (w == 0 || h == 0)
         {
-            string name = CurrentRenderingPipeline?.GetType().Name ?? "RenderPipeline";
+            string name = TryCurrentPipeline?.GetType().Name ?? "RenderPipeline";
             Debug.LogWarning($"[{name}] Internal size unavailable while checking texture resize.");
             return false;
         }
@@ -296,7 +299,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         uint h = FullHeight;
         if (w == 0 || h == 0)
         {
-            string name = CurrentRenderingPipeline?.GetType().Name ?? "RenderPipeline";
+            string name = TryCurrentPipeline?.GetType().Name ?? "RenderPipeline";
             Debug.LogWarning($"[{name}] Full size unavailable while checking texture resize.");
             return false;
         }

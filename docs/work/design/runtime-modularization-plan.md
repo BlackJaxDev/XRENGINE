@@ -16,11 +16,13 @@ Implementation companions:
 - Phase 2 is complete and its implementation record has been retired from `docs/work`.
 - [Runtime Modularization Phase 3 TODO](../todo/runtime-modularization-phase3-todo.md) (physical code moves & XRENGINE deletion)
 
+> Status note (2026-04-20): Phases 0 through 2 of this refactor are already complete. This document now serves as the target-architecture and migration-rationale reference. Some "current state" sections below intentionally describe the pre-Phase-1 baseline and no longer match the repository. Use [Runtime Modularization Phase 3 TODO](../todo/runtime-modularization-phase3-todo.md) as the execution-status and next-slice source of truth.
+
 ## Why This Refactor Exists
 
 The current solution is already partially modularized at the project level, but the assembly boundaries do not fully represent architectural boundaries.
 
-Key problems today:
+Baseline problems at the start of the refactor:
 
 - `XREngine.Server` directly references `XREngine.Editor`.
 - `XRENGINE` directly references `XREngine.Animation`, `XREngine.Audio`, `XREngine.Input`, and `XREngine.Modeling`, so the main runtime assembly is both the engine core and the integration layer.
@@ -34,7 +36,7 @@ The result is avoidable coupling:
 - rendering and gameplay-facing scene types are mixed with subsystem bridges,
 - future headless, tooling, and test harness work must route through the editor assembly.
 
-## Current State Summary
+## Baseline State Summary (Historical)
 
 ### Existing Good Boundaries
 
@@ -51,7 +53,7 @@ The following projects are already reasonable lower-level libraries:
 
 These should remain leaf or near-leaf libraries in the target design.
 
-### Current Architectural Problems
+### Baseline Architectural Problems (Historical)
 
 #### 1. Server depends on editor
 

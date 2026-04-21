@@ -1,4 +1,5 @@
 using XREngine.Extensions;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -25,17 +26,32 @@ namespace XREngine.Rendering
         public event Action<XRMaterialBase, XRRenderProgram>? SettingUniforms;
         public void OnSettingUniforms(XRRenderProgram program)
             => SettingUniforms?.Invoke(this, program);
+        public bool HasSettingUniformsHandlers
+            => SettingUniforms is not null;
 
-        public XRMaterialBase() { }
-        protected XRMaterialBase(ShaderVar[] parameters)
+        public event Action<XRMaterialBase, XRRenderProgram>? SettingShadowUniforms;
+        public void OnSettingShadowUniforms(XRRenderProgram program)
+            => SettingShadowUniforms?.Invoke(this, program);
+        public bool HasSettingShadowUniformHandlers
+            => SettingShadowUniforms is not null;
+
+        private ulong _bindingLayoutVersion = 1;
+        [Browsable(false)]
+        [YamlIgnore]
+        public ulong BindingLayoutVersion
+            => _bindingLayoutVersion;
+
+        public XRMaterialBase()
+            => AttachTextureListHandlers(_textures);
+        protected XRMaterialBase(ShaderVar[] parameters) : this()
         {
             Parameters = [.. parameters]; //Make copy
         }
-        protected XRMaterialBase(XRTexture?[] textures)
+        protected XRMaterialBase(XRTexture?[] textures) : this()
         {
             Textures = [.. textures];
         }
-        protected XRMaterialBase(ShaderVar[] parameters, XRTexture?[] textures)
+        protected XRMaterialBase(ShaderVar[] parameters, XRTexture?[] textures) : this()
         {
             Parameters = [.. parameters]; //Make copy
             Textures = [.. textures];
@@ -117,6 +133,35 @@ namespace XREngine.Rendering
         public void ResetNameIndexCache()
             => _nameIndexCache.Clear();
 
+        private void AttachTextureListHandlers(EventList<XRTexture?>? textures)
+        {
+            if (textures is null)
+                return;
+
+            textures.PostModified += TexturesModified;
+        }
+
+        private void DetachTextureListHandlers(EventList<XRTexture?>? textures)
+        {
+            if (textures is null)
+                return;
+
+            textures.PostModified -= TexturesModified;
+        }
+
+        private void TexturesModified()
+            => IncrementBindingLayoutVersion();
+
+        private void IncrementBindingLayoutVersion()
+        {
+            unchecked
+            {
+                _bindingLayoutVersion++;
+                if (_bindingLayoutVersion == 0)
+                    _bindingLayoutVersion = 1;
+            }
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -124,6 +169,12 @@ namespace XREngine.Rendering
             {
                 case nameof(Parameters):
                     ResetNameIndexCache();
+                    IncrementBindingLayoutVersion();
+                    break;
+                case nameof(Textures):
+                    DetachTextureListHandlers(prev as EventList<XRTexture?>);
+                    AttachTextureListHandlers(field as EventList<XRTexture?>);
+                    IncrementBindingLayoutVersion();
                     break;
             }
         }

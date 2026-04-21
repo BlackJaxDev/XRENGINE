@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Commands
         public RenderCommand() { }
         public RenderCommand(int renderPass) => RenderPass = renderPass;
 
-        public delegate void DelPreRender(RenderCommand command, XRCamera? camera);
+        public delegate void DelPreRender(RenderCommand command, IRuntimeRenderCamera? camera);
         public event DelPreRender? OnCollectedForRender;
 
         public delegate void DelSwapBuffers(RenderCommand command);
@@ -86,7 +86,7 @@ namespace XREngine.Rendering.Commands
         /// Called in the collect visible thread.
         /// </summary>
         /// <param name="camera"></param>
-        public virtual void CollectedForRender(XRCamera? camera)
+        public virtual void CollectedForRender(IRuntimeRenderCamera? camera)
             => OnCollectedForRender?.Invoke(this, camera);
 
         /// <summary>
