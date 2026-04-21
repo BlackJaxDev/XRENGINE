@@ -30,7 +30,7 @@ namespace XREngine.Scene
                 RenderTree.Remake(bounds);
         }
 
-        public override void DebugRender(XRCamera? camera, bool onlyContainingItems = false)
+        public override void DebugRender(IRuntimeCullingCamera? camera, bool onlyContainingItems = false)
         {
             lock (_renderablesLock)
                 RenderTree.DebugRender(camera?.GetOrthoCameraBounds(), onlyContainingItems, RenderAABB);
@@ -51,9 +51,9 @@ namespace XREngine.Scene
 
         public override void CollectRenderedItems(
             RenderCommandCollection meshRenderCommands,
-            XRCamera? activeCamera,
+            IRuntimeCullingCamera? activeCamera,
             bool cullWithFrustum,
-            Func<XRCamera>? cullingCameraOverride,
+            Func<IRuntimeCullingCamera>? cullingCameraOverride,
             IVolume? collectionVolumeOverride,
             bool collectMirrors)
         {
@@ -68,7 +68,7 @@ namespace XREngine.Scene
         /// <param name="commands"></param>
         /// <param name="collectionVolume"></param>
         /// <param name="camera"></param>
-        public void CollectRenderedItems(RenderCommandCollection commands, BoundingRectangleF? collectionVolume, XRCamera? camera)
+        public void CollectRenderedItems(RenderCommandCollection commands, BoundingRectangleF? collectionVolume, IRuntimeCullingCamera? camera)
         {
             lock (_renderablesLock)
             {

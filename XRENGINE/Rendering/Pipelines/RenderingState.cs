@@ -3,14 +3,13 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
-using XREngine.Rendering.UI;
 using XREngine.Scene;
 
 namespace XREngine.Rendering;
 
 public sealed partial class XRRenderPipelineInstance
 {
-    public class RenderingState
+    public class RenderingState : IRuntimeRenderCommandExecutionState
     {
         /// <summary>
         /// The viewport being rendered to.
@@ -52,11 +51,26 @@ public sealed partial class XRRenderPipelineInstance
         /// <summary>
         /// The screen-space UI to render over the scene.
         /// </summary>
-        public UICanvasComponent? ScreenSpaceUserInterface { get; private set; }
+        public IRuntimeScreenSpaceUserInterface? ScreenSpaceUserInterface { get; private set; }
         /// <summary>
         /// All collected render commands for the current frame.
         /// </summary>
         public RenderCommandCollection? MeshRenderCommands { get; set; }
+
+        IRuntimeViewportHost? IRuntimeRenderCommandExecutionState.WindowViewport
+            => WindowViewport;
+
+        IRuntimeRenderCommandSceneContext? IRuntimeRenderCommandExecutionState.RenderingScene
+            => RenderingScene;
+
+        IRuntimeRenderCamera? IRuntimeRenderCommandExecutionState.SceneCamera
+            => SceneCamera;
+
+        IRuntimeRenderCamera? IRuntimeRenderCommandExecutionState.RenderingCamera
+            => RenderingCamera;
+
+        IRuntimeRenderCamera? IRuntimeRenderCommandExecutionState.StereoRightEyeCamera
+            => StereoRightEyeCamera;
 
         //TODO: instead of bools for shadow and stereo passes, use an int for the pass type.
 
@@ -69,7 +83,7 @@ public sealed partial class XRRenderPipelineInstance
             bool shadowPass,
             bool stereoPass,
             XRMaterial? globalMaterialOverride,
-            UICanvasComponent? screenSpaceUI,
+            IRuntimeScreenSpaceUserInterface? screenSpaceUI,
             RenderCommandCollection? meshRenderCommands)
         {
             WindowViewport = viewport;
@@ -80,7 +94,7 @@ public sealed partial class XRRenderPipelineInstance
             ShadowPass = shadowPass;
             StereoPass = stereoPass;
             GlobalMaterialOverride = globalMaterialOverride;
-            ScreenSpaceUserInterface = screenSpaceUI?.CanvasTransform?.DrawSpace == ECanvasDrawSpace.Screen ? screenSpaceUI : null;
+            ScreenSpaceUserInterface = screenSpaceUI?.IsScreenSpace == true ? screenSpaceUI : null;
             MeshRenderCommands = meshRenderCommands;
 
             if (WindowViewport is not null)
@@ -300,7 +314,7 @@ public sealed partial class XRRenderPipelineInstance
 
         public void ApplyScopedProgramBindings(XRRenderProgram program)
         {
-            XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            XRRenderPipelineInstance? pipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance;
             if (pipeline is null)
                 return;
 

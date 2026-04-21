@@ -7,6 +7,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.Shaders;
 
 namespace XREngine.UnitTests.Rendering;
@@ -209,6 +210,198 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
     }
 
     [Test]
+    public void OpaqueMaterial_CanUseSharedOpaqueShadowMaterial()
+    {
+        XRMaterial material = new(XRShader.EngineShader("Common/LitTexturedForward.fs", EShaderType.Fragment))
+        {
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+        };
+
+        material.CanUseSharedOpaqueShadowMaterial().ShouldBeTrue();
+    }
+
+    [Test]
+    public void MaskedMaterial_CannotUseSharedOpaqueShadowMaterial()
+    {
+        XRMaterial material = new(XRShader.EngineShader("Common/LitTexturedForward.fs", EShaderType.Fragment))
+        {
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+        };
+
+        material.TransparencyMode = ETransparencyMode.Masked;
+
+        material.CanUseSharedOpaqueShadowMaterial().ShouldBeFalse();
+    }
+
+    [Test]
+    public void MaterialWithUniformHook_CannotUseSharedOpaqueShadowMaterial()
+    {
+        XRMaterial material = new(XRShader.EngineShader("Common/LitTexturedForward.fs", EShaderType.Fragment))
+        {
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+        };
+
+        material.SettingUniforms += static (_, _) => { };
+
+        material.CanUseSharedOpaqueShadowMaterial().ShouldBeFalse();
+    }
+
+    [Test]
+    public void MaterialWithEngineOnlyVertexShader_CanUseSharedOpaqueShadowMaterial()
+    {
+        XRMaterial material = new(
+            new XRShader(EShaderType.Vertex,
+                "#version 450\n" +
+                "uniform mat4 ModelMatrix;\n" +
+                "uniform mat4 ViewProjectionMatrix_VTX;\n" +
+                "layout(location = 0) in vec3 Position;\n" +
+                "void main() { gl_Position = ViewProjectionMatrix_VTX * ModelMatrix * vec4(Position, 1.0); }"),
+            XRShader.EngineShader("Common/LitTexturedForward.fs", EShaderType.Fragment))
+        {
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+        };
+
+        material.CanUseSharedOpaqueShadowMaterial().ShouldBeTrue();
+    }
+
+    [Test]
+    public void MaterialWithVertexShaderCustomUniform_CannotUseSharedOpaqueShadowMaterial()
+    {
+        XRMaterial material = new(
+            new XRShader(EShaderType.Vertex,
+                "#version 450\n" +
+                "uniform mat4 ModelMatrix;\n" +
+                "uniform mat4 ViewProjectionMatrix_VTX;\n" +
+                "uniform float Wobble;\n" +
+                "layout(location = 0) in vec3 Position;\n" +
+                "void main() { gl_Position = ViewProjectionMatrix_VTX * ModelMatrix * vec4(Position.x + Wobble, Position.yz, 1.0); }"),
+            XRShader.EngineShader("Common/LitTexturedForward.fs", EShaderType.Fragment))
+        {
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+        };
+
+        material.CanUseSharedOpaqueShadowMaterial().ShouldBeFalse();
+    }
+
+    [Test]
+    public void MaterialWithVertexShaderSampler_CannotUseSharedOpaqueShadowMaterial()
+    {
+        XRMaterial material = new(
+            new XRShader(EShaderType.Vertex,
+                "#version 450\n" +
+                "uniform mat4 ModelMatrix;\n" +
+                "uniform mat4 ViewProjectionMatrix_VTX;\n" +
+                "layout(binding = 0) uniform sampler2D HeightMap;\n" +
+                "layout(location = 0) in vec3 Position;\n" +
+                "void main() { gl_Position = ViewProjectionMatrix_VTX * ModelMatrix * vec4(Position, 1.0); }"),
+            XRShader.EngineShader("Common/LitTexturedForward.fs", EShaderType.Fragment))
+        {
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+        };
+
+        material.CanUseSharedOpaqueShadowMaterial().ShouldBeFalse();
+    }
+
+    [Test]
+    public void SharedOpaqueShadowMaterialFastPath_IsWiredIntoGlMeshRenderer()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
+
+        source.ShouldContain("shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == true");
+        source.ShouldContain("return (Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial)!;");
+    }
+
+    [Test]
+    public void ShadowCasterVariant_DropsGenericBindingCopiesAndKeepsSourceReference()
+    {
+        XRMaterial sourceMaterial = new(
+            new[] { new ShaderFloat(0.25f, "AlphaCutoff") },
+            new XRTexture?[]
+            {
+                new XRTexture2D(1u, 1u, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, true)
+                {
+                    SamplerName = "Texture0",
+                },
+            },
+            XRShader.EngineShader("Common/LitTexturedAlphaForward.fs", EShaderType.Fragment))
+        {
+            RenderPass = (int)EDefaultRenderPass.MaskedForward,
+        };
+
+        sourceMaterial.SettingUniforms += static (_, _) => { };
+        sourceMaterial.SettingShadowUniforms += static (_, _) => { };
+
+        XRMaterial? variant = sourceMaterial.ShadowCasterVariant;
+
+        variant.ShouldNotBeNull();
+        variant.Parameters.Length.ShouldBe(0);
+        variant.Textures.Count.ShouldBe(0);
+        variant.HasSettingUniformsHandlers.ShouldBeFalse();
+        variant.HasSettingShadowUniformHandlers.ShouldBeFalse();
+        variant.ShadowBindingSourceMaterial.ShouldBeSameAs(sourceMaterial);
+    }
+
+    [Test]
+    public void ShadowCasterVariant_DoesNotForwardGenericUniformHooks()
+    {
+        XRMaterial sourceMaterial = new(XRShader.EngineShader("Common/LitTexturedAlphaForward.fs", EShaderType.Fragment))
+        {
+            RenderPass = (int)EDefaultRenderPass.MaskedForward,
+        };
+
+        int genericHookCalls = 0;
+        sourceMaterial.SettingUniforms += static (_, _) => { };
+        sourceMaterial.SettingUniforms += (_, _) => genericHookCalls++;
+
+        XRMaterial? variant = sourceMaterial.ShadowCasterVariant;
+
+        variant.ShouldNotBeNull();
+        variant.OnSettingUniforms(new XRRenderProgram());
+        genericHookCalls.ShouldBe(0);
+    }
+
+    [Test]
+    public void ShadowBindingPlan_IsWiredIntoGlMaterial()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
+
+        source.ShouldContain("Data.ShadowBindingSourceMaterial");
+        source.ShouldContain("GetOrCreateShadowBindingPlan");
+        source.ShouldContain("shadowBindingSource.OnSettingShadowUniforms(materialProgram.Data)");
+        source.ShouldContain("shadowBindingSource.OnSettingUniforms(materialProgram.Data)");
+    }
+
+    [Test]
+    public void ShadowBindingFinalize_SkipsFallbackDiagnostics_ForSamplerFreeShadowPrograms()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
+
+        source.ShouldContain("Engine.Rendering.State.IsShadowPass");
+        source.ShouldContain("!materialProgram.HasActiveSamplerUniforms()");
+        source.ShouldContain("if (isSamplerFreeShadowBindingPath)");
+        source.ShouldContain("return;");
+    }
+
+    [Test]
+    public void GlRenderProgram_ExposesActiveSamplerQuery_ForShadowFinalizeFastPath()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLRenderProgram.UniformBinding.cs"));
+
+        source.ShouldContain("public bool HasActiveSamplerUniforms()");
+        source.ShouldContain("if (IsSamplerType(pair.Value.Type))");
+    }
+
+    [Test]
+    public void LightShadowMapMaterial_UsesShadowSpecificUniformHook()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine", "Scene", "Components", "Lights", "Types", "LightComponent.cs"));
+
+        source.ShouldContain("previousShadowMap.Material.SettingShadowUniforms -= SetShadowMapUniforms;");
+        source.ShouldContain("ShadowMap.Material.SettingShadowUniforms += SetShadowMapUniforms;");
+        source.ShouldNotContain("ShadowMap.Material.SettingUniforms += SetShadowMapUniforms;");
+    }
+
+    [Test]
     public void DepthNormalPrePassVariant_FallsBackToNullWhenShaderCannotBeRewritten()
     {
         XRMaterial sourceMaterial = new(XRShader.EngineShader("Common/LitTexturedNormalForward.fs", EShaderType.Fragment))
@@ -308,6 +501,27 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
         {
             Name = Path.GetFileNameWithoutExtension(filePath),
         };
+    }
+
+    private static string LoadRepoSource(string relativePath)
+    {
+        string path = Path.Combine(ResolveRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.Exists(path).ShouldBeTrue($"Expected repository file '{path}' to exist.");
+        return File.ReadAllText(path);
+    }
+
+    private static string ResolveRepoRoot()
+    {
+        string? directory = TestContext.CurrentContext.TestDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            if (File.Exists(Path.Combine(directory, "XRENGINE.slnx")))
+                return directory;
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root from test directory.");
     }
 
     private static string CreateCustomNormalMappedForwardSource()

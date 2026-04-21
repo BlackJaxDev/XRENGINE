@@ -5,7 +5,7 @@ namespace XREngine.Runtime.InputIntegration;
 
 public interface IBootstrapInputBridge
 {
-    PawnComponent? CreateFlyableCameraPawn(SceneNode cameraNode);
+    XRComponent? CreateFlyableCameraPawn(SceneNode cameraNode);
 }
 
 public static class BootstrapInputBridge

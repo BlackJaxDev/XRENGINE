@@ -189,6 +189,43 @@ namespace XREngine
 
             settingsPath = Path.GetFullPath(settingsPath);
 
+            ClearSettingsAssetCaches(settingsPath);
+
+            try
+            {
+                return Assets.Load<T>(settingsPath);
+            }
+            catch (Exception ex)
+            {
+                ClearSettingsAssetCaches(settingsPath);
+                string? quarantinedPath = QuarantineInvalidSettingsAsset(settingsPath);
+
+                Debug.LogWarning(
+                    $"Failed to load settings asset '{settingsPath}'. " +
+                    $"Using a fresh {typeof(T).Name} instance instead. " +
+                    (quarantinedPath is null
+                        ? "The invalid file could not be quarantined."
+                        : $"The invalid file was moved to '{quarantinedPath}'.") +
+                    Environment.NewLine +
+                    ex);
+
+                var fallback = new T
+                {
+                    FilePath = settingsPath,
+                    Name = typeof(T).Name,
+                };
+
+                Assets.EnsureTracked(fallback);
+                fallback.MarkDirty();
+                return fallback;
+            }
+        }
+
+        private static void ClearSettingsAssetCaches(string settingsPath)
+        {
+            if (Assets is null)
+                return;
+
             if (Assets.LoadedAssetsByPathInternal.TryRemove(settingsPath, out XRAsset? existing))
             {
                 if (existing.ID != Guid.Empty)
@@ -200,8 +237,30 @@ namespace XREngine
                 if (!string.IsNullOrWhiteSpace(existing.OriginalPath))
                     Assets.LoadedAssetsByOriginalPathInternal.TryRemove(existing.OriginalPath, out _);
             }
+        }
 
-            return Assets.Load<T>(settingsPath);
+        private static string? QuarantineInvalidSettingsAsset(string settingsPath)
+        {
+            try
+            {
+                if (!File.Exists(settingsPath))
+                    return null;
+
+                string directory = Path.GetDirectoryName(settingsPath) ?? string.Empty;
+                string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(settingsPath);
+                string extension = Path.GetExtension(settingsPath);
+                string quarantinedPath = Path.Combine(
+                    directory,
+                    $"{fileNameWithoutExtension}.invalid_{DateTimeOffset.Now:yyyyMMdd_HHmmssfff}{extension}");
+
+                File.Move(settingsPath, quarantinedPath, overwrite: false);
+                return quarantinedPath;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to quarantine invalid settings asset '{settingsPath}': {ex}");
+                return null;
+            }
         }
 
         /// <summary>

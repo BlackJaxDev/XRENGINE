@@ -263,6 +263,66 @@ public sealed class ImportedDeferredMaterialTests
     }
 
     [Test]
+    public void MakeMaterialForwardPlusUberShader_OpacityMaskTextures_EnableMaskedUberTransparency()
+    {
+        XRTexture2D albedo = new()
+        {
+            FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "uber-albedo.png"),
+        };
+
+        XRTexture2D alphaMask = new()
+        {
+            FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "uber-mask.png"),
+        };
+
+        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader(
+            [albedo, alphaMask],
+            [
+                CreateSlot(albedo.FilePath!, TextureType.Diffuse),
+                CreateSlot(alphaMask.FilePath!, TextureType.Opacity),
+            ],
+            "UberMaskedMaterial");
+
+        material.TransparencyMode.ShouldBe(ETransparencyMode.Masked);
+        material.RenderPass.ShouldBe((int)EDefaultRenderPass.MaskedForward);
+        material.Textures.Count.ShouldBe(3);
+        material.Textures[2].ShouldNotBeNull();
+        material.Textures[2]!.SamplerName.ShouldBe("_AlphaMask");
+        material.Parameter<ShaderInt>("_MainAlphaMaskMode")?.Value.ShouldBe(2);
+        material.Parameter<ShaderInt>("_Mode")?.Value.ShouldBe(1);
+        material.Parameter<ShaderFloat>("_AlphaForceOpaque")?.Value.ShouldBe(0.0f);
+        material.Parameter<ShaderFloat>("AlphaCutoff").ShouldNotBeNull();
+        material.Parameter<ShaderFloat>("_Cutoff")?.Value.ShouldBe(material.AlphaCutoff);
+    }
+
+    [Test]
+    public void MakeMaterialForwardPlusUberShader_BlendHint_RoutesToWeightedBlendedOit()
+    {
+        XRTexture2D albedo = new()
+        {
+            FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "uber-transparent.png"),
+        };
+
+        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader(
+            [albedo],
+            [CreateSlot(albedo.FilePath!, TextureType.Diffuse, flags: 0x2)],
+            "UberTransparentMaterial");
+
+        material.TransparencyMode.ShouldBe(ETransparencyMode.WeightedBlendedOit);
+        material.RenderPass.ShouldBe((int)EDefaultRenderPass.WeightedBlendedOitForward);
+        material.RenderOptions.ShouldNotBeNull();
+        material.RenderOptions!.BlendModesPerDrawBuffer.ShouldNotBeNull();
+        material.RenderOptions.DepthTest.ShouldNotBeNull();
+        material.RenderOptions.DepthTest!.UpdateDepth.ShouldBeFalse();
+        material.Parameter<ShaderInt>("_Mode")?.Value.ShouldBe(3);
+        material.Parameter<ShaderFloat>("_AlphaForceOpaque")?.Value.ShouldBe(0.0f);
+
+        string source = material.FragmentShaders[0].Source?.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
+        source.ShouldContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
+        source.ShouldContain("#define XRENGINE_FORWARD_WEIGHTED_OIT");
+    }
+
+    [Test]
     public void PrefabSource_CreateMaterial_DelegatesToDeferredImporterFactory()
     {
         string source = ReadWorkspaceFile("XRENGINE/Scene/Prefabs/XRPrefabSource.cs").Replace("\r\n", "\n");
@@ -309,8 +369,8 @@ public sealed class ImportedDeferredMaterialTests
         }
     }
 
-    private static TextureSlot CreateSlot(string filePath, TextureType textureType)
-        => new(filePath, textureType, 0, default, 0, 1.0f, default, default, default, 0);
+    private static TextureSlot CreateSlot(string filePath, TextureType textureType, int flags = 0)
+        => new(filePath, textureType, 0, default, 0, 1.0f, default, default, default, flags);
 
     private static XRTexture2D CreateDiffuseTextureWithAlpha(params byte[] alphaValues)
     {

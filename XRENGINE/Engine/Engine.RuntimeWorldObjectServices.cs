@@ -44,7 +44,7 @@ internal sealed class EngineRuntimeWorldObjectServices : IRuntimeWorldObjectServ
         if (worldObject is not IRenderable renderable)
             return;
 
-        XRWorldInstance? worldInstance = isActiveInHierarchy ? worldContext as XRWorldInstance : null;
+        IRuntimeRenderInfo3DRegistrationTarget? worldInstance = isActiveInHierarchy ? worldContext as IRuntimeRenderInfo3DRegistrationTarget : null;
         foreach (var renderInfo in renderable.RenderedObjects)
             renderInfo.WorldInstance = worldInstance;
     }

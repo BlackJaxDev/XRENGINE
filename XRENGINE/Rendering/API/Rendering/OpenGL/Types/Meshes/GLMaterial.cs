@@ -20,6 +20,18 @@ namespace XREngine.Rendering.OpenGL
             private ulong _lastRenderTimeProgramFrameId = ulong.MaxValue;
             private uint _lastRenderTimeProgramBindingId = uint.MaxValue;
             private XRRenderProgram? _lastRenderTimeProgram;
+            private XRMaterial? _shadowBindingSourceMaterial;
+            private XRRenderProgram? _shadowBindingProgram;
+            private uint _shadowBindingProgramBindingId = uint.MaxValue;
+            private ulong _shadowBindingSourceLayoutVersion = ulong.MaxValue;
+            private ShadowBindingPlan? _shadowBindingPlan;
+
+            private sealed class ShadowBindingPlan(ShaderVar[] parameters, int[] textureIndices)
+            {
+                public ShaderVar[] Parameters { get; } = parameters;
+                public int[] TextureIndices { get; } = textureIndices;
+            }
+
             public float SecondsLive
             {
                 get => _secondsLive;
@@ -82,6 +94,18 @@ namespace XREngine.Rendering.OpenGL
                 if (materialProgram is null)
                     return;
 
+                XRMaterial? shadowBindingSource = null;
+                ShadowBindingPlan? shadowBindingPlan = null;
+                if (Engine.Rendering.State.IsShadowPass)
+                {
+                    shadowBindingSource = Data.ShadowBindingSourceMaterial;
+                    if (shadowBindingSource is not null)
+                    {
+                        using var shadowPlanProf = Engine.Profiler.Start("GLMaterial.SetUniforms.ShadowBindingPlan");
+                        shadowBindingPlan = GetOrCreateShadowBindingPlan(materialProgram, shadowBindingSource);
+                    }
+                }
+
                 using (Engine.Profiler.Start("GLMaterial.SetUniforms.BeginBindingBatch"))
                     materialProgram.BeginBindingBatch();
 
@@ -94,12 +118,25 @@ namespace XREngine.Rendering.OpenGL
                 // Ensure uniforms are resident on every program variant that renders this material.
                 using (Engine.Profiler.Start("GLMaterial.SetUniforms.Parameters"))
                 {
-                    foreach (ShaderVar param in Data.Parameters)
-                        param.SetUniform(materialProgram.Data, forceUpdate: forceUniformUpdate);
+                    if (shadowBindingPlan is not null)
+                    {
+                        foreach (ShaderVar param in shadowBindingPlan.Parameters)
+                            param.SetUniform(materialProgram.Data, forceUpdate: forceUniformUpdate);
+                    }
+                    else
+                    {
+                        foreach (ShaderVar param in Data.Parameters)
+                            param.SetUniform(materialProgram.Data, forceUpdate: forceUniformUpdate);
+                    }
                 }
 
                 using (Engine.Profiler.Start("GLMaterial.SetUniforms.Textures"))
-                    SetTextureUniforms(materialProgram);
+                {
+                    if (shadowBindingPlan is not null)
+                        SetTextureUniforms(materialProgram, shadowBindingSource!, shadowBindingPlan.TextureIndices);
+                    else
+                        SetTextureUniforms(materialProgram);
+                }
 
                 EUniformRequirements requiredEngineUniforms = renderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None;
                 if (RequiresEngineUniformBinding(materialProgram, requiredEngineUniforms))
@@ -109,10 +146,70 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 using (Engine.Profiler.Start("GLMaterial.SetUniforms.MaterialHook"))
-                    Data.OnSettingUniforms(materialProgram.Data);
+                {
+                    if (shadowBindingSource is not null)
+                    {
+                        if (shadowBindingSource.HasSettingShadowUniformHandlers)
+                            shadowBindingSource.OnSettingShadowUniforms(materialProgram.Data);
+                        else if (shadowBindingSource.HasSettingUniformsHandlers)
+                            shadowBindingSource.OnSettingUniforms(materialProgram.Data);
+                    }
+                    else
+                    {
+                        Data.OnSettingUniforms(materialProgram.Data);
+                    }
+                }
 
                 using (Engine.Profiler.Start("GLMaterial.SetUniforms.ScopedProgramBindings"))
                     Engine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(materialProgram.Data);
+            }
+
+            private ShadowBindingPlan GetOrCreateShadowBindingPlan(GLRenderProgram materialProgram, XRMaterial sourceMaterial)
+            {
+                ulong bindingLayoutVersion = sourceMaterial.BindingLayoutVersion;
+                if (_shadowBindingPlan is not null
+                    && ReferenceEquals(_shadowBindingSourceMaterial, sourceMaterial)
+                    && ReferenceEquals(_shadowBindingProgram, materialProgram.Data)
+                    && _shadowBindingProgramBindingId == materialProgram.BindingId
+                    && _shadowBindingSourceLayoutVersion == bindingLayoutVersion)
+                    return _shadowBindingPlan;
+
+                _shadowBindingPlan = BuildShadowBindingPlan(materialProgram, sourceMaterial);
+                _shadowBindingSourceMaterial = sourceMaterial;
+                _shadowBindingProgram = materialProgram.Data;
+                _shadowBindingProgramBindingId = materialProgram.BindingId;
+                _shadowBindingSourceLayoutVersion = bindingLayoutVersion;
+                return _shadowBindingPlan;
+            }
+
+            private static ShadowBindingPlan BuildShadowBindingPlan(GLRenderProgram materialProgram, XRMaterial sourceMaterial)
+            {
+                List<ShaderVar> parameterBindings = [];
+                foreach (ShaderVar parameter in sourceMaterial.Parameters)
+                {
+                    if (string.IsNullOrWhiteSpace(parameter.Name))
+                        continue;
+
+                    if (materialProgram.HasUniform(parameter.Name))
+                        parameterBindings.Add(parameter);
+                }
+
+                List<int> textureBindings = [];
+                for (int textureIndex = 0; textureIndex < sourceMaterial.Textures.Count; ++textureIndex)
+                {
+                    XRTexture? texture = sourceMaterial.Textures[textureIndex];
+                    if (texture is null)
+                        continue;
+
+                    string resolvedSamplerName = texture.ResolveSamplerName(textureIndex, null);
+                    string indexedSamplerName = XRTexture.GetIndexedSamplerName(textureIndex);
+                    if (materialProgram.HasUniform(resolvedSamplerName)
+                        || (!string.Equals(resolvedSamplerName, indexedSamplerName, StringComparison.Ordinal)
+                            && materialProgram.HasUniform(indexedSamplerName)))
+                        textureBindings.Add(textureIndex);
+                }
+
+                return new([.. parameterBindings], [.. textureBindings]);
             }
 
             public void FinalizeUniformBindings(GLRenderProgram? materialProgram)
@@ -121,6 +218,12 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 using var sample = Engine.Profiler.Start("GLMaterial.FinalizeUniformBindings");
+
+                bool isSamplerFreeShadowBindingPath = Engine.Rendering.State.IsShadowPass
+                    && !materialProgram.HasActiveSamplerUniforms();
+
+                if (isSamplerFreeShadowBindingPath)
+                    return;
 
                 // Mesh/FBO SettingUniforms hooks run after SetUniforms(); defer fallback binding until
                 // the full binding batch is complete so late sampler binds are observed correctly.
@@ -243,6 +346,9 @@ namespace XREngine.Rendering.OpenGL
             }
 
             public void SetTextureUniforms(GLRenderProgram program)
+                => SetTextureUniforms(program, Data);
+
+            private void SetTextureUniforms(GLRenderProgram program, XRMaterialBase material)
             {
                 using var sample = Engine.Profiler.Start("GLMaterial.SetTextureUniforms");
 
@@ -251,24 +357,38 @@ namespace XREngine.Rendering.OpenGL
                 // Shaders with layout(binding=X) rely on this stable mapping;
                 // the previous compact-unit scheme shifted all bindings when a
                 // texture slot was null, breaking deferred lighting in particular.
-                for (int textureIndex = 0; textureIndex < Data.Textures.Count; ++textureIndex)
+                for (int textureIndex = 0; textureIndex < material.Textures.Count; ++textureIndex)
                 {
-                    if (!TryGetTexture(textureIndex, out IGLTexture texture))
+                    if (!TryGetTexture(material, textureIndex, out IGLTexture texture))
                         continue;
 
-                    SetTextureUniform(program, textureIndex, texture, textureIndex);
+                    SetTextureUniform(program, material, textureIndex, texture, textureIndex);
+                }
+            }
+
+            private void SetTextureUniforms(GLRenderProgram program, XRMaterialBase material, IReadOnlyList<int> textureIndices)
+            {
+                using var sample = Engine.Profiler.Start("GLMaterial.SetTextureUniforms");
+
+                for (int index = 0; index < textureIndices.Count; ++index)
+                {
+                    int textureIndex = textureIndices[index];
+                    if (!TryGetTexture(material, textureIndex, out IGLTexture texture))
+                        continue;
+
+                    SetTextureUniform(program, material, textureIndex, texture, textureIndex);
                 }
             }
 
             public void SetTextureUniform(GLRenderProgram program, int textureIndex, string? samplerNameOverride = null)
             {
-                if (!TryGetTextureBinding(textureIndex, out IGLTexture texture, out int textureUnit))
+                if (!TryGetTextureBinding(Data, textureIndex, out IGLTexture texture, out int textureUnit))
                     return;
 
-                SetTextureUniform(program, textureIndex, texture, textureUnit, samplerNameOverride);
+                SetTextureUniform(program, Data, textureIndex, texture, textureUnit, samplerNameOverride);
             }
 
-            private void SetTextureUniform(GLRenderProgram program, int textureIndex, IGLTexture texture, int textureUnit, string? samplerNameOverride = null)
+            private void SetTextureUniform(GLRenderProgram program, XRMaterialBase material, int textureIndex, IGLTexture texture, int textureUnit, string? samplerNameOverride = null)
             {
                 if (program is null)
                     return;
@@ -278,7 +398,7 @@ namespace XREngine.Rendering.OpenGL
                     // Opt-in diagnostic: record every material → texture → unit mapping so the exact
                     // cross-material texture-bleed culprit (e.g. lion diffuse rendering on sponza roof)
                     // can be identified post-hoc from the log.
-                    string matName = Data?.Name ?? "<unnamed-material>";
+                    string matName = material?.Name ?? Data?.Name ?? "<unnamed-material>";
                     string texName = texture.Data?.Name ?? "<unnamed-texture>";
                     uint texId = texture is GLObjectBase glob && glob.TryGetBindingId(out uint id)
                         ? id
@@ -308,24 +428,24 @@ namespace XREngine.Rendering.OpenGL
                     program.Sampler(indexedSamplerName, texture, textureUnit);
             }
 
-            private bool TryGetTextureBinding(int textureIndex, out IGLTexture texture, out int textureUnit)
+            private bool TryGetTextureBinding(XRMaterialBase material, int textureIndex, out IGLTexture texture, out int textureUnit)
             {
                 texture = null!;
                 textureUnit = textureIndex;
 
-                if (!Data.Textures.IndexInRange(textureIndex))
+                if (!material.Textures.IndexInRange(textureIndex))
                     return false;
 
-                return TryGetTexture(textureIndex, out texture);
+                return TryGetTexture(material, textureIndex, out texture);
             }
 
-            private bool TryGetTexture(int textureIndex, out IGLTexture texture)
+            private bool TryGetTexture(XRMaterialBase material, int textureIndex, out IGLTexture texture)
             {
                 texture = null!;
-                if (!Data.Textures.IndexInRange(textureIndex))
+                if (!material.Textures.IndexInRange(textureIndex))
                     return false;
 
-                var tex = Data.Textures[textureIndex];
+                var tex = material.Textures[textureIndex];
                 if (tex is null || Renderer.GetOrCreateAPIRenderObject(tex) is not IGLTexture glTexture)
                     return false;
 

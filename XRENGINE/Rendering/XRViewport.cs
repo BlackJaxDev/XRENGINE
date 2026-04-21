@@ -23,7 +23,7 @@ namespace XREngine.Rendering
     /// Can either be a window or render texture.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost
+    public sealed class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost, IRuntimeLocalPlayerViewport
     {
         #region Fields
 
@@ -168,6 +168,8 @@ namespace XREngine.Rendering
         /// May be null for off-screen render targets that don't display to a window.
         /// </summary>
         public XRWindow? Window { get; set; }
+
+        object? IRuntimeLocalPlayerViewport.InputContext => Window?.Input;
 
         /// <summary>
         /// Optional override for the world instance to render.
@@ -531,6 +533,13 @@ namespace XREngine.Rendering
             {
                 Debug.Rendering($"[XRViewport] EnsureViewportBoundToCamera: VP[{Index}] already in camera {camera.GetHashCode()} Viewports (count={camera.Viewports.Count})");
             }
+        }
+
+        void IRuntimeLocalPlayerViewport.RefreshControlledPawnCamera(XRComponent? controlledPawnComponent)
+        {
+            var pawnCamera = (controlledPawnComponent as PawnComponent)?.GetCamera();
+            CameraComponent = pawnCamera;
+            EnsureViewportBoundToCamera();
         }
 
         #endregion

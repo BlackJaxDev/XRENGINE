@@ -6,7 +6,6 @@ using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
-using XREngine.Scene;
 
 namespace XREngine.Rendering.Commands
 {
@@ -43,7 +42,7 @@ namespace XREngine.Rendering.Commands
                 if (HasEquivalentPassConfiguration(passIndicesAndSorters, incomingPassMetadata))
                     return;
 
-                string ownerName = _ownerPipeline?.Pipeline?.DebugName ?? _ownerPipeline?.Pipeline?.GetType().Name ?? "<no-owner>";
+                string ownerName = _ownerPipeline?.DebugName ?? "<no-owner>";
                 System.Diagnostics.Debug.WriteLine($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
 
                 _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
@@ -181,13 +180,13 @@ namespace XREngine.Rendering.Commands
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
         private Dictionary<int, RenderPassMetadata> _passMetadata = [];
-        private XRRenderPipelineInstance? _ownerPipeline;
+        private IRuntimeRenderPipelineDebugContext? _ownerPipeline;
 
         public RenderCommandCollection() { }
         public RenderCommandCollection(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters)
             => SetRenderPasses(passIndicesAndSorters);
 
-        internal void SetOwnerPipeline(XRRenderPipelineInstance pipeline)
+        internal void SetOwnerPipeline(IRuntimeRenderPipelineDebugContext pipeline)
         {
             _ownerPipeline = pipeline;
             foreach (KeyValuePair<int, GPURenderPassCollection> pair in _gpuPasses)
@@ -250,7 +249,7 @@ namespace XREngine.Rendering.Commands
             {
                 if (s_addCpuMissingPassDiagCount < 30)
                 {
-                    string ownerName = _ownerPipeline?.Pipeline?.DebugName ?? _ownerPipeline?.Pipeline?.GetType().Name ?? "<no-owner>";
+                    string ownerName = _ownerPipeline?.DebugName ?? "<no-owner>";
                     Debug.Out($"[RenderCommandCollection:AddCPU] MISSING_PASS pass={pass} cmd={item.GetType().Name} enabled={item.Enabled} owner={ownerName} updatingPassKeys=[{string.Join(",", _updatingPasses.Keys.OrderBy(static x => x))}]");
                     s_addCpuMissingPassDiagCount++;
                 }
@@ -388,11 +387,11 @@ namespace XREngine.Rendering.Commands
             if (!HasGpuEligibleMeshCommands(renderPass))
                 return;
             
-            var renderState = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
             if (renderState is null)
                 return;
 
-            XRCamera? camera = renderState.RenderingCamera ?? renderState.SceneCamera;
+            IRuntimeRenderCamera? camera = renderState.RenderingCamera ?? renderState.SceneCamera;
             if (camera is null)
                 return;
 
@@ -402,22 +401,19 @@ namespace XREngine.Rendering.Commands
 
             ConfigureGpuViewSet(gpuPass, renderState, camera);
 
-            gpuPass.Render(scene.GPUCommands);
+            scene.RenderGpuPass(gpuPass);
 
-            if (scene is VisualScene3D visualScene)
+            gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
+            scene.RecordGpuVisibility(draws, instances);
+
+            bool allowPerViewReadback = RuntimeRenderingHostServices.Current.EnableGpuIndirectDebugLogging;
+            if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
             {
-                gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
-                visualScene.RecordGpuVisibility(draws, instances);
-
-                bool allowPerViewReadback = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
-                if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
-                {
-                    uint leftDraws = gpuPass.ReadPerViewDrawCount(0u);
-                    uint rightDraws = gpuPass.ActiveViewCount > 1u
-                        ? gpuPass.ReadPerViewDrawCount(1u)
-                        : 0u;
-                    Engine.Rendering.Stats.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
-                }
+                uint leftDraws = gpuPass.ReadPerViewDrawCount(0u);
+                uint rightDraws = gpuPass.ActiveViewCount > 1u
+                    ? gpuPass.ReadPerViewDrawCount(1u)
+                    : 0u;
+                RuntimeRenderingHostServices.Current.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
             }
         }
 
@@ -444,19 +440,19 @@ namespace XREngine.Rendering.Commands
             return false;
         }
 
-        private static void ConfigureGpuViewSet(GPURenderPassCollection gpuPass, XRRenderPipelineInstance.RenderingState renderState, XRCamera leftCamera)
+        private static void ConfigureGpuViewSet(GPURenderPassCollection gpuPass, IRuntimeRenderCommandExecutionState renderState, IRuntimeRenderCamera leftCamera)
         {
-            var settings = Engine.Rendering.Settings;
-            XRCamera? rightCamera = renderState.StereoPass ? renderState.StereoRightEyeCamera : null;
+            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+            IRuntimeRenderCamera? rightCamera = renderState.StereoPass ? renderState.StereoRightEyeCamera : null;
             bool stereo = renderState.StereoPass && rightCamera is not null;
-            bool includeMirror = settings.RenderWindowsWhileInVR && !settings.VrMirrorComposeFromEyeTextures;
-            bool includeFoveated = stereo && settings.EnableVrFoveatedViewSet;
+            bool includeMirror = hostServices.RenderWindowsWhileInVR && !hostServices.VrMirrorComposeFromEyeTextures;
+            bool includeFoveated = stereo && hostServices.EnableVrFoveatedViewSet;
             float foveationOuter = Math.Clamp(
-                settings.VrFoveationOuterRadius + settings.VrFoveationVisibilityMargin,
-                settings.VrFoveationInnerRadius,
+                hostServices.VrFoveationOuterRadius + hostServices.VrFoveationVisibilityMargin,
+                hostServices.VrFoveationInnerRadius,
                 1.5f);
-            float fullResNearDistance = settings.VrFoveationForceFullResForUiAndNearField
-                ? settings.VrFoveationFullResNearDistanceMeters
+            float fullResNearDistance = hostServices.VrFoveationForceFullResForUiAndNearField
+                ? hostServices.VrFoveationFullResNearDistanceMeters
                 : 0.0f;
 
             int viewCount = stereo ? 2 : 1;
@@ -524,11 +520,11 @@ namespace XREngine.Rendering.Commands
                     gpuPass.CommandCapacity * cursor,
                     gpuPass.CommandCapacity);
                 descriptors[(int)cursor].FoveationA = new Vector4(
-                    settings.VrFoveationCenterUv,
-                    settings.VrFoveationInnerRadius,
+                    hostServices.VrFoveationCenterUv,
+                    hostServices.VrFoveationInnerRadius,
                     foveationOuter);
                 descriptors[(int)cursor].FoveationB = new Vector4(
-                    settings.VrFoveationShadingRates,
+                    hostServices.VrFoveationShadingRates,
                     fullResNearDistance);
                 constants[(int)cursor] = CreateViewConstants(leftCamera);
                 cursor++;
@@ -548,11 +544,11 @@ namespace XREngine.Rendering.Commands
                         gpuPass.CommandCapacity * cursor,
                         gpuPass.CommandCapacity);
                     descriptors[(int)cursor].FoveationA = new Vector4(
-                        settings.VrFoveationCenterUv,
-                        settings.VrFoveationInnerRadius,
+                        hostServices.VrFoveationCenterUv,
+                        hostServices.VrFoveationInnerRadius,
                         foveationOuter);
                     descriptors[(int)cursor].FoveationB = new Vector4(
-                        settings.VrFoveationShadingRates,
+                        hostServices.VrFoveationShadingRates,
                         fullResNearDistance);
                     constants[(int)cursor] = CreateViewConstants(rightCamera);
                     cursor++;
@@ -615,15 +611,15 @@ namespace XREngine.Rendering.Commands
         }
 
         private static uint DetermineIndirectSourceViewId(
-            XRRenderPipelineInstance.RenderingState renderState,
-            XRCamera sceneCamera,
-            XRCamera? stereoRightCamera)
+            IRuntimeRenderCommandExecutionState renderState,
+            IRuntimeRenderCamera sceneCamera,
+            IRuntimeRenderCamera? stereoRightCamera)
         {
             if (!renderState.StereoPass || stereoRightCamera is null)
                 return 0u;
 
-            if (sceneCamera.Parameters is XROVRCameraParameters ovrParams)
-                return ovrParams.LeftEye ? 0u : 1u;
+            if (sceneCamera.StereoEyeLeft.HasValue)
+                return sceneCamera.StereoEyeLeft.Value ? 0u : 1u;
 
             if (ReferenceEquals(sceneCamera, stereoRightCamera))
                 return 1u;
@@ -663,7 +659,7 @@ namespace XREngine.Rendering.Commands
             };
         }
 
-        private static GPUViewConstants CreateViewConstants(XRCamera camera)
+        private static GPUViewConstants CreateViewConstants(IRuntimeRenderCamera camera)
         {
             Matrix4x4 view = camera.Transform.InverseRenderMatrix;
             Matrix4x4 projection = camera.ProjectionMatrix;

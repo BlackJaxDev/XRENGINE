@@ -58,12 +58,12 @@ namespace XREngine.Components.Lights
         /// </summary>
         private ConcurrentHashSet<XRCamera> _collectedCameras = [];
         private ConcurrentHashSet<XRCamera> _renderingCameras = [];
-        private bool RenderCommand_OnPreAddRenderCommands(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
+        private bool RenderCommand_OnPreAddRenderCommands(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
-            if (camera is null || ShouldNotRenderThisMirror(camera))
+            if (camera is not XRCamera renderCamera || ShouldNotRenderThisMirror(renderCamera))
                 return false;
 
-            _collectedCameras.Add(camera);
+            _collectedCameras.Add(renderCamera);
             //UpdateMirrorCamera(camera, true);
             CollectVisible();
             return true;

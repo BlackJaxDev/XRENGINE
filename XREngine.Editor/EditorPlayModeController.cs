@@ -2,6 +2,7 @@ using XREngine.Components;
 using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
+using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;
 
 namespace XREngine.Editor;
@@ -364,8 +365,8 @@ public static class EditorPlayModeController
                 continue;
             }
 
-            var viewport = player.Viewport;
-            var pawn = player.ControlledPawn;
+            var viewport = player.Viewport as XRViewport;
+            var pawn = player.ControlledPawn as PawnComponent;
             var pawnCamera = pawn?.GetCamera();
             Debug.Out(
                 $"[EditorPlayModeController] {phase}: P{playerIndex + 1} Pawn={pawn?.Name ?? "<null>"} " +
@@ -496,7 +497,7 @@ public static class EditorPlayModeController
             Debug.Out($"[EditorPlayModeController] RefreshViewportCamera completed");
 
             // Enhanced debug logging for viewport/camera binding diagnosis
-            var actualViewport = localPlayer.Viewport;
+            var actualViewport = localPlayer.Viewport as XRViewport;
             var pawnCamera = resolvedPawn.GetCamera();
             var xrCam = pawnCamera?.Camera;
             

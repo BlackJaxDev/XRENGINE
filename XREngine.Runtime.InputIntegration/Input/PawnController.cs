@@ -1,10 +1,11 @@
 ﻿using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Input;
 using XREngine.Networking;
 using XREngine.Players;
 using XREngine.Scene;
 
-namespace XREngine.Input
+namespace XREngine.Runtime.InputIntegration
 {
     /// <summary>
     /// This base class is used to send input information to a movement component for an actor.
@@ -41,15 +42,12 @@ namespace XREngine.Input
         XRComponent? IPawnController.ControlledPawnComponent
         {
             get => ControlledPawn;
-            set => ControlledPawn = value as PawnComponent;
+            set => ControlledPawn = value;
         }
 
         // --- EnqueuePossession (explicit interface → delegates to EnqueuePosession) ---
         void IPawnController.EnqueuePossession(XRComponent pawn)
-        {
-            if (pawn is PawnComponent pc)
-                EnqueuePosession(pc);
-        }
+            => EnqueuePosession(pawn);
 
         // --- LocalPlayerIndex (explicit interface → virtual dispatch) ---
         ELocalPlayerIndex? IPawnController.LocalPlayerIndex => GetLocalPlayerIndexCore();
@@ -58,10 +56,10 @@ namespace XREngine.Input
         // --- ApplyNetworkTransform (virtual, overridden by RemotePlayerController) ---
         public virtual void ApplyNetworkTransform(PlayerTransformUpdate update) { }
         //TODO: gamemode vs pawncontroller possession queue usage?
-        protected readonly Queue<PawnComponent> _pawnPossessionQueue = new();
+        protected readonly Queue<XRComponent> _pawnPossessionQueue = new();
 
-        protected PawnComponent? _controlledPawn;
-        public virtual PawnComponent? ControlledPawn
+        protected XRComponent? _controlledPawn;
+        public virtual XRComponent? ControlledPawn
         {
             get => _controlledPawn;
             set => SetField(ref _controlledPawn, value is null && _pawnPossessionQueue.Count > 0 ? _pawnPossessionQueue.Dequeue() : value);
@@ -88,7 +86,8 @@ namespace XREngine.Input
             switch (propName)
             {
                 case nameof(ControlledPawn):
-                    ControlledPawn?.Controller = this;
+                    if (ControlledPawn is IRuntimeInputControllablePawn controllablePawn)
+                        controllablePawn.Controller = this;
                     break;
             }
         }
@@ -98,7 +97,7 @@ namespace XREngine.Input
         /// If the currently possessed pawn is null, possesses the given pawn immediately.
         /// </summary>
         /// <param name="pawn">The pawn to possess.</param>
-        public void EnqueuePosession(PawnComponent pawn)
+        public void EnqueuePosession(XRComponent pawn)
         {
             if (ControlledPawn is null)
                 ControlledPawn = pawn;

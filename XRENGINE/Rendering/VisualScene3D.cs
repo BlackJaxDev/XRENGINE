@@ -58,7 +58,7 @@ namespace XREngine.Scene
 
         public override IRenderTree GenericRenderTree => RenderTree;
 
-        public override void DebugRender(XRCamera? camera, bool onlyContainingItems = false)
+        public override void DebugRender(IRuntimeCullingCamera? camera, bool onlyContainingItems = false)
             => RenderTree.DebugRender(camera?.WorldFrustum(), onlyContainingItems, RenderAABB);
 
         public void RenderMeshBoundsDebug(XRCamera? camera)
@@ -116,19 +116,19 @@ namespace XREngine.Scene
 
         public override void CollectRenderedItems(
             RenderCommandCollection meshRenderCommands,
-            XRCamera? camera,
+            IRuntimeCullingCamera? camera,
             bool cullWithFrustum,
-            Func<XRCamera>? cullingCameraOverride,
+            Func<IRuntimeCullingCamera>? cullingCameraOverride,
             IVolume? collectionVolumeOverride,
             bool collectMirrors)
         {
             using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems");
 
-            XRCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
+            IRuntimeCullingCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
             IVolume? collectionVolume = collectionVolumeOverride ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
             CollectRenderedItems(meshRenderCommands, collectionVolume, camera, collectMirrors);
         }
-        public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
+        public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors)
         {
             using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems");
             int visibleRenderables = 0;
@@ -171,7 +171,7 @@ namespace XREngine.Scene
 
         public (uint Draws, uint Instances) LastGpuVisibility => (_lastGpuVisibleDraws, _lastGpuVisibleInstances);
 
-        internal void RecordGpuVisibility(uint draws, uint instances)
+        public override void RecordGpuVisibility(uint draws, uint instances)
         {
             _lastGpuVisibleDraws = draws;
             _lastGpuVisibleInstances = instances;
@@ -403,7 +403,7 @@ namespace XREngine.Scene
             }
         }
 
-        private void CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
+        private void CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors)
         {
             using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
 

@@ -18,7 +18,6 @@
 #define XRENGINE_UBER_DISABLE_PARALLAX 1
 
 #ifdef XRENGINE_UBER_IMPORT_MATERIAL
-#define XRENGINE_UBER_DISABLE_ALPHA_MASKS 1
 #define XRENGINE_UBER_DISABLE_MATERIAL_AO 1
 #define XRENGINE_UBER_DISABLE_EMISSION 1
 #define XRENGINE_UBER_DISABLE_MATCAP 1
@@ -30,6 +29,13 @@
 #undef PI
 #pragma snippet "ForwardLighting"
 #pragma snippet "AmbientOcclusionSampling"
+#pragma snippet "NormalEncoding"
+
+#if defined(XRENGINE_FORWARD_PPLL)
+#pragma snippet "ExactTransparencyPpll"
+#elif defined(XRENGINE_FORWARD_DEPTH_PEEL)
+#pragma snippet "ExactTransparencyDepthPeel"
+#endif
 
 // ============================================
 // Fragment Inputs
@@ -43,7 +49,57 @@ layout(location = 20) in vec3 FragPosLocal;
 // ============================================
 // Fragment Output
 // ============================================
+#if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
+layout(location = 0) out vec2 Normal;
+#elif defined(XRENGINE_SHADOW_CASTER_PASS)
+layout(location = 0) out float Depth;
+#elif defined(XRENGINE_FORWARD_WEIGHTED_OIT)
+layout(location = 0) out vec4 OutAccum;
+layout(location = 1) out vec4 OutRevealage;
+#else
 layout(location = 0) out vec4 FragColor;
+#endif
+
+#if defined(XRENGINE_FORWARD_WEIGHTED_OIT)
+float XRE_ComputeOitWeight(float alpha)
+{
+    float depthWeight = clamp(1.0 - gl_FragCoord.z * 0.85, 0.05, 1.0);
+    return clamp(alpha * (0.25 + depthWeight * depthWeight * 4.0), 1e-2, 8.0);
+}
+
+void XRE_WriteWeightedBlendedOit(vec4 shadedColor)
+{
+    float alpha = clamp(shadedColor.a, 0.0, 1.0);
+    if (alpha <= 0.0001)
+        discard;
+
+    float weight = XRE_ComputeOitWeight(alpha);
+    vec3 premultiplied = shadedColor.rgb * alpha;
+    OutAccum = vec4(premultiplied * weight, alpha * weight);
+    OutRevealage = vec4(alpha);
+}
+#endif
+
+void XRENGINE_BeginForwardFragmentOutput()
+{
+#if defined(XRENGINE_FORWARD_DEPTH_PEEL)
+    if (XRE_ShouldDiscardDepthPeelFragment())
+        discard;
+#endif
+}
+
+void XRENGINE_WriteForwardFragment(vec4 shadedColor)
+{
+#if defined(XRENGINE_FORWARD_WEIGHTED_OIT)
+    XRE_WriteWeightedBlendedOit(shadedColor);
+#elif defined(XRENGINE_FORWARD_PPLL)
+    XRE_StorePerPixelLinkedListFragment(shadedColor);
+#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS) || defined(XRENGINE_SHADOW_CASTER_PASS)
+    return;
+#else
+    FragColor = shadedColor;
+#endif
+}
 
 // ============================================
 // Internal Data Structures
@@ -703,6 +759,10 @@ void main() {
     
     // Build TBN matrix from the generated vertex contract.
     mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);
+
+#if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS)
+    XRENGINE_BeginForwardFragmentOutput();
+#endif
     
     // Apply parallax mapping to UVs (before any texture sampling)
 #ifndef XRENGINE_UBER_DISABLE_PARALLAX
@@ -752,6 +812,14 @@ void main() {
             discard;
         }
     }
+#endif
+
+#if defined(XRENGINE_SHADOW_CASTER_PASS)
+    Depth = gl_FragCoord.z;
+    return;
+#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS)
+    Normal = XRENGINE_EncodeNormal(mesh.worldNormal);
+    return;
 #endif
     
     // Apply detail textures (before lighting)
@@ -871,13 +939,15 @@ void main() {
     
     // Add emission to final color
     fragData.finalColor += fragData.emission;
-    
+
     // Final output
-    FragColor = vec4(fragData.finalColor, fragData.alpha);
-    
+    vec4 shadedColor = vec4(fragData.finalColor, fragData.alpha);
+
     // Handle transparency modes — opaque and cutout should always output full alpha
     // so MSAA resolve and post-processing compositing don't see partial transparency.
     if (_Mode == BLEND_MODE_OPAQUE || _Mode == BLEND_MODE_CUTOUT) {
-        FragColor.a = 1.0;
+        shadedColor.a = 1.0;
     }
+
+    XRENGINE_WriteForwardFragment(shadedColor);
 }

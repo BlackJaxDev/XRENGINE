@@ -53,7 +53,7 @@ public static class BootstrapEditorHookRegistration
 
     private sealed class EditorBootstrapInputBridge : IBootstrapInputBridge
     {
-        public PawnComponent? CreateFlyableCameraPawn(SceneNode cameraNode)
+        public XRComponent? CreateFlyableCameraPawn(SceneNode cameraNode)
             => cameraNode.AddComponent<EditorFlyingCameraPawnComponent>();
     }
 }

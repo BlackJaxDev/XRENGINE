@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.Linq;
+using System.Numerics;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
 using XREngine.Components.Scene.Mesh;
@@ -7,7 +8,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Components
 {
-    public abstract class HeightScaleBaseComponent : XRComponent
+    public abstract class HeightScaleBaseComponent : XRComponent, IRuntimeVrHeightScaleComponent
     {
         public HeightScaleBaseComponent() { }
 
@@ -29,13 +30,15 @@ namespace XREngine.Components
             set => SetField(ref _footTransform, value);
         }
 
-        public HumanoidComponent? HumanoidComponent { get; set; }
-        public CharacterMovement3DComponent? CharacterMovementComponent { get; set; }
+        public XRComponent? HumanoidComponent { get; set; }
+        public XRComponent? CharacterMovementComponent { get; set; }
 
-        public HumanoidComponent? GetHumanoid()
-            => HumanoidComponent ?? GetSiblingComponent<HumanoidComponent>();
-        public CharacterMovement3DComponent? GetCharacterMovement()
-            => CharacterMovementComponent ?? GetSiblingComponent<CharacterMovement3DComponent>();
+        public IHumanoidHeightReference? GetHumanoid()
+            => HumanoidComponent as IHumanoidHeightReference
+            ?? SceneNode.GetComponents<XRComponent>().Where(component => component != this).OfType<IHumanoidHeightReference>().FirstOrDefault();
+        public IRuntimeCharacterMovementComponent? GetCharacterMovement()
+            => CharacterMovementComponent as IRuntimeCharacterMovementComponent
+            ?? SceneNode.GetComponents<XRComponent>().Where(component => component != this).OfType<IRuntimeCharacterMovementComponent>().FirstOrDefault();
 
         public Vector3 ScaledToRealWorldEyeOffsetFromHead => EyeOffsetFromHead * ModelToRealWorldHeightRatio;
 
@@ -58,11 +61,11 @@ namespace XREngine.Components
             if (h is null)
                 return;
 
-            var headNode = h.Head.Node;
+            var headNode = h.HeadNode;
             if (headNode is null)
                 return;
 
-            var rootTfm = h.SceneNode.Transform;
+            var rootTfm = h.RootTransform;
             var headTfm = headNode.Transform;
 
             float eyeY = headTfm.BindMatrix.Translation.Y + EyeOffsetFromHead.Y;
@@ -78,7 +81,7 @@ namespace XREngine.Components
         /// Calculates the average position of all vertices rigged to bones that contain the word "eye" in their name and returns the difference from the head bone.
         /// </summary>
         /// <returns></returns>
-        public void CalculateEyeOffsetFromHead(ModelComponent? eyesModel, string? eyeLBoneName, string? eyeRBoneName, bool forceXToZero = true)
+        public void CalculateEyeOffsetFromHead(XRComponent? eyesModelComponent, string? eyeLBoneName, string? eyeRBoneName, bool forceXToZero = true)
         {
             EyeOffsetFromHead = Vector3.Zero;
 
@@ -86,10 +89,11 @@ namespace XREngine.Components
             if (h is null)
                 return;
 
+            ModelComponent? eyesModel = eyesModelComponent as ModelComponent;
             if (eyesModel is null)
                 return;
 
-            var headNode = h.Head.Node;
+            var headNode = h.HeadNode;
             if (headNode is null)
                 return;
 
@@ -147,7 +151,7 @@ namespace XREngine.Components
                 case nameof(CrouchedHeightRatio):
                 case nameof(ProneHeightRatio):
                     {
-                        CharacterMovement3DComponent? movement = GetCharacterMovement();
+                        IRuntimeCharacterMovementComponent? movement = GetCharacterMovement();
                         if (movement is not null)
                         {
                             float height = ModelHeightMeters * ModelToRealWorldHeightRatio;
@@ -164,13 +168,13 @@ namespace XREngine.Components
 
         protected void UpdateHeightScale()
         {
-            HumanoidComponent? humanoid = GetHumanoid();
+            IHumanoidHeightReference? humanoid = GetHumanoid();
             if (humanoid is null)
                 return;
 
             float height = ModelHeightMeters * ModelToRealWorldHeightRatio;
 
-            TransformBase rootTfm = humanoid.Transform;
+            TransformBase rootTfm = humanoid.RootTransform;
             TransformBase? footTfm = FootTransform ?? rootTfm.Parent;
 
             float radius = height * RadiusRatio;
@@ -178,7 +182,7 @@ namespace XREngine.Components
             float capsuleHeight = height - radius2;
             float halfHeight = capsuleHeight * 0.5f;
 
-            CharacterMovement3DComponent? movement = GetCharacterMovement();
+            IRuntimeCharacterMovementComponent? movement = GetCharacterMovement();
             if (movement is not null)
             {
                 movement.StandingHeight = capsuleHeight;

@@ -68,7 +68,7 @@ namespace XREngine
 
             public static ETrackingUniverseOrigin Origin { get; set; } = ETrackingUniverseOrigin.TrackingUniverseStanding;
 
-            public static VRIKCalibrator.Settings CalibrationSettings { get; set; } = new VRIKCalibrator.Settings();
+            public static VRIKCalibrationSettings CalibrationSettings { get; set; } = new VRIKCalibrationSettings();
 
             private static readonly Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> _actions = [];
             public static Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> Actions => _actions;
@@ -195,7 +195,7 @@ namespace XREngine
 
             /// <summary>
             /// Calculates the interpupillary distance (IPD) in world space,
-            /// scaling the real-world IPD to match the avatar’s in-world height.
+            /// scaling the real-world IPD to match the avatarï¿½s in-world height.
             /// </summary>
             public static float ScaledIPD
                 => RealWorldIPD * ModelToRealWorldHeightRatio * IPDScalar;

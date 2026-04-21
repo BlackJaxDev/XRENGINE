@@ -26,7 +26,7 @@ namespace XREngine.Components
             _quadtreeNodesRendering.Clear();
             (_quadtreeNodesUpdating, _quadtreeNodesRendering) = (_quadtreeNodesRendering, _quadtreeNodesUpdating);
         }
-        protected override void RenderInfo_PreRenderCallback(RenderInfo info, RenderCommand command, XRCamera? camera)
+        protected override void RenderInfo_PreRenderCallback(RenderInfo info, RenderCommand command, IRuntimeRenderCamera? camera)
         {
             base.RenderInfo_PreRenderCallback(info, command, camera);
             static void AddNodes((QuadtreeNodeBase node, bool intersects) d)

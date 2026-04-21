@@ -114,11 +114,11 @@ namespace XREngine.Rendering.UI
             // Create and configure the streaming session.
             _streamingSession = StreamingSubsystem.CreateSession();
             _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
-            _cachedAudioSource = GetSiblingComponent<AudioSourceComponent>();
+            _cachedAudioSource = ResolveAudioSource();
             Debug.UI($"[AV Setup] Pipeline starting: audioSource={(
                 _cachedAudioSource != null
                     ? "cached"
-                    : "null — AudioSourceComponent not yet a sibling; drain loop will refresh"
+                    : "null — audio streaming component not yet a sibling; drain loop will refresh"
                 )}, url='{resolved.Url}'");
             _streamingRetryCount = resolved.RetryCount;
             _streamingOpenOptions = resolved.OpenOptions ?? new StreamOpenOptions();
@@ -169,11 +169,11 @@ namespace XREngine.Rendering.UI
 
             _streamingSession = StreamingSubsystem.CreateSession();
             _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
-            _cachedAudioSource = GetSiblingComponent<AudioSourceComponent>();
+            _cachedAudioSource = ResolveAudioSource();
             Debug.UI($"[AV Setup] Pipeline starting (variant): audioSource={(
                 _cachedAudioSource != null
                     ? "cached"
-                    : "null — AudioSourceComponent not yet a sibling; drain loop will refresh"
+                    : "null — audio streaming component not yet a sibling; drain loop will refresh"
                 )}, variant='{variant.DisplayLabel}'");
             _streamingRetryCount = 0;
             _streamingOpenOptions = new StreamOpenOptions();

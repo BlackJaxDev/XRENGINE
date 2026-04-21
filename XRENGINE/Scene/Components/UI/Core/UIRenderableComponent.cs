@@ -30,7 +30,7 @@ namespace XREngine.Rendering.UI
         //TODO: register callback on canvas to set RenderInfo3D/2D Visible property so no quadtree/octree culling is done if the canvas is not visible
 
         private static int _shouldRender3DDiagCount = 0;
-        protected virtual bool ShouldRender3D(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
+        protected virtual bool ShouldRender3D(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
             var tfm = BoundableTransform;
             bool diagLog = _shouldRender3DDiagCount < 20;
@@ -76,7 +76,7 @@ namespace XREngine.Rendering.UI
         }
 
         private static int _shouldRender2DDiagCount = 0;
-        protected virtual bool ShouldRender2D(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
+        protected virtual bool ShouldRender2D(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
             var tfm = BoundableTransform;
             bool diagLog = _shouldRender2DDiagCount < 20;

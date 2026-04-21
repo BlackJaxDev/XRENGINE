@@ -34,6 +34,9 @@ namespace XREngine.Rendering.OpenGL
                     }
 
                     XRMaterial? shadowSourceMaterial = localMaterialOverride ?? MeshRenderer.Material;
+                    if (globalMaterialOverride is not null && shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == true)
+                        return (Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial)!;
+
                     XRMaterial? shadowVariant = shadowSourceMaterial?.ShadowCasterVariant;
                     if (shadowVariant is not null)
                     {

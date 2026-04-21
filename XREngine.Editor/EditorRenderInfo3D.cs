@@ -28,9 +28,9 @@ public class EditorRenderInfo3D : RenderInfo3D
         set => SetField(ref _editorVisibilityMode, value);
     }
 
-    public override bool AllowRender(IVolume? cullingVolume, RenderCommandCollection passes, XRCamera? camera, bool containsOnly, bool collectMirrors) =>
-        (Owner is not CameraComponent ccomp || ccomp.Camera != camera) && 
-        (Owner is not XRCamera cam || cam != camera) && 
+    public override bool AllowRender(IVolume? cullingVolume, RenderCommandCollection passes, IRuntimeCullingCamera? camera, bool containsOnly, bool collectMirrors) =>
+        (Owner is not CameraComponent ccomp || !object.ReferenceEquals(ccomp.Camera, camera)) && 
+        (Owner is not XRCamera cam || !object.ReferenceEquals(cam, camera)) && 
         (!EditorState.InPlayMode || !VisibleInEditorOnly) && 
         base.AllowRender(cullingVolume, passes, camera, containsOnly, collectMirrors);
 }

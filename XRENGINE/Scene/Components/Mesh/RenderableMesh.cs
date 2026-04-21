@@ -502,7 +502,7 @@ namespace XREngine.Components.Scene.Mesh
             //vertexProgram.Uniform(EEngineUniform.RootInvModelMatrix.ToString(), /*RootTransform?.InverseWorldMatrix ?? */Matrix4x4.Identity);
         }
 
-        private bool BeforeAdd(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
+        private bool BeforeAdd(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
             var rend = CurrentLODRenderer;
             bool skinned = (rend?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
@@ -541,7 +541,7 @@ namespace XREngine.Components.Scene.Mesh
             if (mat is not null)
             {
                 if (ShouldRecordImportedTextureStreamingUsage(passes.IsShadowPass, Engine.Rendering.State.IsMainPass))
-                    XRTexture2D.RecordImportedTextureStreamingUsage(mat, BuildImportedTextureStreamingUsage(rend?.Mesh, camera, distance));
+                    XRTexture2D.RecordImportedTextureStreamingUsage(mat, BuildImportedTextureStreamingUsage(rend?.Mesh, camera as XRCamera, distance));
                 _rc.RenderPass = mat.RenderPass;
             }
 

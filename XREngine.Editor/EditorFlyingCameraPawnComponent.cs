@@ -24,6 +24,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.UI;
+using XREngine.Runtime.InputIntegration;
 using XREngine.Editor.UI;
 using XREngine.Scene;
 using XREngine.Scene.Components.Editing;
@@ -842,7 +843,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         Debug.Out("[DebugCamera] Exited debug camera mode.");
     }
 
-    private Func<XRCamera>? _originalCullingCameraOverride = null;
+    private Func<IRuntimeCullingCamera>? _originalCullingCameraOverride = null;
 
     /// <summary>
     /// Returns a camera configured with the stored frustum for culling visualization.

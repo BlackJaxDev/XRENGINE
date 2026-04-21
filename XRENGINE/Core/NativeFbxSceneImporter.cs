@@ -5,7 +5,6 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using System.Threading.Tasks;
 using XREngine.Animation;
-using XREngine.Components.Animation;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -204,7 +203,7 @@ internal static class NativeFbxSceneImporter
         return XREngine.Fbx.FbxTrace.TraceOperation(
             "NativeImporter",
             $"Importing '{sourceFilePath}' with {DescribeImportOptions(importOptions, scaleConversion, zUp, importLayer, rootTransformMatrix)}.",
-            result => $"Imported '{sourceFilePath}' into root '{result.RootNode.Name}': sceneNodes={CountSceneNodes(result.RootNode):N0}, materials={result.Materials.Count:N0}, meshes={result.Meshes.Count:N0}, animationClips={result.RootNode.GetComponents<AnimationClipComponent>().Count():N0}",
+            result => $"Imported '{sourceFilePath}' into root '{result.RootNode.Name}': sceneNodes={CountSceneNodes(result.RootNode):N0}, materials={result.Materials.Count:N0}, meshes={result.Meshes.Count:N0}, animationClips={RuntimeAnimationComponentActivator.CountAnimationClipComponents(result.RootNode):N0}",
             () =>
             {
                 using FbxStructuralDocument structural = FbxStructuralParser.ParseFile(sourceFilePath);
@@ -913,10 +912,8 @@ internal static class NativeFbxSceneImporter
                 TotalAnimCount = CountAnimatedMembers(builder.Root),
             };
 
-            AnimationClipComponent component = rootNode.AddComponent<AnimationClipComponent>()!;
-            component.Name = clip.Name;
-            component.Animation = clip;
-            attachedClipCount++;
+            if (RuntimeAnimationComponentActivator.AddAnimationClipComponent(rootNode, clip) is not null)
+                attachedClipCount++;
 
             XREngine.Fbx.FbxTrace.Verbose(
                 "NativeImporter",

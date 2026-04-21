@@ -4,6 +4,8 @@ using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
+using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -181,6 +183,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool IsShadowPass => false;
         public bool IsStereoPass => false;
         public bool IsSceneCapturePass => false;
+        public bool RenderCullingVolumesEnabled => false;
         public bool IsNvidia => false;
         public string AssetFileExtension => "asset";
         public string? TextureFallbackPath => null;
@@ -190,19 +193,39 @@ public sealed class RuntimeRenderingHostServicesTests
         public long LastRenderTimestampTicks => 0L;
         public long TrackedVramBytes => 0L;
         public long TrackedVramBudgetBytes => long.MaxValue;
+        public bool EnableGpuIndirectDebugLogging => false;
         public ETwoPlayerPreference TwoPlayerViewportPreference => ETwoPlayerPreference.SplitHorizontally;
         public EThreePlayerPreference ThreePlayerViewportPreference => EThreePlayerPreference.PreferFirstPlayer;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;
+        public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => null;
+        public IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext => null;
+        public bool IsPlayModeTransitioning => false;
+        public string PlayModeStateName => "Stopped";
+        public EAntiAliasingMode DefaultAntiAliasingMode => EAntiAliasingMode.None;
+        public uint DefaultMsaaSampleCount => 1u;
+        public bool DefaultOutputHDR => false;
+        public float DefaultTsrRenderScale => 1.0f;
         public bool IsWindowScenePanelPresentationEnabled => false;
         public bool ForceFullViewport => false;
         public bool RenderWindowsWhileInVR => false;
+        public bool EnableVrFoveatedViewSet => false;
         public bool IsInVR => false;
         public bool IsOpenXRActive => false;
         public bool VrMirrorComposeFromEyeTextures => false;
+        public Vector2 VrFoveationCenterUv => new(0.5f, 0.5f);
+        public float VrFoveationInnerRadius => 0.35f;
+        public float VrFoveationOuterRadius => 0.85f;
+        public Vector3 VrFoveationShadingRates => new(1.0f, 0.7f, 0.5f);
+        public float VrFoveationVisibilityMargin => 0.05f;
+        public bool VrFoveationForceFullResForUiAndNearField => true;
+        public float VrFoveationFullResNearDistanceMeters => 1.5f;
         public bool ShouldForceDebugOpaquePipeline => false;
 
         public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)
             => RuntimeGraphicsApiKind.Unknown;
+
+        public IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline)
+            => null;
 
         public void LogOutput(string message)
         {
@@ -288,6 +311,21 @@ public sealed class RuntimeRenderingHostServicesTests
         public void EnqueueRenderThreadCoroutine(Func<bool> task)
             => task();
 
+        public IDisposable? PushTransformId(uint transformId)
+            => null;
+
+        public void RecordOctreeSkippedMove()
+        {
+        }
+
+        public void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
+        {
+        }
+
         public TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new()
             => null;
 
@@ -322,6 +360,10 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
+        {
+        }
+
         public void DestroyObjectsForRenderer(IRuntimeRendererHost renderer)
         {
         }
@@ -331,6 +373,10 @@ public sealed class RuntimeRenderingHostServicesTests
 
         public IRuntimeRenderPipelineHost? CreateDebugOpaquePipelineOverride()
             => null;
+
+        public void PrepareUpscaleBridgeForFrame(IRuntimeViewportHost viewport, IRuntimeRenderPipelineFrameContext pipeline)
+        {
+        }
 
         public void ConfigureMaterialProgram(XRMaterialBase material, XRRenderProgram program)
         {

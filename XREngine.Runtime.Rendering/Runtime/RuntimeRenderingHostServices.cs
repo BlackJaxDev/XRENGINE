@@ -3,7 +3,11 @@ using System.IO;
 using System.Numerics;
 using System.Threading;
 using XREngine.Core.Files;
+using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering;
 
@@ -18,6 +22,70 @@ public interface IRuntimeRenderPipelineHost
 {
 }
 
+public interface IRuntimeRenderPipelineDebugContext
+{
+    string DebugName { get; }
+    string DebugDescriptor { get; }
+}
+
+public interface IRuntimeRenderPipelineFrameContext : IRuntimeRenderPipelineDebugContext
+{
+    IRuntimeRenderPipelineHost? PipelineHost { get; }
+    IRuntimeRenderCommandExecutionState RenderState { get; }
+    IRuntimeRenderCamera? LastSceneCamera { get; }
+    IRuntimeRenderCamera? LastRenderingCamera { get; }
+    IRuntimeViewportHost? LastWindowViewport { get; }
+    bool? EffectiveOutputHDRThisFrame { get; }
+    EAntiAliasingMode? EffectiveAntiAliasingModeThisFrame { get; }
+    uint? EffectiveMsaaSampleCountThisFrame { get; }
+    float? EffectiveTsrRenderScaleThisFrame { get; }
+}
+
+public interface IRuntimeGpuRenderPassHost
+{
+    int RenderPass { get; }
+    uint CommandCapacity { get; }
+    uint ActiveViewCount { get; }
+    uint IndirectSourceViewId { get; }
+    void ConfigureViewSet(ReadOnlySpan<GPUViewDescriptor> descriptors, ReadOnlySpan<GPUViewConstants> constants);
+    void SetIndirectSourceViewId(uint viewId);
+    void GetVisibleCounts(out uint drawCount, out uint instanceCount, out uint overflowMarker);
+    uint ReadPerViewDrawCount(uint viewId);
+}
+
+public interface IRuntimeRenderCommandSceneContext
+{
+    void RenderGpuPass(IRuntimeGpuRenderPassHost gpuPass);
+    void RecordGpuVisibility(uint draws, uint instances);
+}
+
+public interface IRuntimeRenderCamera
+{
+    TransformBase Transform { get; }
+    Matrix4x4 ProjectionMatrix { get; }
+    float NearZ { get; }
+    float FarZ { get; }
+    bool? StereoEyeLeft { get; }
+    bool RendersLayer(int layer);
+    float DistanceFromRenderNearPlane(Vector3 point);
+}
+
+public interface IRuntimeCullingCamera : IRuntimeRenderCamera
+{
+    Frustum WorldFrustum();
+    BoundingRectangleF? GetOrthoCameraBounds();
+}
+
+public interface IRuntimeRenderCommandExecutionState
+{
+    IRuntimeViewportHost? WindowViewport { get; }
+    IRuntimeRenderCommandSceneContext? RenderingScene { get; }
+    IRuntimeRenderCamera? SceneCamera { get; }
+    IRuntimeRenderCamera? RenderingCamera { get; }
+    IRuntimeRenderCamera? StereoRightEyeCamera { get; }
+    bool StereoPass { get; }
+}
+
 public interface IRuntimeRendererHost
 {
 }
@@ -28,6 +96,17 @@ public interface IRuntimeRenderWindowHost
 
 public interface IRuntimeViewportHost
 {
+    int Width { get; }
+    int Height { get; }
+    int InternalWidth { get; }
+    int InternalHeight { get; }
+}
+
+public interface IRuntimeScreenSpaceUserInterface
+{
+    bool IsActive { get; }
+    bool IsScreenSpace { get; }
+    void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO);
 }
 
 public interface IRuntimeWindowScenePanelAdapter : IDisposable
@@ -60,6 +139,7 @@ public interface IRuntimeRenderingHostServices
     bool IsShadowPass { get; }
     bool IsStereoPass { get; }
     bool IsSceneCapturePass { get; }
+    bool RenderCullingVolumesEnabled { get; }
     bool IsNvidia { get; }
     string AssetFileExtension { get; }
     string? TextureFallbackPath { get; }
@@ -69,10 +149,20 @@ public interface IRuntimeRenderingHostServices
     long LastRenderTimestampTicks { get; }
     long TrackedVramBytes { get; }
     long TrackedVramBudgetBytes { get; }
+    bool EnableGpuIndirectDebugLogging { get; }
     ETwoPlayerPreference TwoPlayerViewportPreference { get; }
     EThreePlayerPreference ThreePlayerViewportPreference { get; }
     RuntimeGraphicsApiKind CurrentRenderBackend { get; }
+    IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState { get; }
+    IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext { get; }
+    bool IsPlayModeTransitioning { get; }
+    string PlayModeStateName { get; }
+    EAntiAliasingMode DefaultAntiAliasingMode { get; }
+    uint DefaultMsaaSampleCount { get; }
+    bool DefaultOutputHDR { get; }
+    float DefaultTsrRenderScale { get; }
     RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window);
+    IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline);
     void LogOutput(string message);
     void LogWarning(string message);
     void LogException(Exception ex, string? context = null);
@@ -107,6 +197,10 @@ public interface IRuntimeRenderingHostServices
     void EnqueueRenderThreadTask(Action task);
     void EnqueueRenderThreadTask(Action task, string reason);
     void EnqueueRenderThreadCoroutine(Func<bool> task);
+    IDisposable? PushTransformId(uint transformId);
+    void RecordOctreeSkippedMove();
+    void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color);
+    void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color);
     TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new();
     IRuntimeRenderPipelineHost? CreateDefaultRenderPipeline();
     IRuntimeRendererHost CreateRenderer(IRuntimeRenderWindowHost window, RuntimeGraphicsApiKind apiKind);
@@ -118,14 +212,24 @@ public interface IRuntimeRenderingHostServices
     bool IsWindowScenePanelPresentationEnabled { get; }
     bool ForceFullViewport { get; }
     bool RenderWindowsWhileInVR { get; }
+    bool EnableVrFoveatedViewSet { get; }
     bool IsInVR { get; }
     bool IsOpenXRActive { get; }
     bool VrMirrorComposeFromEyeTextures { get; }
+    Vector2 VrFoveationCenterUv { get; }
+    float VrFoveationInnerRadius { get; }
+    float VrFoveationOuterRadius { get; }
+    Vector3 VrFoveationShadingRates { get; }
+    float VrFoveationVisibilityMargin { get; }
+    bool VrFoveationForceFullResForUiAndNearField { get; }
+    float VrFoveationFullResNearDistanceMeters { get; }
     void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight);
+    void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws);
     void DestroyObjectsForRenderer(IRuntimeRendererHost renderer);
     bool IsViewportCurrentlyRendering(IRuntimeViewportHost viewport);
     bool ShouldForceDebugOpaquePipeline { get; }
     IRuntimeRenderPipelineHost? CreateDebugOpaquePipelineOverride();
+    void PrepareUpscaleBridgeForFrame(IRuntimeViewportHost viewport, IRuntimeRenderPipelineFrameContext pipeline);
     void ConfigureMaterialProgram(XRMaterialBase material, XRRenderProgram program);
     int GetBytesPerPixel(ESizedInternalFormat format);
     int GetBytesPerPixel(ERenderBufferStorage storage);
@@ -187,6 +291,7 @@ public static class RuntimeRenderingHostServices
         public bool IsShadowPass => false;
         public bool IsStereoPass => false;
         public bool IsSceneCapturePass => false;
+        public bool RenderCullingVolumesEnabled => false;
         public bool IsNvidia => false;
         public string AssetFileExtension => "asset";
         public string? TextureFallbackPath => null;
@@ -196,12 +301,24 @@ public static class RuntimeRenderingHostServices
         public long LastRenderTimestampTicks => 0L;
         public long TrackedVramBytes => 0L;
         public long TrackedVramBudgetBytes => long.MaxValue;
+        public bool EnableGpuIndirectDebugLogging => false;
         public ETwoPlayerPreference TwoPlayerViewportPreference => ETwoPlayerPreference.SplitHorizontally;
         public EThreePlayerPreference ThreePlayerViewportPreference => EThreePlayerPreference.PreferFirstPlayer;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;
+        public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => null;
+        public IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext => null;
+        public bool IsPlayModeTransitioning => false;
+        public string PlayModeStateName => "Stopped";
+        public EAntiAliasingMode DefaultAntiAliasingMode => EAntiAliasingMode.None;
+        public uint DefaultMsaaSampleCount => 1u;
+        public bool DefaultOutputHDR => false;
+        public float DefaultTsrRenderScale => 1.0f;
 
         public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)
             => RuntimeGraphicsApiKind.Unknown;
+
+        public IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline)
+            => null;
 
         public void LogOutput(string message)
         {
@@ -291,6 +408,21 @@ public static class RuntimeRenderingHostServices
         public void EnqueueRenderThreadCoroutine(Func<bool> task)
             => task();
 
+        public IDisposable? PushTransformId(uint transformId)
+            => null;
+
+        public void RecordOctreeSkippedMove()
+        {
+        }
+
+        public void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
+        {
+        }
+
         public TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new()
             => null;
 
@@ -321,11 +453,23 @@ public static class RuntimeRenderingHostServices
         public bool IsWindowScenePanelPresentationEnabled => false;
         public bool ForceFullViewport => false;
         public bool RenderWindowsWhileInVR => false;
+        public bool EnableVrFoveatedViewSet => false;
         public bool IsInVR => false;
         public bool IsOpenXRActive => false;
         public bool VrMirrorComposeFromEyeTextures => false;
+        public Vector2 VrFoveationCenterUv => new(0.5f, 0.5f);
+        public float VrFoveationInnerRadius => 0.35f;
+        public float VrFoveationOuterRadius => 0.85f;
+        public Vector3 VrFoveationShadingRates => new(1.0f, 0.7f, 0.5f);
+        public float VrFoveationVisibilityMargin => 0.05f;
+        public bool VrFoveationForceFullResForUiAndNearField => true;
+        public float VrFoveationFullResNearDistanceMeters => 1.5f;
 
         public void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
+        {
+        }
+
+        public void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
         {
         }
 
@@ -340,6 +484,10 @@ public static class RuntimeRenderingHostServices
 
         public IRuntimeRenderPipelineHost? CreateDebugOpaquePipelineOverride()
             => null;
+
+        public void PrepareUpscaleBridgeForFrame(IRuntimeViewportHost viewport, IRuntimeRenderPipelineFrameContext pipeline)
+        {
+        }
 
         public void ConfigureMaterialProgram(XRMaterialBase material, XRRenderProgram program)
         {

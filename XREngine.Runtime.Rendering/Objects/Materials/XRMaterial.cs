@@ -22,6 +22,8 @@ namespace XREngine.Rendering
         private XRMaterial? _shadowCasterVariant;
         [YamlIgnore]
         private bool _shadowCasterVariantResolved;
+        [YamlIgnore]
+        private XRMaterial? _shadowBindingSourceMaterial;
 
         private int _opaqueRenderPass = (int)EDefaultRenderPass.OpaqueForward;
 
@@ -341,6 +343,14 @@ namespace XREngine.Rendering
             }
         }
 
+        [Browsable(false)]
+        [YamlIgnore]
+        public XRMaterial? ShadowBindingSourceMaterial
+        {
+            get => _shadowBindingSourceMaterial;
+            internal set => SetField(ref _shadowBindingSourceMaterial, value);
+        }
+
         public void InvalidateDepthNormalPrePassVariant()
         {
             _depthNormalPrePassVariant?.Destroy();
@@ -516,6 +526,52 @@ namespace XREngine.Rendering
             return ETransparencyMode.Opaque;
         }
 
+        public bool CanUseSharedOpaqueShadowMaterial()
+        {
+            if (GetEffectiveTransparencyMode() != ETransparencyMode.Opaque)
+                return false;
+
+            if (Parameter<ShaderFloat>("AlphaCutoff") is not null)
+                return false;
+
+            if (InferTransparencyMode() != ETransparencyMode.Opaque)
+                return false;
+
+            if (HasSettingUniformsHandlers)
+                return false;
+
+            return !VertexShadersRequireMaterialBindings()
+                && GeometryShaders.Count == 0
+                && TessEvalShaders.Count == 0
+                && TessCtrlShaders.Count == 0
+                && MeshShaders.Count == 0
+                && TaskShaders.Count == 0;
+        }
+
+        private bool VertexShadersRequireMaterialBindings()
+            => ShaderStageRequiresMaterialBindings(VertexShaders, EngineVertexUniformNames);
+
+        private static bool ShaderStageRequiresMaterialBindings(IEnumerable<XRShader> shaders, HashSet<string> engineManagedUniformNames)
+        {
+            foreach (XRShader shader in shaders)
+            {
+                string? source = shader?.Source?.Text;
+                if (string.IsNullOrWhiteSpace(source))
+                    return true;
+
+                foreach (Match match in StageUniformDeclRegex.Matches(source))
+                {
+                    string uniformName = match.Groups[2].Value;
+                    if (engineManagedUniformNames.Contains(uniformName))
+                        continue;
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public bool IsTransparentLike(ETransparencyMode? mode = null)
         {
             ETransparencyMode value = mode ?? GetEffectiveTransparencyMode();
@@ -524,6 +580,11 @@ namespace XREngine.Rendering
 
         private static bool ExactTransparencyEnabled
             => RuntimeRenderingHostServices.Current.EnableExactTransparencyTechniques;
+
+        private const int UberBlendModeOpaque = 0;
+        private const int UberBlendModeCutout = 1;
+        private const int UberBlendModeTransparent = 3;
+        private const int UberBlendModeAdditive = 4;
 
         private ETransparencyMode GetRuntimeTransparencyMode(ETransparencyMode effectiveMode)
             => !ExactTransparencyEnabled && effectiveMode is ETransparencyMode.PerPixelLinkedList or ETransparencyMode.DepthPeeling
@@ -640,7 +701,29 @@ namespace XREngine.Rendering
                     break;
             }
 
+            SyncUberTransparencyParameters(runtimeMode);
             SyncAlphaCutoffParameter();
+        }
+
+        private void SyncUberTransparencyParameters(ETransparencyMode runtimeMode)
+        {
+            var uberMode = Parameter<ShaderInt>("_Mode");
+            if (uberMode is not null)
+            {
+                int modeValue = runtimeMode switch
+                {
+                    ETransparencyMode.Opaque => UberBlendModeOpaque,
+                    ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage => UberBlendModeCutout,
+                    ETransparencyMode.Additive => UberBlendModeAdditive,
+                    _ => UberBlendModeTransparent,
+                };
+
+                uberMode.SetValue(modeValue);
+            }
+
+            var alphaForceOpaque = Parameter<ShaderFloat>("_AlphaForceOpaque");
+            if (alphaForceOpaque is not null)
+                alphaForceOpaque.SetValue(runtimeMode == ETransparencyMode.Opaque ? 1.0f : 0.0f);
         }
 
         private static void ConfigureMaterialProgram(XRMaterialBase material, XRRenderProgram program)
@@ -711,6 +794,10 @@ namespace XREngine.Rendering
             var alphaCutoff = Parameter<ShaderFloat>("AlphaCutoff");
             if (alphaCutoff is not null)
                 alphaCutoff.SetValue(AlphaCutoff);
+
+            var uberCutoff = Parameter<ShaderFloat>("_Cutoff");
+            if (uberCutoff is not null)
+                uberCutoff.SetValue(AlphaCutoff);
         }
 
         /// <summary>
@@ -722,6 +809,10 @@ namespace XREngine.Rendering
             @"\buniform\s+(?:(?:lowp|mediump|highp)\s+)?(\w+)\s+(\w+)\s*[;=]",
             RegexOptions.Compiled);
 
+        private static readonly Regex StageUniformDeclRegex = new(
+            @"^\s*(?:layout\s*\([^\)]*\)\s*)?uniform\s+(?:(?:lowp|mediump|highp)\s+)?(\w+)\s+(\w+)",
+            RegexOptions.Compiled | RegexOptions.Multiline);
+
         /// <summary>
         /// Engine-managed uniform names that should never appear in the material
         /// <see cref="XRMaterialBase.Parameters"/> array (they are set automatically
@@ -729,6 +820,20 @@ namespace XREngine.Rendering
         /// </summary>
         private static readonly HashSet<string> EngineUniformNames =
             new(Enum.GetNames<EEngineUniform>(), StringComparer.OrdinalIgnoreCase);
+
+        private static readonly HashSet<string> EngineVertexUniformNames = CreateEngineVertexUniformNames();
+
+        private static HashSet<string> CreateEngineVertexUniformNames()
+        {
+            HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+            foreach (EEngineUniform uniform in Enum.GetValues<EEngineUniform>())
+            {
+                names.Add(uniform.ToStringFast());
+                names.Add(uniform.ToVertexUniformName());
+            }
+
+            return names;
+        }
 
         /// <summary>
         /// Parses all shader sources for uniform declarations and synchronizes

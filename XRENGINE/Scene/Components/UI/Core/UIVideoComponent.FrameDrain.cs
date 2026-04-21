@@ -1,5 +1,6 @@
 using System;
 using XREngine.Components;
+using XREngine.Audio;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.VideoStreaming;
 using XREngine.Rendering.VideoStreaming.Interfaces;
@@ -29,24 +30,24 @@ namespace XREngine.Rendering.UI
         /// current playable buffer count for the caller's video-gate logic.
         /// </summary>
         private void DrainStreamingAudio(IMediaStreamSession session,
-                                         out AudioSourceComponent? audioSource,
+                                         out IAudioStreamingComponent? audioSource,
                                          out int queuedAudioBuffers)
         {
             audioSource = _cachedAudioSource;
 
-            // Late-init: the AudioSourceComponent may have been added to the sibling
+            // Late-init: the audio streaming component may have been added to the sibling
             // list AFTER StartStreamingPipelineOnMainThread cached a null reference
             // (this happens when UIVideoComponent is added to a node before
-            // AudioSourceComponent, e.g. UIEditorComponent adds them in that order).
+            // the audio component, e.g. UIEditorComponent adds them in that order).
             // Refresh the cache here so audio starts working without a restart.
             if (audioSource is null)
             {
-                audioSource = GetSiblingComponent<AudioSourceComponent>();
+                audioSource = ResolveAudioSource();
                 if (audioSource is not null)
                 {
                     _cachedAudioSource = audioSource;
-                    Debug.Out("[AV Setup] AudioSourceComponent discovered after pipeline start — cache refreshed. " +
-                              "Consider adding AudioSourceComponent before UIVideoComponent to avoid this.");
+                    Debug.Out("[AV Setup] Audio streaming component discovered after pipeline start — cache refreshed. " +
+                              "Consider adding the audio component before UIVideoComponent to avoid this.");
                 }
                 else
                 {
@@ -54,7 +55,7 @@ namespace XREngine.Rendering.UI
                     if (nowNoSrc - _lastNoListenersWarnTicks >= TimeSpan.TicksPerSecond * 5)
                     {
                         _lastNoListenersWarnTicks = nowNoSrc;
-                        Debug.UIWarning("[AV Audio] No sibling AudioSourceComponent found — audio is disabled. " +
+                        Debug.UIWarning("[AV Audio] No sibling audio streaming component found — audio is disabled. " +
                                         "Add an AudioSourceComponent to the same scene node as UIVideoComponent.");
                     }
                 }

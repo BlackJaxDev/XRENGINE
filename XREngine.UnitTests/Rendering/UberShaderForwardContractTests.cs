@@ -118,11 +118,38 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.IndexOf("#version 450 core", StringComparison.Ordinal).ShouldBeLessThan(
             source.IndexOf("#define XRENGINE_UBER_IMPORT_MATERIAL", StringComparison.Ordinal));
         source.ShouldContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_ALPHA_MASKS 1");
+        source.ShouldNotContain("#define XRENGINE_UBER_DISABLE_ALPHA_MASKS 1");
         source.ShouldContain("#define XRENGINE_UBER_DISABLE_MATERIAL_AO 1");
         source.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
         source.ShouldContain("#define XRENGINE_UBER_DISABLE_MATCAP 1");
         source.ShouldContain("#define XRENGINE_UBER_DISABLE_RENDER_TIME 1");
+    }
+
+    [Test]
+    public void ImportedUberTransparentVariant_PreservesImportFeatureSet_WhenNormalized()
+    {
+        XRShader weighted = ShaderHelper.GetWeightedBlendedOitForwardVariant(ShaderHelper.UberImportFragForward())
+            ?? throw new InvalidOperationException("Weighted Uber variant was null.");
+
+        XRShader normalized = ShaderHelper.GetStandardForwardVariant(weighted)
+            ?? throw new InvalidOperationException("Normalized Uber variant was null.");
+
+        string source = normalized.Source.Text ?? throw new InvalidOperationException("Normalized shader source text was null.");
+        source.ShouldContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
+        source.ShouldNotContain("#define XRENGINE_FORWARD_WEIGHTED_OIT");
+    }
+
+    [Test]
+    public void ImportedUberWeightedOitVariant_UsesTransparentForwardOutputContract()
+    {
+        XRShader variant = ShaderHelper.GetWeightedBlendedOitForwardVariant(ShaderHelper.UberImportFragForward())
+            ?? throw new InvalidOperationException("Weighted Uber variant was null.");
+
+        string source = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
+        source.ShouldContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
+        source.ShouldContain("#define XRENGINE_FORWARD_WEIGHTED_OIT");
+        source.ShouldContain("layout(location = 0) out vec4 OutAccum;");
+        source.ShouldContain("layout(location = 1) out vec4 OutRevealage;");
     }
 
     [Test]

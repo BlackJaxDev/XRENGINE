@@ -27,7 +27,7 @@ namespace XREngine.Rendering.Commands
             set => SetField(ref _renderDistance, value);
         }
 
-        public void UpdateRenderDistance(Vector3 thisWorldPosition, XRCamera camera)
+        public void UpdateRenderDistance(Vector3 thisWorldPosition, IRuntimeRenderCamera camera)
             => RenderDistance = (camera.Transform.RenderTranslation - thisWorldPosition).LengthSquared();
         public override int CompareTo(RenderCommand? other)
         {

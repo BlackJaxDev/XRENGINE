@@ -39,9 +39,9 @@ namespace XREngine.Components.Capture.Lights
                     : "Scene3D\\Equirect.fs",
             };
 
-        private bool OnPreCollectRenderInfo(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
+        private bool OnPreCollectRenderInfo(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
-            if (camera != null && !camera.CullingMask.Contains(DefaultLayers.GizmosIndex))
+            if (camera != null && !camera.RendersLayer(DefaultLayers.GizmosIndex))
                 return false;
             if (AutoShowPreviewOnSelect)
                 PreviewEnabled = IsSceneNodeSelected();

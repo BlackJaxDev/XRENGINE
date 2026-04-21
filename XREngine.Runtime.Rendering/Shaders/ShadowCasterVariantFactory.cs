@@ -25,20 +25,17 @@ public static class ShadowCasterVariantFactory
 
         XRMaterial variant = new(shaders)
         {
-            Parameters = sourceMaterial.Parameters,
-            Textures = sourceMaterial.Textures,
+            Parameters = [],
+            Textures = [],
             RenderPass = sourceMaterial.RenderPass,
             BillboardMode = sourceMaterial.BillboardMode,
             AlphaCutoff = sourceMaterial.AlphaCutoff,
             TransparencyMode = sourceMaterial.TransparencyMode,
             TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
+            ShadowBindingSourceMaterial = sourceMaterial,
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
         };
-
-        void OnSettingUniforms(XRMaterialBase _, XRRenderProgram program)
-            => sourceMaterial.OnSettingUniforms(program);
-        variant.SettingUniforms += OnSettingUniforms;
         return variant;
     }
 

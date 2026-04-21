@@ -29,10 +29,10 @@ public class EditorRenderInfo2D : RenderInfo2D
     public EditorRenderInfo2D()
         : base(null) { }
 
-    public override bool AllowRender(BoundingRectangleF? cullingVolume, RenderCommandCollection passes, XRCamera camera)
+    public override bool AllowRender(BoundingRectangleF? cullingVolume, RenderCommandCollection passes, IRuntimeCullingCamera? camera)
     {
-        if ((Owner is CameraComponent ccomp && ccomp.Camera == camera) ||
-            (Owner is XRCamera cam && cam == camera))
+        if ((Owner is CameraComponent ccomp && object.ReferenceEquals(ccomp.Camera, camera)) ||
+            (Owner is XRCamera cam && object.ReferenceEquals(cam, camera)))
             return false;
 
         if (EditorState.InPlayMode && VisibleInEditorOnly)

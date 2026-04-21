@@ -14,7 +14,7 @@ namespace XREngine.Components
     /// A pawn is an actor that can be controlled by either a local player, remote player, or AI.
     /// This serves as only way for a player to perceive and interact with the game world.
     /// </summary>
-    public class PawnComponent : XRComponent
+    public class PawnComponent : XRComponent, IRuntimeInputControllablePawn
     {
         // Keep raw device state dispatch ahead of any pawn logic that consumes those updates.
         protected virtual int InputDispatchTickOrder => (int)ETickOrder.Input;
@@ -162,6 +162,16 @@ namespace XREngine.Components
         public EventList<UICanvasInputComponent> LinkedUICanvasInputs { get; } = [];
 
         public virtual void RegisterInput(InputInterface input) { }
+
+        void IRuntimeInputControllablePawn.RegisterControllerInput(object inputInterface)
+        {
+            if (inputInterface is not InputInterface input)
+                return;
+
+            RegisterInput(input);
+            RegisterOptionalInputs(input);
+            UserInterfaceInput?.RegisterInput(input);
+        }
 
         private IEnumerable<OptionalInputSetComponent>? _registeredOptionalSets = null;
         public void RegisterOptionalInputs(InputInterface input)
