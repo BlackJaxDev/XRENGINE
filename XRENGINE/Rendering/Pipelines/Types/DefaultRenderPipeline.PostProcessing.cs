@@ -1689,6 +1689,7 @@ public partial class DefaultRenderPipeline
         float historyWidth = Math.Max(1u, FullWidth);
         float historyHeight = Math.Max(1u, FullHeight);
 
+/*
         Debug.RenderingEvery(
             $"TsrUpscaleFBO.Uniforms.{GetHashCode()}",
             TimeSpan.FromSeconds(1),
@@ -1700,6 +1701,7 @@ public partial class DefaultRenderPipeline
             FullHeight,
             currentJitterUv,
             previousJitterUv);
+*/
 
         program.Uniform("HistoryReady", historyReady);
         program.Uniform("SourceTexelSize", new Vector2(1.0f / sourceWidth, 1.0f / sourceHeight));

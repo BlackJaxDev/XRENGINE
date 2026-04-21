@@ -126,7 +126,7 @@ Implemented in code via `Engine.Rendering.VulkanUpscaleBridge.cs`, `VulkanUpscal
 
 - [x] **0.1** Lock MVP scope: Windows, mono viewport, DLSS first, SDR first.
 - [x] **0.2** Decide ownership model: per-window vs per-viewport bridge. Default to per-viewport unless a hard reason appears otherwise.
-- [x] **0.3** Add experimental toggle: `XRE_ENABLE_VULKAN_UPSCALE_BRIDGE=1` and/or equivalent engine setting.
+- [x] **0.3** Add environment override: `XRE_ENABLE_VULKAN_UPSCALE_BRIDGE` defaults to enabled and accepts `0`/`false` to disable bridge dispatch.
 - [x] **0.4** Add a startup capability snapshot for bridge prerequisites:
   - OpenGL `EXT_memory_object`
   - OpenGL `EXT_memory_object_win32`

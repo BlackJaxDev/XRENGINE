@@ -65,7 +65,6 @@ public sealed class SecondaryPassShaderContractTests
 
         source.ShouldContain("vec2 SafeNormalize2(vec2 v)");
         source.ShouldContain("vec3 SafeNormalize3(vec3 v)");
-        source.ShouldContain("vec2 DirectionToOctahedralPlane(vec3 dir)");
         source.ShouldContain("vec3 dir = SafeNormalize3(FragWorldDir);");
         source.ShouldNotContain("vec2 st = normalize(dir.xz)");
         source.ShouldNotContain("vec2 cloudUv = normalize(max(abs(dir.y), 0.06) * dir.xz)");
@@ -74,13 +73,21 @@ public sealed class SecondaryPassShaderContractTests
     }
 
     [Test]
-    public void SkyboxDynamic_UsesPoleSafeStarAndCloudMapping()
+    public void SkyboxDynamic_UsesSeamlessSphericalSampling()
     {
         string source = LoadShaderSource(Path.Combine("Scene3D", "SkyboxDynamic.fs"));
 
-        source.ShouldContain("vec2 starUv = DirectionToOctahedralPlane(dir) * 256.0");
-        source.ShouldContain("vec2 cloudUv = DirectionToOctahedralPlane(dir) * SkyCloudScale;");
+        // Stars and clouds must sample 3D noise directly on the direction vector
+        // to avoid the diagonal seam + pole stretch that octahedral UV mapping produces.
+        source.ShouldContain("vec3 starP = dir * starDensity;");
+        source.ShouldContain("float starHash = Hash3(starCell);");
+        source.ShouldContain("vec3 cloudP = dir * SkyCloudScale");
+        source.ShouldContain("float cloudBase = Fbm3_6(warped);");
         source.ShouldContain("float cloudMask = smoothstep(-0.08, 0.12, dir.y);");
+
+        // The old octahedral-based UVs must not be used for stars or clouds anymore.
+        source.ShouldNotContain("vec2 starUv = DirectionToOctahedralPlane(dir)");
+        source.ShouldNotContain("vec2 cloudUv = DirectionToOctahedralPlane(dir)");
     }
 
     [Test]
@@ -105,7 +112,6 @@ public sealed class SecondaryPassShaderContractTests
 
         source.ShouldContain("vec2 SafeNormalize2(vec2 v)");
         source.ShouldContain("vec3 SafeNormalize3(vec3 v)");
-        source.ShouldContain("vec2 DirectionToOctahedralPlane(vec3 dir)");
         source.ShouldContain("vec3 dir = SafeNormalize3(FragWorldDir);");
         source.ShouldNotContain("vec2 st = normalize(dir.xz)");
         source.ShouldNotContain("vec2 cloudUv = normalize(max(abs(dir.y), 0.06) * dir.xz)");
@@ -114,13 +120,18 @@ public sealed class SecondaryPassShaderContractTests
     }
 
     [Test]
-    public void SkyboxComponent_FallbackDynamicSource_UsesPoleSafeStarAndCloudMapping()
+    public void SkyboxComponent_FallbackDynamicSource_UsesSeamlessSphericalSampling()
     {
         string source = ReadWorkspaceFile(Path.Combine("XRENGINE", "Scene", "Components", "Misc", "SkyboxComponent.cs"));
 
-        source.ShouldContain("vec2 starUv = DirectionToOctahedralPlane(dir) * 256.0");
-        source.ShouldContain("vec2 cloudUv = DirectionToOctahedralPlane(dir) * SkyCloudScale;");
+        source.ShouldContain("vec3 starP = dir * starDensity;");
+        source.ShouldContain("float starHash = Hash3(starCell);");
+        source.ShouldContain("vec3 cloudP = dir * SkyCloudScale");
+        source.ShouldContain("float cloudBase = Fbm3_6(warped);");
         source.ShouldContain("float cloudMask = smoothstep(-0.08, 0.12, dir.y);");
+
+        source.ShouldNotContain("vec2 starUv = DirectionToOctahedralPlane(dir)");
+        source.ShouldNotContain("vec2 cloudUv = DirectionToOctahedralPlane(dir)");
     }
 
     private static string LoadShaderSource(string shaderRelativePath)

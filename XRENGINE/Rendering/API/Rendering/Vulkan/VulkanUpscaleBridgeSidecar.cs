@@ -5,6 +5,7 @@ using Silk.NET.Vulkan.Extensions.KHR;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using XREngine.Data.Rendering;
@@ -184,6 +185,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     private readonly KhrExternalSemaphoreWin32 _externalSemaphoreWin32;
     private readonly VulkanUpscaleBridgeFrameResources _frameResources;
     private readonly uint _streamlineViewportId;
+    private readonly uint _streamlineGraphicsQueueIndex;
+    private readonly uint _streamlineComputeQueueIndex;
+    private readonly uint _streamlineOpticalFlowQueueIndex;
     private bool _disposed;
     private Instance _instance;
     private Device _device;
@@ -200,15 +204,35 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         _api = Vk.GetApi();
         ResolveVendorRequirements(
             in frameResources,
-            out string[] xessInstanceExtensions,
-            out uint xessMinApiVersion,
-            out string[] xessDeviceExtensions,
-            out IntPtr xessDeviceFeatureChain,
-            out bool xessRequirementsAvailable);
+            out EVulkanUpscaleBridgeVendor? requirementsVendor,
+            out string[] additionalInstanceExtensions,
+            out uint minApiVersion,
+            out string[] additionalDeviceExtensions,
+            out IntPtr additionalDeviceFeatureChain,
+            out string[] additionalDeviceFeatures12,
+            out string[] additionalDeviceFeatures13,
+            out NvidiaDlssManager.Native.StreamlineQueueRequirements dlssQueueRequirements);
 
-        _instance = CreateInstance(xessInstanceExtensions, xessMinApiVersion);
+        _instance = CreateInstance(additionalInstanceExtensions, minApiVersion);
         _selectedDevice = SelectDevice(_api, _instance, openGlVendor, openGlRenderer);
-        _device = CreateDevice(_selectedDevice, xessRequirementsAvailable ? xessDeviceExtensions : [], xessRequirementsAvailable ? xessDeviceFeatureChain : IntPtr.Zero);
+
+        uint streamlineGraphicsQueueIndex;
+        uint streamlineComputeQueueIndex;
+        uint streamlineOpticalFlowQueueIndex;
+        _device = CreateDevice(
+            _selectedDevice,
+            additionalDeviceExtensions,
+            additionalDeviceFeatureChain,
+            additionalDeviceFeatures12,
+            additionalDeviceFeatures13,
+            dlssQueueRequirements,
+            requirementsVendor == EVulkanUpscaleBridgeVendor.Xess,
+            out streamlineGraphicsQueueIndex,
+            out streamlineComputeQueueIndex,
+            out streamlineOpticalFlowQueueIndex);
+        _streamlineGraphicsQueueIndex = streamlineGraphicsQueueIndex;
+        _streamlineComputeQueueIndex = streamlineComputeQueueIndex;
+        _streamlineOpticalFlowQueueIndex = streamlineOpticalFlowQueueIndex;
         _graphicsQueue = GetGraphicsQueue(_selectedDevice.GraphicsQueueFamilyIndex);
         _commandPool = CreateCommandPool(_selectedDevice.GraphicsQueueFamilyIndex);
 
@@ -228,6 +252,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     public Queue GraphicsQueue => _graphicsQueue;
     public uint GraphicsQueueFamilyIndex => _selectedDevice.GraphicsQueueFamilyIndex;
     public uint GraphicsQueueIndex => 0;
+    public uint StreamlineGraphicsQueueIndex => _streamlineGraphicsQueueIndex;
+    public uint StreamlineComputeQueueIndex => _streamlineComputeQueueIndex;
+    public uint StreamlineOpticalFlowQueueIndex => _streamlineOpticalFlowQueueIndex;
 
     public void WaitForFrameSlotAvailability(VulkanUpscaleBridgeFrameSlot slot)
     {
@@ -677,30 +704,158 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
     private static void ResolveVendorRequirements(
         in VulkanUpscaleBridgeFrameResources frameResources,
-        out string[] xessInstanceExtensions,
-        out uint xessMinApiVersion,
-        out string[] xessDeviceExtensions,
-        out IntPtr xessDeviceFeatureChain,
-        out bool xessRequirementsAvailable)
+        out EVulkanUpscaleBridgeVendor? requirementsVendor,
+        out string[] instanceExtensions,
+        out uint minApiVersion,
+        out string[] deviceExtensions,
+        out IntPtr deviceFeatureChain,
+        out string[] deviceFeatures12,
+        out string[] deviceFeatures13,
+        out NvidiaDlssManager.Native.StreamlineQueueRequirements dlssQueueRequirements)
     {
-        xessInstanceExtensions = [];
-        xessMinApiVersion = Vk.Version11;
-        xessDeviceExtensions = [];
-        xessDeviceFeatureChain = IntPtr.Zero;
-        xessRequirementsAvailable = false;
+        requirementsVendor = null;
+        instanceExtensions = [];
+        minApiVersion = Vk.Version11;
+        deviceExtensions = [];
+        deviceFeatureChain = IntPtr.Zero;
+        deviceFeatures12 = [];
+        deviceFeatures13 = [];
+        dlssQueueRequirements = default;
 
-        if (!frameResources.EnableXess || !IntelXessManager.Native.IsAvailable)
-            return;
+        bool preferDlss = Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
+        string? dlssFailure = null;
+        string? xessFailure = null;
 
-        if (!IntelXessManager.Native.TryGetRequiredInstanceExtensions(out xessInstanceExtensions, out xessMinApiVersion, out string failureReason))
+        if (preferDlss)
         {
-            if (!frameResources.EnableDlss)
-                throw new InvalidOperationException(failureReason);
+            if (frameResources.EnableDlss
+                && TryResolveDlssRequirements(
+                    out instanceExtensions,
+                    out minApiVersion,
+                    out deviceExtensions,
+                    out deviceFeatures12,
+                    out deviceFeatures13,
+                    out dlssQueueRequirements,
+                    out dlssFailure))
+            {
+                requirementsVendor = EVulkanUpscaleBridgeVendor.Dlss;
+                return;
+            }
 
-            return;
+            if (frameResources.EnableXess
+                && TryResolveXessRequirements(
+                    out instanceExtensions,
+                    out minApiVersion,
+                    out xessFailure))
+            {
+                requirementsVendor = EVulkanUpscaleBridgeVendor.Xess;
+                return;
+            }
+        }
+        else
+        {
+            if (frameResources.EnableXess
+                && TryResolveXessRequirements(
+                    out instanceExtensions,
+                    out minApiVersion,
+                    out xessFailure))
+            {
+                requirementsVendor = EVulkanUpscaleBridgeVendor.Xess;
+                return;
+            }
+
+            if (frameResources.EnableDlss
+                && TryResolveDlssRequirements(
+                    out instanceExtensions,
+                    out minApiVersion,
+                    out deviceExtensions,
+                    out deviceFeatures12,
+                    out deviceFeatures13,
+                    out dlssQueueRequirements,
+                    out dlssFailure))
+            {
+                requirementsVendor = EVulkanUpscaleBridgeVendor.Dlss;
+                return;
+            }
         }
 
-        xessRequirementsAvailable = true;
+        if (frameResources.EnableDlss && !frameResources.EnableXess && !string.IsNullOrWhiteSpace(dlssFailure))
+            throw new InvalidOperationException(dlssFailure);
+
+        if (frameResources.EnableXess && !frameResources.EnableDlss && !string.IsNullOrWhiteSpace(xessFailure))
+            throw new InvalidOperationException(xessFailure);
+
+        if (frameResources.EnableDlss && frameResources.EnableXess)
+        {
+            throw new InvalidOperationException(preferDlss
+                ? dlssFailure ?? xessFailure ?? "No vendor requirement query succeeded for the Vulkan upscale bridge sidecar."
+                : xessFailure ?? dlssFailure ?? "No vendor requirement query succeeded for the Vulkan upscale bridge sidecar.");
+        }
+    }
+
+    private static bool TryResolveDlssRequirements(
+        out string[] instanceExtensions,
+        out uint minApiVersion,
+        out string[] deviceExtensions,
+        out string[] deviceFeatures12,
+        out string[] deviceFeatures13,
+        out NvidiaDlssManager.Native.StreamlineQueueRequirements queueRequirements,
+        out string failureReason)
+    {
+        instanceExtensions = [];
+        minApiVersion = Vk.Version11;
+        deviceExtensions = [];
+        deviceFeatures12 = [];
+        deviceFeatures13 = [];
+        queueRequirements = default;
+        failureReason = string.Empty;
+
+        if (!NvidiaDlssManager.Native.IsAvailable)
+        {
+            failureReason = NvidiaDlssManager.Native.LastError ?? "Streamline could not be loaded.";
+            return false;
+        }
+
+        bool success = NvidiaDlssManager.Native.TryGetRequiredVulkanRequirements(
+            out instanceExtensions,
+            out deviceExtensions,
+            out deviceFeatures12,
+            out deviceFeatures13,
+            out queueRequirements,
+            out failureReason);
+        if (!success)
+            return false;
+
+        minApiVersion = DetermineMinimumApiVersionForRequestedFeatureSets(deviceFeatures12, deviceFeatures13);
+        return true;
+    }
+
+    private static uint DetermineMinimumApiVersionForRequestedFeatureSets(string[] featureNames12, string[] featureNames13)
+    {
+        if (featureNames13.Length > 0)
+            return Vk.Version13;
+        if (featureNames12.Length > 0)
+            return Vk.Version12;
+
+        return Vk.Version11;
+    }
+
+    private static bool TryResolveXessRequirements(
+        out string[] instanceExtensions,
+        out uint minApiVersion,
+        out string failureReason)
+    {
+        instanceExtensions = [];
+        minApiVersion = Vk.Version11;
+        failureReason = string.Empty;
+
+        if (!IntelXessManager.Native.IsAvailable)
+        {
+            failureReason = IntelXessManager.Native.LastError ?? "XeSS could not be loaded.";
+            return false;
+        }
+
+        return IntelXessManager.Native.TryGetRequiredInstanceExtensions(out instanceExtensions, out minApiVersion, out failureReason);
     }
 
     private Instance CreateInstance(string[] additionalExtensions, uint minApiVersion)
@@ -758,9 +913,20 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     private Device CreateDevice(
         VulkanUpscaleBridgeProbe.VulkanUpscaleBridgeSelectedDevice selectedDevice,
         string[] additionalExtensions,
-        IntPtr additionalFeatureChain)
+        IntPtr additionalFeatureChain,
+        string[] additionalFeatureNames12,
+        string[] additionalFeatureNames13,
+        NvidiaDlssManager.Native.StreamlineQueueRequirements queueRequirements,
+        bool allowDeferredXessRequirements,
+        out uint streamlineGraphicsQueueIndex,
+        out uint streamlineComputeQueueIndex,
+        out uint streamlineOpticalFlowQueueIndex)
     {
-        if (additionalExtensions.Length == 0 && _frameResources.EnableXess && IntelXessManager.Native.IsAvailable)
+        streamlineGraphicsQueueIndex = 0;
+        streamlineComputeQueueIndex = 0;
+        streamlineOpticalFlowQueueIndex = 0;
+
+        if (additionalExtensions.Length == 0 && allowDeferredXessRequirements && IntelXessManager.Native.IsAvailable)
         {
             if (!IntelXessManager.Native.TryGetRequiredDeviceRequirements(_instance, selectedDevice.Device, out additionalExtensions, out additionalFeatureChain, out string failureReason)
                 && !_frameResources.EnableDlss)
@@ -769,13 +935,24 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             }
         }
 
-        float queuePriority = 1.0f;
+        uint queueCount = ResolveStreamlineQueueConfiguration(
+            selectedDevice.Device,
+            selectedDevice.GraphicsQueueFamilyIndex,
+            queueRequirements,
+            out streamlineGraphicsQueueIndex,
+            out streamlineComputeQueueIndex,
+            out streamlineOpticalFlowQueueIndex);
+
+        float* queuePriorities = stackalloc float[(int)queueCount];
+        for (int queueIndex = 0; queueIndex < queueCount; queueIndex++)
+            queuePriorities[queueIndex] = 1.0f;
+
         DeviceQueueCreateInfo queueCreateInfo = new()
         {
             SType = StructureType.DeviceQueueCreateInfo,
             QueueFamilyIndex = selectedDevice.GraphicsQueueFamilyIndex,
-            QueueCount = 1,
-            PQueuePriorities = &queuePriority,
+            QueueCount = queueCount,
+            PQueuePriorities = queuePriorities,
         };
 
         string[] extensionsToEnable =
@@ -791,7 +968,26 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
+        PhysicalDeviceVulkan12Features requestedFeatures12 = default;
+        PhysicalDeviceVulkan13Features requestedFeatures13 = default;
         void* featureChain = additionalFeatureChain == IntPtr.Zero ? null : (void*)additionalFeatureChain;
+        BuildRequestedVulkanFeatures(
+            selectedDevice.Device,
+            additionalFeatureNames12,
+            additionalFeatureNames13,
+            ref requestedFeatures12,
+            ref requestedFeatures13);
+        if (additionalFeatureNames13.Length > 0)
+        {
+            requestedFeatures13.PNext = featureChain;
+            featureChain = &requestedFeatures13;
+        }
+
+        if (additionalFeatureNames12.Length > 0)
+        {
+            requestedFeatures12.PNext = featureChain;
+            featureChain = &requestedFeatures12;
+        }
 
         DeviceCreateInfo createInfo = new()
         {
@@ -814,6 +1010,362 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         {
             SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);
         }
+    }
+
+    private QueueFamilyProperties GetQueueFamilyProperties(PhysicalDevice device, uint queueFamilyIndex)
+    {
+        uint queueFamilyCount = 0;
+        _api.GetPhysicalDeviceQueueFamilyProperties(device, ref queueFamilyCount, null);
+        if (queueFamilyCount == 0 || queueFamilyIndex >= queueFamilyCount)
+            throw new InvalidOperationException($"Vulkan queue family {queueFamilyIndex} is unavailable for the bridge sidecar.");
+
+        var properties = new QueueFamilyProperties[queueFamilyCount];
+        fixed (QueueFamilyProperties* propertiesPtr = properties)
+        {
+            _api.GetPhysicalDeviceQueueFamilyProperties(device, ref queueFamilyCount, propertiesPtr);
+        }
+
+        return properties[queueFamilyIndex];
+    }
+
+    private uint ResolveStreamlineQueueConfiguration(
+        PhysicalDevice device,
+        uint queueFamilyIndex,
+        NvidiaDlssManager.Native.StreamlineQueueRequirements queueRequirements,
+        out uint streamlineGraphicsQueueIndex,
+        out uint streamlineComputeQueueIndex,
+        out uint streamlineOpticalFlowQueueIndex)
+    {
+        streamlineGraphicsQueueIndex = 0;
+        streamlineComputeQueueIndex = 0;
+        streamlineOpticalFlowQueueIndex = 0;
+
+        if (queueRequirements.OpticalFlowQueues > 0)
+        {
+            throw new InvalidOperationException(
+                "Streamline requested Vulkan optical-flow queues, but the OpenGL bridge sidecar only provisions pure DLSS upscaling queues.");
+        }
+
+        QueueFamilyProperties queueFamilyProperties = GetQueueFamilyProperties(device, queueFamilyIndex);
+        if (queueRequirements.ComputeQueues > 0 && (queueFamilyProperties.QueueFlags & QueueFlags.ComputeBit) == 0)
+        {
+            throw new InvalidOperationException(
+                $"The selected Vulkan queue family {queueFamilyIndex} does not support compute work required by Streamline DLSS.");
+        }
+
+        uint queueCount = 1;
+        if (queueRequirements.GraphicsQueues > 0)
+        {
+            streamlineGraphicsQueueIndex = queueCount;
+            queueCount += queueRequirements.GraphicsQueues;
+        }
+
+        if (queueRequirements.ComputeQueues > 0)
+        {
+            streamlineComputeQueueIndex = queueCount;
+            queueCount += queueRequirements.ComputeQueues;
+        }
+        else
+        {
+            streamlineComputeQueueIndex = streamlineGraphicsQueueIndex;
+        }
+
+        if (queueCount > queueFamilyProperties.QueueCount)
+        {
+            throw new InvalidOperationException(
+                $"Streamline requested {queueCount - 1} extra Vulkan queues, but queue family {queueFamilyIndex} only exposes {queueFamilyProperties.QueueCount} total queues.");
+        }
+
+        return queueCount;
+    }
+
+    private void BuildRequestedVulkanFeatures(
+        PhysicalDevice device,
+        string[] featureNames12,
+        string[] featureNames13,
+        ref PhysicalDeviceVulkan12Features requestedFeatures12,
+        ref PhysicalDeviceVulkan13Features requestedFeatures13)
+    {
+        if (featureNames12.Length == 0 && featureNames13.Length == 0)
+            return;
+
+        PhysicalDeviceVulkan12Features supportedFeatures12 = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan12Features,
+        };
+        PhysicalDeviceVulkan13Features supportedFeatures13 = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan13Features,
+        };
+        PhysicalDeviceFeatures2 supportedFeatures2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+        };
+
+        if (featureNames12.Length > 0)
+        {
+            supportedFeatures2.PNext = &supportedFeatures12;
+            supportedFeatures12.PNext = featureNames13.Length > 0 ? &supportedFeatures13 : null;
+        }
+        else
+        {
+            supportedFeatures2.PNext = &supportedFeatures13;
+        }
+
+        _api.GetPhysicalDeviceFeatures2(device, &supportedFeatures2);
+
+        if (featureNames13.Length > 0)
+        {
+            requestedFeatures13 = new PhysicalDeviceVulkan13Features
+            {
+                SType = StructureType.PhysicalDeviceVulkan13Features,
+            };
+            ValidateAndPopulateRequestedFeatures(ref requestedFeatures13, in supportedFeatures13, featureNames13, "Vulkan 1.3");
+        }
+
+        if (featureNames12.Length > 0)
+        {
+            requestedFeatures12 = new PhysicalDeviceVulkan12Features
+            {
+                SType = StructureType.PhysicalDeviceVulkan12Features,
+            };
+            ValidateAndPopulateRequestedFeatures(ref requestedFeatures12, in supportedFeatures12, featureNames12, "Vulkan 1.2");
+        }
+    }
+
+    private static void ValidateAndPopulateRequestedFeatures<TFeatures>(
+        ref TFeatures requestedFeatures,
+        in TFeatures supportedFeatures,
+        string[] featureNames,
+        string featureGroup) where TFeatures : struct
+    {
+        List<string> unknownFeatures = [];
+        List<string> unsupportedFeatures = [];
+
+        foreach (string featureName in featureNames
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal))
+        {
+            if (!TryResolveFeatureField(typeof(TFeatures), featureName, out FieldInfo? field) || field is null)
+            {
+                unknownFeatures.Add(featureName);
+                continue;
+            }
+
+            if (!TryReadFeatureField(in supportedFeatures, field, out bool supported) || !supported)
+            {
+                unsupportedFeatures.Add(featureName);
+                continue;
+            }
+
+            WriteFeatureField(ref requestedFeatures, field, enabled: true);
+        }
+
+        if (unknownFeatures.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Streamline requested unknown {featureGroup} feature fields: {string.Join(", ", unknownFeatures)}.");
+        }
+
+        if (unsupportedFeatures.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"The selected Vulkan device does not support Streamline-required {featureGroup} features: {string.Join(", ", unsupportedFeatures)}.");
+        }
+    }
+
+    private static bool TryResolveFeatureField(Type featureType, string featureName, out FieldInfo? field)
+    {
+        string pascalCaseName = featureName.Length == 0
+            ? string.Empty
+            : char.ToUpperInvariant(featureName[0]) + featureName[1..];
+
+        field = featureType.GetField(pascalCaseName, BindingFlags.Public | BindingFlags.Instance)
+            ?? featureType.GetField(featureName, BindingFlags.Public | BindingFlags.Instance);
+        return field is not null;
+    }
+
+    private static bool TryReadFeatureField<TFeatures>(in TFeatures features, FieldInfo field, out bool value) where TFeatures : struct
+    {
+        object boxed = features;
+        return TryConvertFeatureFieldValue(field.GetValue(boxed), out value);
+    }
+
+    private static void WriteFeatureField<TFeatures>(ref TFeatures features, FieldInfo field, bool enabled) where TFeatures : struct
+    {
+        object boxed = features;
+        field.SetValue(boxed, CreateFeatureFieldValue(field.FieldType, enabled));
+        features = (TFeatures)boxed;
+    }
+
+    private static object CreateFeatureFieldValue(Type fieldType, bool enabled)
+    {
+        if (TryCreateDirectFeatureFieldValue(fieldType, enabled, out object? directValue))
+            return directValue!;
+
+        ConstructorInfo? constructor = fieldType.GetConstructor([typeof(bool)])
+            ?? fieldType.GetConstructor([typeof(uint)])
+            ?? fieldType.GetConstructor([typeof(int)]);
+        if (constructor is not null)
+        {
+            Type parameterType = constructor.GetParameters()[0].ParameterType;
+            object argument = parameterType == typeof(bool)
+                ? enabled
+                : parameterType == typeof(uint)
+                    ? enabled ? 1u : 0u
+                    : enabled ? 1 : 0;
+            return constructor.Invoke([argument]);
+        }
+
+        object instance = Activator.CreateInstance(fieldType)
+            ?? throw new InvalidOperationException($"Could not construct Vulkan feature field type '{fieldType.FullName}'.");
+        if (!TryAssignFeatureValueMember(instance, enabled))
+        {
+            throw new InvalidOperationException(
+                $"Unsupported Vulkan feature field type '{fieldType.FullName}' in Streamline requirement translation.");
+        }
+
+        return instance;
+    }
+
+    private static bool TryConvertFeatureFieldValue(object? rawValue, out bool value)
+    {
+        switch (rawValue)
+        {
+            case bool boolValue:
+                value = boolValue;
+                return true;
+            case uint uintValue:
+                value = uintValue != 0;
+                return true;
+            case int intValue:
+                value = intValue != 0;
+                return true;
+            case byte byteValue:
+                value = byteValue != 0;
+                return true;
+            case null:
+                value = false;
+                return false;
+        }
+
+        if (TryReadFeatureValueMember(rawValue, out value)
+            || TryConvertFeatureFieldValueViaOperators(rawValue, typeof(bool), out value)
+            || TryConvertFeatureFieldValueViaOperators(rawValue, typeof(uint), out value)
+            || TryConvertFeatureFieldValueViaOperators(rawValue, typeof(int), out value)
+            || TryConvertFeatureFieldValueViaOperators(rawValue, typeof(byte), out value))
+            return true;
+
+        value = false;
+        return false;
+    }
+
+    private static bool TryCreateDirectFeatureFieldValue(Type fieldType, bool enabled, out object? value)
+    {
+        if (fieldType == typeof(bool))
+        {
+            value = enabled;
+            return true;
+        }
+
+        if (fieldType == typeof(uint))
+        {
+            value = enabled ? 1u : 0u;
+            return true;
+        }
+
+        if (fieldType == typeof(int))
+        {
+            value = enabled ? 1 : 0;
+            return true;
+        }
+
+        if (fieldType == typeof(byte))
+        {
+            value = enabled ? (byte)1 : (byte)0;
+            return true;
+        }
+
+        object[] candidates = [enabled, enabled ? 1u : 0u, enabled ? 1 : 0, enabled ? (byte)1 : (byte)0];
+        foreach (object candidate in candidates)
+        {
+            if (TryInvokeUserDefinedConversion(candidate, fieldType, out value))
+                return true;
+        }
+
+        value = null;
+        return false;
+    }
+
+    private static bool TryAssignFeatureValueMember(object instance, bool enabled)
+    {
+        Type instanceType = instance.GetType();
+        FieldInfo? valueField = instanceType.GetField("Value", BindingFlags.Public | BindingFlags.Instance);
+        if (valueField is not null && TryCreateDirectFeatureFieldValue(valueField.FieldType, enabled, out object? fieldValue))
+        {
+            valueField.SetValue(instance, fieldValue);
+            return true;
+        }
+
+        PropertyInfo? valueProperty = instanceType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+        if (valueProperty is not null
+            && valueProperty.CanWrite
+            && TryCreateDirectFeatureFieldValue(valueProperty.PropertyType, enabled, out object? propertyValue))
+        {
+            valueProperty.SetValue(instance, propertyValue);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryReadFeatureValueMember(object rawValue, out bool value)
+    {
+        Type rawType = rawValue.GetType();
+        FieldInfo? valueField = rawType.GetField("Value", BindingFlags.Public | BindingFlags.Instance);
+        if (valueField is not null)
+            return TryConvertFeatureFieldValue(valueField.GetValue(rawValue), out value);
+
+        PropertyInfo? valueProperty = rawType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+        if (valueProperty is not null && valueProperty.CanRead)
+            return TryConvertFeatureFieldValue(valueProperty.GetValue(rawValue), out value);
+
+        value = false;
+        return false;
+    }
+
+    private static bool TryConvertFeatureFieldValueViaOperators(object rawValue, Type intermediateType, out bool value)
+    {
+        if (TryInvokeUserDefinedConversion(rawValue, intermediateType, out object? convertedValue))
+            return TryConvertFeatureFieldValue(convertedValue, out value);
+
+        value = false;
+        return false;
+    }
+
+    private static bool TryInvokeUserDefinedConversion(object sourceValue, Type targetType, out object? convertedValue)
+    {
+        Type sourceType = sourceValue.GetType();
+        foreach (Type type in new[] { sourceType, targetType })
+        {
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))
+            {
+                if (method.ReturnType != targetType)
+                    continue;
+                if (method.Name != "op_Implicit" && method.Name != "op_Explicit")
+                    continue;
+
+                ParameterInfo[] parameters = method.GetParameters();
+                if (parameters.Length != 1 || !parameters[0].ParameterType.IsAssignableFrom(sourceType))
+                    continue;
+
+                convertedValue = method.Invoke(null, [sourceValue]);
+                return convertedValue is not null || !targetType.IsValueType;
+            }
+        }
+
+        convertedValue = null;
+        return false;
     }
 
     private Queue GetGraphicsQueue(uint queueFamilyIndex)
@@ -1019,7 +1571,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         texture.UWrap = ETexWrapMode.ClampToEdge;
         texture.VWrap = ETexWrapMode.ClampToEdge;
         texture.AutoGenerateMipmaps = false;
-        texture.SetOpenGlExternalMemoryImport(glHandle, memoryRequirements.Size, name);
+        texture.SetOpenGlExternalMemoryImport(glHandle, memoryRequirements.Size, name, mipLevels: 1);
 
         if (renderer.GenericToAPI<GLTexture2D>(texture) is not GLTexture2D glTexture)
             throw new InvalidOperationException($"Failed to create the OpenGL wrapper for bridge texture '{name}'.");

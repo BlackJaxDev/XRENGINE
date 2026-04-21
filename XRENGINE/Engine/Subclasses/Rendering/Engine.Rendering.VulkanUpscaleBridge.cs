@@ -80,7 +80,7 @@ namespace XREngine
             private static string? _lastVulkanUpscaleBridgeProbeKey;
             private static string? _lastVulkanUpscaleBridgeFingerprint;
 
-            public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar);
+            public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar, defaultValue: true);
             public static bool VulkanUpscaleBridgeWindowsOnly => true;
             public static bool VulkanUpscaleBridgeMonoViewportOnly => true;
             public static bool VulkanUpscaleBridgeHdrSupported => false;
@@ -121,7 +121,7 @@ namespace XREngine
 
                 if (!VulkanUpscaleBridgeRequested)
                 {
-                    ReleaseVulkanUpscaleBridge(viewport, "experimental bridge disabled");
+                    ReleaseVulkanUpscaleBridge(viewport, DescribeVulkanUpscaleBridgeDisabledByEnvironmentReason());
                     return EVulkanUpscaleBridgeState.Disabled;
                 }
 
@@ -212,7 +212,7 @@ namespace XREngine
                         _lastVulkanUpscaleBridgeProbeKey = null;
                     }
 
-                    ReleaseAllVulkanUpscaleBridges("experimental bridge disabled");
+                    ReleaseAllVulkanUpscaleBridges(DescribeVulkanUpscaleBridgeDisabledByEnvironmentReason());
                     return;
                 }
 
@@ -328,7 +328,7 @@ namespace XREngine
                 List<string> reasons = new(12);
 
                 if (!snapshot.EnvironmentEnabled)
-                    reasons.Add($"experimental bridge disabled (set {VulkanUpscaleBridgeEnvVar}=1 to opt in)");
+                    reasons.Add(DescribeVulkanUpscaleBridgeDisabledByEnvironmentReason());
 
                 if (snapshot.WindowsOnly && !OperatingSystem.IsWindows())
                     reasons.Add("bridge MVP is Windows only");
@@ -388,14 +388,26 @@ namespace XREngine
                 return string.Join("; ", reasons.Where(static reason => !string.IsNullOrWhiteSpace(reason)));
             }
 
-            private static bool IsEnvFlagEnabled(string name)
+            private static string DescribeVulkanUpscaleBridgeDisabledByEnvironmentReason()
+                => $"{VulkanUpscaleBridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge (clear it or set it to 1 to re-enable)";
+
+            private static bool IsEnvFlagEnabled(string name, bool defaultValue)
             {
                 string? raw = Environment.GetEnvironmentVariable(name);
                 if (string.IsNullOrWhiteSpace(raw))
+                    return defaultValue;
+
+                raw = raw.Trim();
+
+                if (string.Equals(raw, "1", StringComparison.Ordinal))
+                    return true;
+
+                if (string.Equals(raw, "0", StringComparison.Ordinal))
                     return false;
 
-                return string.Equals(raw, "1", StringComparison.Ordinal) ||
-                    bool.TryParse(raw, out bool enabled) && enabled;
+                return bool.TryParse(raw, out bool enabled)
+                    ? enabled
+                    : defaultValue;
             }
 
             private static string BuildVulkanUpscaleBridgeFingerprint(VulkanUpscaleBridgeCapabilitySnapshot snapshot)

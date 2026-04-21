@@ -915,17 +915,7 @@ public static partial class EditorImGuiUI
                 return;
 
             _closePromptBypassWindow = window;
-            Engine.EnqueueMainThreadTask(() =>
-            {
-                try
-                {
-                    window.Window.Close();
-                }
-                catch
-                {
-                    // ignored
-                }
-            });
+            window.RequestClose();
         }
 
         private static void CancelClosePrompt()

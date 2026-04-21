@@ -79,4 +79,15 @@ public sealed class GLShaderSourceCompatibilityTests
 
         rewritten.ShouldBe(source);
     }
+
+    [Test]
+    public void SourceLevelSeparateShaderExtension_InjectsMissingOutputBlock_EvenWhenProgramIsNotMarkedSeparable()
+    {
+        string source = "#version 450\n#extension GL_ARB_separate_shader_objects : enable\nlayout(location = 0) in vec3 Position;\nvoid main()\n{\n    gl_Position = vec4(Position, 1.0);\n}\n";
+
+        string rewritten = GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(source, EShaderType.Vertex, separableProgram: false);
+
+        rewritten.ShouldContain("out gl_PerVertex");
+        rewritten.ShouldContain("layout(location = 0) in vec3 Position;");
+    }
 }

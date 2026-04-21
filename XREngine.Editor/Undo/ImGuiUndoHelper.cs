@@ -12,9 +12,11 @@ internal static class ImGuiUndoHelper
         public Undo.ChangeScope Scope { get; } = scope;
         public IDisposable? UserInteraction { get; } = userInteraction;
         public int LastFrameSeen { get; set; } = frame;
+        public bool PendingClose { get; set; }
     }
 
     private static readonly Dictionary<uint, ScopeInfo> _scopes = new();
+    private static readonly List<uint> _scopeOrder = [];
     private static int _lastPruneFrame = -1;
 
     /// <summary>
@@ -49,6 +51,8 @@ internal static class ImGuiUndoHelper
 
         foreach (uint id in expired)
             CloseScope(id);
+
+        DrainPendingScopeClosures();
     }
 
     /// <summary>
@@ -76,11 +80,17 @@ internal static class ImGuiUndoHelper
     /// </summary>
     public static void CancelAll()
     {
-        foreach (var info in _scopes.Values)
+        for (int index = _scopeOrder.Count - 1; index >= 0; --index)
         {
+            uint itemId = _scopeOrder[index];
+            if (!_scopes.Remove(itemId, out var info))
+                continue;
+
             info.Scope.Dispose();
             info.UserInteraction?.Dispose();
         }
+
+        _scopeOrder.Clear();
         _scopes.Clear();
         _lastPruneFrame = ImGui.GetFrameCount();
     }
@@ -97,7 +107,13 @@ internal static class ImGuiUndoHelper
         if (target is not null)
             Undo.Track(target);
 
-        CloseScope(itemId);
+        if (_scopes.ContainsKey(itemId))
+        {
+            CloseScope(itemId);
+            DrainPendingScopeClosures();
+            if (_scopes.ContainsKey(itemId))
+                return;
+        }
 
         IDisposable? interaction = null;
         try
@@ -105,6 +121,7 @@ internal static class ImGuiUndoHelper
             interaction = Undo.BeginUserInteraction();
             var scope = Undo.BeginChange(description);
             _scopes[itemId] = new ScopeInfo(scope, interaction, frame);
+            _scopeOrder.Add(itemId);
             interaction = null;
         }
         finally
@@ -122,8 +139,29 @@ internal static class ImGuiUndoHelper
         if (!_scopes.TryGetValue(itemId, out var info))
             return;
 
-        info.Scope.Dispose();
-        info.UserInteraction?.Dispose();
-        _scopes.Remove(itemId);
+        info.PendingClose = true;
+        DrainPendingScopeClosures();
+    }
+
+    private static void DrainPendingScopeClosures()
+    {
+        while (_scopeOrder.Count > 0)
+        {
+            int lastIndex = _scopeOrder.Count - 1;
+            uint itemId = _scopeOrder[lastIndex];
+            if (!_scopes.TryGetValue(itemId, out var info))
+            {
+                _scopeOrder.RemoveAt(lastIndex);
+                continue;
+            }
+
+            if (!info.PendingClose)
+                break;
+
+            _scopeOrder.RemoveAt(lastIndex);
+            _scopes.Remove(itemId);
+            info.Scope.Dispose();
+            info.UserInteraction?.Dispose();
+        }
     }
 }

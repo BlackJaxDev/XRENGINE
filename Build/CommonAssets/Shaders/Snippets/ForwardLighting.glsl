@@ -110,9 +110,14 @@ const int XRENGINE_MAX_FORWARD_LOCAL_LIGHTS = 16;
 const int XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS = 4;
 const int XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS = 4;
 
+#ifdef XRENGINE_UBER_IMPORT_MATERIAL
+#define XRENGINE_FORWARD_DISABLE_LOCAL_LIGHT_SHADOWS 1
+#endif
+
 layout(binding = 17) uniform samplerCube PointLightShadowMaps[XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS];
 layout(binding = 21) uniform sampler2D SpotLightShadowMaps[XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS];
 
+#if !defined(XRENGINE_FORWARD_DISABLE_LOCAL_LIGHT_SHADOWS)
 uniform int PointLightShadowSlots[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowNearPlanes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float PointLightShadowFarPlanes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
@@ -138,6 +143,7 @@ uniform float SpotLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int SpotLightShadowSoftShadowMode[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform float SpotLightShadowLightSourceRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform int SpotLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+#endif
 
 // Forward+ tiled light culling uniforms
 uniform bool ForwardPlusEnabled;
@@ -737,6 +743,9 @@ vec3 XRENGINE_CalcDirLight(DirLight light, vec3 normal, vec3 fragPos, vec3 albed
 
 float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal, vec3 fragPos)
 {
+#if defined(XRENGINE_FORWARD_DISABLE_LOCAL_LIGHT_SHADOWS)
+    return 1.0;
+#else
     if (lightIndex < 0 || lightIndex >= PointLightCount)
         return 1.0;
 
@@ -796,10 +805,14 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
     }
 
     return shadow;
+#endif
 }
 
 float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, vec3 fragPos, vec3 lightDir)
 {
+#if defined(XRENGINE_FORWARD_DISABLE_LOCAL_LIGHT_SHADOWS)
+    return 1.0;
+#else
     if (lightIndex < 0 || lightIndex >= SpotLightCount)
         return 1.0;
 
@@ -858,6 +871,7 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
     }
 
     return shadow;
+#endif
 }
 
 vec3 XRENGINE_CalcPointLight(int lightIndex, PointLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0)
