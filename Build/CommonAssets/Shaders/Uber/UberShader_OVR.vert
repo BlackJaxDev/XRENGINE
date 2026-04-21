@@ -1,14 +1,32 @@
-// Uber Shader - Vertex Shader (OVR Multiview)
+// =============================================================================
+// Uber Shader - Vertex Stage (OVR_multiview2 stereo)
+// =============================================================================
+// Stereo variant of UberShader.vert that uses the GL_OVR_multiview2 extension
+// to render both eyes from a single draw call. Each invocation of main()
+// gets a distinct value of gl_ViewID_OVR (0 = left, 1 = right), which is used
+// to pick the per-eye view and projection matrices.
+//
+// This is the preferred stereo path on most XR-capable GL drivers (Quest,
+// PCVR via Oculus / Monado / WMR). Compared to two separate draws it roughly
+// halves CPU submission cost and lets vertex work run twice per vertex
+// instead of being fully duplicated.
+//
+// Mirrors the outputs of UberShader.vert so the same fragment stage works
+// with either.
+// =============================================================================
 
 #version 450 core
 #extension GL_OVR_multiview2 : require
 
+// Re-declared for separable programs, same as mono path.
 out gl_PerVertex {
 	vec4 gl_Position;
 	float gl_PointSize;
 	float gl_ClipDistance[];
 };
 
+// Request two views (one per eye). The driver invokes the vertex shader
+// once per view per vertex, with gl_ViewID_OVR telling us which eye.
 layout(num_views = 2) in;
 
 // ============================================
@@ -42,6 +60,10 @@ layout(location = 22) out float FragViewIndex;
 // ============================================
 #include "uniforms.glsl"
 
+// Per-eye matrices pushed by the engine each frame. We take inverse-view
+// (camera->world) for the view direction, and project with the per-eye
+// projection. Using *inverse view* here avoids having to invert mat4s on the
+// GPU for every vertex.
 uniform mat4 LeftEyeInverseViewMatrix_VTX;
 uniform mat4 RightEyeInverseViewMatrix_VTX;
 uniform mat4 LeftEyeProjMatrix_VTX;
@@ -68,24 +90,37 @@ void main() {
 #endif
 	float tanSign = Tangent.w;
 
+	// Object -> world. World-space data is shared between both eyes so we
+	// only have to do this once per vertex-invocation even though each eye
+	// runs main() independently.
 	vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);
 	v_WorldPos = worldPosition.xyz;
 	v_LocalPos = pos;
 
+	// Select per-eye matrices based on which view we're in.
 	bool leftEye = gl_ViewID_OVR == 0;
 	mat4 inverseView = leftEye ? LeftEyeInverseViewMatrix_VTX : RightEyeInverseViewMatrix_VTX;
-	mat4 projection = leftEye ? LeftEyeProjMatrix_VTX : RightEyeProjMatrix_VTX;
+	mat4 projection  = leftEye ? LeftEyeProjMatrix_VTX        : RightEyeProjMatrix_VTX;
+	// inverse(inverseView) == view; kept explicit so the engine can pass only
+	// the inverse view and we recover the forward matrix here when needed.
 	mat4 view = inverse(inverseView);
 	gl_Position = projection * view * worldPosition;
 
+	// Same inverse-transpose trick as the mono path — preserves normals
+	// under non-uniform scale.
 	mat3 normalMatrix = mat3(transpose(inverse(u_ModelMatrix)));
-	v_WorldNormal = normalize(normalMatrix * norm);
+	v_WorldNormal  = normalize(normalMatrix * norm);
 	v_WorldTangent = normalize(normalMatrix * tan);
-	v_TangentSign = tanSign;
+	v_TangentSign  = tanSign;
 
 	v_Uv01 = vec4(TexCoord0, TexCoord1);
 	v_Uv23 = vec4(TexCoord2, TexCoord3);
 	v_VertexColor = Color0;
+	// Camera world-position is the translation column of the inverse-view
+	// matrix, so we can compute the view direction without touching
+	// u_CameraPosition (which is mono-only).
 	v_ViewDir = normalize(inverseView[3].xyz - worldPosition.xyz);
+	// Let the fragment stage know which eye is being shaded — useful for
+	// per-eye effects (e.g. mask textures, UI overlays, stereo debug).
 	FragViewIndex = float(gl_ViewID_OVR);
 }
