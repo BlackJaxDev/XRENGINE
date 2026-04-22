@@ -111,8 +111,10 @@ void main() {
 	// Left eye = layer 0; secondary_view_offset = 1 places right eye on layer 1.
 	gl_Layer = 0;
 
-	// Inverse-transpose of model for correct normals under non-uniform scale.
-	mat3 normalMatrix = mat3(transpose(inverse(u_ModelMatrix)));
+	// u_NormalMatrix (adjoint of model) handles non-uniform scale for direction
+	// vectors; normalize() below absorbs the determinant scalar. Avoids a full
+	// mat3/mat4 inverse — see uniforms.glsl for the math.
+	mat3 normalMatrix = u_NormalMatrix;
 	v_WorldNormal  = normalize(normalMatrix * norm);
 	v_WorldTangent = normalize(normalMatrix * tan);
 	v_TangentSign  = tanSign;

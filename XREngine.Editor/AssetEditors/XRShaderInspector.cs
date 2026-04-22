@@ -14,6 +14,9 @@ public sealed class XRShaderInspector : IXRAssetInspector
 {
     private static readonly TextFileInspector _textInspector = new();
     private static readonly Vector4 DirtyBadgeColor = new(0.95f, 0.65f, 0.2f, 1f);
+    private static readonly Vector4 ValidationErrorColor = new(0.93f, 0.36f, 0.31f, 1f);
+    private static readonly Vector4 ValidationWarningColor = new(0.96f, 0.74f, 0.23f, 1f);
+    private static readonly Vector4 ValidationOkColor = new(0.32f, 0.82f, 0.52f, 1f);
 
     public void DrawInspector(EditorImGuiUI.InspectorTargetSet targets, HashSet<object> visitedObjects)
     {
@@ -35,6 +38,7 @@ public sealed class XRShaderInspector : IXRAssetInspector
 
         DrawHeader(shader);
         DrawCompilationSettings(shader);
+        DrawUiMetadataSection(shader);
         DrawSourceSection(shader, visitedObjects);
         DrawAdvancedSection(shader, visitedObjects);
     }
@@ -122,6 +126,70 @@ public sealed class XRShaderInspector : IXRAssetInspector
         ImGui.PushID("XRShaderSourceInspector");
         _textInspector.DrawInspector(new EditorImGuiUI.InspectorTargetSet(new object[] { source }, source.GetType()), visitedObjects);
         ImGui.PopID();
+        ImGui.Separator();
+    }
+
+    private static void DrawUiMetadataSection(XRShader shader)
+    {
+        if (!ImGui.CollapsingHeader("UI Metadata", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        ShaderUiManifest manifest = shader.GetUiManifest();
+        int implicitFeatureCount = manifest.Features.Count(static x => !x.HasExplicitMetadata);
+        int unannotatedPropertyCount = manifest.Properties.Count(static x => !x.HasExplicitMetadata);
+        int issueCount = manifest.ValidationIssues.Count;
+
+        if (issueCount == 0 && implicitFeatureCount == 0 && unannotatedPropertyCount == 0)
+        {
+            ImGui.TextColored(ValidationOkColor, "All discovered features and properties are explicitly annotated.");
+        }
+        else
+        {
+            if (issueCount > 0)
+                ImGui.TextColored(ValidationErrorColor, $"{issueCount} validation issue(s)");
+
+            if (implicitFeatureCount > 0)
+                ImGui.TextColored(ValidationWarningColor, $"{implicitFeatureCount} feature guard(s) are inferred from preprocessor macros.");
+
+            if (unannotatedPropertyCount > 0)
+                ImGui.TextColored(ValidationWarningColor, $"{unannotatedPropertyCount} uniform(s) have no explicit @property annotation.");
+        }
+
+        ImGui.TextDisabled($"Features: {manifest.Features.Count} | Properties: {manifest.Properties.Count}");
+
+        if (issueCount > 0 && ImGui.TreeNodeEx("Validation Issues", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            foreach (ShaderUiValidationIssue issue in manifest.ValidationIssues)
+            {
+                Vector4 color = issue.Severity switch
+                {
+                    EShaderUiValidationSeverity.Error => ValidationErrorColor,
+                    EShaderUiValidationSeverity.Warning => ValidationWarningColor,
+                    _ => ValidationOkColor,
+                };
+
+                ImGui.TextColored(color, $"L{issue.LineNumber}: {issue.Message}");
+            }
+
+            ImGui.TreePop();
+        }
+
+        if (implicitFeatureCount > 0 && ImGui.TreeNodeEx("Implicit Features", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            foreach (ShaderUiFeature feature in manifest.Features.Where(static x => !x.HasExplicitMetadata))
+                ImGui.BulletText($"{feature.DisplayName} ({feature.GuardMacro ?? "<no guard>"})");
+
+            ImGui.TreePop();
+        }
+
+        if (unannotatedPropertyCount > 0 && ImGui.TreeNodeEx("Unannotated Properties", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            foreach (ShaderUiProperty property in manifest.Properties.Where(static x => !x.HasExplicitMetadata))
+                ImGui.BulletText($"{property.Name} ({property.GlslType})");
+
+            ImGui.TreePop();
+        }
+
         ImGui.Separator();
     }
 

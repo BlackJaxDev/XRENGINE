@@ -1,274 +1,234 @@
 # Uber Shader Optimization TODO
 
-Last Updated: 2026-04-19
-Status: Active redesign and implementation planning.
-Scope: optimize the Uber shader only by making it fully modular, editor-driven, and cheap by default through compile-time feature specialization, per-property static versus animated modes, and dynamic async recompilation.
+Last Updated: 2026-04-21
+Status: Foundation landed. Remaining implementation and hardening work only.
+Scope: finish the modular Uber shader pipeline, move all non-API calculations off the render thread, and complete the material-state, variant, cache, migration, and validation systems.
 
-## Current Reality
+## Already Landed
 
-What is already true:
+These items are no longer TODOs:
 
-- the Uber shader already has real compile-time gating in `UberShader.frag` and `uniforms.glsl`
-- the Uber shader source is already split into reusable module files under `Build/CommonAssets/Shaders/Uber/`
-- `XRMaterial` already reacts to shader reloads and rebuilds its discovered uniform surface when shader source changes
-- `XRShader.GenerateAsync` and renderer async program-compilation settings already provide a starting point for non-blocking rebuilds
-- the ImGui-based material and shader inspectors are the correct first UI surface for iteration and validation
+- a reusable shader UI manifest parser exists and is cached through `XRShader`
+- the shader inspector can surface parsed metadata and validation issues
+- the ImGui material inspector has an initial Uber-specific section with grouped categories and feature toggles
+- `uniforms.glsl` now has initial category, feature, label, and tooltip annotations
+- feature toggles currently work through material-local fragment shader source cloning as an interim path
 
-What remains problematic:
+What is not landed yet:
 
-- imported and default Uber materials still behave too much like one large shader family instead of a curated set of feature-composed variants
-- feature enablement is currently spread across compile-time defines, runtime uniforms, and shader-local branching instead of one authoritative material model
-- too many values are treated like uniforms even when they are static for the lifetime of a material instance
-- there is no dedicated Uber UI that lets the user toggle whole feature sections on or off, understand dependencies, and see compile state
-- live edits are not yet designed around queued, cancellable, async recompilation with last-known-good program fallback
-- the Uber path has already hit real failure modes from excessive shader surface area, including constant register pressure and texture binding collisions, so trimming it is also a correctness task
+- the current toggle path is not the final variant system
+- there is still no authored Uber material state model separate from shader text
+- property-level `Static` versus `Animated` specialization is not implemented
+- async variant rebuilds, safe program retention, cache invalidation, migration, and full diagnostics are still incomplete
+- too much CPU-side work is still at risk of happening on render-time code paths instead of a background preparation path
 
-## Primary Goal
+## End State
 
-At the end of this work:
+At the end of the remaining work:
 
-- the Uber shader is composed from explicit feature modules instead of behaving like a permanently maximal fragment path
-- every major feature family has a master toggle in a custom Uber material UI
-- toggling a feature section on or off queues an async shader variant rebuild without blocking the editor UI
-- every user-editable property defaults to a compile constant
-- a property becomes an actual uniform only when the user marks it as animated
-- disabled features contribute no code, no uniforms, and no texture bindings to the compiled variant
-- the current material keeps rendering with its last valid program until a newly requested variant compiles and links successfully
-- variant identity is explicit, cacheable, and observable in tooling
+- the Uber shader is composed from explicit feature modules with one authoritative manifest derived from shader annotations
+- every major feature family has a clear module toggle and grouped property UI
+- every property defaults to `Static` and only becomes a runtime uniform when explicitly marked `Animated`
+- disabled modules contribute no code, no uniforms, and no texture bindings to the compiled variant
+- the material keeps rendering with its last-known-good program until the requested replacement is fully ready
+- variant identity is explicit, cacheable, visible in tooling, and stable across reloads
+- all CPU-side calculations required to prepare a variant happen off the render thread
+- the render thread is left with only the minimum unavoidable render-API work and the final atomic program adoption step
 
-## Core Design Rules
-
-These rules are the center of the design and should override ad hoc convenience decisions:
+## Non-Negotiable Rules
 
 - feature sections are compile-time decisions, not runtime escape hatches
-- the default property mode is static, not animated
+- the default property mode is `Static`, not `Animated`
 - static properties are emitted as compile constants into generated shader source or generated constant blocks
 - animated properties are emitted as uniforms and remain on the live material parameter surface
-- changing a static property triggers async recompilation of the owning material variant
-- changing an animated property updates runtime uniforms without forcing a full recompile unless feature membership changed
-- disabled feature sections remove their dependent uniforms, samplers, and code paths entirely
+- disabled modules remove their dependent uniforms, samplers, and code paths entirely
 - the editor UI is the authoritative source of feature enablement and property mode, not inferred shader text alone
+- the module manifest comes from annotated shader source, not a parallel C# metadata file
+- material-level state changes must go through `SetField(...)` per the `XRBase` rule in AGENTS.md §11
+- the render thread is not a place for manifest parsing, dependency checks, property-mode diffing, literal formatting, variant-key hashing, source generation, request coalescing, migration inference, or compile-log parsing
+- only the minimum unavoidable API-facing work stays on the render thread: backend compile or upload if required by the renderer, plus final atomic program swap after in-flight work using the old program has drained
+- if a calculation currently occurs during draw, bind, or render-time material preparation and is not strictly render-API work, treat that as a bug and move it off the render thread
 
-## Feature Model
+## Remaining Workstreams
 
-The Uber shader should be reorganized around explicit modules with metadata, dependencies, and ownership of their properties.
+### 1. Finish Shader Annotation Coverage
 
-Each feature module should define:
+Outcome: the annotation system is complete enough that the Uber shader can be authored and debugged without falling back to implicit metadata for shipping behavior.
 
-- a stable feature id
-- the shader snippets or files it owns
-- the compile-time define or defines that enable it
-- the list of dependent features it requires
-- the properties it owns
-- which properties may legally be animated
-- the textures and samplers it requires when enabled
-- whether it is allowed in imported-material-lite variants, full variants, or both
-
-Initial module families:
-
-- Surface and Base Color
-- Alpha and Cutout
-- Normal Mapping
-- Stylized Lighting
-- Material AO and Shadow Masking
-- Emission
-- Matcap
-- Rim Lighting
-- Advanced Specular
-- Detail Textures
-- Outline and Backface Effects
-- Glitter
-- Flipbook
-- Subsurface
-- Dissolve
-- Parallax
+- [ ] finish explicit `@feature` coverage for every optional Uber feature family
+- [ ] finish explicit `@property` coverage for all user-authored Uber uniforms and samplers that should appear in the custom UI
+- [ ] add missing ranges, enums, display names, tooltips, categories, and subcategories for the remaining Uber controls
+- [ ] tighten validation so missing or mismatched annotation coverage is loud in tooling instead of silently tolerated
+- [ ] write `docs/architecture/rendering/uber-shader-ui-annotations.md`
 
 Acceptance criteria:
 
-- every optional Uber feature is represented by a module definition instead of scattered one-off toggles
-- disabling a module removes its uniforms block from `uniforms.glsl` and its logic from the compiled fragment path
-- module dependencies are explicit and validated by tooling before compilation begins
+- shipping Uber modules do not rely on inferred guard-only metadata as their primary definition path
+- the shader inspector reports missing feature and property annotations in a way that is hard to ignore
+- shader authors can add or rename Uber UI content by editing shader source alone
 
-## Custom Uber UI
+### 2. Add A Real Uber Material State Model
 
-Outcome: the user can author Uber variants intentionally instead of indirectly poking at shader internals.
+Outcome: authored Uber state is stored as structured material data, not as ad hoc source edits.
 
-- [ ] add a dedicated Uber material inspector section instead of relying only on generic uniform discovery
-- [ ] expose a top-level toggle for each feature module with clear enabled, disabled, pending compile, and compile-failed states
-- [ ] group properties underneath their owning feature section rather than a flat parameter list
-- [ ] add a per-property mode control: `Static` or `Animated`
-- [ ] hide or disable child properties when their parent feature is off
-- [ ] show dependency badges and auto-enable required parent modules only when the user explicitly accepts that change
-- [ ] show variant metadata such as feature count, animated property count, variant hash, last compile time, and cache hit or miss
-- [ ] preserve serialized values for disabled sections without binding them to the live shader until re-enabled
+- [ ] add a dedicated serialized Uber material state object or equivalent data model owned by `XRMaterial`
+- [ ] store enabled module ids, property modes, and any authored static values in that state model rather than treating the fragment shader text as the source of truth
+- [ ] separate authored state, requested variant state, and currently bound compiled state
+- [ ] ensure imported and legacy materials can infer this new state on load
+- [ ] keep serialized values for disabled modules without leaking them into the live compiled shader surface
+- [ ] surface requested-state versus active-state differences in the inspector
 
 Acceptance criteria:
 
-- the user can toggle whole feature sections on and off from one custom UI
-- the user can mark individual properties as animated without editing shader source or raw parameter lists
-- the UI makes it obvious when a change will only update uniforms versus trigger async recompilation
+- Uber material authoring does not depend on directly editing the shader text as the canonical state store
+- the material can represent a desired future variant even while the current compiled program is still the old one
+- disabled modules preserve their authored data without staying live on the runtime shader surface
 
-## Static Versus Animated Property Policy
+### 3. Move Variant Preparation Off The Render Thread
 
-Outcome: the Uber shader pays runtime uniform cost only for values that genuinely need to change during playback.
+Outcome: all CPU-side calculations required to produce an Uber variant run on background worker paths instead of render-time code paths.
+
+- [ ] audit the current Uber material, shader, and inspector flows for CPU-side work happening on or near render-time code paths
+- [ ] move annotation parsing, manifest validation, dependency resolution, feature-state validation, property-mode diffing, migration inference, variant-key hashing, static literal formatting, generated-source emission, request coalescing, and compile-log parsing off the render thread
+- [ ] add a dedicated background preparation path for Uber variant requests before any renderer-specific compile or upload step
+- [ ] ensure no UI interaction causes render-thread stalls because of CPU-side variant preparation work
+- [ ] instrument time spent in worker-thread preparation versus render-thread adoption so regressions are visible
+- [ ] document the allowed render-thread responsibilities explicitly in code comments and docs
+
+Acceptance criteria:
+
+- changing Uber feature state or static-property state does not require CPU-side preparation work on the render thread
+- the render thread only performs unavoidable API work and final swap logic
+- profiling can distinguish background preparation time from render-thread adoption time
+
+### 4. Implement Property `Static` Versus `Animated` Specialization
+
+Outcome: the runtime uniform surface shrinks to only the values that truly need to change after compilation.
 
 - [ ] define a serialized property-mode model for every Uber property
 - [ ] treat booleans, enums, ints, floats, vectors, and colors as compile constants by default
-- [ ] keep sampler bindings as sampler resources, but treat related control values such as scales, pans, intensities, thresholds, and modes as static compile constants unless marked animated
-- [ ] generate shader literals for static values using deterministic formatting so variant keys remain stable
-- [ ] emit real uniforms only for properties currently marked animated
-- [ ] keep animated-property discovery consistent with `XRMaterial` parameter synchronization so values survive recompiles and reloads
-- [ ] ensure switching a property from `Static` to `Animated` or back is handled as a variant change and not as a silent partial mutation
+- [ ] keep sampler bindings as resources while treating related control values as static unless explicitly marked animated
+- [ ] generate deterministic shader literals using invariant culture and stable formatting
+- [ ] explicitly handle `-0.0`, `NaN`, and `Inf` cases when generating literals or reject invalid authored values with loud diagnostics
+- [ ] capture the current runtime value when a property moves from `Animated` back to `Static`
+- [ ] emit real uniforms only for properties currently marked `Animated`
+- [ ] keep `XRMaterial` parameter synchronization consistent across recompiles so animated values and bindings survive variant swaps
+- [ ] add the per-property mode UI and bulk actions for converting eligible properties
 
 Acceptance criteria:
 
-- a newly created Uber material compiles with the minimum uniform surface necessary for its enabled animated properties
-- a property marked static does not appear as a runtime uniform in the active variant
-- a property marked animated does appear as a runtime uniform and can change without another compile when its feature set is unchanged
+- a newly created Uber material compiles with the minimum uniform surface needed for its enabled animated properties
+- static properties do not appear as runtime uniforms in the compiled variant
+- animated properties remain editable without forcing a recompile when feature membership is unchanged
 
-## Async Recompilation Pipeline
+### 5. Replace Source-Cloning With A Real Variant Request Pipeline
 
-Outcome: the editor remains responsive while the material converges toward the newly requested Uber variant.
+Outcome: module toggles and property-mode changes feed a structured async variant builder instead of mutating shader text inline as the long-term behavior.
 
-- [ ] define a dedicated Uber variant request object keyed by enabled modules, animated-property mask, render mode, and source version
-- [ ] debounce rapid UI edits so repeated toggles do not enqueue redundant compile jobs
-- [ ] cancel or supersede stale compile requests when newer edits arrive for the same material
-- [ ] compile and link variants asynchronously using existing async shader and program-compilation infrastructure where available
-- [ ] keep the last-known-good shader program bound until the replacement variant is ready
-- [ ] surface compile progress and errors directly in the Uber UI instead of failing silently or dropping to black output
-- [ ] apply successful program swaps atomically so the material never presents a partially updated shader state
-- [ ] record compile timing and result metadata for later profiling and cache tuning
+- [ ] define a dedicated Uber variant request keyed by enabled modules, animated-property mask, static-property literals, render pass, vertex permutation, pipeline flavor, and source version
+- [ ] define the stable variant hash ordering and hash function explicitly
+- [ ] debounce rapid edits and supersede stale requests for the same material
+- [ ] compile and link variants asynchronously using existing shader and program infrastructure where possible
+- [ ] retain the last-known-good program until the replacement variant is fully ready
+- [ ] define a guaranteed safe fallback variant for first-compile or first-failure cases
+- [ ] surface compile progress, compile timing, and compile failures directly in the Uber inspector
+- [ ] apply successful swaps atomically after old program usage has drained
 
 Acceptance criteria:
 
-- toggling feature sections on or off does not stall the editor main loop
-- compile failure leaves the old valid Uber variant rendering in place
 - repeated quick edits converge to the final requested state instead of compiling every intermediate state
+- failed rebuilds leave valid rendering on screen
+- the direct fragment-source clone toggle path is no longer the main implementation path
 
-## Variant Caching And Invalidation
+### 6. Finish Cache And Invalidation Rules
 
-Outcome: modularity does not turn into uncontrolled variant churn.
+Outcome: the new variant system does not replace runtime waste with uncontrolled source and program churn.
 
-- [ ] cache generated Uber source by module set plus static-property literals plus animated-property mask
-- [ ] cache compiled shader variants and linked programs by the same stable key
-- [ ] invalidate cached variants when any owned module file, shared Uber snippet, or generated constant schema changes
-- [ ] keep cache entries separated for imported-material-lite, standard, and full-rich variants if those remain distinct families
-- [ ] log cache hit or miss, compile duration, uniform count, sampler count, and compile-failure reason for each Uber variant build
-- [ ] make the active variant key visible in the material inspector for diagnostics
-
-Acceptance criteria:
-
-- the same Uber feature and property configuration does not regenerate or recompile identical shader source repeatedly
-- cache invalidation is strict enough that snippet edits never leave stale compiled variants behind
-
-## Phase 0 - Establish Uber Baselines
-
-Outcome: work is ordered by actual Uber cost and failure risk, not intuition.
-
-- [ ] capture compile and link timings for representative minimal, medium, and full-feature Uber variants
-- [ ] record uniform counts, sampler counts, and generated source size for those same variants
-- [ ] profile GPU cost for representative materials after modularization begins so compile wins are not mistaken for frame wins
-- [ ] record the current worst offenders in `UberShader.frag` and `uniforms.glsl`, including runtime branches that should become module gates
-- [ ] create a small diagnostic table covering compile time, link time, variant count, and live uniform surface before any major refactor
+- [ ] cache generated Uber source by full stable variant key
+- [ ] cache compiled shaders and linked programs by that same key
+- [ ] choose and document the sampler-layout strategy: dense repack per variant or stable sparse bindings per module
+- [ ] invalidate cache entries when any owned module file, shared include, generated-constant schema, or relevant shader source revision changes
+- [ ] treat shared include edits such as `common.glsl` as full-family invalidations, not per-module local edits
+- [ ] expose cache hit or miss, compile duration, uniform count, sampler count, and failure reason in diagnostics
+- [ ] display the active variant key in the material inspector
 
 Acceptance criteria:
 
-- the roadmap has a measured baseline for minimal, common, and maximal Uber materials
-- the first implementation phase is chosen from measured compile pressure, runtime cost, or failure frequency
+- identical authored Uber states do not regenerate identical source repeatedly
+- source and program cache invalidation is strict enough to avoid stale variants after snippet edits
+- the active variant is diagnosable from the editor without digging through logs
 
-## Phase 1 - Define The Uber Module Manifest
+### 7. Complete The Custom Uber Inspector
 
-Outcome: the shader, UI, and caching code share one authoritative definition of Uber features.
+Outcome: the current inspector shell becomes a full authoring surface instead of an initial grouped view.
 
-- [ ] add a module manifest or equivalent metadata layer that maps feature ids to shader files, defines, dependencies, and properties
-- [ ] move existing optional blocks in `uniforms.glsl` and `UberShader.frag` under module-owned compile gates driven by that manifest
-- [ ] separate always-on core surface data from optional feature families
-- [ ] keep one thin compatibility path for legacy materials while new Uber materials use the module manifest directly
-
-Acceptance criteria:
-
-- module membership is data-driven and not duplicated independently across shader code, editor UI, and cache keys
-- turning a module off removes all of its owned compile and binding surface
-
-## Phase 2 - Ship The Custom Uber Inspector
-
-Outcome: Uber authoring becomes intentional and observable.
-
-- [ ] implement the first ImGui inspector for Uber materials with collapsible feature sections
-- [ ] add master feature toggles, per-property static or animated mode controls, and compile-state badges
-- [ ] display dependency warnings and compile-impact hints before the user commits a change
-- [ ] support bulk actions such as `Disable All Expensive Features`, `Convert Eligible Properties To Static`, and `Mark Selected Properties Animated`
+- [ ] replace interim feature toggle behavior with the real authored-state and variant-request path
+- [ ] add compile-state badges for requested, compiling, active, stale, and failed states
+- [ ] add property-mode controls for `Static` versus `Animated`
+- [ ] hide or disable child properties when their parent module is off
+- [ ] show dependency warnings and dependency-resolution prompts before applying changes
+- [ ] show module cost hints, animated-property counts, compile timings, and cache status
+- [ ] add bulk actions such as `Disable All Expensive Features` and `Convert Eligible Properties To Static`
 
 Acceptance criteria:
 
-- the generic uniform list is no longer the primary authoring experience for Uber materials
-- users can reason about feature cost and property mode directly from the editor
+- the generic uniform list is no longer the primary Uber authoring experience
+- the user can see which edits trigger uniform updates versus variant rebuilds
+- the custom UI can author the material without dropping back to raw parameter spelunking
 
-## Phase 3 - Convert Static Properties To Generated Constants
+### 8. Trim Remaining Runtime Branches And Decide The Default Family Shape
 
-Outcome: the common Uber path becomes materially cheaper by default.
+Outcome: the common Uber path stops carrying logic it does not use.
 
-- [ ] generate deterministic constant declarations or injected defines for static properties
-- [ ] remove runtime toggle uniforms such as feature-enable booleans from the hot path once their owning module is compile-specialized
-- [ ] keep only true time-varying properties on the uniform surface
-- [ ] validate literal generation for floats and vectors so cache keys are stable and text churn is minimized
-
-Acceptance criteria:
-
-- common non-animated Uber materials compile with dramatically fewer uniforms than the legacy path
-- runtime branching on optional feature enable flags is materially reduced or removed in the common case
-
-## Phase 4 - Add Dynamic Async Recompilation And Safe Program Swap
-
-Outcome: feature toggles are live and safe.
-
-- [ ] wire the Uber inspector to request variant rebuilds automatically when feature membership or property mode changes
-- [ ] ensure compile requests are debounced, supersedable, and cancellable
-- [ ] preserve the last valid program until the next program is fully compiled and linked
-- [ ] show compile logs in-editor when a requested variant fails
-- [ ] retain material values and animation bindings across variant swaps
+- [ ] audit remaining runtime `if` branches in `UberShader.frag` and move module-selection branches to compile time where reasonable
+- [ ] finish separating always-on core surface data from optional feature families
+- [ ] prioritize trimming high-surface optional families such as stylized lighting, matcap, parallax, glitter, dissolve, and subsurface from the default path
+- [ ] decide whether imported materials should stay on a dedicated lite Uber family distinct from hand-authored full variants
+- [ ] formalize vertex permutations, render passes, and pipeline flavors as explicit variant axes, not implicit side effects
 
 Acceptance criteria:
 
-- toggling a feature section updates the material through async recompilation instead of forcing blocking manual reload flows
-- the material never drops to an invalid partially rebound state during normal editor use
+- simple Uber materials compile into materially smaller shaders than feature-rich ones
+- the default family shape is explicit and intentionally minimal
+- imported-material behavior is deliberate rather than an accidental subset of the full path
 
-## Phase 5 - Trim The Uber Runtime Path Aggressively
+### 9. Add Migration, Telemetry, And Regression Coverage
 
-Outcome: the default Uber variant stops carrying logic it is not using.
+Outcome: the remaining architecture change is measured and protected against the failure modes already seen in practice.
 
-- [ ] audit all remaining runtime `if` branches in `UberShader.frag` and move feature-selection branches to compile time where reasonable
-- [ ] prioritize removal of high-surface optional families such as stylized lighting variants, matcap, parallax, glitter, dissolve, and subsurface from the default common path
-- [ ] decide whether imported materials should target a dedicated lite Uber family instead of the same full-rich manifest used by hand-authored materials
-- [ ] keep a genuine full-rich path only for materials that need it, not as the default for ordinary content
-
-Acceptance criteria:
-
-- a simple Uber material compiles into a materially smaller shader than a feature-rich Uber material
-- the full-rich variant is explicit and opt-in rather than the default shape of the system
-
-## Phase 6 - Validate Known Uber Failure Modes
-
-Outcome: the new architecture does not reintroduce already diagnosed Uber regressions.
-
-- [ ] add regression coverage for shader compile failure caused by excessive uniform and constant pressure
-- [ ] add regression coverage for sampler binding collisions when the logical material texture list is sparse
-- [ ] validate that disabled modules do not leak unused samplers or uniforms into compiled variants
-- [ ] validate that failed async recompiles keep the old valid program bound and visible
-- [ ] validate that switching properties between `Static` and `Animated` preserves serialized values and animation hookups
+- [ ] capture compile time, link time, uniform count, sampler count, and generated-source size baselines for minimal, common, and maximal Uber variants
+- [ ] profile representative GPU runtime cost after modularization so compile wins are not mistaken for frame wins
+- [ ] add sustained telemetry counters for variants compiled per session, cache hit rate, average compile ms, average link ms, and failed-compile count
+- [ ] add migration coverage for imported and legacy Uber materials mapping into the new state model
+- [ ] add regression coverage for excessive uniform or constant pressure, sampler binding collisions, disabled-module leakage, failed async fallback behavior, and `Static` or `Animated` transitions preserving values and animation hookups
 
 Acceptance criteria:
 
-- prior black-output classes of Uber failure are covered by targeted validation instead of manual rediscovery
-- the modular Uber path fails loudly in tooling before it fails silently in-frame
+- the remaining roadmap is driven by measured pressure rather than guesswork
+- known black-output and resource-surface failure modes are covered by targeted validation
+- migration from legacy or importer-authored Uber materials is deliberate and testable
+
+## Immediate Next Order
+
+The next implementation order should be:
+
+1. add the real Uber material state model
+2. move variant preparation work off the render thread
+3. replace source-clone toggles with a structured variant request pipeline
+4. add per-property `Static` versus `Animated` modes and literal generation
+5. finish cache, migration, diagnostics, and regression coverage
+
+That order replaces the current interim behavior with the real architecture while keeping the render thread clean and making every later system build on structured authored state instead of shader-text mutation.
 
 ## Non-Goals
 
-- do not broaden this document back into a whole-engine shader optimization audit
-- do not make the first implementation depend on the native editor UI; use the ImGui editor path first
-- do not keep feature toggles as runtime uniforms just for implementation convenience if they should be compile-time module gates
+- do not broaden this document into a whole-engine shader optimization audit
+- do not make the first full implementation depend on the native editor UI; keep the ImGui path first
+- do not keep feature toggles as runtime uniforms just for convenience if they should be compile-time gates
+- do not let the current direct source-cloning path become the permanent implementation
+- do not duplicate shader UI metadata in a parallel C# data file
+- do not build a node-graph shader editor as part of this work
 - do not force Vulkan-specific architecture into the OpenGL-first Uber workflow without separate approval
-- do not let a compatibility fallback become the permanent main path again
 
 ## Key Files
 
@@ -283,19 +243,13 @@ Acceptance criteria:
 - `Build/CommonAssets/Shaders/Uber/parallax.glsl`
 - `Build/CommonAssets/Shaders/Uber/specular.glsl`
 - `Build/CommonAssets/Shaders/Uber/subsurface.glsl`
+- `XREngine.Runtime.Rendering/Resources/Shaders/ShaderUiManifest.cs`
 - `XREngine.Runtime.Rendering/Resources/Shaders/XRShader.cs`
 - `XREngine.Runtime.Rendering/Resources/Shaders/ShaderHelper.cs`
 - `XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.cs`
-- `XREngine.Editor/AssetEditors/XRMaterialInspector.Enhanced.cs`
+- `XREngine.Editor/AssetEditors/XRMaterialInspector.cs`
+- `XREngine.Editor/AssetEditors/XRMaterialInspector.Uber.cs`
 - `XREngine.Editor/AssetEditors/XRShaderInspector.cs`
 - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs`
-
-## Suggested Next Step
-
-The first implementation pass should be Phase 1 plus the minimal Phase 2 shell:
-
-1. define the authoritative Uber module manifest
-2. build the custom ImGui Uber inspector around module toggles and per-property `Static` or `Animated` modes
-3. only after that, wire async recompilation and generated compile constants to the new data model
-
-That order keeps the shader architecture, UI, and variant cache keyed off the same source of truth instead of layering async recompilation on top of an unstable feature model.
+- `XREngine.UnitTests/Rendering/ShaderUiManifestParserTests.cs`
+- `docs/architecture/rendering/uber-shader-ui-annotations.md` (still to be authored)

@@ -98,6 +98,8 @@ namespace XREngine.Scene
             {
                 program.Uniform("ForwardPlusScreenSize", Engine.Rendering.State.ForwardPlusScreenSize);
                 program.Uniform("ForwardPlusTileSize", Engine.Rendering.State.ForwardPlusTileSize);
+                program.Uniform("ForwardPlusTileCountX", Engine.Rendering.State.ForwardPlusTileCountX);
+                program.Uniform("ForwardPlusTileCountY", Engine.Rendering.State.ForwardPlusTileCountY);
                 program.Uniform("ForwardPlusMaxLightsPerTile", Engine.Rendering.State.ForwardPlusMaxLightsPerTile);
 
                 // Keep bindings in sync with the compute shader: 20 (local lights), 21 (visible indices).

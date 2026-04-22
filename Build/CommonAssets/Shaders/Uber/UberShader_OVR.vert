@@ -106,9 +106,10 @@ void main() {
 	mat4 view = inverse(inverseView);
 	gl_Position = projection * view * worldPosition;
 
-	// Same inverse-transpose trick as the mono path — preserves normals
-	// under non-uniform scale.
-	mat3 normalMatrix = mat3(transpose(inverse(u_ModelMatrix)));
+	// u_NormalMatrix (adjoint of model) handles non-uniform scale for direction
+	// vectors; normalize() below absorbs the determinant scalar. Avoids a full
+	// mat3/mat4 inverse — see uniforms.glsl for the math.
+	mat3 normalMatrix = u_NormalMatrix;
 	v_WorldNormal  = normalize(normalMatrix * norm);
 	v_WorldTangent = normalize(normalMatrix * tan);
 	v_TangentSign  = tanSign;

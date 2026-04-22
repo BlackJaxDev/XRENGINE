@@ -179,6 +179,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = _visibleIndicesBuffer;
             Engine.Rendering.State.ForwardPlusScreenSize = new Vector2(width, height);
             Engine.Rendering.State.ForwardPlusTileSize = TileSize;
+            Engine.Rendering.State.ForwardPlusTileCountX = tileCountX;
+            Engine.Rendering.State.ForwardPlusTileCountY = tileCountY;
             Engine.Rendering.State.ForwardPlusMaxLightsPerTile = MaxLightsPerTile;
             Engine.Rendering.State.ForwardPlusLocalLightCount = lightCount;
 

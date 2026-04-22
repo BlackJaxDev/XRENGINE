@@ -120,6 +120,10 @@ namespace XREngine.Components.Scene.Mesh
 
         private bool _horizonAutoDisable = true;
         private float _horizonDisableThreshold = -0.05f;
+        private float _horizonFadeRange = 0.15f;
+
+        private float _sunIntensity = 6.0f;
+        private float _moonIntensity = 0.35f;
 
         private bool _sunColorTemperatureEnabled = false;
         private bool _animateSunColorTemperature = true;
@@ -429,6 +433,47 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         /// <summary>
+        /// Width (on the light direction's Y component) of the smooth fade band above <see cref="HorizonDisableThreshold"/>.
+        /// The synced light's intensity ramps from 0 at the threshold to its full configured value at (threshold + range),
+        /// eliminating the visible pop when the sun/moon crosses the horizon.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Horizon Fade Range")]
+        [Description("Range (0..1) above Horizon Disable Threshold over which the light smoothly fades in/out. Larger values produce a longer twilight fade.")]
+        public float HorizonFadeRange
+        {
+            get => _horizonFadeRange;
+            set => SetField(ref _horizonFadeRange, Math.Max(0.0f, value));
+        }
+
+        /// <summary>
+        /// Target <see cref="LightComponent.DiffuseIntensity"/> for the synced sun light at full elevation.
+        /// The actual applied intensity is scaled by the smooth horizon fade factor.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sun Intensity")]
+        [Description("Full-elevation DiffuseIntensity for the synced sun directional light. Sunlight should be bright.")]
+        public float SunIntensity
+        {
+            get => _sunIntensity;
+            set => SetField(ref _sunIntensity, Math.Max(0.0f, value));
+        }
+
+        /// <summary>
+        /// Target <see cref="LightComponent.DiffuseIntensity"/> for the synced moon light at full elevation.
+        /// The actual applied intensity is scaled by the smooth horizon fade factor. Moonlight should be
+        /// significantly dimmer than sunlight.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Moon Intensity")]
+        [Description("Full-elevation DiffuseIntensity for the synced moon directional light. Moonlight should be much dimmer than sunlight.")]
+        public float MoonIntensity
+        {
+            get => _moonIntensity;
+            set => SetField(ref _moonIntensity, Math.Max(0.0f, value));
+        }
+
+        /// <summary>
         /// When true, the synced sun directional light's Color is driven every tick by <see cref="SunColorTemperatureKelvin"/>.
         /// </summary>
         [Category("Skybox Dynamic")]
@@ -638,7 +683,7 @@ namespace XREngine.Components.Scene.Mesh
                     _sunColorTemperatureKelvin,
                     _sunHorizonColorTemperatureKelvin,
                     _sunZenithColorTemperatureKelvin);
-                ApplyDirectionalLightSync(sun, sunDirection, _sunColorTemperatureEnabled, sunKelvin);
+                ApplyDirectionalLightSync(sun, sunDirection, _sunColorTemperatureEnabled, sunKelvin, _sunIntensity);
             }
 
             if (moon is not null)
@@ -650,7 +695,7 @@ namespace XREngine.Components.Scene.Mesh
                     _moonColorTemperatureKelvin,
                     _moonHorizonColorTemperatureKelvin,
                     _moonZenithColorTemperatureKelvin);
-                ApplyDirectionalLightSync(moon, moonDirection, _moonColorTemperatureEnabled, moonKelvin);
+                ApplyDirectionalLightSync(moon, moonDirection, _moonColorTemperatureEnabled, moonKelvin, _moonIntensity);
             }
         }
 
@@ -718,17 +763,38 @@ namespace XREngine.Components.Scene.Mesh
         private IReadOnlyList<DirectionalLightComponent>? GetSceneDirectionalLights()
             => (SceneNode?.World as XRWorldInstance)?.Lights.DynamicDirectionalLights;
 
-        private void ApplyDirectionalLightSync(DirectionalLightComponent light, Vector3 direction, bool temperatureEnabled, float kelvin)
+        private void ApplyDirectionalLightSync(DirectionalLightComponent light, Vector3 direction, bool temperatureEnabled, float kelvin, float baseIntensity)
         {
+            // Smoothly fade the light in/out across a band above the horizon threshold so switching between
+            // sun and moon doesn't cause a one-frame pop with no directional lighting on the scene.
+            float fade;
             if (_horizonAutoDisable)
             {
-                bool shouldBeActive = direction.Y >= _horizonDisableThreshold;
-                if (light.IsActive != shouldBeActive)
-                    light.IsActive = shouldBeActive;
-
-                if (!shouldBeActive)
-                    return;
+                float threshold = _horizonDisableThreshold;
+                float range = MathF.Max(_horizonFadeRange, 1e-4f);
+                float t = (direction.Y - threshold) / range;
+                t = Math.Clamp(t, 0.0f, 1.0f);
+                // Smoothstep for a soft shoulder at both ends.
+                fade = t * t * (3.0f - 2.0f * t);
             }
+            else
+            {
+                fade = 1.0f;
+            }
+
+            // Fully below the fade band -> deactivate to skip shadow/lighting work.
+            bool shouldBeActive = fade > 0.0f;
+            if (light.IsActive != shouldBeActive)
+                light.IsActive = shouldBeActive;
+
+            if (!shouldBeActive)
+                return;
+
+            // Synced sun/moon are the scene's primary shadow casters; ensure shadows stay enabled.
+            if (!light.CastsShadows)
+                light.CastsShadows = true;
+
+            light.DiffuseIntensity = baseIntensity * fade;
 
             if (temperatureEnabled)
                 light.Color = KelvinToColorF3(kelvin);

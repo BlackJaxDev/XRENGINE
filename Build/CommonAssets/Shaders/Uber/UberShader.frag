@@ -226,7 +226,8 @@ struct PBRData {
 // -----------------------------------------------------------------------------
 mat3 computeWorldTbn(vec3 normal, vec3 worldPos, vec2 uv)
 {
-    vec3 n = normalize(normal);
+    // Caller passes a pre-normalized vertex normal; skip re-normalizing.
+    vec3 n = normal;
     vec3 dp1 = dFdx(worldPos);
     vec3 dp2 = dFdy(worldPos);
     vec2 duv1 = dFdx(uv);
@@ -321,8 +322,9 @@ vec4 calculateBaseColor(ToonMesh mesh) {
         if (_MainVertexColoringLinearSpace > 0.5) {
             vertColor.rgb = sRGBToLinear(vertColor.rgb);
         }
-        baseColor.rgb = mix(baseColor.rgb, baseColor.rgb * vertColor.rgb, _MainVertexColoring);
-        baseColor.a = mix(baseColor.a, baseColor.a * vertColor.a, _MainUseVertexColorAlpha);
+        // mix(x, x*y, t) == x * mix(1, y, t) — saves a vec3 multiply.
+        baseColor.rgb *= mix(vec3(1.0), vertColor.rgb, _MainVertexColoring);
+        baseColor.a *= mix(1.0, vertColor.a, _MainUseVertexColorAlpha);
     }
     
     return baseColor;
@@ -509,10 +511,9 @@ vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, P
 
     if (ForwardPlusEnabled) {
         // Find which screen-space tile we're in, then index into the tile's
-        // visible-light list.
+        // visible-light list. tileCountX is precomputed engine-side.
         ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;
-        int tileCountX = (int(ForwardPlusScreenSize.x) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
-        int tileIndex = tileCoord.y * tileCountX + tileCoord.x;
+        int tileIndex = tileCoord.y * ForwardPlusTileCountX + tileCoord.x;
         int baseIndex = tileIndex * ForwardPlusMaxLightsPerTile;
 
         for (int o = 0; o < ForwardPlusMaxLightsPerTile; ++o) {
@@ -573,14 +574,11 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
     light.attenuation = 1.0;
 
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
-    // PBR path: we just need the raw dot products; no ramp remap.
+    // PBR path: downstream only reads direction/color/indirectColor/nDotL/
+    // lightMap. Skip halfDir/nDotH/lDotH/nDotV/reflectionDir — the
+    // ForwardLighting snippet computes its own per-light half-vector.
     light.indirectColor = indirectColor;
     light.nDotL = dot(normal, light.direction);
-    light.nDotV = dot(normal, mesh.viewDir);
-    light.halfDir = normalize(light.direction + mesh.viewDir);
-    light.nDotH = dot(normal, light.halfDir);
-    light.lDotH = dot(light.direction, light.halfDir);
-    light.reflectionDir = reflect(-mesh.viewDir, normal);
     light.lightMap = saturate(light.nDotL);
     return light;
 #else
@@ -914,8 +912,17 @@ void main() {
     mesh.worldNormal = mesh.vertexNormal;
 
     // TBN built from screen-space derivatives — works even when the mesh has
-    // no baked tangents.
-    mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);
+    // no baked tangents. Skip when normal mapping is disabled (bump scale ~0)
+    // since the derivatives + cross products are pure waste in that case.
+    // Initialize to an identity-like frame so downstream helpers that touch
+    // TBN directly (rare) still see a well-formed matrix.
+    if (abs(_BumpScale) > EPSILON) {
+        mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);
+    } else {
+        vec3 n = mesh.vertexNormal;
+        vec3 t = normalize(abs(n.z) < 0.999 ? cross(n, vec3(0.0, 0.0, 1.0)) : cross(n, vec3(0.0, 1.0, 0.0)));
+        mesh.TBN = mat3(t, cross(n, t), n);
+    }
 
     // ---- 2. Depth-peel gate -------------------------------------------------
 #if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS)
