@@ -24,6 +24,16 @@ public sealed class GLMeshRendererLifecycleContractTests
         source.ShouldContain("BuffersBound = false;");
     }
 
+    [Test]
+    public void GLMeshRenderer_BuildsIndexBuffersOnlyWhenMeshRendererIsGenerated()
+    {
+        string lifecycleSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Lifecycle.cs");
+        string shaderSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
+
+        lifecycleSource.ShouldContain("MakeIndexBuffers();");
+        shaderSource.ShouldNotContain("MakeIndexBuffers();");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string fullPath = ResolveWorkspacePath(relativePath);

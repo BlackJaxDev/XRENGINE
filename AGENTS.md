@@ -95,7 +95,7 @@ When working on editor tooling or features, default to the ImGui path unless the
 ### Logs and Diagnostics
 
 - When file logging is enabled, per-run engine logs are written under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`.
-- Profiler traces in that same run directory include `profiler-main-thread-invokes.log` and `profiler-fps-drops.log`.
+- Profiler traces in that same run directory include `profiler-main-thread-invokes.log`, `profiler-fps-drops.log`, and `profiler-render-stalls.log`.
 - Math Intersections benchmark runs also write `math-intersections-benchmarks.log` into the same session directory.
 
 ### ExecTool (interactive script launcher)

@@ -4,8 +4,10 @@ using SharpFont;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SkiaSharp;
+using System.Buffers;
 using System.Numerics;
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using XREngine.Core.Files;
 using XREngine.Data;
@@ -791,6 +793,26 @@ namespace XREngine.Rendering
                 lineSpacing);
         }
 
+        private static bool TryReadNextRune(ReadOnlySpan<char> text, ref int charIndex, out Rune rune, out bool last)
+        {
+            while (charIndex < text.Length)
+            {
+                OperationStatus status = Rune.DecodeFromUtf16(text[charIndex..], out rune, out int charsConsumed);
+                if (status == OperationStatus.Done)
+                {
+                    last = charIndex + charsConsumed >= text.Length;
+                    charIndex += charsConsumed;
+                    return true;
+                }
+
+                charIndex++;
+            }
+
+            rune = default;
+            last = true;
+            return false;
+        }
+
         /// <summary>
         /// Retrieves quads for rendering a string of text.
         /// </summary>
@@ -815,19 +837,20 @@ namespace XREngine.Rendering
             if (str is null)
                 return;
 
+            ReadOnlySpan<char> text = str.AsSpan();
             float xOffset = offset.X;
-            for (int i = 0; i < str.Length; i++)
+            for (int charIndex = 0; charIndex < text.Length;)
             {
-                bool last = i == str.Length - 1;
-                char ch = str[i];
-                string character = ch.ToString();
-                if (!glyphs.ContainsKey(character))
+                if (!TryReadNextRune(text, ref charIndex, out Rune rune, out bool last))
+                    break;
+
+                string character = rune.ToString();
+                if (!glyphs.TryGetValue(character, out Glyph glyph))
                 {
                     // Handle missing glyphs (e.g., skip or substitute)
                     continue;
                 }
 
-                Glyph glyph = glyphs[character];
                 float scale = fontSize / layoutEmSize;
                 float translateX = (xOffset + glyph.Bearing.X) * scale;
                 float translateY = (offset.Y + glyph.Bearing.Y) * scale;
@@ -1015,20 +1038,23 @@ namespace XREngine.Rendering
                 : new int[str.Length];
 
             float scale = (fontSize ?? 1.0f) / layoutEmSize;
-            for (int i = 0; i < str.Length; i++)
+            ReadOnlySpan<char> text = str.AsSpan();
+            for (int charIndex = 0; charIndex < text.Length;)
             {
-                bool last = i == str.Length - 1;
-                bool first = i == 0;
+                int runeStart = charIndex;
+                if (!TryReadNextRune(text, ref charIndex, out Rune rune, out bool last))
+                    break;
 
-                char ch = str[i];
-                if (ch == ' ')
+                bool first = runeStart == 0;
+
+                if (rune.Value == ' ')
                 {
                     xOffset += spaceWidth;
                     if (!last)
                         xOffset += spacing;
                     continue;
                 }
-                if (ch == '\n')
+                if (rune.Value == '\n')
                 {
                     xOffset = offset.X;
                     lineBreakHeights[lineBreakCount] = lineHeight;
@@ -1040,14 +1066,13 @@ namespace XREngine.Rendering
                     continue;
                 }
 
-                string character = ch.ToString();
-                if (!glyphs.ContainsKey(character))
+                string character = rune.ToString();
+                if (!glyphs.TryGetValue(character, out Glyph glyph))
                 {
                     // Handle missing glyphs (e.g., skip or substitute)
                     continue;
                 }
 
-                Glyph glyph = glyphs[character];
                 float translateX = (xOffset + glyph.Bearing.X) * scale;
                 if (first)
                 {
@@ -1244,6 +1269,14 @@ namespace XREngine.Rendering
         public static FontGlyphSet LoadDefaultUIFont()
                 => LoadDefaultUIFontBitmap();
 
+        public static FontGlyphSet LoadDefaultUIIconFont()
+            => TryLoadWindowsUIFont("seguisym.ttf") ?? LoadDefaultUIFontBitmap();
+
+        public static FontGlyphSet LoadDefaultUIEmojiFont()
+            => TryLoadWindowsUIFont("seguiemj.ttf")
+            ?? TryLoadWindowsUIFont("seguisym.ttf")
+            ?? LoadDefaultUIFontBitmap();
+
         public static FontGlyphSet LoadDefaultUIFontBitmap()
             => LoadEngineFont(
                 Engine.Rendering.Settings.DefaultFontFolder,
@@ -1267,6 +1300,33 @@ namespace XREngine.Rendering
                 Engine.Rendering.Settings.DefaultFontFolder,
                 Engine.Rendering.Settings.DefaultFontFileName,
                 CreateWorldMtsdfImportOptions());
+
+        private static FontGlyphSet? TryLoadWindowsUIFont(string fileName)
+        {
+            if (!OperatingSystem.IsWindows())
+                return null;
+
+            string fontsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+            if (string.IsNullOrWhiteSpace(fontsDirectory))
+                return null;
+
+            string path = Path.Combine(fontsDirectory, fileName);
+            if (!File.Exists(path))
+                return null;
+
+            XRFontImportOptions options = CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize);
+            string cacheKey = BuildDirectEngineFontCacheKey(path, options);
+
+            try
+            {
+                return GetOrLoadDirectEngineFont(cacheKey, path, options);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadWindowsUIFont failed for '{path}': {ex.Message}");
+                return null;
+            }
+        }
 
         private static string BuildDirectEngineFontCacheKey(string path, XRFontImportOptions importOptions)
             => $"{path}|{BuildImportProfileKey(importOptions)}";

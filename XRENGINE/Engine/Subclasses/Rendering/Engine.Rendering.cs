@@ -344,12 +344,13 @@ namespace XREngine
                 => Settings.RecalcChildMatricesLoopType = Engine.EffectiveSettings.RecalcChildMatricesLoopType;
 
             /// <summary>
-            /// Pushes the effective compute skinning setting into the engine rendering settings.
+            /// Pushes the effective compute-rendering settings into the engine rendering settings.
             /// </summary>
-            public static void ApplyComputeSkinningPreference()
+            public static void ApplyComputeRenderingPreference()
             {
                 Settings.CalculateSkinningInComputeShader = Engine.EffectiveSettings.CalculateSkinningInComputeShader;
                 Settings.CalculateBlendshapesInComputeShader = Engine.EffectiveSettings.CalculateBlendshapesInComputeShader;
+                Settings.UseDetailPreservingComputeMipmaps = Engine.EffectiveSettings.UseDetailPreservingComputeMipmaps;
             }
 
             internal static void ApplyGpuRenderDispatchToPipeline(RenderPipeline pipeline, bool useGpu)

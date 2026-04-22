@@ -1231,7 +1231,8 @@ namespace XREngine
     {
         /// <summary>
         /// Populates points, lines, and triangles on separate thread-pool tasks in parallel (Task.Run + Task.WaitAll).
-        /// Preserved as an opt-in compatibility mode.
+        /// Default. The .NET thread pool is large and elastic, so debug population is never starved
+        /// by long-running engine jobs (e.g. texture-streaming cache writes / compression).
         /// </summary>
         Tasks,
 
@@ -1249,7 +1250,8 @@ namespace XREngine
 
         /// <summary>
         /// Schedules population on the engine's persistent worker threads via the JobManager.
-        /// Avoids thread-pool scheduling overhead; workers are pre-warmed and use lock-free queues. Default.
+        /// Avoids thread-pool scheduling overhead, but debug population can be starved when all
+        /// job workers are busy on long-running, CPU-bound work (e.g. texture cache compression).
         /// </summary>
         JobSystem,
     }
@@ -1306,6 +1308,7 @@ namespace XREngine
         private int _codeProfilerFpsDropBaselineWindowSamples = 30;
         private float _codeProfilerFpsDropMinPreviousFps = 10.0f;
         private float _codeProfilerFpsDropMinDeltaMs = 1.0f;
+        private float _codeProfilerRenderStallThresholdMs = 500.0f;
         private bool _profilerPanelPaused = false;
         private bool _profilerPanelSortByTime = false;
         private float _profilerPanelSmoothingAlpha = 0.0f;
@@ -1331,7 +1334,7 @@ namespace XREngine
         private bool _profilerPanelShowBvhMetrics = true;
         private bool _profilerPanelShowJobSystem = true;
         private bool _profilerPanelShowMainThreadInvokes = true;
-        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.JobSystem;
+        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.Tasks;
         private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
         private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
         private bool _forwardDepthPrePassEnabled = true;
@@ -2006,6 +2009,20 @@ namespace XREngine
             }
         }
 
+        [Category("Profiling: Render Stall Detection")]
+        [DisplayName("Threshold (ms)")]
+        [Description("Log a render-stall diagnostic when an active render dispatch goes this long without completing a render frame.")]
+        public float CodeProfilerRenderStallThresholdMs
+        {
+            get => _codeProfilerRenderStallThresholdMs;
+            set
+            {
+                float clamped = Math.Max(0.0f, value);
+                if (SetField(ref _codeProfilerRenderStallThresholdMs, clamped))
+                    Engine.Profiler.RenderStallThresholdMs = clamped;
+            }
+        }
+
         [Category("Profiling UI")]
         [DisplayName("Paused")]
         [Description("Pause refreshes in the in-editor profiler panel.")]
@@ -2279,6 +2296,7 @@ namespace XREngine
             CodeProfilerFpsDropBaselineWindowSamples = source.CodeProfilerFpsDropBaselineWindowSamples;
             CodeProfilerFpsDropMinPreviousFps = source.CodeProfilerFpsDropMinPreviousFps;
             CodeProfilerFpsDropMinDeltaMs = source.CodeProfilerFpsDropMinDeltaMs;
+            CodeProfilerRenderStallThresholdMs = source.CodeProfilerRenderStallThresholdMs;
             ProfilerPanelPaused = source.ProfilerPanelPaused;
             ProfilerPanelSortByTime = source.ProfilerPanelSortByTime;
             ProfilerPanelSmoothingAlpha = source.ProfilerPanelSmoothingAlpha;
@@ -2402,6 +2420,8 @@ namespace XREngine
                 CodeProfilerFpsDropMinPreviousFps = profilerFpsPrevious.Value;
             if (overrides.CodeProfilerFpsDropMinDeltaMsOverride is { HasOverride: true } profilerFpsDelta)
                 CodeProfilerFpsDropMinDeltaMs = profilerFpsDelta.Value;
+            if (overrides.CodeProfilerRenderStallThresholdMsOverride is { HasOverride: true } renderStallThreshold)
+                CodeProfilerRenderStallThresholdMs = renderStallThreshold.Value;
             if (overrides.ProfilerPanelPausedOverride is { HasOverride: true } profilerPaused)
                 ProfilerPanelPaused = profilerPaused.Value;
             if (overrides.ProfilerPanelSortByTimeOverride is { HasOverride: true } profilerSortByTime)

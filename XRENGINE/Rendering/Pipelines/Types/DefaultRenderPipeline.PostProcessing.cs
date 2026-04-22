@@ -415,13 +415,22 @@ public partial class DefaultRenderPipeline
     private static void DescribeBloomStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
         stage.AddParameter(
+            nameof(BloomSettings.Enabled),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Enabled");
+
+        bool IsEnabled(object o) => ((BloomSettings)o).Enabled;
+
+        stage.AddParameter(
             nameof(BloomSettings.Intensity),
             PostProcessParameterKind.Float,
             1.0f,
             displayName: "Intensity",
             min: 0.0f,
             max: 5.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.Threshold),
@@ -430,7 +439,8 @@ public partial class DefaultRenderPipeline
             displayName: "Threshold",
             min: 0.0f,
             max: 5.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.SoftKnee),
@@ -439,7 +449,8 @@ public partial class DefaultRenderPipeline
             displayName: "Soft Knee",
             min: 0.0f,
             max: 1.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.Radius),
@@ -448,7 +459,8 @@ public partial class DefaultRenderPipeline
             displayName: "Blur Radius",
             min: 0.1f,
             max: 8.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.Scatter),
@@ -457,7 +469,8 @@ public partial class DefaultRenderPipeline
             displayName: "Scatter",
             min: 0.0f,
             max: 1.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.Strength),
@@ -466,7 +479,8 @@ public partial class DefaultRenderPipeline
             displayName: "Bloom Strength",
             min: 0.0f,
             max: 1.0f,
-            step: 0.001f);
+            step: 0.001f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.StartMip),
@@ -475,7 +489,8 @@ public partial class DefaultRenderPipeline
             displayName: "Start Mip (Quality)",
             min: 0,
             max: 4,
-            step: 1);
+            step: 1,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.EndMip),
@@ -484,7 +499,8 @@ public partial class DefaultRenderPipeline
             displayName: "End Mip",
             min: 0,
             max: 4,
-            step: 1);
+            step: 1,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.Lod0Weight),
@@ -493,7 +509,8 @@ public partial class DefaultRenderPipeline
             displayName: "LOD0 Weight",
             min: 0.0f,
             max: 2.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.Lod1Weight),
@@ -502,7 +519,8 @@ public partial class DefaultRenderPipeline
             displayName: "LOD1 Weight",
             min: 0.0f,
             max: 2.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.Lod2Weight),
@@ -511,7 +529,8 @@ public partial class DefaultRenderPipeline
             displayName: "LOD2 Weight",
             min: 0.0f,
             max: 2.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.Lod3Weight),
@@ -520,7 +539,8 @@ public partial class DefaultRenderPipeline
             displayName: "LOD3 Weight",
             min: 0.0f,
             max: 2.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.Lod4Weight),
@@ -529,13 +549,15 @@ public partial class DefaultRenderPipeline
             displayName: "LOD4 Weight",
             min: 0.0f,
             max: 2.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
 
         stage.AddParameter(
             nameof(BloomSettings.DebugBloomOnly),
             PostProcessParameterKind.Bool,
             false,
-            displayName: "Debug: Show Bloom Only");
+            displayName: "Debug: Show Bloom Only",
+            visibilityCondition: IsEnabled);
     }
 
     private static void DescribeTemporalAntiAliasingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -1549,10 +1571,22 @@ public partial class DefaultRenderPipeline
         return stage?.TryGetBacking(out DepthOfFieldSettings? settings) == true ? settings : null;
     }
 
+    private static BloomSettings? GetBloomSettings()
+    {
+        var renderState = Engine.Rendering.State.RenderingPipelineState;
+        var stage = renderState?.SceneCamera?.GetPostProcessStageState<BloomSettings>();
+        return stage?.TryGetBacking(out BloomSettings? settings) == true ? settings : null;
+    }
+
     private static bool ShouldUseDepthOfField()
         => !IsLightProbePass
         && !Engine.Rendering.State.IsSceneCapturePass
         && GetDepthOfFieldSettings() is { Enabled: true };
+
+    private static bool ShouldUseBloom()
+        => !IsLightProbePass
+        && !Engine.Rendering.State.IsSceneCapturePass
+        && GetBloomSettings() is not { Enabled: false };
 
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class
         => state?.GetStage<TSettings>()?.TryGetBacking(out TSettings? settings) == true ? settings : null;

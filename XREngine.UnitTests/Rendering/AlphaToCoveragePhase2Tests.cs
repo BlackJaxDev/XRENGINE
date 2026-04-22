@@ -156,6 +156,7 @@ public sealed class AlphaToCoveragePhase2Tests
     public void BloomCombine_DefaultsUseAccumulatedMip1_InsteadOfIntermediateMips()
     {
         string bloomSettingsSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/BloomSettings.cs").Replace("\r\n", "\n");
+        bloomSettingsSource.ShouldContain("private bool _enabled = true;");
         bloomSettingsSource.ShouldContain("private int _startMip = 1;");
         bloomSettingsSource.ShouldContain("private int _endMip = 1;");
         bloomSettingsSource.ShouldContain("private float _lod1Weight = 1.0f;");
@@ -165,6 +166,7 @@ public sealed class AlphaToCoveragePhase2Tests
         bloomSettingsSource.ShouldNotContain("usesLegacySingleMipProfile");
 
         string pipelinePostProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+    pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Enabled),\n            PostProcessParameterKind.Bool,\n            true,");
         pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.StartMip),\n            PostProcessParameterKind.Int,\n            1,");
         pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            1,");
         pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod1Weight),\n            PostProcessParameterKind.Float,\n            1.0f,");
@@ -173,6 +175,7 @@ public sealed class AlphaToCoveragePhase2Tests
         pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod4Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
 
         string pipeline2PostProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
+    pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Enabled),\n            PostProcessParameterKind.Bool,\n            true,");
         pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.StartMip),\n            PostProcessParameterKind.Int,\n            1,");
         pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            1,");
         pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod1Weight),\n            PostProcessParameterKind.Float,\n            1.0f,");
@@ -189,6 +192,34 @@ public sealed class AlphaToCoveragePhase2Tests
         postProcessStereoShader.ShouldContain("uniform int BloomStartMip = 1;");
         postProcessStereoShader.ShouldContain("uniform int BloomEndMip = 1;");
         postProcessStereoShader.ShouldContain("uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);");
+    }
+
+    [Test]
+    public void BloomStage_EnabledToggle_DisablesBloomPassAndHidesDependentControls()
+    {
+        string bloomSettingsSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/BloomSettings.cs").Replace("\r\n", "\n");
+        bloomSettingsSource.ShouldContain("public bool Enabled");
+        bloomSettingsSource.ShouldContain("program.Uniform(\"BloomStrength\", enabled ? MathF.Max(0.0f, Strength) : 0.0f);");
+        bloomSettingsSource.ShouldContain("program.Uniform(\"DebugBloomOnly\", enabled && _debugBloomOnly);");
+
+        string pipelinePostProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        pipelinePostProcessSource.ShouldContain("bool IsEnabled(object o) => ((BloomSettings)o).Enabled;");
+        pipelinePostProcessSource.ShouldContain("visibilityCondition: IsEnabled");
+        pipelinePostProcessSource.ShouldContain("GetBloomSettings() is not { Enabled: false };");
+
+        string pipeline2PostProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
+        pipeline2PostProcessSource.ShouldContain("bool IsEnabled(object o) => ((BloomSettings)o).Enabled;");
+        pipeline2PostProcessSource.ShouldContain("visibilityCondition: IsEnabled");
+        pipeline2PostProcessSource.ShouldContain("GetBloomSettings() is not { Enabled: false };");
+
+        string pipelineCommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        pipelineCommandChainSource.ShouldContain("bloomChoice.ConditionEvaluator = ShouldUseBloom;");
+
+        string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        pipeline2CommandChainSource.ShouldContain("bloomChoice.ConditionEvaluator = ShouldUseBloom;");
+
+        string pipelineLegacySource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineLegacySource.ShouldContain("bloomChoice.ConditionEvaluator = ShouldUseBloom;");
     }
 
     [Test]

@@ -463,6 +463,15 @@ namespace XREngine
                     ? projectOverride.Value
                     : Rendering.Settings.CalculateBlendshapesInComputeShader;
 
+            /// <summary>
+            /// Gets the effective detail-preserving compute mipmap setting.
+            /// Resolved from: Project Override > Engine Default (not user-overridable)
+            /// </summary>
+            public static bool UseDetailPreservingComputeMipmaps
+                => GameSettings?.UseDetailPreservingComputeMipmapsOverride is { HasOverride: true } projectOverride
+                    ? projectOverride.Value
+                    : Rendering.Settings.UseDetailPreservingComputeMipmaps;
+
             #endregion
 
             #region Networking Settings (Project > Engine only)

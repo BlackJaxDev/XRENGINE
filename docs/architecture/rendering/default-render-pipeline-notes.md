@@ -25,6 +25,7 @@ The non-stereo `HDRSceneTex` was created via `CreateFrameBufferTexture` which de
 ### Checklist for new textures
 
 - [ ] Does this texture need mipmaps? → Set `Resizable = false`, `AutoGenerateMipmaps = true`.
+- [ ] If `UseDetailPreservingComputeMipmaps` is enabled, confirm the texture path is an eligible OpenGL 2D format; unsupported formats still fall back to `glGenerateTextureMipmap`.
 - [ ] Is there parity between the stereo and non-stereo creation paths?
 - [ ] After creation, does `SmallestMipmapLevel` return the expected value?
 

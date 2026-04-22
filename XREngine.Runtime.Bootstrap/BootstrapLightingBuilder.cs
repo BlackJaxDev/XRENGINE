@@ -224,7 +224,7 @@ public static class BootstrapLightingBuilder
     private static Vector3 ToVector3(UnitTestingWorldSettings.TranslationXYZ value)
         => new(value.X, value.Y, value.Z);
 
-    public static void AddDirLight(SceneNode rootNode)
+    public static DirectionalLightComponent? AddDirLight(SceneNode rootNode)
     {
         var dirLightNode = new SceneNode(rootNode) { Name = "TestDirectionalLightNode" };
         var dirLightTransform = dirLightNode.SetTransform<Transform>();
@@ -234,7 +234,7 @@ public static class BootstrapLightingBuilder
             float.DegreesToRadians(-55),
             0.0f);
         if (!dirLightNode.TryAddComponent<DirectionalLightComponent>(out var dirLightComp))
-            return;
+            return null;
 
         dirLightComp!.Name = "TestDirectionalLight";
         dirLightComp.Color = new Vector3(1, 1, 1);
@@ -242,5 +242,6 @@ public static class BootstrapLightingBuilder
         dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
         dirLightComp.CastsShadows = true;
         dirLightComp.SetShadowMapResolution(4096, 4096);
+        return dirLightComp;
     }
 }

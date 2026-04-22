@@ -288,6 +288,8 @@ public sealed class McpAssistantWindow
     private string _prompt = string.Empty;
     private bool _pendingPromptClear; // Set after send to force-clear the ImGui text buffer next frame.
     private readonly List<ChatMessage> _history = [];
+    private readonly Dictionary<ChatMessage, float> _chatRowHeightCache = [];
+    private int _lastChatHistoryCount;
     private bool _isBusy;
     private string _status = "Ready";
     private Vector4 _statusColor = ColorReady;
@@ -1080,6 +1082,10 @@ public sealed class McpAssistantWindow
 
     private void DrawChatLog()
     {
+        if (_history.Count < _lastChatHistoryCount)
+            _chatRowHeightCache.Clear();
+        _lastChatHistoryCount = _history.Count;
+
         // Reserve space for the prompt bar at the bottom.
         float promptBarHeight = GetPromptInputHeight() + 44f;
         float available = ImGui.GetContentRegionAvail().Y - promptBarHeight;
@@ -1098,39 +1104,109 @@ public sealed class McpAssistantWindow
         else
         {
             ImGui.Spacing();
-            for (int i = 0; i < _history.Count; i++)
-            {
-                ChatMessage msg = _history[i];
-                bool isUser = string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
-
-                if (isUser)
-                    DrawUserMessage(msg);
-                else
-                    DrawAssistantMessage(msg, i);
-
-                // Thin separator between messages.
-                if (i < _history.Count - 1)
-                {
-                    ImGui.Spacing();
-                    var dl = ImGui.GetWindowDrawList();
-                    Vector2 p = ImGui.GetCursorScreenPos();
-                    float w = ImGui.GetContentRegionAvail().X;
-                    dl.AddLine(p, p + new Vector2(w, 0), ImGui.ColorConvertFloat4ToU32(ColorSeparator));
-                    ImGui.Spacing();
-                    ImGui.Spacing();
-                }
-            }
+            DrawVirtualizedChatRows();
         }
 
         // Auto-scroll when streaming or when a new message was just added.
         if (_scrollToBottom || (AutoScroll && _isBusy))
         {
+            ImGui.Dummy(new Vector2(1.0f, 0.0f));
             ImGui.SetScrollHereY(1.0f);
             _scrollToBottom = false;
         }
 
         ImGui.EndChild();
         ImGui.PopStyleColor();
+    }
+
+    private void DrawVirtualizedChatRows()
+    {
+        const float overscanLines = 8.0f;
+
+        int messageCount = _history.Count;
+        float lineHeight = ImGui.GetTextLineHeightWithSpacing();
+        float overscanHeight = lineHeight * overscanLines;
+        float visibleMin = Math.Max(0.0f, ImGui.GetScrollY() - overscanHeight);
+        float visibleMax = ImGui.GetScrollY() + ImGui.GetWindowHeight() + overscanHeight;
+
+        float topSpacerHeight = 0.0f;
+        int startIndex = 0;
+        for (; startIndex < messageCount; startIndex++)
+        {
+            float rowHeight = GetEstimatedChatRowHeight(_history[startIndex], lineHeight);
+            if (topSpacerHeight + rowHeight >= visibleMin)
+                break;
+
+            topSpacerHeight += rowHeight;
+        }
+
+        float accumulatedHeight = topSpacerHeight;
+        int endIndex = startIndex;
+        for (; endIndex < messageCount; endIndex++)
+        {
+            float rowHeight = GetEstimatedChatRowHeight(_history[endIndex], lineHeight);
+            if (accumulatedHeight > visibleMax && endIndex > startIndex)
+                break;
+
+            accumulatedHeight += rowHeight;
+        }
+
+        float bottomSpacerHeight = 0.0f;
+        for (int i = endIndex; i < messageCount; i++)
+            bottomSpacerHeight += GetEstimatedChatRowHeight(_history[i], lineHeight);
+
+        if (topSpacerHeight > 0.0f)
+            ImGui.Dummy(new Vector2(1.0f, topSpacerHeight));
+
+        for (int i = startIndex; i < endIndex; i++)
+        {
+            ChatMessage msg = _history[i];
+            float rowStart = ImGui.GetCursorPosY();
+            DrawChatMessageRow(msg, i, messageCount);
+            float measuredHeight = Math.Max(ImGui.GetCursorPosY() - rowStart, lineHeight * 3.0f);
+            _chatRowHeightCache[msg] = measuredHeight;
+        }
+
+        if (bottomSpacerHeight > 0.0f)
+            ImGui.Dummy(new Vector2(1.0f, bottomSpacerHeight));
+    }
+
+    private float GetEstimatedChatRowHeight(ChatMessage message, float lineHeight)
+    {
+        if (_chatRowHeightCache.TryGetValue(message, out float cachedHeight))
+            return cachedHeight;
+
+        int toolCallCount;
+        lock (message.ToolCallsSyncRoot)
+            toolCallCount = message.ToolCalls.Count;
+
+        int estimatedLines = Math.Max(1, Math.Min(64, (message.Content.Length / 84) + 1));
+        float estimatedHeight = (estimatedLines + 4.0f) * lineHeight;
+        if (!string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
+            estimatedHeight += toolCallCount * lineHeight * 2.5f;
+
+        return Math.Max(estimatedHeight, lineHeight * 5.0f);
+    }
+
+    private void DrawChatMessageRow(ChatMessage msg, int index, int messageCount)
+    {
+        bool isUser = string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
+
+        if (isUser)
+            DrawUserMessage(msg);
+        else
+            DrawAssistantMessage(msg, index);
+
+        if (index >= messageCount - 1)
+            return;
+
+        ImGui.Spacing();
+        var dl = ImGui.GetWindowDrawList();
+        Vector2 p = ImGui.GetCursorScreenPos();
+        float w = ImGui.GetContentRegionAvail().X;
+        dl.AddLine(p, p + new Vector2(w, 0), ImGui.ColorConvertFloat4ToU32(ColorSeparator));
+        ImGui.Spacing();
+        ImGui.Spacing();
     }
 
     // ── Copilot-Style Message Rendering ──────────────────────────────────
@@ -6275,6 +6351,8 @@ Conversation transcript:
             || (string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase)
                 && string.IsNullOrWhiteSpace(m.Content)
                 && m.ToolCalls.Count == 0));
+        _chatRowHeightCache.Clear();
+        _lastChatHistoryCount = _history.Count;
         _historyCompactedThroughExclusive = 0;
     }
 

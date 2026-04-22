@@ -34,6 +34,8 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
     private static readonly Vector4 DropTargetHighlight = new(0.25f, 0.55f, 0.95f, 0.35f);
     private static readonly Vector4 RootDropHighlight = new(0.18f, 0.18f, 0.18f, 0.30f);
     private static readonly ColorF4 SelectedNodeColor = new(0.22f, 0.50f, 0.85f, 0.45f);
+    private static FontGlyphSet NativeUiIconFont => FontGlyphSet.LoadDefaultUIIconFont();
+    private static FontGlyphSet NativeUiEmojiFont => FontGlyphSet.LoadDefaultUIEmojiFont();
 
     private bool _truncateHierarchy = true;
     public bool TruncateHierarchy
@@ -437,13 +439,25 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         headerBtnTfm.Margins = new Vector4(0.0f);
 
         headerBtnNode.NewChild<UITextComponent>(out var headerText);
+    headerBtnNode.NewChild<UITextComponent>(out var headerArrow);
+    var headerArrowTfm = headerArrow.BoundableTransform;
+    headerArrowTfm.MinAnchor = new Vector2(0.0f, 0.0f);
+    headerArrowTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
+    headerArrowTfm.Width = ArrowWidth;
+    headerArrowTfm.Translation = new Vector2(4.0f, 0.0f);
+    headerArrow.Font = NativeUiIconFont;
+    headerArrow.FontSize = EditorUI.Styles.SectionHeaderFontSize;
+    headerArrow.Text = collapsed ? "\u25B6" : "\u25BC";
+    headerArrow.HorizontalAlignment = EHorizontalAlignment.Center;
+    headerArrow.VerticalAlignment = EVerticalAlignment.Center;
+    headerArrow.Color = EditorUI.Styles.SectionHeaderTextColor;
+
         var headerTextTfm = headerText.BoundableTransform;
         headerTextTfm.MinAnchor = Vector2.Zero;
         headerTextTfm.MaxAnchor = Vector2.One;
-        headerTextTfm.Margins = new Vector4(6.0f, 2.0f, 6.0f, 2.0f);
+    headerTextTfm.Margins = new Vector4(22.0f, 2.0f, 6.0f, 2.0f);
         headerText.FontSize = EditorUI.Styles.SectionHeaderFontSize;
-        string arrow = collapsed ? "\u25B6" : "\u25BC";
-        headerText.Text = $"{arrow} {sceneName}{dirtyMarker}";
+    headerText.Text = $"{sceneName}{dirtyMarker}";
         headerText.HorizontalAlignment = EHorizontalAlignment.Left;
         headerText.VerticalAlignment = EVerticalAlignment.Center;
         headerText.Color = EditorUI.Styles.SectionHeaderTextColor;
@@ -482,6 +496,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         visGlyphTfm.MinAnchor = Vector2.Zero;
         visGlyphTfm.MaxAnchor = Vector2.One;
         visGlyphTfm.Margins = new Vector4(0.0f);
+        visGlyph.Font = scene.IsVisible ? NativeUiEmojiFont : NativeUiIconFont;
         visGlyph.FontSize = 11;
         visGlyph.Text = scene.IsVisible ? "\uD83D\uDC41" : "\u2014"; // eye icon or dash
         visGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
@@ -512,6 +527,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         unloadGlyphTfm.MinAnchor = Vector2.Zero;
         unloadGlyphTfm.MaxAnchor = Vector2.One;
         unloadGlyphTfm.Margins = new Vector4(0.0f);
+        unloadGlyph.Font = NativeUiIconFont;
         unloadGlyph.FontSize = 10;
         unloadGlyph.Text = "\u2716"; // X icon
         unloadGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
@@ -547,14 +563,26 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             headerBtnTfm.MaxAnchor = Vector2.One;
             headerBtnTfm.Margins = new Vector4(0.0f);
 
+            headerBtnNode.NewChild<UITextComponent>(out var headerArrow);
+            var headerArrowTfm = headerArrow.BoundableTransform;
+            headerArrowTfm.MinAnchor = new Vector2(0.0f, 0.0f);
+            headerArrowTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
+            headerArrowTfm.Width = ArrowWidth;
+            headerArrowTfm.Translation = new Vector2(4.0f, 0.0f);
+            headerArrow.Font = NativeUiIconFont;
+            headerArrow.FontSize = EditorUI.Styles.SectionHeaderFontSize;
+            headerArrow.Text = collapsed ? "\u25B6" : "\u25BC";
+            headerArrow.HorizontalAlignment = EHorizontalAlignment.Center;
+            headerArrow.VerticalAlignment = EVerticalAlignment.Center;
+            headerArrow.Color = EditorUI.Styles.SectionHeaderTextColor;
+
             headerBtnNode.NewChild<UITextComponent>(out var headerText);
             var headerTextTfm = headerText.BoundableTransform;
             headerTextTfm.MinAnchor = Vector2.Zero;
             headerTextTfm.MaxAnchor = Vector2.One;
-            headerTextTfm.Margins = new Vector4(6.0f, 2.0f, 6.0f, 2.0f);
+            headerTextTfm.Margins = new Vector4(22.0f, 2.0f, 6.0f, 2.0f);
             headerText.FontSize = EditorUI.Styles.SectionHeaderFontSize;
-            string arrow = collapsed ? "\u25B6" : "\u25BC";
-            headerText.Text = $"{arrow} {title}";
+            headerText.Text = title;
             headerText.HorizontalAlignment = EHorizontalAlignment.Left;
             headerText.VerticalAlignment = EVerticalAlignment.Center;
             headerText.Color = EditorUI.Styles.SectionHeaderTextColor;
@@ -564,13 +592,26 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         }
         else
         {
+            sectionNode.NewChild<UITextComponent>(out var headerArrow);
+            var headerArrowTfm = headerArrow.BoundableTransform;
+            headerArrowTfm.MinAnchor = new Vector2(0.0f, 0.0f);
+            headerArrowTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
+            headerArrowTfm.Width = ArrowWidth;
+            headerArrowTfm.Translation = new Vector2(4.0f, 0.0f);
+            headerArrow.Font = NativeUiIconFont;
+            headerArrow.FontSize = EditorUI.Styles.SectionHeaderFontSize;
+            headerArrow.Text = "\u25BC";
+            headerArrow.HorizontalAlignment = EHorizontalAlignment.Center;
+            headerArrow.VerticalAlignment = EVerticalAlignment.Center;
+            headerArrow.Color = EditorUI.Styles.SectionHeaderTextColor;
+
             sectionNode.NewChild<UITextComponent>(out var headerText);
             var headerTextTfm = headerText.BoundableTransform;
             headerTextTfm.MinAnchor = Vector2.Zero;
             headerTextTfm.MaxAnchor = Vector2.One;
-            headerTextTfm.Margins = new Vector4(6.0f, 2.0f, 6.0f, 2.0f);
+            headerTextTfm.Margins = new Vector4(22.0f, 2.0f, 6.0f, 2.0f);
             headerText.FontSize = EditorUI.Styles.SectionHeaderFontSize;
-            headerText.Text = $"\u25BC {title}";
+            headerText.Text = title;
             headerText.HorizontalAlignment = EHorizontalAlignment.Left;
             headerText.VerticalAlignment = EVerticalAlignment.Center;
             headerText.Color = EditorUI.Styles.SectionHeaderTextColor;
@@ -813,6 +854,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
                 arrowGlyphTfm.MinAnchor = Vector2.Zero;
                 arrowGlyphTfm.MaxAnchor = Vector2.One;
                 arrowGlyphTfm.Margins = new Vector4(0.0f);
+                arrowGlyph.Font = NativeUiIconFont;
                 arrowGlyph.FontSize = 10;
                 arrowGlyph.Text = collapsed ? "\u25B6" : "\u25BC";
                 arrowGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
@@ -885,6 +927,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             toggleGlyphTfm.MinAnchor = Vector2.Zero;
             toggleGlyphTfm.MaxAnchor = Vector2.One;
             toggleGlyphTfm.Margins = new Vector4(0.0f);
+            toggleGlyph.Font = NativeUiIconFont;
             toggleGlyph.FontSize = 12;
             toggleGlyph.Text = node.IsActiveSelf ? "\u2713" : string.Empty;
             toggleGlyph.HorizontalAlignment = EHorizontalAlignment.Center;

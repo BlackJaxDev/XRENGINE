@@ -142,6 +142,16 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _animatableTransforms, value);
         }
 
+        private bool _disableBatching = false;
+        /// <summary>
+        /// When true, this text component always uses the per-component render path instead of the batched UI text renderer.
+        /// </summary>
+        public bool DisableBatching
+        {
+            get => _disableBatching;
+            set => SetField(ref _disableBatching, value);
+        }
+
         private FontGlyphSet.EWrapMode _wordWrap = FontGlyphSet.EWrapMode.None;
         /// <summary>
         /// Controls how glyphs wrap when reaching the available bounds.
@@ -822,7 +832,7 @@ namespace XREngine.Rendering.UI
         /// use animatable (per-glyph rotation) transforms, or have no glyphs to render.
         /// </summary>
         public override bool SupportsBatchedRendering
-            => !ClipToBounds && !AnimatableTransforms;
+            => !DisableBatching && !ClipToBounds && !AnimatableTransforms;
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {

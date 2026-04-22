@@ -1,0 +1,66 @@
+#version 450
+
+#ifndef DPID_IMAGE_FORMAT
+#define DPID_IMAGE_FORMAT rgba8
+#endif
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D sourceTexture;
+layout(binding = 1, DPID_IMAGE_FORMAT) writeonly uniform image2D dstMip;
+
+uniform ivec2 DstMipSize;
+uniform int SrcMip;
+uniform float DetailPreserveStrength;
+
+const vec3 LumaWeights = vec3(0.2126, 0.7152, 0.0722);
+
+vec4 SampleSource(ivec2 coord, ivec2 srcSize)
+{
+    ivec2 clampedCoord = clamp(coord, ivec2(0), srcSize - 1);
+    return texelFetch(sourceTexture, clampedCoord, SrcMip);
+}
+
+vec4 Reduce2x2DetailPreserving(ivec2 srcBase)
+{
+    ivec2 srcSize = textureSize(sourceTexture, SrcMip);
+
+    vec4 c0 = SampleSource(srcBase, srcSize);
+    vec4 c1 = SampleSource(srcBase + ivec2(1, 0), srcSize);
+    vec4 c2 = SampleSource(srcBase + ivec2(0, 1), srcSize);
+    vec4 c3 = SampleSource(srcBase + ivec2(1, 1), srcSize);
+
+    vec4 averageColor = 0.25 * (c0 + c1 + c2 + c3);
+
+    float l0 = dot(c0.rgb, LumaWeights);
+    float l1 = dot(c1.rgb, LumaWeights);
+    float l2 = dot(c2.rgb, LumaWeights);
+    float l3 = dot(c3.rgb, LumaWeights);
+    float lumaMean = 0.25 * (l0 + l1 + l2 + l3);
+
+    float normalization = max(abs(lumaMean), 0.05);
+    float w0 = 1.0 + min(2.0, abs(l0 - lumaMean) / normalization);
+    float w1 = 1.0 + min(2.0, abs(l1 - lumaMean) / normalization);
+    float w2 = 1.0 + min(2.0, abs(l2 - lumaMean) / normalization);
+    float w3 = 1.0 + min(2.0, abs(l3 - lumaMean) / normalization);
+
+    float totalWeight = w0 + w1 + w2 + w3;
+    vec4 weightedColor = (c0 * w0 + c1 * w1 + c2 * w2 + c3 * w3) / max(totalWeight, 1e-5);
+
+    vec4 detailPreserved = mix(averageColor, weightedColor, clamp(DetailPreserveStrength, 0.0, 1.0));
+    detailPreserved.a = averageColor.a;
+
+    vec4 minColor = min(min(c0, c1), min(c2, c3));
+    vec4 maxColor = max(max(c0, c1), max(c2, c3));
+    return clamp(detailPreserved, minColor, maxColor);
+}
+
+void main()
+{
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= DstMipSize.x || coord.y >= DstMipSize.y)
+        return;
+
+    vec4 outColor = Reduce2x2DetailPreserving(coord * 2);
+    imageStore(dstMip, coord, outColor);
+}

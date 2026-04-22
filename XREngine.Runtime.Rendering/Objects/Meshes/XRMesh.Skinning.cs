@@ -192,7 +192,7 @@ public partial class XRMesh
         Dictionary<int, List<int>>? faceRemap,
         Vertex[] sourceList)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope(null);
+        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
 
         CollectBoneWeights(
             mesh,
@@ -216,7 +216,7 @@ public partial class XRMesh
         out Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex,
         out Dictionary<TransformBase, int> boneToIndexTable)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope(null);
+        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
 
         boneCount = RuntimeRenderingHostServices.Current.AllowSkinning ? mesh.BoneCount : 0;
         int vertexCount = VertexCount;
@@ -227,21 +227,19 @@ public partial class XRMesh
         _maxWeightCount = 0;
         int boneIndex = 0;
 
-        object[] vertexLocks = new object[vertexCount];
-        for (int i = 0; i < vertexCount; i++)
-            vertexLocks[i] = new object();
-
-        Parallel.For(0, boneCount, i =>
+        // Mesh import is already on an async worker; keep bone collection sequential so the
+        // fan-out can't starve Update / FixedUpdate / CollectVisible threads.
+        for (int i = 0; i < boneCount; i++)
         {
             Bone bone = mesh.Bones[i];
             if (!bone.HasVertexWeights)
-                return;
+                continue;
 
             string name = bone.Name;
             if (!TryGetTransform(nodeCache, name, out var transform) || transform is null)
             {
                 RuntimeRenderingHostServices.Current.LogOutput($"Bone {name} has no corresponding node in the heirarchy.");
-                return;
+                continue;
             }
 
             Matrix4x4 invBind = transform.InverseBindMatrix;
@@ -259,36 +257,28 @@ public partial class XRMesh
 
                 foreach (int newId in targetIndices)
                 {
-                    lock (vertexLocks[newId])
+                    var wpv = weightsPerVertex2[newId];
+                    wpv ??= [];
+                    weightsPerVertex2[newId] = wpv;
+
+                    if (!wpv.TryGetValue(transform, out var existing))
+                        wpv[transform] = (weight, invBind);
+                    else if (existing.weight != weight)
                     {
-                        var wpv = weightsPerVertex2[newId];
-                        wpv ??= [];
-                        weightsPerVertex2[newId] = wpv;
-
-                        if (!wpv.TryGetValue(transform, out var existing))
-                            wpv[transform] = (weight, invBind);
-                        else if (existing.weight != weight)
-                        {
-                            wpv[transform] = ((existing.weight + weight) * 0.5f, existing.invBindMatrix);
-                            RuntimeRenderingHostServices.Current.LogOutput($"Vertex {newId} has multiple weights for bone {name}.");
-                        }
-                        if (sourceList[newId].Weights == null)
-                            sourceList[newId].Weights = wpv;
-
-                        int origMax, currentMax;
-                        do
-                        {
-                            origMax = _maxWeightCount;
-                            currentMax = Math.Max(origMax, wpv.Count);
-                        }
-                        while (Interlocked.CompareExchange(ref _maxWeightCount, currentMax, origMax) != origMax);
+                        wpv[transform] = ((existing.weight + weight) * 0.5f, existing.invBindMatrix);
+                        RuntimeRenderingHostServices.Current.LogOutput($"Vertex {newId} has multiple weights for bone {name}.");
                     }
+                    if (sourceList[newId].Weights == null)
+                        sourceList[newId].Weights = wpv;
+
+                    if (wpv.Count > _maxWeightCount)
+                        _maxWeightCount = wpv.Count;
                 }
             }
 
             int idx = Interlocked.Increment(ref boneIndex) - 1;
             concurrentBoneToIndexTable.TryAdd(transform, idx);
-        });
+        }
 
         boneToIndexTable = concurrentBoneToIndexTable.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
@@ -350,7 +340,7 @@ public partial class XRMesh
         Dictionary<TransformBase, int> boneToIndexTable,
         Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope(null);
+        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
 
         int vertexCount = VertexCount;
         uint[] counts = new uint[vertexCount];
@@ -358,7 +348,7 @@ public partial class XRMesh
         List<float>[] localBoneWeights = new List<float>[vertexCount];
         bool intVarType = RuntimeRenderingHostServices.Current.UseIntegerUniformsInShaders;
 
-        Parallel.For(0, vertexCount, vi =>
+        for (int vi = 0; vi < vertexCount; vi++)
         {
             var group = weightsPerVertex[vi];
             if (group == null)
@@ -366,7 +356,7 @@ public partial class XRMesh
                 counts[vi] = 0;
                 localBoneIndices[vi] = [];
                 localBoneWeights[vi] = [];
-                return;
+                continue;
             }
 
             VertexWeightGroup.Normalize(group);
@@ -388,8 +378,9 @@ public partial class XRMesh
             }
             localBoneIndices[vi] = indicesList;
             localBoneWeights[vi] = weightsList;
-            Interlocked.Exchange(ref _maxWeightCount, Math.Max(MaxWeightCount, count));
-        });
+            if (count > _maxWeightCount)
+                _maxWeightCount = count;
+        }
 
         uint offset = 0;
         var offsetsBuf = BoneWeightOffsets!;
@@ -441,17 +432,18 @@ public partial class XRMesh
         Dictionary<TransformBase, int> boneToIndexTable,
         Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope(null);
+        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
 
         int vertexCount = VertexCount;
         var weightOffsets = BoneWeightOffsets!;
         var weightCounts = BoneWeightCounts!;
 
-        Parallel.For(0, vertexCount, vi =>
+        int* idxData = (int*)weightOffsets.Address;
+        float* wtData = (float*)weightCounts.Address;
+
+        for (int vi = 0; vi < vertexCount; vi++)
         {
             var group = weightsPerVertex[vi];
-            int* idxData = (int*)weightOffsets.Address;
-            float* wtData = (float*)weightCounts.Address;
             int baseIndex = vi * 4;
 
             if (group == null)
@@ -461,17 +453,13 @@ public partial class XRMesh
                     idxData[baseIndex + k] = 0;
                     wtData[baseIndex + k] = 0f;
                 }
-                return;
+                continue;
             }
 
             VertexWeightGroup.Optimize(group, 4);
             int count = group.Count;
-            int current, computed;
-            do
-            {
-                current = _maxWeightCount;
-                computed = Math.Max(current, count);
-            } while (Interlocked.CompareExchange(ref _maxWeightCount, computed, current) != current);
+            if (count > _maxWeightCount)
+                _maxWeightCount = count;
 
             int i = 0;
             foreach (var pair in group)
@@ -493,7 +481,7 @@ public partial class XRMesh
                 wtData[baseIndex + i] = 0f;
                 i++;
             }
-        });
+        }
     }
 
     private static unsafe bool TryGetTransform(Dictionary<string, List<SceneNode>> nodeCache, string name, out TransformBase? transform)

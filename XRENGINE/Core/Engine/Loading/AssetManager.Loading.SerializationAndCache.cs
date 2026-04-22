@@ -149,22 +149,43 @@ namespace XREngine
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
             string cachePath = string.Empty;
             bool hasCachePath = useCache && TryResolveCachePath(filePath, typeof(T), cacheVariantKey: null, out cachePath);
+            bool traceAnimClipLoad = typeof(T) == typeof(AnimationClip) && string.Equals(ext, "anim", StringComparison.OrdinalIgnoreCase);
+
+            if (traceAnimClipLoad && hasCachePath)
+                Debug.Out($"[AssetManager] Probing animation clip cache for '{filePath}' at '{cachePath}'.");
 
             if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
             {
+                if (traceAnimClipLoad)
+                    Debug.Out($"[AssetManager] Animation clip cache hit for '{filePath}'.");
+
                 cachedAsset!.OriginalLastWriteTimeUtc = timestampUtc;
                 return cachedAsset;
             }
+
+            if (traceAnimClipLoad)
+                Debug.Out($"[AssetManager] Importing animation clip source '{filePath}'.");
 
             var asset = Load3rdPartyAsset<T>(filePath, ext);
             if (asset is null)
                 return null;
 
+            if (traceAnimClipLoad)
+                Debug.Out($"[AssetManager] Imported animation clip source '{filePath}'.");
+
             if (hasTimestamp)
                 asset.OriginalLastWriteTimeUtc = timestampUtc;
 
             if (hasTimestamp && hasCachePath)
+            {
+                if (traceAnimClipLoad)
+                    Debug.Out($"[AssetManager] Starting animation clip cache write for '{filePath}' -> '{cachePath}'.");
+
                 TryWriteCacheAsset(cachePath, asset);
+
+                if (traceAnimClipLoad)
+                    Debug.Out($"[AssetManager] Finished animation clip cache write attempt for '{filePath}'.");
+            }
 
             return asset;
         }

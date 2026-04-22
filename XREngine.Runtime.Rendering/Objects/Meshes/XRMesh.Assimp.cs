@@ -208,42 +208,11 @@ public partial class XRMesh
             }
         }
 
-        if (RuntimeRenderingHostServices.Current.ProcessMeshImportsAsynchronously)
-        {
-            // Spread face processing across the job thread via an enumerator so other jobs can interleave
-            IEnumerable ProcessFacesRoutine()
-            {
-                for (int i = 0; i < faceCount; i++)
-                {
-                    ProcessFace(i);
-                    yield return null; // Yield to let the job scheduler advance between faces
-                }
-            }
-
-            // If we're already on a job worker thread we can't enqueue and wait without deadlocking, so process inline
-            if (JobManager.IsJobWorkerThread)
-            {
-                foreach (var _ignore in ProcessFacesRoutine())
-                {
-                    // Inline iteration; yield points above ensure the caller job can make progress between steps
-                }
-            }
-            else
-            {
-                var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-                RuntimeRenderingHostServices.Current.ScheduleEnumeratorJob(
-                    ProcessFacesRoutine,
-                    completed: () => completion.TrySetResult(true),
-                    error: ex => completion.TrySetException(ex));
-
-                completion.Task.Wait();
-            }
-        }
-        else
-        {
-            Parallel.For(0, faceCount, ProcessFace);
-        }
+        // Mesh import is already run on an async job worker; nested Parallel.For fans out to
+        // enough ThreadPool workers to starve the Update / FixedUpdate / CollectVisible threads.
+        // Loop sequentially on the calling worker instead (same policy as texture import).
+        for (int i = 0; i < faceCount; i++)
+            ProcessFace(i);
 
         points = pointsArray;
         lines = linesArray;

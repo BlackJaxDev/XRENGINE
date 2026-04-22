@@ -122,7 +122,7 @@ public interface IRuntimeWindowScenePanelAdapter : IDisposable
 
 public interface IRuntimeRenderingHostServices
 {
-    IDisposable? StartProfileScope(string? scopeName);
+    IDisposable? StartProfileScope([System.Runtime.CompilerServices.CallerMemberName] string? scopeName = null);
     bool AllowShaderPipelines { get; }
     bool EnableExactTransparencyTechniques { get; }
     bool UseInterleavedMeshBuffer { get; }

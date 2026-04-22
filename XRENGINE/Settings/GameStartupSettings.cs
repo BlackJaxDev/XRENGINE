@@ -331,6 +331,7 @@ namespace XREngine
         private OverrideableSetting<bool> _allowInitialSkinnedBoundsBuildWhenNeverOverride = new();
         private OverrideableSetting<bool> _calculateSkinningInComputeShaderOverride = new();
         private OverrideableSetting<bool> _calculateBlendshapesInComputeShaderOverride = new();
+        private OverrideableSetting<bool> _useDetailPreservingComputeMipmapsOverride = new();
 
         private OverrideableSetting<float> _transformReplicationKeyframeIntervalSecOverride = new();
         private OverrideableSetting<float> _timeBetweenReplicationsOverride = new();
@@ -785,6 +786,20 @@ namespace XREngine
         {
             get => _calculateBlendshapesInComputeShaderOverride;
             set => SetField(ref _calculateBlendshapesInComputeShaderOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for detail-preserving compute mipmap generation.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Technical setting not typically exposed to end users.
+        /// Unsupported formats and non-2D paths fall back to standard GL mip generation.
+        /// </summary>
+        [Category("Technical Overrides")]
+        [Description("Project override for detail-preserving compute mipmap generation on eligible OpenGL 2D textures (technical).")]
+        public OverrideableSetting<bool> UseDetailPreservingComputeMipmapsOverride
+        {
+            get => _useDetailPreservingComputeMipmapsOverride;
+            set => SetField(ref _useDetailPreservingComputeMipmapsOverride, value ?? new());
         }
 
         /// <summary>

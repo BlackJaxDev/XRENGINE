@@ -883,6 +883,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     {
         Stereo = stereo;
         GlobalIlluminationMode = Engine.UserSettings.GlobalIlluminationMode;
+        WarmDeferredLightingShaders();
         _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
@@ -890,6 +891,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
         Engine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
         ApplyAntiAliasingResolutionHint();
         CommandChain = GenerateCommandChain();
+    }
+
+    private void WarmDeferredLightingShaders()
+    {
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "DeferredLightingPoint.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "DeferredLightingSpot.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "DeferredLightingDir.fs"), EShaderType.Fragment);
     }
 
     private bool EnableTransformIdVisualization
@@ -1583,10 +1592,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
             c.Add<VPRC_DepthTest>().Enable = false;
 
-            c.Add<VPRC_BloomPass>().SetTargetFBONames(
-                ForwardPassFBOName,
-                BloomBlurTextureName,
-                Stereo);
+            var bloomChoice = c.Add<VPRC_IfElse>();
+            bloomChoice.ConditionEvaluator = ShouldUseBloom;
+            {
+                var bloomCommands = new ViewportRenderCommandContainer(this);
+                bloomCommands.Add<VPRC_BloomPass>().SetTargetFBONames(
+                    ForwardPassFBOName,
+                    BloomBlurTextureName,
+                    Stereo);
+                bloomChoice.TrueCommands = bloomCommands;
+            }
 
             var motionBlurChoice = c.Add<VPRC_IfElse>();
             motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
@@ -3305,8 +3320,17 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return EProbeRefreshKind.Immediate;
     }
 
+    private bool AreProbeBindingResourcesMissing()
+        => _probeIrradianceArray is null
+        || _probePrefilterArray is null
+        || _probePositionBuffer is null
+        || _probeParamBuffer is null;
+
     private EProbeRefreshKind ProbeConfigurationChanged(IReadOnlyList<LightProbeComponent> readyProbes, bool batchCaptureActive)
     {
+        if (AreProbeBindingResourcesMissing())
+            return ResolveStructuralProbeRefresh(batchCaptureActive);
+
         if (_lastProbeCount != readyProbes.Count)
         {
             return ResolveStructuralProbeRefresh(batchCaptureActive);

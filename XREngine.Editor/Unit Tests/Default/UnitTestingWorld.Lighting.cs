@@ -196,7 +196,7 @@ public static partial class EditorUnitTests
         private static Vector3 ToVector3(Settings.TranslationXYZ value)
             => new(value.X, value.Y, value.Z);
 
-        public static void AddDirLight(SceneNode rootNode)
+        public static DirectionalLightComponent? AddDirLight(SceneNode rootNode)
         {
             var dirLightNode = new SceneNode(rootNode) { Name = "TestDirectionalLightNode" };
             var dirLightTransform = dirLightNode.SetTransform<Transform>();
@@ -207,7 +207,7 @@ public static partial class EditorUnitTests
                 0.0f);
             //dirLightTransform.RegisterAnimationTick<Transform>(t => t.Rotation *= Quaternion.CreateFromAxisAngle(Globals.Backward, Engine.DilatedDelta));
             if (!dirLightNode.TryAddComponent<DirectionalLightComponent>(out var dirLightComp))
-                return;
+                return null;
 
             dirLightComp!.Name = "TestDirectionalLight";
             dirLightComp.Color = new Vector3(1, 1, 1);
@@ -215,22 +215,24 @@ public static partial class EditorUnitTests
             dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
             dirLightComp.CastsShadows = true;
             dirLightComp.SetShadowMapResolution(4096, 4096);
+            return dirLightComp;
         }
 
-        public static void AddDirLight2(SceneNode rootNode)
+        public static DirectionalLightComponent? AddDirLight2(SceneNode rootNode)
         {
             var dirLightNode2 = new SceneNode(rootNode) { Name = "TestDirectionalLightNode2" };
             var dirLightTransform2 = dirLightNode2.SetTransform<Transform>();
             dirLightTransform2.Translation = new Vector3(0.0f, 10.0f, 0.0f);
             dirLightTransform2.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI / 2.0f);
             if (!dirLightNode2.TryAddComponent<DirectionalLightComponent>(out var dirLightComp2))
-                return;
+                return null;
 
             dirLightComp2!.Name = "TestDirectionalLight2";
             dirLightComp2.Color = new Vector3(1.0f, 0.8f, 0.8f);
             dirLightComp2.DiffuseIntensity = 1.0f;
             dirLightComp2.Scale = new Vector3(1000.0f, 1000.0f, 1000.0f);
             dirLightComp2.CastsShadows = false;
+            return dirLightComp2;
         }
 
         public static void AddSpotLight(SceneNode rootNode)

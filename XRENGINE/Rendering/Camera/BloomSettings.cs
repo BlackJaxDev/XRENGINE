@@ -4,6 +4,7 @@ namespace XREngine.Rendering
 {
     public class BloomSettings : PostProcessSettings
     {
+        private bool _enabled = true;
         private float _intensity = 1.0f;
         private float _threshold = 0.8f;
         private float _softKnee = 0.5f;
@@ -22,6 +23,12 @@ namespace XREngine.Rendering
         public BloomSettings()
         {
 
+        }
+
+        public bool Enabled
+        {
+            get => _enabled;
+            set => SetField(ref _enabled, value);
         }
 
         public float Intensity
@@ -133,8 +140,9 @@ namespace XREngine.Rendering
         {
             float threshold = MathF.Max(0.0f, Threshold);
             float softKnee = MathF.Min(1.0f, MathF.Max(0.0f, SoftKnee));
+            float intensity = Enabled ? MathF.Max(0.0f, Intensity) : 0.0f;
 
-            program.Uniform("BloomIntensity", MathF.Max(0.0f, Intensity));
+            program.Uniform("BloomIntensity", intensity);
             program.Uniform("BloomThreshold", threshold);
             program.Uniform("SoftKnee", softKnee);
             program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
@@ -144,6 +152,7 @@ namespace XREngine.Rendering
         {
             float threshold = MathF.Max(0.0f, Threshold);
             float softKnee = MathF.Min(1.0f, MathF.Max(0.0f, SoftKnee));
+            float intensity = Enabled ? MathF.Max(0.0f, Intensity) : 0.0f;
 
             // SourceLOD is set dynamically via the material's ShaderInt before each
             // downsample pass. Do NOT set it here — this callback fires after material
@@ -155,7 +164,7 @@ namespace XREngine.Rendering
             program.Uniform("UseThreshold", firstLevel);
             program.Uniform("BloomThreshold", threshold);
             program.Uniform("BloomSoftKnee", softKnee);
-            program.Uniform("BloomIntensity", MathF.Max(0.0f, Intensity));
+            program.Uniform("BloomIntensity", intensity);
             program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
             program.Uniform("UseKarisAverage", firstLevel);
         }
@@ -171,6 +180,8 @@ namespace XREngine.Rendering
 
         public void SetCombineUniforms(XRRenderProgram program)
         {
+            bool enabled = Enabled;
+
             // Clamp ordering to avoid invalid ranges.
             int startMip = Math.Clamp(StartMip, 0, 4);
             int endMip = Math.Clamp(EndMip, startMip, 4);
@@ -187,11 +198,11 @@ namespace XREngine.Rendering
                 _lod4Weight
             ];
 
-            program.Uniform("BloomStrength", MathF.Max(0.0f, Strength));
+            program.Uniform("BloomStrength", enabled ? MathF.Max(0.0f, Strength) : 0.0f);
             program.Uniform("BloomStartMip", startMip);
             program.Uniform("BloomEndMip", endMip);
             program.Uniform("BloomLodWeights", weights);
-            program.Uniform("DebugBloomOnly", _debugBloomOnly);
+            program.Uniform("DebugBloomOnly", enabled && _debugBloomOnly);
         }
     }
 }

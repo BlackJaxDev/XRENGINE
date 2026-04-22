@@ -282,6 +282,34 @@ namespace XREngine.Scene
                 Debug.Out($"[ForwardShadow] ShadowMapEnabled={shadowEnabled}, forwardShadowTex={forwardShadowTex?.GetType().Name ?? "null"}");
             }
 
+            // Diagnostic: log every transition of shadowEnabled / primary-dir-light state so we can
+            // diff "CastsShadows=true" vs "CastsShadows=false" uniforms upstream of the uber shader.
+            // Covers the reported bump-mapped-goes-fully-bright symptom when shadows are toggled off.
+            if (DynamicDirectionalLights.Count > 0)
+            {
+                var diagLight = DynamicDirectionalLights[0];
+                bool diagCasts = diagLight.CastsShadows;
+                var diagDir = diagLight.Transform.WorldForward;
+                var diagColor = diagLight.Color;
+                float diagIntensity = diagLight.DiffuseIntensity;
+                ulong diagKey = (ulong)((shadowEnabled ? 1 : 0) | (diagCasts ? 2 : 0) | (useCascadedDirectionalShadows ? 4 : 0));
+                diagKey = (diagKey << 32) | (uint)DynamicDirectionalLights.Count;
+                if (diagKey != _lastForwardShadowDiagKey)
+                {
+                    _lastForwardShadowDiagKey = diagKey;
+                    Debug.Out(
+                        $"[ForwardShadowDiag] transition: shadowEnabled={shadowEnabled} " +
+                        $"CastsShadows={diagCasts} useCascadedDirShadows={useCascadedDirectionalShadows} " +
+                        $"DirLightCount={DynamicDirectionalLights.Count} " +
+                        $"forwardShadowTex={forwardShadowTex?.GetType().Name ?? "null"} " +
+                        $"cascadeTex={forwardCascadeShadowTex?.GetType().Name ?? "null"} " +
+                        $"dir=({diagDir.X:F3},{diagDir.Y:F3},{diagDir.Z:F3}) " +
+                        $"color=({diagColor.R:F3},{diagColor.G:F3},{diagColor.B:F3}) " +
+                        $"diffuseIntensity={diagIntensity:F3} " +
+                        $"shadowMap={(diagLight.ShadowMap?.Material?.Textures.Count ?? -1)} textures");
+                }
+            }
+
             // ALWAYS set the ShadowMap sampler to point to unit 15, even when shadows are disabled.
             // This prevents stale state from deferred passes (which use unit 4) from leaking through.
             // The shader's layout(binding=15) should handle this, but we force it to be safe against

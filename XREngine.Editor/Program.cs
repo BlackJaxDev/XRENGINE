@@ -152,8 +152,8 @@ internal class Program
 
             // Unit test initialization that must run after editor preferences are loaded 
             // but before windows are created (e.g., that may affect render pipeline selection).
-            UnitTest_Init();
-            ApplyStartupProfilerPreferences();
+            TraceBootstrapStep("BeforeCreateWindows.UnitTest_Init", UnitTest_Init);
+            TraceBootstrapStep("BeforeCreateWindows.ApplyStartupProfilerPreferences", ApplyStartupProfilerPreferences);
 
             // LoadSandboxSettings() replaces Engine.UserSettings with persisted values,
             // which may differ from the unit-test settings file overrides. Re-apply them
@@ -161,16 +161,17 @@ internal class Program
             XREngine.Engine.UserSettings.RenderLibrary = EditorUnitTests.Toggles.RenderAPI;
             XREngine.Engine.UserSettings.PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI;
             WriteBootstrapTrace($"Applied unit-test overrides: Render={EditorUnitTests.Toggles.RenderAPI}, Physics={EditorUnitTests.Toggles.PhysicsAPI}");
-            StartStartupFontPrewarm();
-            StartStartupTextShaderPrewarm();
+            TraceBootstrapStep("BeforeCreateWindows.StartStartupFontPrewarm", StartStartupFontPrewarm);
+            TraceBootstrapStep("BeforeCreateWindows.StartStartupTextShaderPrewarm", StartStartupTextShaderPrewarm);
             
             // Initialize MCP server after last project or sandbox editor preferences are loaded
-            McpServerHost.Initialize(args);
+            TraceBootstrapStep("BeforeCreateWindows.McpServerHost.Initialize", () => McpServerHost.Initialize(args));
 
             // Assign the target world AFTER all settings have been applied and BEFORE windows are created, 
             // so that the render pipeline and other systems can be properly initialized.
+            EWorldMode worldMode = ResolveWorldMode(args);
             Stopwatch targetWorldStopwatch = Stopwatch.StartNew();
-            settings.StartupWindows[0].TargetWorld = GetTargetWorld(ResolveWorldMode(args));
+            TraceBootstrapStep($"BeforeCreateWindows.GetTargetWorld({worldMode})", () => settings.StartupWindows[0].TargetWorld = GetTargetWorld(worldMode));
             targetWorldStopwatch.Stop();
             WriteBootstrapTrace($"Target world created in {targetWorldStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
             WriteBootstrapTrace($"BeforeCreateWindows configured target world '{settings.StartupWindows[0].TargetWorld?.Name ?? "<null>"}'.");
@@ -225,6 +226,7 @@ internal class Program
         XREngine.TraceListener.GlobalMessageCallback = PrintTraceToGeneralLog;
         XREngine.TraceListener.InstallGlobalListener();
         FbxTrace.LogSink = static message => EngineDebug.Assets(message);
+        SyncBootstrapTracePathToCurrentRunDirectory();
         //ConsoleHelper.EnsureConsoleAttached();
     }
 
@@ -272,6 +274,25 @@ internal class Program
         }
     }
 
+    private static void TraceBootstrapStep(string name, Action action)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        WriteBootstrapTrace($"{name} started.");
+
+        try
+        {
+            action();
+            stopwatch.Stop();
+            WriteBootstrapTrace($"{name} completed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms.");
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            WriteBootstrapTrace($"{name} threw {ex.GetType().Name} after {stopwatch.Elapsed.TotalMilliseconds:F0} ms: {ex.Message}");
+            throw;
+        }
+    }
+
     private static string ResolveBootstrapTracePath()
     {
         try
@@ -284,6 +305,42 @@ internal class Program
             string fallbackDirectory = Path.Combine(Path.GetTempPath(), "XREngine");
             Directory.CreateDirectory(fallbackDirectory);
             return Path.Combine(fallbackDirectory, $"editor_bootstrap_{Environment.ProcessId}.log");
+        }
+    }
+
+    private static void SyncBootstrapTracePathToCurrentRunDirectory()
+    {
+        try
+        {
+            string currentPath = ResolveBootstrapTracePath();
+
+            lock (s_bootstrapTraceLock)
+            {
+                if (string.IsNullOrWhiteSpace(s_bootstrapTracePath))
+                {
+                    s_bootstrapTracePath = currentPath;
+                    return;
+                }
+
+                if (string.Equals(s_bootstrapTracePath, currentPath, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                string previousPath = s_bootstrapTracePath;
+                Directory.CreateDirectory(Path.GetDirectoryName(currentPath)!);
+
+                if (File.Exists(previousPath))
+                {
+                    string previousContent = File.ReadAllText(previousPath);
+                    if (!string.IsNullOrEmpty(previousContent))
+                        File.AppendAllText(currentPath, previousContent);
+                }
+
+                s_bootstrapTracePath = currentPath;
+            }
+        }
+        catch
+        {
+            // Bootstrap tracing must never block startup.
         }
     }
 

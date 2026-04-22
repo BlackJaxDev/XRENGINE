@@ -15,6 +15,10 @@ namespace XREngine.Rendering.OpenGL
             private bool _isCompiled = false;
             private bool _compilePending;
             private bool _compileAsSeparable;
+            private readonly object _preparedSourceLock = new();
+            private string? _preparedSource;
+            private bool _preparedSourceSeparable;
+            private bool _hasPreparedSource;
 
             /// <summary>
             /// GL_COMPLETION_STATUS_ARB (0x91B1) — used to poll non-blocking compile/link when
@@ -82,6 +86,17 @@ namespace XREngine.Rendering.OpenGL
             public void PrepareCompileVariant(bool separableProgram)
                 => _compileAsSeparable = separableProgram;
 
+            public void PrepareResolvedSourceVariant(bool separableProgram)
+            {
+                string resolved = ResolveFullSourceCore(separableProgram);
+                lock (_preparedSourceLock)
+                {
+                    _preparedSource = resolved;
+                    _preparedSourceSeparable = separableProgram;
+                    _hasPreparedSource = true;
+                }
+            }
+
             /// <summary>
             /// Polls the driver for async shader-compilation completion (GL_ARB_parallel_shader_compile).
             /// Returns <c>true</c> when compilation is resolved (check <see cref="IsCompiled"/> for success/failure).
@@ -130,10 +145,21 @@ namespace XREngine.Rendering.OpenGL
             private void OnSourceChanged()
             {
                 IsCompiled = false;
+                InvalidatePreparedSource();
                 UpdateLocalIncludeDirectory();
                 if (IsGenerated)
                     PushSource();
                 SourceChanged?.Invoke();
+            }
+
+            private void InvalidatePreparedSource()
+            {
+                lock (_preparedSourceLock)
+                {
+                    _preparedSource = null;
+                    _preparedSourceSeparable = false;
+                    _hasPreparedSource = false;
+                }
             }
 
             protected internal override void PreGenerated() { }
@@ -236,9 +262,28 @@ namespace XREngine.Rendering.OpenGL
 
             public string? ResolveFullSource()
             {
-                Data.TryGetResolvedSource(out string src);
+                bool separableProgram = RequiresSeparableCompatibility();
+                lock (_preparedSourceLock)
+                {
+                    if (_hasPreparedSource && _preparedSourceSeparable == separableProgram)
+                        return _preparedSource;
+                }
 
-                return GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(src, Mode, RequiresSeparableCompatibility());
+                string resolved = ResolveFullSourceCore(separableProgram);
+                lock (_preparedSourceLock)
+                {
+                    _preparedSource = resolved;
+                    _preparedSourceSeparable = separableProgram;
+                    _hasPreparedSource = true;
+                }
+
+                return resolved;
+            }
+
+            private string ResolveFullSourceCore(bool separableProgram)
+            {
+                Data.TryGetResolvedSource(out string src);
+                return GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(src, Mode, separableProgram);
             }
 
             private bool RequiresSeparableCompatibility()

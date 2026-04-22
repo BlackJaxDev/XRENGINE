@@ -55,11 +55,70 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Helper to set an index buffer for a given primitive type.
+            /// The underlying mesh index buffer is built asynchronously by <see cref="XRMesh.GetIndexBuffer"/>;
+            /// the first call typically returns <c>null</c> and schedules the build on a background task.
+            /// When the build completes we re-enqueue this renderer so <see cref="MakeIndexBuffers"/> runs
+            /// again on the render thread and picks up the cached buffer.
             /// </summary>
             private void SetIndexBuffer(ref GLDataBuffer? buffer, ref IndexSize bufferElementSize, XRMesh mesh, EPrimitiveType type)
             {
-                buffer = Renderer.GenericToAPI<GLDataBuffer>(mesh.GetIndexBuffer(type, out bufferElementSize))!;
-                Dbg($"SetIndexBuffer type={type} elementSize={bufferElementSize}", "Buffers");
+                var xrBuffer = mesh.GetIndexBuffer(
+                    type,
+                    out bufferElementSize,
+                    EBufferTarget.ElementArrayBuffer,
+                    OnAsyncIndexBufferReady);
+
+                buffer = xrBuffer is not null
+                    ? Renderer.GenericToAPI<GLDataBuffer>(xrBuffer)
+                    : null;
+
+                Dbg($"SetIndexBuffer type={type} elementSize={bufferElementSize} buffer={(buffer is null ? "null (async pending)" : "ready")}", "Buffers");
+            }
+
+            /// <summary>
+            /// Invoked (possibly on a background thread) when XRMesh finishes building an index buffer
+            /// that was previously pending. Marshals back onto the render thread to attach the buffer.
+            /// </summary>
+            private void OnAsyncIndexBufferReady(XRDataBuffer xrBuffer, IndexSize elementSize)
+            {
+                RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                    RefreshIndexBuffersFromCache,
+                    "GLMeshRenderer.RefreshIndexBuffersFromCache");
+            }
+
+            /// <summary>
+            /// Fills any currently-null index buffer slots from the now-cached XRMesh index buffers.
+            /// Existing non-null buffers are left untouched to avoid destroying live GL resources.
+            /// </summary>
+            private void RefreshIndexBuffersFromCache()
+            {
+                var mesh = Mesh;
+                if (mesh is null)
+                    return;
+
+                bool changed = false;
+                changed |= TryRefreshIndexBuffer(ref _triangleIndicesBuffer, ref _trianglesElementType, mesh, EPrimitiveType.Triangles);
+                changed |= TryRefreshIndexBuffer(ref _lineIndicesBuffer, ref _lineIndicesElementType, mesh, EPrimitiveType.Lines);
+                changed |= TryRefreshIndexBuffer(ref _pointIndicesBuffer, ref _pointIndicesElementType, mesh, EPrimitiveType.Points);
+
+                if (changed)
+                    BuffersBound = false;
+            }
+
+            private bool TryRefreshIndexBuffer(ref GLDataBuffer? buffer, ref IndexSize bufferElementSize, XRMesh mesh, EPrimitiveType type)
+            {
+                if (buffer is not null)
+                    return false;
+
+                // No callback here: by the time we get invoked the buffer is already cached.
+                // If it somehow isn't (e.g. the mesh has no indices of this type) we get null back
+                // and simply leave the slot null.
+                var xrBuffer = mesh.GetIndexBuffer(type, out bufferElementSize);
+                if (xrBuffer is null)
+                    return false;
+
+                buffer = Renderer.GenericToAPI<GLDataBuffer>(xrBuffer);
+                return buffer is not null;
             }
 
             /// <summary>

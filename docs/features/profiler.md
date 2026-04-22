@@ -183,6 +183,14 @@ The in-editor profiler window also exposes **Enable Profiler Component Timing**,
 which independently controls per-component tick timing capture for the
 Components panel without affecting frame logging or render statistics.
 
+When code-profiler frame logging is enabled, the stats thread also writes
+disk diagnostics for severe frame anomalies:
+
+- `profiler-fps-drops.log` records completed-frame spikes using the per-thread snapshot history.
+- `profiler-render-stalls.log` records when an active render dispatch goes longer than
+  **CodeProfilerRenderStallThresholdMs** without completing a render, then logs how long recovery took once the next render finishes.
+- `profiler-main-thread-invokes.log` records verbose queued render-thread invoke diagnostics when **Enable Main Thread Invoke Diagnostics** is enabled.
+
 Profiler settings also allow **Update (s)** to be set to `0` for every-render
 graph refresh, and expose per-category CPU/GPU timing graph toggles for raw ms
 lines, smoothed display lines, and interpolation between buffered updates.

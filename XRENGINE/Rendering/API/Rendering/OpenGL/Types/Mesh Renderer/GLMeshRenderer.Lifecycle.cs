@@ -122,6 +122,8 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             protected internal override void PostGenerated()
             {
+                MakeIndexBuffers();
+
                 if (MeshRenderer.GenerateAsync)
                     Task.Run(GenProgramsAndBuffers);
                 else

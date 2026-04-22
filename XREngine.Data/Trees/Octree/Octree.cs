@@ -108,6 +108,13 @@ namespace XREngine.Data.Trees
 
         private const long MaxRaycastTicksPerFrame = 3 * TimeSpan.TicksPerMillisecond; // 3ms
 
+        // Cap swap-command execution per Swap() call so large startup bursts (hundreds of
+        // scene inserts on world activation) can't stall the CollectVisible / Swap thread
+        // for 100+ ms. Remaining buffered commands are re-enqueued and picked up on the
+        // next Swap(); correctness is preserved because command combining is idempotent
+        // across calls (the same (item, ETreeCommand) dedup keys survive re-enqueue).
+        private const long MaxSwapExecuteTicksPerFrame = 4 * TimeSpan.TicksPerMillisecond; // 4ms
+
         private void ConsumeRaycastCommandsInternal()
         {
             long startTicks = DateTime.UtcNow.Ticks;
@@ -286,7 +293,9 @@ namespace XREngine.Data.Trees
             long maxCommandTicks = 0L;
             EOctreeCommandKind maxCommandKind = EOctreeCommandKind.None;
             var head = _head;
-            for (int i = 0; i < _swapCommandBuffer.Count; i++)
+            int bufferCount = _swapCommandBuffer.Count;
+            int deferredIndex = bufferCount; // all consumed by default
+            for (int i = 0; i < bufferCount; i++)
             {
                 var (item, command) = _swapCommandBuffer[i];
                 if (item is null || command == ETreeCommand.None)
@@ -309,6 +318,23 @@ namespace XREngine.Data.Trees
                     case ETreeCommand.Move: moves++; break;
                     case ETreeCommand.Remove: removes++; break;
                 }
+
+                // Time-slice large bursts: stop executing once the budget is exhausted
+                // and re-enqueue the remainder for the next Swap().
+                if (i + 1 < bufferCount && Stopwatch.GetTimestamp() - executeStart > MaxSwapExecuteTicksPerFrame)
+                {
+                    deferredIndex = i + 1;
+                    break;
+                }
+            }
+
+            // Re-enqueue any buffered commands we didn't get to this frame.
+            for (int i = deferredIndex; i < bufferCount; i++)
+            {
+                var buffered = _swapCommandBuffer[i];
+                if (buffered.item is null || buffered.command == ETreeCommand.None)
+                    continue;
+                SwapCommands.Enqueue(buffered);
             }
 
             _swapCommandBuffer.Clear();

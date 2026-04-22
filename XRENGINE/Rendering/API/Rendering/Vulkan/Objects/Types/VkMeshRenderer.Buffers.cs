@@ -60,6 +60,10 @@ public unsafe partial class VulkanRenderer
 		/// <summary>
 		/// Lazily generates (uploads) all cached buffers and resolves index buffers
 		/// for triangles, lines, and points. No-ops if buffers are already up-to-date.
+		/// Index buffer construction is asynchronous — on first call the mesh kicks off a
+		/// background Task.Run to build the buffer and returns null; the callback below
+		/// flips <see cref="_buffersDirty"/> back to true so the next EnsureBuffers call
+		/// picks up the now-cached buffer without stalling the render thread.
 		/// </summary>
 		private void EnsureBuffers()
 		{
@@ -71,20 +75,27 @@ public unsafe partial class VulkanRenderer
 
 			if (Mesh is not null)
 			{
-				var tri = Mesh.GetIndexBuffer(EPrimitiveType.Triangles, out _triangleIndexSize);
+				var tri = Mesh.GetIndexBuffer(EPrimitiveType.Triangles, out _triangleIndexSize, EBufferTarget.ElementArrayBuffer, OnAsyncIndexBufferReady);
 				_triangleIndexBuffer = tri is not null ? Renderer.GenericToAPI<VkDataBuffer>(tri) : null;
 				_triangleIndexBuffer?.Generate();
 
-				var line = Mesh.GetIndexBuffer(EPrimitiveType.Lines, out _lineIndexSize);
+				var line = Mesh.GetIndexBuffer(EPrimitiveType.Lines, out _lineIndexSize, EBufferTarget.ElementArrayBuffer, OnAsyncIndexBufferReady);
 				_lineIndexBuffer = line is not null ? Renderer.GenericToAPI<VkDataBuffer>(line) : null;
 				_lineIndexBuffer?.Generate();
 
-				var point = Mesh.GetIndexBuffer(EPrimitiveType.Points, out _pointIndexSize);
+				var point = Mesh.GetIndexBuffer(EPrimitiveType.Points, out _pointIndexSize, EBufferTarget.ElementArrayBuffer, OnAsyncIndexBufferReady);
 				_pointIndexBuffer = point is not null ? Renderer.GenericToAPI<VkDataBuffer>(point) : null;
 				_pointIndexBuffer?.Generate();
 			}
 
 			_buffersDirty = false;
+		}
+
+		private void OnAsyncIndexBufferReady(XRDataBuffer buffer, IndexSize elementSize)
+		{
+			// The callback may fire from a background thread. A plain bool write is safe here;
+			// worst case the render thread misses the flip by one frame and re-checks next tick.
+			_buffersDirty = true;
 		}
 
 		/// <summary>

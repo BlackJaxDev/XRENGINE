@@ -1112,10 +1112,11 @@ internal static class NativeGltfSceneImporter
             UWrap = ResolveWrapMode(sampler?.WrapS),
             VWrap = ResolveWrapMode(sampler?.WrapT),
             AlphaAsTransparency = true,
-            AutoGenerateMipmaps = false,
+            AutoGenerateMipmaps = true,
             Resizable = false,
         };
-        texture.Mipmaps = XRTexture2D.GetMipmapsFromImage(image);
+        // Only upload the base mip; the GPU generates the rest via glGenerateMipmap.
+        texture.Mipmaps = [new Mipmap2D(image)];
         return texture;
     }
 

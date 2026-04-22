@@ -585,6 +585,7 @@ namespace XREngine
         private readonly ConcurrentDictionary<(TextureType type, string pathLower), TextureSlot> _textureInfoCache = [];
         private readonly ConcurrentDictionary<string, MagickImage?> _textureCache = new();
         private readonly Dictionary<string, List<SceneNode>> _nodeCache = [];
+        private readonly ConcurrentDictionary<int, Lazy<XRMaterial>> _materialCacheByIndex = [];
 
         private readonly ConcurrentBag<XRMesh> _meshes = [];
         private readonly ConcurrentBag<XRMaterial> _materials = [];
@@ -1616,6 +1617,8 @@ namespace XREngine
             _meshFinalizeActions.Clear();
             bool processMeshesAsync = effectiveImportOptions.ProcessMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
             bool batchSubmeshAdds = effectiveImportOptions.BatchSubmeshAddsDuringAsyncImport;
+            bool importedRenderersGenerateAsync = effectiveImportOptions.GenerateMeshRenderersAsync;
+            bool splitSubmeshesIntoSeparateModelComponents = effectiveImportOptions.SplitSubmeshesIntoSeparateModelComponents;
 
             SceneNode rootNode;
             using (Engine.Profiler.Start($"Assemble model hierarchy"))
@@ -1623,7 +1626,14 @@ namespace XREngine
                 rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath)) { Layer = _importLayer };
                 _nodeTransforms.Clear();
                 ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, effectiveImportOptions.CollapseGeneratedFbxHelperNodes, null, cancellationToken);
-                NormalizeNodeScales(scene, rootNode, cancellationToken, processMeshesAsync, batchSubmeshAdds);
+                NormalizeNodeScales(
+                    scene,
+                    rootNode,
+                    cancellationToken,
+                    processMeshesAsync,
+                    batchSubmeshAdds,
+                    importedRenderersGenerateAsync,
+                    splitSubmeshesIntoSeparateModelComponents);
             }
 
             void meshProcessAction() => ProcessMeshesOnJobThread(onProgress, cancellationToken);
@@ -1829,7 +1839,14 @@ namespace XREngine
                 ScheduleMeshBatch(i);
         }
 
-        private void NormalizeNodeScales(AScene scene, SceneNode rootNode, CancellationToken cancellationToken, bool processMeshesAsynchronously, bool batchSubmeshAddsDuringAsyncImport)
+        private void NormalizeNodeScales(
+            AScene scene,
+            SceneNode rootNode,
+            CancellationToken cancellationToken,
+            bool processMeshesAsynchronously,
+            bool batchSubmeshAddsDuringAsyncImport,
+            bool importedRenderersGenerateAsync,
+            bool splitSubmeshesIntoSeparateModelComponents)
         {
             using var t = Engine.Profiler.Start("Normalizing node scales");
 
@@ -1893,6 +1910,8 @@ namespace XREngine
                     geometryTransform,
                     rootTransform,
                     cancellationToken,
+                    importedRenderersGenerateAsync,
+                    splitSubmeshesIntoSeparateModelComponents,
                     publishSubMeshesOnSwapThread: processMeshesAsynchronously,
                     batchSubmeshAddsDuringAsyncImport: processMeshesAsynchronously && batchSubmeshAddsDuringAsyncImport);
             }
@@ -2038,15 +2057,14 @@ namespace XREngine
             Matrix4x4 dataTransform,
             TransformBase rootTransform,
             CancellationToken cancellationToken,
+            bool importedRenderersGenerateAsync,
+            bool splitSubmeshesIntoSeparateModelComponents,
             bool publishSubMeshesOnSwapThread,
             bool batchSubmeshAddsDuringAsyncImport)
         {
             int count = meshIndices.Count;
             if (count == 0)
                 return;
-
-            bool importedRenderersGenerateAsync = ImportOptions?.GenerateMeshRenderersAsync ?? false;
-            bool splitSubmeshesIntoSeparateModelComponents = ImportOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false;
 
             ModelComponent CreateModelComponent(string componentName)
             {
@@ -2133,7 +2151,6 @@ namespace XREngine
                     // and ModelMatrix correctly transforms root-local to world. Pre-multiplying rootBind
                     // would produce world-space skinning output, causing double-transformation with ModelMatrix.
                 _meshes.Add(xrMesh);
-                _materials.Add(xrMaterial);
 
                 SubMesh subMesh = new(new SubMeshLOD(xrMaterial, xrMesh, 0.0f)
                 {
@@ -2173,17 +2190,38 @@ namespace XREngine
 
             var xrMesh = new XRMesh(mesh, _assimp, _nodeCache, dataTransform);
             cancellationToken.ThrowIfCancellationRequested();
-            var xrMaterial = ProcessMaterial(mesh, scene, cancellationToken);
+            var xrMaterial = ResolveMaterial(mesh, scene, cancellationToken);
             return (xrMesh, xrMaterial);
         }
 
-        private unsafe XRMaterial ProcessMaterial(Mesh mesh, AScene scene, CancellationToken cancellationToken)
+        private XRMaterial ResolveMaterial(Mesh mesh, AScene scene, CancellationToken cancellationToken)
         {
-            using var t = Engine.Profiler.Start($"Processing material for {mesh.Name}");
+            cancellationToken.ThrowIfCancellationRequested();
+
+            Lazy<XRMaterial> lazyMaterial = _materialCacheByIndex.GetOrAdd(
+                mesh.MaterialIndex,
+                materialIndex => new Lazy<XRMaterial>(
+                    () => ProcessMaterial(materialIndex, mesh.Name, scene, cancellationToken),
+                    LazyThreadSafetyMode.ExecutionAndPublication));
+
+            try
+            {
+                return lazyMaterial.Value;
+            }
+            catch
+            {
+                _materialCacheByIndex.TryRemove(new KeyValuePair<int, Lazy<XRMaterial>>(mesh.MaterialIndex, lazyMaterial));
+                throw;
+            }
+        }
+
+        private unsafe XRMaterial ProcessMaterial(int materialIndex, string meshName, AScene scene, CancellationToken cancellationToken)
+        {
+            using var t = Engine.Profiler.Start($"Processing material for {meshName}");
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            Material matInfo = scene.Materials[mesh.MaterialIndex];
+            Material matInfo = scene.Materials[materialIndex];
             List<TextureSlot> textures = [];
             HashSet<TextureType> discoveredTypes = [];
             foreach (TextureType type in Enum.GetValues<TextureType>())
@@ -2197,7 +2235,9 @@ namespace XREngine
                     textures.AddRange(maps);
             }
             ReadProperties(matInfo, out string name, out TextureFlags flags, out ShadingMode mode, out var propDic);
-            return _materialFactory(SourceFilePath, name, textures, flags, mode, propDic);
+            XRMaterial material = _materialFactory(SourceFilePath, name, textures, flags, mode, propDic);
+            _materials.Add(material);
+            return material;
         }
 
         private static unsafe void ReadProperties(Material material, out string name, out TextureFlags flags, out ShadingMode shadingMode, out Dictionary<string, List<MaterialProperty>> properties)

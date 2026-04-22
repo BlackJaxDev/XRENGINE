@@ -57,14 +57,17 @@ public static class BootstrapWorldFactory
 
         SceneNode? characterPawnModelParentNode = BootstrapPawnFactory.CreatePlayerPawn(setUI, isServer, rootNode);
 
+        DirectionalLightComponent? sunDirectionalLight = null;
+        DirectionalLightComponent? moonDirectionalLight = null;
+
         if (settings.DirLight)
-            BootstrapLightingBuilder.AddDirLight(rootNode);
+            sunDirectionalLight = BootstrapLightingBuilder.AddDirLight(rootNode);
 
         if (settings.SpotLight)
             AddSpotLight(rootNode);
 
         if (settings.DirLight2)
-            AddDirLight2(rootNode);
+            moonDirectionalLight = AddDirLight2(rootNode);
 
         if (settings.PointLight)
             AddPointLight(rootNode);
@@ -90,7 +93,7 @@ public static class BootstrapWorldFactory
                     deferStartupCapture: addSkybox && settings.LightProbeCapture == LightProbeCaptureMode.Startup);
 
             if (addSkybox)
-                AddSkyboxEnvironment(rootNode, skyTextureName, deferredStartupProbeCapture);
+                AddSkyboxEnvironment(rootNode, skyTextureName, deferredStartupProbeCapture, settings.ProceduralSky, sunDirectionalLight, moonDirectionalLight);
         }
 
         if (settings.Mirror)
@@ -169,11 +172,28 @@ public static class BootstrapWorldFactory
         return CreateUnitTestWorld(setUI, isServer);
     }
 
-    private static void AddSkyboxEnvironment(SceneNode rootNode, string skyTextureName, Action? onSkyReady)
+    private static void AddSkyboxEnvironment(
+        SceneNode rootNode,
+        string skyTextureName,
+        Action? onSkyReady,
+        bool useProceduralSky = false,
+        DirectionalLightComponent? sunDirectionalLight = null,
+        DirectionalLightComponent? moonDirectionalLight = null)
     {
         SkyboxComponent? skyboxComp = BootstrapModelBuilder.AddSkybox(rootNode, null);
         if (skyboxComp is null)
             return;
+
+        if (useProceduralSky)
+        {
+            skyboxComp.Mode = ESkyboxMode.DynamicProcedural;
+            skyboxComp.SunDirectionalLight = sunDirectionalLight;
+            skyboxComp.SyncDirectionalLightWithSun = sunDirectionalLight is not null;
+            skyboxComp.MoonDirectionalLight = moonDirectionalLight;
+            skyboxComp.SyncDirectionalLightWithMoon = moonDirectionalLight is not null;
+            onSkyReady?.Invoke();
+            return;
+        }
 
         string skyTexturePath = Engine.Assets.ResolveEngineAssetPath("Textures", skyTextureName);
         void StartSkyTextureLoad()
@@ -262,20 +282,21 @@ public static class BootstrapWorldFactory
         decalComp.SetTexture(Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", "decal guide.png"));
     }
 
-    private static void AddDirLight2(SceneNode rootNode)
+    private static DirectionalLightComponent? AddDirLight2(SceneNode rootNode)
     {
         var dirLightNode = new SceneNode(rootNode) { Name = "TestDirectionalLightNode2" };
         var dirLightTransform = dirLightNode.SetTransform<Transform>();
         dirLightTransform.Translation = new Vector3(0.0f, 10.0f, 0.0f);
         dirLightTransform.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI / 2.0f);
         if (!dirLightNode.TryAddComponent<DirectionalLightComponent>(out var dirLightComp))
-            return;
+            return null;
 
         dirLightComp!.Name = "TestDirectionalLight2";
         dirLightComp.Color = new Vector3(1.0f, 0.8f, 0.8f);
         dirLightComp.DiffuseIntensity = 1.0f;
         dirLightComp.Scale = new Vector3(1000.0f, 1000.0f, 1000.0f);
         dirLightComp.CastsShadows = false;
+        return dirLightComp;
     }
 
     private static void AddSpotLight(SceneNode rootNode)

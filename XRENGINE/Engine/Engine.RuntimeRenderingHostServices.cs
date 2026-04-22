@@ -17,9 +17,18 @@ namespace XREngine;
 internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHostServices
 {
     public IDisposable? StartProfileScope(string? scopeName)
-        => string.IsNullOrWhiteSpace(scopeName)
-            ? Engine.Profiler.Start()
-            : Engine.Profiler.Start(scopeName);
+    {
+        // Fast path when profiling is off: avoid the ProfilerScope -> IDisposable box entirely.
+        if (!Engine.Profiler.EnableFrameLogging)
+            return null;
+
+        // Always pass an explicit name. The [CallerMemberName] attribute on the interface
+        // captures the actual caller; if a caller invokes StartProfileScope() without a name,
+        // that caller's method name arrives here. If it did not (e.g. explicit null), fall
+        // back to a generic placeholder rather than letting CodeProfiler.Start()'s own
+        // [CallerMemberName] resolve to our wrapper name ("StartProfileScope").
+        return Engine.Profiler.Start(string.IsNullOrWhiteSpace(scopeName) ? "<unnamed>" : scopeName);
+    }
 
     public bool AllowShaderPipelines => Engine.Rendering.Settings.AllowShaderPipelines;
     public bool EnableExactTransparencyTechniques => Engine.EditorPreferences.Debug.EnableExactTransparencyTechniques;

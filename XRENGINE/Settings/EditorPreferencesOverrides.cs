@@ -573,6 +573,7 @@ namespace XREngine
         private OverrideableSetting<int> _codeProfilerFpsDropBaselineWindowSamplesOverride = new();
         private OverrideableSetting<float> _codeProfilerFpsDropMinPreviousFpsOverride = new();
         private OverrideableSetting<float> _codeProfilerFpsDropMinDeltaMsOverride = new();
+        private OverrideableSetting<float> _codeProfilerRenderStallThresholdMsOverride = new();
         private OverrideableSetting<bool> _profilerPanelPausedOverride = new();
         private OverrideableSetting<bool> _profilerPanelSortByTimeOverride = new();
         private OverrideableSetting<float> _profilerPanelSmoothingAlphaOverride = new();
@@ -860,6 +861,12 @@ namespace XREngine
         {
             get => _codeProfilerFpsDropMinDeltaMsOverride;
             set => SetField(ref _codeProfilerFpsDropMinDeltaMsOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> CodeProfilerRenderStallThresholdMsOverride
+        {
+            get => _codeProfilerRenderStallThresholdMsOverride;
+            set => SetField(ref _codeProfilerRenderStallThresholdMsOverride, value ?? new());
         }
 
         public OverrideableSetting<bool> ProfilerPanelPausedOverride

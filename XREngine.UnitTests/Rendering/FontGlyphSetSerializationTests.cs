@@ -67,7 +67,20 @@ public sealed class FontGlyphSetSerializationTests
         quads.ShouldBeEmpty();
     }
 
-    private static FontGlyphSet CreateFontWithEmbeddedAtlas()
+    [Test]
+    public void GetQuads_WhenStringContainsSurrogatePairGlyph_ProducesOneQuad()
+    {
+        const string eyeGlyph = "\U0001F441";
+        FontGlyphSet font = CreateFontWithEmbeddedAtlas(eyeGlyph);
+
+        List<(Vector4 transform, Vector4 uvs)> quads = [];
+
+        font.GetQuads(eyeGlyph, quads, 8.0f, float.MaxValue, float.MaxValue);
+
+        quads.Count.ShouldBe(1);
+    }
+
+    private static FontGlyphSet CreateFontWithEmbeddedAtlas(string glyph = "A")
     {
         string tempRoot = Path.Combine(Path.GetTempPath(), "FontGlyphSetSerializationTests");
         string fontPath = Path.Combine(tempRoot, "EmbeddedFont.ttf");
@@ -92,10 +105,10 @@ public sealed class FontGlyphSetSerializationTests
             Name = "EmbeddedFont",
             FilePath = fontPath,
             OriginalPath = fontPath,
-            Characters = ["A"],
+            Characters = [glyph],
             Glyphs = new Dictionary<string, FontGlyphSet.Glyph>
             {
-                ["A"] = new(new Vector2(8.0f, 8.0f), Vector2.Zero)
+                [glyph] = new(new Vector2(8.0f, 8.0f), Vector2.Zero)
             },
             Atlas = atlas,
             AtlasType = EFontAtlasType.Bitmap,

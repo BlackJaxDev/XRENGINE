@@ -46,54 +46,34 @@ public partial class XRMesh
 
     private void PopulateVertexData(IEnumerable<DelVertexAction> vertexActions, Vertex[] sourceList, int[]? firstAppearanceArray, Matrix4x4? dataTransform, bool parallel)
     {
+        // `parallel` is kept for API compatibility but intentionally ignored. Mesh import is
+        // already run on an async worker; nested Parallel.For fans out to the ThreadPool and
+        // starves the pinned Update / FixedUpdate / CollectVisible loops.
+        _ = parallel;
         int count = firstAppearanceArray?.Length ?? sourceList.Length;
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope("PopulateVertexData (remapped)");
+        using var _s = RuntimeRenderingHostServices.Current.StartProfileScope("PopulateVertexData (remapped)");
         var actions = vertexActions as DelVertexAction[] ?? [.. vertexActions];
 
-        if (parallel)
+        for (int i = 0; i < count; i++)
         {
-            Parallel.For(0, count, i =>
-            {
-                int x = firstAppearanceArray?[i] ?? i;
-                var vtx = sourceList[x];
-                for (int j = 0; j < actions.Length; j++)
-                    actions[j](this, i, x, vtx, dataTransform);
-            });
-        }
-        else
-        {
-            for (int i = 0; i < count; i++)
-            {
-                int x = firstAppearanceArray?[i] ?? i;
-                var vtx = sourceList[x];
-                for (int j = 0; j < actions.Length; j++)
-                    actions[j](this, i, x, vtx, dataTransform);
-            }
+            int x = firstAppearanceArray?[i] ?? i;
+            var vtx = sourceList[x];
+            for (int j = 0; j < actions.Length; j++)
+                actions[j](this, i, x, vtx, dataTransform);
         }
     }
 
     private void PopulateVertexData(IEnumerable<DelVertexAction> vertexActions, Vertex[] sourceList, int count, Matrix4x4? dataTransform, bool parallel)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope("PopulateVertexData");
+        _ = parallel;
+        using var _s = RuntimeRenderingHostServices.Current.StartProfileScope("PopulateVertexData");
         var actions = vertexActions as DelVertexAction[] ?? [.. vertexActions];
 
-        if (parallel)
+        for (int i = 0; i < count; i++)
         {
-            Parallel.For(0, count, i =>
-            {
-                var vtx = sourceList[i];
-                for (int j = 0; j < actions.Length; j++)
-                    actions[j](this, i, i, vtx, dataTransform);
-            });
-        }
-        else
-        {
-            for (int i = 0; i < count; i++)
-            {
-                var vtx = sourceList[i];
-                for (int j = 0; j < actions.Length; j++)
-                    actions[j](this, i, i, vtx, dataTransform);
-            }
+            var vtx = sourceList[i];
+            for (int j = 0; j < actions.Length; j++)
+                actions[j](this, i, i, vtx, dataTransform);
         }
     }
 
