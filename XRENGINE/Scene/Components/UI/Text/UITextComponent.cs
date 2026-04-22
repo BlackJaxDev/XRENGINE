@@ -651,8 +651,14 @@ namespace XREngine.Rendering.UI
         /// Resizes all SSBOs, sets glyph instance count, and invalidates layout if auto-sizing is enabled.
         /// </summary>
         /// <param name="count"></param>
+        private static int _resizeGlyphDiagCount = 0;
         private void ResizeGlyphCount(uint count, bool invalidateLayout)
         {
+            if (_resizeGlyphDiagCount < 10)
+            {
+                _resizeGlyphDiagCount++;
+                Debug.Out($"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
+            }
             RenderCommand3D.Instances = count;
             RenderCommand2D.Instances = count;
             if (_allocatedGlyphCount < count)

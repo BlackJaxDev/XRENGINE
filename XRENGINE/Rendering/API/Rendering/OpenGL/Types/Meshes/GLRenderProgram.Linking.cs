@@ -2,6 +2,7 @@ using XREngine.Extensions;
 using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using XREngine;
 using XREngine.Data.Rendering;
@@ -334,6 +335,10 @@ namespace XREngine.Rendering.OpenGL
             private EAsyncLinkPhase _asyncLinkPhase;
             private uint[]? _asyncAttachedShaderIds;
             private uint _asyncLinkedProgramId;
+            private ulong _uberVariantHash;
+            private long _uberCompileStartTimestamp;
+            private long _uberLinkStartTimestamp;
+            private double _uberCompileMilliseconds;
 
             /// <summary>
             /// Pre-computes the shader source hash and binary cache lookup.
@@ -540,9 +545,12 @@ namespace XREngine.Rendering.OpenGL
                         if (anyPending && !anyFailed)
                             return false; // Still compiling — retry next frame
 
+                        double compileMilliseconds = CompleteUberBackendCompileTracking();
+
                         if (anyFailed)
                         {
                             Debug.OpenGLWarning($"Failed to compile program with hash {Hash}.");
+                            CompleteUberBackendTracking(false, "Backend shader compile failed.", compileMilliseconds, 0.0);
                             Failed.TryAdd(Hash, 0);
                             InFlightCompilations.TryRemove(Hash, out _);
                             CleanupAsyncLink();
@@ -581,6 +589,7 @@ namespace XREngine.Rendering.OpenGL
                             return false;
                         }
 
+                        BeginUberBackendLinkTracking(compileMilliseconds);
                         Api.LinkProgram(bindingId);
                         _asyncLinkedProgramId = bindingId;
                         _asyncAttachedShaderIds = [.. attachedShaderIds];
@@ -600,6 +609,7 @@ namespace XREngine.Rendering.OpenGL
 
                         Api.GetProgram(linkedProgramId, GLEnum.LinkStatus, out int status);
                         bool linked = status != 0;
+                        string? linkError = null;
                         if (linked)
                         {
                             CacheActiveUniforms();
@@ -607,8 +617,11 @@ namespace XREngine.Rendering.OpenGL
                         }
                         else
                         {
+                            Api.GetProgramInfoLog(linkedProgramId, out linkError);
                             PrintLinkDebug(linkedProgramId);
                         }
+
+                        CompleteUberBackendTracking(linked, linkError);
 
                         IsLinked = linked;
                         InFlightCompilations.TryRemove(Hash, out _);
@@ -643,6 +656,7 @@ namespace XREngine.Rendering.OpenGL
                 _asyncLinkedProgramId = 0;
                 _shaderCache.ForEach(x => x.Value.Destroy());
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
+                ResetUberBackendTracking();
                 UnregisterPendingAsyncProgram();
             }
 
@@ -654,8 +668,96 @@ namespace XREngine.Rendering.OpenGL
                 CleanupAsyncLink();
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
+                ResetUberBackendTracking();
                 UnregisterPendingAsyncProgram();
             }
+
+            private bool TryResolveUberVariantHash(out ulong variantHash)
+            {
+                if (_preparedCompileInputs is { Length: > 0 } preparedInputs && TryResolveUberVariantHash(preparedInputs, out variantHash))
+                    return true;
+
+                foreach (GLShader shader in _shaderCache.Values)
+                {
+                    if (UberShaderVariantTelemetry.TryParseVariantHash(shader.Data.Source?.Text, out variantHash))
+                        return true;
+                }
+
+                variantHash = 0;
+                return false;
+            }
+
+            private static bool TryResolveUberVariantHash(IEnumerable<GLProgramCompileLinkQueue.ShaderInput> inputs, out ulong variantHash)
+            {
+                foreach (GLProgramCompileLinkQueue.ShaderInput input in inputs)
+                {
+                    if (UberShaderVariantTelemetry.TryParseVariantHash(input.ResolvedSource, out variantHash))
+                        return true;
+                }
+
+                variantHash = 0;
+                return false;
+            }
+
+            private void BeginUberBackendCompileTracking(ulong variantHash)
+            {
+                if (variantHash == 0)
+                    return;
+
+                _uberVariantHash = variantHash;
+                _uberCompileMilliseconds = 0.0;
+                _uberCompileStartTimestamp = Stopwatch.GetTimestamp();
+                _uberLinkStartTimestamp = 0;
+                UberShaderVariantTelemetry.RecordBackendCompileStarted(variantHash);
+            }
+
+            private double CompleteUberBackendCompileTracking()
+            {
+                if (_uberVariantHash == 0 || _uberCompileStartTimestamp == 0)
+                    return _uberCompileMilliseconds;
+
+                _uberCompileMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - _uberCompileStartTimestamp);
+                _uberCompileStartTimestamp = 0;
+                return _uberCompileMilliseconds;
+            }
+
+            private void BeginUberBackendLinkTracking(double compileMilliseconds)
+            {
+                if (_uberVariantHash == 0)
+                    return;
+
+                _uberCompileMilliseconds = compileMilliseconds > 0.0 ? compileMilliseconds : _uberCompileMilliseconds;
+                _uberLinkStartTimestamp = Stopwatch.GetTimestamp();
+                UberShaderVariantTelemetry.RecordBackendLinkStarted(_uberVariantHash, _uberCompileMilliseconds);
+            }
+
+            private void CompleteUberBackendTracking(bool linked, string? failureReason = null, double? compileMilliseconds = null, double? linkMilliseconds = null)
+            {
+                if (_uberVariantHash == 0)
+                    return;
+
+                double resolvedCompileMilliseconds = compileMilliseconds ?? _uberCompileMilliseconds;
+                double resolvedLinkMilliseconds = linkMilliseconds ??
+                    (_uberLinkStartTimestamp == 0 ? 0.0 : StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - _uberLinkStartTimestamp));
+
+                if (linked)
+                    UberShaderVariantTelemetry.RecordBackendSuccess(_uberVariantHash, resolvedCompileMilliseconds, resolvedLinkMilliseconds);
+                else
+                    UberShaderVariantTelemetry.RecordBackendFailure(_uberVariantHash, failureReason, resolvedCompileMilliseconds, resolvedLinkMilliseconds);
+
+                ResetUberBackendTracking();
+            }
+
+            private void ResetUberBackendTracking()
+            {
+                _uberVariantHash = 0;
+                _uberCompileStartTimestamp = 0;
+                _uberLinkStartTimestamp = 0;
+                _uberCompileMilliseconds = 0.0;
+            }
+
+            private static double StopwatchTicksToMilliseconds(long ticks)
+                => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
 
             private void DetachShaders(uint programId, ReadOnlySpan<uint> attachedShaderIds)
             {
@@ -731,6 +833,7 @@ namespace XREngine.Rendering.OpenGL
                         _asyncCompileLinkPending = false;
                         if (compileResult.Status == GLProgramCompileLinkQueue.CompileStatus.Success)
                         {
+                            CompleteUberBackendTracking(true, compileMilliseconds: compileResult.CompileMilliseconds, linkMilliseconds: compileResult.LinkMilliseconds);
                             IsLinked = true;
                             using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
                             CacheActiveUniforms();
@@ -740,6 +843,7 @@ namespace XREngine.Rendering.OpenGL
                         }
                         else
                         {
+                            CompleteUberBackendTracking(false, compileResult.ErrorLog, compileResult.CompileMilliseconds, compileResult.LinkMilliseconds);
                             string errorKind = compileResult.Status == GLProgramCompileLinkQueue.CompileStatus.CompileFailed
                                 ? "compile" : "link";
                             Debug.OpenGLWarning($"Async {errorKind} failed for hash {Hash}: {compileResult.ErrorLog}");
@@ -888,6 +992,9 @@ namespace XREngine.Rendering.OpenGL
 
                             if (allResolved)
                             {
+                                if (TryResolveUberVariantHash(inputs!, out ulong queuedVariantHash))
+                                    BeginUberBackendCompileTracking(queuedVariantHash);
+
                                 compileQueue.EnqueueCompileAndLink(bindingId, inputs!);
                                 _asyncCompileLinkPending = true;
                                 RegisterPendingAsyncProgram();
@@ -898,6 +1005,9 @@ namespace XREngine.Rendering.OpenGL
 
                         using (Engine.Profiler.Start("GLRenderProgram.Link.GenerateShaders"))
                         {
+                            if (TryResolveUberVariantHash(out ulong variantHash))
+                                BeginUberBackendCompileTracking(variantHash);
+
                             foreach (GLShader shader in _shaderCache.Values)
                             {
                                 shader.PrepareCompileVariant(Data.Separable);
@@ -918,9 +1028,12 @@ namespace XREngine.Rendering.OpenGL
                             return false;
                         }
 
+                        double compileMilliseconds = CompleteUberBackendCompileTracking();
+
                         if (_shaderCache.Values.Any(x => !x.IsCompiled))
                         {
                             Debug.OpenGLWarning($"Failed to compile program with hash {Hash}.");
+                            CompleteUberBackendTracking(false, "Backend shader compile failed.", compileMilliseconds, 0.0);
                             Failed.TryAdd(Hash, 0);
                             InFlightCompilations.TryRemove(Hash, out _);
                             //TODO: return invalid material until shaders are compiled
@@ -957,6 +1070,7 @@ namespace XREngine.Rendering.OpenGL
                         }
                         if (noErrors)
                         {
+                            BeginUberBackendLinkTracking(compileMilliseconds);
                             using var linkProf = Engine.Profiler.Start("GLRenderProgram.Link.DriverLinkProgram");
                             Api.LinkProgram(bindingId);
 
@@ -972,6 +1086,12 @@ namespace XREngine.Rendering.OpenGL
 
                             Api.GetProgram(bindingId, GLEnum.LinkStatus, out int status);
                             bool linked = status != 0;
+                            string? linkError = null;
+                            if (!linked)
+                                Api.GetProgramInfoLog(bindingId, out linkError);
+
+                            CompleteUberBackendTracking(linked, linkError, compileMilliseconds);
+
                             if (!linked)
                                 PrintLinkDebug(bindingId);
                             IsLinked = linked;

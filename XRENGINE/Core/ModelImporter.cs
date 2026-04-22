@@ -1249,7 +1249,6 @@ namespace XREngine
                 new ShaderFloat(1.0f, "_AlphaForceOpaque"),
                 new ShaderFloat(0.0f, "_AlphaMod"),
 
-                new ShaderFloat(0.0f, "_MainColorAdjustToggle"),
                 new ShaderVector4(identitySt, "_MainColorAdjustTexture_ST"),
                 new ShaderVector2(Vector2.Zero, "_MainColorAdjustTexturePan"),
                 new ShaderInt(0, "_MainColorAdjustTextureUV"),
@@ -1261,7 +1260,6 @@ namespace XREngine
                 new ShaderInt(0, "_MainHueShiftColorSpace"),
                 new ShaderFloat(0.0f, "_MainHueShiftReplace"),
 
-                new ShaderFloat(1.0f, "_ShadingEnabled"),
                 new ShaderInt(6, "_LightingMode"),
                 new ShaderInt(0, "_LightingColorMode"),
                 new ShaderInt(2, "_LightingMapMode"),
@@ -1291,7 +1289,6 @@ namespace XREngine
                 new ShaderVector4(identitySt, "_LightingShadowMasks_ST"),
                 new ShaderFloat(0.0f, "_LightingShadowMaskStrengthR"),
 
-                new ShaderFloat(0.0f, "_EnableEmission"),
                 new ShaderVector4(identitySt, "_EmissionMap_ST"),
                 new ShaderVector2(Vector2.Zero, "_EmissionMapPan"),
                 new ShaderInt(0, "_EmissionMapUV"),
@@ -1301,7 +1298,6 @@ namespace XREngine
                 new ShaderVector2(Vector2.Zero, "_EmissionScrollingSpeed"),
                 new ShaderFloat(0.0f, "_EmissionScrollingVertexColor"),
 
-                new ShaderFloat(0.0f, "_MatcapEnable"),
                 new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_MatcapColor"),
                 new ShaderFloat(1.0f, "_MatcapIntensity"),
                 new ShaderFloat(0.0f, "_MatcapBorder"),
@@ -1316,7 +1312,6 @@ namespace XREngine
                 new ShaderInt(0, "_MatcapMaskChannel"),
                 new ShaderFloat(0.0f, "_MatcapMaskInvert"),
 
-                new ShaderFloat(0.0f, "_EnableRimLighting"),
                 new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_RimLightColor"),
                 new ShaderFloat(0.5f, "_RimWidth"),
                 new ShaderFloat(0.5f, "_RimSharpness"),
@@ -1336,7 +1331,6 @@ namespace XREngine
                 new ShaderFloat(1.0f, "_SpecularStrength"),
                 new ShaderInt(0, "_SpecularType"),
 
-                new ShaderFloat(0.0f, "_DetailEnabled"),
                 new ShaderVector4(identitySt, "_DetailMask_ST"),
                 new ShaderVector4(identitySt, "_DetailTex_ST"),
                 new ShaderVector2(Vector2.Zero, "_DetailTexPan"),
@@ -1352,13 +1346,11 @@ namespace XREngine
                 new ShaderFloat(1.0f, "_MainVertexColoring"),
                 new ShaderFloat(0.0f, "_MainUseVertexColorAlpha"),
 
-                new ShaderFloat(0.0f, "_EnableBackFace"),
                 new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_BackFaceColor"),
                 new ShaderFloat(0.0f, "_BackFaceBlendMode"),
                 new ShaderFloat(0.0f, "_BackFaceEmission"),
                 new ShaderFloat(1.0f, "_BackFaceAlpha"),
 
-                new ShaderFloat(0.0f, "_EnableGlitter"),
                 new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_GlitterColor"),
                 new ShaderFloat(1.0f, "_GlitterDensity"),
                 new ShaderFloat(1.0f, "_GlitterSize"),
@@ -1368,7 +1360,6 @@ namespace XREngine
                 new ShaderFloat(1.0f, "_GlitterMaxAngle"),
                 new ShaderFloat(0.0f, "_GlitterRainbow"),
 
-                new ShaderFloat(0.0f, "_EnableFlipbook"),
                 new ShaderFloat(1.0f, "_FlipbookColumns"),
                 new ShaderFloat(1.0f, "_FlipbookRows"),
                 new ShaderFloat(0.0f, "_FlipbookFrameRate"),
@@ -1377,14 +1368,12 @@ namespace XREngine
                 new ShaderFloat(0.0f, "_FlipbookBlendMode"),
                 new ShaderFloat(0.0f, "_FlipbookCrossfade"),
 
-                new ShaderFloat(0.0f, "_EnableSSS"),
                 new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_SSSColor"),
                 new ShaderFloat(1.0f, "_SSSPower"),
                 new ShaderFloat(0.0f, "_SSSDistortion"),
                 new ShaderFloat(1.0f, "_SSSScale"),
                 new ShaderFloat(0.0f, "_SSSAmbient"),
 
-                new ShaderFloat(0.0f, "_EnableDissolve"),
                 new ShaderFloat(0.0f, "_DissolveType"),
                 new ShaderFloat(0.0f, "_DissolveProgress"),
                 new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_DissolveEdgeColor"),
@@ -1397,7 +1386,6 @@ namespace XREngine
                 new ShaderFloat(0.0f, "_DissolveInvert"),
                 new ShaderFloat(0.5f, "_DissolveCutoff"),
 
-                new ShaderFloat(0.0f, "_EnableParallax"),
                 new ShaderFloat(0.0f, "_ParallaxMode"),
                 new ShaderVector4(identitySt, "_ParallaxMap_ST"),
                 new ShaderFloat(0.05f, "_ParallaxStrength"),

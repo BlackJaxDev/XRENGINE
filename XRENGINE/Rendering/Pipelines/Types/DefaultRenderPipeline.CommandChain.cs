@@ -104,6 +104,12 @@ public partial class DefaultRenderPipeline
             AppendAntiAliasingResourceCaching(c);
         }
 
+        // Volumetric fog scatter runs once at internal resolution, writing an
+        // RGBA16F texture that the post-process composite samples. Skipped in
+        // stereo (no stereo scatter variant yet).
+        if (!Stereo)
+            AppendVolumetricFog(c);
+
         AppendExposureUpdate(c);
         AppendFxaaTsrUpscaleChain(c);
         AppendTemporalCommit(c);
@@ -722,6 +728,89 @@ public partial class DefaultRenderPipeline
         {
             c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
         }
+    }
+
+    /// <summary>
+    /// Caches and runs the three-stage volumetric fog chain:
+    ///   1. Half-resolution depth downsample (<c>VolumetricFogHalfDepth</c>).
+    ///   2. Half-resolution scatter raymarch (<c>VolumetricFogHalfScatter</c>).
+    ///   3. Full-resolution bilateral upscale (<c>VolumetricFogColor</c>).
+    /// The scatter shader early-outs to (0,0,0,1) when no volumes are present
+    /// or the effect is disabled, so the post-process composite degrades to a
+    /// no-op without an external gate. Each pass uses
+    /// <see cref="VPRC_RenderQuadToFBO.MatchDestinationRenderArea"/> so the
+    /// viewport follows the destination FBO's size automatically.
+    /// </summary>
+    private void AppendVolumetricFog(ViewportRenderCommandContainer c)
+    {
+        // Stage 1: half-resolution depth downsample.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogHalfDepthTextureName,
+            CreateVolumetricFogHalfDepthTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogHalfDepthQuadFBOName,
+            CreateVolumetricFogHalfDepthQuadFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogHalfDepthQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogHalfDepthFBOName,
+            CreateVolumetricFogHalfDepthFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogHalfDepthFbo);
+
+        c.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(VolumetricFogHalfDepthQuadFBOName, VolumetricFogHalfDepthFBOName, matchDestinationRenderArea: true);
+
+        // Stage 2: half-resolution scatter raymarch.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogHalfScatterTextureName,
+            CreateVolumetricFogHalfScatterTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogHalfScatterQuadFBOName,
+            CreateVolumetricFogHalfScatterQuadFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogHalfScatterQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogHalfScatterFBOName,
+            CreateVolumetricFogHalfScatterFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogHalfScatterFbo);
+
+        c.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(VolumetricFogHalfScatterQuadFBOName, VolumetricFogHalfScatterFBOName, matchDestinationRenderArea: true);
+
+        // Stage 3: full-resolution bilateral upscale.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogColorTextureName,
+            CreateVolumetricFogColorTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogUpscaleQuadFBOName,
+            CreateVolumetricFogUpscaleQuadFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateVolumetricFogUpscaleQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogUpscaleFBOName,
+            CreateVolumetricFogUpscaleFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateVolumetricFogUpscaleFbo);
+
+        c.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(VolumetricFogUpscaleQuadFBOName, VolumetricFogUpscaleFBOName, matchDestinationRenderArea: true);
     }
 
     private void AppendTemporalCommit(ViewportRenderCommandContainer c)

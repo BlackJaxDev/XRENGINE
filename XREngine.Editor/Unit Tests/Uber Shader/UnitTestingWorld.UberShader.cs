@@ -124,7 +124,7 @@ public static partial class EditorUnitTests
 
         material.SetVector4("_Color", new Vector4(config.Tint.R, config.Tint.G, config.Tint.B, config.Tint.A));
         material.SetFloat("_BumpScale", 0.4f);
-        material.SetFloat("_EnableEmission", 1.0f);
+        material.SetUberFeatureEnabled("emission", config.EnableEmission);
         material.SetVector4(
             "_EmissionColor",
             config.EnableEmission
@@ -132,7 +132,7 @@ public static partial class EditorUnitTests
                 : new Vector4(1.0f, 1.0f, 1.0f, 1.0f));
         material.SetFloat("_EmissionStrength", config.EnableEmission ? 2.5f : 0.35f);
 
-        material.SetFloat("_MatcapEnable", config.EnableMatcap ? 1.0f : 0.0f);
+        material.SetUberFeatureEnabled("matcap", config.EnableMatcap);
         material.SetVector4("_MatcapColor", new Vector4(1.0f, 1.0f, 1.0f, 1.0f));
         material.SetFloat("_MatcapIntensity", 1.25f);
         material.SetFloat("_MatcapReplace", 0.0f);

@@ -12,7 +12,7 @@ using Color = System.Drawing.Color;
 namespace XREngine.Rendering
 {
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRMaterialInspector")]
-    public class XRMaterial : XRMaterialBase
+    public partial class XRMaterial : XRMaterialBase
     {
         [YamlIgnore]
         private XRMaterial? _depthNormalPrePassVariant;
@@ -24,6 +24,18 @@ namespace XREngine.Rendering
         private bool _shadowCasterVariantResolved;
         [YamlIgnore]
         private XRMaterial? _shadowBindingSourceMaterial;
+
+        private UberMaterialAuthoredState _uberAuthoredState = UberMaterialAuthoredState.Empty;
+        [YamlIgnore]
+        private UberMaterialVariantRequest _requestedUberVariant = UberMaterialVariantRequest.Empty;
+        [YamlIgnore]
+        private UberMaterialVariantBindingState _activeUberVariant = UberMaterialVariantBindingState.Empty;
+        [YamlIgnore]
+        private UberMaterialVariantStatus _uberVariantStatus = UberMaterialVariantStatus.Empty;
+        [YamlIgnore]
+        private long _uberStateRevision = 1;
+        [YamlIgnore]
+        private long _shaderStateRevision = 1;
 
         private int _opaqueRenderPass = (int)EDefaultRenderPass.OpaqueForward;
 
@@ -122,6 +134,52 @@ namespace XREngine.Rendering
         {
             get => _shaders;
             set => SetField(ref _shaders, value);
+        }
+
+        public UberMaterialAuthoredState UberAuthoredState
+        {
+            get => _uberAuthoredState;
+            set => SetField(ref _uberAuthoredState, value ?? UberMaterialAuthoredState.Empty);
+        }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public UberMaterialVariantRequest RequestedUberVariant
+        {
+            get => _requestedUberVariant;
+            private set => SetField(ref _requestedUberVariant, value ?? UberMaterialVariantRequest.Empty);
+        }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public UberMaterialVariantBindingState ActiveUberVariant
+        {
+            get => _activeUberVariant;
+            private set => SetField(ref _activeUberVariant, value ?? UberMaterialVariantBindingState.Empty);
+        }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public UberMaterialVariantStatus UberVariantStatus
+        {
+            get => _uberVariantStatus;
+            private set => SetField(ref _uberVariantStatus, value ?? UberMaterialVariantStatus.Empty);
+        }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public long UberStateRevision
+        {
+            get => _uberStateRevision;
+            private set => SetField(ref _uberStateRevision, value <= 0 ? 1 : value);
+        }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public long ShaderStateRevision
+        {
+            get => _shaderStateRevision;
+            private set => SetField(ref _shaderStateRevision, value <= 0 ? 1 : value);
         }
 
         [Browsable(false)]
@@ -233,6 +291,94 @@ namespace XREngine.Rendering
 
         public void RefreshShaderState()
             => ShadersChanged();
+
+        public bool SetUberFeatureEnabled(string featureId, bool enabled)
+            => UpdateUberAuthoredState(static (state, args) => state.SetFeature(args.featureId, args.enabled), (featureId, enabled));
+
+        public bool SetUberPropertyMode(string propertyName, EShaderUiPropertyMode mode)
+        {
+            string? capturedStaticLiteral = mode == EShaderUiPropertyMode.Static
+                ? TryCaptureUberStaticLiteral(propertyName)
+                : null;
+
+            return UpdateUberAuthoredState(static (state, args) =>
+            {
+                UberMaterialAuthoredState next = state.SetPropertyMode(args.propertyName, args.mode);
+                if (args.mode == EShaderUiPropertyMode.Static && args.capturedStaticLiteral is not null)
+                    next = next.SetPropertyStaticLiteral(args.propertyName, args.capturedStaticLiteral);
+
+                return next;
+            }, (propertyName, mode, capturedStaticLiteral));
+        }
+
+        public bool SetUberPropertyStaticLiteral(string propertyName, string? staticLiteral)
+            => UpdateUberAuthoredState(static (state, args) => state.SetPropertyStaticLiteral(args.propertyName, args.staticLiteral), (propertyName, staticLiteral));
+
+        public bool RefreshUberPropertyStaticLiteral(string propertyName)
+        {
+            string? literal = TryCaptureUberStaticLiteral(propertyName);
+            return literal is not null && SetUberPropertyStaticLiteral(propertyName, literal);
+        }
+
+        public void SetRequestedUberVariant(UberMaterialVariantRequest? request)
+            => RequestedUberVariant = request ?? UberMaterialVariantRequest.Empty;
+
+        public void SetActiveUberVariant(UberMaterialVariantBindingState? bindingState)
+            => ActiveUberVariant = bindingState ?? UberMaterialVariantBindingState.Empty;
+
+        public void SetUberVariantStatus(UberMaterialVariantStatus? status)
+            => UberVariantStatus = status ?? UberMaterialVariantStatus.Empty;
+
+        public void ClearUberVariantRuntimeState()
+        {
+            SetRequestedUberVariant(null);
+            SetActiveUberVariant(null);
+            SetUberVariantStatus(null);
+        }
+
+        private bool UpdateUberAuthoredState<TArgs>(Func<UberMaterialAuthoredState, TArgs, UberMaterialAuthoredState> update, TArgs args)
+        {
+            UberMaterialAuthoredState current = UberAuthoredState ?? UberMaterialAuthoredState.Empty;
+            UberMaterialAuthoredState next = update(current, args) ?? UberMaterialAuthoredState.Empty;
+            if (current.Equals(next))
+                return false;
+
+            UberAuthoredState = next;
+            ClearUberVariantRuntimeState();
+            BumpUberStateRevision();
+            MarkDirty();
+            return true;
+        }
+
+        private void BumpUberStateRevision()
+        {
+            long next = unchecked(UberStateRevision + 1);
+            if (next <= 0)
+                next = 1;
+
+            UberStateRevision = next;
+        }
+
+        private void BumpShaderStateRevision()
+        {
+            long next = unchecked(ShaderStateRevision + 1);
+            if (next <= 0)
+                next = 1;
+
+            ShaderStateRevision = next;
+        }
+
+        private string? TryCaptureUberStaticLiteral(string propertyName)
+        {
+            if (!TryGetUberMaterialState(out _, out ShaderUiManifest manifest) ||
+                !manifest.PropertyLookup.TryGetValue(propertyName, out ShaderUiProperty? property) ||
+                property.IsSampler)
+                return null;
+
+            return UberShaderVariantBuilder.TryFormatStaticLiteral(this, property, out string literal)
+                ? literal
+                : null;
+        }
 
         private EMeshBillboardMode _billboardMode = EMeshBillboardMode.None;
         public EMeshBillboardMode BillboardMode
@@ -426,6 +572,7 @@ namespace XREngine.Rendering
         {
             InvalidateDepthNormalPrePassVariant();
             InvalidateShadowCasterVariant();
+            BumpShaderStateRevision();
 
             _fragmentShaders.Clear();
             _geometryShaders.Clear();
@@ -476,6 +623,7 @@ namespace XREngine.Rendering
             SyncParametersToShaderUniforms();
             SyncRequiredEngineUniforms();
             SyncAlphaCutoffParameter();
+            EnsureUberStateInitialized();
         }
 
         /// <summary>
@@ -915,11 +1063,39 @@ namespace XREngine.Rendering
                 }
             }
 
+            if (IsUberShaderMaterial())
+            {
+                HashSet<string> mergedNames = new(merged.Select(static x => x.Name), StringComparer.Ordinal);
+                foreach (ShaderVar existing in existingByName.Values)
+                {
+                    if (!ShouldPreserveUberParameter(existing.Name) || !mergedNames.Add(existing.Name))
+                        continue;
+
+                    merged.Add(existing);
+                }
+            }
+
             // Only reassign if the set actually changed (avoids unnecessary change-notification noise)
             ShaderVar[] mergedArray = [.. merged];
             ShaderVar[]? current = Parameters;
             if (current is null || current.Length != mergedArray.Length || !current.SequenceEqual(mergedArray))
                 Parameters = mergedArray;
+        }
+
+        private bool IsUberShaderMaterial()
+        {
+            XRShader? fragmentShader = GetShader(EShaderType.Fragment);
+            string? shaderPath = fragmentShader?.Source?.FilePath ?? fragmentShader?.FilePath;
+            return string.Equals(Path.GetFileName(shaderPath), "UberShader.frag", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool ShouldPreserveUberParameter(string? parameterName)
+        {
+            if (string.IsNullOrWhiteSpace(parameterName))
+                return false;
+
+            return parameterName.StartsWith("_", StringComparison.Ordinal) ||
+                   string.Equals(parameterName, "AlphaCutoff", StringComparison.Ordinal);
         }
 
         /// <summary>

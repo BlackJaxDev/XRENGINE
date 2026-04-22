@@ -456,10 +456,14 @@ namespace XREngine.Components.Lights
                 return;
 
             XRWorldInstance? world = WorldAs<XRWorldInstance>();
-            _cascadeShadowFrameBuffers = new XRFrameBuffer[requiredCascades];
-            _cascadeShadowViewports = new XRViewport[requiredCascades];
-            _cascadeShadowTransforms = new Transform[requiredCascades];
-            _cascadeShadowCameras = new XRCamera[requiredCascades];
+
+            // Build fully-populated arrays in locals first, then publish the field
+            // references atomically. Readers on the render thread snapshot these field
+            // references and must never observe a partially-populated array.
+            var frameBuffers = new XRFrameBuffer[requiredCascades];
+            var viewports = new XRViewport[requiredCascades];
+            var transforms = new Transform[requiredCascades];
+            var cameras = new XRCamera[requiredCascades];
 
             for (int i = 0; i < requiredCascades; i++)
             {
@@ -487,11 +491,16 @@ namespace XREngine.Components.Lights
                     Camera = camera,
                 };
 
-                _cascadeShadowTransforms[i] = transform;
-                _cascadeShadowCameras[i] = camera;
-                _cascadeShadowViewports[i] = viewport;
-                _cascadeShadowFrameBuffers[i] = new XRFrameBuffer((_cascadeShadowMapTexture!, EFrameBufferAttachment.DepthAttachment, 0, i));
+                transforms[i] = transform;
+                cameras[i] = camera;
+                viewports[i] = viewport;
+                frameBuffers[i] = new XRFrameBuffer((_cascadeShadowMapTexture!, EFrameBufferAttachment.DepthAttachment, 0, i));
             }
+
+            _cascadeShadowTransforms = transforms;
+            _cascadeShadowCameras = cameras;
+            _cascadeShadowViewports = viewports;
+            _cascadeShadowFrameBuffers = frameBuffers;
         }
 
         private void ReleaseCascadeShadowResources()
@@ -512,21 +521,19 @@ namespace XREngine.Components.Lights
             _cascadeShadowCameras = [];
         }
 
-        private void UpdateCascadeShadowCamera(int slot, Vector3 center, Vector3 halfExtents, Quaternion orientation, Vector3 lightDirection)
+        private static void UpdateCascadeShadowCamera(Transform transform, XRCamera camera, Vector3 center, Vector3 halfExtents, Quaternion orientation, Vector3 lightDirection, float nearZ)
         {
-            Transform transform = _cascadeShadowTransforms[slot];
             transform.Translation = center - lightDirection * halfExtents.Z;
             transform.Rotation = orientation;
 
             transform.RecalculateMatrices(forceWorldRecalc: true);
 
-            XRCamera camera = _cascadeShadowCameras[slot];
             float width = MathF.Max(halfExtents.X * 2.0f, 1e-3f);
             float height = MathF.Max(halfExtents.Y * 2.0f, 1e-3f);
-            float depth = MathF.Max(halfExtents.Z * 2.0f, NearZ + 1e-3f);
+            float depth = MathF.Max(halfExtents.Z * 2.0f, nearZ + 1e-3f);
             if (camera.Parameters is not XROrthographicCameraParameters ortho)
             {
-                ortho = new XROrthographicCameraParameters(width, height, NearZ, depth - NearZ);
+                ortho = new XROrthographicCameraParameters(width, height, nearZ, depth - nearZ);
                 ortho.InheritAspectRatio = false;
                 ortho.SetOriginPercentages(0.5f, 0.5f);
                 camera.Parameters = ortho;
@@ -534,8 +541,8 @@ namespace XREngine.Components.Lights
             else
             {
                 ortho.Resize(width, height); // Bypass InheritAspectRatio coupling
-                ortho.NearZ = NearZ;
-                ortho.FarZ = depth - NearZ;
+                ortho.NearZ = nearZ;
+                ortho.FarZ = depth - nearZ;
             }
         }
 
@@ -559,7 +566,12 @@ namespace XREngine.Components.Lights
             }
 
             EnsureCascadeShadowResources();
-            if (_cascadeShadowMapTexture is null || _cascadeShadowCameras.Length == 0)
+
+            // Snapshot the cascade resource arrays so iteration is stable against
+            // concurrent Ensure/Release calls from property changes on other threads.
+            Transform[] transformsSnapshot = _cascadeShadowTransforms;
+            XRCamera[] camerasSnapshot = _cascadeShadowCameras;
+            if (_cascadeShadowMapTexture is null || camerasSnapshot.Length == 0 || transformsSnapshot.Length != camerasSnapshot.Length)
             {
                 ClearCascadeShadows();
                 return;
@@ -568,7 +580,7 @@ namespace XREngine.Components.Lights
             Frustum playerFrustum = playerCamera.WorldFrustum();
             BuildLightSpaceBasis(out Matrix4x4 worldToLight, out Matrix4x4 lightToWorld, out Quaternion lightRotation, out Vector3 lightDirection);
 
-            int maxCascadeCount = Math.Min(_cascadeShadowCameras.Length, MaxCascadeRenderCount);
+            int maxCascadeCount = Math.Min(camerasSnapshot.Length, MaxCascadeRenderCount);
             Span<float> percentages = stackalloc float[MaxCascadeRenderCount];
             CopyEffectiveCascadePercentages(percentages, out int percentageCount);
             CascadeShadowSlice[] nextShadowSlices = ArrayPool<CascadeShadowSlice>.Shared.Rent(maxCascadeCount);
@@ -627,10 +639,10 @@ namespace XREngine.Components.Lights
                     Vector3 halfExtents = Vector3.Max((max - min) * 0.5f, new Vector3(1e-3f, 1e-3f, NearZ + 1e-3f));
                     Vector3 centerWS = Vector3.Transform(centerLS, lightToWorld);
 
-                    UpdateCascadeShadowCamera(resourceSlot, centerWS, halfExtents, lightRotation, lightDirection);
+                    UpdateCascadeShadowCamera(transformsSnapshot[resourceSlot], camerasSnapshot[resourceSlot], centerWS, halfExtents, lightRotation, lightDirection, NearZ);
 
-                    Matrix4x4 cascadeView = _cascadeShadowCameras[resourceSlot].Transform.InverseRenderMatrix;
-                    Matrix4x4 cascadeProj = _cascadeShadowCameras[resourceSlot].ProjectionMatrix;
+                    Matrix4x4 cascadeView = camerasSnapshot[resourceSlot].Transform.InverseRenderMatrix;
+                    Matrix4x4 cascadeProj = camerasSnapshot[resourceSlot].ProjectionMatrix;
                     Matrix4x4 viewProj = cascadeView * cascadeProj;
 
                     nextShadowSlices[resourceSlot] = new CascadeShadowSlice

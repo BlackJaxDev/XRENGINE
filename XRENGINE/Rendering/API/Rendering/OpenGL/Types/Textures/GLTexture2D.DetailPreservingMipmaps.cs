@@ -82,9 +82,6 @@ public partial class GLTexture2D
             ESizedInternalFormat.Rg16 => XRRenderProgram.EImageFormat.RG16,
             ESizedInternalFormat.Rg16f => XRRenderProgram.EImageFormat.RG16F,
             ESizedInternalFormat.Rg32f => XRRenderProgram.EImageFormat.RG32F,
-            ESizedInternalFormat.Rgb8 => XRRenderProgram.EImageFormat.RGB8,
-            ESizedInternalFormat.Rgb16f => XRRenderProgram.EImageFormat.RGB16F,
-            ESizedInternalFormat.Rgb32f => XRRenderProgram.EImageFormat.RGB32F,
             ESizedInternalFormat.Rgba8 => XRRenderProgram.EImageFormat.RGBA8,
             ESizedInternalFormat.Rgba16 => XRRenderProgram.EImageFormat.RGBA16,
             ESizedInternalFormat.Rgba16f => XRRenderProgram.EImageFormat.RGBA16F,
@@ -100,9 +97,6 @@ public partial class GLTexture2D
             or ESizedInternalFormat.Rg16
             or ESizedInternalFormat.Rg16f
             or ESizedInternalFormat.Rg32f
-            or ESizedInternalFormat.Rgb8
-            or ESizedInternalFormat.Rgb16f
-            or ESizedInternalFormat.Rgb32f
             or ESizedInternalFormat.Rgba8
             or ESizedInternalFormat.Rgba16
             or ESizedInternalFormat.Rgba16f

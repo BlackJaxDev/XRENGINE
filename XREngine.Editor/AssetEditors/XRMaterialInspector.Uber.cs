@@ -1,6 +1,7 @@
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using ImGuiNET;
 using XREngine.Core.Files;
@@ -14,6 +15,9 @@ public sealed partial class XRMaterialInspector
     private static readonly Vector4 UberHeaderColor = new(0.85f, 0.62f, 0.29f, 1.0f);
     private static readonly Vector4 UberFeatureEnabledColor = new(0.32f, 0.82f, 0.52f, 1.0f);
     private static readonly Vector4 UberFeatureDisabledColor = new(0.82f, 0.42f, 0.34f, 1.0f);
+    private static readonly Vector4 UberFeatureRequestedColor = new(0.90f, 0.74f, 0.28f, 1.0f);
+    private static readonly Vector4 UberFeatureCompilingColor = new(0.33f, 0.67f, 0.89f, 1.0f);
+    private static readonly ConditionalWeakTable<XRMaterial, PendingUberFeatureResolution> PendingUberFeatureResolutions = new();
 
     private static void DrawUberInspector(XRMaterial material)
     {
@@ -21,6 +25,8 @@ public sealed partial class XRMaterialInspector
             fragmentShader is null ||
             manifest is null)
             return;
+
+        material.EnsureUberStateInitialized();
 
         XRShader uberFragmentShader = fragmentShader!;
         ShaderUiManifest uberManifest = manifest!;
@@ -43,11 +49,18 @@ public sealed partial class XRMaterialInspector
             .Where(static x => x.EngineBinding is null)
             .ToDictionary(static x => x.Sampler.Name, StringComparer.Ordinal);
 
-        int enabledFeatureCount = uberManifest.Features.Count(static x => x.DefaultEnabled);
-        ulong variantHash = ComputeStableSourceHash(uberFragmentShader.Source?.Text ?? string.Empty);
+        int enabledFeatureCount = uberManifest.Features.Count(x => material.IsUberFeatureEnabled(x.Id, x.DefaultEnabled));
+        ulong requestedVariantHash = material.RequestedUberVariant.VariantHash;
+        ulong activeVariantHash = material.ActiveUberVariant.VariantHash;
+        if (requestedVariantHash == 0)
+            requestedVariantHash = ComputeStableSourceHash(uberFragmentShader.Source?.Text ?? string.Empty);
+
+        UberShaderVariantTelemetry.Snapshot telemetrySnapshot = UberShaderVariantTelemetry.GetSnapshot();
 
         ImGui.TextColored(UberHeaderColor, $"Feature Modules: {uberManifest.Features.Count} | Authorable Properties: {visibleProperties.Length}");
-        ImGui.TextDisabled($"Enabled: {enabledFeatureCount} | Variant Hash: 0x{variantHash:X16} | Async Compile: {(uberFragmentShader.GenerateAsync ? "On" : "Off")}");
+        ImGui.TextDisabled($"Enabled: {enabledFeatureCount} | Requested: 0x{requestedVariantHash:X16} | Active: 0x{activeVariantHash:X16} | Async Compile: {(uberFragmentShader.GenerateAsync ? "On" : "Off")}");
+        DrawUberVariantStatus(material);
+        ImGui.TextDisabled($"Session: requests {telemetrySnapshot.RequestCount} | successes {telemetrySnapshot.SuccessCount} | failures {telemetrySnapshot.FailureCount} | cache {telemetrySnapshot.CacheHitRate:P0} | avg prepare {telemetrySnapshot.AveragePreparationMilliseconds:0.##} ms | avg adopt {telemetrySnapshot.AverageAdoptionMilliseconds:0.##} ms | avg compile {telemetrySnapshot.AverageCompileMilliseconds:0.##} ms | avg link {telemetrySnapshot.AverageLinkMilliseconds:0.##} ms");
         if (uberManifest.ValidationIssues.Count > 0)
         {
             ImGui.SameLine();
@@ -62,6 +75,8 @@ public sealed partial class XRMaterialInspector
                 ImGui.EndTooltip();
             }
         }
+
+        DrawUberBulkActions(material, uberManifest, visibleProperties);
 
         foreach (string rawCategory in categoryNames)
         {
@@ -139,9 +154,11 @@ public sealed partial class XRMaterialInspector
         string? featureId,
         IReadOnlyList<ShaderUiProperty> properties)
     {
+        bool variantChanged = false;
         if (featureId is not null && featureLookup.TryGetValue(featureId, out ShaderUiFeature? feature))
         {
-            bool enabled = feature.DefaultEnabled;
+            bool enabled = material.IsUberFeatureEnabled(feature.Id, feature.DefaultEnabled);
+            int animatedPropertyCount = properties.Count(x => !x.IsSampler && material.GetUberPropertyMode(x.Name, x.DefaultMode, x.IsSampler) == EShaderUiPropertyMode.Animated);
             ImGui.PushID(feature.Id);
             if (feature.Required)
             {
@@ -153,7 +170,21 @@ public sealed partial class XRMaterialInspector
             {
                 bool toggled = enabled;
                 if (ImGui.Checkbox(feature.DisplayName, ref toggled) && toggled != enabled)
-                    ApplyUberFeatureToggle(material, fragmentShader, feature, toggled);
+                {
+                    PendingUberFeatureResolution? pendingResolution = toggled
+                        ? BuildPendingUberFeatureResolution(material, featureLookup, feature)
+                        : null;
+
+                    if (pendingResolution is null)
+                    {
+                        ClearPendingUberFeatureResolution(material, feature.Id);
+                        variantChanged |= material.SetUberFeatureEnabled(feature.Id, toggled);
+                    }
+                    else
+                    {
+                        SetPendingUberFeatureResolution(material, pendingResolution);
+                    }
+                }
 
                 ImGui.SameLine();
                 ImGui.TextColored(toggled ? UberFeatureEnabledColor : UberFeatureDisabledColor, toggled ? "enabled" : "disabled");
@@ -162,27 +193,35 @@ public sealed partial class XRMaterialInspector
             if (!string.IsNullOrWhiteSpace(feature.Tooltip) && ImGui.IsItemHovered())
                 ImGui.SetTooltip(feature.Tooltip);
 
-            if (feature.Dependencies.Count > 0)
+            if (feature.Cost != EShaderUiFeatureCost.Unspecified)
             {
                 ImGui.SameLine();
-                ImGui.TextDisabled($"deps: {string.Join(", ", feature.Dependencies)}");
+                ImGui.TextDisabled($"cost: {feature.Cost.ToString().ToLowerInvariant()} | animated: {animatedPropertyCount}");
             }
+
+            DrawPendingUberFeatureResolution(material, feature, ref variantChanged);
 
             ImGui.PopID();
         }
 
-        if (!ImGui.BeginTable($"UberPropertyTable_{featureId ?? "base"}", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        if (!ImGui.BeginTable($"UberPropertyTable_{featureId ?? "base"}", 5, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
             return;
 
         ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthStretch, 0.28f);
         ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 130.0f);
-        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.42f);
-        ImGui.TableSetupColumn("Drive", ImGuiTableColumnFlags.WidthStretch, 0.18f);
+        ImGui.TableSetupColumn("Mode", ImGuiTableColumnFlags.WidthFixed, 120.0f);
+        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.32f);
+        ImGui.TableSetupColumn("Update", ImGuiTableColumnFlags.WidthStretch, 0.18f);
         ImGui.TableHeadersRow();
 
         foreach (ShaderUiProperty rawProperty in properties)
         {
             ShaderUiProperty property = rawProperty!;
+            bool featureEnabled = featureId is null ||
+                (featureLookup.TryGetValue(featureId, out ShaderUiFeature? bucketFeature) && material.IsUberFeatureEnabled(bucketFeature.Id, bucketFeature.DefaultEnabled)) ||
+                (featureLookup.TryGetValue(featureId, out ShaderUiFeature? requiredFeature) && requiredFeature.Required);
+            EShaderUiPropertyMode propertyMode = material.GetUberPropertyMode(property.Name, property.DefaultMode, property.IsSampler);
+
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
             ImGui.TextUnformatted(property.DisplayName);
@@ -193,6 +232,27 @@ public sealed partial class XRMaterialInspector
             ImGui.TextUnformatted(property.ArraySize > 0 ? $"{property.GlslType}[{property.ArraySize}]" : property.GlslType);
 
             ImGui.TableSetColumnIndex(2);
+            if (property.IsSampler)
+            {
+                ImGui.TextDisabled("Texture");
+            }
+            else
+            {
+                bool animated = propertyMode == EShaderUiPropertyMode.Animated;
+                ImGui.PushID($"UberMode_{property.Name}");
+                if (ImGui.Checkbox("##Animated", ref animated))
+                {
+                    EShaderUiPropertyMode nextMode = animated ? EShaderUiPropertyMode.Animated : EShaderUiPropertyMode.Static;
+                    variantChanged |= material.SetUberPropertyMode(property.Name, nextMode);
+                    propertyMode = nextMode;
+                }
+                ImGui.SameLine();
+                ImGui.TextUnformatted(animated ? "Animated" : "Static");
+                ImGui.PopID();
+            }
+
+            ImGui.TableSetColumnIndex(3);
+            using (new ImGuiDisabledScope(!featureEnabled))
             if (property.IsSampler)
             {
                 if (samplerLookup.TryGetValue(property.Name, out SamplerBindingEntry? binding) && binding is not null)
@@ -209,6 +269,7 @@ public sealed partial class XRMaterialInspector
             else
             {
                 ShaderVar? parameter = FindParameter(parameterLookup, property.Name);
+                object? previousValue = parameter?.GenericValue;
                 if (parameter is null)
                 {
                     if (ImGui.SmallButton($"Create##Uber_{property.Name}"))
@@ -222,10 +283,16 @@ public sealed partial class XRMaterialInspector
                     ImGui.PushID($"UberProperty_{property.Name}");
                     DrawShaderParameterControl(material, parameter);
                     ImGui.PopID();
+
+                    if (propertyMode == EShaderUiPropertyMode.Static && featureEnabled && !Equals(previousValue, parameter.GenericValue))
+                    {
+                        variantChanged = true;
+                        material.RefreshUberPropertyStaticLiteral(property.Name);
+                    }
                 }
             }
 
-            ImGui.TableSetColumnIndex(3);
+            ImGui.TableSetColumnIndex(4);
             if (property.IsSampler)
             {
                 if (samplerLookup.TryGetValue(property.Name, out SamplerBindingEntry? binding) && binding is not null)
@@ -236,12 +303,18 @@ public sealed partial class XRMaterialInspector
             else
             {
                 ShaderVar? parameter = FindParameter(parameterLookup, property.Name);
-                DrawParameterDriveCell(material, parameter, property.Name, property.GlslType);
+                if (propertyMode == EShaderUiPropertyMode.Static)
+                    ImGui.TextDisabled(featureEnabled ? "Rebuild variant" : "Feature off");
+                else
+                    DrawParameterDriveCell(material, parameter, property.Name, property.GlslType);
             }
         }
 
         ImGui.EndTable();
         ImGui.Spacing();
+
+        if (variantChanged)
+            material.RequestUberVariantRebuild();
     }
 
     private static bool IsAuthorableUberProperty(ShaderUiProperty property)
@@ -249,8 +322,9 @@ public sealed partial class XRMaterialInspector
         if (IsEngineUniform(property.Name, out _))
             return false;
 
-        return property.Name.StartsWith("_", StringComparison.Ordinal) ||
-               property.Name.Equals("AlphaCutoff", StringComparison.Ordinal);
+        return property.HasExplicitMetadata &&
+               (property.Name.StartsWith("_", StringComparison.Ordinal) ||
+            property.Name.Equals("AlphaCutoff", StringComparison.Ordinal));
     }
 
     private static string ResolveCategoryName(ShaderUiProperty property, IReadOnlyDictionary<string, ShaderUiFeature> featureLookup)
@@ -264,45 +338,120 @@ public sealed partial class XRMaterialInspector
         return "General";
     }
 
-    private static void ApplyUberFeatureToggle(XRMaterial material, XRShader fragmentShader, ShaderUiFeature feature, bool enabled)
+    private static void DrawUberVariantStatus(XRMaterial material)
     {
-        if (string.IsNullOrWhiteSpace(feature.GuardMacro) || fragmentShader.Source?.Text is not { Length: > 0 } source)
+        UberMaterialVariantStatus status = material.UberVariantStatus;
+        if (status.Stage == EUberMaterialVariantStage.None)
             return;
 
-        bool defineShouldExist = feature.GuardDefinedEnablesFeature ? enabled : !enabled;
-        string updatedSource = SetMacroDefined(source, feature.GuardMacro, defineShouldExist);
-        if (string.Equals(updatedSource, source, StringComparison.Ordinal))
-            return;
-
-        TextFile updatedText = TextFile.FromText(updatedSource);
-        updatedText.FilePath = fragmentShader.Source?.FilePath;
-        updatedText.Name = fragmentShader.Source?.Name;
-
-        var replacement = new XRShader(fragmentShader.Type, updatedText)
+        bool hasBackendSnapshot = TryGetUberBackendSnapshot(status, out UberShaderVariantTelemetry.BackendSnapshot backendSnapshot);
+        double compileMilliseconds = status.CompileMilliseconds;
+        double linkMilliseconds = status.LinkMilliseconds;
+        string? failureReason = status.FailureReason;
+        string stageLabel = status.Stage.ToString();
+        Vector4 stageColor = status.Stage switch
         {
-            Name = fragmentShader.Name,
-            GenerateAsync = fragmentShader.GenerateAsync,
+            EUberMaterialVariantStage.Active => UberFeatureEnabledColor,
+            EUberMaterialVariantStage.Failed => UberFeatureDisabledColor,
+            EUberMaterialVariantStage.Compiling => UberFeatureCompilingColor,
+            _ => UberFeatureRequestedColor,
         };
 
-        material.SetShader(EShaderType.Fragment, replacement, coerceShaderType: true);
-        material.MarkDirty();
+        if (hasBackendSnapshot)
+        {
+            if (compileMilliseconds <= 0.0 && backendSnapshot.CompileMilliseconds > 0.0)
+                compileMilliseconds = backendSnapshot.CompileMilliseconds;
+
+            if (linkMilliseconds <= 0.0 && backendSnapshot.LinkMilliseconds > 0.0)
+                linkMilliseconds = backendSnapshot.LinkMilliseconds;
+
+            if (string.IsNullOrWhiteSpace(failureReason) && !string.IsNullOrWhiteSpace(backendSnapshot.FailureReason))
+                failureReason = backendSnapshot.FailureReason;
+
+            switch (backendSnapshot.Stage)
+            {
+                case UberShaderVariantTelemetry.BackendStage.Compiling:
+                    stageLabel = "Backend Compile";
+                    stageColor = UberFeatureCompilingColor;
+                    break;
+                case UberShaderVariantTelemetry.BackendStage.Linking:
+                    stageLabel = "Backend Link";
+                    stageColor = UberFeatureCompilingColor;
+                    break;
+                case UberShaderVariantTelemetry.BackendStage.Failed:
+                    stageLabel = "Backend Failed";
+                    stageColor = UberFeatureDisabledColor;
+                    break;
+            }
+        }
+
+        bool stale = status.RequestedVariantHash != 0 &&
+            status.ActiveVariantHash != 0 &&
+            status.RequestedVariantHash != status.ActiveVariantHash;
+
+        DrawUberStatusBadge(stageLabel, stageColor);
+
+        if (stale)
+            DrawUberStatusBadge("Stale", ValidationWarningColor);
+
+        ImGui.TextDisabled($"prepare {status.PreparationMilliseconds:0.##} ms | adopt {status.AdoptionMilliseconds:0.##} ms | compile {FormatTiming(compileMilliseconds)} | link {FormatTiming(linkMilliseconds)} | source {status.GeneratedSourceLength} B | uniforms {status.UniformCount} | samplers {status.SamplerCount} | cache {(status.CacheHit ? "hit" : "miss")}");
+        if (!string.IsNullOrWhiteSpace(failureReason))
+        {
+            ImGui.TextColored(UberFeatureDisabledColor, failureReason);
+        }
     }
 
-    private static string SetMacroDefined(string source, string macroName, bool shouldBeDefined)
+    private static bool TryGetUberBackendSnapshot(UberMaterialVariantStatus status, out UberShaderVariantTelemetry.BackendSnapshot snapshot)
     {
-        string definePattern = $@"^[ \t]*#define[ \t]+{Regex.Escape(macroName)}(?:\s+.*)?$\r?\n?";
-        string stripped = Regex.Replace(source, definePattern, string.Empty, RegexOptions.Multiline);
-        if (!shouldBeDefined)
-            return stripped;
+        ulong variantHash = status.RequestedVariantHash != 0 &&
+            status.RequestedVariantHash != status.ActiveVariantHash
+            ? status.RequestedVariantHash
+            : status.ActiveVariantHash != 0
+                ? status.ActiveVariantHash
+                : status.RequestedVariantHash;
 
-        Match versionMatch = Regex.Match(stripped, @"^[ \t]*#version.*$", RegexOptions.Multiline);
-        if (!versionMatch.Success)
-            return $"#define {macroName}{Environment.NewLine}{stripped}";
+        return UberShaderVariantTelemetry.TryGetBackendSnapshot(variantHash, out snapshot);
+    }
 
-        int insertionIndex = versionMatch.Index + versionMatch.Length;
-        string prefix = stripped[..insertionIndex];
-        string suffix = insertionIndex < stripped.Length ? stripped[insertionIndex..] : string.Empty;
-        return $"{prefix}{Environment.NewLine}#define {macroName}{Environment.NewLine}{suffix.TrimStart('\r', '\n')}";
+    private static void DrawUberStatusBadge(string label, Vector4 color)
+    {
+        ImGui.SameLine();
+        ImGui.TextColored(color, $"[{label}]");
+    }
+
+    private static string FormatTiming(double milliseconds)
+        => milliseconds > 0.0 ? $"{milliseconds:0.##} ms" : "n/a";
+
+    private static void DrawUberBulkActions(XRMaterial material, ShaderUiManifest manifest, IReadOnlyList<ShaderUiProperty> visibleProperties)
+    {
+        bool variantChanged = false;
+        if (ImGui.SmallButton("Disable All Expensive Features"))
+        {
+            foreach (ShaderUiFeature feature in manifest.Features)
+            {
+                if (feature.Required || feature.Cost < EShaderUiFeatureCost.Medium)
+                    continue;
+
+                variantChanged |= material.SetUberFeatureEnabled(feature.Id, false);
+            }
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Convert Eligible Properties To Static"))
+        {
+            foreach (ShaderUiProperty property in visibleProperties)
+            {
+                if (property.IsSampler)
+                    continue;
+
+                variantChanged |= material.SetUberPropertyMode(property.Name, EShaderUiPropertyMode.Static);
+            }
+        }
+
+        if (variantChanged)
+            material.RequestUberVariantRebuild();
+
+        ImGui.Spacing();
     }
 
     private static ulong ComputeStableSourceHash(string source)
@@ -319,4 +468,82 @@ public sealed partial class XRMaterialInspector
 
         return hash;
     }
+
+    private readonly struct ImGuiDisabledScope : IDisposable
+    {
+        private readonly bool _disabled;
+
+        public ImGuiDisabledScope(bool disabled)
+        {
+            _disabled = disabled;
+            if (disabled)
+                ImGui.BeginDisabled();
+        }
+
+        public void Dispose()
+        {
+            if (_disabled)
+                ImGui.EndDisabled();
+        }
+    }
+
+    private static PendingUberFeatureResolution? BuildPendingUberFeatureResolution(
+        XRMaterial material,
+        IReadOnlyDictionary<string, ShaderUiFeature> featureLookup,
+        ShaderUiFeature feature)
+    {
+        string[] missingDependencies = feature.Dependencies
+            .Where(id => featureLookup.TryGetValue(id, out ShaderUiFeature? dependency) && !material.IsUberFeatureEnabled(dependency.Id, dependency.DefaultEnabled))
+            .ToArray();
+
+        string[] activeConflicts = feature.Conflicts
+            .Where(id => featureLookup.TryGetValue(id, out ShaderUiFeature? conflict) && material.IsUberFeatureEnabled(conflict.Id, conflict.DefaultEnabled))
+            .ToArray();
+
+        return missingDependencies.Length == 0 && activeConflicts.Length == 0
+            ? null
+            : new PendingUberFeatureResolution(feature.Id, missingDependencies, activeConflicts);
+    }
+
+    private static void DrawPendingUberFeatureResolution(XRMaterial material, ShaderUiFeature feature, ref bool variantChanged)
+    {
+        if (!PendingUberFeatureResolutions.TryGetValue(material, out PendingUberFeatureResolution? pending) ||
+            !string.Equals(pending.FeatureId, feature.Id, StringComparison.Ordinal))
+            return;
+
+        if (pending.MissingDependencies.Length > 0)
+            ImGui.TextColored(ValidationWarningColor, $"Requires: {string.Join(", ", pending.MissingDependencies)}");
+        if (pending.ActiveConflicts.Length > 0)
+            ImGui.TextColored(ValidationWarningColor, $"Conflicts with: {string.Join(", ", pending.ActiveConflicts)}");
+
+        if (ImGui.SmallButton($"Resolve##{feature.Id}"))
+        {
+            foreach (string dependencyId in pending.MissingDependencies)
+                variantChanged |= material.SetUberFeatureEnabled(dependencyId, true);
+            foreach (string conflictId in pending.ActiveConflicts)
+                variantChanged |= material.SetUberFeatureEnabled(conflictId, false);
+
+            variantChanged |= material.SetUberFeatureEnabled(feature.Id, true);
+            ClearPendingUberFeatureResolution(material, feature.Id);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton($"Cancel##{feature.Id}"))
+            ClearPendingUberFeatureResolution(material, feature.Id);
+    }
+
+    private static void SetPendingUberFeatureResolution(XRMaterial material, PendingUberFeatureResolution resolution)
+    {
+        PendingUberFeatureResolutions.Remove(material);
+        PendingUberFeatureResolutions.Add(material, resolution);
+    }
+
+    private static void ClearPendingUberFeatureResolution(XRMaterial material, string featureId)
+    {
+        if (PendingUberFeatureResolutions.TryGetValue(material, out PendingUberFeatureResolution? pending) &&
+            string.Equals(pending.FeatureId, featureId, StringComparison.Ordinal))
+            PendingUberFeatureResolutions.Remove(material);
+    }
+
+    private sealed record PendingUberFeatureResolution(string FeatureId, string[] MissingDependencies, string[] ActiveConflicts);
 }

@@ -41,14 +41,26 @@ public partial class DefaultRenderPipeline
     {
         // Texture array order must match the shader's sampler declaration order in PostProcess.fs,
         // because Vulkan binds by index (binding N → Textures[N]), not by name.
-        XRTexture[] postProcessRefs =
-        [
-            GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2D HDRSceneTex
-            GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2D BloomBlurTexture
-            GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2D DepthView
-            GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2D StencilView
-            GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
-        ];
+        // The VolumetricFogColor binding is mono-only; stereo PostProcessStereo.fs does
+        // not declare that sampler and omits the slot to keep Vulkan binding indices aligned.
+        XRTexture[] postProcessRefs = Stereo
+            ?
+            [
+                GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2DArray HDRSceneTex
+                GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2DArray BloomBlurTexture
+                GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2DArray DepthView
+                GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2DArray StencilView
+                GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
+            ]
+            :
+            [
+                GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2D HDRSceneTex
+                GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2D BloomBlurTexture
+                GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2D DepthView
+                GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2D StencilView
+                GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
+                GetTexture<XRTexture>(VolumetricFogColorTextureName)!, // binding 5: sampler2D VolumetricFogColor
+            ];
         XRShader postProcessShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, PostProcessShaderName()), EShaderType.Fragment);
         XRMaterial postProcessMat = new(postProcessRefs, postProcessShader)
         {
@@ -75,6 +87,154 @@ public partial class DefaultRenderPipeline
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
             Name = PostProcessOutputFBOName
+        };
+    }
+
+    /// <summary>
+    /// Quad FBO that runs <c>VolumetricFogHalfDepthDownsample.fs</c> at half
+    /// internal resolution, writing <see cref="VolumetricFogHalfDepthTextureName"/>
+    /// from the full-res <see cref="DepthViewTextureName"/>. Raw depth is
+    /// preserved so the scatter shader's <c>XRENGINE_ResolveDepth</c> path
+    /// still handles reversed-Z correctly.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHalfDepthQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(DepthViewTextureName)!, // binding 0: sampler2D DepthView
+        ];
+        XRShader downsampleShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogHalfDepthDownsample.fs"),
+            EShaderType.Fragment);
+        XRMaterial mat = new(refs, downsampleShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                // Downsample only reads the depth sampler; no engine uniforms required.
+            }
+        };
+        return new XRQuadFrameBuffer(mat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = VolumetricFogHalfDepthQuadFBOName
+        };
+    }
+
+    /// <summary>
+    /// Destination FBO that wraps <see cref="VolumetricFogHalfDepthTextureName"/>
+    /// as color0 for the half-resolution depth downsample pass.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHalfDepthFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfDepthTextureName, CreateVolumetricFogHalfDepthTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogHalfDepthFBOName
+        };
+    }
+
+    /// <summary>
+    /// Quad FBO for the half-resolution scatter raymarch. Material binding 0
+    /// is <see cref="VolumetricFogHalfDepthTextureName"/>; ShadowMap /
+    /// ShadowMapArray flow via <see cref="EUniformRequirements.Lights"/>.
+    /// Settings are pushed via <see cref="VolumetricFogHalfScatterFBO_SettingUniforms"/>.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHalfScatterQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)!, // binding 0: sampler2D VolumetricFogHalfDepth
+        ];
+        XRShader scatterShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogScatter.fs"),
+            EShaderType.Fragment);
+        XRMaterial scatterMat = new(refs, scatterShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime,
+            }
+        };
+        var fbo = new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = VolumetricFogHalfScatterQuadFBOName
+        };
+        fbo.SettingUniforms += VolumetricFogHalfScatterFBO_SettingUniforms;
+        return fbo;
+    }
+
+    /// <summary>
+    /// Destination FBO for the half-resolution scatter pass. Wraps
+    /// <see cref="VolumetricFogHalfScatterTextureName"/> as color0.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHalfScatterFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfScatterTextureName, CreateVolumetricFogHalfScatterTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogHalfScatterFBOName
+        };
+    }
+
+    /// <summary>
+    /// Quad FBO that drives the bilateral upscale. Reads the half-res scatter,
+    /// half-res depth, and full-res depth, emitting the full-resolution
+    /// <see cref="VolumetricFogColorTextureName"/> consumed by PostProcess.fs.
+    /// The <c>InverseProjMatrix</c> / <c>DepthMode</c> uniforms arrive via
+    /// <see cref="EUniformRequirements.Camera"/>, so no explicit setter is needed.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogUpscaleQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(VolumetricFogHalfScatterTextureName)!, // binding 0: sampler2D VolumetricFogHalfScatter
+            GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)!,   // binding 1: sampler2D VolumetricFogHalfDepth
+            GetTexture<XRTexture>(DepthViewTextureName)!,                // binding 2: sampler2D DepthView
+        ];
+        XRShader upscaleShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogUpscale.fs"),
+            EShaderType.Fragment);
+        XRMaterial upscaleMat = new(refs, upscaleShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                RequiredEngineUniforms = EUniformRequirements.Camera,
+            }
+        };
+        return new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = VolumetricFogUpscaleQuadFBOName
+        };
+    }
+
+    /// <summary>
+    /// Destination FBO for the volumetric fog upscale pass. Wraps
+    /// <see cref="VolumetricFogColorTextureName"/> as color0 and is the texture
+    /// the post-process composite binds.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogUpscaleFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogColorTextureName, CreateVolumetricFogColorTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogUpscaleFBOName
         };
     }
 

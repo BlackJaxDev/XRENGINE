@@ -214,7 +214,7 @@ namespace XREngine.Rendering
             }
 
             bool resolved = TryGetResolvedSource(out string resolvedSource, annotateIncludes: false, logFailures: logFailures);
-            manifest = ShaderUiManifestParser.Parse(resolvedSource);
+            manifest = ShaderUiManifestParser.Parse(resolvedSource, sourcePath);
 
             if (resolved)
             {
