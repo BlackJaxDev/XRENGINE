@@ -16,6 +16,8 @@ public static class EngineShaderBindingNames
         public const string ForwardPlusEnabled = "ForwardPlusEnabled";
         public const string ForwardPlusScreenSize = "ForwardPlusScreenSize";
         public const string ForwardPlusTileSize = "ForwardPlusTileSize";
+        public const string ForwardPlusTileCountX = "ForwardPlusTileCountX";
+        public const string ForwardPlusTileCountY = "ForwardPlusTileCountY";
         public const string ForwardPlusMaxLightsPerTile = "ForwardPlusMaxLightsPerTile";
         public const string ForwardPlusEyeCount = "ForwardPlusEyeCount";
         public const string AmbientOcclusionEnabled = "AmbientOcclusionEnabled";

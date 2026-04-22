@@ -149,6 +149,10 @@ uniform int SpotLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
 uniform bool ForwardPlusEnabled;
 uniform vec2 ForwardPlusScreenSize;
 uniform int ForwardPlusTileSize;
+// Precomputed tile counts (ceil(screen / tileSize)) — supplied by the engine
+// so shaders don't have to recompute them per fragment.
+uniform int ForwardPlusTileCountX;
+uniform int ForwardPlusTileCountY;
 uniform int ForwardPlusMaxLightsPerTile;
 uniform int ForwardPlusEyeCount;
 #ifndef XRENGINE_SCREEN_ORIGIN_UNIFORM
@@ -951,8 +955,8 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
     // Local lights: use Forward+ if available, otherwise brute-force
     if (ForwardPlusEnabled)
     {
-        int tileCountX = (int(ForwardPlusScreenSize.x) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
-        int tileCountY = (int(ForwardPlusScreenSize.y) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
+        int tileCountX = ForwardPlusTileCountX;
+        int tileCountY = ForwardPlusTileCountY;
         ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;
         tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));
         int tileIndex = XRENGINE_GetForwardViewIndex() * (tileCountX * tileCountY) + tileCoord.y * tileCountX + tileCoord.x;

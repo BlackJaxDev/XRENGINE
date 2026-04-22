@@ -110,6 +110,8 @@ namespace XREngine.Rendering.Models.Materials
                 [EngineShaderBindingNames.Uniforms.ForwardPlusEnabled] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ForwardPlusScreenSize] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ForwardPlusTileSize] = EUniformRequirements.Lights,
+                [EngineShaderBindingNames.Uniforms.ForwardPlusTileCountX] = EUniformRequirements.Lights,
+                [EngineShaderBindingNames.Uniforms.ForwardPlusTileCountY] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ForwardPlusMaxLightsPerTile] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ForwardPlusEyeCount] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.AmbientOcclusionEnabled] = EUniformRequirements.Lights,

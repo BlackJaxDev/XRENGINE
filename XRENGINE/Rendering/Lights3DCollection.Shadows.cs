@@ -83,8 +83,8 @@ namespace XREngine.Scene
             //CollectingVisibleShadowMaps = false;
         }
 
-        private static bool ShouldCollectShadowItems(LightComponent light)
-            => light.IsActiveInHierarchy && light.CastsShadows && light.ShadowMap is not null;
+        private static bool ShouldCollectShadowItems(LightComponent? light)
+            => light is not null && light.IsActiveInHierarchy && light.CastsShadows && light.ShadowMap is not null;
 
         private void CollectShadowItems<TLight>(IReadOnlyList<TLight> lights) where TLight : LightComponent
         {

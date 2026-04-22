@@ -26,7 +26,24 @@ uniform mat4 ViewProjectionMatrix_VTX;
 #define u_ViewMatrix ViewMatrix_VTX
 #define u_ProjectionMatrix ProjMatrix_VTX
 #define u_MVPMatrix (ViewProjectionMatrix_VTX * ModelMatrix)
-#define u_NormalMatrix mat3(transpose(inverse(ModelMatrix)))
+
+// Adjoint of the upper-left 3x3 of a mat4: direction-transform matrix
+// equivalent to transpose(inverse(mat3(m))) up to the non-negative scalar
+// det(m). normalize() of the result absorbs that scalar, so this is exact
+// for rendering while avoiding the expensive inverse().
+mat3 adjoint(mat4 m) {
+    return mat3(
+        m[1].y * m[2].z - m[1].z * m[2].y,
+        m[1].z * m[2].x - m[1].x * m[2].z,
+        m[1].x * m[2].y - m[1].y * m[2].x,
+        m[0].z * m[2].y - m[0].y * m[2].z,
+        m[0].x * m[2].z - m[0].z * m[2].x,
+        m[0].y * m[2].x - m[0].x * m[2].y,
+        m[0].y * m[1].z - m[0].z * m[1].y,
+        m[0].z * m[1].x - m[0].x * m[1].z,
+        m[0].x * m[1].y - m[0].y * m[1].x);
+}
+#define u_NormalMatrix adjoint(ModelMatrix)
 
 // Camera data
 uniform vec3 CameraPosition;

@@ -32,16 +32,8 @@ bool isUvIn01(vec2 uv) {
 // ============================================
 float sampleHeightMap(vec2 uv) {
     vec4 heightSample = texture(_ParallaxMap, uv);
-    
-    int channel = int(_ParallaxMapChannel);
-    float height = 0.0;
-    
-    if (channel == 0) height = heightSample.r;
-    else if (channel == 1) height = heightSample.g;
-    else if (channel == 2) height = heightSample.b;
-    else height = heightSample.a;
-    
-    return height;
+    // Dynamic vector subscript — one component select, no branching.
+    return heightSample[clamp(int(_ParallaxMapChannel), 0, 3)];
 }
 
 // ============================================
@@ -157,8 +149,14 @@ vec2 calculateSilhouetteParallaxOcclusion(vec2 transformedUV, vec3 viewDirTangen
     float prevHeight = currentHeight;
     float prevLayerDepth = currentLayerDepth;
 
+    // Hoist the parallax-ST -> base-UV mapping out of the inner loop: the
+    // division by _ParallaxMap_ST.xy becomes a reciprocal multiply we can
+    // reuse, shaving one div per ray-march step. baseUV = currentUV*invST - zwOvST
+    vec2 invST  = 1.0 / _ParallaxMap_ST.xy;
+    vec2 zwOvST = _ParallaxMap_ST.zw * invST;
+
     for (int i = 0; i < maxSamples; i++) {
-        vec2 baseUV = (currentUV - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy;
+        vec2 baseUV = currentUV * invST - zwOvST;
         if (!isUvIn01(baseUV)) {
             valid = 0.0;
             return transformedUV;
@@ -178,8 +176,8 @@ vec2 calculateSilhouetteParallaxOcclusion(vec2 transformedUV, vec3 viewDirTangen
     }
 
     // Final bounds check before interpolation
-    if (!isUvIn01((currentUV - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy) ||
-        !isUvIn01((prevUV - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy)) {
+    if (!isUvIn01(currentUV * invST - zwOvST) ||
+        !isUvIn01(prevUV * invST - zwOvST)) {
         valid = 0.0;
         return transformedUV;
     }
@@ -194,7 +192,7 @@ vec2 calculateSilhouetteParallaxOcclusion(vec2 transformedUV, vec3 viewDirTangen
 
     vec2 finalUV = mix(currentUV, prevUV, clamp(weight, 0.0, 1.0));
 
-    if (!isUvIn01((finalUV - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy)) {
+    if (!isUvIn01(finalUV * invST - zwOvST)) {
         valid = 0.0;
         return transformedUV;
     }

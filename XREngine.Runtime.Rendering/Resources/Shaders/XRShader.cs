@@ -22,6 +22,9 @@ namespace XREngine.Rendering
         private string? _resolvedSourceCachePath;
         private string? _resolvedSourceCacheText;
         private ShaderSourceFileDependency[]? _resolvedSourceDependencies;
+        private ShaderUiManifest? _uiManifestCache;
+        private string? _uiManifestCachePath;
+        private string? _uiManifestCacheText;
 
         internal EShaderType _type = EShaderType.Fragment;
         public EShaderType Type
@@ -179,9 +182,51 @@ namespace XREngine.Rendering
                 _resolvedSourceCachePath = null;
                 _resolvedSourceCacheText = null;
                 _resolvedSourceDependencies = null;
+                _uiManifestCache = null;
+                _uiManifestCachePath = null;
+                _uiManifestCacheText = null;
             }
 
             _existingUniforms.Clear();
+        }
+
+        public ShaderUiManifest GetUiManifest(bool logFailures = true)
+        {
+            TryGetUiManifest(out ShaderUiManifest manifest, logFailures);
+            return manifest;
+        }
+
+        public bool TryGetUiManifest(out ShaderUiManifest manifest, bool logFailures = true)
+        {
+            string sourceText = Source?.Text ?? string.Empty;
+            string? sourcePath = Source?.FilePath;
+
+            lock (_resolvedSourceCacheLock)
+            {
+                if (_uiManifestCache is not null &&
+                    string.Equals(_uiManifestCacheText, sourceText, StringComparison.Ordinal) &&
+                    string.Equals(_uiManifestCachePath, sourcePath, StringComparison.Ordinal) &&
+                    ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
+                {
+                    manifest = _uiManifestCache;
+                    return true;
+                }
+            }
+
+            bool resolved = TryGetResolvedSource(out string resolvedSource, annotateIncludes: false, logFailures: logFailures);
+            manifest = ShaderUiManifestParser.Parse(resolvedSource);
+
+            if (resolved)
+            {
+                lock (_resolvedSourceCacheLock)
+                {
+                    _uiManifestCache = manifest;
+                    _uiManifestCacheText = sourceText;
+                    _uiManifestCachePath = sourcePath;
+                }
+            }
+
+            return resolved;
         }
 
         public string GetResolvedSource(bool annotateIncludes = false)

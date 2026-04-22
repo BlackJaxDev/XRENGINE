@@ -41,28 +41,65 @@ uniform float RenderTime;
 // by the shared engine snippets included by fragment-stage Uber shaders.
 
 // ============================================
+// Adjoint (classical adjugate) of a mat4's upper-left 3x3
+// ============================================
+// Produces a direction-transform matrix equivalent to inverse-transpose up to
+// a non-negative scalar (the determinant). Because the vertex stage follows
+// every adjoint-transform with normalize(), that scalar drops out \u2014 giving the
+// same visual result as transpose(inverse(mat3(m))) at a fraction of the cost
+// (9 muls + 6 subs vs. a full 3x3 inverse + transpose).
+//
+// This matches the engine's DefaultVertexShaderGenerator/MeshDeformVertex-
+// ShaderGenerator paths which already use adjoint(ModelMatrix). Safe for the
+// non-uniform-scale case that motivates inverse-transpose in the first place.
+mat3 adjoint(mat4 m) {
+    return mat3(
+        m[1].y * m[2].z - m[1].z * m[2].y,
+        m[1].z * m[2].x - m[1].x * m[2].z,
+        m[1].x * m[2].y - m[1].y * m[2].x,
+        m[0].z * m[2].y - m[0].y * m[2].z,
+        m[0].x * m[2].z - m[0].z * m[2].x,
+        m[0].y * m[2].x - m[0].x * m[2].y,
+        m[0].y * m[1].z - m[0].z * m[1].y,
+        m[0].z * m[1].x - m[0].x * m[1].z,
+        m[0].x * m[1].y - m[0].y * m[1].x);
+}
+#define u_NormalMatrix adjoint(u_ModelMatrix)
+
+// ============================================
 // Main Texture Properties
 // ============================================
+//@category("Surface", order=0)
+//@property(name="_MainTex", display="Albedo Map", slot=texture)
+//@tooltip("Primary base-color texture sampled for the material surface.")
 uniform sampler2D _MainTex;
 uniform vec4 _MainTex_ST;           // xy: tiling, zw: offset
 uniform vec2 _MainTexPan;
 uniform int _MainTexUV;
 
+//@property(name="_Color", display="Tint", mode=static)
+//@tooltip("Color tint multiplied into the sampled albedo.")
 uniform vec4 _Color;                // Main color tint
 uniform int _ColorThemeIndex;
 
 // ============================================
 // Normal Map
 // ============================================
+//@category("Surface")
+//@property(name="_BumpMap", display="Normal Map", slot=texture)
+//@tooltip("Tangent-space normal map used to perturb surface lighting.")
 uniform sampler2D _BumpMap;
 uniform vec4 _BumpMap_ST;
 uniform vec2 _BumpMapPan;
 uniform int _BumpMapUV;
+//@property(name="_BumpScale", display="Normal Strength", mode=static, range=[0,2])
 uniform float _BumpScale;
 
 // ============================================
 // Alpha / Transparency
 // ============================================
+//@category("Transparency", order=10)
+//@feature(id="alpha-masks", name="Alpha Masks", default=on, cost=low)
 #ifndef XRENGINE_UBER_DISABLE_ALPHA_MASKS
 uniform sampler2D _AlphaMask;
 uniform vec4 _AlphaMask_ST;
@@ -74,6 +111,8 @@ uniform float _AlphaMaskValue;
 uniform float _AlphaMaskInvert;
 #endif
 
+//@property(name="_Cutoff", display="Alpha Cutoff", mode=static, range=[0,1])
+//@tooltip("Threshold below which fragments are discarded in masked modes.")
 uniform float _Cutoff;              // Alpha cutoff threshold
 uniform int _Mode;                  // Rendering mode (opaque, cutout, fade, etc.)
 uniform float _AlphaForceOpaque;
@@ -82,6 +121,8 @@ uniform float _AlphaMod;
 // ============================================
 // Color Adjustments
 // ============================================
+//@category("Surface")
+//@feature(id="color-adjustments", name="Color Adjustments", default=off, cost=low)
 #ifndef XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS
 uniform float _MainColorAdjustToggle;
 uniform sampler2D _MainColorAdjustTexture;
@@ -100,6 +141,8 @@ uniform float _MainHueShiftReplace;
 // ============================================
 // Shading / Lighting
 // ============================================
+//@category("Lighting", order=20)
+//@feature(id="stylized-shading", name="Stylized Lighting", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
 uniform float _ShadingEnabled;
 uniform int _LightingMode;          // 0: Ramp, 1: Multilayer, 2: Wrapped, 3: Skin, 4: ShadeMap, 5: Flat, 6: Realistic, 7: Cloth, 8: SDF
@@ -140,6 +183,8 @@ uniform float _LightingGradientEnd;
 #endif
 
 // AO Maps
+//@category("Lighting")
+//@feature(id="material-ao", name="Material AO", default=off, cost=low)
 #ifndef XRENGINE_UBER_DISABLE_MATERIAL_AO
 uniform sampler2D _LightingAOMaps;
 uniform vec4 _LightingAOMaps_ST;
@@ -149,6 +194,8 @@ uniform float _LightDataAOStrengthR;
 #endif
 
 // Shadow Mask
+//@category("Lighting")
+//@feature(id="shadow-masks", name="Shadow Masks", default=off, cost=low)
 #ifndef XRENGINE_UBER_DISABLE_SHADOW_MASKS
 uniform sampler2D _LightingShadowMasks;
 uniform vec4 _LightingShadowMasks_ST;
@@ -158,13 +205,19 @@ uniform float _LightingShadowMaskStrengthR;
 // ============================================
 // Emission
 // ============================================
+//@category("Effects", order=30)
+//@feature(id="emission", name="Emission", default=off, cost=low)
 #ifndef XRENGINE_UBER_DISABLE_EMISSION
 uniform float _EnableEmission;
+//@property(name="_EmissionMap", display="Emission Map", slot=texture)
+//@tooltip("Texture sampled for emissive contribution.")
 uniform sampler2D _EmissionMap;
 uniform vec4 _EmissionMap_ST;
 uniform vec2 _EmissionMapPan;
 uniform int _EmissionMapUV;
+//@property(name="_EmissionColor", display="Emission Color", mode=static)
 uniform vec4 _EmissionColor;
+//@property(name="_EmissionStrength", display="Emission Strength", mode=static, range=[0,8])
 uniform float _EmissionStrength;
 
 // Emission scrolling
@@ -176,8 +229,12 @@ uniform float _EmissionScrollingVertexColor;
 // ============================================
 // Matcap
 // ============================================
+//@category("Effects")
+//@feature(id="matcap", name="Matcap", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_MATCAP
 uniform float _MatcapEnable;
+//@property(name="_Matcap", display="Matcap Texture", slot=texture)
+//@tooltip("Sphere-mapped texture layered over the lit surface.")
 uniform sampler2D _Matcap;
 uniform vec4 _MatcapColor;
 uniform float _MatcapIntensity;
@@ -199,8 +256,11 @@ uniform float _MatcapMaskInvert;
 // ============================================
 // Rim Lighting
 // ============================================
+//@category("Effects")
+//@feature(id="rim-lighting", name="Rim Lighting", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
 uniform float _EnableRimLighting;
+//@property(name="_RimLightColor", display="Rim Color", mode=static)
 uniform vec4 _RimLightColor;
 uniform float _RimWidth;
 uniform float _RimSharpness;
@@ -219,9 +279,13 @@ uniform int _RimMaskChannel;
 // ============================================
 // Specular
 // ============================================
+//@category("Lighting")
+//@property(name="_SpecularSmoothness", display="Specular Smoothness", mode=static, range=[0,1])
 uniform float _SpecularSmoothness;
+//@property(name="_SpecularStrength", display="Specular Strength", mode=static, range=[0,4])
 uniform float _SpecularStrength;
 
+//@feature(id="advanced-specular", name="Advanced Specular", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
 uniform float _StylizedSpecular;
 uniform sampler2D _SpecularMap;
@@ -233,6 +297,8 @@ uniform int _SpecularType;          // 0: Realistic, 1: Toon, 2: Anisotropic
 // ============================================
 // Detail Textures
 // ============================================
+//@category("Surface")
+//@feature(id="detail-textures", name="Detail Textures", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
 uniform float _DetailEnabled;
 uniform sampler2D _DetailMask;
@@ -253,6 +319,7 @@ uniform float _DetailNormalMapScale;
 // ============================================
 // Vertex Colors
 // ============================================
+//@category("Surface")
 uniform float _MainVertexColoringEnabled;
 uniform float _MainVertexColoringLinearSpace;
 uniform float _MainVertexColoring;
@@ -261,6 +328,8 @@ uniform float _MainUseVertexColorAlpha;
 // ============================================
 // Outline (for outline pass)
 // ============================================
+//@category("Effects")
+//@feature(id="outline", name="Outline", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_OUTLINE
 uniform float _EnableOutline;
 uniform vec4 _OutlineColor;
@@ -277,6 +346,8 @@ uniform float _OutlineVertexColorTint;
 // ============================================
 // Back Face
 // ============================================
+//@category("Effects")
+//@feature(id="backface", name="Backface Effects", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_BACKFACE
 uniform float _EnableBackFace;
 uniform vec4 _BackFaceColor;
@@ -289,6 +360,8 @@ uniform float _BackFaceAlpha;
 // ============================================
 // Glitter / Sparkle
 // ============================================
+//@category("Effects")
+//@feature(id="glitter", name="Glitter", default=off, cost=high)
 #ifndef XRENGINE_UBER_DISABLE_GLITTER
 uniform float _EnableGlitter;
 uniform vec4 _GlitterColor;
@@ -305,6 +378,8 @@ uniform sampler2D _GlitterMask;
 // ============================================
 // Flipbook Animation
 // ============================================
+//@category("Effects")
+//@feature(id="flipbook", name="Flipbook", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_FLIPBOOK
 uniform float _EnableFlipbook;
 uniform sampler2D _FlipbookTexture;
@@ -320,6 +395,8 @@ uniform float _FlipbookCrossfade;
 // ============================================
 // Subsurface Scattering
 // ============================================
+//@category("Lighting")
+//@feature(id="subsurface", name="Subsurface", default=off, cost=high)
 #ifndef XRENGINE_UBER_DISABLE_SUBSURFACE
 uniform float _EnableSSS;
 uniform vec4 _SSSColor;
@@ -333,6 +410,8 @@ uniform float _SSSAmbient;
 // ============================================
 // Dissolve
 // ============================================
+//@category("Effects")
+//@feature(id="dissolve", name="Dissolve", default=off, cost=high)
 #ifndef XRENGINE_UBER_DISABLE_DISSOLVE
 uniform float _EnableDissolve;
 uniform float _DissolveType;
@@ -352,9 +431,13 @@ uniform float _DissolveCutoff;
 // ============================================
 // Parallax / Height Mapping
 // ============================================
+//@category("Surface")
+//@feature(id="parallax", name="Parallax", default=off, cost=high)
 #ifndef XRENGINE_UBER_DISABLE_PARALLAX
 uniform float _EnableParallax;
 uniform float _ParallaxMode;
+//@property(name="_ParallaxMap", display="Height Map", slot=texture)
+//@tooltip("Height texture used for parallax or relief sampling.")
 uniform sampler2D _ParallaxMap;
 uniform vec4 _ParallaxMap_ST;
 uniform float _ParallaxStrength;

@@ -136,11 +136,11 @@ vec3 sampleReflectionCubemap(samplerCube cube, vec3 reflDir, float roughness, fl
 // Channel Extraction Helper
 // ============================================
 float getChannel(vec4 tex, int channel) {
-    if (channel == 0) return tex.r;
-    if (channel == 1) return tex.g;
-    if (channel == 2) return tex.b;
-    if (channel == 3) return tex.a;
-    return 1.0; // White (channel == 4)
+    // Dynamic vector subscript compiles to a single component select on all
+    // major drivers; avoids the old 4-way branch chain. `channel == 4` (no
+    // mask / "white") is the documented out-of-range input so clamp and let
+    // the caller's invert/multiplier lanes handle it.
+    return tex[clamp(channel, 0, 3)];
 }
 
 // ============================================

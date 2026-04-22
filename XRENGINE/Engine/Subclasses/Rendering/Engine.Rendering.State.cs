@@ -432,6 +432,18 @@ namespace XREngine
                 public static int ForwardPlusTileSize { get; internal set; }
 
                 /// <summary>
+                /// Number of Forward+ tiles along the X axis: ceil(screenWidth / tileSize).
+                /// Published alongside ForwardPlusScreenSize so shaders don't have to recompute
+                /// it per fragment.
+                /// </summary>
+                public static int ForwardPlusTileCountX { get; internal set; }
+
+                /// <summary>
+                /// Number of Forward+ tiles along the Y axis: ceil(screenHeight / tileSize).
+                /// </summary>
+                public static int ForwardPlusTileCountY { get; internal set; }
+
+                /// <summary>
                 /// Maximum number of lights that can affect a single Forward+ tile.
                 /// Lights beyond this limit are ignored for tiles that exceed this count.
                 /// </summary>

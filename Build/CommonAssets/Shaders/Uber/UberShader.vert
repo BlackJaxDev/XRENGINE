@@ -108,10 +108,11 @@ void main() {
     gl_Position = u_ModelViewProjectionMatrix * vec4(pos, 1.0);
 
     // ---- Normal / Tangent basis into world space ---------------------------
-    // Use the inverse-transpose of the model matrix for normals so they stay
-    // perpendicular under non-uniform scale. Tangent is a direction vector
-    // too, so the same matrix applies.
-    mat3 normalMatrix = mat3(transpose(inverse(u_ModelMatrix)));
+    // u_NormalMatrix (adjoint of model) correctly handles non-uniform scale
+    // for direction vectors; the normalize() below absorbs the determinant
+    // scalar so this is exact vs. inverse-transpose for rendering purposes.
+    // ~9 muls + 6 subs instead of a full mat3 or mat4 inverse.
+    mat3 normalMatrix = u_NormalMatrix;
     v_WorldNormal  = normalize(normalMatrix * norm);
     v_WorldTangent = normalize(normalMatrix * tan);
     v_TangentSign  = tanSign;

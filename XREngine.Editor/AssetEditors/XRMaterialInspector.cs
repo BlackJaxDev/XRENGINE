@@ -78,6 +78,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Hide uniforms and samplers that are automatically driven by the engine.");
 
+        DrawUberInspector(material);
         DrawUniforms(material);
         DrawUniformBlocks(material);
         DrawSamplerList(material);
