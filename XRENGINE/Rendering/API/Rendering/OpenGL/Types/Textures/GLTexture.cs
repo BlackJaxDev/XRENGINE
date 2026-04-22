@@ -324,7 +324,7 @@ namespace XREngine.Rendering.OpenGL
                 previous.Bind();
         }
 
-        public void GenerateMipmaps()
+        public virtual void GenerateMipmaps()
         {
             if (IsMultisampleTarget)
                 return;

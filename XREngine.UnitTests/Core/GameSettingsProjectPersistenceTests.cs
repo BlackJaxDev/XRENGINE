@@ -38,6 +38,7 @@ public sealed class GameSettingsProjectPersistenceTests
             Engine.GameSettings.ServerIP = "10.20.30.40";
             Engine.GameSettings.TargetFramesPerSecond = 144.0f;
             Engine.GameSettings.CalculateSkinningInComputeShaderOverride = new OverrideableSetting<bool>(false, true);
+            Engine.GameSettings.UseDetailPreservingComputeMipmapsOverride = new OverrideableSetting<bool>(true, true);
 
             Engine.SaveProjectGameSettings();
 
@@ -46,6 +47,7 @@ public sealed class GameSettingsProjectPersistenceTests
             Engine.GameSettings.ServerIP = "127.0.0.1";
             Engine.GameSettings.TargetFramesPerSecond = 60.0f;
             Engine.GameSettings.CalculateSkinningInComputeShaderOverride = new OverrideableSetting<bool>(true, false);
+            Engine.GameSettings.UseDetailPreservingComputeMipmapsOverride = new OverrideableSetting<bool>(false, false);
 
             Engine.LoadProject(project).ShouldBeTrue();
 
@@ -53,6 +55,8 @@ public sealed class GameSettingsProjectPersistenceTests
             Engine.GameSettings.TargetFramesPerSecond.ShouldBe(144.0f);
             Engine.GameSettings.CalculateSkinningInComputeShaderOverride.HasOverride.ShouldBeTrue();
             Engine.GameSettings.CalculateSkinningInComputeShaderOverride.Value.ShouldBeFalse();
+            Engine.GameSettings.UseDetailPreservingComputeMipmapsOverride.HasOverride.ShouldBeTrue();
+            Engine.GameSettings.UseDetailPreservingComputeMipmapsOverride.Value.ShouldBeTrue();
         }
         finally
         {

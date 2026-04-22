@@ -893,6 +893,64 @@ namespace XREngine.Data
         }
 
         /// <summary>
+        /// Compresses <paramref name="source"/> with Zstandard and returns the result as a
+        /// hexadecimal string. Zstd compresses roughly an order of magnitude faster than
+        /// LZMA at similar ratios, which makes it the preferred codec for embedding
+        /// payloads inside YAML (e.g. cached texture assets).
+        /// </summary>
+        public static unsafe string CompressZstdToString(DataSource source, int level = DefaultZstdLevel)
+        {
+            if (source.Length == 0)
+                return string.Empty;
+
+            int length = checked((int)source.Length);
+            ReadOnlySpan<byte> bytes = new((void*)source.Address, length);
+            byte[] compressed = CompressZstd(bytes, level);
+            return Convert.ToHexString(compressed);
+        }
+
+        /// <summary>
+        /// Decompresses a Zstd-compressed hexadecimal string produced by
+        /// <see cref="CompressZstdToString(DataSource, int)"/> or equivalent. Whitespace and
+        /// an optional <c>0x</c> prefix are tolerated so that YAML folded/literal scalars
+        /// round-trip cleanly.
+        /// </summary>
+        public static byte[] DecompressZstdFromString(string byteStr)
+        {
+            if (string.IsNullOrEmpty(byteStr))
+                return [];
+
+            if (byteStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                byteStr = byteStr[2..];
+
+            // Strip whitespace (YAML may fold very long scalars across lines).
+            bool hasWhitespace = false;
+            for (int i = 0; i < byteStr.Length; i++)
+            {
+                if (char.IsWhiteSpace(byteStr[i]))
+                {
+                    hasWhitespace = true;
+                    break;
+                }
+            }
+            if (hasWhitespace)
+            {
+                var sb = new StringBuilder(byteStr.Length);
+                foreach (char c in byteStr)
+                    if (!char.IsWhiteSpace(c))
+                        sb.Append(c);
+                byteStr = sb.ToString();
+            }
+
+            if ((byteStr.Length & 1) != 0)
+                throw new FormatException(
+                    $"Zstd hex payload must contain an even number of hex characters (after trimming); got {byteStr.Length}.");
+
+            byte[] compressed = Convert.FromHexString(byteStr);
+            return DecompressZstd(compressed);
+        }
+
+        /// <summary>
         /// Compresses a unit quaternion q = [w, x, y, z] into a compressed form.
         /// N is the number of bits per component for the quantized components.
         /// </summary>

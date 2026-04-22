@@ -329,6 +329,7 @@ namespace XREngine
                 private int _maxAsyncShaderProgramsPerFrame = 4;
                 private bool _calculateBlendshapesInComputeShader = true;
                 private bool _calculateSkinningInComputeShader = true;
+                private bool _useDetailPreservingComputeMipmaps = true;
                 private bool _useGlobalBoneMatricesBufferForComputeSkinning = false;
                 private bool _useGlobalBlendshapeWeightsBufferForComputeSkinning = false;
                 private ESkinnedBoundsRecomputePolicy _skinnedBoundsRecomputePolicy = ESkinnedBoundsRecomputePolicy.Never;
@@ -827,6 +828,19 @@ namespace XREngine
                 {
                     get => _calculateSkinningInComputeShader;
                     set => SetField(ref _calculateSkinningInComputeShader, value, null, _ => BumpShaderConfigVersion());
+                }
+
+                /// <summary>
+                /// If true, eligible 2D OpenGL textures generate mipmaps with the detail-preserving
+                /// compute downscale shader instead of <c>glGenerateTextureMipmap</c>.
+                /// Unsupported formats and non-2D paths fall back to standard GL mip generation.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true, eligible 2D OpenGL textures generate mipmaps with a detail-preserving compute shader instead of glGenerateTextureMipmap. Unsupported formats and non-2D paths fall back to standard GL mip generation.")]
+                public bool UseDetailPreservingComputeMipmaps
+                {
+                    get => _useDetailPreservingComputeMipmaps;
+                    set => SetField(ref _useDetailPreservingComputeMipmaps, value);
                 }
 
                 /// <summary>

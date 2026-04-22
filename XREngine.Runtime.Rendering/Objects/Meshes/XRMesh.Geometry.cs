@@ -18,7 +18,10 @@ public partial class XRMesh
     // Only caches buffers created for the default ElementArrayBuffer target.
     // Prevents the render-resource registry from destroying a still-in-use
     // VkBuffer when multiple VkMeshRenderers share the same mesh.
+    private readonly object _indexBufferLock = new();
     private readonly Dictionary<EPrimitiveType, (XRDataBuffer buffer, IndexSize elementSize)> _indexBufferCache = new();
+    private readonly HashSet<EPrimitiveType> _indexBufferBuilding = new();
+    private readonly Dictionary<EPrimitiveType, List<Action<XRDataBuffer, IndexSize>>> _indexBufferPendingCallbacks = new();
 
     /// <summary>
     /// Clears the cached index buffers so the next call to
@@ -27,10 +30,13 @@ public partial class XRMesh
     /// </summary>
     public void InvalidateIndexBufferCache(EPrimitiveType? type = null)
     {
-        if (type.HasValue)
-            _indexBufferCache.Remove(type.Value);
-        else
-            _indexBufferCache.Clear();
+        lock (_indexBufferLock)
+        {
+            if (type.HasValue)
+                _indexBufferCache.Remove(type.Value);
+            else
+                _indexBufferCache.Clear();
+        }
     }
 
     // Indices API
@@ -131,8 +137,18 @@ public partial class XRMesh
         yield return task;
     }
 
+    private bool _allowBVHGeneration = false;
+    public bool AllowBVHGeneration
+    {
+        get => _allowBVHGeneration;
+        set => SetField(ref _allowBVHGeneration, value);
+    }
+
     public void GenerateBVH()
     {
+        if (!AllowBVHGeneration)
+            return;
+        
         try
         {
             if (Triangles is null)
@@ -237,20 +253,133 @@ public partial class XRMesh
     }
 
     // Index buffer helpers
-    public XRDataBuffer? GetIndexBuffer(EPrimitiveType type, out IndexSize elementSize, EBufferTarget target = EBufferTarget.ElementArrayBuffer)
+    /// <summary>
+    /// Returns a GPU-ready index buffer for the given primitive type.
+    ///
+    /// For the default <see cref="EBufferTarget.ElementArrayBuffer"/> target, the heavy index
+    /// conversion work (traversing triangle/line/point lists, downcasting to ushort, uploading
+    /// the raw bytes) is offloaded to a background <see cref="Task.Run"/> so it never stalls the
+    /// render thread. The first call after an invalidation returns <c>null</c> and schedules the
+    /// build; once the background task finishes, the buffer is cached and any <paramref name="onReady"/>
+    /// callbacks are invoked. Subsequent calls return the cached buffer synchronously.
+    ///
+    /// Non-default targets (e.g. <see cref="EBufferTarget.ShaderStorageBuffer"/> for compute) are
+    /// rare and off the render hot path, so they build synchronously and bypass the cache.
+    /// </summary>
+    /// <param name="onReady">
+    /// Optional completion callback. Invoked synchronously if the buffer is already cached, or on
+    /// the background task thread when the async build completes. Callers that need the callback
+    /// on a specific thread should marshal inside the callback body.
+    /// </param>
+    public XRDataBuffer? GetIndexBuffer(
+        EPrimitiveType type,
+        out IndexSize elementSize,
+        EBufferTarget target = EBufferTarget.ElementArrayBuffer,
+        Action<XRDataBuffer, IndexSize>? onReady = null)
     {
         elementSize = IndexSize.TwoBytes;
 
-        // Return the cached instance when available (ElementArrayBuffer only).
-        // This ensures multiple VkMeshRenderers sharing this mesh receive the
-        // same XRDataBuffer, so the render-resource registry's Bind() sees
-        // Instance == buffer and skips the destroy-previous-buffer path.
-        if (target == EBufferTarget.ElementArrayBuffer &&
-            _indexBufferCache.TryGetValue(type, out var cached))
+        // Non-default targets bypass the cache and build synchronously.
+        if (target != EBufferTarget.ElementArrayBuffer)
         {
-            elementSize = cached.elementSize;
-            return cached.buffer;
+            var syncBuf = BuildIndexBuffer(type, target, out elementSize);
+            if (syncBuf is not null)
+                onReady?.Invoke(syncBuf, elementSize);
+            return syncBuf;
         }
+
+        // Cheap short-circuit: avoid spawning a Task just to discover there are no indices
+        // (e.g. querying Points on a triangle-only mesh).
+        if (!HasAnyIndices(type))
+            return null;
+
+        lock (_indexBufferLock)
+        {
+            if (_indexBufferCache.TryGetValue(type, out var cached))
+            {
+                elementSize = cached.elementSize;
+                onReady?.Invoke(cached.buffer, cached.elementSize);
+                return cached.buffer;
+            }
+
+            if (onReady is not null)
+            {
+                if (!_indexBufferPendingCallbacks.TryGetValue(type, out var list))
+                    _indexBufferPendingCallbacks[type] = list = new List<Action<XRDataBuffer, IndexSize>>();
+                list.Add(onReady);
+            }
+
+            if (_indexBufferBuilding.Add(type))
+            {
+                var buildType = type;
+                Task.Run(() => BuildIndexBufferWorker(buildType));
+            }
+        }
+
+        return null;
+    }
+
+    private bool HasAnyIndices(EPrimitiveType type) => type switch
+    {
+        EPrimitiveType.Triangles => _triangles is { Count: > 0 },
+        EPrimitiveType.Lines => _lines is { Count: > 0 },
+        EPrimitiveType.Points => _points is { Count: > 0 },
+        EPrimitiveType.Patches => PatchVertices switch
+        {
+            1 => _points is { Count: > 0 },
+            2 => _lines is { Count: > 0 },
+            3 => _triangles is { Count: > 0 },
+            _ => false,
+        },
+        _ => false,
+    };
+
+    private void BuildIndexBufferWorker(EPrimitiveType type)
+    {
+        XRDataBuffer? buf = null;
+        IndexSize elementSize = IndexSize.TwoBytes;
+        Exception? error = null;
+
+        try
+        {
+            buf = BuildIndexBuffer(type, EBufferTarget.ElementArrayBuffer, out elementSize);
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+
+        List<Action<XRDataBuffer, IndexSize>>? callbacks;
+        lock (_indexBufferLock)
+        {
+            if (buf is not null)
+                _indexBufferCache[type] = (buf, elementSize);
+            _indexBufferBuilding.Remove(type);
+            _indexBufferPendingCallbacks.Remove(type, out callbacks);
+        }
+
+        if (error is not null)
+            RuntimeRenderingHostServices.Current.LogException(error);
+
+        if (buf is null || callbacks is null)
+            return;
+
+        for (int i = 0; i < callbacks.Count; i++)
+        {
+            try
+            {
+                callbacks[i].Invoke(buf, elementSize);
+            }
+            catch (Exception ex)
+            {
+                RuntimeRenderingHostServices.Current.LogException(ex);
+            }
+        }
+    }
+
+    private XRDataBuffer? BuildIndexBuffer(EPrimitiveType type, EBufferTarget target, out IndexSize elementSize)
+    {
+        elementSize = IndexSize.TwoBytes;
 
         var indices = GetIndices(type);
         if (indices is null || indices.Length == 0)
@@ -273,9 +402,6 @@ public partial class XRMesh
             elementSize = IndexSize.FourBytes;
             buf.SetDataRaw(indices);
         }
-
-        if (target == EBufferTarget.ElementArrayBuffer)
-            _indexBufferCache[type] = (buf, elementSize);
 
         return buf;
     }

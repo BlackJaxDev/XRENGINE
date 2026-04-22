@@ -886,6 +886,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     {
         Stereo = stereo;
         GlobalIlluminationMode = Engine.UserSettings.GlobalIlluminationMode;
+        WarmDeferredLightingShaders();
         _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
@@ -893,6 +894,14 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         Engine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
         ApplyAntiAliasingResolutionHint();
         CommandChain = GenerateCommandChain();
+    }
+
+    private void WarmDeferredLightingShaders()
+    {
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "DeferredLightingPoint.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "DeferredLightingSpot.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "DeferredLightingDir.fs"), EShaderType.Fragment);
     }
 
     private bool EnableTransformIdVisualization

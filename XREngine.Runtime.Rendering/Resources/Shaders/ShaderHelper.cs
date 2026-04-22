@@ -22,6 +22,7 @@ public static class ShaderHelper
     private const string UberImportMaterialDefine = "XRENGINE_UBER_IMPORT_MATERIAL";
     private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<DefinedVariantCacheKey, string>> DefinedVariantSourceCache = new();
     private static readonly ConcurrentDictionary<DefinedVariantShaderCacheKey, XRShader> DefinedVariantShaderCache = new();
+    private static readonly ConcurrentDictionary<EngineShaderCacheKey, Task<XRShader>> EngineShaderLoadTasks = new();
     private static readonly HashSet<string> DefineBasedTransparencyForwardShaderFiles = new(StringComparer.OrdinalIgnoreCase)
     {
         "LitTexturedForward.fs",
@@ -48,11 +49,34 @@ public static class ShaderHelper
 
     private readonly record struct DefinedVariantCacheKey(string DefineName, string SourceText);
     private readonly record struct DefinedVariantShaderCacheKey(string DefineName, EShaderType ShaderType, string SourceText, string? FilePath, string? SourceName);
+    private readonly record struct EngineShaderCacheKey(string RelativePath, EShaderType ShaderType);
 
     internal static void ClearDefinedVariantSourceCache()
     {
         DefinedVariantSourceCache.Clear();
         DefinedVariantShaderCache.Clear();
+    }
+
+    private static Task<XRShader> GetOrCreateEngineShaderTask(string relativePath, EShaderType shaderType)
+    {
+        string normalizedPath = relativePath.Replace('\\', '/');
+        return EngineShaderLoadTasks.GetOrAdd(
+            new EngineShaderCacheKey(normalizedPath, shaderType),
+            static key => LoadAndWarmEngineShaderAsync(key));
+    }
+
+    private static async Task<XRShader> LoadAndWarmEngineShaderAsync(EngineShaderCacheKey key)
+    {
+        XRShader source = await Services.LoadEngineAssetAsync<XRShader>(JobPriority.Highest, bypassJobThread: false, "Shaders", key.RelativePath).ConfigureAwait(false);
+        source._type = key.ShaderType;
+        source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
+        return source;
+    }
+
+    public static void WarmEngineShader(string relativePath, EShaderType? type = null)
+    {
+        EShaderType shaderType = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
+        _ = GetOrCreateEngineShaderTask(relativePath, shaderType);
     }
 
     /// <summary>
@@ -62,8 +86,9 @@ public static class ShaderHelper
     /// <param name="type">Optional shader type override. If null, type is inferred from file extension.</param>
     public static XRShader LoadEngineShader(string relativePath, EShaderType? type = null)
     {
-        XRShader source = Services.LoadEngineAsset<XRShader>(JobPriority.Highest, bypassJobThread: true, "Shaders", relativePath);
-        source._type = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
+        EShaderType shaderType = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
+        XRShader source = GetOrCreateEngineShaderTask(relativePath, shaderType).GetAwaiter().GetResult();
+        source._type = shaderType;
         return source;
     }
 
@@ -74,8 +99,9 @@ public static class ShaderHelper
     /// <param name="type">Optional shader type override</param>
     public static async Task<XRShader> LoadEngineShaderAsync(string relativePath, EShaderType? type = null)
     {
-        XRShader source = await Services.LoadEngineAssetAsync<XRShader>(JobPriority.Highest, bypassJobThread: true, "Shaders", relativePath);
-        source._type = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
+        EShaderType shaderType = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
+        XRShader source = await GetOrCreateEngineShaderTask(relativePath, shaderType).ConfigureAwait(false);
+        source._type = shaderType;
         return source;
     }
 

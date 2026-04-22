@@ -1,12 +1,15 @@
 ﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Lights;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Scene.Mesh
 {
@@ -108,6 +111,26 @@ namespace XREngine.Components.Scene.Mesh
         private float _horizonHaze = 1.0f;
         private float _sunDiscSize = 0.9994f;
         private float _moonDiscSize = 0.99965f;
+
+        private bool _syncDirectionalLightWithSun = false;
+        private DirectionalLightComponent? _sunDirectionalLight;
+
+        private bool _syncDirectionalLightWithMoon = false;
+        private DirectionalLightComponent? _moonDirectionalLight;
+
+        private bool _horizonAutoDisable = true;
+        private float _horizonDisableThreshold = -0.05f;
+
+        private bool _sunColorTemperatureEnabled = false;
+        private bool _animateSunColorTemperature = true;
+        private float _sunColorTemperatureKelvin = 5800.0f;
+        private float _sunHorizonColorTemperatureKelvin = 2200.0f;
+        private float _sunZenithColorTemperatureKelvin = 5800.0f;
+        private bool _moonColorTemperatureEnabled = false;
+        private bool _animateMoonColorTemperature = true;
+        private float _moonColorTemperatureKelvin = 7500.0f;
+        private float _moonHorizonColorTemperatureKelvin = 4500.0f;
+        private float _moonZenithColorTemperatureKelvin = 7500.0f;
 
         // Cached shaders
         private static XRShader? s_vertexShader;
@@ -325,6 +348,213 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         /// <summary>
+        /// When enabled, rotates a directional light in the scene to match the procedural sun's
+        /// direction each tick. Only active when <see cref="Mode"/> is <see cref="ESkyboxMode.DynamicProcedural"/>.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sync Directional Light With Sun")]
+        [Description("When enabled (and Mode is DynamicProcedural), rotates a directional light to follow the procedural sun. Uses SunDirectionalLight if set, otherwise the scene's first directional light.")]
+        public bool SyncDirectionalLightWithSun
+        {
+            get => _syncDirectionalLightWithSun;
+            set => SetField(ref _syncDirectionalLightWithSun, value);
+        }
+
+        /// <summary>
+        /// Specific directional light to synchronize with the procedural sun.
+        /// When null and <see cref="SyncDirectionalLightWithSun"/> is enabled, the scene's first directional light is used.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sun Directional Light")]
+        [Description("Specific directional light to sync with the sun. Leave unset to use the scene's first directional light.")]
+        public DirectionalLightComponent? SunDirectionalLight
+        {
+            get => _sunDirectionalLight;
+            set => SetField(ref _sunDirectionalLight, value);
+        }
+
+        /// <summary>
+        /// When enabled, rotates a directional light in the scene to match the procedural moon's
+        /// direction each tick. Only active when <see cref="Mode"/> is <see cref="ESkyboxMode.DynamicProcedural"/>.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sync Directional Light With Moon")]
+        [Description("When enabled (and Mode is DynamicProcedural), rotates a directional light to follow the procedural moon. Uses MoonDirectionalLight if set, otherwise the scene's second directional light (falling back to the first if only one exists).")]
+        public bool SyncDirectionalLightWithMoon
+        {
+            get => _syncDirectionalLightWithMoon;
+            set => SetField(ref _syncDirectionalLightWithMoon, value);
+        }
+
+        /// <summary>
+        /// Specific directional light to synchronize with the procedural moon.
+        /// When null and <see cref="SyncDirectionalLightWithMoon"/> is enabled, the scene's second directional light is used
+        /// (falling back to the first if only one exists and it is not already claimed by the sun).
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Moon Directional Light")]
+        [Description("Specific directional light to sync with the moon. Leave unset to auto-select a second directional light from the scene.")]
+        public DirectionalLightComponent? MoonDirectionalLight
+        {
+            get => _moonDirectionalLight;
+            set => SetField(ref _moonDirectionalLight, value);
+        }
+
+        /// <summary>
+        /// When enabled, the synchronized sun/moon directional lights are automatically deactivated once their
+        /// direction passes below <see cref="HorizonDisableThreshold"/>, so they skip shadow mapping and lighting work
+        /// while they can't see the scene.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Horizon Auto Disable")]
+        [Description("Automatically disables synced sun/moon directional lights when they sink past HorizonDisableThreshold.")]
+        public bool HorizonAutoDisable
+        {
+            get => _horizonAutoDisable;
+            set => SetField(ref _horizonAutoDisable, value);
+        }
+
+        /// <summary>
+        /// Threshold on the light direction's Y component (world up is +Y). When the sun/moon direction's Y component
+        /// drops below this value, the corresponding light is deactivated if <see cref="HorizonAutoDisable"/> is on.
+        /// Use a small negative value to let the light continue working slightly past the visual horizon for twilight.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Horizon Disable Threshold")]
+        [Description("Y-component threshold (−1..1) below which the synced light is disabled. Default −0.05 disables shortly after the light passes the horizon.")]
+        public float HorizonDisableThreshold
+        {
+            get => _horizonDisableThreshold;
+            set => SetField(ref _horizonDisableThreshold, Math.Clamp(value, -1.0f, 1.0f));
+        }
+
+        /// <summary>
+        /// When true, the synced sun directional light's Color is driven every tick by <see cref="SunColorTemperatureKelvin"/>.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sun Color Temperature Enabled")]
+        [Description("When enabled, drives the synced sun light's Color from SunColorTemperatureKelvin each tick.")]
+        public bool SunColorTemperatureEnabled
+        {
+            get => _sunColorTemperatureEnabled;
+            set => SetField(ref _sunColorTemperatureEnabled, value);
+        }
+
+        /// <summary>
+        /// When true, the synced sun directional light's color temperature animates with solar elevation,
+        /// warming near the horizon and cooling toward its zenith.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Animate Sun Color Temperature")]
+        [Description("When enabled, animates the synced sun light's color temperature from Sun Horizon Color Temperature to Sun Zenith Color Temperature based on sun elevation.")]
+        public bool AnimateSunColorTemperature
+        {
+            get => _animateSunColorTemperature;
+            set => SetField(ref _animateSunColorTemperature, value);
+        }
+
+        /// <summary>
+        /// Fixed color temperature in Kelvin applied to the synced sun directional light when <see cref="SunColorTemperatureEnabled"/> is on
+        /// and <see cref="AnimateSunColorTemperature"/> is off.
+        /// Typical sunlight ~5500–6500 K; warm/golden-hour lighting ~2500–3500 K.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sun Color Temperature (K)")]
+        [Description("Fixed color temperature (Kelvin) for the synced sun light when Animate Sun Color Temperature is off. Typical range 1000–12000.")]
+        public float SunColorTemperatureKelvin
+        {
+            get => _sunColorTemperatureKelvin;
+            set => SetField(ref _sunColorTemperatureKelvin, Math.Clamp(value, 1000.0f, 40000.0f));
+        }
+
+        /// <summary>
+        /// Horizon color temperature in Kelvin applied to the synced sun light when <see cref="AnimateSunColorTemperature"/> is enabled.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sun Horizon Color Temperature (K)")]
+        [Description("Animated sun temperature at and just below the horizon. Lower values are warmer.")]
+        public float SunHorizonColorTemperatureKelvin
+        {
+            get => _sunHorizonColorTemperatureKelvin;
+            set => SetField(ref _sunHorizonColorTemperatureKelvin, Math.Clamp(value, 1000.0f, 40000.0f));
+        }
+
+        /// <summary>
+        /// Zenith color temperature in Kelvin applied to the synced sun light when <see cref="AnimateSunColorTemperature"/> is enabled.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sun Zenith Color Temperature (K)")]
+        [Description("Animated sun temperature high in the sky. Higher values are cooler/whiter.")]
+        public float SunZenithColorTemperatureKelvin
+        {
+            get => _sunZenithColorTemperatureKelvin;
+            set => SetField(ref _sunZenithColorTemperatureKelvin, Math.Clamp(value, 1000.0f, 40000.0f));
+        }
+
+        /// <summary>
+        /// When true, the synced moon directional light's Color is driven every tick by <see cref="MoonColorTemperatureKelvin"/>.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Moon Color Temperature Enabled")]
+        [Description("When enabled, drives the synced moon light's Color from MoonColorTemperatureKelvin each tick.")]
+        public bool MoonColorTemperatureEnabled
+        {
+            get => _moonColorTemperatureEnabled;
+            set => SetField(ref _moonColorTemperatureEnabled, value);
+        }
+
+        /// <summary>
+        /// When true, the synced moon directional light's color temperature animates with lunar elevation,
+        /// warming near the horizon and cooling overhead.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Animate Moon Color Temperature")]
+        [Description("When enabled, animates the synced moon light's color temperature from Moon Horizon Color Temperature to Moon Zenith Color Temperature based on moon elevation.")]
+        public bool AnimateMoonColorTemperature
+        {
+            get => _animateMoonColorTemperature;
+            set => SetField(ref _animateMoonColorTemperature, value);
+        }
+
+        /// <summary>
+        /// Fixed color temperature in Kelvin applied to the synced moon directional light when <see cref="MoonColorTemperatureEnabled"/> is on
+        /// and <see cref="AnimateMoonColorTemperature"/> is off.
+        /// Moonlight is a reflection of sunlight but appears cooler due to the Purkinje effect; typical 7000–9000 K.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Moon Color Temperature (K)")]
+        [Description("Fixed color temperature (Kelvin) for the synced moon light when Animate Moon Color Temperature is off. Typical range 5000–12000.")]
+        public float MoonColorTemperatureKelvin
+        {
+            get => _moonColorTemperatureKelvin;
+            set => SetField(ref _moonColorTemperatureKelvin, Math.Clamp(value, 1000.0f, 40000.0f));
+        }
+
+        /// <summary>
+        /// Horizon color temperature in Kelvin applied to the synced moon light when <see cref="AnimateMoonColorTemperature"/> is enabled.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Moon Horizon Color Temperature (K)")]
+        [Description("Animated moon temperature at and just above the horizon. Lower values are warmer.")]
+        public float MoonHorizonColorTemperatureKelvin
+        {
+            get => _moonHorizonColorTemperatureKelvin;
+            set => SetField(ref _moonHorizonColorTemperatureKelvin, Math.Clamp(value, 1000.0f, 40000.0f));
+        }
+
+        /// <summary>
+        /// Zenith color temperature in Kelvin applied to the synced moon light when <see cref="AnimateMoonColorTemperature"/> is enabled.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Moon Zenith Color Temperature (K)")]
+        [Description("Animated moon temperature high in the sky. Higher values are cooler/bluer.")]
+        public float MoonZenithColorTemperatureKelvin
+        {
+            get => _moonZenithColorTemperatureKelvin;
+            set => SetField(ref _moonZenithColorTemperatureKelvin, Math.Clamp(value, 1000.0f, 40000.0f));
+        }
+
+        /// <summary>
         /// The material used to render the skybox.
         /// </summary>
         public XRMaterial? Material => _material;
@@ -386,13 +616,215 @@ namespace XREngine.Components.Scene.Mesh
 
         private void TickSky()
         {
-            if (!_autoCycle || _mode != ESkyboxMode.DynamicProcedural)
+            if (_mode != ESkyboxMode.DynamicProcedural)
                 return;
 
-            float dt = Math.Max(0.0f, Engine.Delta);
-            float dayLength = Math.Max(1.0f, _dayLengthSeconds);
-            _timeOfDay = (_timeOfDay + dt / dayLength) % 1.0f;
+            if (_autoCycle)
+            {
+                float dt = Math.Max(0.0f, Engine.Delta);
+                float dayLength = Math.Max(1.0f, _dayLengthSeconds);
+                _timeOfDay = (_timeOfDay + dt / dayLength) % 1.0f;
+            }
+
+            DirectionalLightComponent? sun = _syncDirectionalLightWithSun ? ResolveSunLight() : null;
+            DirectionalLightComponent? moon = _syncDirectionalLightWithMoon ? ResolveMoonLight(sun) : null;
+
+            if (sun is not null)
+            {
+                Vector3 sunDirection = GetSunDirection();
+                float sunKelvin = ResolveAnimatedColorTemperatureKelvin(
+                    sunDirection,
+                    _animateSunColorTemperature,
+                    _sunColorTemperatureKelvin,
+                    _sunHorizonColorTemperatureKelvin,
+                    _sunZenithColorTemperatureKelvin);
+                ApplyDirectionalLightSync(sun, sunDirection, _sunColorTemperatureEnabled, sunKelvin);
+            }
+
+            if (moon is not null)
+            {
+                Vector3 moonDirection = GetMoonDirection();
+                float moonKelvin = ResolveAnimatedColorTemperatureKelvin(
+                    moonDirection,
+                    _animateMoonColorTemperature,
+                    _moonColorTemperatureKelvin,
+                    _moonHorizonColorTemperatureKelvin,
+                    _moonZenithColorTemperatureKelvin);
+                ApplyDirectionalLightSync(moon, moonDirection, _moonColorTemperatureEnabled, moonKelvin);
+            }
         }
+
+        /// <summary>
+        /// Computes the world-space direction toward the procedural sun for the current <see cref="TimeOfDay"/>.
+        /// Matches the formula used by the dynamic sky fragment shader.
+        /// </summary>
+        public Vector3 GetSunDirection()
+        {
+            float angle = _timeOfDay * MathF.Tau;
+            Vector3 dir = new(MathF.Cos(angle), MathF.Sin(angle), 0.18f);
+            float lenSq = dir.LengthSquared();
+            return lenSq > 1e-8f ? dir / MathF.Sqrt(lenSq) : new Vector3(0.0f, 1.0f, 0.0f);
+        }
+
+        /// <summary>
+        /// Computes the world-space direction toward the procedural moon for the current <see cref="TimeOfDay"/>.
+        /// Matches the formula used by the dynamic sky fragment shader.
+        /// </summary>
+        public Vector3 GetMoonDirection()
+        {
+            float angle = _timeOfDay * MathF.Tau;
+            float moonAngle = angle + MathF.PI + 0.25f * MathF.Sin(_timeOfDay * MathF.Tau * 0.3f);
+            Vector3 dir = new(MathF.Cos(moonAngle), MathF.Sin(moonAngle), -0.22f);
+            float lenSq = dir.LengthSquared();
+            return lenSq > 1e-8f ? dir / MathF.Sqrt(lenSq) : new Vector3(0.0f, 1.0f, 0.0f);
+        }
+
+        /// <summary>
+        /// Resolves the directional light to drive for the sun: the explicit <see cref="SunDirectionalLight"/> if set,
+        /// otherwise the scene's first directional light.
+        /// </summary>
+        private DirectionalLightComponent? ResolveSunLight()
+        {
+            if (_sunDirectionalLight is not null)
+                return _sunDirectionalLight;
+
+            var lights = GetSceneDirectionalLights();
+            return lights is { Count: > 0 } ? lights[0] : null;
+        }
+
+        /// <summary>
+        /// Resolves the directional light to drive for the moon: the explicit <see cref="MoonDirectionalLight"/> if set,
+        /// otherwise the scene's second directional light (falling back to the first if it wasn't already used for the sun).
+        /// </summary>
+        private DirectionalLightComponent? ResolveMoonLight(DirectionalLightComponent? sunLight)
+        {
+            if (_moonDirectionalLight is not null)
+                return _moonDirectionalLight;
+
+            var lights = GetSceneDirectionalLights();
+            if (lights is null || lights.Count == 0)
+                return null;
+
+            for (int i = 0; i < lights.Count; i++)
+            {
+                var candidate = lights[i];
+                if (candidate != sunLight)
+                    return candidate;
+            }
+
+            return null;
+        }
+
+        private IReadOnlyList<DirectionalLightComponent>? GetSceneDirectionalLights()
+            => (SceneNode?.World as XRWorldInstance)?.Lights.DynamicDirectionalLights;
+
+        private void ApplyDirectionalLightSync(DirectionalLightComponent light, Vector3 direction, bool temperatureEnabled, float kelvin)
+        {
+            if (_horizonAutoDisable)
+            {
+                bool shouldBeActive = direction.Y >= _horizonDisableThreshold;
+                if (light.IsActive != shouldBeActive)
+                    light.IsActive = shouldBeActive;
+
+                if (!shouldBeActive)
+                    return;
+            }
+
+            if (temperatureEnabled)
+                light.Color = KelvinToColorF3(kelvin);
+
+            OrientLightToDirection(light, direction);
+        }
+
+        private static void OrientLightToDirection(DirectionalLightComponent light, Vector3 direction)
+        {
+            // Light travels from the sun/moon toward the scene, so its forward vector is -direction.
+            // Globals.Forward = -Z, so we need the transform rotation such that local -Z maps to -direction,
+            // which means local +Z maps to +direction.
+
+            // Build an orthonormal basis (right, up, direction) where local +X->right, +Y->up, +Z->direction.
+            Vector3 upSeed = MathF.Abs(Vector3.Dot(direction, Globals.Up)) > 0.99f
+                ? Globals.Right
+                : Globals.Up;
+            Vector3 right = Vector3.Normalize(Vector3.Cross(upSeed, direction));
+            Vector3 up = Vector3.Normalize(Vector3.Cross(direction, right));
+
+            // System.Numerics.Matrix4x4 is row-major with row-vector multiplication:
+            // local axes map to rows (M11..M13 = world image of +X, M21..M23 = +Y, M31..M33 = +Z).
+            Matrix4x4 basis = new(
+                right.X, right.Y, right.Z, 0.0f,
+                up.X, up.Y, up.Z, 0.0f,
+                direction.X, direction.Y, direction.Z, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f);
+
+            Quaternion worldRotation = Quaternion.CreateFromRotationMatrix(basis);
+
+            if (light.Transform is Transform transform)
+            {
+                // Convert world rotation to local rotation relative to the light's parent.
+                Quaternion parentWorldRotation = transform.Parent?.WorldRotation ?? Quaternion.Identity;
+                Quaternion localRotation = Quaternion.Concatenate(worldRotation, Quaternion.Inverse(parentWorldRotation));
+                transform.Rotation = localRotation;
+            }
+        }
+
+        /// <summary>
+        /// Converts a black-body color temperature in Kelvin to a linear RGB color using
+        /// Tanner Helland's piecewise approximation. Output channels are clamped to [0, 1].
+        /// </summary>
+        public static ColorF3 KelvinToColorF3(float kelvin)
+        {
+            // Helland's approximation operates on "temperature / 100".
+            float t = Math.Clamp(kelvin, 1000.0f, 40000.0f) / 100.0f;
+
+            float r, g, b;
+
+            if (t <= 66.0f)
+            {
+                r = 1.0f;
+                g = Math.Clamp((99.4708025861f * MathF.Log(t) - 161.1195681661f) / 255.0f, 0.0f, 1.0f);
+            }
+            else
+            {
+                r = Math.Clamp((329.698727446f * MathF.Pow(t - 60.0f, -0.1332047592f)) / 255.0f, 0.0f, 1.0f);
+                g = Math.Clamp((288.1221695283f * MathF.Pow(t - 60.0f, -0.0755148492f)) / 255.0f, 0.0f, 1.0f);
+            }
+
+            if (t >= 66.0f)
+                b = 1.0f;
+            else if (t <= 19.0f)
+                b = 0.0f;
+            else
+                b = Math.Clamp((138.5177312231f * MathF.Log(t - 10.0f) - 305.0447927307f) / 255.0f, 0.0f, 1.0f);
+
+            return new ColorF3(r, g, b);
+        }
+
+        private static float ResolveAnimatedColorTemperatureKelvin(
+            Vector3 direction,
+            bool animateTemperature,
+            float fixedKelvin,
+            float horizonKelvin,
+            float zenithKelvin)
+        {
+            if (!animateTemperature)
+                return fixedKelvin;
+
+            float t = SmoothStep(-0.05f, 0.35f, direction.Y);
+            return Lerp(horizonKelvin, zenithKelvin, t);
+        }
+
+        private static float SmoothStep(float edge0, float edge1, float value)
+        {
+            if (Math.Abs(edge1 - edge0) < 1e-6f)
+                return value >= edge1 ? 1.0f : 0.0f;
+
+            float t = Math.Clamp((value - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+        }
+
+        private static float Lerp(float start, float end, float amount)
+            => start + ((end - start) * amount);
 
         private void AttachDebugHooks()
         {

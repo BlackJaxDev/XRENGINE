@@ -24,7 +24,7 @@ public partial class XRMesh
 
     private unsafe void PopulateBlendshapeBuffers(Vertex[] sourceList)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope(null);
+        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
 
         bool intVarType = RuntimeRenderingHostServices.Current.UseIntegerUniformsInShaders;
         string[] blendshapeNames = BlendshapeNames ?? [];
@@ -176,7 +176,7 @@ public partial class XRMesh
 
     private unsafe void PopulateBlendshapeDeltas(bool intVarType, List<Vector3> deltas, List<IVector4> blendshapeIndices)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope(null);
+        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
 
         BlendshapeDeltas = new XRDataBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer", EBufferTarget.ShaderStorageBuffer,
             (uint)deltas.Count, EComponentType.Float, 4, false, false);
@@ -219,7 +219,7 @@ public partial class XRMesh
 
     private unsafe void PopulateRemappedBlendshapeDeltas(bool intVarType, List<Vector3> deltas, List<IVector4> blendshapeIndices)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope(null);
+        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
 
         Remapper deltaRemap = new();
         deltaRemap.Remap(deltas, null);

@@ -49,8 +49,10 @@
   "StartInPlayModeWithoutTransitions": false,
 
   // Misc.
-  // Adds a skybox to the scene
+  // Adds a skybox to the scene.
   "Skybox": true,
+  // Uses the dynamic procedural sky instead of loading the unit-test skybox texture. When enabled, the skybox syncs to the unit-test directional lights when present.
+  "ProceduralSky": false,
   // Adds a 3D spline to the scene.
   "Spline": false,
   // Adds a deferred decal to the scene.

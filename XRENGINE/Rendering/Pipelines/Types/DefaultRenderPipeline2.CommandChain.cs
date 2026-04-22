@@ -629,10 +629,16 @@ public partial class DefaultRenderPipeline2
     /// <summary>Appends the bloom downsample/upsample pass.</summary>
     private void AppendBloomPass(ViewportRenderCommandContainer c)
     {
-        c.Add<VPRC_BloomPass>().SetTargetFBONames(
-            ForwardPassFBOName,
-            BloomBlurTextureName,
-            Stereo);
+        var bloomChoice = c.Add<VPRC_IfElse>();
+        bloomChoice.ConditionEvaluator = ShouldUseBloom;
+        {
+            var bloomCommands = new ViewportRenderCommandContainer(this);
+            bloomCommands.Add<VPRC_BloomPass>().SetTargetFBONames(
+                ForwardPassFBOName,
+                BloomBlurTextureName,
+                Stereo);
+            bloomChoice.TrueCommands = bloomCommands;
+        }
 
     }
 

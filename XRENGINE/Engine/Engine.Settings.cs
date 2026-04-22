@@ -359,9 +359,10 @@ namespace XREngine
             // ── Technical / compute overrides (GameStartup → Engine push) ──
             h[nameof(GameStartupSettings.AllowShaderPipelinesOverride)] = Rendering.ApplyAllowShaderPipelinesPreference;
             h[nameof(GameStartupSettings.RecalcChildMatricesLoopTypeOverride)] = Rendering.ApplyRecalcChildMatricesLoopTypePreference;
-            Action applyCompute = Rendering.ApplyComputeSkinningPreference;
+            Action applyCompute = Rendering.ApplyComputeRenderingPreference;
             h[nameof(GameStartupSettings.CalculateSkinningInComputeShaderOverride)] = applyCompute;
             h[nameof(GameStartupSettings.CalculateBlendshapesInComputeShaderOverride)] = applyCompute;
+            h[nameof(GameStartupSettings.UseDetailPreservingComputeMipmapsOverride)] = applyCompute;
 
             return h;
         }
@@ -381,7 +382,7 @@ namespace XREngine
             Rendering.ApplyTickGroupedItemsInParallelPreference();
             Rendering.ApplyAllowShaderPipelinesPreference();
             Rendering.ApplyRecalcChildMatricesLoopTypePreference();
-            Rendering.ApplyComputeSkinningPreference();
+            Rendering.ApplyComputeRenderingPreference();
             ApplyTimerSettings();
             ApplyAudioPreferences();
         }

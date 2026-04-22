@@ -227,7 +227,7 @@ namespace XREngine.Rendering.OpenGL
                 _asyncCompileLinkPending = false;
                 UnregisterPendingAsyncProgram();
                 _hashComputed = false;
-                _linkDataPrepared = false;
+                InvalidatePreparedLinkData();
                 _attribCache.Clear();
                 _explicitAttributeLocations.Clear();
                 _uniformCache.Clear();

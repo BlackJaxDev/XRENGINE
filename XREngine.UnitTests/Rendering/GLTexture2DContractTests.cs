@@ -110,6 +110,17 @@ public sealed class GLTexture2DContractTests
     }
 
     [Test]
+    public void GLTexture2D_CanRouteAutoMipGenerationThroughDetailPreservingComputeShader()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+
+        source.ShouldContain("Engine.Rendering.Settings.UseDetailPreservingComputeMipmaps");
+        source.ShouldContain("Renderer.GetOrCreateDetailPreservingMipmapProgram(imageFormat)");
+        source.ShouldContain("Compute/Textures/DetailPreservingMipmaps.comp");
+        source.ShouldContain("base.GenerateMipmaps();");
+    }
+
+    [Test]
     public void GLTexture_BindNeverSilentlyLeavesStaleUnitState()
     {
         // Regression guard for the "wrong texture on wrong mesh" bug:

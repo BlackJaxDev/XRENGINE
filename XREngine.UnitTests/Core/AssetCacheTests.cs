@@ -89,6 +89,9 @@ AnimationClip:
             cacheFiles.Length.ShouldBe(1, "animation clips should now emit a cache asset");
             string cachePath = cacheFiles[0];
             File.Exists(cachePath).ShouldBeTrue();
+            string cacheText = File.ReadAllText(cachePath);
+            cacheText.ShouldContain("Format: CookedBinary");
+            cacheText.ShouldContain("Payload:");
 
             DateTime cacheTimestampUtc = File.GetLastWriteTimeUtc(cachePath);
             File.WriteAllText(sourcePath, "this is intentionally not valid animation data");

@@ -540,8 +540,10 @@ public static partial class EditorImGuiUI
             SuppressUnexpectedImGuiDebugWindows();
 
             // Draw menu bar and toolbar first
-            DrawMainMenuBar();
-            DrawToolbar();
+            using (Engine.Profiler.Start("UI.DrawMainMenuBar"))
+                DrawMainMenuBar();
+            using (Engine.Profiler.Start("UI.DrawToolbar"))
+                DrawToolbar();
 
             // Calculate dock space position accounting for menu bar and toolbar
             var viewport = ImGui.GetMainViewport();
@@ -583,46 +585,74 @@ public static partial class EditorImGuiUI
             
             ImGui.End();
 
-            EditorUnitTests.UserInterface.DrawNewProjectDialog();
-            DrawArchiveImportDialog();
+            using (Engine.Profiler.Start("UI.DrawNewProjectDialog"))
+                EditorUnitTests.UserInterface.DrawNewProjectDialog();
+            using (Engine.Profiler.Start("UI.DrawArchiveImportDialog"))
+                DrawArchiveImportDialog();
 
-            DrawProfilerPanel();
-            DrawConsolePanel();
-            DrawStatePanel();
-            DrawOpenGLApiObjectsPanel();
-            DrawOpenGLErrorsPanel();
-            DrawRenderApiExtensionsPanel();
+            using (Engine.Profiler.Start("UI.DrawProfilerPanel"))
+                DrawProfilerPanel();
+            using (Engine.Profiler.Start("UI.DrawConsolePanel"))
+                DrawConsolePanel();
+            using (Engine.Profiler.Start("UI.DrawStatePanel"))
+                DrawStatePanel();
+            using (Engine.Profiler.Start("UI.DrawOpenGLApiObjectsPanel"))
+                DrawOpenGLApiObjectsPanel();
+            using (Engine.Profiler.Start("UI.DrawOpenGLErrorsPanel"))
+                DrawOpenGLErrorsPanel();
+            using (Engine.Profiler.Start("UI.DrawRenderApiExtensionsPanel"))
+                DrawRenderApiExtensionsPanel();
             DrawMissingAssetsPanel();
-            DrawGlobalEditorPreferencesPanel();
-            DrawEditorPreferencesOverridesPanel();
-            DrawUserSettingsPanel();
-            DrawBuildSettingsPanel();
-            DrawNetworkingPanel();
-            DrawAnimationClipEditorPanel();
-            DrawRenderPipelineGraphPanel();
-            DrawShaderGraphPanel();
+            using (Engine.Profiler.Start("UI.DrawGlobalEditorPreferencesPanel"))
+                DrawGlobalEditorPreferencesPanel();
+            using (Engine.Profiler.Start("UI.DrawEditorPreferencesOverridesPanel"))
+                DrawEditorPreferencesOverridesPanel();
+            using (Engine.Profiler.Start("UI.DrawUserSettingsPanel"))
+                DrawUserSettingsPanel();
+            using (Engine.Profiler.Start("UI.DrawBuildSettingsPanel"))
+                DrawBuildSettingsPanel();
+            using (Engine.Profiler.Start("UI.DrawNetworkingPanel"))
+                DrawNetworkingPanel();
+            using (Engine.Profiler.Start("UI.DrawAnimationClipEditorPanel"))
+                DrawAnimationClipEditorPanel();
+            using (Engine.Profiler.Start("UI.DrawRenderPipelineGraphPanel"))
+                DrawRenderPipelineGraphPanel();
+            using (Engine.Profiler.Start("UI.DrawShaderGraphPanel"))
+                DrawShaderGraphPanel();
             DrawHierarchyPanel();
-            DrawScenePanel();
+            using (Engine.Profiler.Start("UI.DrawScenePanel"))
+                DrawScenePanel();
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
             DrawArchiveInspectorPanel();
-            DrawTextureStreamingPanel();
-            DrawClosePromptDialog();
+            using (Engine.Profiler.Start("UI.DrawTextureStreamingPanel"))
+                DrawTextureStreamingPanel();
+            using (Engine.Profiler.Start("UI.DrawClosePromptDialog"))
+                DrawClosePromptDialog();
 
-            PersistEditorSceneHierarchyToUserSettingsIfChanged();
-            PersistPanelVisibilityToImGuiIniIfChanged();
+            using (Engine.Profiler.Start("UI.PersistEditorSceneHierarchy"))
+                PersistEditorSceneHierarchyToUserSettingsIfChanged();
+            using (Engine.Profiler.Start("UI.PersistPanelVisibility"))
+                PersistPanelVisibilityToImGuiIniIfChanged();
 
             // Tool windows
-            UI.Tools.ShaderLockingWindow.Instance.Render();
-            UI.Tools.ShaderLockingWindow.Instance.RenderDialogs();
-            UI.Tools.ShaderAnalyzerWindow.Instance.Render();
-            UI.Tools.ShaderCrossCompilerWindow.Instance.Render();
-            UI.Tools.McpAssistantWindow.Instance.Render();
+            using (Engine.Profiler.Start("UI.Tools.ShaderLockingWindow.Render"))
+                UI.Tools.ShaderLockingWindow.Instance.Render();
+            using (Engine.Profiler.Start("UI.Tools.ShaderLockingWindow.RenderDialogs"))
+                UI.Tools.ShaderLockingWindow.Instance.RenderDialogs();
+            using (Engine.Profiler.Start("UI.Tools.ShaderAnalyzerWindow.Render"))
+                UI.Tools.ShaderAnalyzerWindow.Instance.Render();
+            using (Engine.Profiler.Start("UI.Tools.ShaderCrossCompilerWindow.Render"))
+                UI.Tools.ShaderCrossCompilerWindow.Instance.Render();
+            using (Engine.Profiler.Start("UI.Tools.McpAssistantWindow.Render"))
+                UI.Tools.McpAssistantWindow.Instance.Render();
 
-            EditorPlayModeConfirmationPrompt.Render();
+            using (Engine.Profiler.Start("UI.EditorPlayModeConfirmationPrompt.Render"))
+                EditorPlayModeConfirmationPrompt.Render();
 
             // MCP permission prompt (modal overlay — must render after all other windows)
-            UI.Tools.McpPermissionPromptUI.Render();
+            using (Engine.Profiler.Start("UI.Tools.McpPermissionPromptUI.Render"))
+                UI.Tools.McpPermissionPromptUI.Render();
 
             // Background-mode model spawning on drop.
             // We track the dragged asset path from the Asset Explorer and spawn when the mouse is

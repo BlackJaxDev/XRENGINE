@@ -10,8 +10,12 @@ namespace XREngine.Data
     {
         private enum DataSourceEncoding
         {
+            /// <summary>Legacy LZMA-over-hex encoding. Retained for reading old cache files.</summary>
             LzmaHex,
+            /// <summary>Uncompressed raw bytes as hex. Used when the source opts out of compression.</summary>
             RawHex,
+            /// <summary>Default compressed encoding. Zstd-over-hex; ~order of magnitude faster to compress than LZMA at similar ratios.</summary>
+            ZstdHex,
         }
 
         public bool Accepts(Type type)
@@ -87,21 +91,26 @@ namespace XREngine.Data
             {
                 DataSource result;
 
-                if (encoding == DataSourceEncoding.RawHex)
+                switch (encoding)
                 {
-                    if (string.IsNullOrWhiteSpace(byteStr))
-                    {
-                        result = new DataSource(length ?? 0u, zeroMemory: true) { PreferCompressedYaml = false };
-                    }
-                    else
-                    {
-                        byte[] rawBytes = Convert.FromHexString(NormalizeHexScalar(byteStr));
-                        result = new DataSource(rawBytes) { PreferCompressedYaml = false };
-                    }
-                }
-                else
-                {
-                    result = new DataSource(Compression.DecompressFromString(length, byteStr)) { PreferCompressedYaml = true };
+                    case DataSourceEncoding.RawHex:
+                        if (string.IsNullOrWhiteSpace(byteStr))
+                        {
+                            result = new DataSource(length ?? 0u, zeroMemory: true) { PreferCompressedYaml = false };
+                        }
+                        else
+                        {
+                            byte[] rawBytes = Convert.FromHexString(NormalizeHexScalar(byteStr));
+                            result = new DataSource(rawBytes) { PreferCompressedYaml = false };
+                        }
+                        break;
+                    case DataSourceEncoding.ZstdHex:
+                        result = new DataSource(Compression.DecompressZstdFromString(byteStr)) { PreferCompressedYaml = true };
+                        break;
+                    case DataSourceEncoding.LzmaHex:
+                    default:
+                        result = new DataSource(Compression.DecompressFromString(length, byteStr)) { PreferCompressedYaml = true };
+                        break;
                 }
 
                 return result;
@@ -138,8 +147,15 @@ namespace XREngine.Data
                 }
                 else
                 {
+                    // Zstd is ~an order of magnitude faster to compress than LZMA at similar
+                    // ratios, so we write new cache payloads as ZstdHex. Old caches that used
+                    // LzmaHex (the previous default, produced without an explicit Encoding field)
+                    // are still readable via the fallback branch in ReadYaml.
+                    emitter.Emit(new Scalar("Encoding"));
+                    emitter.Emit(new Scalar("ZstdHex"));
+
                     emitter.Emit(new Scalar("Bytes"));
-                    emitter.Emit(new Scalar(Compression.CompressToString(source)));
+                    emitter.Emit(new Scalar(Compression.CompressZstdToString(source)));
                 }
             }
             emitter.Emit(new MappingEnd());
@@ -195,6 +211,15 @@ namespace XREngine.Data
                 return DataSourceEncoding.RawHex;
             }
 
+            if (token.Equals("Zstd", StringComparison.OrdinalIgnoreCase) ||
+                token.Equals("ZstdHex", StringComparison.OrdinalIgnoreCase) ||
+                token.Equals("Zstandard", StringComparison.OrdinalIgnoreCase))
+            {
+                return DataSourceEncoding.ZstdHex;
+            }
+
+            // Back-compat default: files written before ZstdHex used LZMA and either
+            // emitted no Encoding field at all or emitted "Lzma"/"LzmaHex".
             return DataSourceEncoding.LzmaHex;
         }
 

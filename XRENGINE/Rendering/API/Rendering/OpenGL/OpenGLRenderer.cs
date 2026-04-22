@@ -30,6 +30,26 @@ namespace XREngine.Rendering.OpenGL
         private sealed record BoundTextureDebugState(IGLTexture Texture, string Name, uint BindingId);
 
         public GL RawGL => Api; // public accessor for underlying GL instance
+
+        private enum FrontLuminanceReadbackMode
+        {
+            Mipmap,
+            Compute
+        }
+
+        private sealed class PendingFrontLuminanceReadback
+        {
+            public required Action<bool, float> Callback { get; init; }
+            public required FrontLuminanceReadbackMode Mode { get; init; }
+            public required Vector3 LuminanceWeights { get; init; }
+            public required IntPtr Sync { get; init; }
+            public required long StartedTicks { get; init; }
+            public required long LastPollTicks { get; set; }
+        }
+
+        private const double FrontLuminanceReadbackMinIntervalMs = 66.0;
+        private const double FrontLuminanceReadbackPollIntervalMs = 33.0;
+        private const double FrontLuminanceReadbackTimeoutMs = 250.0;
         public OvrMultiview? OVRMultiView { get; }
         public Silk.NET.OpenGL.Extensions.NV.NVMeshShader? NVMeshShader { get; }
         public Silk.NET.OpenGL.Extensions.NV.NVGpuShader5? NVGpuShader5 { get; }
@@ -39,6 +59,116 @@ namespace XREngine.Rendering.OpenGL
         public ExtMemoryObject? EXTMemoryObject { get; }
         public ExtSemaphore? EXTSemaphore { get; }
         public ExtMemoryObjectWin32? EXTMemoryObjectWin32 { get; }
+        private PendingFrontLuminanceReadback? _pendingFrontLuminanceReadback;
+        private long _lastFrontLuminanceRequestTicks;
+        private bool _hasFrontLuminanceSample;
+        private float _lastFrontLuminanceSample;
+
+        private static long FrontLuminanceMillisecondsToTicks(double milliseconds)
+            => (long)(System.Diagnostics.Stopwatch.Frequency * (milliseconds / 1000.0));
+
+        private void QueueFrontLuminanceCallback(Action<bool, float> callback, bool success, float dot)
+            => Engine.EnqueueAppThreadTask(() => callback(success, dot), "GLRenderer.FrontLuminance.Callback");
+
+        private void QueueCachedFrontLuminanceCallback(Action<bool, float> callback)
+            => QueueFrontLuminanceCallback(callback, _hasFrontLuminanceSample, _hasFrontLuminanceSample ? _lastFrontLuminanceSample : 0.0f);
+
+        private void CompletePendingFrontLuminanceReadback(PendingFrontLuminanceReadback pending, bool success, float dot)
+        {
+            _pendingFrontLuminanceReadback = null;
+            QueueFrontLuminanceCallback(pending.Callback, success, dot);
+        }
+
+        private void CancelPendingFrontLuminanceReadback()
+        {
+            if (_pendingFrontLuminanceReadback is not { } pending)
+                return;
+
+            Api.DeleteSync(pending.Sync);
+            _pendingFrontLuminanceReadback = null;
+        }
+
+        private unsafe bool TryServicePendingFrontLuminanceReadback(long nowTicks)
+        {
+            if (_pendingFrontLuminanceReadback is not { } pending)
+                return false;
+
+            long timeoutTicks = FrontLuminanceMillisecondsToTicks(FrontLuminanceReadbackTimeoutMs);
+            if (nowTicks - pending.StartedTicks >= timeoutTicks)
+            {
+                Api.DeleteSync(pending.Sync);
+                CompletePendingFrontLuminanceReadback(pending, _hasFrontLuminanceSample, _hasFrontLuminanceSample ? _lastFrontLuminanceSample : 0.0f);
+                return false;
+            }
+
+            long pollIntervalTicks = FrontLuminanceMillisecondsToTicks(FrontLuminanceReadbackPollIntervalMs);
+            if (nowTicks - pending.LastPollTicks < pollIntervalTicks)
+                return true;
+
+            pending.LastPollTicks = nowTicks;
+
+            switch (pending.Mode)
+            {
+                case FrontLuminanceReadbackMode.Mipmap:
+                {
+                    if (!GetData(_luminanceFrontPboSize, _rgbDataForAsync(ref _asyncBuffer), pending.Sync, _luminanceFrontPbo))
+                        return true;
+
+                    Api.DeleteSync(pending.Sync);
+
+                    float r = _asyncBuffer[0] / 255.0f;
+                    float g = _asyncBuffer[1] / 255.0f;
+                    float b = _asyncBuffer[2] / 255.0f;
+                    if (float.IsNaN(r) || float.IsNaN(g) || float.IsNaN(b))
+                    {
+                        CompletePendingFrontLuminanceReadback(pending, _hasFrontLuminanceSample, _hasFrontLuminanceSample ? _lastFrontLuminanceSample : 0.0f);
+                        return false;
+                    }
+
+                    _lastFrontLuminanceSample = new Vector3(r, g, b).Dot(pending.LuminanceWeights);
+                    _hasFrontLuminanceSample = true;
+                    CompletePendingFrontLuminanceReadback(pending, true, _lastFrontLuminanceSample);
+                    return false;
+                }
+
+                case FrontLuminanceReadbackMode.Compute:
+                {
+                    var waitResult = Api.ClientWaitSync(pending.Sync, 0u, 0u);
+                    if (!(waitResult == GLEnum.AlreadySignaled || waitResult == GLEnum.ConditionSatisfied))
+                        return true;
+
+                    Api.DeleteSync(pending.Sync);
+
+                    Vector4 average;
+                    Api.BindBuffer(GLEnum.ShaderStorageBuffer, _luminanceResultBuffer);
+                    Api.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, 16, &average);
+                    Api.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+
+                    if (float.IsNaN(average.X) || float.IsNaN(average.Y) || float.IsNaN(average.Z))
+                    {
+                        CompletePendingFrontLuminanceReadback(pending, _hasFrontLuminanceSample, _hasFrontLuminanceSample ? _lastFrontLuminanceSample : 0.0f);
+                        return false;
+                    }
+
+                    _lastFrontLuminanceSample = new Vector3(average.X, average.Y, average.Z).Dot(pending.LuminanceWeights);
+                    _hasFrontLuminanceSample = true;
+                    CompletePendingFrontLuminanceReadback(pending, true, _lastFrontLuminanceSample);
+                    return false;
+                }
+
+                default:
+                    return false;
+            }
+        }
+
+        private bool PollPendingFrontLuminanceReadback()
+        {
+            if (_pendingFrontLuminanceReadback is null)
+                return true;
+
+            long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            return !TryServicePendingFrontLuminanceReadback(nowTicks);
+        }
         public ExtSemaphoreWin32? EXTSemaphoreWin32 { get; }
         public ExtSemaphoreFd? EXTSemaphoreFd { get; }
         public ExtMemoryObjectFd? EXTMemoryObjectFd { get; }
@@ -618,6 +748,8 @@ namespace XREngine.Rendering.OpenGL
             _programCompileLinkQueue = null;
             _sharedContext?.Dispose();
             _sharedContext = null;
+
+            CancelPendingFrontLuminanceReadback();
 
             // Clean up cached luminance front resources
             if (_luminanceFrontTex != 0)
@@ -2294,11 +2426,26 @@ void main()
         {
             using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsync");
 
+            long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            TryServicePendingFrontLuminanceReadback(nowTicks);
+            if (_pendingFrontLuminanceReadback is not null)
+            {
+                QueueCachedFrontLuminanceCallback(callback);
+                return;
+            }
+
+            long minIntervalTicks = FrontLuminanceMillisecondsToTicks(FrontLuminanceReadbackMinIntervalMs);
+            if (_hasFrontLuminanceSample && nowTicks - _lastFrontLuminanceRequestTicks < minIntervalTicks)
+            {
+                QueueCachedFrontLuminanceCallback(callback);
+                return;
+            }
+
             uint w = (uint)region.Width;
             uint h = (uint)region.Height;
             if (w == 0 || h == 0)
             {
-                callback(false, 0.0f);
+                QueueFrontLuminanceCallback(callback, false, 0.0f);
                 return;
             }
 
@@ -2377,29 +2524,17 @@ void main()
             IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
             Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
 
-            bool FenceCheck()
+            _lastFrontLuminanceRequestTicks = nowTicks;
+            _pendingFrontLuminanceReadback = new PendingFrontLuminanceReadback
             {
-                if (!GetData(byteSize, _rgbDataForAsync(ref _asyncBuffer), sync, pbo))
-                    return false;
-
-                Api.DeleteSync(sync);
-                // Note: PBO, texture and FBO are cached and NOT deleted here
-
-                float r = _asyncBuffer[0] / 255.0f;
-                float g = _asyncBuffer[1] / 255.0f;
-                float b = _asyncBuffer[2] / 255.0f;
-
-                if (float.IsNaN(r) || float.IsNaN(g) || float.IsNaN(b))
-                {
-                    callback(false, 0.0f);
-                    return true;
-                }
-
-                callback(true, new Vector3(r, g, b).Dot(luminance));
-                return true;
-            }
-
-            Engine.AddMainThreadCoroutine(FenceCheck);
+                Callback = callback,
+                Mode = FrontLuminanceReadbackMode.Mipmap,
+                LuminanceWeights = luminance,
+                Sync = sync,
+                StartedTicks = nowTicks,
+                LastPollTicks = nowTicks
+            };
+            Engine.AddMainThreadCoroutine(PollPendingFrontLuminanceReadback, "GLRenderer.FrontLuminanceReadback");
         }
 
         /// <summary>
@@ -2410,11 +2545,26 @@ void main()
         {
             using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsyncCompute");
 
+            long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            TryServicePendingFrontLuminanceReadback(nowTicks);
+            if (_pendingFrontLuminanceReadback is not null)
+            {
+                QueueCachedFrontLuminanceCallback(callback);
+                return;
+            }
+
+            long minIntervalTicks = FrontLuminanceMillisecondsToTicks(FrontLuminanceReadbackMinIntervalMs);
+            if (_hasFrontLuminanceSample && nowTicks - _lastFrontLuminanceRequestTicks < minIntervalTicks)
+            {
+                QueueCachedFrontLuminanceCallback(callback);
+                return;
+            }
+
             uint w = (uint)region.Width;
             uint h = (uint)region.Height;
             if (w == 0 || h == 0)
             {
-                callback(false, 0.0f);
+                QueueFrontLuminanceCallback(callback, false, 0.0f);
                 return;
             }
 
@@ -2495,30 +2645,17 @@ void main()
             // Async readback from result buffer
             IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
 
-            bool FenceCheck()
+            _lastFrontLuminanceRequestTicks = nowTicks;
+            _pendingFrontLuminanceReadback = new PendingFrontLuminanceReadback
             {
-                var result = Api.ClientWaitSync(sync, 0u, 0u);
-                if (!(result == GLEnum.AlreadySignaled || result == GLEnum.ConditionSatisfied))
-                    return false;
-
-                Api.DeleteSync(sync);
-
-                Vector4 avg;
-                Api.BindBuffer(GLEnum.ShaderStorageBuffer, _luminanceResultBuffer);
-                Api.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, 16, &avg);
-                Api.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
-
-                if (float.IsNaN(avg.X) || float.IsNaN(avg.Y) || float.IsNaN(avg.Z))
-                {
-                    callback(false, 0.0f);
-                    return true;
-                }
-
-                callback(true, new Vector3(avg.X, avg.Y, avg.Z).Dot(luminance));
-                return true;
-            }
-
-            Engine.AddMainThreadCoroutine(FenceCheck);
+                Callback = callback,
+                Mode = FrontLuminanceReadbackMode.Compute,
+                LuminanceWeights = luminance,
+                Sync = sync,
+                StartedTicks = nowTicks,
+                LastPollTicks = nowTicks
+            };
+            Engine.AddMainThreadCoroutine(PollPendingFrontLuminanceReadback, "GLRenderer.FrontLuminanceReadback");
         }
 
         /// <summary>

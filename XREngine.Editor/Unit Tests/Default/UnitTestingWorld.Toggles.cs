@@ -112,7 +112,8 @@ public static partial class EditorUnitTests
         public bool StartInPlayModeWithoutTransitions = false; //Starts in play mode immediately without the edit->play transition.
 
         //Misc
-        public bool Skybox = true; //Adds a skybox to the scene
+        public bool Skybox = true; //Adds a skybox to the scene.
+        public bool ProceduralSky = false; //Uses the dynamic procedural sky instead of loading the unit-test skybox texture. When enabled, the skybox syncs to the unit-test directional lights when present.
         public bool Spline = false; //Adds a 3D spline to the scene.
         public bool DeferredDecal = false; //Adds a deferred decal to the scene.
         public bool AddCameraVRPickup = false; //Adds a camera pickup to the scene for testing VR camera pickup.

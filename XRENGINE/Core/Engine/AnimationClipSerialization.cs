@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using MemoryPack;
 using XREngine.Animation;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Serialization;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
@@ -55,9 +56,22 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
             throw new YamlException($"Unexpected scalar while deserializing {nameof(AnimationClip)}: '{scalar.Value}'.");
         }
 
-        AnimationClipSerializedModel? model = rootDeserializer(typeof(AnimationClipSerializedModel)) as AnimationClipSerializedModel;
+        AnimationClipYamlEnvelope? envelope = rootDeserializer(typeof(AnimationClipYamlEnvelope)) as AnimationClipYamlEnvelope;
+        if (envelope?.ID is Guid referenceId
+            && referenceId != Guid.Empty
+            && envelope.Payload is null
+            && !LooksLikeLegacyInlineModel(envelope))
+            return ResolveExternalReference(referenceId);
+
+        if (envelope?.Payload is not null && envelope.Payload.Length > 0)
+        {
+            byte[] payload = envelope.Payload.GetBytes();
+            AnimationClip? cookedClip = RuntimeCookedBinarySerializer.Deserialize(typeof(AnimationClip), payload) as AnimationClip;
+            return cookedClip ?? new AnimationClip();
+        }
+
         AnimationClip clip = new();
-        AnimationClipSerialization.ApplyModel(clip, model);
+        AnimationClipSerialization.ApplyModel(clip, envelope?.ToLegacyModel());
         return clip;
     }
 
@@ -75,7 +89,102 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
         if (TryWriteAsReference.TryEmitReference(emitter, clip))
             return;
 
-        serializer(AnimationClipSerialization.CreateModel(clip), typeof(AnimationClipSerializedModel));
+        byte[] payloadBytes = RuntimeCookedBinarySerializer.Serialize(clip);
+        AnimationClipYamlEnvelope envelope = new()
+        {
+            ID = clip.ID,
+            AssetType = clip.GetType().FullName ?? clip.GetType().Name,
+            Format = "CookedBinary",
+            Version = 1,
+            Payload = new DataSource(payloadBytes) { PreferCompressedYaml = true }
+        };
+
+        serializer(envelope, typeof(AnimationClipYamlEnvelope));
+    }
+
+    private static bool LooksLikeLegacyInlineModel(AnimationClipYamlEnvelope envelope)
+        => envelope.RootMember is not null
+            || !string.IsNullOrWhiteSpace(envelope.Name)
+            || !string.IsNullOrWhiteSpace(envelope.OriginalPath)
+            || envelope.OriginalLastWriteTimeUtc is not null
+            || envelope.LengthInSeconds > 0.0f
+            || envelope.SampleRate is not null
+            || envelope.Looped
+            || envelope.HasMuscleChannels
+            || envelope.HasRootMotion
+            || envelope.HasIKGoals
+            || envelope.ClipKind != default;
+
+    private static AnimationClip? ResolveExternalReference(Guid id)
+    {
+        if (Engine.Assets.TryGetAssetByID(id, out XRAsset? loadedAsset) && loadedAsset is AnimationClip loadedClip)
+            return loadedClip;
+
+        string? referenceAssetPath = AssetDeserializationContext.CurrentFilePath;
+        if (!Engine.Assets.TryResolveAssetPathById(id, referenceAssetPath, out string? assetPath) || string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
+            return null;
+
+        if (DeferredAssetReferenceContext.TryDeferAssetLoad(assetPath, typeof(AnimationClip), out XRAsset? deferredAsset))
+            return deferredAsset as AnimationClip;
+
+        return Engine.Assets.LoadImmediate<AnimationClip>(assetPath);
+    }
+
+    private sealed class AnimationClipYamlEnvelope
+    {
+        public Guid? ID { get; set; }
+
+        [YamlMember(Alias = "__assetType", Order = -100)]
+        public string? AssetType { get; set; }
+
+        public string? Format { get; set; }
+
+        public int Version { get; set; } = 1;
+
+        public DataSource? Payload { get; set; }
+
+        public string? Name { get; set; }
+
+        public string? OriginalPath { get; set; }
+
+        public DateTime? OriginalLastWriteTimeUtc { get; set; }
+
+        public EAnimTreeTraversalMethod TraversalMethod { get; set; }
+
+        public float LengthInSeconds { get; set; }
+
+        public bool Looped { get; set; }
+
+        public EAnimationClipKind ClipKind { get; set; }
+
+        public bool HasMuscleChannels { get; set; }
+
+        public bool HasRootMotion { get; set; }
+
+        public bool HasIKGoals { get; set; }
+
+        public int? SampleRate { get; set; }
+
+        public AnimationMemberSerializedModel? RootMember { get; set; }
+
+        public AnimationClipSerializedModel ToLegacyModel()
+            => new()
+            {
+                AssetType = AssetType,
+                Id = ID ?? Guid.Empty,
+                Name = Name,
+                OriginalPath = OriginalPath,
+                OriginalLastWriteTimeUtc = OriginalLastWriteTimeUtc,
+                TraversalMethod = TraversalMethod,
+                LengthInSeconds = LengthInSeconds,
+                Looped = Looped,
+                ClipKind = ClipKind,
+                HasMuscleChannels = HasMuscleChannels,
+                HasRootMotion = HasRootMotion,
+                HasIKGoals = HasIKGoals,
+                SampleRate = SampleRate,
+                RootMember = RootMember,
+            };
     }
 }
 

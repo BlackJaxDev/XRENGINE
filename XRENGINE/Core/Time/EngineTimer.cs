@@ -158,9 +158,9 @@ namespace XREngine.Timers
         public DeltaManager Collect { get; } = new();
         public DeltaManager FixedUpdateManager { get; } = new();
 
-        private Task? UpdateTask = null;
-        private Task? CollectVisibleTask = null;
-        private Task? FixedUpdateTask = null;
+        private Thread? UpdateThreadHandle = null;
+        private Thread? CollectVisibleThreadHandle = null;
+        private Thread? FixedUpdateThreadHandle = null;
 
         //private static bool IsApplicationIdle() => NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, 0) == 0;
 
@@ -186,9 +186,13 @@ namespace XREngine.Timers
             _renderDone = new ManualResetEventSlim(false);
             _swapDone = new ManualResetEventSlim(true);
 
-            UpdateTask = Task.Run(UpdateThread);
-            CollectVisibleTask = Task.Run(CollectVisibleThread);
-            FixedUpdateTask = Task.Run(FixedUpdateThread);
+            // Critical engine loops must NOT run on the shared ThreadPool; bursts of mesh/asset
+            // import jobs were observed to starve them (see fps-drop diagnostics). Use dedicated
+            // foreground threads at AboveNormal priority so they are scheduled independently
+            // of ThreadPool saturation.
+            UpdateThreadHandle = StartEngineLoopThread(UpdateThread, "XRE-Update");
+            CollectVisibleThreadHandle = StartEngineLoopThread(CollectVisibleThread, "XRE-CollectVisible");
+            FixedUpdateThreadHandle = StartEngineLoopThread(FixedUpdateThread, "XRE-FixedUpdate");
             // JobManager is now internally multi-threaded; no loop needed here.
             //There are 4 main threads: Update, Collect Visible, Render, and FixedUpdate.
             //Update runs as fast as requested without fences.
@@ -200,6 +204,24 @@ namespace XREngine.Timers
             //PreRenderDone is set when the prerender thread finishes collecting render commands. This fence is set right before the render thread starts swapping buffers.
 
             Debug.Out($"Started game loop threads.");
+        }
+
+        /// <summary>
+        /// Creates and starts a dedicated foreground thread at <see cref="ThreadPriority.AboveNormal"/>
+        /// for one of the core engine loops (Update / CollectVisible / FixedUpdate).
+        /// These loops must not share the ThreadPool with asset-import / job work, since import
+        /// bursts can saturate the pool and starve the loop of scheduling opportunities.
+        /// </summary>
+        private static Thread StartEngineLoopThread(ThreadStart loop, string name)
+        {
+            var t = new Thread(loop)
+            {
+                Name = name,
+                IsBackground = false,
+                Priority = ThreadPriority.AboveNormal,
+            };
+            t.Start();
+            return t;
         }
 
         public void BlockForRendering(Func<bool> runUntilPredicate)
@@ -372,14 +394,14 @@ namespace XREngine.Timers
             _renderDone?.Set();
             //_updatingDone?.Set();
 
-            //UpdateTask?.Wait(-1);
-            UpdateTask = null;
+            //UpdateThreadHandle?.Join();
+            UpdateThreadHandle = null;
 
-            //CollectVisibleTask?.Wait(-1);
-            CollectVisibleTask = null;
+            //CollectVisibleThreadHandle?.Join();
+            CollectVisibleThreadHandle = null;
 
-            //FixedUpdateTask?.Wait(-1);
-            FixedUpdateTask = null;
+            //FixedUpdateThreadHandle?.Join();
+            FixedUpdateThreadHandle = null;
         }
 
         /// <summary>

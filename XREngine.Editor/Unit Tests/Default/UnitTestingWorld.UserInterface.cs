@@ -166,6 +166,7 @@ public static partial class EditorUnitTests
         {
             SceneNode textNode = new(parentNode) { Name = "TestTextNode" };
             UITextComponent text = textNode.AddComponent<UITextComponent>()!;
+            text.DisableBatching = true;
             text.Font = font;
             text.FontSize = 22;
             text.HorizontalAlignment = EHorizontalAlignment.Center;

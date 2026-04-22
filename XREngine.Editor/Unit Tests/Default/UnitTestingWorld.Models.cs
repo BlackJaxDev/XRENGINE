@@ -6,6 +6,7 @@ using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Components;
 using XREngine.Components.Capture;
+using XREngine.Components.Lights;
 using XREngine.Components.Physics;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
@@ -21,6 +22,7 @@ using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using System.Diagnostics;
 using Quaternion = System.Numerics.Quaternion;
 
 namespace XREngine.Editor;
@@ -103,12 +105,17 @@ public static partial class EditorUnitTests
             bool splitSubmeshes = model.SplitSubmeshesIntoSeparateModelComponents
                 || (model.Kind is UnitTestModelImportKind.Static && model.GenerateCoacdCollidersPerSubmesh);
 
-            bool needsImportOptions = splitSubmeshes
+            bool alwaysCreateImportOptions = model.Kind is UnitTestModelImportKind.Static;
+
+            bool needsImportOptions = alwaysCreateImportOptions
+                || splitSubmeshes
                 || model.ImporterBackend is ModelImportBackendPreference.AssimpOnly
                 || textureLoadDirSearchPaths.Length > 0;
 
             if (!needsImportOptions)
                 return null;
+
+            bool streamStaticSubmeshPublishes = model.Kind is UnitTestModelImportKind.Static;
 
             return new ModelImportOptions
             {
@@ -117,7 +124,11 @@ public static partial class EditorUnitTests
                 ZUp = model.ZUp,
                 FbxBackend = ResolveFbxBackend(model),
                 GltfBackend = ResolveGltfBackend(model),
+                GenerateMeshRenderersAsync = true,
                 SplitSubmeshesIntoSeparateModelComponents = splitSubmeshes,
+                // Stream static-model publication as worker batches finish so large imports do not
+                // collapse into one large app-thread completion burst.
+                BatchSubmeshAddsDuringAsyncImport = !streamStaticSubmeshPublishes,
                 TextureLoadDirSearchPaths = textureLoadDirSearchPaths,
             };
         }
@@ -371,7 +382,7 @@ public static partial class EditorUnitTests
             var spawners = rootNode.FindAllDescendantComponents<LightProbeGridSpawnerComponent>();
             if (spawners.Length == 0)
             {
-                Debug.Out("[LightProbeGrid] No LightProbeGridSpawnerComponent found — skipping model-bounds wiring.");
+                Debug.Out("[LightProbeGrid] No LightProbeGridSpawnerComponent found ï¿½ skipping model-bounds wiring.");
                 return;
             }
 
@@ -381,7 +392,7 @@ public static partial class EditorUnitTests
 
             if (models.Count == 0)
             {
-                Debug.Out("[LightProbeGrid] No ModelComponents found under imported static models — skipping model-bounds wiring.");
+                Debug.Out("[LightProbeGrid] No ModelComponents found under imported static models ï¿½ skipping model-bounds wiring.");
                 return;
             }
 
@@ -495,7 +506,12 @@ public static partial class EditorUnitTests
             return Path.GetFullPath(Path.Combine(baseDir, rawPath));
         }
 
-        public static SkyboxComponent? AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)
+        public static SkyboxComponent? AddSkybox(
+            SceneNode rootNode,
+            XRTexture2D? skyEquirect,
+            bool useProceduralSky = false,
+            DirectionalLightComponent? sunDirectionalLight = null,
+            DirectionalLightComponent? moonDirectionalLight = null)
         {
             var skybox = new SceneNode(rootNode) { Name = "TestSkyboxNode" };
             if (!skybox.TryAddComponent<SkyboxComponent>(out var skyboxComp))
@@ -504,7 +520,15 @@ public static partial class EditorUnitTests
             skyboxComp!.Name = "TestSkybox";
             skyboxComp.Intensity = 1.0f;
 
-            if (skyEquirect is null)
+            if (useProceduralSky)
+            {
+                skyboxComp.Mode = ESkyboxMode.DynamicProcedural;
+                skyboxComp.SunDirectionalLight = sunDirectionalLight;
+                skyboxComp.SyncDirectionalLightWithSun = sunDirectionalLight is not null;
+                skyboxComp.MoonDirectionalLight = moonDirectionalLight;
+                skyboxComp.SyncDirectionalLightWithMoon = moonDirectionalLight is not null;
+            }
+            else if (skyEquirect is null)
             {
                 skyboxComp.Mode = ESkyboxMode.Gradient;
             }
@@ -539,16 +563,41 @@ public static partial class EditorUnitTests
         public static void OnFinishedImportingAvatar(SceneNode? rootNode)
             => OnFinishedImportingAvatar(rootNode, characterParentNode: null);
 
+        private static async Task<AnimationClip?> LoadStartupAnimationClipOnWorkerAsync(string clipPath, string label)
+        {
+            // Run startup loads on a worker and keep nested asset work inline so the app thread
+            // does not block behind a scheduled load job during startup.
+            return await Task.Run(() =>
+            {
+                Stopwatch stopwatch = Stopwatch.StartNew();
+                Debug.Out($"[UnitTestingWorld] Starting startup {label} clip load from '{clipPath}'.");
+
+                AnimationClip? clip = File.Exists(clipPath)
+                    ? Engine.Assets.Load<AnimationClip>(clipPath, bypassJobThread: true)
+                    : null;
+
+                stopwatch.Stop();
+                Debug.Out($"[UnitTestingWorld] Startup {label} clip load finished in {stopwatch.Elapsed.TotalMilliseconds:F1} ms. Loaded={(clip is not null)} Path='{clipPath}'.");
+                return clip;
+            }).ConfigureAwait(false);
+        }
+
         private static async Task<AvatarStartupClipLoadResult?> LoadAvatarStartupClipsAsync()
         {
             if (!Toggles.AnimationClipVMD && !Toggles.AnimationClipAnim)
                 return null;
 
+            Stopwatch startupClipLoadStopwatch = Stopwatch.StartNew();
+            Debug.Out($"[UnitTestingWorld] Begin startup clip load. AnimationClipVMD={Toggles.AnimationClipVMD} AnimationClipAnim={Toggles.AnimationClipAnim} RawAnimPath='{Toggles.AnimClipPath}'.");
+
             var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
 
             Task<AnimationClip?>? vmdClipTask = null;
             if (Toggles.AnimationClipVMD)
-                vmdClipTask = Engine.Assets.LoadAsync<AnimationClip>(Path.Combine(desktopDir, "test.vmd"));
+            {
+                string vmdClipPath = Path.Combine(desktopDir, "test.vmd");
+                vmdClipTask = LoadStartupAnimationClipOnWorkerAsync(vmdClipPath, "VMD");
+            }
 
             string? animClipPath = null;
             bool animClipFileExists = false;
@@ -557,8 +606,9 @@ public static partial class EditorUnitTests
             {
                 animClipPath = ResolveUnitTestAssetPath(desktopDir, Toggles.AnimClipPath);
                 animClipFileExists = File.Exists(animClipPath);
+                Debug.Out($"[UnitTestingWorld] Resolved startup .anim clip path to '{animClipPath}'. Exists={animClipFileExists}.");
                 if (animClipFileExists)
-                    animClipTask = Engine.Assets.LoadAsync<AnimationClip>(animClipPath);
+                    animClipTask = LoadStartupAnimationClipOnWorkerAsync(animClipPath, ".anim");
             }
 
             AnimationClip? vmdClip = vmdClipTask is null
@@ -568,6 +618,9 @@ public static partial class EditorUnitTests
             AnimationClip? animClip = animClipTask is null
                 ? null
                 : await animClipTask.ConfigureAwait(false);
+
+            startupClipLoadStopwatch.Stop();
+            Debug.Out($"[UnitTestingWorld] Startup clip load completed in {startupClipLoadStopwatch.Elapsed.TotalMilliseconds:F1} ms. VMDLoaded={(vmdClip is not null)} AnimLoaded={(animClip is not null)} AnimExists={animClipFileExists} AnimPath='{animClipPath ?? "<null>"}'.");
 
             return new AvatarStartupClipLoadResult
             {
@@ -890,14 +943,27 @@ public static partial class EditorUnitTests
             {
                 try
                 {
+                    Stopwatch startupClipAttachmentStopwatch = Stopwatch.StartNew();
+                    Debug.Out($"[UnitTestingWorld] Starting startup clip attachment flow for '{rootNode.Name}'.");
+
                     AvatarStartupClipLoadResult? startupClips = await LoadAvatarStartupClipsAsync().ConfigureAwait(false);
                     if (startupClips is null)
+                    {
+                        startupClipAttachmentStopwatch.Stop();
+                        Debug.Out($"[UnitTestingWorld] Startup clip attachment flow for '{rootNode.Name}' exited early after {startupClipAttachmentStopwatch.Elapsed.TotalMilliseconds:F1} ms because no startup clip toggles were enabled.");
                         return;
+                    }
+
+                    startupClipAttachmentStopwatch.Stop();
+                    Debug.Out($"[UnitTestingWorld] Startup clip attachment flow for '{rootNode.Name}' finished loading clip data in {startupClipAttachmentStopwatch.Elapsed.TotalMilliseconds:F1} ms.");
 
                     _ = Engine.InvokeOnAppThread(() =>
                     {
                         if (!rootNode.TryGetComponent<HumanoidComponent>(out var humanComp) || humanComp is null)
+                        {
+                            Debug.LogWarning($"[UnitTestingWorld] Skipping startup clip attachment for '{rootNode.Name}' because no HumanoidComponent exists on the imported avatar root.");
                             return;
+                        }
 
                         AttachAvatarStartupClips(rootNode, humanComp, startupClips);
                     }, $"UnitTestingWorld: Attach startup clips to '{rootNode.Name}'", executeNowIfAlreadyAppThread: true);
@@ -952,15 +1018,22 @@ public static partial class EditorUnitTests
                         }
 
                         if (startupClips.AnimClip is not AnimationClip clip)
+                        {
+                            string resolvedPath = startupClips.AnimClipPath ?? Toggles.AnimClipPath;
+                            Debug.LogWarning($"[UnitTestingWorld] Failed to load .anim clip from '{resolvedPath}' even though the file exists. No AnimationClipComponent was added to '{rootNode.Name}'.");
                             return true;
+                        }
 
                         clip.Looped = Toggles.AnimLooped;
 
                         bool runPoseAudit = startupClips.RunPoseAudit;
 
                         animClipComponent = rootNode.AddComponent<AnimationClipComponent>()!;
+                        animClipComponent.Name = "Startup .anim Clip";
                         animClipComponent.StartOnActivate = false;
                         animClipComponent.Animation = clip;
+
+                        Debug.Out($"[UnitTestingWorld] Attached startup .anim clip '{clip.Name}' to '{rootNode.Name}'.");
 
                         if (clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle && !runPoseAudit)
                         {

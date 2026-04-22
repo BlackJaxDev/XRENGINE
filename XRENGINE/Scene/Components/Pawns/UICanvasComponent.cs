@@ -278,6 +278,14 @@ namespace XREngine.Components
 
             ResizeScreenSpace(CanvasTransform.GetActualBounds());
             UpdateWorldSpaceQuadData();
+
+            // Run the initial Measure/Arrange pass synchronously here on the activating thread.
+            // If we don't, the first CollectVisibleItemsScreenSpace on the render-collect thread
+            // hits IsLayoutInvalidated==true and pays a 50–100 ms first-layout cost inline,
+            // which the startup FPS-drop log flagged. Activation happens off the latency-sensitive
+            // collect/render path, so this is the right place to absorb that cost.
+            if (CanvasTransform.IsLayoutInvalidated)
+                UpdateLayout();
         }
 
         protected override void OnComponentDeactivated()

@@ -100,6 +100,7 @@ public class UnitTestingWorldSettings
     public bool StartInPlayModeWithoutTransitions = false;
 
     public bool Skybox = true;
+    public bool ProceduralSky = false;
     public bool Spline = false;
     public bool DeferredDecal = false;
     public bool AddCameraVRPickup = false;

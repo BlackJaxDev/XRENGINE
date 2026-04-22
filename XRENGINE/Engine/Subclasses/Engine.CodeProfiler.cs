@@ -127,8 +127,18 @@ namespace XREngine
                 set => SetField(ref _fpsDropMinDeltaMs, Math.Max(0.0f, value));
             }
 
+            private float _renderStallThresholdMs = 500.0f;
+            public float RenderStallThresholdMs
+            {
+                get => _renderStallThresholdMs;
+                set => SetField(ref _renderStallThresholdMs, Math.Max(0.0f, value));
+            }
+
             private const int ProducerBufferHardMaxCapacity = 1 << 20;
             private const int ProducerBufferAutoGrowthFactor = 8;
+            private const int RenderThreadScopeStackCapacity = 256;
+            private const string RenderDispatchScopeName = "EngineTimer.DispatchRender";
+            private const string RenderStallLogFileName = "profiler-render-stalls.log";
 
             private long SnapshotIntervalTicks => EngineTimer.SecondsToStopwatchTicks(SnapshotIntervalMs / 1000.0);
 
@@ -167,8 +177,20 @@ namespace XREngine
             private readonly Dictionary<int, ThreadBuildState> _threadBuildStates = [];
             private readonly List<ProfilerThreadSnapshot> _threadSnapshotsBuffer = new(8);
             private readonly Dictionary<int, List<BuiltTimer>> _accumulatedRoots = [];
+            private readonly string[] _renderThreadScopeNames = new string[RenderThreadScopeStackCapacity];
+            private readonly long[] _renderThreadScopeStartTicks = new long[RenderThreadScopeStackCapacity];
             private long _lastSnapshotTicks = -1L;
             private float _lastFpsDropProcessedFrameTime = float.NegativeInfinity;
+            private int _renderThreadScopeDepth;
+            private long _lastCompletedRenderFrameTicks;
+            private float _lastCompletedRenderThreadTotalMs;
+            private float _lastCompletedRenderThreadHotPathMs;
+            private string _lastCompletedRenderThreadHotPath = string.Empty;
+            private bool _renderStallTrackingActive;
+            private long _renderStallBaseTicks;
+            private long _renderStallDetectedTicks;
+            private long _renderStallLastCompletedFrameTicks;
+            private string _renderStallScopePath = string.Empty;
 
             [ThreadStatic]
             private static ThreadProducerState? _tlsProducerState;
@@ -314,11 +336,16 @@ namespace XREngine
                         return;
 
                     int depth = _state.Depth;
-                    _state.Depth = depth > 0 ? depth - 1 : 0;
+                    int newDepth = depth > 0 ? depth - 1 : 0;
+                    _state.Depth = newDepth;
+
+                    long endTicks = Time.Timer.TimeTicks();
+                    if (_state.ThreadId == RenderThreadId)
+                        _profiler.RecordRenderThreadScopeExit(newDepth, endTicks, _methodName);
+
                     if (!_profiler._enableFrameLogging)
                         return;
 
-                    long endTicks = Time.Timer.TimeTicks();
                     long elapsedTicks = endTicks - _startTicks;
                     if (elapsedTicks < 0L)
                         elapsedTicks = 0L;
@@ -512,6 +539,12 @@ namespace XREngine
                 _threadFrameHistory.Clear();
                 _readySnapshot = null;
                 _readyHistorySnapshot = [];
+                Volatile.Write(ref _renderThreadScopeDepth, 0);
+                Volatile.Write(ref _lastCompletedRenderFrameTicks, 0L);
+                _lastCompletedRenderThreadTotalMs = 0.0f;
+                _lastCompletedRenderThreadHotPathMs = 0.0f;
+                _lastCompletedRenderThreadHotPath = string.Empty;
+                ResetRenderStallTracking();
             }
 
             private void StatsThreadMain(object? state)
@@ -531,6 +564,8 @@ namespace XREngine
                             BuildFrameSnapshot(nowTicks);
                             _lastSnapshotTicks = nowTicks;
                         }
+
+                        CheckRenderThreadStall(nowTicks);
 
                         if (scopesProcessed == 0)
                             Thread.Sleep(StatsThreadIntervalMs);
@@ -690,10 +725,222 @@ namespace XREngine
                 }
 
                 if (frameSnapshot is not null)
+                {
+                    UpdateLastRenderThreadSnapshot(frameSnapshot);
                     LogFpsDrops(frameSnapshot, historySnapshot);
+                }
 
                 _readyHistorySnapshot = historySnapshot;
                 _readySnapshot = frameSnapshot;
+            }
+
+            private void UpdateLastRenderThreadSnapshot(ProfilerFrameSnapshot frameSnapshot)
+            {
+                int renderThreadId = RenderThreadId;
+                if (renderThreadId <= 0)
+                    return;
+
+                for (int i = 0; i < frameSnapshot.Threads.Count; i++)
+                {
+                    ProfilerThreadSnapshot thread = frameSnapshot.Threads[i];
+                    if (thread.ThreadId != renderThreadId)
+                        continue;
+
+                    _lastCompletedRenderThreadTotalMs = thread.TotalTimeMs;
+                    _lastCompletedRenderThreadHotPath = GetHottestPath(thread.RootNodes, out float hotPathMs);
+                    _lastCompletedRenderThreadHotPathMs = hotPathMs;
+                    return;
+                }
+            }
+
+            private void CheckRenderThreadStall(long nowTicks)
+            {
+                if (RenderStallThresholdMs <= 0.0f)
+                {
+                    ResetRenderStallTracking();
+                    return;
+                }
+
+                long lastCompletedRenderTicks = Volatile.Read(ref _lastCompletedRenderFrameTicks);
+                bool renderDispatchActive = IsRenderDispatchActive();
+                if (_renderStallTrackingActive)
+                {
+                    if (lastCompletedRenderTicks > _renderStallLastCompletedFrameTicks)
+                    {
+                        LogRenderThreadStallRecovered(lastCompletedRenderTicks);
+                        ResetRenderStallTracking();
+                        return;
+                    }
+
+                    if (!renderDispatchActive)
+                    {
+                        ResetRenderStallTracking();
+                        return;
+                    }
+
+                    return;
+                }
+
+                if (!renderDispatchActive)
+                    return;
+
+                if (!TrySnapshotActiveRenderDispatch(out int scopeDepth, out long rootStartTicks, out long leafStartTicks, out string leafScope, out string scopePath))
+                    return;
+
+                long baseTicks = lastCompletedRenderTicks > 0L ? lastCompletedRenderTicks : rootStartTicks;
+                float noCompletedRenderMs = TicksToMilliseconds(Math.Max(0L, nowTicks - baseTicks));
+                if (noCompletedRenderMs < RenderStallThresholdMs)
+                    return;
+
+                _renderStallTrackingActive = true;
+                _renderStallBaseTicks = baseTicks;
+                _renderStallDetectedTicks = nowTicks;
+                _renderStallLastCompletedFrameTicks = lastCompletedRenderTicks;
+                _renderStallScopePath = scopePath;
+
+                LogRenderThreadStallDetected(
+                    nowTicks,
+                    lastCompletedRenderTicks,
+                    scopeDepth,
+                    rootStartTicks,
+                    leafStartTicks,
+                    leafScope,
+                    scopePath);
+            }
+
+            private bool IsRenderDispatchActive()
+            {
+                int depth = Volatile.Read(ref _renderThreadScopeDepth);
+                return depth > 0 && string.Equals(_renderThreadScopeNames[0], RenderDispatchScopeName, StringComparison.Ordinal);
+            }
+
+            private bool TrySnapshotActiveRenderDispatch(
+                out int scopeDepth,
+                out long rootStartTicks,
+                out long leafStartTicks,
+                out string leafScope,
+                out string scopePath)
+            {
+                scopeDepth = Volatile.Read(ref _renderThreadScopeDepth);
+                rootStartTicks = 0L;
+                leafStartTicks = 0L;
+                leafScope = string.Empty;
+                scopePath = string.Empty;
+
+                if (scopeDepth <= 0)
+                    return false;
+
+                scopeDepth = Math.Min(scopeDepth, RenderThreadScopeStackCapacity);
+                if (!string.Equals(_renderThreadScopeNames[0], RenderDispatchScopeName, StringComparison.Ordinal))
+                    return false;
+
+                rootStartTicks = _renderThreadScopeStartTicks[0];
+                int leafIndex = scopeDepth - 1;
+                leafStartTicks = _renderThreadScopeStartTicks[leafIndex];
+                leafScope = _renderThreadScopeNames[leafIndex] ?? RenderDispatchScopeName;
+
+                var builder = new StringBuilder(scopeDepth * 32);
+                for (int i = 0; i < scopeDepth; i++)
+                {
+                    string? name = _renderThreadScopeNames[i];
+                    if (string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    if (builder.Length > 0)
+                        builder.Append(" > ");
+                    builder.Append(name);
+                }
+
+                scopePath = builder.Length == 0 ? RenderDispatchScopeName : builder.ToString();
+                return true;
+            }
+
+            private void LogRenderThreadStallDetected(
+                long detectedTicks,
+                long lastCompletedRenderTicks,
+                int scopeDepth,
+                long rootStartTicks,
+                long leafStartTicks,
+                string leafScope,
+                string scopePath)
+            {
+                try
+                {
+                    string timingBasis = lastCompletedRenderTicks > 0L
+                        ? "LastCompletedRender"
+                        : "CurrentRenderFrameStart";
+                    float noCompletedRenderMs = TicksToMilliseconds(Math.Max(0L, detectedTicks - _renderStallBaseTicks));
+                    float currentFrameElapsedMs = TicksToMilliseconds(Math.Max(0L, detectedTicks - rootStartTicks));
+                    float currentLeafElapsedMs = TicksToMilliseconds(Math.Max(0L, detectedTicks - leafStartTicks));
+
+                    var builder = new StringBuilder(1024);
+                    builder.Append("[").Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")).AppendLine("] Render stall detected");
+                    builder.Append("ThresholdMs: ").Append(RenderStallThresholdMs.ToString("F3")).AppendLine();
+                    builder.Append("TimingBasis: ").Append(timingBasis).AppendLine();
+                    builder.Append("RenderThreadId: ").Append(RenderThreadId).AppendLine();
+                    builder.Append("NoCompletedRenderForMs: ").Append(noCompletedRenderMs.ToString("F3")).AppendLine();
+                    builder.Append("CurrentRenderFrameElapsedMs: ").Append(currentFrameElapsedMs.ToString("F3")).AppendLine();
+                    builder.Append("CurrentRenderLeafElapsedMs: ").Append(currentLeafElapsedMs.ToString("F3")).AppendLine();
+                    builder.Append("RenderScopeDepth: ").Append(scopeDepth).AppendLine();
+                    builder.Append("RenderScopeLeaf: ").Append(leafScope).AppendLine();
+                    builder.Append("RenderScopePath: ").Append(scopePath).AppendLine();
+                    builder.Append("QueuedRenderJobsNow: ").Append(GetQueuedRenderThreadJobCount()).AppendLine();
+                    builder.Append("IsDispatchingRenderFrame: ").Append(IsDispatchingRenderFrame).AppendLine();
+
+                    if (!string.IsNullOrWhiteSpace(_lastCompletedRenderThreadHotPath))
+                    {
+                        builder.Append("LastCompletedRenderThreadTotalMs: ").Append(_lastCompletedRenderThreadTotalMs.ToString("F3")).AppendLine();
+                        builder.Append("LastCompletedRenderHotPathMs: ").Append(_lastCompletedRenderThreadHotPathMs.ToString("F3")).AppendLine();
+                        builder.Append("LastCompletedRenderHotPath: ").Append(_lastCompletedRenderThreadHotPath).AppendLine();
+                    }
+
+                    Debug.WriteAuxiliaryLog(RenderStallLogFileName, builder.ToString());
+                }
+                catch
+                {
+                    // Diagnostics must never break the profiler stats thread.
+                }
+            }
+
+            private void LogRenderThreadStallRecovered(long recoveredTicks)
+            {
+                try
+                {
+                    float totalNoRenderMs = TicksToMilliseconds(Math.Max(0L, recoveredTicks - _renderStallBaseTicks));
+                    float detectionToRecoveryMs = TicksToMilliseconds(Math.Max(0L, recoveredTicks - _renderStallDetectedTicks));
+
+                    var builder = new StringBuilder(896);
+                    builder.Append("[").Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")).AppendLine("] Render stall recovered");
+                    builder.Append("ThresholdMs: ").Append(RenderStallThresholdMs.ToString("F3")).AppendLine();
+                    builder.Append("RenderThreadId: ").Append(RenderThreadId).AppendLine();
+                    builder.Append("NoCompletedRenderForMs: ").Append(totalNoRenderMs.ToString("F3")).AppendLine();
+                    builder.Append("DetectionToRecoveryMs: ").Append(detectionToRecoveryMs.ToString("F3")).AppendLine();
+                    builder.Append("StallScopePathAtDetection: ").Append(_renderStallScopePath).AppendLine();
+                    builder.Append("QueuedRenderJobsNow: ").Append(GetQueuedRenderThreadJobCount()).AppendLine();
+                    builder.Append("IsDispatchingRenderFrame: ").Append(IsDispatchingRenderFrame).AppendLine();
+
+                    if (!string.IsNullOrWhiteSpace(_lastCompletedRenderThreadHotPath))
+                    {
+                        builder.Append("RecoveredRenderThreadTotalMs: ").Append(_lastCompletedRenderThreadTotalMs.ToString("F3")).AppendLine();
+                        builder.Append("RecoveredRenderHotPathMs: ").Append(_lastCompletedRenderThreadHotPathMs.ToString("F3")).AppendLine();
+                        builder.Append("RecoveredRenderHotPath: ").Append(_lastCompletedRenderThreadHotPath).AppendLine();
+                    }
+
+                    Debug.WriteAuxiliaryLog(RenderStallLogFileName, builder.ToString());
+                }
+                catch
+                {
+                    // Diagnostics must never break the profiler stats thread.
+                }
+            }
+
+            private void ResetRenderStallTracking()
+            {
+                _renderStallTrackingActive = false;
+                _renderStallBaseTicks = 0L;
+                _renderStallDetectedTicks = 0L;
+                _renderStallLastCompletedFrameTicks = 0L;
+                _renderStallScopePath = string.Empty;
             }
 
             private void LogFpsDrops(ProfilerFrameSnapshot frame, Dictionary<int, float[]> history)
@@ -1072,7 +1319,29 @@ namespace XREngine
                 int depth = state.Depth + 1;
                 state.Depth = depth;
                 long startTicks = Time.Timer.TimeTicks();
+                if (state.ThreadId == RenderThreadId)
+                    RecordRenderThreadScopeEntry(depth, startTicks, methodName);
                 return new ProfilerScope(this, state, startTicks, depth, methodName);
+            }
+
+            private void RecordRenderThreadScopeEntry(int depth, long startTicks, string? methodName)
+            {
+                if (depth <= 0)
+                    return;
+
+                int clampedDepth = Math.Min(depth, RenderThreadScopeStackCapacity);
+                int index = clampedDepth - 1;
+                _renderThreadScopeNames[index] = string.IsNullOrWhiteSpace(methodName) ? "<unnamed>" : methodName;
+                _renderThreadScopeStartTicks[index] = startTicks;
+                Volatile.Write(ref _renderThreadScopeDepth, clampedDepth);
+            }
+
+            private void RecordRenderThreadScopeExit(int depth, long endTicks, string? methodName)
+            {
+                Volatile.Write(ref _renderThreadScopeDepth, Math.Max(0, Math.Min(depth, RenderThreadScopeStackCapacity)));
+
+                if (string.Equals(methodName, RenderDispatchScopeName, StringComparison.Ordinal))
+                    Volatile.Write(ref _lastCompletedRenderFrameTicks, endTicks);
             }
 
             public Guid StartAsync(DelTimerCallback? callback = null, [CallerMemberName] string? methodName = null)
@@ -1357,6 +1626,12 @@ namespace XREngine
             }
 
             public float FpsDropMinDeltaMs
+            {
+                get => 0f;
+                set { }
+            }
+
+            public float RenderStallThresholdMs
             {
                 get => 0f;
                 set { }

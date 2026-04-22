@@ -86,8 +86,9 @@ namespace XREngine.Rendering
             {
                 byte[] fileBytes = RuntimeRenderingHostServices.Current.ReadAllBytes(filePath);
                 using var sourceImage = new MagickImage(fileBytes);
-                Mipmaps = GetMipmapsFromImage(sourceImage);
-                AutoGenerateMipmaps = false;
+                // Only upload the base mip; the GPU generates the rest via glGenerateMipmap.
+                Mipmaps = [new Mipmap2D(sourceImage)];
+                AutoGenerateMipmaps = true;
                 Resizable = false;
                 return true;
             }
@@ -122,8 +123,9 @@ namespace XREngine.Rendering
             try
             {
                 var sourceImage = new MagickImage(fileData);
-                Mipmaps = GetMipmapsFromImage(sourceImage);
-                AutoGenerateMipmaps = false;
+                // Only upload the base mip; the GPU generates the rest via glGenerateMipmap.
+                Mipmaps = [new Mipmap2D(sourceImage)];
+                AutoGenerateMipmaps = true;
                 Resizable = false;
                 return true;
             }
@@ -976,6 +978,15 @@ namespace XREngine.Rendering
             previewImage.Resize(scaledWidth, scaledHeight);
         }
 
+        /// <summary>
+        /// Builds a full CPU mip chain from <paramref name="image"/>.
+        /// <para>
+        /// This is reserved for offline/cook-time streaming payload generation (see
+        /// <c>CreateTextureStreamingPayload</c> and <c>BuildResidentDataFromImage</c>), where the mip chain
+        /// is the persisted streamable representation. Runtime texture loads must not call this: set
+        /// <see cref="XRTexture.AutoGenerateMipmaps"/> to <c>true</c> and let the GPU generate mipmaps.
+        /// </para>
+        /// </summary>
         public static Mipmap2D[] GetMipmapsFromImage(MagickImage image)
         {
             int mipCount = Math.Max(1, GetSmallestMipmapLevel(image.Width, image.Height) + 1);
@@ -1401,17 +1412,6 @@ namespace XREngine.Rendering
 
     [field: MemoryPackIgnore]
     public event Action? Resized;
-
-        /// <summary>
-        /// Generates mipmaps from the base texture.
-        /// </summary>
-        public void GenerateMipmapsCPU()
-        {
-            if (_mipmaps is null || _mipmaps.Length <= 0)
-                return;
-
-            Mipmaps = GetMipmapsFromImage(_mipmaps[0].GetImage());
-        }
 
         /// <summary>
         /// Creates a new texture specifically for attaching to a framebuffer.

@@ -28,7 +28,6 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 Dbg("GenProgramsAndBuffers start", "Programs");
-                MakeIndexBuffers();
 
                 bool hasNoVertexShaders = (material.Data.VertexShaders.Count) == 0;
 
@@ -308,7 +307,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.InitiateLink");
                 vertexProgram.Data.AllowLink();
-                vertexProgram.PrepareLinkData();
+                vertexProgram.BeginPrepareLinkData();
                 if (!Data.Parent.GenerateAsync)
                     vertexProgram.Link();
             }

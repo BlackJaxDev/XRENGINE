@@ -96,7 +96,11 @@
     },
     "Skybox": {
       "type": "boolean",
-      "description": "Adds a skybox to the scene"
+      "description": "Adds a skybox to the scene."
+    },
+    "ProceduralSky": {
+      "type": "boolean",
+      "description": "Uses the dynamic procedural sky instead of loading the unit-test skybox texture. When enabled, the skybox syncs to the unit-test directional lights when present."
     },
     "Spline": {
       "type": "boolean",

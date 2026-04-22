@@ -9,9 +9,11 @@ namespace XREngine;
 internal sealed class EngineRuntimeSceneNodeServices : IRuntimeSceneNodeServices
 {
     public IDisposable? StartProfileScope(string scopeName)
-        => string.IsNullOrWhiteSpace(scopeName)
-            ? Engine.Profiler.Start()
-            : Engine.Profiler.Start(scopeName);
+    {
+        if (!Engine.Profiler.EnableFrameLogging)
+            return null;
+        return Engine.Profiler.Start(string.IsNullOrWhiteSpace(scopeName) ? "<unnamed>" : scopeName);
+    }
 
     public object CreateDefaultTransform()
         => new Transform();

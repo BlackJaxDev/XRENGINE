@@ -118,6 +118,7 @@ public static class NativeUIElements
 
         parent.NewChild(out UITextComponent glyph, "ToggleLabel");
         glyph.Text = string.Empty;
+        glyph.Font = FontGlyphSet.LoadDefaultUIIconFont();
         glyph.FontSize = glyphFontSize;
         glyph.Color = ColorF4.Gray;
         glyph.HorizontalAlignment = EHorizontalAlignment.Center;

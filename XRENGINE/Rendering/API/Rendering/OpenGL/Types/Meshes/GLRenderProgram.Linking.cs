@@ -305,6 +305,10 @@ namespace XREngine.Rendering.OpenGL
             private ulong _preparedHash;
             private bool _preparedIsCached;
             private BinaryProgram _preparedBinProg;
+            private GLProgramCompileLinkQueue.ShaderInput[]? _preparedCompileInputs;
+            private volatile int _linkPreparationPendingGeneration = -1;
+            private int _linkPreparationGeneration;
+            private Exception? _linkPreparationFailure;
 
             // Async binary upload state: set when a glProgramBinary call has been
             // dispatched to the shared context thread and we are waiting for completion.
@@ -344,6 +348,7 @@ namespace XREngine.Rendering.OpenGL
                 ulong hash;
                 bool isCached = false;
                 BinaryProgram binProg = default;
+                GLProgramCompileLinkQueue.ShaderInput[]? compileInputs = null;
                 using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup"))
                 {
                     using (Engine.Profiler.Start("GLRenderProgram.Link.CalcHash"))
@@ -356,10 +361,100 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
+                compileInputs = PrepareCompileInputs();
+
                 _preparedHash = hash;
                 _preparedIsCached = isCached;
                 _preparedBinProg = binProg;
+                _preparedCompileInputs = compileInputs;
+                _linkPreparationFailure = null;
                 _linkDataPrepared = true;
+            }
+
+            public void BeginPrepareLinkData()
+            {
+                if (_linkDataPrepared || IsLinked || _shaderCache.IsEmpty)
+                    return;
+
+                int generation = Volatile.Read(ref _linkPreparationGeneration);
+                if (Volatile.Read(ref _linkPreparationPendingGeneration) == generation)
+                    return;
+
+                if (!Engine.IsRenderThread)
+                {
+                    try
+                    {
+                        PrepareLinkData();
+                    }
+                    catch (Exception ex)
+                    {
+                        _linkPreparationFailure = ex;
+                    }
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(ref _linkPreparationPendingGeneration, generation, -1) != -1)
+                    return;
+
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    try
+                    {
+                        PrepareLinkData();
+                    }
+                    catch (Exception ex)
+                    {
+                        _linkPreparationFailure = ex;
+                    }
+                    finally
+                    {
+                        if (Volatile.Read(ref _linkPreparationPendingGeneration) == generation)
+                            Interlocked.CompareExchange(ref _linkPreparationPendingGeneration, -1, generation);
+                    }
+                });
+            }
+
+            private GLProgramCompileLinkQueue.ShaderInput[]? PrepareCompileInputs()
+            {
+                var shaderData = Data.Shaders;
+                if (shaderData.Count == 0)
+                    return [];
+
+                var inputs = new GLProgramCompileLinkQueue.ShaderInput[shaderData.Count];
+                for (int index = 0; index < shaderData.Count; index++)
+                {
+                    XRShader shaderDataItem = shaderData[index];
+                    if (!_shaderCache.TryGetValue(shaderDataItem, out GLShader? shader) || shader is null)
+                        return null;
+
+                    shader.PrepareCompileVariant(Data.Separable);
+                    shader.PrepareResolvedSourceVariant(Data.Separable);
+
+                    string? resolved = shader.ResolveFullSource();
+                    if (string.IsNullOrWhiteSpace(resolved))
+                        return null;
+
+                    inputs[index] = new GLProgramCompileLinkQueue.ShaderInput(
+                        resolved,
+                        GLProgramCompileLinkQueue.ToGLShaderType(shaderDataItem.Type));
+                }
+
+                return inputs;
+            }
+
+            private bool IsLinkPreparationPending
+                => Volatile.Read(ref _linkPreparationPendingGeneration) == Volatile.Read(ref _linkPreparationGeneration);
+
+            private void InvalidatePreparedLinkData()
+            {
+                Interlocked.Increment(ref _linkPreparationGeneration);
+                Volatile.Write(ref _linkPreparationPendingGeneration, -1);
+                _linkPreparationFailure = null;
+                _preparedCompileInputs = null;
+                _preparedHash = 0;
+                _preparedIsCached = false;
+                _preparedBinProg = default;
+                _linkDataPrepared = false;
             }
 
             //private static object HashLock = new();
@@ -584,6 +679,15 @@ namespace XREngine.Rendering.OpenGL
                 if (IsLinked)
                     return true;
 
+                if (IsLinkPreparationPending)
+                    return false;
+
+                if (_linkPreparationFailure is not null)
+                {
+                    Debug.OpenGLWarning($"GLRenderProgram link preparation failed for '{Data.Name ?? "unnamed"}': {_linkPreparationFailure.Message}");
+                    _linkPreparationFailure = null;
+                }
+
                 // Check for completed async binary upload from the shared context thread.
                 if (_asyncBinaryUploadPending)
                 {
@@ -779,26 +883,12 @@ namespace XREngine.Rendering.OpenGL
                             && compileQueue.IsAvailable
                             && compileQueue.CanEnqueue)
                         {
-                            var shaderData = Data.Shaders;
-                            var inputs = new GLProgramCompileLinkQueue.ShaderInput[shaderData.Count];
-                            bool allResolved = true;
-                            for (int si = 0; si < shaderData.Count; si++)
-                            {
-                                XRShader s = shaderData[si];
-                                string resolved = ResolveSourceForCompilation(s);
-                                if (string.IsNullOrWhiteSpace(resolved))
-                                {
-                                    allResolved = false;
-                                    break;
-                                }
-                                inputs[si] = new GLProgramCompileLinkQueue.ShaderInput(
-                                    resolved,
-                                    GLProgramCompileLinkQueue.ToGLShaderType(s.Type));
-                            }
+                            GLProgramCompileLinkQueue.ShaderInput[]? inputs = _preparedCompileInputs ?? PrepareCompileInputs();
+                            bool allResolved = inputs is { Length: > 0 };
 
                             if (allResolved)
                             {
-                                compileQueue.EnqueueCompileAndLink(bindingId, inputs);
+                                compileQueue.EnqueueCompileAndLink(bindingId, inputs!);
                                 _asyncCompileLinkPending = true;
                                 RegisterPendingAsyncProgram();
                                 return false;
@@ -912,6 +1002,8 @@ namespace XREngine.Rendering.OpenGL
 
             private void Value_SourceChanged()
             {
+                InvalidatePreparedLinkData();
+
                 //If the source of a shader changes, we need to relink the program.
                 //This will cause the program to be destroyed and recreated.
                 if (IsLinked)
@@ -926,6 +1018,7 @@ namespace XREngine.Rendering.OpenGL
                 //Programs can't be relinked; destroy and recreate.
                 Destroy();
                 Generate();
+                BeginPrepareLinkData();
                 Link();
             }
 
