@@ -42,6 +42,17 @@ public sealed class MaterialInspectorShaderSlotContractTests
     }
 
     [Test]
+    public void SetShader_BumpsMaterialShaderStateRevision()
+    {
+        XRMaterial material = new();
+        long initialRevision = material.ShaderStateRevision;
+
+        material.SetShader(EShaderType.Fragment, new XRShader(EShaderType.Fragment));
+
+        material.ShaderStateRevision.ShouldBeGreaterThan(initialRevision);
+    }
+
+    [Test]
     public void NormalizeShaderStages_PrefersLastAssignmentPerStage()
     {
         XRShader firstFragment = new(EShaderType.Fragment);
@@ -73,6 +84,17 @@ public sealed class MaterialInspectorShaderSlotContractTests
         inspectorSource.ShouldContain("Create##Uniform_");
         inspectorSource.ShouldContain("DrawSamplerDriveCell(material, binding)");
         inspectorSource.ShouldContain("DrawParameterDriveCell(material, param");
+    }
+
+    [Test]
+    public void UberInspector_PrefersRequestedVariantTelemetry_WhenRequestedAndActiveDiffer()
+    {
+        string uberInspectorSource = ReadWorkspaceFile("XREngine.Editor/AssetEditors/XRMaterialInspector.Uber.cs");
+
+        uberInspectorSource.ShouldContain("status.RequestedVariantHash != 0 &&");
+        uberInspectorSource.ShouldContain("status.RequestedVariantHash != status.ActiveVariantHash");
+        uberInspectorSource.ShouldContain("? status.RequestedVariantHash");
+        uberInspectorSource.ShouldContain(": status.ActiveVariantHash != 0");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

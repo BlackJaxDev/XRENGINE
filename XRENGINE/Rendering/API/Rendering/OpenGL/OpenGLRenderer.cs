@@ -2626,21 +2626,29 @@ void main()
                 return;
             }
 
-            Api.UseProgram(glProgram.BindingId);
-            glProgram.Uniform("textureSize", new Data.Vectors.IVector2((int)w, (int)h));
-            glProgram.Uniform("luminanceWeights", luminance);
+            try
+            {
+                Api.UseProgram(glProgram.BindingId);
+                glProgram.Uniform("textureSize", new Data.Vectors.IVector2((int)w, (int)h));
+                glProgram.Uniform("luminanceWeights", luminance);
 
-            SetActiveTextureUnit(0);
-            Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
-            glProgram.Uniform("inputTexture", 0);
+                SetActiveTextureUnit(0);
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                glProgram.Uniform("inputTexture", 0);
 
-            Api.BindBufferBase(GLEnum.ShaderStorageBuffer, 0, _luminanceResultBuffer);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, 0, _luminanceResultBuffer);
 
-            uint groupsX = (w + 15) / 16;
-            uint groupsY = (h + 15) / 16;
-            Api.DispatchCompute(groupsX, groupsY, 1);
+                uint groupsX = (w + 15) / 16;
+                uint groupsY = (h + 15) / 16;
+                Api.DispatchCompute(groupsX, groupsY, 1);
 
-            Api.MemoryBarrier((uint)MemoryBarrierMask.ShaderStorageBarrierBit);
+                Api.MemoryBarrier((uint)MemoryBarrierMask.ShaderStorageBarrierBit);
+            }
+            finally
+            {
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, 0, 0);
+                Api.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+            }
 
             // Async readback from result buffer
             IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);

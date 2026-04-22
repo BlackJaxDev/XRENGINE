@@ -1,5 +1,6 @@
 using Silk.NET.Vulkan;
 using System;
+using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Rendering.Vulkan;
@@ -245,6 +246,10 @@ namespace XREngine.Rendering.DLSS
                 }
                 finally
                 {
+                    if (preferences.PathsToPlugins != IntPtr.Zero)
+                        Marshal.FreeHGlobal(preferences.PathsToPlugins);
+                    if (preferences.PathToLogsAndData != IntPtr.Zero)
+                        Marshal.FreeHGlobal(preferences.PathToLogsAndData);
                     if (preferences.EngineVersion != IntPtr.Zero)
                         Marshal.FreeHGlobal(preferences.EngineVersion);
                     if (preferences.ProjectId != IntPtr.Zero)
@@ -348,14 +353,24 @@ namespace XREngine.Rendering.DLSS
 
             private static unsafe StreamlinePreferences CreatePreferences(uint* featuresToLoad, uint featureCount)
             {
+                string runtimeDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                IntPtr runtimeDirectoryPtr = Marshal.StringToHGlobalUni(runtimeDirectory);
+                IntPtr pluginPathArrayPtr = Marshal.AllocHGlobal(IntPtr.Size);
+                Marshal.WriteIntPtr(pluginPathArrayPtr, runtimeDirectoryPtr);
+
+                // Struct version must be 3 because the layout includes v2 fields
+                // (Engine/EngineVersion/ProjectId) and the v3 field (RenderApi). Sending
+                // version 1 causes slInit to return ErrorInitNotCalled because the SDK
+                // won't read past the v1 field boundary and will see uninitialized data
+                // for RenderApi. Keep in sync with sl.h Preferences kStructVersion3.
                 return new StreamlinePreferences
                 {
-                    Base = CreateBase(PreferencesStructType, 1),
+                    Base = CreateBase(PreferencesStructType, 3),
                     ShowConsole = 0,
-                    LogLevel = StreamlineLogLevel.Default,
-                    PathsToPlugins = IntPtr.Zero,
-                    NumPathsToPlugins = 0,
-                    PathToLogsAndData = IntPtr.Zero,
+                    LogLevel = StreamlineLogLevel.Verbose,
+                    PathsToPlugins = pluginPathArrayPtr,
+                    NumPathsToPlugins = 1,
+                    PathToLogsAndData = runtimeDirectoryPtr,
                     AllocateCallback = IntPtr.Zero,
                     ReleaseCallback = IntPtr.Zero,
                     LogMessageCallback = IntPtr.Zero,
@@ -909,9 +924,14 @@ namespace XREngine.Rendering.DLSS
             [Flags]
             private enum StreamlinePreferenceFlags : ulong
             {
+                // Keep in sync with sl::PreferenceFlags in sl_core_types.h.
                 DisableCommandListStateTracking = 1UL << 0,
                 DisableDebugText = 1UL << 1,
                 UseManualHooking = 1UL << 2,
+                AllowOta = 1UL << 3,
+                BypassOsVersionCheck = 1UL << 4,
+                UseDxgiFactoryProxy = 1UL << 5,
+                LoadDownloadedPlugins = 1UL << 6,
                 UseFrameBasedResourceTagging = 1UL << 7,
             }
 
@@ -993,6 +1013,7 @@ namespace XREngine.Rendering.DLSS
             {
                 public IntPtr Next;
                 public StreamlineStructType StructType;
+                // Keep in sync with sl::BaseStructure in sl_struct.h.
                 public nuint StructVersion;
             }
 

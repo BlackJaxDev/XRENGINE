@@ -515,6 +515,10 @@ public sealed class VulkanUpscaleBridge : IDisposable
 
         DestroyInteropResources();
         SidecarDeviceOwned = false;
+        // Clear the pending recreate reason so PrepareForFrame doesn't immediately re-enter
+        // the recreate branch next frame and throw the same exception. Re-entry is gated to
+        // explicit signals (resize, vendor change, snapshot refresh) via MarkNeedsRecreate.
+        _pendingRecreateReason = null;
         TransitionState(EVulkanUpscaleBridgeState.Faulted, ex.Message, log: false);
         return _state;
     }

@@ -1,5 +1,6 @@
 using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using XREngine.Rendering.Shaders;
 
@@ -43,7 +44,11 @@ namespace XREngine.Rendering.OpenGL
 
             public readonly record struct ShaderInput(string ResolvedSource, ShaderType Type);
 
-            public readonly record struct CompileResult(CompileStatus Status, string? ErrorLog);
+            public readonly record struct CompileResult(
+                CompileStatus Status,
+                string? ErrorLog,
+                double CompileMilliseconds,
+                double LinkMilliseconds);
 
             /// <summary>
             /// Queues a full compile → attach → link pipeline on the shared context thread.
@@ -56,6 +61,7 @@ namespace XREngine.Rendering.OpenGL
                 Interlocked.Increment(ref _inFlight);
                 _sharedContext.Enqueue(gl =>
                 {
+                    long compileStartTimestamp = Stopwatch.GetTimestamp();
                     uint[] shaderIds = new uint[shaders.Length];
                     bool allCompiled = true;
                     string? errorLog = null;
@@ -85,14 +91,18 @@ namespace XREngine.Rendering.OpenGL
 
                     if (!allCompiled)
                     {
-                        _completed[programId] = new CompileResult(CompileStatus.CompileFailed, errorLog);
+                        double compileMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - compileStartTimestamp);
+                        _completed[programId] = new CompileResult(CompileStatus.CompileFailed, errorLog, compileMilliseconds, 0.0);
                         return;
                     }
+
+                    double compileMillisecondsCompleted = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - compileStartTimestamp);
 
                     // Attach all compiled shaders to the program.
                     for (int i = 0; i < shaderIds.Length; i++)
                         gl.AttachShader(programId, shaderIds[i]);
 
+                    long linkStartTimestamp = Stopwatch.GetTimestamp();
                     gl.LinkProgram(programId);
                     gl.GetProgram(programId, ProgramPropertyARB.LinkStatus, out int linkStatus);
 
@@ -110,9 +120,13 @@ namespace XREngine.Rendering.OpenGL
                     // Synchronize so the linked program is usable on the main context.
                     gl.Finish();
 
+                    double linkMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - linkStartTimestamp);
+
                     _completed[programId] = new CompileResult(
                         linkStatus != 0 ? CompileStatus.Success : CompileStatus.LinkFailed,
-                        linkError);
+                        linkError,
+                        compileMillisecondsCompleted,
+                        linkMilliseconds);
                 });
             }
 
@@ -147,6 +161,9 @@ namespace XREngine.Rendering.OpenGL
                     EShaderType.Mesh => (ShaderType)0x9559,
                     _ => ShaderType.FragmentShader
                 };
+
+            private static double StopwatchTicksToMilliseconds(long ticks)
+                => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
         }
     }
 }

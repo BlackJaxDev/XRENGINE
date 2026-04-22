@@ -12,14 +12,24 @@
 //   * Weighted-Blended OIT, Per-Pixel Linked-List OIT, and Depth Peeling
 //     for order-independent transparency
 //
-// Most of the XRENGINE_UBER_DISABLE_* macros below are active for this
-// variant, stripping the stylized/rim/matcap/dissolve/etc. blocks out at
-// compile time so we only pay for what we use.
+// Feature gating is compile-time only, driven by XRENGINE_UBER_DISABLE_*
+// macros injected by UberShaderVariantBuilder from the material's authored
+// state. This file contains NO baked feature disables for hand-authored
+// materials; the per-material variant generator owns that decision. The
+// only source-level feature cascade is the XRENGINE_UBER_IMPORT_MATERIAL
+// pipeline axis below, which trims the feature surface for imported glTF/
+// FBX materials that never bind those uniforms.
 // =============================================================================
 
 #version 450 core
 
 #define XRENGINE_UBER_MVP_FRAGMENT 1
+
+// Pipeline-axis cascade: imported materials ride a lean Uber variant that
+// strips features the model importer never touches, keeping GL fragment
+// uniform pressure below older-driver register budgets and giving the
+// variant cache a single canonical "import" shape.
+#ifdef XRENGINE_UBER_IMPORT_MATERIAL
 #define XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS 1
 #define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1
 #define XRENGINE_UBER_DISABLE_SHADOW_MASKS 1
@@ -33,10 +43,6 @@
 #define XRENGINE_UBER_DISABLE_SUBSURFACE 1
 #define XRENGINE_UBER_DISABLE_DISSOLVE 1
 #define XRENGINE_UBER_DISABLE_PARALLAX 1
-
-// When materials come from an external import path (glTF/FBX), a handful of
-// engine-specific features don't map cleanly, so disable them as well.
-#ifdef XRENGINE_UBER_IMPORT_MATERIAL
 #define XRENGINE_UBER_DISABLE_MATERIAL_AO 1
 #define XRENGINE_UBER_DISABLE_EMISSION 1
 #define XRENGINE_UBER_DISABLE_MATCAP 1
@@ -341,8 +347,6 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
 #ifdef XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS
     return color;
 #else
-    if (_MainColorAdjustToggle < 0.5) return color;
-    
     // Sample adjustment mask
     vec2 adjustUV = transformUV(getUV(_MainColorAdjustTextureUV, mesh), _MainColorAdjustTexture_ST);
     adjustUV = panUV(adjustUV, _MainColorAdjustTexturePan, u_Time);
@@ -639,11 +643,6 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     return baseColor * (light.color * saturate(light.nDotL) + light.indirectColor);
 #else
-    // Artist flag to bypass all shading (pure unlit * light color).
-    if (_ShadingEnabled < 0.5) {
-        return baseColor * (light.color + light.indirectColor);
-    }
-    
     // Sample directional light shadow map
     float shadowMapFactor = sampleShadowMap(mesh.worldPos, normal, light.nDotL);
     
@@ -756,8 +755,6 @@ vec3 calculateEmission(ToonMesh mesh, ToonLight light) {
 #ifdef XRENGINE_UBER_DISABLE_EMISSION
     return vec3(0.0);
 #else
-    if (_EnableEmission < 0.5) return vec3(0.0);
-    
     vec2 emissionUV = transformUV(getUV(_EmissionMapUV, mesh), _EmissionMap_ST);
     emissionUV = panUV(emissionUV, _EmissionMapPan, u_Time);
     
@@ -783,8 +780,6 @@ vec3 calculateMatcap(ToonMesh mesh, vec3 normal, ToonLight light, inout vec3 emi
 #ifdef XRENGINE_UBER_DISABLE_MATCAP
     return vec3(0.0);
 #else
-    if (_MatcapEnable < 0.5) return vec3(0.0);
-    
     // Calculate matcap UV based on view-space normal
     vec3 viewNormal = normalize(mat3(u_ViewMatrix) * normal);
     
@@ -838,8 +833,6 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
 #ifdef XRENGINE_UBER_DISABLE_RIM_LIGHTING
     return vec3(0.0);
 #else
-    if (_EnableRimLighting < 0.5) return vec3(0.0);
-    
     float nDotV = saturate(dot(normal, mesh.viewDir));
     
     float rim;
@@ -935,7 +928,7 @@ void main() {
     // discards fragments whose ray steps off the base UV rectangle so the
     // displaced surface also looks correct at grazing angles.
 #ifndef XRENGINE_UBER_DISABLE_PARALLAX
-    if (_EnableParallax > 0.5) {
+    {
         int parallaxMode = int(_ParallaxMode);
         float parallaxValid = 1.0;
         vec2 parallaxUV = applyParallaxWithValidity(mesh.uv[0], mesh.worldPos, mesh.viewDir, mesh.TBN, parallaxMode, parallaxValid);
@@ -973,10 +966,8 @@ void main() {
     // Dissolve may rewrite baseColor/emission/alpha and can discard entirely
     // for fully-dissolved fragments.
 #ifndef XRENGINE_UBER_DISABLE_DISSOLVE
-    if (_EnableDissolve > 0.5) {
-        if (applyDissolve(mesh.uv[0], mesh.worldPos, mesh.localPos, fragData.baseColor, fragData.emission, fragData.alpha)) {
-            discard;
-        }
+    if (applyDissolve(mesh.uv[0], mesh.worldPos, mesh.localPos, fragData.baseColor, fragData.emission, fragData.alpha)) {
+        discard;
     }
 #endif
 
@@ -994,7 +985,7 @@ void main() {
     // Detail textures run before lighting so shading responds to the detail-
     // modulated albedo rather than tinting an already-lit result.
 #ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
-    if (_DetailEnabled > 0.5) {
+    {
         vec2 detailUV = transformUV(mesh.uv[0], _DetailTex_ST);
         detailUV = panUV(detailUV, _DetailTexPan, u_Time);
         vec3 detailColor = texture(_DetailTex, detailUV).rgb * _DetailTint + _DetailBrightness;
@@ -1018,14 +1009,12 @@ void main() {
     // ---- 7. Feature overlays (back face, SSS, matcap, rim, etc.) ----------
     // Separate material for the back side of double-sided geometry.
 #ifndef XRENGINE_UBER_DISABLE_BACKFACE
-    if (_EnableBackFace > 0.5) {
-        if (mesh.isFrontFace < 0.0) {
-            vec4 backTex = texture(_BackFaceTexture, mesh.uv[0]);
-            vec3 backColor = mix(_BackFaceColor.rgb, backTex.rgb * _BackFaceColor.rgb, saturate(_BackFaceBlendMode));
-            fragData.baseColor = mix(fragData.baseColor, backColor, _BackFaceColor.a);
-            fragData.alpha = clamp(fragData.alpha * _BackFaceAlpha, 0.0, 1.0);
-            fragData.emission += backColor * _BackFaceEmission;
-        }
+    if (mesh.isFrontFace < 0.0) {
+        vec4 backTex = texture(_BackFaceTexture, mesh.uv[0]);
+        vec3 backColor = mix(_BackFaceColor.rgb, backTex.rgb * _BackFaceColor.rgb, saturate(_BackFaceBlendMode));
+        fragData.baseColor = mix(fragData.baseColor, backColor, _BackFaceColor.a);
+        fragData.alpha = clamp(fragData.alpha * _BackFaceAlpha, 0.0, 1.0);
+        fragData.emission += backColor * _BackFaceEmission;
     }
 #endif
     
@@ -1036,7 +1025,11 @@ void main() {
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
 #else
-    bool useStylizedPrimaryLighting = _ShadingEnabled > 0.5 && _LightingMode != 6;
+    // _LightingMode == 6 is Realistic (plain Lambert) which is equivalent to
+    // the PBR path; skip the stylized dispatch in that case so the primary
+    // directional is lit through the shared PBR BRDF rather than a redundant
+    // stylized wrapper.
+    bool useStylizedPrimaryLighting = _LightingMode != 6;
     if (useStylizedPrimaryLighting) {
         fragData.finalColor = applyShading(fragData.baseColor, light, mesh, mesh.worldNormal);
         fragData.finalColor += calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, true);
@@ -1049,7 +1042,7 @@ void main() {
     // times a view-aligned falloff, modulated by a thickness map. Produces
     // the classic "glow through ears / leaves" look.
 #ifndef XRENGINE_UBER_DISABLE_SUBSURFACE
-    if (_EnableSSS > 0.5) {
+    {
         float backLight = max(0.0, dot(-mesh.worldNormal, light.direction));
         float viewWrap = pow(max(0.0, dot(mesh.viewDir, -light.direction)), max(_SSSPower, 0.001));
         float thickness = texture(_SSSThicknessMap, mesh.uv[0]).r;
@@ -1061,9 +1054,8 @@ void main() {
     
     // Matcap compositing — can replace, multiply, and/or add independently.
 #ifndef XRENGINE_UBER_DISABLE_MATCAP
-    vec3 matcapColor = calculateMatcap(mesh, mesh.worldNormal, light, fragData.emission);
-
-    if (_MatcapEnable > 0.5) {
+    {
+        vec3 matcapColor = calculateMatcap(mesh, mesh.worldNormal, light, fragData.emission);
         fragData.finalColor = mix(fragData.finalColor, matcapColor, _MatcapReplace);
         fragData.finalColor *= mix(vec3(1.0), matcapColor, _MatcapMultiply);
         fragData.finalColor += matcapColor * _MatcapAdd;
@@ -1080,7 +1072,7 @@ void main() {
     // Sparkle: hashed noise gated by view angle and an optional mask,
     // scrolling over time. Contributes to both color and emission.
 #ifndef XRENGINE_UBER_DISABLE_GLITTER
-    if (_EnableGlitter > 0.5) {
+    {
         vec2 glitterUV = mesh.uv[0] * max(_GlitterDensity, 0.001);
         float glitterNoise = hash21(floor(glitterUV) + vec2(u_Time * _GlitterSpeed));
         float nDotV = saturate(dot(mesh.worldNormal, mesh.viewDir));
@@ -1095,7 +1087,7 @@ void main() {
     
     // Flipbook (sprite-sheet) additive overlay.
 #ifndef XRENGINE_UBER_DISABLE_FLIPBOOK
-    if (_EnableFlipbook > 0.5 && _FlipbookBlendMode > 0.5) {
+    if (_FlipbookBlendMode > 0.5) {
         vec4 flipbookColor = simpleFlipbook(
             _FlipbookTexture,
             mesh.uv[0],

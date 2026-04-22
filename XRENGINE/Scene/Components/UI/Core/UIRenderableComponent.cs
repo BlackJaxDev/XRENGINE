@@ -85,7 +85,7 @@ namespace XREngine.Rendering.UI
             {
                 if (diagLog)
                 {
-                    //Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': parentCanvasActive={tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy} visibleInHierarchy={tfm.IsVisibleInHierarchy} parentCanvas={tfm.ParentCanvas?.SceneNode?.Name}");
+                    Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': parentCanvasActive={tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy} visibleInHierarchy={tfm.IsVisibleInHierarchy} parentCanvas={tfm.ParentCanvas?.SceneNode?.Name}");
                     _shouldRender2DDiagCount++;
                 }
                 return false;
@@ -96,7 +96,7 @@ namespace XREngine.Rendering.UI
             {
                 if (diagLog)
                 {
-                    //Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': canvas is null");
+                    Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': canvas is null");
                     _shouldRender2DDiagCount++;
                 }
                 return false;
@@ -114,7 +114,7 @@ namespace XREngine.Rendering.UI
                 {
                     if (diagLog)
                     {
-                        //Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': drawSpace={canvas.DrawSpace} effectiveOffscreen={canvasComp?.UseOffscreenRenderingForNonScreenSpaces()} preferOffscreen={canvasComp?.PreferOffscreenRenderingForNonScreenSpaces} canvasComp={canvasComp is not null}");
+                        Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': drawSpace={canvas.DrawSpace} effectiveOffscreen={canvasComp?.UseOffscreenRenderingForNonScreenSpaces()} preferOffscreen={canvasComp?.PreferOffscreenRenderingForNonScreenSpaces} canvasComp={canvasComp is not null}");
                         _shouldRender2DDiagCount++;
                     }
                     return false;
@@ -137,7 +137,7 @@ namespace XREngine.Rendering.UI
 
             if (diagLog)
             {
-                //Debug.UI($"[ShouldRender2D] ACCEPTED {GetType().Name} on '{SceneNode?.Name}': drawSpace={canvas.DrawSpace} mesh={Mesh is not null} renderPass={RenderCommand2D.RenderPass}");
+                Debug.UI($"[ShouldRender2D] ACCEPTED {GetType().Name} on '{SceneNode?.Name}': drawSpace={canvas.DrawSpace} mesh={Mesh is not null} renderPass={RenderCommand2D.RenderPass} instances={RenderCommand2D.Instances}");
                 _shouldRender2DDiagCount++;
             }
 

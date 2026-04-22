@@ -44,13 +44,15 @@ namespace XREngine.Rendering
         }
 
     // Cache of graphics programs created per material (combined program MVP)
-    private readonly struct MaterialProgramCache(XRRenderProgram program, XRShader? generatedVertexShader)
+    private readonly struct MaterialProgramCache(XRRenderProgram program, XRShader? generatedVertexShader, long shaderStateRevision)
         {
         public readonly XRRenderProgram Program = program;
         public readonly XRShader? GeneratedVertexShader = generatedVertexShader;
+        public readonly long ShaderStateRevision = shaderStateRevision;
         }
 
         private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
+        private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _pendingMaterialPrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
         private XRDataBuffer? _indirectTextRotationsBuffer;
@@ -1574,10 +1576,57 @@ namespace XREngine.Rendering
             GpuDebug($"=== EnsureCombinedProgram: materialID={materialID} ===");
             
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
-            if (_materialPrograms.TryGetValue((materialID, rendererKey), out var existing))
+            long shaderStateRevision = material.ShaderStateRevision;
+            (uint materialId, int rendererKey) cacheKey = (materialID, rendererKey);
+
+            if (_materialPrograms.TryGetValue(cacheKey, out var existing))
             {
-                existing.Program.Link();
-                return existing.Program;
+                if (existing.ShaderStateRevision == shaderStateRevision)
+                {
+                    existing.Program.Link();
+                    return existing.Program;
+                }
+
+                if (_pendingMaterialPrograms.TryGetValue(cacheKey, out var pending) &&
+                    pending.ShaderStateRevision == shaderStateRevision)
+                {
+                    pending.Program.Link();
+                    if (IsProgramReadyForCurrentRenderer(pending.Program))
+                    {
+                        _pendingMaterialPrograms.Remove(cacheKey);
+                        _materialPrograms[cacheKey] = pending;
+                        DestroyMaterialProgramCache(existing);
+                        return pending.Program;
+                    }
+
+                    return existing.Program;
+                }
+
+                if (_pendingMaterialPrograms.Remove(cacheKey, out var stalePending))
+                    DestroyMaterialProgramCache(stalePending);
+
+                GpuDebug(
+                    "Program cache stale for material '{0}': cached shader revision {1}, current {2}.",
+                    material.Name ?? "<unnamed>",
+                    existing.ShaderStateRevision,
+                    shaderStateRevision);
+            }
+            else if (_pendingMaterialPrograms.TryGetValue(cacheKey, out var pendingOnly))
+            {
+                if (pendingOnly.ShaderStateRevision == shaderStateRevision)
+                {
+                    pendingOnly.Program.Link();
+                    if (IsProgramReadyForCurrentRenderer(pendingOnly.Program))
+                    {
+                        _pendingMaterialPrograms.Remove(cacheKey);
+                        _materialPrograms[cacheKey] = pendingOnly;
+                    }
+
+                    return pendingOnly.Program;
+                }
+
+                _pendingMaterialPrograms.Remove(cacheKey);
+                DestroyMaterialProgramCache(pendingOnly);
             }
 
             GpuDebug($"Creating new program for material: {material.Name ?? "<unnamed>"}");
@@ -1633,10 +1682,44 @@ namespace XREngine.Rendering
                 return null;
             }
 
-            _materialPrograms[(materialID, rendererKey)] = new MaterialProgramCache(program, generatedVertexShader);
+            MaterialProgramCache cacheEntry = new(program, generatedVertexShader, shaderStateRevision);
+            if (IsProgramReadyForCurrentRenderer(program) || !_materialPrograms.TryGetValue(cacheKey, out existing))
+            {
+                if (_pendingMaterialPrograms.Remove(cacheKey, out var stalePending))
+                    DestroyMaterialProgramCache(stalePending);
+
+                if (existing.Program is not null && existing.ShaderStateRevision != shaderStateRevision)
+                    DestroyMaterialProgramCache(existing);
+
+                _materialPrograms[cacheKey] = cacheEntry;
+                return program;
+            }
+
+            if (_pendingMaterialPrograms.Remove(cacheKey, out var previousPending))
+                DestroyMaterialProgramCache(previousPending);
+
+            _pendingMaterialPrograms[cacheKey] = cacheEntry;
             //Debug.Out("Program cached");
             
-            return program;
+            return existing.Program;
+        }
+
+        private static bool IsProgramReadyForCurrentRenderer(XRRenderProgram program)
+        {
+            if (AbstractRenderer.Current is not OpenGLRenderer glRenderer)
+                return true;
+
+            OpenGLRenderer.GLRenderProgram? glProgram = program.APIWrappers
+                .OfType<OpenGLRenderer.GLRenderProgram>()
+                .FirstOrDefault(wrapper => ReferenceEquals(wrapper.Owner, glRenderer));
+
+            return glProgram?.IsLinked == true;
+        }
+
+        private static void DestroyMaterialProgramCache(MaterialProgramCache cache)
+        {
+            cache.Program.Destroy();
+            cache.GeneratedVertexShader?.Destroy();
         }
 
         private XRShader? CreateGpuIndirectVertexShader(XRMeshRenderer? vaoRenderer, bool emitTransformId, bool emitLodTransitionRole)
@@ -2948,8 +3031,11 @@ namespace XREngine.Rendering
         {
             _indirectCompProgram?.Destroy();
             foreach (var cache in _materialPrograms.Values)
-                cache.Program.Destroy();
+                DestroyMaterialProgramCache(cache);
             _materialPrograms.Clear();
+            foreach (var cache in _pendingMaterialPrograms.Values)
+                DestroyMaterialProgramCache(cache);
+            _pendingMaterialPrograms.Clear();
             _indirectTextTransformsBuffer?.Destroy();
             _indirectTextTexCoordsBuffer?.Destroy();
             _indirectTextRotationsBuffer?.Destroy();

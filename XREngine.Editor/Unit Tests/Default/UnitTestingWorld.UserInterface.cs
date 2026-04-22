@@ -43,8 +43,14 @@ public static partial class EditorUnitTests
         private static XRTexture? _vrStereoPreviewLastRight;
         private static bool _vrStereoPreviewRefreshHooked;
 
+        private static int _tickFpsDiagCount = 0;
         private static void TickFPS(UITextComponent t)
         {
+            if (_tickFpsDiagCount < 5)
+            {
+                _tickFpsDiagCount++;
+                XREngine.Debug.Out($"[FpsTextDiag] TickFPS fired #{_tickFpsDiagCount} on '{t.SceneNode?.Name}' textLen={t.Text?.Length ?? -1} instances2D={t.RenderCommand2D.Instances} mesh={(t.Mesh is not null)} disableBatching={t.DisableBatching} parentCanvasActive={(t.BoundableTransform.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false)}");
+            }
             // Only sample once per actual render frame to avoid duplicate stale samples
             long renderTimestampTicks = Engine.Time.Timer.Render.LastTimestampTicks;
             if (renderTimestampTicks != _lastSampledRenderTimestampTicks)

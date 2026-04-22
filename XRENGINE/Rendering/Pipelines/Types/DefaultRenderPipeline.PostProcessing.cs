@@ -1685,6 +1685,18 @@ public partial class DefaultRenderPipeline
         materialProgram.Uniform("FxaaTexelStep", texelStep);
     }
 
+    /// <summary>
+    /// Pushes volumetric-fog + primary directional shadow uniforms to the
+    /// half-resolution scatter quad pass. The <see cref="EUniformRequirements.Lights"/>
+    /// engine-uniform plumbing handles ShadowMap / ShadowMapArray sampler binds.
+    /// </summary>
+    private void VolumetricFogHalfScatterFBO_SettingUniforms(XRRenderProgram materialProgram)
+    {
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var volumetricFog = GetSettings<VolumetricFogSettings>(state);
+        (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
+    }
+
     private static TemporalResolveSettings ResolveTemporalSettings(PipelinePostProcessState? state)
     {
         var stage = state?.GetStage(TemporalAntiAliasingStageKey);

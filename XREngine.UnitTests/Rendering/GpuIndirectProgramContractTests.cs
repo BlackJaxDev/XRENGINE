@@ -20,6 +20,19 @@ public sealed class GpuIndirectProgramContractTests
     }
 
     [Test]
+    public void IndirectProgramCache_KeepsLastKnownGoodUntilReplacementLinks()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/HybridRenderingManager.cs");
+
+        source.ShouldContain("private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _pendingMaterialPrograms = [];");
+        source.ShouldContain("pending.ShaderStateRevision == shaderStateRevision");
+        source.ShouldContain("if (IsProgramReadyForCurrentRenderer(pending.Program))");
+        source.ShouldContain("return existing.Program;");
+        source.ShouldContain("program.APIWrappers");
+        source.ShouldContain("glProgram?.IsLinked == true");
+    }
+
+    [Test]
     public void OpenGlIndirectBinding_SkipsUnlinkedPrograms_And_UsePollsLinkState()
     {
         string rendererSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs");

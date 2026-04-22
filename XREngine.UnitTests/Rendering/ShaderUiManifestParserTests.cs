@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
@@ -86,5 +88,68 @@ public sealed class ShaderUiManifestParserTests
         manifest.Properties.Count.ShouldBe(1);
         manifest.Properties[0].Tooltip.ShouldBe("Alpha cutoff threshold");
         manifest.Properties[0].DefaultMode.ShouldBe(EShaderUiPropertyMode.Static);
+    }
+
+    [Test]
+    public void Parse_UberSourcePath_MissingExplicitPropertyMetadata_ReportsWarning()
+    {
+        const string source = """
+            #version 450 core
+            //@feature(id="glitter", name="Glitter", default=off)
+            #ifndef XRENGINE_UBER_DISABLE_GLITTER
+            uniform float _GlitterBrightness;
+            #endif
+            """;
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source, @"Build\CommonAssets\Shaders\Uber\uniforms.glsl");
+
+        manifest.ValidationIssues.ShouldContain(x =>
+            x.Severity == EShaderUiValidationSeverity.Warning &&
+            x.Message.Contains("_GlitterBrightness", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Parse_UberHelperUniforms_DoNotRequireExplicitPropertyMetadata()
+    {
+        const string source = """
+            #version 450 core
+            //@feature(id="glitter", name="Glitter", default=off)
+            #ifndef XRENGINE_UBER_DISABLE_GLITTER
+            uniform float _EnableGlitter;
+            uniform vec4 _GlitterMask_ST;
+            #endif
+            """;
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source, @"Build\CommonAssets\Shaders\Uber\uniforms.glsl");
+
+        manifest.ValidationIssues.ShouldNotContain(x => x.Message.Contains("_EnableGlitter", StringComparison.Ordinal));
+        manifest.ValidationIssues.ShouldNotContain(x => x.Message.Contains("_GlitterMask_ST", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Parse_RealUberUniformSurface_HasNoMissingMetadataWarnings()
+    {
+        string path = Path.Combine(ResolveRepoRoot(), "Build", "CommonAssets", "Shaders", "Uber", "uniforms.glsl");
+        string source = File.ReadAllText(path);
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source, path);
+
+        manifest.ValidationIssues.ShouldBeEmpty();
+        manifest.PropertyLookup["_MainVertexColoringEnabled"].HasExplicitMetadata.ShouldBeTrue();
+        manifest.PropertyLookup["_LightingMapMode"].HasExplicitMetadata.ShouldBeTrue();
+    }
+
+    private static string ResolveRepoRoot()
+    {
+        string? directory = TestContext.CurrentContext.TestDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            if (File.Exists(Path.Combine(directory, "XRENGINE.slnx")))
+                return directory;
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root from test directory.");
     }
 }

@@ -93,12 +93,37 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
         string uniforms = LoadShaderSource(Path.Combine("Uber", "uniforms.glsl"));
 
+        // MVP marker is the only unconditional #define in the canonical source.
         source.ShouldContain("#define XRENGINE_UBER_MVP_FRAGMENT 1");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_DETAIL_TEXTURES 1");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_DISSOLVE 1");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_PARALLAX 1");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_SUBSURFACE 1");
+
+        // Canonical source must NOT bake in any feature-disable macros for
+        // hand-authored materials. Feature gating is driven by authored state
+        // via UberShaderVariantBuilder, not hard-coded in the shader. The
+        // only legitimate disable cascade lives inside the
+        // #ifdef XRENGINE_UBER_IMPORT_MATERIAL block for the import pipeline
+        // axis.
+        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1\n");
+        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_DETAIL_TEXTURES 1\n");
+        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_DISSOLVE 1\n");
+        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_PARALLAX 1\n");
+        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_SUBSURFACE 1\n");
+        source.ShouldContain("#ifdef XRENGINE_UBER_IMPORT_MATERIAL");
+
+        // Runtime feature-toggle uniforms must not reappear: feature gating
+        // is compile-time only.
+        source.ShouldNotContain("_EnableEmission");
+        source.ShouldNotContain("_MatcapEnable");
+        source.ShouldNotContain("_EnableRimLighting");
+        source.ShouldNotContain("_EnableParallax");
+        source.ShouldNotContain("_EnableDissolve");
+        source.ShouldNotContain("_DetailEnabled");
+        source.ShouldNotContain("_EnableBackFace");
+        source.ShouldNotContain("_EnableSSS");
+        source.ShouldNotContain("_EnableGlitter");
+        source.ShouldNotContain("_EnableFlipbook");
+        source.ShouldNotContain("_ShadingEnabled");
+        source.ShouldNotContain("_MainColorAdjustToggle");
+
         source.ShouldNotContain("#include \"pbr.glsl\"");
         source.ShouldContain("struct PBRData {");
 
@@ -107,6 +132,9 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         uniforms.ShouldContain("#ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES");
         uniforms.ShouldContain("#ifndef XRENGINE_UBER_DISABLE_DISSOLVE");
         uniforms.ShouldContain("#ifndef XRENGINE_UBER_DISABLE_PARALLAX");
+        uniforms.ShouldNotContain("uniform float _EnableEmission;");
+        uniforms.ShouldNotContain("uniform float _MatcapEnable;");
+        uniforms.ShouldNotContain("uniform float _ShadingEnabled;");
     }
 
     [Test]

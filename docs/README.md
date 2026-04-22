@@ -26,6 +26,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 ## Rendering
 - [Default Render Pipeline Notes (Known Issues & Invariants)](architecture/rendering/default-render-pipeline-notes.md)
 - [Rendering Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
+- [Uber Shader Varianting](architecture/rendering/uber-shader-varianting.md)
 - [CoACD Integration](architecture/CoACD.md)
 - [GPU Render Pass Pipeline](work/design/gpu-render-pass-pipeline.md)
 - [DDGI Integration Plan](work/design/ddgi-integration-plan.md)

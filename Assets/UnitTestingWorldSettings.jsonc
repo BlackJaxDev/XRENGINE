@@ -64,7 +64,7 @@
   // Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path.
   "DynamicWaterQuad": false,
   // Adds a demo volumetric fog volume to the default unit-testing world and enables volumetric fog on the unit-test camera(s).
-  "InitializeVolumetricFog": false,
+  "InitializeVolumetricFog": true,
   // Forces the debug opaque render pipeline instead of the default pipeline.
   "ForceDebugOpaquePipeline": false,
 

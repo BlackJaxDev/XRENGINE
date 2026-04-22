@@ -88,7 +88,8 @@ namespace XREngine.Rendering
         string? Range,
         string? EnumOptions,
         EShaderUiPropertyMode DefaultMode,
-        bool HasExplicitMetadata);
+        bool HasExplicitMetadata,
+        int SourceLine);
 
     public sealed record ShaderUiValidationIssue(
         EShaderUiValidationSeverity Severity,
@@ -97,7 +98,7 @@ namespace XREngine.Rendering
 
     public static partial class ShaderUiManifestParser
     {
-        public static ShaderUiManifest Parse(string? source)
+        public static ShaderUiManifest Parse(string? source, string? sourcePath = null)
         {
             if (string.IsNullOrWhiteSpace(source))
                 return ShaderUiManifest.Empty;
@@ -181,7 +182,8 @@ namespace XREngine.Rendering
                     range,
                     enumOptions,
                     mode,
-                    hasExplicitPropertyMetadata));
+                    hasExplicitPropertyMetadata,
+                    lineNumber));
 
                 state.PendingProperty = null;
                 state.PendingTooltip = null;
@@ -189,6 +191,7 @@ namespace XREngine.Rendering
 
             FinalizePendingAnnotations(state, validation, lines.Length);
             ValidateFeatureGraph(featuresById, validation);
+            ValidateUberCoverage(sourcePath, featuresById, properties, validation);
 
             ShaderUiFeature[] features = featuresById.Values
                 .OrderBy(static x => x.SortOrder)
@@ -250,6 +253,39 @@ namespace XREngine.Rendering
 
             foreach (FeatureBuilder feature in featuresById.Values)
                 DetectCycles(feature, featuresById, validation, visiting, visited);
+        }
+
+        private static void ValidateUberCoverage(
+            string? sourcePath,
+            Dictionary<string, FeatureBuilder> featuresById,
+            IReadOnlyList<ShaderUiProperty> properties,
+            List<ShaderUiValidationIssue> validation)
+        {
+            if (!IsUberAnnotationSource(sourcePath))
+                return;
+
+            foreach (FeatureBuilder feature in featuresById.Values)
+            {
+                if (!feature.HasExplicitMetadata &&
+                    feature.GuardMacro?.StartsWith("XRENGINE_UBER_DISABLE_", StringComparison.Ordinal) == true)
+                {
+                    validation.Add(new(
+                        EShaderUiValidationSeverity.Warning,
+                        $"Uber feature '{feature.Id}' relies on inferred guard metadata. Add an explicit //@feature annotation.",
+                        feature.SourceLine));
+                }
+            }
+
+            foreach (ShaderUiProperty property in properties)
+            {
+                if (!property.HasExplicitMetadata && ShouldRequireExplicitUberPropertyMetadata(property))
+                {
+                    validation.Add(new(
+                        EShaderUiValidationSeverity.Warning,
+                        $"Uber property '{property.Name}' is missing explicit //@property metadata for the custom inspector.",
+                        property.SourceLine));
+                }
+            }
         }
 
         private static void DetectCycles(
@@ -497,6 +533,33 @@ namespace XREngine.Rendering
 
         private static string NormalizeNewlines(string source)
             => source.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+
+        private static bool IsUberAnnotationSource(string? sourcePath)
+            => !string.IsNullOrWhiteSpace(sourcePath) &&
+               sourcePath.Replace('\\', '/').Contains("/Shaders/Uber/", StringComparison.OrdinalIgnoreCase);
+
+        private static bool ShouldRequireExplicitUberPropertyMetadata(ShaderUiProperty property)
+        {
+            if (!(property.Name.StartsWith("_", StringComparison.Ordinal) || string.Equals(property.Name, "AlphaCutoff", StringComparison.Ordinal)))
+                return false;
+
+            if (property.Name is "_LightingColorMode" or "_LightingDirectionMode" or "_StylizedSpecular" or "_MatcapNormal" or "_FlipbookFrame")
+                return false;
+
+            if (property.Name.EndsWith("_ST", StringComparison.Ordinal) ||
+                property.Name.EndsWith("Pan", StringComparison.Ordinal) ||
+                property.Name.EndsWith("UV", StringComparison.Ordinal) ||
+                property.Name.EndsWith("ThemeIndex", StringComparison.Ordinal) ||
+                property.Name.StartsWith("_Enable", StringComparison.Ordinal) ||
+                property.Name.EndsWith("Enabled", StringComparison.Ordinal) ||
+                property.Name.EndsWith("Toggle", StringComparison.Ordinal) ||
+                string.Equals(property.Name, "_Mode", StringComparison.Ordinal) ||
+                string.Equals(property.Name, "_AlphaForceOpaque", StringComparison.Ordinal) ||
+                string.Equals(property.Name, "_AlphaMod", StringComparison.Ordinal))
+                return false;
+
+            return true;
+        }
 
         private static int ParseArraySize(string value)
             => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : 0;

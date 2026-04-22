@@ -637,7 +637,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 5)
+        int expectedCount = Stereo ? 5 : 6;
+        if (textures.Count != expectedCount)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(HDRSceneTextureName))
@@ -645,6 +646,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(StencilViewTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(AutoExposureTextureName)))
+            return true;
+
+        if (!Stereo && !ReferenceEquals(textures[5], GetTexture<XRTexture>(VolumetricFogColorTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -655,6 +659,169 @@ public partial class DefaultRenderPipeline : RenderPipeline
             Path.Combine(SceneShaderPath, PostProcessShaderName()),
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateVolumetricFogHalfDepthQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(DepthViewTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogHalfDepthDownsample.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateVolumetricFogHalfDepthFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateVolumetricFogHalfScatterQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogScatter.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateVolumetricFogHalfScatterFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogHalfScatterTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateVolumetricFogUpscaleQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 3)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(VolumetricFogHalfScatterTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogUpscale.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateVolumetricFogUpscaleFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogColorTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    // --- Half-internal size helpers ---
+    // Mirror XRRenderPipeline.{GetDesiredFBOSizeInternal,NeedsRecreateTextureInternalSize,
+    // ResizeTextureInternalSize} for the half-resolution volumetric fog chain.
+    // Kept local so they don't pollute the base class.
+    private static (uint x, uint y) GetDesiredFBOSizeHalfInternal()
+        => (System.Math.Max(1u, InternalWidth / 2u), System.Math.Max(1u, InternalHeight / 2u));
+
+    private static bool NeedsRecreateTextureHalfInternalSize(XRTexture t)
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                return t2d.Width != w || t2d.Height != h;
+            case XRTexture2DArray t2da:
+                return t2da.Width != w || t2da.Height != h;
+            case XRTexture2DView:
+            case XRTexture2DArrayView:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    private static void ResizeTextureHalfInternalSize(XRTexture t)
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                t2d.Resize(w, h);
+                break;
+            case XRTexture2DArray t2da:
+                t2da.Resize(w, h);
+                break;
+        }
     }
 
     private bool NeedsRecreateDeferredGBufferFbo(XRFrameBuffer fbo)
@@ -761,6 +928,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string PostProcessFBOName = "PostProcessFBO";
     public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
+    public const string VolumetricFogColorTextureName = "VolumetricFogColor";
+    public const string VolumetricFogHalfDepthTextureName = "VolumetricFogHalfDepth";
+    public const string VolumetricFogHalfScatterTextureName = "VolumetricFogHalfScatter";
+    public const string VolumetricFogHalfDepthQuadFBOName = "VolumetricFogHalfDepthQuadFBO";
+    public const string VolumetricFogHalfDepthFBOName = "VolumetricFogHalfDepthFBO";
+    public const string VolumetricFogHalfScatterQuadFBOName = "VolumetricFogHalfScatterQuadFBO";
+    public const string VolumetricFogHalfScatterFBOName = "VolumetricFogHalfScatterFBO";
+    public const string VolumetricFogUpscaleQuadFBOName = "VolumetricFogUpscaleQuadFBO";
+    public const string VolumetricFogUpscaleFBOName = "VolumetricFogUpscaleFBO";
     public const string FxaaFBOName = "FxaaFBO";
     public const string SmaaFBOName = "SmaaFBO";
     public const string UserInterfaceFBOName = "UserInterfaceFBO";
