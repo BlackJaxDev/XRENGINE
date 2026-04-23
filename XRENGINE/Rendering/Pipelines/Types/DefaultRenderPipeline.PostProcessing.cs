@@ -1694,6 +1694,15 @@ public partial class DefaultRenderPipeline
     }
 
     private static bool _loggedVolumetricFogScatterLightsOnce;
+    private static bool _loggedVolumetricFogScatterCascadeOnce;
+    private static ulong _lastVolumetricFogScatterLightsKey = ulong.MaxValue;
+
+    private void VolumetricFog_SetFragmentCameraUniforms(XRRenderProgram materialProgram)
+    {
+        var renderState = RenderingPipelineState;
+        renderState?.SceneCamera?.SetUniforms(materialProgram, true);
+        renderState?.StereoRightEyeCamera?.SetUniforms(materialProgram, false);
+    }
 
     /// <summary>
     /// Pushes volumetric-fog + primary directional shadow uniforms to the
@@ -1706,6 +1715,8 @@ public partial class DefaultRenderPipeline
     /// </summary>
     private void VolumetricFogHalfScatterFBO_SettingUniforms(XRRenderProgram materialProgram)
     {
+        VolumetricFog_SetFragmentCameraUniforms(materialProgram);
+
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         var volumetricFog = GetSettings<VolumetricFogSettings>(state);
         (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
@@ -1714,10 +1725,51 @@ public partial class DefaultRenderPipeline
         if (lights is not null)
         {
             lights.SetForwardLightingUniforms(materialProgram);
-            if (!_loggedVolumetricFogScatterLightsOnce)
+
+            // Mirror the deferred directional-light upload path used by the scene light-combine
+            // pass so the volumetric fog shader can read the primary directional light through
+            // `LightData.*` instead of the array-of-struct `DirectionalLights[0].*` path.
+            if (lights.DynamicDirectionalLights.Count > 0)
+                lights.DynamicDirectionalLights[0].SetUniforms(materialProgram);
+
+            // Diagnostic: log on transition of (dirLightCount, castsShadows, hasShadowTex) so we
+            // can tell whether the scatter pass observes a shadow-enabled directional light. Driven
+            // by the user-reported mode-8 output (red = ShadowMapEnabled false at scatter time).
+            int dirCount = lights.DynamicDirectionalLights.Count;
+            bool casts = false;
+            bool hasShadowTex = false;
+            int texCount = 0;
+            if (dirCount > 0)
             {
-                _loggedVolumetricFogScatterLightsOnce = true;
-                Debug.Out($"[VolumetricFog.Scatter] Lights upload: DirLights={lights.DynamicDirectionalLights.Count}");
+                var first = lights.DynamicDirectionalLights[0];
+                casts = first.CastsShadows;
+                texCount = first.ShadowMap?.Material?.Textures.Count ?? 0;
+                hasShadowTex = texCount > 0;
+            }
+            ulong key = ((ulong)(uint)dirCount)
+                      | ((casts ? 1UL : 0UL) << 32)
+                      | ((hasShadowTex ? 1UL : 0UL) << 33)
+                      | (((ulong)(uint)texCount) << 40);
+            if (key != _lastVolumetricFogScatterLightsKey)
+            {
+                _lastVolumetricFogScatterLightsKey = key;
+                Debug.Out($"[VolumetricFog.Scatter] Lights upload: DirLights={dirCount} CastsShadows={casts} HasShadowTex={hasShadowTex} TexCount={texCount}");
+            }
+
+            // One-shot diagnostic: dump the published cascade state of the primary directional
+            // light so we can see whether the cascade data the scatter pass is uploading is
+            // valid. If ActiveCascadeCount is 0 or the first cascade's WorldToLightSpaceMatrix
+            // is Identity, mode-11 "always white" is explained by the matrix itself being
+            // degenerate rather than by a uniform-upload drop.
+            if (!_loggedVolumetricFogScatterCascadeOnce && dirCount > 0)
+            {
+                _loggedVolumetricFogScatterCascadeOnce = true;
+                var first = lights.DynamicDirectionalLights[0];
+                int activeCascades = first.ActiveCascadeCount;
+                Debug.Out(
+                    $"[VolumetricFog.Scatter] DirLight[0] EnableCascadedShadows={first.EnableCascadedShadows} " +
+                    $"ActiveCascadeCount={activeCascades} CascadedShadowMapTexture={(first.CascadedShadowMapTexture != null ? "present" : "null")} " +
+                    $"WorldForward=({first.Transform.WorldForward.X:F3},{first.Transform.WorldForward.Y:F3},{first.Transform.WorldForward.Z:F3})");
             }
         }
         else if (!_loggedVolumetricFogScatterLightsOnce)
@@ -1726,6 +1778,9 @@ public partial class DefaultRenderPipeline
             Debug.Out("[VolumetricFog.Scatter] Lights upload skipped: RenderingWorld is null at scatter pass.");
         }
     }
+
+    private void VolumetricFogUpscaleFBO_SettingUniforms(XRRenderProgram materialProgram)
+        => VolumetricFog_SetFragmentCameraUniforms(materialProgram);
 
     private static TemporalResolveSettings ResolveTemporalSettings(PipelinePostProcessState? state)
     {

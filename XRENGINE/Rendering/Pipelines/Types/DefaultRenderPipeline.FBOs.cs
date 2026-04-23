@@ -142,7 +142,8 @@ public partial class DefaultRenderPipeline
     /// Quad FBO for the half-resolution scatter raymarch. Material binding 0
     /// is <see cref="VolumetricFogHalfDepthTextureName"/>; ShadowMap /
     /// ShadowMapArray flow via <see cref="EUniformRequirements.Lights"/>.
-    /// Settings are pushed via <see cref="VolumetricFogHalfScatterFBO_SettingUniforms"/>.
+    /// Settings and fragment-only camera uniforms are pushed via
+    /// <see cref="VolumetricFogHalfScatterFBO_SettingUniforms"/>.
     /// </summary>
     private XRFrameBuffer CreateVolumetricFogHalfScatterQuadFBO()
     {
@@ -163,7 +164,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime,
+                RequiredEngineUniforms = EUniformRequirements.Lights | EUniformRequirements.RenderTime,
             }
         };
         var fbo = new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false)
@@ -191,8 +192,9 @@ public partial class DefaultRenderPipeline
     /// Quad FBO that drives the bilateral upscale. Reads the half-res scatter,
     /// half-res depth, and full-res depth, emitting the full-resolution
     /// <see cref="VolumetricFogColorTextureName"/> consumed by PostProcess.fs.
-    /// The <c>InverseProjMatrix</c> / <c>DepthMode</c> uniforms arrive via
-    /// <see cref="EUniformRequirements.Camera"/>, so no explicit setter is needed.
+    /// Fragment-only camera uniforms are pushed via
+    /// <see cref="VolumetricFogUpscaleFBO_SettingUniforms"/> so the fullscreen
+    /// quad stays in screenspace while the shader still receives the scene camera.
     /// </summary>
     private XRFrameBuffer CreateVolumetricFogUpscaleQuadFBO()
     {
@@ -215,13 +217,14 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
-                RequiredEngineUniforms = EUniformRequirements.Camera,
             }
         };
-        return new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false)
+        var fbo = new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false)
         {
             Name = VolumetricFogUpscaleQuadFBOName
         };
+        fbo.SettingUniforms += VolumetricFogUpscaleFBO_SettingUniforms;
+        return fbo;
     }
 
     /// <summary>

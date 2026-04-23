@@ -771,11 +771,17 @@ public static partial class EditorImGuiUI
 
             var assets = Engine.Assets;
             if (assets is null)
+            {
+                FlushImGuiLayoutImmediate();
                 return Engine.WindowCloseRequestResult.Allow;
+            }
 
             var dirtyAssets = assets.DirtyAssets.Values.ToArray();
             if (dirtyAssets.Length == 0)
+            {
+                FlushImGuiLayoutImmediate();
                 return Engine.WindowCloseRequestResult.Allow;
+            }
 
             BeginClosePrompt(window, dirtyAssets);
             return Engine.WindowCloseRequestResult.Defer;
@@ -944,6 +950,7 @@ public static partial class EditorImGuiUI
             if (window?.Window is null)
                 return;
 
+            FlushImGuiLayoutImmediate();
             _closePromptBypassWindow = window;
             window.RequestClose();
         }
@@ -1625,7 +1632,19 @@ public static partial class EditorImGuiUI
             var io = ImGui.GetIO();
             if (!string.IsNullOrWhiteSpace(io.IniFilename))
                 _ownedImGuiIniFilename ??= io.IniFilename;
-            io.IniSavingRate = float.MaxValue; // Disable ImGui auto-save; we handle persistence with debounced async writes.
+
+            // Fully own ini persistence. ImGui's DestroyContext() unconditionally calls
+            // SaveIniSettingsToDisk() at shutdown if io.IniFilename is non-null, which
+            // overwrites our custom [XREngine][PanelVisibility] section (and can race our
+            // own write). Nulling the native pointer disables both ImGui's auto-save and
+            // its shutdown save; io.IniSavingRate also becomes moot. We keep the captured
+            // path in _ownedImGuiIniFilename for our explicit load/save code paths.
+            unsafe
+            {
+                io.NativePtr->IniFilename = null;
+            }
+
+            io.IniSavingRate = float.MaxValue; // Belt and suspenders; ignored when IniFilename is null.
             io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
 
             var style = ImGui.GetStyle();
@@ -1939,6 +1958,53 @@ public static partial class EditorImGuiUI
                     Interlocked.Exchange(ref _iniSaveInFlight, 0);
                 }
             });
+        }
+
+        /// <summary>
+        /// Synchronously flushes the current ImGui layout (dock nodes, window state) and
+        /// editor panel visibility to disk, bypassing the normal debounce window.
+        ///
+        /// This must only be called from live ImGui close paths before the native ImGui
+        /// context is torn down. Calling it from process-exit or other late shutdown hooks
+        /// is unsafe because <see cref="ImGui.SaveIniSettingsToMemory"/> can dereference a
+        /// destroyed native context and terminate the process.
+        /// </summary>
+        private static void FlushImGuiLayoutImmediate()
+        {
+            string? iniFilename = _ownedImGuiIniFilename;
+            if (string.IsNullOrWhiteSpace(iniFilename))
+                return;
+
+            // Wait briefly for any in-flight async write to finish so we don't race with it.
+            for (int i = 0; i < 200; i++)
+            {
+                if (Interlocked.CompareExchange(ref _iniSaveInFlight, 1, 0) == 0)
+                    break;
+                Thread.Sleep(10);
+            }
+
+            try
+            {
+                ImGuiPanelVisibilityState currentState = CapturePanelVisibilityState();
+                string imguiIniContent = ImGui.SaveIniSettingsToMemory();
+                string updatedContent = UpsertPanelVisibilityIniSection(imguiIniContent, currentState);
+                _savedPanelVisibilityState = currentState;
+                _imguiPanelVisibilityWriteRequested = false;
+                _iniSaveDeadlineTicks = 0;
+
+                string? dir = Path.GetDirectoryName(iniFilename);
+                if (!string.IsNullOrWhiteSpace(dir))
+                    Directory.CreateDirectory(dir);
+                File.WriteAllText(iniFilename, updatedContent);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"FlushImGuiLayoutImmediate failed: {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _iniSaveInFlight, 0);
+            }
         }
 
         private static ImGuiPanelVisibilityState CapturePanelVisibilityState()
