@@ -11,7 +11,7 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Debug visualization for the volumetric fog scatter pass.
-        /// Modes 1..6 emit alpha = 0 so the post-process composite replaces the scene color
+        /// Non-zero modes emit alpha = 0 so the post-process composite replaces the scene color
         /// with the diagnostic output, making the result visible regardless of scatter intensity.
         /// </summary>
         public enum EDebugMode
@@ -34,6 +34,20 @@ namespace XREngine.Rendering
             DensityInputs = 7,
             /// <summary>Shadow debug: red=shadow disabled, green=cascade in-bounds, blue=fallback in-bounds.</summary>
             ShadowPathState = 8,
+            /// <summary>Shadow factor sampled at the depth-reconstructed surface world position.</summary>
+            SurfaceShadowFactor = 9,
+            /// <summary>Cascade index selected for the depth-reconstructed surface world position.</summary>
+            SurfaceCascadeIndex = 10,
+            /// <summary>Shadow UV/depth coordinate sampled at the depth-reconstructed surface world position.</summary>
+            SurfaceShadowCoord = 11,
+            /// <summary>Diagnostic: DirectionalLights[0].Direction as rgb (0.5 + dir*0.5). Black = light uniform not uploaded to scatter program.</summary>
+            DirLightDirection = 12,
+            /// <summary>Diagnostic: fract(reconstructed surface world position * 0.1). Wrapping gradient = reconstruction works. Flat color = InverseViewMatrix/InverseProjMatrix stale.</summary>
+            SurfaceWorldPosWrap = 13,
+            /// <summary>Diagnostic: project world origin (0,0,0) through CascadeMatrices[0] to NDC. Gray (0.5,0.5,0.5) = identity matrix; non-gray = real cascade matrix landed.</summary>
+            CascadeMatrixOriginProjection = 14,
+            /// <summary>Diagnostic: CascadeSplits[0]/100 (red) and CascadeCount/4 (green). Black = cascade scalar uniforms not uploaded.</summary>
+            CascadeSplitsAndCount = 15,
         }
 
         private readonly VolumetricFogVolumeComponent?[] _activeVolumes = new VolumetricFogVolumeComponent?[MaxVolumeCount];
@@ -89,7 +103,7 @@ namespace XREngine.Rendering
         public EDebugMode DebugMode
         {
             get => (EDebugMode)_debugMode;
-            set => SetField(ref _debugMode, Math.Clamp((int)value, 0, 8));
+            set => SetField(ref _debugMode, Math.Clamp((int)value, 0, 15));
         }
 
         public override void SetUniforms(XRRenderProgram program)

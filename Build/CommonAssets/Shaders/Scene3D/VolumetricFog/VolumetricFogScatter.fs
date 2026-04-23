@@ -43,39 +43,51 @@ uniform int ShadowSamples;
 uniform float ShadowFilterRadius;
 
 // Debug visualization mode:
-//   0 = normal scatter output (default)
-//   1 = solid magenta (pipeline smoke test: proves scatter -> upscale -> composite chain is live)
-//   2 = volume hit mask (green if view ray intersects any fog OBB, red if not)
-//   3 = average primary-directional shadow factor along the march (grayscale; bright=lit, dark=shadowed)
-//   4 = accumulated optical depth (red intensity; brighter = denser march)
-//   5 = phase function at march midpoint (blue intensity; HG peaked toward sun direction)
-//   6 = raw accumulated scatter (rgb, no composite), useful to see if scatter is non-zero
-//   7 = density inputs (red = avg density * 32, green = avg noise mask, blue = avg edge mask)
-//   8 = shadow path state (red = shadow disabled, green = cascade coords in bounds, blue = fallback coords in bounds)
-// Modes 1..5 write alpha = 0 so the composite `hdrScene * a + rgb` replaces the scene with the debug color.
+//   0  = normal scatter output (default)
+//   1  = solid magenta (pipeline smoke test: proves scatter -> upscale -> composite chain is live)
+//   2  = volume hit mask (green if view ray intersects any fog OBB, red if not)
+//   3  = average primary-directional shadow factor along the march (grayscale; bright=lit, dark=shadowed)
+//   4  = accumulated optical depth (red intensity; brighter = denser march)
+//   5  = phase function at march midpoint (blue intensity; HG peaked toward sun direction)
+//   6  = raw accumulated scatter (rgb, no composite), useful to see if scatter is non-zero
+//   7  = density inputs (red = avg density * 32, green = avg noise mask, blue = avg edge mask)
+//   8  = shadow path state (red = shadow disabled, green = cascade coords in bounds, blue = fallback coords in bounds)
+//   9  = shadow factor sampled AT THE SURFACE (depth-reconstructed WS, no march). Grayscale.
+//        If this looks like the real shadow map projected onto scene geometry, shadow sampling is correct;
+//        if not, the shadow sampling function itself is broken.
+//   10 = cascade index at surface pos (red=0, green=1, blue=2, yellow=3, white=out-of-range, black=no cascade).
+//        Helps verify cascade selection and texture binding.
+//   11 = shadow coord UV at surface pos (R=u, G=v, B=z). Should look like the shadow map's UVs swept
+//        across visible geometry. If it's garbage or flat, the cascade matrix is wrong.
+// All debug modes write alpha = 0 so the composite `hdrScene * a + rgb` replaces the scene with the debug color.
 uniform int VolumetricFogDebugMode;
 
-struct BaseLight
+// Use the shared LightStructs definitions so DirLight stays in lock-step with
+// the C# uniform upload layout (CascadeBlendWidths, etc.). A locally inlined
+// copy here drifts whenever the shared struct changes and silently mismaps
+// uniforms by name lookup.
+#pragma snippet "LightStructs"
+
+// Mirror the legacy deferred-light upload path (`LightData`) because that is
+// the same directional-light uniform surface the scene light-combine pass uses.
+// The volumetric fog scatter pass only needs the first directional light.
+const int VOLUMETRIC_FOG_MAX_CASCADES = 8;
+
+struct LegacyDirLight
 {
   vec3 Color;
   float DiffuseIntensity;
-  float AmbientIntensity;
-  mat4 WorldToLightSpaceProjMatrix;
-};
-
-struct DirLight
-{
-  BaseLight Base;
-  vec3 Direction;
   mat4 WorldToLightInvViewMatrix;
   mat4 WorldToLightProjMatrix;
   mat4 WorldToLightSpaceMatrix;
-  float CascadeSplits[8];
-  mat4 CascadeMatrices[8];
+  vec3 Direction;
+  float CascadeSplits[VOLUMETRIC_FOG_MAX_CASCADES];
+  float CascadeBlendWidths[VOLUMETRIC_FOG_MAX_CASCADES];
+  mat4 CascadeMatrices[VOLUMETRIC_FOG_MAX_CASCADES];
   int CascadeCount;
 };
 
-uniform DirLight DirectionalLights[2];
+uniform LegacyDirLight LightData;
 
 const int MaxVolumetricFogVolumes = 4;
 
@@ -199,14 +211,14 @@ int GetPrimaryDirectionalCascadeIndex(vec3 samplePosWS)
   if (!UseCascadedDirectionalShadows || !EnableCascadedShadows || DirLightCount <= 0)
     return -1;
 
-  int cascadeCount = min(DirectionalLights[0].CascadeCount, 8);
+  int cascadeCount = min(LightData.CascadeCount, VOLUMETRIC_FOG_MAX_CASCADES);
   if (cascadeCount <= 0)
     return -1;
 
   float viewDepth = ViewDepthFromWorldPos(samplePosWS);
   for (int i = 0; i < cascadeCount; ++i)
   {
-    if (viewDepth <= DirectionalLights[0].CascadeSplits[i])
+    if (viewDepth <= LightData.CascadeSplits[i])
       return i;
   }
   return cascadeCount - 1;
@@ -248,11 +260,15 @@ float EvaluatePrimaryDirectionalShadow(vec3 samplePosWS)
   if (DirLightCount <= 0 || !ShadowMapEnabled)
     return 1.0f;
 
-  float bias = max(ShadowBiasMin, ShadowBiasMax * 0.25f);
+  // Volumetric shadow bias is intentionally tiny: the sample is a 3D point in
+  // open air (no surface normal, no grazing-angle acne risk), so we don't need
+  // the surface-tuned bias. A large bias tuned for the forward pass can wash
+  // out thin shafts because fog samples near a caster get classified as lit.
+  float bias = max(ShadowBiasMin * 0.25f, 1e-5f);
   int cascadeIndex = GetPrimaryDirectionalCascadeIndex(samplePosWS);
   if (cascadeIndex >= 0)
   {
-    vec3 cascadeCoord = ProjectShadowCoord(DirectionalLights[0].CascadeMatrices[cascadeIndex], samplePosWS);
+    vec3 cascadeCoord = ProjectShadowCoord(LightData.CascadeMatrices[cascadeIndex], samplePosWS);
     if (ShadowCoordInBounds(cascadeCoord))
     {
       float filterRadius = ShadowFilterRadius * (1.0f + float(cascadeIndex) * 0.35f);
@@ -262,7 +278,7 @@ float EvaluatePrimaryDirectionalShadow(vec3 samplePosWS)
     }
   }
 
-  vec3 shadowCoord = ProjectShadowCoord(DirectionalLights[0].WorldToLightSpaceMatrix, samplePosWS);
+  vec3 shadowCoord = ProjectShadowCoord(LightData.WorldToLightSpaceMatrix, samplePosWS);
   if (!ShadowCoordInBounds(shadowCoord))
     return 1.0f;
 
@@ -312,11 +328,11 @@ vec3 GetPrimaryDirectionalShadowDebugState(vec3 samplePosWS)
   int cascadeIndex = GetPrimaryDirectionalCascadeIndex(samplePosWS);
   if (cascadeIndex >= 0)
   {
-    vec3 cascadeCoord = ProjectShadowCoord(DirectionalLights[0].CascadeMatrices[cascadeIndex], samplePosWS);
+    vec3 cascadeCoord = ProjectShadowCoord(LightData.CascadeMatrices[cascadeIndex], samplePosWS);
     cascadeInBounds = ShadowCoordInBounds(cascadeCoord) ? 1.0f : 0.0f;
   }
 
-  vec3 shadowCoord = ProjectShadowCoord(DirectionalLights[0].WorldToLightSpaceMatrix, samplePosWS);
+  vec3 shadowCoord = ProjectShadowCoord(LightData.WorldToLightSpaceMatrix, samplePosWS);
   fallbackInBounds = ShadowCoordInBounds(shadowCoord) ? 1.0f : 0.0f;
   return vec3(shadowEnabled, cascadeInBounds, fallbackInBounds);
 }
@@ -326,8 +342,8 @@ vec3 EvaluateVolumeLighting(int index, vec3 viewToCamera, float shadowFactor)
   if (DirLightCount <= 0 || lightContribution <= 0.0f)
     return vec3(0.0f);
 
-  vec3 lightDir = normalize(-DirectionalLights[0].Direction);
-  vec3 lightColor = DirectionalLights[0].Base.Color * DirectionalLights[0].Base.DiffuseIntensity;
+  vec3 lightDir = normalize(-LightData.Direction);
+  vec3 lightColor = LightData.Color * LightData.DiffuseIntensity;
   float phase = PhaseHenyeyGreenstein(dot(viewToCamera, lightDir), VolumetricFogLightParams[index].y);
   return lightColor * shadowFactor * lightContribution * phase * 4.0f;
 }
@@ -366,6 +382,94 @@ vec4 ComputeVolumetricFog(vec2 uv)
   vec2 sourceUv = clamp(uv, vec2(0.0f), vec2(1.0f));
   float rawDepth = texture(VolumetricFogHalfDepth, sourceUv).r;
   float resolvedDepth = XRENGINE_ResolveDepth(rawDepth);
+
+  // Diagnostic modes 9-15 operate directly on the depth-reconstructed SURFACE
+  // world position, bypassing the march, volume intersection, and density logic.
+  // They isolate the shadow-sampling path so we can tell whether the primary
+  // bug is in shadow projection vs. everything else in the fog pipeline.
+  //
+  // Modes 12-15 visualize raw uniforms (not computed shadow values) so we can
+  // verify that SetForwardLightingUniforms is actually landing on the scatter
+  // program. Modes 13 and 14 were redesigned 2026-04-23 after the previous
+  // squash-based visualizers mapped valid cascade-matrix values into the
+  // neutral-gray zone and misled diagnosis.
+  if (VolumetricFogDebugMode >= 9 && VolumetricFogDebugMode <= 15)
+  {
+    // Mode 12: LightData.Direction as color. Non-zero = light uniform
+    // arrived. Expected: approximately (0.5 + dir*0.5) per component.
+    if (VolumetricFogDebugMode == 12)
+    {
+      vec3 d = LightData.Direction;
+      return vec4(d * 0.5f + 0.5f, 0.0f);
+    }
+    // Mode 15: CascadeSplits[0] / 100 (red) and CascadeCount / 4 (green). Lets
+    // us see whether the splits array was uploaded. (Kept before the surface-
+    // dependent modes so it works even when the screen is entirely sky.)
+    if (VolumetricFogDebugMode == 15)
+    {
+      float split = LightData.CascadeSplits[0];
+      float normSplit = split / 100.0f;
+      float normCount = float(LightData.CascadeCount) / 4.0f;
+      return vec4(clamp(normSplit, 0.0f, 1.0f), clamp(normCount, 0.0f, 1.0f), 0.0f, 0.0f);
+    }
+
+    if (resolvedDepth >= 0.999999f)
+    {
+      // Sky pixel: no surface. Emit near-black so the scene pixel is replaced but clearly
+      // distinguishable from an actual "black = shadowed" sample.
+      return vec4(0.02f, 0.0f, 0.02f, 0.0f);
+    }
+    vec3 surfacePosWS = XRENGINE_WorldPosFromDepthRaw(rawDepth, sourceUv, InverseProjMatrix, InverseViewMatrix);
+
+    // Mode 13 (redesigned): visualize reconstructed surface world position directly
+    // via fract() so we see a wrapping gradient across the scene. If reconstruction
+    // is correct the scene geometry shows clear gradients matching real world dimensions;
+    // if InverseProjMatrix/InverseViewMatrix are stale/identity the result is flat or
+    // exhibits screen-space (not world-space) patterns.
+    if (VolumetricFogDebugMode == 13)
+    {
+      vec3 wrapped = fract(surfacePosWS * 0.1f);
+      return vec4(wrapped, 0.0f);
+    }
+    // Mode 14 (redesigned): project a canonical world-space point (the origin)
+    // through CascadeMatrices[0] and visualize the resulting clip-space XYZ.
+    //   If CascadeMatrices[0] is identity             → output = (0.5, 0.5, 0.5) gray
+    //   If CascadeMatrices[0] is a real view·proj     → some bounded non-gray color
+    //   If CascadeMatrices[0] is all zeros            → output = (NaN) but alpha=0 path clamps
+    // This bypasses every other potential source of variance (surface reconstruction,
+    // view matrix, depth reconstruction) so the only remaining signal is the matrix itself.
+    if (VolumetricFogDebugMode == 14)
+    {
+      vec4 originClip = LightData.CascadeMatrices[0] * vec4(0.0f, 0.0f, 0.0f, 1.0f);
+      // Safe divide: a well-formed VP has w near 1 for origin; an identity matrix yields
+      // w=1 as well. A degenerate matrix may give w=0 → clamp to avoid NaN.
+      float wSafe = (abs(originClip.w) < 1e-6f) ? 1.0f : originClip.w;
+      vec3 ndc = originClip.xyz / wSafe;
+      return vec4(ndc * 0.5f + 0.5f, 0.0f);
+    }
+
+    if (VolumetricFogDebugMode == 9)
+    {
+      float s = EvaluatePrimaryDirectionalShadow(surfacePosWS);
+      return vec4(s, s, s, 0.0f);
+    }
+    if (VolumetricFogDebugMode == 10)
+    {
+      int ci = GetPrimaryDirectionalCascadeIndex(surfacePosWS);
+      if (ci < 0) return vec4(0.0f, 0.0f, 0.0f, 0.0f);
+      if (ci == 0) return vec4(1.0f, 0.0f, 0.0f, 0.0f);
+      if (ci == 1) return vec4(0.0f, 1.0f, 0.0f, 0.0f);
+      if (ci == 2) return vec4(0.0f, 0.0f, 1.0f, 0.0f);
+      if (ci == 3) return vec4(1.0f, 1.0f, 0.0f, 0.0f);
+      return vec4(1.0f, 1.0f, 1.0f, 0.0f);
+    }
+    // Mode 11: visualize cascade shadow coord (or 2D fallback coord if no cascade).
+    int ci = GetPrimaryDirectionalCascadeIndex(surfacePosWS);
+    vec3 coord = ci >= 0
+      ? ProjectShadowCoord(LightData.CascadeMatrices[ci], surfacePosWS)
+      : ProjectShadowCoord(LightData.WorldToLightSpaceMatrix, surfacePosWS);
+    return vec4(coord, 0.0f);
+  }
 
   float rayLength = VolumetricFog.MaxDistance;
   if (resolvedDepth < 0.999999f)
@@ -428,11 +532,19 @@ vec4 ComputeVolumetricFog(vec2 uv)
   float marchLength = unionTFar - unionTNear;
   int stepCount = max(1, int(ceil(marchLength / stepSize)));
 
-  // Time-varying jitter seed lets TAA / temporal accumulation average the
-  // per-pixel noise across frames.
-  float jitter = (interleavedGradientNoise(gl_FragCoord.xy + fract(RenderTime * 7.0f) * 64.0f) - 0.5f)
-               * stepSize * VolumetricFog.JitterStrength;
-  float t = unionTNear + max(0.0f, 0.5f * stepSize + jitter);
+  // Per-pixel blue-noise offset on the march start position. ALWAYS apply this
+  // spatial dither regardless of JitterStrength: if every pixel started at the
+  // same offset within its ray, the per-step sample positions across neighboring
+  // pixels would only differ by the (very smooth) ray-direction delta, and the
+  // 30+ step average would collapse to a near-constant per-pixel value — making
+  // the entire screen look like one solid color (no shafts, no density variation).
+  // JitterStrength now controls only the *temporal* component: when > 0 the IGN
+  // seed is re-mixed each frame so the per-pixel offset moves frame-to-frame
+  // (TAA / temporal accumulation can then average it out). When 0 the per-pixel
+  // pattern is stable so there is no flicker.
+  float temporalSeedOffset = fract(RenderTime * 7.0f) * 64.0f * VolumetricFog.JitterStrength;
+  float ign = interleavedGradientNoise(gl_FragCoord.xy + temporalSeedOffset);
+  float t = unionTNear + ign * stepSize;
   vec3 accumulatedScattering = vec3(0.0f);
   float transmittance = 1.0f;
 
@@ -482,7 +594,7 @@ vec4 ComputeVolumetricFog(vec2 uv)
 
       if (stepIndex == stepCount / 2 && debugPhaseSample == 0.0f && DirLightCount > 0)
       {
-        vec3 lightDir = normalize(-DirectionalLights[0].Direction);
+        vec3 lightDir = normalize(-LightData.Direction);
         debugPhaseSample = PhaseHenyeyGreenstein(dot(viewToCamera, lightDir), VolumetricFogLightParams[volumeIndex].y);
       }
     }

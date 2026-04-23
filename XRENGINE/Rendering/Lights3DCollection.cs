@@ -74,6 +74,10 @@ namespace XREngine.Scene
         // transitions so we get exactly one log line per toggle rather than per frame.
         private static ulong _lastForwardShadowDiagKey = ulong.MaxValue;
 
+        // Last reason logged by the "No shadow tex" diagnostic in SetForwardLightingUniforms.
+        // Logged exactly once per distinct reason so we don't spam the log every frame.
+        private static string? _lastForwardShadowNoTexReason = null;
+
         #endregion
 
         #region Instance Fields

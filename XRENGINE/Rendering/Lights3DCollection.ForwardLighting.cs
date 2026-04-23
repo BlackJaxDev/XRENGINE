@@ -242,15 +242,23 @@ namespace XREngine.Scene
                 program.Uniform("ContactShadowDistance", firstDirLight.ContactShadowDistance);
                 program.Uniform("ContactShadowSamples", firstDirLight.ContactShadowSamples);
 
-                if (firstDirLight.CastsShadows && firstDirLight.ShadowMap?.Material?.Textures.Count > 0)
+                if (firstDirLight.CastsShadows)
                 {
-                    forwardShadowTex = firstDirLight.ShadowMap.Material.Textures[0];
+                    // 2D shadow map (non-cascaded / fallback path).
+                    if (firstDirLight.ShadowMap?.Material?.Textures.Count > 0)
+                        forwardShadowTex = firstDirLight.ShadowMap.Material.Textures[0];
+
                     if (firstDirLight is OneViewLightComponent oneView && oneView.ShadowCamera is not null)
                     {
                         primaryDirLightWorldToLightInvView = oneView.ShadowCamera.Transform.RenderMatrix;
                         primaryDirLightWorldToLightProj = oneView.ShadowCamera.ProjectionMatrix;
                     }
 
+                    // Cascaded shadow array — evaluated independently of the 2D map because
+                    // in cascaded mode the 2D ShadowMap may never be populated but the
+                    // cascade array IS available. Previously this branch was nested inside
+                    // the 2D-map-populated check, so cascaded-only configs silently dropped
+                    // all directional shadows (including the volumetric fog scatter pass).
                     var cameraComponent = currentPipeline?.RenderState.WindowViewport?.CameraComponent;
                     useCascadedDirectionalShadows =
                         cameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
@@ -260,20 +268,41 @@ namespace XREngine.Scene
 
                     if (useCascadedDirectionalShadows)
                         forwardCascadeShadowTex = firstDirLight.CascadedShadowMapTexture;
+
+                    if (forwardShadowTex is null && forwardCascadeShadowTex is null)
+                    {
+                        // Log once per distinct reason — useful when the light casts shadows
+                        // but neither representation has been populated yet.
+                        string reason = firstDirLight.ShadowMap is null ? "ShadowMap=null,CascadeTex=null" :
+                                        firstDirLight.ShadowMap.Material is null ? "ShadowMap.Material=null,CascadeTex=null" :
+                                        $"Textures.Count={firstDirLight.ShadowMap.Material.Textures.Count},CascadeTex=null";
+                        if (reason != _lastForwardShadowNoTexReason)
+                        {
+                            _lastForwardShadowNoTexReason = reason;
+                            Debug.Out($"[ForwardShadow] No shadow tex: {reason}");
+                        }
+                    }
                 }
                 else
                 {
-                    /*
-                    // Debug: log why shadow map isn't available
-                    string reason = !firstDirLight.CastsShadows ? "CastsShadows=false" :
-                                    firstDirLight.ShadowMap is null ? "ShadowMap=null" :
-                                    firstDirLight.ShadowMap.Material is null ? "ShadowMap.Material=null" :
-                                    $"Textures.Count={firstDirLight.ShadowMap.Material.Textures.Count}";
-                    Debug.Out($"[ForwardShadow] No shadow tex: {reason}");
-                    */
+                    string reason = "CastsShadows=false";
+                    if (reason != _lastForwardShadowNoTexReason)
+                    {
+                        _lastForwardShadowNoTexReason = reason;
+                        Debug.Out($"[ForwardShadow] No shadow tex: {reason}");
+                    }
                 }
             }
-            bool shadowEnabled = forwardShadowTex != null;
+            // ShadowMapEnabled is a "shader may sample a directional shadow" flag.
+            // Before: it was forwardShadowTex != null, which only considered the 2D
+            // ShadowMap. When the pipeline runs in cascaded mode the 2D map is often
+            // unpopulated and only forwardCascadeShadowTex is available, so this
+            // flag flipped to false and every consumer (uber shader, volumetric fog
+            // scatter, etc.) short-circuited to "fully lit" — no shafts, no shadows.
+            // Treat either texture as "shadows available"; downstream shaders already
+            // prefer the cascade path when UseCascadedDirectionalShadows is true and
+            // fall back to the 2D map otherwise.
+            bool shadowEnabled = forwardShadowTex != null || forwardCascadeShadowTex != null;
             program.Uniform("ShadowMapEnabled", shadowEnabled);
             program.Uniform("UseCascadedDirectionalShadows", useCascadedDirectionalShadows);
             program.Uniform("PrimaryDirLightWorldToLightInvViewMatrix", primaryDirLightWorldToLightInvView);

@@ -15,18 +15,16 @@ public partial class GLTexture2D
 
     private bool TryGenerateMipmapsWithDetailPreservingCompute()
     {
-        if (!Engine.Rendering.Settings.UseDetailPreservingComputeMipmaps)
+        if (!Engine.Rendering.Settings.UseDetailPreservingComputeMipmaps || 
+            IsMultisampleTarget || 
+            Data.SparseTextureStreamingEnabled || 
+            !StorageSet || 
+            _allocatedLevels <= 1 || 
+            _allocatedWidth == 0 || 
+            _allocatedHeight == 0 || 
+            !TryGetDetailPreservingImageFormat(_allocatedInternalFormat, out XRRenderProgram.EImageFormat imageFormat))
             return false;
-
-        if (IsMultisampleTarget || Data.SparseTextureStreamingEnabled)
-            return false;
-
-        if (!StorageSet || _allocatedLevels <= 1 || _allocatedWidth == 0 || _allocatedHeight == 0)
-            return false;
-
-        if (!TryGetDetailPreservingImageFormat(_allocatedInternalFormat, out XRRenderProgram.EImageFormat imageFormat))
-            return false;
-
+        
         XRRenderProgram? program = Renderer.GetOrCreateDetailPreservingMipmapProgram(imageFormat);
         if (program is null)
             return false;
