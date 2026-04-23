@@ -42,6 +42,19 @@ uniform float ShadowBiasMax;
 uniform int ShadowSamples;
 uniform float ShadowFilterRadius;
 
+// Debug visualization mode:
+//   0 = normal scatter output (default)
+//   1 = solid magenta (pipeline smoke test: proves scatter -> upscale -> composite chain is live)
+//   2 = volume hit mask (green if view ray intersects any fog OBB, red if not)
+//   3 = average primary-directional shadow factor along the march (grayscale; bright=lit, dark=shadowed)
+//   4 = accumulated optical depth (red intensity; brighter = denser march)
+//   5 = phase function at march midpoint (blue intensity; HG peaked toward sun direction)
+//   6 = raw accumulated scatter (rgb, no composite), useful to see if scatter is non-zero
+//   7 = density inputs (red = avg density * 32, green = avg noise mask, blue = avg edge mask)
+//   8 = shadow path state (red = shadow disabled, green = cascade coords in bounds, blue = fallback coords in bounds)
+// Modes 1..5 write alpha = 0 so the composite `hdrScene * a + rgb` replaces the scene with the debug color.
+uniform int VolumetricFogDebugMode;
+
 struct BaseLight
 {
   vec3 Color;
@@ -257,16 +270,19 @@ float EvaluatePrimaryDirectionalShadow(vec3 samplePosWS)
     ? SampleShadowMapSimple(ShadowMap, shadowCoord, bias)
     : SampleShadowMapTent4(ShadowMap, shadowCoord, bias, ShadowFilterRadius);
 }
-float EvaluateVolumeDensity(int index, vec3 samplePosWS)
+float EvaluateVolumeDensityTerms(int index, vec3 samplePosWS, out float edgeMask, out float noiseMask)
 {
   vec3 localPos = (VolumetricFogWorldToLocal[index] * vec4(samplePosWS, 1.0f)).xyz;
   vec3 halfExtents = VolumetricFogHalfExtentsEdgeFade[index].xyz;
-  float edgeMask = ComputeBoxFade(localPos, halfExtents, VolumetricFogHalfExtentsEdgeFade[index].w);
+  edgeMask = ComputeBoxFade(localPos, halfExtents, VolumetricFogHalfExtentsEdgeFade[index].w);
   if (edgeMask <= 0.0f)
+  {
+    noiseMask = 0.0f;
     return 0.0f;
+  }
 
   vec4 noiseParams = VolumetricFogNoiseScaleThreshold[index];
-  float noiseMask = 1.0f;
+  noiseMask = 1.0f;
   if (noiseParams.x > 0.0f && noiseParams.z > 0.0f)
   {
     vec3 noiseSamplePos = localPos * noiseParams.x
@@ -277,6 +293,32 @@ float EvaluateVolumeDensity(int index, vec3 samplePosWS)
     noiseMask = mix(1.0f, thresholdMask, saturate(noiseParams.z));
   }
   return VolumetricFogColorDensity[index].w * edgeMask * noiseMask;
+}
+float EvaluateVolumeDensity(int index, vec3 samplePosWS)
+{
+  float edgeMask;
+  float noiseMask;
+  return EvaluateVolumeDensityTerms(index, samplePosWS, edgeMask, noiseMask);
+}
+vec3 GetPrimaryDirectionalShadowDebugState(vec3 samplePosWS)
+{
+  float shadowEnabled = ShadowMapEnabled ? 1.0f : 0.0f;
+  float cascadeInBounds = 0.0f;
+  float fallbackInBounds = 0.0f;
+
+  if (DirLightCount <= 0)
+    return vec3(shadowEnabled, cascadeInBounds, fallbackInBounds);
+
+  int cascadeIndex = GetPrimaryDirectionalCascadeIndex(samplePosWS);
+  if (cascadeIndex >= 0)
+  {
+    vec3 cascadeCoord = ProjectShadowCoord(DirectionalLights[0].CascadeMatrices[cascadeIndex], samplePosWS);
+    cascadeInBounds = ShadowCoordInBounds(cascadeCoord) ? 1.0f : 0.0f;
+  }
+
+  vec3 shadowCoord = ProjectShadowCoord(DirectionalLights[0].WorldToLightSpaceMatrix, samplePosWS);
+  fallbackInBounds = ShadowCoordInBounds(shadowCoord) ? 1.0f : 0.0f;
+  return vec3(shadowEnabled, cascadeInBounds, fallbackInBounds);
 }
 vec3 EvaluateVolumeLighting(int index, vec3 viewToCamera, float shadowFactor)
 {
@@ -309,8 +351,17 @@ bool IntersectVolumeOBB(int index, vec3 rayOriginWS, vec3 rayDirWS, out float tN
 }
 vec4 ComputeVolumetricFog(vec2 uv)
 {
+  // Debug smoke test: solid magenta with alpha 0 so the composite replaces the scene.
+  if (VolumetricFogDebugMode == 1)
+    return vec4(1.0f, 0.0f, 1.0f, 0.0f);
+
   if (!VolumetricFog.Enabled || VolumetricFog.VolumeCount <= 0 || VolumetricFog.Intensity <= 0.0f || VolumetricFog.MaxDistance <= 0.0f)
+  {
+    // In non-hit debug modes we still want to know why: emit dark red so it's obvious.
+    if (VolumetricFogDebugMode != 0)
+      return vec4(0.25f, 0.0f, 0.0f, 0.0f);
     return vec4(0.0f, 0.0f, 0.0f, 1.0f);
+  }
 
   vec2 sourceUv = clamp(uv, vec2(0.0f), vec2(1.0f));
   float rawDepth = texture(VolumetricFogHalfDepth, sourceUv).r;
@@ -324,14 +375,18 @@ vec4 ComputeVolumetricFog(vec2 uv)
   }
 
   if (rayLength <= 0.0f)
+  {
+    if (VolumetricFogDebugMode != 0)
+      return vec4(0.5f, 0.0f, 0.0f, 0.0f);
     return vec4(0.0f, 0.0f, 0.0f, 1.0f);
+  }
 
   vec3 rayDir;
   if (resolvedDepth >= 0.999999f)
   {
-    vec4 viewFar = InverseProjMatrix * vec4(sourceUv * 2.0f - 1.0f, 1.0f, 1.0f);
-    viewFar /= max(viewFar.w, 0.0001f);
-    vec3 worldFar = (InverseViewMatrix * viewFar).xyz;
+    // Use the raw far-plane depth for the current depth convention.
+    float farRawDepth = DepthMode == 1 ? 0.0f : 1.0f;
+    vec3 worldFar = XRENGINE_WorldPosFromDepthRaw(farRawDepth, sourceUv, InverseProjMatrix, InverseViewMatrix);
     rayDir = normalize(worldFar - CameraPosition);
   }
   else
@@ -359,8 +414,15 @@ vec4 ComputeVolumetricFog(vec2 uv)
     anyHit = true;
   }
 
+  if (VolumetricFogDebugMode == 2)
+    return vec4(anyHit ? 0.0f : 1.0f, anyHit ? 1.0f : 0.0f, 0.0f, 0.0f);
+
   if (!anyHit || unionTFar <= unionTNear)
+  {
+    if (VolumetricFogDebugMode != 0)
+      return vec4(0.0f, 0.0f, 0.25f, 0.0f); // dark blue = ray missed all volumes
     return vec4(0.0f, 0.0f, 0.0f, 1.0f);
+  }
 
   float stepSize = max(VolumetricFog.StepSize, 0.25f);
   float marchLength = unionTFar - unionTNear;
@@ -374,6 +436,17 @@ vec4 ComputeVolumetricFog(vec2 uv)
   vec3 accumulatedScattering = vec3(0.0f);
   float transmittance = 1.0f;
 
+  // Debug accumulators.
+  float debugShadowSum = 0.0f;
+  int debugShadowSamples = 0;
+  float debugOpticalDepth = 0.0f;
+  float debugPhaseSample = 0.0f;
+  float debugDensitySum = 0.0f;
+  float debugNoiseMaskSum = 0.0f;
+  float debugEdgeMaskSum = 0.0f;
+  int debugDensitySamples = 0;
+  vec3 debugShadowStateSum = vec3(0.0f);
+
   for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
   {
     if (t >= unionTFar || transmittance <= 0.01f)
@@ -385,10 +458,20 @@ vec4 ComputeVolumetricFog(vec2 uv)
     float stepExtinction = 0.0f;
     vec3 viewToCamera = -rayDir;
     float shadowFactor = EvaluatePrimaryDirectionalShadow(samplePosWS);
+    debugShadowSum += shadowFactor;
+    debugShadowSamples += 1;
+    if (VolumetricFogDebugMode == 8)
+      debugShadowStateSum += GetPrimaryDirectionalShadowDebugState(samplePosWS);
 
     for (int volumeIndex = 0; volumeIndex < VolumetricFog.VolumeCount; ++volumeIndex)
     {
-      float density = EvaluateVolumeDensity(volumeIndex, samplePosWS) * VolumetricFog.Intensity;
+      float edgeMask;
+      float noiseMask;
+      float density = EvaluateVolumeDensityTerms(volumeIndex, samplePosWS, edgeMask, noiseMask) * VolumetricFog.Intensity;
+      debugDensitySum += density;
+      debugNoiseMaskSum += noiseMask;
+      debugEdgeMaskSum += edgeMask;
+      debugDensitySamples += 1;
       if (density <= 0.0f)
         continue;
 
@@ -396,15 +479,46 @@ vec4 ComputeVolumetricFog(vec2 uv)
       vec3 lighting = EvaluateVolumeLighting(volumeIndex, viewToCamera, shadowFactor);
       stepScattering += albedo * lighting * density;
       stepExtinction += density;
+
+      if (stepIndex == stepCount / 2 && debugPhaseSample == 0.0f && DirLightCount > 0)
+      {
+        vec3 lightDir = normalize(-DirectionalLights[0].Direction);
+        debugPhaseSample = PhaseHenyeyGreenstein(dot(viewToCamera, lightDir), VolumetricFogLightParams[volumeIndex].y);
+      }
     }
 
     if (stepExtinction > 0.0f)
     {
       accumulatedScattering += stepScattering * currentStep * transmittance;
       transmittance *= exp(-stepExtinction * currentStep);
+      debugOpticalDepth += stepExtinction * currentStep;
     }
 
     t += currentStep;
+  }
+
+  if (VolumetricFogDebugMode == 3)
+  {
+    float avg = debugShadowSamples > 0 ? debugShadowSum / float(debugShadowSamples) : 1.0f;
+    return vec4(avg, avg, avg, 0.0f);
+  }
+  if (VolumetricFogDebugMode == 4)
+    return vec4(saturate(debugOpticalDepth), 0.0f, 0.0f, 0.0f);
+  if (VolumetricFogDebugMode == 5)
+    return vec4(0.0f, 0.0f, saturate(debugPhaseSample), 0.0f);
+  if (VolumetricFogDebugMode == 6)
+    return vec4(accumulatedScattering, 0.0f);
+  if (VolumetricFogDebugMode == 7)
+  {
+    float avgDensity = debugDensitySamples > 0 ? debugDensitySum / float(debugDensitySamples) : 0.0f;
+    float avgNoiseMask = debugDensitySamples > 0 ? debugNoiseMaskSum / float(debugDensitySamples) : 0.0f;
+    float avgEdgeMask = debugDensitySamples > 0 ? debugEdgeMaskSum / float(debugDensitySamples) : 0.0f;
+    return vec4(saturate(avgDensity * 32.0f), saturate(avgNoiseMask), saturate(avgEdgeMask), 0.0f);
+  }
+  if (VolumetricFogDebugMode == 8)
+  {
+    vec3 avgShadowState = debugShadowSamples > 0 ? debugShadowStateSum / float(debugShadowSamples) : vec3(0.0f);
+    return vec4(1.0f - saturate(avgShadowState.x), saturate(avgShadowState.y), saturate(avgShadowState.z), 0.0f);
   }
 
   return vec4(accumulatedScattering, transmittance);

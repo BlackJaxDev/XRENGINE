@@ -1520,6 +1520,14 @@ public partial class DefaultRenderPipeline2
             max: 1.0f,
             step: 0.01f,
             visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(VolumetricFogSettings.DebugMode),
+            PostProcessParameterKind.Int,
+            (int)VolumetricFogSettings.EDebugMode.Off,
+            displayName: "Debug Mode",
+            enumOptions: BuildEnumOptions<VolumetricFogSettings.EDebugMode>(),
+            visibilityCondition: IsEnabled);
     }
 
     private static PostProcessEnumOption[] BuildEnumOptions<TEnum>() where TEnum : struct, Enum

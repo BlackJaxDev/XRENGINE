@@ -9,6 +9,33 @@ namespace XREngine.Rendering
         public const string StructUniformName = "VolumetricFog";
         public const int MaxVolumeCount = 4;
 
+        /// <summary>
+        /// Debug visualization for the volumetric fog scatter pass.
+        /// Modes 1..6 emit alpha = 0 so the post-process composite replaces the scene color
+        /// with the diagnostic output, making the result visible regardless of scatter intensity.
+        /// </summary>
+        public enum EDebugMode
+        {
+            /// <summary>Normal scatter output (default).</summary>
+            Off = 0,
+            /// <summary>Solid magenta. Smoke-tests the scatter -> upscale -> composite chain.</summary>
+            SolidMagenta = 1,
+            /// <summary>Green where view ray intersects any fog OBB, red where it misses.</summary>
+            VolumeHitMask = 2,
+            /// <summary>Average primary directional shadow factor along the march (grayscale; bright=lit).</summary>
+            ShadowFactor = 3,
+            /// <summary>Accumulated optical depth (red intensity).</summary>
+            OpticalDepth = 4,
+            /// <summary>Henyey-Greenstein phase function at march midpoint (blue intensity).</summary>
+            PhaseFunction = 5,
+            /// <summary>Raw accumulated scatter as RGB, no composite attenuation.</summary>
+            RawScatter = 6,
+            /// <summary>Density debug: red=avg density, green=avg noise mask, blue=avg edge mask.</summary>
+            DensityInputs = 7,
+            /// <summary>Shadow debug: red=shadow disabled, green=cascade in-bounds, blue=fallback in-bounds.</summary>
+            ShadowPathState = 8,
+        }
+
         private readonly VolumetricFogVolumeComponent?[] _activeVolumes = new VolumetricFogVolumeComponent?[MaxVolumeCount];
         private readonly Matrix4x4[] _worldToLocal = new Matrix4x4[MaxVolumeCount];
         private readonly Vector4[] _colorDensity = new Vector4[MaxVolumeCount];
@@ -23,6 +50,7 @@ namespace XREngine.Rendering
         private float _maxDistance = 150.0f;
         private float _stepSize = 4.0f;
         private float _jitterStrength = 0.25f;
+        private int _debugMode = 0;
 
         public bool Enabled
         {
@@ -52,6 +80,16 @@ namespace XREngine.Rendering
         {
             get => _jitterStrength;
             set => SetField(ref _jitterStrength, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
+        /// <summary>
+        /// Debug visualization mode for the volumetric fog scatter pass.
+        /// See <see cref="EDebugMode"/> for individual mode meanings.
+        /// </summary>
+        public EDebugMode DebugMode
+        {
+            get => (EDebugMode)_debugMode;
+            set => SetField(ref _debugMode, Math.Clamp((int)value, 0, 8));
         }
 
         public override void SetUniforms(XRRenderProgram program)
@@ -115,6 +153,7 @@ namespace XREngine.Rendering
             program.Uniform("VolumetricFogNoiseOffsetAmount", _noiseOffsetAmount);
             program.Uniform("VolumetricFogNoiseVelocity", _noiseVelocity);
             program.Uniform("VolumetricFogLightParams", _lightParams);
+            program.Uniform("VolumetricFogDebugMode", _debugMode);
         }
     }
 }

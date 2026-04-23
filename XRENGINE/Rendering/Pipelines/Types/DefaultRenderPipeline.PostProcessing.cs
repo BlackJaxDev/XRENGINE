@@ -1520,6 +1520,14 @@ public partial class DefaultRenderPipeline
             max: 1.0f,
             step: 0.01f,
             visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(VolumetricFogSettings.DebugMode),
+            PostProcessParameterKind.Int,
+            (int)VolumetricFogSettings.EDebugMode.Off,
+            displayName: "Debug Mode",
+            enumOptions: BuildEnumOptions<VolumetricFogSettings.EDebugMode>(),
+            visibilityCondition: IsEnabled);
     }
 
     private static PostProcessEnumOption[] BuildEnumOptions<TEnum>() where TEnum : struct, Enum
@@ -1685,16 +1693,38 @@ public partial class DefaultRenderPipeline
         materialProgram.Uniform("FxaaTexelStep", texelStep);
     }
 
+    private static bool _loggedVolumetricFogScatterLightsOnce;
+
     /// <summary>
     /// Pushes volumetric-fog + primary directional shadow uniforms to the
     /// half-resolution scatter quad pass. The <see cref="EUniformRequirements.Lights"/>
-    /// engine-uniform plumbing handles ShadowMap / ShadowMapArray sampler binds.
+    /// engine-uniform plumbing also handles ShadowMap / ShadowMapArray sampler binds,
+    /// but we re-issue the forward-lighting upload explicitly here as well so that
+    /// DirectionalLights / DirLightCount / ShadowMapEnabled are guaranteed to be
+    /// present on this program even if the missing-uniform cache was warmed by an
+    /// earlier pass that bound the same flag bit for a different program.
     /// </summary>
     private void VolumetricFogHalfScatterFBO_SettingUniforms(XRRenderProgram materialProgram)
     {
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         var volumetricFog = GetSettings<VolumetricFogSettings>(state);
         (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
+
+        var lights = Engine.Rendering.State.RenderingWorld?.Lights;
+        if (lights is not null)
+        {
+            lights.SetForwardLightingUniforms(materialProgram);
+            if (!_loggedVolumetricFogScatterLightsOnce)
+            {
+                _loggedVolumetricFogScatterLightsOnce = true;
+                Debug.Out($"[VolumetricFog.Scatter] Lights upload: DirLights={lights.DynamicDirectionalLights.Count}");
+            }
+        }
+        else if (!_loggedVolumetricFogScatterLightsOnce)
+        {
+            _loggedVolumetricFogScatterLightsOnce = true;
+            Debug.Out("[VolumetricFog.Scatter] Lights upload skipped: RenderingWorld is null at scatter pass.");
+        }
     }
 
     private static TemporalResolveSettings ResolveTemporalSettings(PipelinePostProcessState? state)

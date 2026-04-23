@@ -400,8 +400,14 @@ void main()
     }
   }
 
+  // Safe composite: when the fog scatter pass is disabled, skipped, or has not yet written
+  // a frame, the texture clears to (0,0,0,0). A literal `hdrSceneColor * 0 + 0` would zero out
+  // the entire scene. Only apply the composite when the fog pass has written meaningful
+  // transmittance/scatter data (alpha > 0 OR rgb > 0). A fully opaque fog volume that wants
+  // to occlude the scene must still write a non-zero alpha (transmittance) or non-zero rgb.
   vec4 volumetricFog = texture(VolumetricFogColor, uv);
-  hdrSceneColor = hdrSceneColor * volumetricFog.a + volumetricFog.rgb;
+  if (volumetricFog.a > 0.0f || any(greaterThan(volumetricFog.rgb, vec3(0.0f))))
+    hdrSceneColor = hdrSceneColor * volumetricFog.a + volumetricFog.rgb;
 
   //Tone mapping / HDR selection
   vec3 sceneColor;
