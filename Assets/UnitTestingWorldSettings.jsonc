@@ -210,7 +210,7 @@
       // Enables or disables ZUp.
       "ZUp": false,
       // Enables or disables GenerateCoacdCollidersPerSubmesh.
-      "GenerateCoacdCollidersPerSubmesh": true,
+      "GenerateCoacdCollidersPerSubmesh": false,
       // When true, each imported submesh gets its own ModelComponent instead of grouping all submeshes from the same source node into one ModelComponent. Increases GPU resource usage; leave false unless per-submesh scene nodes are needed.
       "SplitSubmeshesIntoSeparateModelComponents": false,
       // Optional additional local-space rotation to apply after import. Values are degrees.
@@ -427,9 +427,9 @@
       "B": 1.0
     },
     // Generated from Density on VolumetricFogVolumeInitSettings.
-    "Density": 0.025,
+    "Density": 0.2,
     // Generated from NoiseScale on VolumetricFogVolumeInitSettings.
-    "NoiseScale": 0.08,
+    "NoiseScale": 3.0,
     // Generated from NoiseVelocity on VolumetricFogVolumeInitSettings.
     "NoiseVelocity": {
       // Generated from X on TranslationXYZ.
@@ -446,7 +446,7 @@
     // Generated from EdgeFade on VolumetricFogVolumeInitSettings.
     "EdgeFade": 0.25,
     // Generated from Anisotropy on VolumetricFogVolumeInitSettings.
-    "Anisotropy": 0.2,
+    "Anisotropy": 0.75,
     // Generated from LightContribution on VolumetricFogVolumeInitSettings.
     "LightContribution": 1.0,
     // Generated from Priority on VolumetricFogVolumeInitSettings.
@@ -458,6 +458,6 @@
     // Generated from StepSize on VolumetricFogVolumeInitSettings.
     "StepSize": 4.0,
     // Generated from JitterStrength on VolumetricFogVolumeInitSettings.
-    "JitterStrength": 0.25
+    "JitterStrength": 0.0
   }
 }
