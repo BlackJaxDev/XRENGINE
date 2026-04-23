@@ -107,6 +107,43 @@ public sealed class ShaderSourceResolverCachingTests
         }
     }
 
+    [Test]
+    public void Resolver_ExpandsIncludeWithTrailingLineComment()
+    {
+        string tempDir = CreateTempShaderRoot();
+        string shaderPath = Path.Combine(tempDir, "Main.frag");
+        string includePath = Path.Combine(tempDir, "Includes", "Helper.glsl");
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(includePath)!);
+            WriteTextWithAdvancedTimestamp(includePath, "const float XRE_HELPER_VALUE = 42.0;\n");
+
+            // The include line has a trailing `//` comment. The resolver must still expand it
+            // and must not leave a literal `#include` in the resolved source.
+            WriteTextWithAdvancedTimestamp(
+                shaderPath,
+                "#version 450\n" +
+                "#include \"Includes/Helper.glsl\"   // helper comment\n" +
+                "void main() {}\n");
+
+            TextFile textFile = new()
+            {
+                FilePath = shaderPath,
+                Text = File.ReadAllText(shaderPath),
+            };
+            XRShader shader = new(EShaderType.Fragment, textFile);
+
+            string resolved = shader.GetResolvedSource();
+            resolved.ShouldContain("XRE_HELPER_VALUE = 42.0");
+            resolved.ShouldNotContain("#include");
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(Path.GetDirectoryName(tempDir)!);
+        }
+    }
+
     private static string CreateTempShaderRoot()
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "xre-shader-cache-" + Guid.NewGuid().ToString("N"));

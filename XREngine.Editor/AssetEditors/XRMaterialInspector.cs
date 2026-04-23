@@ -3,7 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
+using XREngine.Editor.ComponentEditors;
 using XREngine.Editor;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -18,6 +20,30 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 {
     private const float TexturePreviewMaxEdge = 128.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
+    private const float MaterialPreviewMaxEdge = 176.0f;
+    private static readonly string[] MaterialInspectorTabLabels = ["Properties", "Surface", "Shaders", "Advanced"];
+
+    private static readonly string[] PromotedSamplerHints =
+    [
+        "maintex",
+        "maintexture",
+        "basemap",
+        "basecolor",
+        "basecolormap",
+        "albedo",
+        "normal",
+        "normalmap",
+        "bump",
+        "bumpmap",
+        "orm",
+        "roughness",
+        "metallic",
+        "occlusion",
+        "mask",
+        "emission",
+        "emissionmap"
+    ];
+    private static readonly ConditionalWeakTable<XRMaterial, MaterialInspectorUiState> MaterialUiStates = new();
 
     private static readonly Dictionary<string, string> RuntimeDrivenSamplerProviders = new(StringComparer.Ordinal)
     {
@@ -30,6 +56,10 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     /// </summary>
     private static readonly Dictionary<string, string> RuntimeDrivenUniformProviders = new(StringComparer.Ordinal)
     {
+        [nameof(EEngineUniform.ModelMatrix)] = "Per-draw mesh transform",
+        [nameof(EEngineUniform.PrevModelMatrix)] = "Per-draw mesh transform history",
+        [nameof(EEngineUniform.BillboardMode)] = "Per-draw billboard state",
+        [nameof(EEngineUniform.VRMode)] = "Per-draw stereo state",
         [EngineShaderBindingNames.Uniforms.PpllMaxNodes] = "Per-pixel linked list transparency",
         [EngineShaderBindingNames.Uniforms.DepthPeelLayerIndex] = "Exact transparency depth peeling",
         [EngineShaderBindingNames.Uniforms.DepthPeelEpsilon] = "Exact transparency depth peeling"
@@ -39,8 +69,22 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     private static readonly Vector4 EngineActiveColor = new(0.30f, 0.85f, 0.55f, 1.0f);
     private static readonly Vector4 EngineMissingFlagColor = new(0.95f, 0.75f, 0.25f, 1.0f);
     private static readonly Vector4 DirtyBadgeColor = new(0.95f, 0.65f, 0.2f, 1.0f);
+    private static readonly Vector4 MaterialPreviewBorderColor = new(0.82f, 0.82f, 0.88f, 0.95f);
 
     private static bool _hideEngineDrivenUniforms;
+
+    private sealed class MaterialInspectorUiState
+    {
+        public string AdvancedFilter = string.Empty;
+        public bool ShowDisabledUberFeatures;
+    }
+
+    private enum MaterialPreviewSurface
+    {
+        Sphere,
+        Cube,
+        Plane,
+    }
 
     private static bool IsEngineUniform(string name, out EUniformRequirements requiredFlags)
     {
@@ -70,19 +114,103 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             return;
         }
 
+        MaterialInspectorUiState uiState = MaterialUiStates.GetValue(material, static _ => new MaterialInspectorUiState());
+        HandleMaterialInspectorHotkeys(material);
         DrawHeader(material);
-        DrawShaderStageSection(material);
-        DrawTransparencySettings(material);
-        DrawRenderOptions(material, visitedObjects);
-        ImGui.Checkbox("Hide engine-driven", ref _hideEngineDrivenUniforms);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Hide uniforms and samplers that are automatically driven by the engine.");
 
-        DrawUberInspector(material);
-        DrawUniforms(material);
-        DrawUniformBlocks(material);
-        DrawSamplerList(material);
-        DrawDefaultInspector(material, visitedObjects);
+        int selectedTab = DrawInspectorTabSelector("MaterialInspectorTabs", Engine.EditorPreferences?.MaterialInspectorTabIndex ?? 0, MaterialInspectorTabLabels);
+        switch (selectedTab)
+        {
+            case 0:
+                DrawMaterialPreviewSection(material);
+                DrawPromotedSamplerPanel(material);
+                DrawUberInspector(material);
+                if (ImGui.CollapsingHeader("Raw Asset Fields"))
+                    DrawDefaultInspector(material, visitedObjects);
+                break;
+            case 1:
+                DrawTransparencySettings(material);
+                DrawRenderOptions(material, visitedObjects);
+                break;
+            case 2:
+                DrawShaderStageSection(material);
+                break;
+            case 3:
+                ImGui.SetNextItemWidth(MathF.Min(360.0f, ImGui.GetContentRegionAvail().X));
+                ImGui.InputTextWithHint("##MaterialAdvancedFilter", "Filter uniforms, blocks, or samplers...", ref uiState.AdvancedFilter, 128u);
+                if (!string.IsNullOrWhiteSpace(uiState.AdvancedFilter))
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Clear##MaterialAdvancedFilter"))
+                        uiState.AdvancedFilter = string.Empty;
+                }
+
+                ImGui.Checkbox("Hide engine-driven", ref _hideEngineDrivenUniforms);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Hide uniforms and samplers that are automatically driven by the engine.");
+
+                DrawUniforms(material, uiState.AdvancedFilter);
+                DrawUniformBlocks(material, uiState.AdvancedFilter);
+                DrawSamplerList(material, uiState.AdvancedFilter);
+                break;
+        }
+    }
+
+    private static int DrawInspectorTabSelector(string tableId, int selectedIndex, IReadOnlyList<string> labels)
+    {
+        if (!ImGui.BeginTable(tableId, labels.Count, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
+            return selectedIndex;
+
+        for (int i = 0; i < labels.Count; i++)
+        {
+            ImGui.TableNextColumn();
+            bool selected = selectedIndex == i;
+            if (selected)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button, EngineActiveColor);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.38f, 0.93f, 0.63f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.22f, 0.72f, 0.46f, 1.0f));
+            }
+
+            if (ImGui.Button(labels[i], new Vector2(-1.0f, 0.0f)))
+                selectedIndex = i;
+
+            if (selected)
+                ImGui.PopStyleColor(3);
+        }
+
+        ImGui.EndTable();
+        ImGui.Spacing();
+
+        if (Engine.EditorPreferences is not null && Engine.EditorPreferences.MaterialInspectorTabIndex != selectedIndex)
+            Engine.EditorPreferences.MaterialInspectorTabIndex = selectedIndex;
+
+        return selectedIndex;
+    }
+
+    private static void HandleMaterialInspectorHotkeys(XRMaterial material)
+    {
+        var io = ImGui.GetIO();
+        if (!io.KeyCtrl || io.WantTextInput || !ImGui.IsKeyPressed(ImGuiKey.S, false))
+            return;
+
+        SaveMaterialAsset(material);
+    }
+
+    private static void SaveMaterialAsset(XRMaterial material)
+    {
+        if (Engine.Assets is null || string.IsNullOrWhiteSpace(material.FilePath))
+            return;
+
+        Engine.Assets.Save(material, bypassJobThread: true);
+    }
+
+    private static void ReloadMaterialAsset(XRMaterial material)
+    {
+        if (string.IsNullOrWhiteSpace(material.FilePath))
+            return;
+
+        material.Reload();
     }
 
     private static void DrawHeader(XRMaterial material)
@@ -90,18 +218,32 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         ImGui.TextUnformatted(material.Name ?? "<unnamed material>");
         ImGui.TextDisabled(material.FilePath ?? "<unsaved asset>");
 
-        if (!string.IsNullOrWhiteSpace(material.FilePath))
+        bool hasPath = !string.IsNullOrWhiteSpace(material.FilePath);
+
+        if (hasPath)
         {
             ImGui.SameLine();
             if (ImGui.SmallButton("Copy Path##XRMaterial"))
                 ImGui.SetClipboardText(material.FilePath);
+
+            ImGui.SameLine();
+            using (new ImGuiDisabledScope(Engine.Assets is null))
+            {
+                if (ImGui.SmallButton("Save##XRMaterial"))
+                    SaveMaterialAsset(material);
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Save this material to disk. Shortcut: Ctrl+S");
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Revert##XRMaterial"))
+                ReloadMaterialAsset(material);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Reload this material from disk and discard unsaved changes.");
         }
 
-        if (material.IsDirty)
-        {
-            ImGui.SameLine();
-            ImGui.TextColored(DirtyBadgeColor, "Modified");
-        }
+        ImGui.SameLine();
+        ImGui.TextColored(material.IsDirty ? DirtyBadgeColor : EngineActiveColor, material.IsDirty ? "Modified" : "Saved");
 
         ImGui.TextDisabled($"Render Pass: {DescribeRenderPass(material.RenderPass)}");
 
@@ -111,6 +253,196 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
         ImGui.Separator();
     }
+
+    private static void DrawMaterialPreviewSection(XRMaterial material)
+    {
+        if (!ImGui.CollapsingHeader("Preview", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        XRTexture? texture = TrySelectMaterialPreviewTexture(material);
+        if (texture is null)
+        {
+            ImGui.TextDisabled("No material texture available to preview.");
+            return;
+        }
+
+        MaterialPreviewSurface surface = GetSelectedMaterialPreviewSurface();
+        if (ImGui.BeginCombo("Preview Surface", surface.ToString()))
+        {
+            foreach (MaterialPreviewSurface option in Enum.GetValues<MaterialPreviewSurface>())
+            {
+                bool selected = option == surface;
+                if (ImGui.Selectable(option.ToString(), selected) && !selected)
+                    SetSelectedMaterialPreviewSurface(option);
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        if (!TryGetTexturePreviewData(texture, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason))
+        {
+            ImGui.TextDisabled(failureReason ?? "Preview unavailable.");
+            return;
+        }
+
+        float maxDimension = MathF.Max(displaySize.X, displaySize.Y);
+        if (maxDimension > 0.0f && maxDimension < MaterialPreviewMaxEdge)
+        {
+            float scale = MaterialPreviewMaxEdge / maxDimension;
+            displaySize *= scale;
+        }
+
+        Vector2 start = ImGui.GetCursorScreenPos();
+        ImGui.Image(handle, displaySize);
+        DrawMaterialPreviewFrame(start, displaySize, surface);
+
+        bool openLarge = ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left);
+        if (ImGui.SmallButton("View Larger##MaterialPreview"))
+            openLarge = true;
+
+        if (openLarge)
+            ComponentEditorLayout.RequestPreviewDialog($"{material.Name ?? "Material"} Preview", handle, pixelSize, flipVertically: false);
+
+        ImGui.TextDisabled($"Preview Source: {texture.SamplerName ?? texture.Name ?? texture.GetType().Name}");
+        ImGui.TextDisabled($"{(int)pixelSize.X} x {(int)pixelSize.Y}");
+    }
+
+    private static void DrawMaterialPreviewFrame(Vector2 start, Vector2 size, MaterialPreviewSurface surface)
+    {
+        ImDrawListPtr drawList = ImGui.GetWindowDrawList();
+        Vector2 end = start + size;
+        uint borderColor = ImGui.ColorConvertFloat4ToU32(MaterialPreviewBorderColor);
+
+        switch (surface)
+        {
+            case MaterialPreviewSurface.Sphere:
+                {
+                    Vector2 center = (start + end) * 0.5f;
+                    float radius = MathF.Min(size.X, size.Y) * 0.5f;
+                    drawList.AddCircle(center, radius, borderColor, 48, 2.0f);
+                    break;
+                }
+            case MaterialPreviewSurface.Cube:
+                drawList.AddRect(start, end, borderColor, 8.0f, ImDrawFlags.None, 2.0f);
+                drawList.AddLine(new Vector2(end.X, start.Y), new Vector2(end.X - 12.0f, start.Y + 12.0f), borderColor, 2.0f);
+                drawList.AddLine(new Vector2(end.X, start.Y), new Vector2(start.X + 12.0f, start.Y), borderColor, 2.0f);
+                break;
+            default:
+                drawList.AddRect(start, end, borderColor, 0.0f, ImDrawFlags.None, 2.0f);
+                break;
+        }
+    }
+
+    private static MaterialPreviewSurface GetSelectedMaterialPreviewSurface()
+    {
+        int raw = Engine.EditorPreferences?.MaterialPreviewSurfaceIndex ?? 0;
+        raw = Math.Clamp(raw, 0, Enum.GetValues<MaterialPreviewSurface>().Length - 1);
+        return (MaterialPreviewSurface)raw;
+    }
+
+    private static void SetSelectedMaterialPreviewSurface(MaterialPreviewSurface surface)
+    {
+        if (Engine.EditorPreferences is not null)
+            Engine.EditorPreferences.MaterialPreviewSurfaceIndex = (int)surface;
+    }
+
+    private static void DrawPromotedSamplerPanel(XRMaterial material)
+    {
+        List<SamplerBindingEntry> promotedBindings = GetPromotedSamplerBindings(material);
+        if (promotedBindings.Count == 0)
+            return;
+
+        if (!ImGui.CollapsingHeader("Textures", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        ShaderUiManifest? manifest = null;
+        if (TryGetUberMaterialManifest(material, out _, out _, out ShaderUiManifest? resolvedManifest))
+            manifest = resolvedManifest;
+
+        if (!ImGui.BeginTable("PromotedSamplerTable", 3, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+            return;
+
+        ImGui.TableSetupColumn("Texture", ImGuiTableColumnFlags.WidthStretch, 0.3f);
+        ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthStretch, 0.5f);
+        ImGui.TableSetupColumn("Preview", ImGuiTableColumnFlags.WidthFixed, 72.0f);
+        ImGui.TableHeadersRow();
+
+        foreach (SamplerBindingEntry binding in promotedBindings)
+        {
+            string displayName = manifest is not null && manifest.PropertyLookup.TryGetValue(binding.Sampler.Name, out ShaderUiProperty? property)
+                ? property.DisplayName
+                : binding.Sampler.Name;
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(displayName);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(binding.Sampler.Name);
+
+            ImGui.TableSetColumnIndex(1);
+            ImGui.PushID($"PromotedSampler_{binding.Sampler.Name}");
+            DrawSamplerTextureField(material, binding);
+            ImGui.PopID();
+
+            ImGui.TableSetColumnIndex(2);
+            DrawTexturePreviewCell(binding.PreviewTexture, 56.0f);
+        }
+
+        ImGui.EndTable();
+    }
+
+    private static List<SamplerBindingEntry> GetPromotedSamplerBindings(XRMaterial material)
+    {
+        List<SamplerBindingEntry> allBindings = ResolveSamplerBindings(material, CollectSamplerDefinitions(material));
+        List<SamplerBindingEntry> promoted = [];
+
+        foreach (SamplerBindingEntry binding in allBindings)
+        {
+            if (binding.EngineBinding is not null)
+                continue;
+
+            string normalized = NormalizeSamplerName(binding.Sampler.Name);
+            if (Array.Exists(PromotedSamplerHints, hint => normalized.Contains(hint, StringComparison.Ordinal)))
+                promoted.Add(binding);
+        }
+
+        if (promoted.Count > 0)
+            return promoted;
+
+        foreach (SamplerBindingEntry binding in allBindings)
+        {
+            if (binding.EngineBinding is null)
+                promoted.Add(binding);
+
+            if (promoted.Count >= 4)
+                break;
+        }
+
+        return promoted;
+    }
+
+    private static XRTexture? TrySelectMaterialPreviewTexture(XRMaterial material)
+    {
+        foreach (SamplerBindingEntry binding in GetPromotedSamplerBindings(material))
+        {
+            if (binding.PreviewTexture is not null)
+                return binding.PreviewTexture;
+        }
+
+        foreach (XRTexture? texture in material.Textures)
+        {
+            if (texture is not null)
+                return texture;
+        }
+
+        return null;
+    }
+
+    private static string NormalizeSamplerName(string name)
+        => name.Replace("_", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
 
     private static void DrawTransparencySettings(XRMaterial material)
     {
@@ -219,7 +551,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         EditorImGuiUI.DrawRuntimeObjectInspector("Render Option Settings", material.RenderOptions, visitedObjects, defaultOpen: true);
     }
 
-    private static void DrawUniforms(XRMaterial material)
+    private static void DrawUniforms(XRMaterial material, string? filter)
     {
         if (!ImGui.CollapsingHeader("Uniforms", ImGuiTreeNodeFlags.DefaultOpen))
             return;
@@ -241,7 +573,11 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 continue;
 
             var parsed = ParseShaderSource(text);
-            if (parsed.Uniforms.Count == 0)
+            UniformEntry[] filteredUniforms = parsed.Uniforms
+                .Where(uniform => MatchesMaterialAdvancedFilter(filter, uniform.Name, uniform.TypeLabel))
+                .ToArray();
+
+            if (filteredUniforms.Length == 0)
                 continue;
 
             anyUniforms = true;
@@ -249,7 +585,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             if (!ImGui.TreeNodeEx(header, ImGuiTreeNodeFlags.DefaultOpen))
                 continue;
 
-            DrawUniformTable(parsed.Uniforms, parameterLookup, material);
+            DrawUniformTable(filteredUniforms, parameterLookup, material);
             ImGui.TreePop();
         }
 
@@ -257,7 +593,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             ImGui.TextDisabled("No uniform declarations found in assigned shaders.");
     }
 
-    private static void DrawUniformBlocks(XRMaterial material)
+    private static void DrawUniformBlocks(XRMaterial material, string? filter)
     {
         if (!ImGui.CollapsingHeader("Uniform Blocks", ImGuiTreeNodeFlags.DefaultOpen))
             return;
@@ -279,7 +615,17 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 continue;
 
             var parsed = ParseShaderSource(text);
-            if (parsed.Blocks.Count == 0)
+            List<UniformBlockEntry> filteredBlocks = [];
+            foreach (UniformBlockEntry block in parsed.Blocks)
+            {
+                List<UniformEntry> filteredMembers = block.Members
+                    .Where(member => MatchesMaterialAdvancedFilter(filter, block.BlockName, block.InstanceName, member.Name, member.TypeLabel))
+                    .ToList();
+                if (filteredMembers.Count > 0)
+                    filteredBlocks.Add(block with { Members = filteredMembers });
+            }
+
+            if (filteredBlocks.Count == 0)
                 continue;
 
             anyBlocks = true;
@@ -287,7 +633,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             if (!ImGui.TreeNodeEx(header, ImGuiTreeNodeFlags.DefaultOpen))
                 continue;
 
-            foreach (var block in parsed.Blocks)
+            foreach (var block in filteredBlocks)
             {
                 string blockLabel = string.IsNullOrWhiteSpace(block.InstanceName)
                     ? block.BlockName
@@ -307,7 +653,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             ImGui.TextDisabled("No uniform blocks found in assigned shaders.");
     }
 
-    private static void DrawSamplerList(XRMaterial material)
+    private static void DrawSamplerList(XRMaterial material, string? filter)
     {
         if (!ImGui.CollapsingHeader("Texture Samplers", ImGuiTreeNodeFlags.DefaultOpen))
             return;
@@ -315,7 +661,9 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         ImGui.TextDisabled("Click a texture field to inspect it inline. Replacing a texture also updates its sampler binding name to match the shader slot.");
         ImGui.Separator();
 
-        var samplers = CollectSamplerDefinitions(material);
+        List<SamplerEntry> samplers = CollectSamplerDefinitions(material)
+            .Where(sampler => MatchesMaterialAdvancedFilter(filter, sampler.Name, sampler.TypeLabel))
+            .ToList();
         var samplerBindings = ResolveSamplerBindings(material, samplers);
         if (samplers.Count == 0)
         {
@@ -703,6 +1051,177 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 ImGui.TextDisabled(param.GetType().Name);
                 break;
         }
+
+        DrawShaderParameterContextMenu(material, param);
+    }
+
+    private static void DrawShaderParameterContextMenu(XRMaterial material, ShaderVar param)
+    {
+        bool canCopy = TrySerializeShaderParameterValue(param, out string serializedValue);
+        bool canPaste = CanApplyShaderParameterClipboard(param, ImGui.GetClipboardText());
+
+        if (!ImGui.BeginPopupContextItem($"ShaderParamContext_{param.GetHashCode()}"))
+            return;
+
+        if (ImGui.MenuItem("Copy Value", null, false, canCopy) && canCopy)
+            ImGui.SetClipboardText(serializedValue);
+
+        if (ImGui.MenuItem("Paste Value", null, false, canPaste))
+            TryApplyShaderParameterClipboard(material, param, ImGui.GetClipboardText());
+
+        ImGui.EndPopup();
+    }
+
+    private static bool TrySerializeShaderParameterValue(ShaderVar param, out string serialized)
+    {
+        serialized = param switch
+        {
+            ShaderFloat value => $"xreparam:float|{value.Value.ToString(CultureInfo.InvariantCulture)}",
+            ShaderInt value => $"xreparam:int|{value.Value.ToString(CultureInfo.InvariantCulture)}",
+            ShaderUInt value => $"xreparam:uint|{value.Value.ToString(CultureInfo.InvariantCulture)}",
+            ShaderBool value => $"xreparam:bool|{(value.Value ? "1" : "0")}",
+            ShaderVector2 value => $"xreparam:vec2|{value.Value.X.ToString(CultureInfo.InvariantCulture)},{value.Value.Y.ToString(CultureInfo.InvariantCulture)}",
+            ShaderVector3 value => $"xreparam:vec3|{value.Value.X.ToString(CultureInfo.InvariantCulture)},{value.Value.Y.ToString(CultureInfo.InvariantCulture)},{value.Value.Z.ToString(CultureInfo.InvariantCulture)}",
+            ShaderVector4 value => $"xreparam:vec4|{value.Value.X.ToString(CultureInfo.InvariantCulture)},{value.Value.Y.ToString(CultureInfo.InvariantCulture)},{value.Value.Z.ToString(CultureInfo.InvariantCulture)},{value.Value.W.ToString(CultureInfo.InvariantCulture)}",
+            _ => string.Empty,
+        };
+
+        return !string.IsNullOrWhiteSpace(serialized);
+    }
+
+    private static bool CanApplyShaderParameterClipboard(ShaderVar param, string? clipboard)
+        => TryParseShaderParameterClipboard(param, clipboard, out _);
+
+    private static bool TryApplyShaderParameterClipboard(XRMaterial material, ShaderVar param, string? clipboard)
+    {
+        if (!TryParseShaderParameterClipboard(param, clipboard, out object? parsedValue))
+            return false;
+
+        switch (param)
+        {
+            case ShaderFloat value when parsedValue is float floatValue:
+                value.SetValue(floatValue);
+                break;
+            case ShaderInt value when parsedValue is int intValue:
+                value.SetValue(intValue);
+                break;
+            case ShaderUInt value when parsedValue is uint uintValue:
+                value.SetValue(uintValue);
+                break;
+            case ShaderBool value when parsedValue is bool boolValue:
+                value.SetValue(boolValue);
+                break;
+            case ShaderVector2 value when parsedValue is Vector2 vec2Value:
+                value.SetValue(vec2Value);
+                break;
+            case ShaderVector3 value when parsedValue is Vector3 vec3Value:
+                value.SetValue(vec3Value);
+                break;
+            case ShaderVector4 value when parsedValue is Vector4 vec4Value:
+                value.SetValue(vec4Value);
+                break;
+            default:
+                return false;
+        }
+
+        material.MarkDirty();
+        return true;
+    }
+
+    private static bool TryParseShaderParameterClipboard(ShaderVar param, string? clipboard, out object? parsedValue)
+    {
+        parsedValue = null;
+        if (string.IsNullOrWhiteSpace(clipboard) || !clipboard.StartsWith("xreparam:", StringComparison.Ordinal))
+            return false;
+
+        int separatorIndex = clipboard.IndexOf('|');
+        if (separatorIndex < 0)
+            return false;
+
+        string kind = clipboard[9..separatorIndex];
+        string payload = clipboard[(separatorIndex + 1)..];
+
+        switch (param)
+        {
+            case ShaderFloat when string.Equals(kind, "float", StringComparison.Ordinal) &&
+                                  float.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out float floatValue):
+                parsedValue = floatValue;
+                return true;
+            case ShaderInt when string.Equals(kind, "int", StringComparison.Ordinal) &&
+                                int.TryParse(payload, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intValue):
+                parsedValue = intValue;
+                return true;
+            case ShaderUInt when string.Equals(kind, "uint", StringComparison.Ordinal) &&
+                                 uint.TryParse(payload, NumberStyles.Integer, CultureInfo.InvariantCulture, out uint uintValue):
+                parsedValue = uintValue;
+                return true;
+            case ShaderBool when string.Equals(kind, "bool", StringComparison.Ordinal):
+                parsedValue = payload == "1" || payload.Equals("true", StringComparison.OrdinalIgnoreCase);
+                return true;
+            case ShaderVector2 when string.Equals(kind, "vec2", StringComparison.Ordinal) && TryParseVectorPayload(payload, 2, out float[]? vec2) && vec2 is not null:
+                parsedValue = new Vector2(vec2[0], vec2[1]);
+                return true;
+            case ShaderVector3 when string.Equals(kind, "vec3", StringComparison.Ordinal) && TryParseVectorPayload(payload, 3, out float[]? vec3) && vec3 is not null:
+                parsedValue = new Vector3(vec3[0], vec3[1], vec3[2]);
+                return true;
+            case ShaderVector4 when string.Equals(kind, "vec4", StringComparison.Ordinal) && TryParseVectorPayload(payload, 4, out float[]? vec4) && vec4 is not null:
+                parsedValue = new Vector4(vec4[0], vec4[1], vec4[2], vec4[3]);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryParseVectorPayload(string payload, int componentCount, out float[]? values)
+    {
+        string[] parts = payload.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != componentCount)
+        {
+            values = null;
+            return false;
+        }
+
+        values = new float[componentCount];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            if (!float.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]))
+            {
+                values = null;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool MatchesMaterialAdvancedFilter(string? filter, params string?[] candidates)
+    {
+        if (string.IsNullOrWhiteSpace(filter))
+            return true;
+
+        string needle = filter.Trim();
+        foreach (string? candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && candidate.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool RemoveMaterialParameter(XRMaterial material, string parameterName)
+    {
+        ShaderVar[] parameters = material.Parameters ?? [];
+        int index = Array.FindIndex(parameters, x => string.Equals(x?.Name, parameterName, StringComparison.Ordinal));
+        if (index < 0)
+            return false;
+
+        ShaderVar[] next = [.. parameters];
+        Array.Copy(next, index + 1, next, index, next.Length - index - 1);
+        Array.Resize(ref next, next.Length - 1);
+        material.Parameters = next;
+        material.MarkDirty();
+        return true;
     }
 
     private static void DrawSamplerTextureField(XRMaterial material, SamplerBindingEntry binding)

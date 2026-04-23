@@ -87,9 +87,11 @@ namespace XREngine.Rendering
         string? Slot,
         string? Range,
         string? EnumOptions,
+        bool IsToggle,
         EShaderUiPropertyMode DefaultMode,
         bool HasExplicitMetadata,
-        int SourceLine);
+        int SourceLine,
+        string? DefaultLiteral = null);
 
     public sealed record ShaderUiValidationIssue(
         EShaderUiValidationSeverity Severity,
@@ -181,9 +183,11 @@ namespace XREngine.Rendering
                     slot,
                     range,
                     enumOptions,
+                    propertyAnnotation?.IsToggle ?? false,
                     mode,
                     hasExplicitPropertyMetadata,
-                    lineNumber));
+                    lineNumber,
+                    propertyAnnotation?.DefaultLiteral));
 
                 state.PendingProperty = null;
                 state.PendingTooltip = null;
@@ -365,6 +369,9 @@ namespace XREngine.Rendering
                     break;
 
                 case "feature":
+                    string? featureTooltip = namedArgs.TryGetValue("tooltip", out string? featureTooltipArg)
+                        ? BuildTooltip(state.PendingTooltip, Unquote(featureTooltipArg))
+                        : state.PendingTooltip;
                     state.PendingFeature = new PendingFeatureAnnotation(
                         namedArgs.TryGetValue("id", out string? id) ? Unquote(id) : FirstStringArgument(arguments, namedArgs, "id"),
                         namedArgs.TryGetValue("name", out string? name) ? Unquote(name) : null,
@@ -373,7 +380,7 @@ namespace XREngine.Rendering
                         ParseDefaultEnabled(namedArgs),
                         state.CurrentCategory,
                         state.CurrentSubcategory,
-                        state.PendingTooltip,
+                        featureTooltip,
                         ParseStringList(arguments, namedArgs, "depends"),
                         ParseStringList(arguments, namedArgs, "conflicts"),
                         ParseSortOrder(namedArgs),
@@ -409,6 +416,9 @@ namespace XREngine.Rendering
                     break;
 
                 case "property":
+                    string? propertyTooltip = namedArgs.TryGetValue("tooltip", out string? propertyTooltipArg)
+                        ? BuildTooltip(state.PendingTooltip, Unquote(propertyTooltipArg))
+                        : state.PendingTooltip;
                     state.PendingProperty = new PendingPropertyAnnotation(
                         namedArgs.TryGetValue("name", out string? propertyName) ? Unquote(propertyName) : null,
                         namedArgs.TryGetValue("display", out string? display) ? Unquote(display) : null,
@@ -416,10 +426,12 @@ namespace XREngine.Rendering
                         namedArgs.TryGetValue("range", out string? range) ? Unquote(range) : null,
                         namedArgs.TryGetValue("slot", out string? slot) ? Unquote(slot) : null,
                         namedArgs.TryGetValue("enum", out string? enumOptions) ? Unquote(enumOptions) : null,
+                        ParseBool(namedArgs, "toggle"),
                         namedArgs.TryGetValue("feature", out string? propertyFeature) ? Unquote(propertyFeature) : null,
                         state.CurrentCategory,
                         state.CurrentSubcategory,
-                        state.PendingTooltip);
+                        propertyTooltip,
+                        namedArgs.TryGetValue("default", out string? defaultLiteral) ? Unquote(defaultLiteral) : null);
                     break;
             }
 
@@ -742,6 +754,7 @@ namespace XREngine.Rendering
 
             return Unquote(value).ToLowerInvariant() switch
             {
+                "constant" => EShaderUiPropertyMode.Static,
                 "static" => EShaderUiPropertyMode.Static,
                 "animated" => EShaderUiPropertyMode.Animated,
                 _ => EShaderUiPropertyMode.Unspecified,
@@ -924,9 +937,11 @@ namespace XREngine.Rendering
             string? Range,
             string? Slot,
             string? EnumOptions,
+            bool IsToggle,
             string? FeatureId,
             string? Category,
             string? Subcategory,
-            string? Tooltip);
+            string? Tooltip,
+            string? DefaultLiteral);
     }
 }

@@ -97,6 +97,18 @@ public sealed class MaterialInspectorShaderSlotContractTests
         uberInspectorSource.ShouldContain(": status.ActiveVariantHash != 0");
     }
 
+    [Test]
+    public void UberInspector_DisablesModulesTrimmedByImportVariant()
+    {
+        string uberInspectorSource = ReadWorkspaceFile("XREngine.Editor/AssetEditors/XRMaterialInspector.Uber.cs");
+
+        uberInspectorSource.ShouldContain("XRENGINE_UBER_IMPORT_MATERIAL");
+        uberInspectorSource.ShouldContain("Active shader trims");
+        uberInspectorSource.ShouldContain("Unavailable in the active shader variant.");
+        uberInspectorSource.ShouldContain("UberFeatureUnavailableColor");
+        uberInspectorSource.ShouldContain("Unavailable");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string repoRoot = ResolveRepoRoot();

@@ -79,6 +79,21 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         return new(appended, Properties);
     }
 
+    public UberMaterialAuthoredState ClearFeature(string featureId)
+    {
+        if (string.IsNullOrWhiteSpace(featureId))
+            return this;
+
+        int index = Array.FindIndex(Features, x => string.Equals(x.Id, featureId, StringComparison.Ordinal));
+        if (index < 0)
+            return this;
+
+        UberMaterialFeatureState[] next = [.. Features];
+        Array.Copy(next, index + 1, next, index, next.Length - index - 1);
+        Array.Resize(ref next, next.Length - 1);
+        return new(next, Properties);
+    }
+
     public UberMaterialAuthoredState SetPropertyMode(string propertyName, EShaderUiPropertyMode mode)
     {
         if (string.IsNullOrWhiteSpace(propertyName))
@@ -112,6 +127,21 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
 
         UberMaterialPropertyState[] appended = [.. Properties, new UberMaterialPropertyState(propertyName, mode, null)];
         return new(Features, appended);
+    }
+
+    public UberMaterialAuthoredState ClearProperty(string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName))
+            return this;
+
+        int index = Array.FindIndex(Properties, x => string.Equals(x.Name, propertyName, StringComparison.Ordinal));
+        if (index < 0)
+            return this;
+
+        UberMaterialPropertyState[] next = [.. Properties];
+        Array.Copy(next, index + 1, next, index, next.Length - index - 1);
+        Array.Resize(ref next, next.Length - 1);
+        return new(Features, next);
     }
 
     public UberMaterialAuthoredState SetPropertyStaticLiteral(string propertyName, string? staticLiteral)

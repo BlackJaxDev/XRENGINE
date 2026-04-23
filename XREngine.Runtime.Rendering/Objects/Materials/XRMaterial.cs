@@ -293,7 +293,16 @@ namespace XREngine.Rendering
             => ShadersChanged();
 
         public bool SetUberFeatureEnabled(string featureId, bool enabled)
-            => UpdateUberAuthoredState(static (state, args) => state.SetFeature(args.featureId, args.enabled), (featureId, enabled));
+        {
+            bool changed = UpdateUberAuthoredState(static (state, args) => state.SetFeature(args.featureId, args.enabled), (featureId, enabled));
+            if (changed && enabled)
+                EnsureUberFeatureResources(featureId);
+
+            return changed;
+        }
+
+        public bool ResetUberFeatureOverride(string featureId)
+            => UpdateUberAuthoredState(static (state, id) => state.ClearFeature(id), featureId);
 
         public bool SetUberPropertyMode(string propertyName, EShaderUiPropertyMode mode)
         {
@@ -313,6 +322,9 @@ namespace XREngine.Rendering
 
         public bool SetUberPropertyStaticLiteral(string propertyName, string? staticLiteral)
             => UpdateUberAuthoredState(static (state, args) => state.SetPropertyStaticLiteral(args.propertyName, args.staticLiteral), (propertyName, staticLiteral));
+
+        public bool ResetUberPropertyOverride(string propertyName)
+            => UpdateUberAuthoredState(static (state, name) => state.ClearProperty(name), propertyName);
 
         public bool RefreshUberPropertyStaticLiteral(string propertyName)
         {

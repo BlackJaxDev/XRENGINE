@@ -316,6 +316,15 @@ internal static partial class UberShaderVariantBuilder
         if (parameter is null && string.Equals(property.Name, "_Cutoff", StringComparison.Ordinal))
             return FormatFloatLiteral(material.AlphaCutoff);
 
+        // When the property has no backing material parameter (e.g. a feature
+        // was disabled at import time so its parameters were never populated),
+        // prefer the manifest-authored default literal. Without this, a freshly
+        // enabled feature would bake as zeros — e.g. rim lighting with
+        // _RimLightColor = vec4(0,0,0,0) and _RimBlendStrength = 0 produces
+        // black rim regardless of the enabled flag.
+        if (parameter is null && !string.IsNullOrWhiteSpace(property.DefaultLiteral))
+            return property.DefaultLiteral!;
+
         if (parameter is null)
         {
             if (!ShaderVar.GlslTypeMap.TryGetValue(property.GlslType, out EShaderVarType type))

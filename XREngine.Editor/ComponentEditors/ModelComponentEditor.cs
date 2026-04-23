@@ -31,6 +31,8 @@ namespace XREngine.Editor.ComponentEditors;
 public sealed class ModelComponentEditor : IXRComponentEditor
 {
     private static readonly Vector4 ActiveLodHighlight = new(0.20f, 0.50f, 0.90f, 0.18f);
+    private static readonly string[] SubmeshInspectorTabLabels = ["Properties", "Tools"];
+    private static readonly string[] SubmeshDetailTabLabels = ["Properties", "Tools"];
     private const float TexturePreviewMaxEdge = 96.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
 
@@ -112,6 +114,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private static readonly ConditionalWeakTable<ModelComponent, ImpostorState> s_impostorStates = new();
     private static readonly ConditionalWeakTable<ModelComponent, BvhPreviewState> s_bvhPreviewStates = new();
     private static readonly ConditionalWeakTable<SubMesh, MeshOptimizerEditorState> s_meshOptimizerStates = new();
+    private static readonly ConditionalWeakTable<SubMesh, SubmeshEditorState> s_submeshEditorStates = new();
     private static readonly ConditionalWeakTable<SubMesh, SubMeshMaterialState> s_submeshMaterialStates = new();
     private static readonly ConditionalWeakTable<ModelComponent, SubmeshPanelState> s_submeshPanelStates = new();
 
@@ -119,6 +122,12 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     {
         public MeshOptimizerMeshletStats? LastMeshletStats;
         public List<MeshOptimizerLodStats> LastGeneratedLodStats = [];
+        public MeshOptimizerPreset SelectedPreset;
+    }
+
+    private sealed class SubmeshEditorState
+    {
+        public HashSet<int> ExpandedLodIndices = [];
     }
 
     private sealed class SubMeshMaterialState
@@ -129,6 +138,18 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private sealed class SubmeshPanelState
     {
         public string Filter = string.Empty;
+        public bool HideEmptySubmeshes;
+        public HashSet<int> SelectedSubmeshIndices = [];
+        public int RenamingIndex = -1;
+        public string RenameBuffer = string.Empty;
+        public XRMaterial? PendingBatchMaterial;
+    }
+
+    private enum MeshOptimizerPreset
+    {
+        Default,
+        PreserveQuality,
+        Aggressive,
     }
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
@@ -225,34 +246,72 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 panelState.Filter = string.Empty;
         }
 
+        ImGui.SameLine();
+        bool hideEmptySubmeshes = panelState.HideEmptySubmeshes;
+        if (ImGui.Checkbox("Hide Empty", ref hideEmptySubmeshes))
+            panelState.HideEmptySubmeshes = hideEmptySubmeshes;
+
         int matchingSubmeshCount = 0;
         for (int i = 0; i < model.Meshes.Count; i++)
         {
-            if (SubmeshMatchesFilter(model.Meshes[i], i, panelState.Filter))
+            if (SubmeshMatchesFilter(model.Meshes[i], i, panelState.Filter, panelState.HideEmptySubmeshes))
                 matchingSubmeshCount++;
         }
 
         ImGui.TextDisabled($"Showing {matchingSubmeshCount.ToString(CultureInfo.InvariantCulture)} of {model.Meshes.Count.ToString(CultureInfo.InvariantCulture)} submesh(es)");
+        ImGui.SameLine();
+        ImGui.TextDisabled($"Selected: {panelState.SelectedSubmeshIndices.Count.ToString(CultureInfo.InvariantCulture)}");
 
-        int submeshIndex = 0;
-        foreach (SubMesh subMesh in model.Meshes)
+        if (matchingSubmeshCount > 0)
         {
-            if (!SubmeshMatchesFilter(subMesh, submeshIndex, panelState.Filter))
-            {
-                submeshIndex++;
-                continue;
-            }
+            if (ImGui.SmallButton("Select Visible"))
+                SelectVisibleSubmeshes(model, panelState);
 
-            RenderableMesh? runtimeMesh = submeshIndex < runtimeMeshes.Length ? runtimeMeshes[submeshIndex] : null;
-            DrawSubmeshSection(modelComponent, submeshIndex, subMesh, runtimeMesh);
-            submeshIndex++;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Clear Selection"))
+                panelState.SelectedSubmeshIndices.Clear();
         }
 
-        if (matchingSubmeshCount == 0)
-            ImGui.TextDisabled("No submeshes matched the current filter.");
+        if (panelState.SelectedSubmeshIndices.Count > 0)
+        {
+            ImGui.TextUnformatted("Apply Shared Material To Selected");
+            ImGuiAssetUtilities.DrawAssetField("SelectedSubmeshMaterial", panelState.PendingBatchMaterial, asset => panelState.PendingBatchMaterial = asset, AssetFieldOptions.ForMaterials());
+            ImGui.SameLine();
+            if (ImGui.Button("Apply To Selected"))
+                ApplyMaterialToSelectedSubmeshes(model, panelState.SelectedSubmeshIndices, panelState.PendingBatchMaterial);
+        }
 
-        DrawImpostorUtilities(modelComponent, model);
-        DrawBvhPreviewUtilities(modelComponent);
+        int submeshIndex = 0;
+        int selectedTab = DrawInspectorTabSelector("SubmeshPanelTabs", Engine.EditorPreferences?.SubmeshInspectorTabIndex ?? 0, SubmeshInspectorTabLabels, value =>
+        {
+            if (Engine.EditorPreferences is not null)
+                Engine.EditorPreferences.SubmeshInspectorTabIndex = value;
+        });
+
+        switch (selectedTab)
+        {
+            case 0:
+                foreach (SubMesh subMesh in model.Meshes)
+                {
+                    if (!SubmeshMatchesFilter(subMesh, submeshIndex, panelState.Filter, panelState.HideEmptySubmeshes))
+                    {
+                        submeshIndex++;
+                        continue;
+                    }
+
+                    RenderableMesh? runtimeMesh = submeshIndex < runtimeMeshes.Length ? runtimeMeshes[submeshIndex] : null;
+                    DrawSubmeshSection(modelComponent, submeshIndex, subMesh, runtimeMesh);
+                    submeshIndex++;
+                }
+
+                if (matchingSubmeshCount == 0)
+                    ImGui.TextDisabled("No submeshes matched the current filter.");
+                break;
+            case 1:
+                DrawImpostorUtilities(modelComponent, model);
+                DrawBvhPreviewUtilities(modelComponent);
+                break;
+        }
     }
 
     private static void DrawUnifiedBlendshapeControls(ModelComponent modelComponent)
@@ -658,11 +717,31 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     {
         using var profilerScope = Engine.Profiler.Start("UI.ModelComponentEditor.SubmeshSection");
 
+        SubmeshPanelState panelState = s_submeshPanelStates.GetValue(modelComponent, _ => new SubmeshPanelState());
+        SubmeshEditorState editorState = s_submeshEditorStates.GetValue(subMesh, _ => new SubmeshEditorState());
+
         ImGui.PushID($"Submesh{index}");
+
+        bool selected = panelState.SelectedSubmeshIndices.Contains(index);
+        if (ImGui.Checkbox("##SubmeshSelected", ref selected))
+        {
+            if (selected)
+                panelState.SelectedSubmeshIndices.Add(index);
+            else
+                panelState.SelectedSubmeshIndices.Remove(index);
+        }
+
+        ImGui.SameLine();
 
         string headerLabel = BuildSubmeshHeaderLabel(index, subMesh, runtimeMesh);
 
-        if (!ImGui.TreeNodeEx(headerLabel, ImGuiTreeNodeFlags.SpanFullWidth | ImGuiTreeNodeFlags.FramePadding))
+        bool open = ImGui.TreeNodeEx(headerLabel, ImGuiTreeNodeFlags.SpanFullWidth | ImGuiTreeNodeFlags.FramePadding);
+        if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            BeginSubmeshRename(panelState, index, subMesh);
+
+        TryAcceptSubmeshMaterialDrop(subMesh);
+
+        if (!open)
         {
             ImGui.PopID();
             return;
@@ -670,15 +749,24 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         var lodEntries = BuildLodEntries(subMesh, runtimeMesh);
 
-        DrawSubmeshOverview(index, subMesh, runtimeMesh, lodEntries);
-        DrawSubmeshMaterialControls(subMesh);
-        DrawMeshOptimizerControls(modelComponent, subMesh);
-        DrawLodSummaryTable(index, subMesh, lodEntries, runtimeMesh);
+        DrawSubmeshRenameControls(panelState, index, subMesh);
 
-        if (ImGui.CollapsingHeader($"LOD Details##Submesh{index}"))
+        int selectedTab = DrawInspectorTabSelector($"SubmeshTabs_{index}", Engine.EditorPreferences?.SubmeshDetailTabIndex ?? 0, SubmeshDetailTabLabels, value =>
         {
-            ImGui.Spacing();
-            DrawLodPropertyEditors(modelComponent, index, subMesh, lodEntries, runtimeMesh);
+            if (Engine.EditorPreferences is not null)
+                Engine.EditorPreferences.SubmeshDetailTabIndex = value;
+        });
+
+        switch (selectedTab)
+        {
+            case 0:
+                DrawSubmeshOverview(index, subMesh, runtimeMesh, lodEntries);
+                DrawSubmeshMaterialControls(subMesh);
+                DrawLodSummaryTable(modelComponent, index, subMesh, lodEntries, runtimeMesh, editorState);
+                break;
+            case 1:
+                DrawMeshOptimizerControls(modelComponent, subMesh);
+                break;
         }
 
         ImGui.TreePop();
@@ -1120,8 +1208,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         return entries;
     }
 
-    private static bool SubmeshMatchesFilter(SubMesh subMesh, int index, string? filter)
+    private static bool SubmeshMatchesFilter(SubMesh subMesh, int index, string? filter, bool hideEmptySubmeshes = false)
     {
+        if (hideEmptySubmeshes && IsSubmeshEmpty(subMesh))
+            return false;
+
         if (string.IsNullOrWhiteSpace(filter))
             return true;
 
@@ -1142,6 +1233,13 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
 
         return false;
+    }
+
+    private static bool IsSubmeshEmpty(SubMesh subMesh)
+    {
+        bool hasGeometry = subMesh.LODs.Any(static lod => lod.Mesh is { IndexCount: > 0 });
+        bool hasMaterial = subMesh.LODs.Any(static lod => lod.Material is not null);
+        return !hasGeometry || !hasMaterial;
     }
 
     private static string BuildSubmeshHeaderLabel(int index, SubMesh subMesh, RenderableMesh? runtimeMesh)
@@ -1246,10 +1344,12 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     }
 
     private static void DrawLodSummaryTable(
+        ModelComponent modelComponent,
         int submeshIndex,
         SubMesh subMesh,
         IReadOnlyList<(int Index, SubMeshLOD Lod, LinkedListNode<RenderableMesh.RenderableLOD>? RuntimeNode)> lodEntries,
-        RenderableMesh? runtimeMesh)
+        RenderableMesh? runtimeMesh,
+        SubmeshEditorState editorState)
     {
         if (lodEntries.Count == 0)
         {
@@ -1264,7 +1364,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                                            | ImGuiTableFlags.Resizable
                                            | ImGuiTableFlags.NoSavedSettings;
 
-        if (!ImGui.BeginTable($"Submesh{submeshIndex}_LODs", 5, tableFlags))
+        if (!ImGui.BeginTable($"Submesh{submeshIndex}_LODs", 6, tableFlags))
             return;
 
         ImGui.TableSetupColumn("LOD", ImGuiTableColumnFlags.WidthFixed, 80.0f);
@@ -1272,6 +1372,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         ImGui.TableSetupColumn("Mesh", ImGuiTableColumnFlags.WidthStretch, 0.0f);
         ImGui.TableSetupColumn("Material", ImGuiTableColumnFlags.WidthStretch, 0.0f);
         ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthStretch, 0.0f);
+        ImGui.TableSetupColumn("Details", ImGuiTableColumnFlags.WidthFixed, 88.0f);
         ImGui.TableHeadersRow();
 
         foreach (var entry in lodEntries)
@@ -1316,9 +1417,29 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
             ImGui.TableSetColumnIndex(4);
             DrawStatusSummaryCell(entry.Index, isActive, runtimeMesh, runtimeNode);
+
+            ImGui.TableSetColumnIndex(5);
+            bool expanded = editorState.ExpandedLodIndices.Contains(entry.Index);
+            if (ImGui.SmallButton(expanded ? "Hide" : "Inspect"))
+            {
+                if (expanded)
+                    editorState.ExpandedLodIndices.Remove(entry.Index);
+                else
+                    editorState.ExpandedLodIndices.Add(entry.Index);
+            }
         }
 
         ImGui.EndTable();
+
+        foreach (var entry in lodEntries)
+        {
+            if (!editorState.ExpandedLodIndices.Contains(entry.Index))
+                continue;
+
+            ImGui.Spacing();
+            ImGui.SeparatorText($"LOD {entry.Index} Details");
+            DrawLodEditorContent(modelComponent, submeshIndex, subMesh, runtimeMesh, entry.Lod, entry.Index, entry.RuntimeNode, entry.RuntimeNode?.Value);
+        }
     }
 
     private static void DrawMeshSummaryCell(XRMesh? assetMesh, XRMesh? runtimeMesh)
@@ -1834,6 +1955,21 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
     }
 
+    private static void ApplyMaterialToSelectedSubmeshes(Model model, IReadOnlyCollection<int> selectedIndices, XRMaterial? material)
+    {
+        if (selectedIndices.Count == 0)
+            return;
+
+        int index = 0;
+        foreach (SubMesh subMesh in model.Meshes)
+        {
+            if (selectedIndices.Contains(index))
+                ApplySharedMaterial(subMesh, material);
+
+            index++;
+        }
+    }
+
     private static void DrawMeshOptimizerControls(ModelComponent modelComponent, SubMesh subMesh)
     {
         if (!ImGui.CollapsingHeader("Meshoptimizer"))
@@ -1842,58 +1978,166 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         var state = s_meshOptimizerStates.GetValue(subMesh, _ => new MeshOptimizerEditorState());
         bool changed = false;
 
-        if (ImGui.TreeNodeEx("Meshlets", ImGuiTreeNodeFlags.FramePadding | ImGuiTreeNodeFlags.SpanFullWidth))
+        DrawMeshOptimizerSummary(state, subMesh);
+
+        MeshOptimizerPreset preset = state.SelectedPreset;
+        if (ImGui.BeginCombo("Preset", preset.ToString()))
         {
-            changed |= DrawMeshletGenerationSettings(subMesh.MeshOptimizer.Meshlets);
-
-            if (ImGui.Button("Analyze Current LOD Meshlets", new Vector2(-1f, 0f)))
+            foreach (MeshOptimizerPreset option in Enum.GetValues<MeshOptimizerPreset>())
             {
-                XRMesh? sourceMesh = subMesh.LODs.FirstOrDefault(static lod => lod.Mesh is not null)?.Mesh;
-                state.LastMeshletStats = sourceMesh is null ? null : MeshOptimizerIntegration.BuildMeshlets(sourceMesh, subMesh.MeshOptimizer.Meshlets).Stats;
+                bool isSelected = option == preset;
+                if (ImGui.Selectable(option.ToString(), isSelected) && !isSelected)
+                    state.SelectedPreset = option;
+
+                if (isSelected)
+                    ImGui.SetItemDefaultFocus();
             }
 
-            if (state.LastMeshletStats is { } meshletStats)
-            {
-                ImGui.TextDisabled($"Meshlets: {meshletStats.MeshletCount}");
-                ImGui.TextDisabled($"Vertex refs: {meshletStats.VertexReferenceCount}, triangle bytes: {meshletStats.TriangleByteCount}");
-                if (subMesh.MeshOptimizer.Meshlets.EncodeMeshlets)
-                    ImGui.TextDisabled($"Encoded bytes: {meshletStats.EncodedByteCount}");
-            }
-
-            ImGui.TreePop();
+            ImGui.EndCombo();
         }
 
-        if (ImGui.TreeNodeEx("LOD Generation", ImGuiTreeNodeFlags.FramePadding | ImGuiTreeNodeFlags.SpanFullWidth))
+        ImGui.SameLine();
+        if (ImGui.Button("Apply Preset"))
         {
-            changed |= DrawMeshLodGenerationSettings(subMesh.MeshOptimizer.Lods);
+            ApplyMeshOptimizerPreset(subMesh, state.SelectedPreset);
+            changed = true;
+        }
 
-            if (ImGui.Button("Generate Auto LODs", new Vector2(-1f, 0f)))
+        if (ImGui.CollapsingHeader("Advanced Meshoptimizer Settings"))
+        {
+            if (ImGui.TreeNodeEx("Meshlets", ImGuiTreeNodeFlags.FramePadding | ImGuiTreeNodeFlags.SpanFullWidth))
             {
-                state.LastGeneratedLodStats = [.. MeshOptimizerIntegration.RegenerateAutoLods(subMesh).Select(static x => x.Stats)];
-                modelComponent.RebuildRuntimeMeshes();
+                changed |= DrawMeshletGenerationSettings(subMesh.MeshOptimizer.Meshlets);
+
+                if (ImGui.Button("Analyze Current LOD Meshlets", new Vector2(-1f, 0f)))
+                {
+                    XRMesh? sourceMesh = subMesh.LODs.FirstOrDefault(static lod => lod.Mesh is not null)?.Mesh;
+                    state.LastMeshletStats = sourceMesh is null ? null : MeshOptimizerIntegration.BuildMeshlets(sourceMesh, subMesh.MeshOptimizer.Meshlets).Stats;
+                }
+
+                ImGui.TreePop();
             }
 
-            if (ImGui.Button("Remove Auto LODs", new Vector2(-1f, 0f)))
+            if (ImGui.TreeNodeEx("LOD Generation", ImGuiTreeNodeFlags.FramePadding | ImGuiTreeNodeFlags.SpanFullWidth))
             {
-                MeshOptimizerIntegration.RemoveAutoGeneratedLods(subMesh);
-                state.LastGeneratedLodStats.Clear();
-                modelComponent.RebuildRuntimeMeshes();
+                changed |= DrawMeshLodGenerationSettings(subMesh.MeshOptimizer.Lods);
+
+                if (ImGui.Button("Generate Auto LODs", new Vector2(-1f, 0f)))
+                {
+                    state.LastGeneratedLodStats = [.. MeshOptimizerIntegration.RegenerateAutoLods(subMesh).Select(static x => x.Stats)];
+                    modelComponent.RebuildRuntimeMeshes();
+                }
+
+                if (ImGui.Button("Remove Auto LODs", new Vector2(-1f, 0f)))
+                {
+                    MeshOptimizerIntegration.RemoveAutoGeneratedLods(subMesh);
+                    state.LastGeneratedLodStats.Clear();
+                    modelComponent.RebuildRuntimeMeshes();
+                }
+
+                ImGui.TreePop();
             }
-
-            int autoGeneratedCount = subMesh.LODs.Count(static lod => lod.IsAutoGenerated);
-            ImGui.TextDisabled($"Auto-generated LODs: {autoGeneratedCount}");
-
-            for (int i = 0; i < state.LastGeneratedLodStats.Count; i++)
-            {
-                MeshOptimizerLodStats stats = state.LastGeneratedLodStats[i];
-                ImGui.TextDisabled($"LOD {i + 1}: {stats.SourceTriangleCount} -> {stats.ResultTriangleCount} tris, error {stats.NormalizedError:F4}");
-            }
-
-            ImGui.TreePop();
         }
 
         if (changed)
             modelComponent.RebuildRuntimeMeshes();
+    }
+
+    private static void DrawMeshOptimizerSummary(MeshOptimizerEditorState state, SubMesh subMesh)
+    {
+        if (state.LastMeshletStats is null && state.LastGeneratedLodStats.Count == 0)
+        {
+            ImGui.TextDisabled("No meshoptimizer results yet. Run an analysis or generate LODs to see stats here.");
+            return;
+        }
+
+        ImGui.SeparatorText("Latest Results");
+
+        if (state.LastMeshletStats is { } meshletStats)
+        {
+            ImGui.TextDisabled($"Meshlets: {meshletStats.MeshletCount}");
+            ImGui.TextDisabled($"Vertex refs: {meshletStats.VertexReferenceCount}, triangle bytes: {meshletStats.TriangleByteCount}");
+            if (subMesh.MeshOptimizer.Meshlets.EncodeMeshlets)
+                ImGui.TextDisabled($"Encoded bytes: {meshletStats.EncodedByteCount}");
+        }
+
+        int autoGeneratedCount = subMesh.LODs.Count(static lod => lod.IsAutoGenerated);
+        ImGui.TextDisabled($"Auto-generated LODs: {autoGeneratedCount}");
+
+        for (int i = 0; i < state.LastGeneratedLodStats.Count; i++)
+        {
+            MeshOptimizerLodStats stats = state.LastGeneratedLodStats[i];
+            ImGui.TextDisabled($"LOD {i + 1}: {stats.SourceTriangleCount} -> {stats.ResultTriangleCount} tris, error {stats.NormalizedError:F4}");
+        }
+
+        ImGui.Spacing();
+    }
+
+    private static void ApplyMeshOptimizerPreset(SubMesh subMesh, MeshOptimizerPreset preset)
+    {
+        MeshletGenerationSettings meshlets = subMesh.MeshOptimizer.Meshlets;
+        MeshLodGenerationSettings lods = subMesh.MeshOptimizer.Lods;
+
+        meshlets.Enabled = true;
+        meshlets.OptimizeMeshlets = true;
+        meshlets.ComputeBounds = true;
+        meshlets.EncodeMeshlets = true;
+        meshlets.EncodeVertexReferences = true;
+
+        lods.Enabled = true;
+        lods.UseNormals = true;
+        lods.UseTangents = true;
+        lods.UseTexCoords = true;
+        lods.UseColors = true;
+        lods.ProtectAttributeSeams = true;
+        lods.PrioritizeBorderVertices = true;
+        lods.LockWeightedVertices = true;
+        lods.ReusePreviousLodAsSource = true;
+
+        switch (preset)
+        {
+            case MeshOptimizerPreset.PreserveQuality:
+                meshlets.OptimizeLevel = 3;
+                meshlets.SplitFactor = 1.5f;
+                meshlets.FillWeight = 1.25f;
+                meshlets.ConeWeight = 0.15f;
+
+                lods.AdditionalLodCount = 1;
+                lods.FirstLodIndexRatio = 0.82f;
+                lods.LodRatioScale = 0.72f;
+                lods.TargetError = 0.005f;
+                lods.FirstLodDistance = 20.0f;
+                lods.LodDistanceScale = 2.5f;
+                break;
+            case MeshOptimizerPreset.Aggressive:
+                meshlets.OptimizeLevel = 8;
+                meshlets.SplitFactor = 4.0f;
+                meshlets.FillWeight = 0.6f;
+                meshlets.ConeWeight = 0.4f;
+
+                lods.AdditionalLodCount = 3;
+                lods.FirstLodIndexRatio = 0.45f;
+                lods.LodRatioScale = 0.45f;
+                lods.TargetError = 0.03f;
+                lods.FirstLodDistance = 12.0f;
+                lods.LodDistanceScale = 1.75f;
+                lods.ProtectAttributeSeams = false;
+                lods.PrioritizeBorderVertices = false;
+                break;
+            default:
+                meshlets.OptimizeLevel = 5;
+                meshlets.SplitFactor = 2.5f;
+                meshlets.FillWeight = 1.0f;
+                meshlets.ConeWeight = 0.25f;
+
+                lods.AdditionalLodCount = 2;
+                lods.FirstLodIndexRatio = 0.65f;
+                lods.LodRatioScale = 0.6f;
+                lods.TargetError = 0.0125f;
+                lods.FirstLodDistance = 16.0f;
+                lods.LodDistanceScale = 2.0f;
+                break;
+        }
     }
 
     private static bool DrawMeshletGenerationSettings(MeshletGenerationSettings settings)
@@ -2166,6 +2410,105 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
 
         return changed;
+    }
+
+    private static int DrawInspectorTabSelector(string tableId, int selectedIndex, IReadOnlyList<string> labels, Action<int> persistSelection)
+    {
+        if (!ImGui.BeginTable(tableId, labels.Count, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
+            return selectedIndex;
+
+        for (int i = 0; i < labels.Count; i++)
+        {
+            ImGui.TableNextColumn();
+            bool isSelected = selectedIndex == i;
+            if (isSelected)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.28f, 0.72f, 0.92f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.36f, 0.80f, 1.0f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.20f, 0.60f, 0.82f, 1.0f));
+            }
+
+            if (ImGui.Button(labels[i], new Vector2(-1.0f, 0.0f)))
+                selectedIndex = i;
+
+            if (isSelected)
+                ImGui.PopStyleColor(3);
+        }
+
+        ImGui.EndTable();
+        ImGui.Spacing();
+        persistSelection(selectedIndex);
+        return selectedIndex;
+    }
+
+    private static void SelectVisibleSubmeshes(Model model, SubmeshPanelState panelState)
+    {
+        panelState.SelectedSubmeshIndices.Clear();
+        for (int i = 0; i < model.Meshes.Count; i++)
+        {
+            if (SubmeshMatchesFilter(model.Meshes[i], i, panelState.Filter, panelState.HideEmptySubmeshes))
+                panelState.SelectedSubmeshIndices.Add(i);
+        }
+    }
+
+    private static void BeginSubmeshRename(SubmeshPanelState panelState, int index, SubMesh subMesh)
+    {
+        panelState.RenamingIndex = index;
+        panelState.RenameBuffer = string.IsNullOrWhiteSpace(subMesh.Name) ? string.Empty : subMesh.Name;
+    }
+
+    private static void DrawSubmeshRenameControls(SubmeshPanelState panelState, int index, SubMesh subMesh)
+    {
+        if (panelState.RenamingIndex != index)
+        {
+            if (ImGui.SmallButton($"Rename##SubmeshRename_{index}"))
+                BeginSubmeshRename(panelState, index, subMesh);
+            return;
+        }
+
+        ImGui.SetNextItemWidth(MathF.Min(360.0f, ImGui.GetContentRegionAvail().X));
+        bool commitRename = ImGui.InputText($"##SubmeshRename_{index}", ref panelState.RenameBuffer, 128u, ImGuiInputTextFlags.EnterReturnsTrue);
+        ImGui.SameLine();
+        if (ImGui.SmallButton($"Save##SubmeshRenameSave_{index}"))
+            commitRename = true;
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton($"Cancel##SubmeshRenameCancel_{index}"))
+        {
+            panelState.RenamingIndex = -1;
+            panelState.RenameBuffer = string.Empty;
+            return;
+        }
+
+        if (!commitRename)
+            return;
+
+        using var _ = Undo.TrackChange("Rename Submesh", subMesh);
+        subMesh.Name = string.IsNullOrWhiteSpace(panelState.RenameBuffer) ? string.Empty : panelState.RenameBuffer.Trim();
+        panelState.RenamingIndex = -1;
+        panelState.RenameBuffer = string.Empty;
+    }
+
+    private static void TryAcceptSubmeshMaterialDrop(SubMesh subMesh)
+    {
+        if (!ImGui.BeginDragDropTarget())
+            return;
+
+        ImGuiPayloadPtr payload = ImGui.AcceptDragDropPayload(ImGuiAssetUtilities.AssetPayloadType);
+        unsafe
+        {
+            if ((IntPtr)payload.NativePtr != IntPtr.Zero && payload.Data != IntPtr.Zero && payload.DataSize > 0)
+            {
+                string? path = ImGuiAssetUtilities.GetPathFromPayload(payload);
+                XRMaterial? material = !string.IsNullOrWhiteSpace(path) && Engine.Assets is not null
+                    ? Engine.Assets.Load<XRMaterial>(path)
+                    : null;
+                if (material is not null)
+                    ApplySharedMaterial(subMesh, material);
+            }
+        }
+
+        ImGui.EndDragDropTarget();
     }
 
     private static bool DrawEnumCombo<TEnum>(string label, ref TEnum value) where TEnum : struct, Enum

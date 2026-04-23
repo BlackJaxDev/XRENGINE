@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Threading;
 using NUnit.Framework;
@@ -161,6 +162,52 @@ public sealed class UberMaterialVariantTests
     }
 
     [Test]
+    public void SetUberFeatureEnabled_PrimesFeatureDefaultsForVisibleRuntimeBehavior()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@feature(id="stylized-shading", name="Stylized Lighting", default=off)
+            #ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+            //@property(name="_LightingMode", display="Lighting Mode", mode=static)
+            uniform int _LightingMode;
+            //@property(name="_ToonRamp", display="Ramp Texture", slot=texture)
+            uniform sampler2D _ToonRamp;
+            #endif
+            //@feature(id="rim-lighting", name="Rim Lighting", default=off)
+            #ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
+            //@property(name="_RimLightColor", display="Rim Color", mode=static, default="vec4(1.0, 1.0, 1.0, 1.0)")
+            uniform vec4 _RimLightColor;
+            //@property(name="_RimMask", display="Rim Mask", slot=texture)
+            uniform sampler2D _RimMask;
+            #endif
+            //@feature(id="glitter", name="Glitter", default=off)
+            #ifndef XRENGINE_UBER_DISABLE_GLITTER
+            //@property(name="_GlitterMask", display="Glitter Mask", slot=texture)
+            uniform sampler2D _GlitterMask;
+            #endif
+            """,
+            new ShaderInt(6, "_LightingMode"));
+
+        material.EnsureUberStateInitialized();
+
+        material.SetUberFeatureEnabled("stylized-shading", true).ShouldBeTrue();
+        material.SetUberFeatureEnabled("rim-lighting", true).ShouldBeTrue();
+        material.SetUberFeatureEnabled("glitter", true).ShouldBeTrue();
+
+        material.Parameter<ShaderInt>("_LightingMode")?.Value.ShouldBe(5);
+        material.Parameter<ShaderVector4>("_RimLightColor")?.Value.ShouldBe(new Vector4(1.0f, 1.0f, 1.0f, 1.0f));
+
+        XRTexture2D rimMask = material.Textures.OfType<XRTexture2D>().Single(texture => texture.SamplerName == "_RimMask");
+        XRTexture2D glitterMask = material.Textures.OfType<XRTexture2D>().Single(texture => texture.SamplerName == "_GlitterMask");
+        XRTexture2D toonRamp = material.Textures.OfType<XRTexture2D>().Single(texture => texture.SamplerName == "_ToonRamp");
+
+        rimMask.Mipmaps[0].Data!.GetBytes().ShouldBe([255, 255, 255, 255]);
+        glitterMask.Mipmaps[0].Data!.GetBytes().ShouldBe([255, 255, 255, 255]);
+        toonRamp.Mipmaps[0].Data!.GetBytes().ShouldBe([255, 255, 255, 255]);
+    }
+
+    [Test]
     public void UberVariantTelemetry_SnapshotAggregatesPreparationAdoptionAndBackendTiming()
     {
         UberShaderVariantTelemetry.ResetForTests();
@@ -315,6 +362,28 @@ public sealed class UberMaterialVariantTests
         finalSource.ShouldContain("uniform vec4 _Color;");
         finalSource.ShouldNotContain("#define _Color ");
         material.Parameter<ShaderVector4>("_Color")!.Value.ShouldBe(new Vector4(0.1f, 0.2f, 0.3f, 0.4f));
+    }
+
+    [Test]
+    public void TryGetUberMaterialState_AfterConstantBake_ReturnsCanonicalManifestWithAuthorableProperty()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@property(name="_Color", display="Color", mode=constant)
+            uniform vec4 _Color;
+            """,
+            new ShaderVector4(new Vector4(0.2f, 0.3f, 0.4f, 1.0f), "_Color"));
+
+        material.EnsureUberStateInitialized();
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        material.TryGetUberMaterialState(out XRShader? canonicalFragmentShader, out ShaderUiManifest manifest).ShouldBeTrue();
+        canonicalFragmentShader.ShouldNotBeNull();
+        Path.GetFileName(canonicalFragmentShader!.Source?.FilePath ?? canonicalFragmentShader.FilePath)
+            .ShouldBe("UberShader.frag");
+        manifest.PropertyLookup.ShouldContainKey("_Color");
     }
 
     [Test]

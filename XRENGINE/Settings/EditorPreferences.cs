@@ -42,6 +42,10 @@ namespace XREngine
         private ColorF4 _selectionOutlineColor = ColorF4.Green;
         private bool _confirmBeforeEnteringPlayMode = true;
         private bool _confirmBeforeExitingPlayMode = true;
+        private int _materialInspectorTabIndex = 0;
+        private int _materialPreviewSurfaceIndex = 0;
+        private int _submeshInspectorTabIndex = 0;
+        private int _submeshDetailTabIndex = 0;
         private EditorThemeSettings _theme = new();
         private EditorDebugOptions _debug = new();
         private bool _mcpServerEnabled = false;
@@ -196,6 +200,42 @@ namespace XREngine
         {
             get => _confirmBeforeExitingPlayMode;
             set => SetField(ref _confirmBeforeExitingPlayMode, value);
+        }
+
+        [Category("Inspector")]
+        [DisplayName("Material Inspector Tab Index")]
+        [Description("Last selected top-level tab in the material inspector.")]
+        public int MaterialInspectorTabIndex
+        {
+            get => _materialInspectorTabIndex;
+            set => SetField(ref _materialInspectorTabIndex, Math.Max(0, value));
+        }
+
+        [Category("Inspector")]
+        [DisplayName("Material Preview Surface Index")]
+        [Description("Last selected preview surface style for the material inspector.")]
+        public int MaterialPreviewSurfaceIndex
+        {
+            get => _materialPreviewSurfaceIndex;
+            set => SetField(ref _materialPreviewSurfaceIndex, Math.Clamp(value, 0, 2));
+        }
+
+        [Category("Inspector")]
+        [DisplayName("Submesh Inspector Tab Index")]
+        [Description("Last selected top-level tab in the model submesh inspector.")]
+        public int SubmeshInspectorTabIndex
+        {
+            get => _submeshInspectorTabIndex;
+            set => SetField(ref _submeshInspectorTabIndex, Math.Max(0, value));
+        }
+
+        [Category("Inspector")]
+        [DisplayName("Submesh Detail Tab Index")]
+        [Description("Last selected tab inside each expanded submesh entry.")]
+        public int SubmeshDetailTabIndex
+        {
+            get => _submeshDetailTabIndex;
+            set => SetField(ref _submeshDetailTabIndex, Math.Max(0, value));
         }
 
         /// <summary>
