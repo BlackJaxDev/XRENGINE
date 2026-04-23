@@ -113,7 +113,7 @@ uniform int _MainAlphaMaskMode;     // 0: Off, 1: Replace, 2: Multiply, 3: Add, 
 uniform float _AlphaMaskBlendStrength;
 //@property(name="_AlphaMaskValue", display="Mask Value", mode=static, range=[0,1])
 uniform float _AlphaMaskValue;
-//@property(name="_AlphaMaskInvert", display="Invert Mask", mode=static, range=[0,1])
+//@property(name="_AlphaMaskInvert", display="Invert Mask", mode=static, range=[0,1], toggle=true)
 uniform float _AlphaMaskInvert;
 #endif
 
@@ -146,7 +146,7 @@ uniform float _MainHueShift;
 uniform float _MainHueShiftSpeed;
 //@property(name="_MainHueShiftColorSpace", display="Hue Space", mode=static, enum="0:OKLab|1:HSV")
 uniform int _MainHueShiftColorSpace;    // 0: OKLab, 1: HSV
-//@property(name="_MainHueShiftReplace", display="Hue Replace", mode=static, range=[0,1])
+//@property(name="_MainHueShiftReplace", display="Hue Replace", mode=static, range=[0,1], toggle=true)
 uniform float _MainHueShiftReplace;
 #endif
 
@@ -161,7 +161,7 @@ uniform int _LightingMode;          // 0: Ramp, 1: Multilayer, 2: Wrapped, 3: Sk
 
 // Light Data options
 uniform int _LightingColorMode;
-//@property(name="_LightingMapMode", display="Light Map Mode", mode=static, enum="0:Poi Custom|1:Normalized|2:Saturated|3:Shadow Only")
+//@property(name="_LightingMapMode", display="Light Map Mode", mode=static, enum="0:Poiyomi|1:Normalized|2:Saturated|3:Shadow Only")
 //@tooltip("Selects how NdotL is remapped into the light-map value used by stylized lighting modes.")
 uniform int _LightingMapMode;
 uniform int _LightingDirectionMode;
@@ -170,9 +170,9 @@ uniform float _LightingCapEnabled;
 uniform float _LightingCap;
 //@property(name="_LightingMinLightBrightness", display="Minimum Light", mode=static, range=[0,1])
 uniform float _LightingMinLightBrightness;
-//@property(name="_LightingMonochromatic", display="Monochromatic", mode=static, range=[0,1])
+//@property(name="_LightingMonochromatic", display="Monochromatic", mode=static, range=[0,1], toggle=true)
 uniform float _LightingMonochromatic;
-//@property(name="_LightingIndirectUsesNormals", display="Indirect Uses Normals", mode=static, range=[0,1])
+//@property(name="_LightingIndirectUsesNormals", display="Indirect Uses Normals", mode=static, range=[0,1], toggle=true)
 uniform float _LightingIndirectUsesNormals;
 
 // Shadow options
@@ -180,7 +180,7 @@ uniform float _LightingIndirectUsesNormals;
 uniform vec3 _LightingShadowColor;
 //@property(name="_ShadowStrength", display="Shadow Strength", mode=static, range=[0,1])
 uniform float _ShadowStrength;
-//@property(name="_LightingIgnoreAmbientColor", display="Ignore Ambient Tint", mode=static, range=[0,1])
+//@property(name="_LightingIgnoreAmbientColor", display="Ignore Ambient Tint", mode=static, range=[0,1], toggle=true)
 uniform float _LightingIgnoreAmbientColor;
 
 // Texture Ramp shading (Mode 0)
@@ -190,7 +190,7 @@ uniform sampler2D _ToonRamp;
 uniform float _ShadowOffset;
 
 // Flat shading (Mode 5)
-//@property(name="_ForceFlatRampedLightmap", display="Binary Flat Lightmap", mode=static, range=[0,1])
+//@property(name="_ForceFlatRampedLightmap", display="Binary Flat Lightmap", mode=static, range=[0,1], toggle=true)
 //@tooltip("When flat lighting mode is active, forces a hard 0.5 threshold instead of using the continuous remapped light value.")
 uniform float _ForceFlatRampedLightmap;
 
@@ -207,7 +207,7 @@ uniform float _ShadowBlur;
 // Wrapped shading (Mode 2)
 //@property(name="_LightingWrappedWrap", display="Wrap Amount", mode=static, range=[0,1])
 uniform float _LightingWrappedWrap;
-//@property(name="_LightingWrappedNormalization", display="Wrap Normalize", mode=static, range=[0,1])
+//@property(name="_LightingWrappedNormalization", display="Wrap Normalize", mode=static, range=[0,1], toggle=true)
 uniform float _LightingWrappedNormalization;
 //@property(name="_LightingGradientStart", display="Gradient Start", mode=static, range=[0,1])
 uniform float _LightingGradientStart;
@@ -263,7 +263,7 @@ uniform float _EmissionStrength;
 uniform float _EmissionScrollingEnabled;
 //@property(name="_EmissionScrollingSpeed", display="Scroll Speed", mode=animated)
 uniform vec2 _EmissionScrollingSpeed;
-//@property(name="_EmissionScrollingVertexColor", display="Use Vertex Color", mode=static, range=[0,1])
+//@property(name="_EmissionScrollingVertexColor", display="Use Vertex Color", mode=static, range=[0,1], toggle=true)
 uniform float _EmissionScrollingVertexColor;
 #endif
 
@@ -285,15 +285,15 @@ uniform float _MatcapIntensity;
 uniform float _MatcapBorder;
 //@property(name="_MatcapUVMode", display="UV Mode", mode=static, enum="0:UTS|1:Top Pinch|2:Double Sided")
 uniform int _MatcapUVMode;          // 0: UTS, 1: Top Pinch, 2: Double Sided
-//@property(name="_MatcapReplace", display="Replace Lit Color", mode=static, range=[0,1])
+//@property(name="_MatcapReplace", display="Replace Lit Color", mode=static, range=[0,1], toggle=true)
 uniform float _MatcapReplace;
-//@property(name="_MatcapMultiply", display="Multiply Lit Color", mode=static, range=[0,1])
+//@property(name="_MatcapMultiply", display="Multiply Lit Color", mode=static, range=[0,1], toggle=true)
 uniform float _MatcapMultiply;
 //@property(name="_MatcapAdd", display="Additive Blend", mode=static, range=[0,4])
 uniform float _MatcapAdd;
 //@property(name="_MatcapEmissionStrength", display="Emission Boost", mode=static, range=[0,8])
 uniform float _MatcapEmissionStrength;
-//@property(name="_MatcapLightMask", display="Hide In Shadow", mode=static, range=[0,1])
+//@property(name="_MatcapLightMask", display="Hide In Shadow", mode=static, range=[0,1], toggle=true)
 uniform float _MatcapLightMask;
 uniform float _MatcapNormal;
 
@@ -302,7 +302,7 @@ uniform sampler2D _MatcapMask;
 uniform vec4 _MatcapMask_ST;
 //@property(name="_MatcapMaskChannel", display="Mask Channel", mode=static, enum="0:R|1:G|2:B|3:A")
 uniform int _MatcapMaskChannel;
-//@property(name="_MatcapMaskInvert", display="Invert Mask", mode=static, range=[0,1])
+//@property(name="_MatcapMaskInvert", display="Invert Mask", mode=static, range=[0,1], toggle=true)
 uniform float _MatcapMaskInvert;
 #endif
 
@@ -313,29 +313,29 @@ uniform float _MatcapMaskInvert;
 //@subcategory("Rim")
 //@feature(id="rim-lighting", name="Rim Lighting", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
-//@property(name="_RimLightColor", display="Rim Color", mode=static)
+//@property(name="_RimLightColor", display="Rim Color", mode=static, default="vec4(1.0, 1.0, 1.0, 1.0)")
 uniform vec4 _RimLightColor;
-//@property(name="_RimWidth", display="Rim Width", mode=static, range=[0,1])
+//@property(name="_RimWidth", display="Rim Width", mode=static, range=[0,1], default="0.5")
 uniform float _RimWidth;
-//@property(name="_RimSharpness", display="Rim Sharpness", mode=static, range=[0,16])
+//@property(name="_RimSharpness", display="Rim Sharpness", mode=static, range=[0,16], default="1.0")
 uniform float _RimSharpness;
-//@property(name="_RimLightColorBias", display="Light Bias", mode=static, range=[0,1])
+//@property(name="_RimLightColorBias", display="Light Bias", mode=static, range=[0,1], default="0.0")
 uniform float _RimLightColorBias;
-//@property(name="_RimEmission", display="Emission Amount", mode=static, range=[0,8])
+//@property(name="_RimEmission", display="Emission Amount", mode=static, range=[0,8], default="1.0")
 uniform float _RimEmission;
-//@property(name="_RimHideInShadow", display="Hide In Shadow", mode=static, range=[0,1])
+//@property(name="_RimHideInShadow", display="Hide In Shadow", mode=static, range=[0,1], toggle=true, default="0.0")
 uniform float _RimHideInShadow;
-//@property(name="_RimStyle", display="Rim Style", mode=static, enum="0:Poiyomi|1:UTS2|2:LilToon")
+//@property(name="_RimStyle", display="Rim Style", mode=static, enum="0:Poiyomi|1:UTS2|2:LilToon", default="1")
 uniform int _RimStyle;              // 0: Poiyomi, 1: UTS2, 2: LilToon
-//@property(name="_RimBlendStrength", display="Blend Strength", mode=static, range=[0,1])
+//@property(name="_RimBlendStrength", display="Blend Strength", mode=static, range=[0,1], default="1.0")
 uniform float _RimBlendStrength;
-//@property(name="_RimBlendMode", display="Blend Mode", mode=static, enum="0:Mix|1:Add|2:Multiply")
+//@property(name="_RimBlendMode", display="Blend Mode", mode=static, enum="0:Mix|1:Add|2:Multiply", default="1")
 uniform int _RimBlendMode;
 
 //@property(name="_RimMask", display="Rim Mask", slot=texture)
 uniform sampler2D _RimMask;
 uniform vec4 _RimMask_ST;
-//@property(name="_RimMaskChannel", display="Mask Channel", mode=static, enum="0:R|1:G|2:B|3:A")
+//@property(name="_RimMaskChannel", display="Mask Channel", mode=static, enum="0:R|1:G|2:B|3:A", default="0")
 uniform int _RimMaskChannel;
 #endif
 
@@ -395,10 +395,10 @@ uniform float _DetailNormalMapScale;
 // ============================================
 //@category("Surface")
 //@subcategory("Vertex Colors")
-//@property(name="_MainVertexColoringEnabled", display="Use Vertex Colors", mode=static, range=[0,1])
+//@property(name="_MainVertexColoringEnabled", display="Use Vertex Colors", mode=static, range=[0,1], toggle=true)
 //@tooltip("Enables multiplication of the sampled base color by the mesh vertex colors.")
 uniform float _MainVertexColoringEnabled;
-//@property(name="_MainVertexColoringLinearSpace", display="Vertex Colors Are Linear", mode=static, range=[0,1])
+//@property(name="_MainVertexColoringLinearSpace", display="Vertex Colors Are Linear", mode=static, range=[0,1], toggle=true)
 //@tooltip("Treats incoming vertex colors as already converted to linear space before tinting the base color.")
 uniform float _MainVertexColoringLinearSpace;
 //@property(name="_MainVertexColoring", display="Color Blend", mode=static, range=[0,1])
@@ -552,7 +552,7 @@ uniform float _DissolveNoiseStrength;
 uniform vec3 _DissolveStartPoint;
 //@property(name="_DissolveEndPoint", display="End Point", mode=static)
 uniform vec3 _DissolveEndPoint;
-//@property(name="_DissolveInvert", display="Invert", mode=static, range=[0,1])
+//@property(name="_DissolveInvert", display="Invert", mode=static, range=[0,1], toggle=true)
 uniform float _DissolveInvert;
 //@property(name="_DissolveCutoff", display="Cutoff", mode=static, range=[0,1])
 uniform float _DissolveCutoff;

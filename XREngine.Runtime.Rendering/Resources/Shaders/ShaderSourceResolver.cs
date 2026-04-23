@@ -38,7 +38,8 @@ internal static partial class ShaderSourceResolver
 
     private static long _registeredSnippetVersion;
 
-    [GeneratedRegex(@"^\s*#\s*include\s+[""<](?<path>[^"">]+)["">]\s*$", RegexOptions.Compiled | RegexOptions.Multiline)]
+    // Matches `#include "path"` or `#include <path>` optionally followed by whitespace and/or a `//` line comment.
+    [GeneratedRegex(@"^\s*#\s*include\s+[""<](?<path>[^"">]+)["">]\s*(?://.*)?$", RegexOptions.Compiled | RegexOptions.Multiline)]
     private static partial Regex IncludeRegex();
 
     [GeneratedRegex(@"#pragma\s+snippet\s+[""<](?<name>[^"">]+)["">]", RegexOptions.Compiled)]

@@ -1260,7 +1260,7 @@ namespace XREngine
                 new ShaderInt(0, "_MainHueShiftColorSpace"),
                 new ShaderFloat(0.0f, "_MainHueShiftReplace"),
 
-                new ShaderInt(6, "_LightingMode"),
+                new ShaderInt(5, "_LightingMode"),
                 new ShaderInt(0, "_LightingColorMode"),
                 new ShaderInt(2, "_LightingMapMode"),
                 new ShaderInt(0, "_LightingDirectionMode"),
@@ -1479,7 +1479,7 @@ namespace XREngine
 
             mat.Textures = alphaMask is null ? [main, bump] : [main, bump, alphaMask];
 
-            XRShader frag = ShaderHelper.UberImportFragForward();
+            XRShader frag = ShaderHelper.UberFragForward();
 
             mat.Shaders.Clear();
             mat.Shaders.Add(frag);
@@ -1493,6 +1493,7 @@ namespace XREngine
             mat.RenderOptions = CreateForwardPlusUberShaderRenderOptions();
 
             ConfigureImportedTransparency(mat, textureList, textures);
+            mat.PrepareUberVariantImmediately();
         }
 
         public static XRMaterial MakeMaterialForwardPlusUberShader(XRTexture[] textureList, List<TextureSlot> textures, string name)

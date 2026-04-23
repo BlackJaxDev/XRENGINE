@@ -73,6 +73,18 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void UberShaderFragment_StylizedModesDriveAllDirectLights()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+
+        source.ShouldContain("vec3 calculateStylizedAdditionalLighting(ToonMesh mesh, vec3 baseColor, vec3 normal)");
+        source.ShouldContain("fragData.finalColor += calculateStylizedAdditionalLighting(mesh, fragData.baseColor, mesh.worldNormal);");
+        source.ShouldNotContain("fragData.finalColor += calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, true);");
+        source.ShouldContain("case 5: // Flat");
+        source.ShouldContain("finalLight = light.color;");
+    }
+
+    [Test]
     public void UberShaderFragment_SharedScreenOriginUniform_IsGuardedAcrossSnippets()
     {
         string forwardLighting = LoadShaderSource(Path.Combine("Snippets", "ForwardLighting.glsl"));

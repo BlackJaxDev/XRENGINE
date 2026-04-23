@@ -20,7 +20,7 @@ public sealed class ShaderUiManifestParserTests
             #ifndef XRENGINE_UBER_DISABLE_MATCAP
             //@property(name="_MatcapTex", display="Matcap Texture", slot=texture)
             uniform sampler2D _MatcapTex;
-            //@property(name="_MatcapIntensity", display="Intensity", mode=static, range=[0,2])
+            //@property(name="_MatcapIntensity", display="Intensity", mode=constant, range=[0,2])
             uniform float _MatcapIntensity;
             #endif
             """;
@@ -47,6 +47,39 @@ public sealed class ShaderUiManifestParserTests
         scalar.DefaultMode.ShouldBe(EShaderUiPropertyMode.Static);
         scalar.Range.ShouldBe("[0,2]");
         scalar.FeatureId.ShouldBe("matcap");
+    }
+
+    [Test]
+    public void Parse_PropertyToggleAndEnumMetadata_AreCaptured()
+    {
+        const string source = """
+            #version 450 core
+            //@property(name="_HideInShadow", display="Hide In Shadow", mode=constant, toggle=true)
+            uniform float _HideInShadow;
+            //@property(name="_BlendMode", display="Blend Mode", mode=constant, enum="0:Mix|1:Add|2:Multiply")
+            uniform float _BlendMode;
+            """;
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source);
+
+        manifest.ValidationIssues.ShouldBeEmpty();
+        manifest.PropertyLookup["_HideInShadow"].IsToggle.ShouldBeTrue();
+        manifest.PropertyLookup["_BlendMode"].EnumOptions.ShouldBe("0:Mix|1:Add|2:Multiply");
+    }
+
+    [Test]
+    public void Parse_PropertyTooltipNamedArgument_IsCaptured()
+    {
+        const string source = """
+            #version 450 core
+            //@property(name="_MainTex", display="Main Texture", tooltip="Primary albedo sampler")
+            uniform sampler2D _MainTex;
+            """;
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source);
+
+        manifest.ValidationIssues.ShouldBeEmpty();
+        manifest.PropertyLookup["_MainTex"].Tooltip.ShouldBe("Primary albedo sampler");
     }
 
     [Test]
@@ -137,6 +170,8 @@ public sealed class ShaderUiManifestParserTests
         manifest.ValidationIssues.ShouldBeEmpty();
         manifest.PropertyLookup["_MainVertexColoringEnabled"].HasExplicitMetadata.ShouldBeTrue();
         manifest.PropertyLookup["_LightingMapMode"].HasExplicitMetadata.ShouldBeTrue();
+        manifest.PropertyLookup["_RimHideInShadow"].IsToggle.ShouldBeTrue();
+        manifest.PropertyLookup["_BackFaceBlendMode"].EnumOptions.ShouldBe("0:Mix|1:Add|2:Multiply");
     }
 
     private static string ResolveRepoRoot()

@@ -71,6 +71,24 @@
 #pragma snippet "ExactTransparencyDepthPeel"    // depth-peeling OIT
 #endif
 
+// Feature helper includes. These files provide helper functions referenced by
+// the corresponding feature blocks in main(). Each is gated by the same
+// XRENGINE_UBER_DISABLE_* macro that uniforms.glsl uses for the matching
+// feature's uniforms so enabling a feature at runtime pulls in both the
+// uniforms and the helper implementations together.
+#ifndef XRENGINE_UBER_DISABLE_PARALLAX
+#include "parallax.glsl"   // applyParallaxWithValidity, PARALLAX_* constants
+#endif
+#ifndef XRENGINE_UBER_DISABLE_DISSOLVE
+#include "dissolve.glsl"   // applyDissolve
+#endif
+#ifndef XRENGINE_UBER_DISABLE_GLITTER
+#include "glitter.glsl"    // hash21
+#endif
+#ifndef XRENGINE_UBER_DISABLE_FLIPBOOK
+#include "flipbook.glsl"   // simpleFlipbook
+#endif
+
 // ============================================
 // Fragment Inputs
 // ============================================
@@ -554,6 +572,67 @@ vec3 calculateForwardDirectLighting(ToonMesh mesh, vec3 baseColor, vec3 normal, 
         + calculateForwardLocalLighting(mesh, normal, baseColor, pbr);
 }
 
+float calculateStylizedLightMap(float nDotL) {
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    return saturate(nDotL);
+#else
+    float lightMap = nDotL;
+    switch(_LightingMapMode) {
+        case 0: lightMap = nDotL * 0.5 + 0.5; break;
+        case 1: lightMap = nDotL * 0.5 + 0.5; break;
+        case 2: lightMap = saturate(nDotL); break;
+        case 3: lightMap = 1.0; break;
+    }
+
+    return lightMap;
+#endif
+}
+
+ToonLight createToonLight(ToonMesh mesh, vec3 normal, vec3 lightDirection, vec3 lightColor, float attenuation, vec3 indirectColor) {
+    ToonLight light;
+
+    vec3 safeDirection = dot(lightDirection, lightDirection) > EPSILON
+        ? normalize(lightDirection)
+        : vec3(0.0, 1.0, 0.0);
+
+    light.direction = safeDirection;
+    light.color = lightColor * attenuation;
+    light.attenuation = attenuation;
+    light.indirectColor = indirectColor;
+
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    // PBR path: downstream only reads direction/color/indirectColor/nDotL/
+    // lightMap. Skip halfDir/nDotH/lDotH/nDotV/reflectionDir — the
+    // ForwardLighting snippet computes its own per-light half-vector.
+    light.nDotL = dot(normal, light.direction);
+    light.lightMap = saturate(light.nDotL);
+    return light;
+#else
+    // Stylized path: optional hemisphere ambient tint + ramp-driven remap.
+    if (_LightingIndirectUsesNormals > 0.0) {
+        // Simple hemisphere lighting: upward-facing surfaces brighten,
+        // downward-facing surfaces darken.
+        float upFactor = dot(normal, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
+        light.indirectColor *= mix(0.5, 1.0, upFactor);
+    }
+
+    // Calculate dot products.
+    light.nDotL = dot(normal, light.direction);
+    light.nDotV = dot(normal, mesh.viewDir);
+
+    vec3 halfVector = light.direction + mesh.viewDir;
+    light.halfDir = dot(halfVector, halfVector) > EPSILON
+        ? normalize(halfVector)
+        : mesh.viewDir;
+    light.nDotH = dot(normal, light.halfDir);
+    light.lDotH = dot(light.direction, light.halfDir);
+    light.reflectionDir = reflect(-mesh.viewDir, normal);
+
+    light.lightMap = calculateStylizedLightMap(light.nDotL);
+    return light;
+#endif
+}
+
 // ============================================
 // Lighting Calculation (stylized / shared setup)
 // ============================================
@@ -562,64 +641,22 @@ vec3 calculateForwardDirectLighting(ToonMesh mesh, vec3 baseColor, vec3 normal, 
 // path the early #ifdef short-circuits the fancy remap and only fills the
 // raw dot products.
 ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
-    ToonLight light;
-
     if (DirLightCount > 0) {
         // Engine convention: DirectionalLights[i].Direction points *from* the
         // light, so flip it to get L (fragment -> light).
-        light.direction = normalize(-DirectionalLights[0].Direction);
-        light.color = DirectionalLights[0].Base.Color * DirectionalLights[0].Base.DiffuseIntensity;
-    } else {
-        // No directional light in the scene -> use a harmless default so
-        // downstream dot products stay well-defined.
-        light.direction = vec3(0.0, 1.0, 0.0);
-        light.color = vec3(0.0);
+        return createToonLight(
+            mesh,
+            normal,
+            -DirectionalLights[0].Direction,
+            DirectionalLights[0].Base.Color * DirectionalLights[0].Base.DiffuseIntensity,
+            1.0,
+            indirectColor);
     }
-    light.attenuation = 1.0;
 
-#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
-    // PBR path: downstream only reads direction/color/indirectColor/nDotL/
-    // lightMap. Skip halfDir/nDotH/lDotH/nDotV/reflectionDir — the
-    // ForwardLighting snippet computes its own per-light half-vector.
-    light.indirectColor = indirectColor;
-    light.nDotL = dot(normal, light.direction);
-    light.lightMap = saturate(light.nDotL);
-    return light;
-#else
-    
-    // Stylized path: optional hemisphere ambient tint + ramp-driven remap.
-    light.indirectColor = indirectColor;
-    if (_LightingIndirectUsesNormals > 0.0) {
-        // Simple hemisphere lighting: upward-facing surfaces brighten,
-        // downward-facing surfaces darken.
-        float upFactor = dot(normal, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
-        light.indirectColor *= mix(0.5, 1.0, upFactor);
-    }
-    
-    // Calculate dot products
-    light.nDotL = dot(normal, light.direction);
-    light.nDotV = dot(normal, mesh.viewDir);
-    light.halfDir = normalize(light.direction + mesh.viewDir);
-    light.nDotH = dot(normal, light.halfDir);
-    light.lDotH = dot(light.direction, light.halfDir);
-    light.reflectionDir = reflect(-mesh.viewDir, normal);
-    
-    // Remap NdotL into a [0,1] light intensity per the selected mode.
-    //   0 Poi Custom / 1 Normalized: map [-1,1] -> [0,1] ("half-Lambert" style)
-    //   2 Saturated: standard Lambert clamp
-    //   3 Shadows-only: always fully lit; only cast shadows darken it
-    float lightMap = light.nDotL;
-    switch(_LightingMapMode) {
-        case 0: lightMap = light.nDotL * 0.5 + 0.5; break;
-        case 1: lightMap = light.nDotL * 0.5 + 0.5; break;
-        case 2: lightMap = saturate(light.nDotL); break;
-        case 3: lightMap = 1.0; break;
-    }
-    
-    light.lightMap = lightMap;
-    
-    return light;
-#endif
+    // No directional light in the scene -> use a harmless default so
+    // downstream dot products stay well-defined and ambient-only stylized
+    // materials still render.
+    return createToonLight(mesh, normal, vec3(0.0, 1.0, 0.0), vec3(0.0), 1.0, indirectColor);
 }
 
 // ============================================
@@ -639,13 +676,10 @@ float sampleShadowMap(vec3 worldPos, vec3 normal, float nDotL) {
 // Applies one of several stylized lighting models to the primary directional
 // light. If stylized shading is disabled for this variant we fall through to
 // a plain Lambert + ambient composition and skip everything below.
-vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
+vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal, float shadowMapFactor) {
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     return baseColor * (light.color * saturate(light.nDotL) + light.indirectColor);
 #else
-    // Sample directional light shadow map
-    float shadowMapFactor = sampleShadowMap(mesh.worldPos, normal, light.nDotL);
-    
     vec3 finalLight;
     float shadow = 1.0;
     
@@ -685,13 +719,11 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
         
         case 5: // Flat
         {
-            // Either a hard binary step or the raw remapped lightMap.
-            if (_ForceFlatRampedLightmap > 0.5) {
-                shadow = step(0.5, light.lightMap);
-            } else {
-                shadow = light.lightMap;
-            }
-            finalLight = light.color * shadow + light.indirectColor * (1.0 - shadow);
+            // Flat mode intentionally ignores NdotL. Each direct light
+            // contributes a constant band, with only attenuation / explicit
+            // shadowing allowed to reduce it.
+            shadow = 1.0;
+            finalLight = light.color;
             break;
         }
 
@@ -709,8 +741,8 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
             break;
         }
     }
-    
-    // Fold directional shadow-map occlusion into the shadow term.
+
+    // Fold explicit shadowing/visibility into the stylized shadow term.
     shadow *= shadowMapFactor;
 
     // Artist-friendly softening toward fully lit.
@@ -744,6 +776,156 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
     
     return result;
 #endif
+}
+
+vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    return baseColor * (light.color * saturate(light.nDotL) + light.indirectColor);
+#else
+    return applyShadingWithShadow(baseColor, light, mesh, normal, sampleShadowMap(mesh.worldPos, normal, light.nDotL));
+#endif
+}
+
+vec3 calculateStylizedPointLight(ToonMesh mesh, vec3 baseColor, vec3 normal, int lightIndex, PointLight light) {
+    vec3 lightVector = light.Position - mesh.worldPos;
+    float lightDistance = length(lightVector);
+    if (lightDistance <= EPSILON)
+        return vec3(0.0);
+
+    float attenuation = XRENGINE_Attenuate(lightDistance, light.Radius) * light.Brightness;
+    ToonLight toonLight = createToonLight(
+        mesh,
+        normal,
+        lightVector / lightDistance,
+        light.Base.Color * light.Base.DiffuseIntensity,
+        attenuation,
+        vec3(0.0));
+    float shadow = XRENGINE_ReadShadowMapPoint(lightIndex, light, normal, mesh.worldPos);
+    return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
+}
+
+vec3 calculateStylizedSpotLight(ToonMesh mesh, vec3 baseColor, vec3 normal, int lightIndex, SpotLight light) {
+    vec3 lightVector = light.Base.Position - mesh.worldPos;
+    float lightDistance = length(lightVector);
+    if (lightDistance <= EPSILON)
+        return vec3(0.0);
+
+    vec3 lightToPosN = lightVector / lightDistance;
+    float clampedCosine = max(0.0, dot(-lightToPosN, normalize(light.Direction)));
+    float spotEffect = smoothstep(light.OuterCutoff, light.InnerCutoff, clampedCosine);
+    float spotAttn = pow(clampedCosine, light.Exponent);
+    float attenuation = spotEffect * spotAttn * XRENGINE_Attenuate(lightDistance, light.Base.Radius) * light.Base.Brightness;
+
+    ToonLight toonLight = createToonLight(
+        mesh,
+        normal,
+        lightToPosN,
+        light.Base.Base.Color * light.Base.Base.DiffuseIntensity,
+        attenuation,
+        vec3(0.0));
+    float shadow = XRENGINE_ReadShadowMapSpot(lightIndex, light, normal, mesh.worldPos, lightToPosN);
+    return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
+}
+
+vec3 calculateStylizedForwardPlusPointLight(ToonMesh mesh, vec3 baseColor, vec3 normal, ForwardPlusLocalLight light) {
+    vec3 lightVector = light.PositionWS.xyz - mesh.worldPos;
+    float lightDistance = length(lightVector);
+    if (lightDistance <= EPSILON)
+        return vec3(0.0);
+
+    float attenuation = XRENGINE_Attenuate(lightDistance, light.Params.x) * max(light.Params.y, 0.0001);
+    ToonLight toonLight = createToonLight(
+        mesh,
+        normal,
+        lightVector / lightDistance,
+        light.Color_Type.xyz * light.Params.z,
+        attenuation,
+        vec3(0.0));
+    int sourceIndex = int(light.Params.w + 0.5);
+    float shadow = (sourceIndex >= 0 && sourceIndex < PointLightCount)
+        ? XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], normal, mesh.worldPos)
+        : 1.0;
+    return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
+}
+
+vec3 calculateStylizedForwardPlusSpotLight(ToonMesh mesh, vec3 baseColor, vec3 normal, ForwardPlusLocalLight light) {
+    vec3 lightDirection = normalize(light.DirectionWS_Exponent.xyz);
+    vec3 lightVector = light.PositionWS.xyz - mesh.worldPos;
+    float lightDistance = length(lightVector);
+    if (lightDistance <= EPSILON)
+        return vec3(0.0);
+
+    vec3 lightToPosN = lightVector / lightDistance;
+    float clampedCosine = max(0.0, dot(-lightToPosN, lightDirection));
+    float spotEffect = smoothstep(light.SpotAngles.y, light.SpotAngles.x, clampedCosine);
+    float spotAttn = pow(clampedCosine, light.DirectionWS_Exponent.w);
+    float attenuation = spotEffect * spotAttn * XRENGINE_Attenuate(lightDistance, light.Params.x) * max(light.Params.y, 0.0001);
+
+    ToonLight toonLight = createToonLight(
+        mesh,
+        normal,
+        lightToPosN,
+        light.Color_Type.xyz * light.Params.z,
+        attenuation,
+        vec3(0.0));
+    int sourceIndex = int(light.Params.w + 0.5);
+    float shadow = (sourceIndex >= 0 && sourceIndex < SpotLightCount)
+        ? XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], normal, mesh.worldPos, lightToPosN)
+        : 1.0;
+
+    return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
+}
+
+vec3 calculateStylizedLocalLighting(ToonMesh mesh, vec3 baseColor, vec3 normal) {
+    vec3 totalLight = vec3(0.0);
+
+    if (ForwardPlusEnabled) {
+        ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;
+        int tileIndex = tileCoord.y * ForwardPlusTileCountX + tileCoord.x;
+        int baseIndex = tileIndex * ForwardPlusMaxLightsPerTile;
+
+        for (int o = 0; o < ForwardPlusMaxLightsPerTile; ++o) {
+            int lightIndex = ForwardPlusVisibleIndices[baseIndex + o];
+            if (lightIndex < 0) {
+                break;
+            }
+
+            ForwardPlusLocalLight light = ForwardPlusLocalLights[lightIndex];
+            totalLight += (light.Color_Type.w < 0.5)
+                ? calculateStylizedForwardPlusPointLight(mesh, baseColor, normal, light)
+                : calculateStylizedForwardPlusSpotLight(mesh, baseColor, normal, light);
+        }
+
+        return totalLight;
+    }
+
+    for (int i = 0; i < PointLightCount; ++i) {
+        totalLight += calculateStylizedPointLight(mesh, baseColor, normal, i, PointLights[i]);
+    }
+
+    for (int i = 0; i < SpotLightCount; ++i) {
+        totalLight += calculateStylizedSpotLight(mesh, baseColor, normal, i, SpotLights[i]);
+    }
+
+    return totalLight;
+}
+
+vec3 calculateStylizedAdditionalLighting(ToonMesh mesh, vec3 baseColor, vec3 normal) {
+    vec3 totalLight = vec3(0.0);
+
+    for (int i = 1; i < DirLightCount; ++i) {
+        ToonLight light = createToonLight(
+            mesh,
+            normal,
+            -DirectionalLights[i].Direction,
+            DirectionalLights[i].Base.Color * DirectionalLights[i].Base.DiffuseIntensity,
+            1.0,
+            vec3(0.0));
+        totalLight += applyShadingWithShadow(baseColor, light, mesh, normal, 1.0);
+    }
+
+    totalLight += calculateStylizedLocalLighting(mesh, baseColor, normal);
+    return totalLight;
 }
 
 // ============================================
@@ -1018,10 +1200,10 @@ void main() {
     }
 #endif
     
-    // Shading dispatch. PBR always evaluates every light (including the
-    // primary directional). The stylized path handles the primary directional
-    // via a ramp/cel/wrapped model and adds secondary directionals + all
-    // local lights on top.
+    // Shading dispatch. PBR always evaluates every light through the shared
+    // BRDF path. Stylized modes own every direct light so switching
+    // `_LightingMode` changes the response for the sun, extra directionals,
+    // points, and spots together.
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
 #else
@@ -1032,7 +1214,7 @@ void main() {
     bool useStylizedPrimaryLighting = _LightingMode != 6;
     if (useStylizedPrimaryLighting) {
         fragData.finalColor = applyShading(fragData.baseColor, light, mesh, mesh.worldNormal);
-        fragData.finalColor += calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, true);
+        fragData.finalColor += calculateStylizedAdditionalLighting(mesh, fragData.baseColor, mesh.worldNormal);
     } else {
         fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
     }

@@ -44,7 +44,7 @@ public static class ShaderHelper
         => RuntimeShaderServices.Current
         ?? throw new InvalidOperationException("RuntimeShaderServices.Current has not been configured.");
 
-    private static XRShader UberFragForward()
+    public static XRShader UberFragForward()
         => LoadEngineShader(Path.Combine("Uber", "UberShader.frag"), EShaderType.Fragment);
 
     private readonly record struct DefinedVariantCacheKey(string DefineName, string SourceText);
