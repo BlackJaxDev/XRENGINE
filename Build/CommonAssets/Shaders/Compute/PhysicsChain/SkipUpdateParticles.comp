@@ -79,11 +79,16 @@ layout(std430, binding = 5) readonly buffer PerTreeParamsBuffer
     PerTreeParams TreeParams[];
 };
 
+uniform int ParticleCount;
+
 // --- Main ---
 
 void main()
 {
     uint pid = gl_GlobalInvocationID.x;
+    if (ParticleCount <= 0 || pid >= uint(ParticleCount))
+        return;
+
     ParticleStatic particleStatic = ParticleStatics[pid];
     int treeIndex = particleStatic.TreeIndex;
 
