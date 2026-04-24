@@ -68,8 +68,9 @@ namespace XREngine.Networking
     public sealed partial class WorldSyncDescriptor
     {
         public string? WorldName { get; set; }
+        public string? WorldBootstrapId { get; set; }
         public string? GameModeType { get; set; }
-        public string[] SceneNames { get; set; } = Array.Empty<string>();
+        public string[] SceneNames { get; set; } = [];
         public WorldAssetIdentity? Asset { get; set; }
     }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Numerics;
 using NUnit.Framework;
 using XREngine;
 using XREngine.Scene;
@@ -87,6 +88,122 @@ public class SceneNodePrefabTests
         SceneNodePrefabUtility.ApplyOverrides(secondInstance, overrides);
 
         Assert.That(secondChild.Name, Is.EqualTo(overriddenName));
+    }
+
+    [Test]
+    public void CloneHierarchy_PublishedAot_UsesBoundedCloneForDefaultTransforms()
+    {
+        Guid prefabId = Guid.NewGuid();
+        SceneNode template = CreatePrefabTemplate();
+        SceneNodePrefabUtility.EnsurePrefabMetadata(template, prefabId);
+
+        var transform = (Transform)template.Transform;
+        transform.Translation = new Vector3(1.0f, 2.0f, 3.0f);
+        transform.Scale = new Vector3(2.0f, 3.0f, 4.0f);
+        transform.Rotation = Quaternion.CreateFromYawPitchRoll(0.25f, 0.5f, 0.75f);
+
+        try
+        {
+            XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+
+            SceneNode clone = SceneNodePrefabUtility.CloneHierarchy(template);
+            var clonedTransform = (Transform)clone.Transform;
+            SceneNode clonedChild = GetFirstChild(clone);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(clone, Is.Not.SameAs(template));
+                Assert.That(clone.Name, Is.EqualTo(template.Name));
+                Assert.That(clone.Prefab?.PrefabAssetId, Is.EqualTo(prefabId));
+                Assert.That(clonedChild.Prefab?.PrefabAssetId, Is.EqualTo(prefabId));
+                Assert.That(clonedTransform.Translation, Is.EqualTo(transform.Translation));
+                Assert.That(clonedTransform.Scale, Is.EqualTo(transform.Scale));
+                Assert.That(clonedTransform.Rotation, Is.EqualTo(transform.Rotation));
+            });
+        }
+        finally
+        {
+            XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);
+        }
+    }
+
+    [Test]
+    public void ApplyOverrides_PublishedAot_UsesRegisteredHandlers()
+    {
+        Guid prefabId = Guid.NewGuid();
+        SceneNode instance = CreatePrefabTemplate();
+        SceneNodePrefabUtility.EnsurePrefabMetadata(instance, prefabId);
+
+        SceneNode child = GetFirstChild(instance);
+        const string overriddenName = "AOT Child";
+        List<SceneNodePrefabNodeOverride> overrides =
+        [
+            new()
+            {
+                PrefabNodeId = child.Prefab!.PrefabNodeId,
+                Properties = new Dictionary<string, SceneNodePrefabPropertyOverride>(StringComparer.Ordinal)
+                {
+                    [nameof(SceneNode.Name)] = new()
+                    {
+                        PropertyPath = nameof(SceneNode.Name),
+                        SerializedValue = overriddenName,
+                        SerializedType = typeof(string).AssemblyQualifiedName
+                    }
+                }
+            }
+        ];
+
+        try
+        {
+            XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+
+            SceneNodePrefabUtility.ApplyOverrides(instance, overrides);
+
+            Assert.That(child.Name, Is.EqualTo(overriddenName));
+        }
+        finally
+        {
+            XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);
+        }
+    }
+
+    [Test]
+    public void ApplyOverrides_PublishedAot_RejectsUnregisteredPropertyPaths()
+    {
+        Guid prefabId = Guid.NewGuid();
+        SceneNode instance = CreatePrefabTemplate();
+        SceneNodePrefabUtility.EnsurePrefabMetadata(instance, prefabId);
+
+        SceneNode child = GetFirstChild(instance);
+        List<SceneNodePrefabNodeOverride> overrides =
+        [
+            new()
+            {
+                PrefabNodeId = child.Prefab!.PrefabNodeId,
+                Properties = new Dictionary<string, SceneNodePrefabPropertyOverride>(StringComparer.Ordinal)
+                {
+                    ["Transform.Unknown"] = new()
+                    {
+                        PropertyPath = "Transform.Unknown",
+                        SerializedValue = "1"
+                    }
+                }
+            }
+        ];
+
+        try
+        {
+            XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+                () => SceneNodePrefabUtility.ApplyOverrides(instance, overrides))!;
+
+            Assert.That(ex.Message, Does.Contain("No registered prefab property override handler"));
+        }
+        finally
+        {
+            XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);
+        }
     }
 
     [Test]

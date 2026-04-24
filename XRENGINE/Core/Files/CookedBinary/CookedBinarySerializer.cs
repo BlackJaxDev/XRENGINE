@@ -327,6 +327,36 @@ public static partial class CookedBinarySerializer
 {
     internal const string ReflectionWarningMessage = "Cooked binary serialization relies on reflection and cannot be statically analyzed for trimming or AOT";
 
+    private static readonly ConcurrentDictionary<Type, Func<object?>> RuntimeObjectFactories = new();
+
+    public static void RegisterRuntimeFactory<T>(Func<T> factory)
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+        RegisterRuntimeFactory(typeof(T), () => factory());
+    }
+
+    public static void RegisterRuntimeFactory(Type type, Func<object?> factory)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(factory);
+        RuntimeObjectFactories[type] = factory;
+    }
+
+    private static bool TryCreateRegisteredRuntimeObject(Type type, out object? value)
+    {
+        if (RuntimeObjectFactories.TryGetValue(type, out Func<object?>? factory))
+        {
+            value = factory();
+            return true;
+        }
+
+        value = null;
+        return false;
+    }
+
+    private static InvalidOperationException CreatePublishedAotUnsupportedException(string feature)
+        => new($"Cooked binary {feature} is not available in published AOT builds without an explicit registered factory or typed serializer.");
+
     // Prevent MemoryPack from re-entering itself (XRAsset envelope calls back into cooked serialization).
     private static readonly AsyncLocal<int> MemoryPackRecursionDepth = new();
     private static bool IsMemoryPackSuppressed => MemoryPackRecursionDepth.Value > 0;
@@ -1319,6 +1349,9 @@ public static partial class CookedBinarySerializer
     {
         string typeArg = reader.ReadString();
         Type elementType = ResolveType(typeArg);
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            throw CreatePublishedAotUnsupportedException($"generic XREvent<{elementType.Name}> deserialization");
+
         Type eventType = typeof(XREvent<>).MakeGenericType(elementType);
         
         var evt = Activator.CreateInstance(eventType)!;
@@ -1463,6 +1496,9 @@ public static partial class CookedBinarySerializer
         if (count == 0)
             return default(ValueTuple);
 
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            throw CreatePublishedAotUnsupportedException("ValueTuple deserialization");
+
         Type[] typeArgs = new Type[count];
         object?[] values = new object?[count];
 
@@ -1528,6 +1564,9 @@ public static partial class CookedBinarySerializer
     {
         string elementTypeName = reader.ReadString();
         Type elementType = ResolveType(elementTypeName);
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            throw CreatePublishedAotUnsupportedException($"HashSet<{elementType.Name}> deserialization");
+
         Type hashSetType = typeof(HashSet<>).MakeGenericType(elementType);
 
         int count = reader.ReadInt32();
@@ -1600,7 +1639,7 @@ public static partial class CookedBinarySerializer
     {
         if (value is null)
             return targetType.IsValueType && Nullable.GetUnderlyingType(targetType) is null
-                ? Activator.CreateInstance(targetType)
+                ? RuntimeHelpers.GetUninitializedObject(targetType)
                 : null;
 
         Type valueType = value.GetType();
@@ -1634,8 +1673,14 @@ public static partial class CookedBinarySerializer
     {
         try
         {
+            if (TryCreateRegisteredRuntimeObject(type, out object? registered))
+                return registered;
+
             if (type.IsValueType)
-                return Activator.CreateInstance(type);
+                return RuntimeHelpers.GetUninitializedObject(type);
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                throw CreatePublishedAotUnsupportedException($"object construction for '{type.FullName}'");
 
             // Prefer public parameterless ctor.
             ConstructorInfo? ctor = type.GetConstructor(Type.EmptyTypes);
@@ -1656,7 +1701,7 @@ public static partial class CookedBinarySerializer
 
             return null;
         }
-        catch
+        catch when (!XRRuntimeEnvironment.IsAotRuntimeBuild)
         {
             return null;
         }

@@ -50,6 +50,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Default Render Pipeline Script Export](features/default-render-pipeline.xrs)
 - [Model Import](features/model-import.md)
 - [Native Dependencies](features/native-dependencies.md)
+- [Networking](features/networking.md)
 - [Steam Audio Integration](features/steam-audio.md)
 - [Tick-Based Animation Timing](features/tick-based-animation-timing.md)
 - [Unit Testing World](features/unit-testing-world.md)

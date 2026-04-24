@@ -1,7 +1,6 @@
 using MemoryPack;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using XREngine;
 using XREngine.Core.Files;
 using XREngine.Rendering;
@@ -48,7 +47,6 @@ namespace XREngine.Scene.Prefabs
         /// <summary>
         /// Instantiates the variant by cloning the base prefab and replaying overrides.
         /// </summary>
-        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
         public SceneNode Instantiate(XRWorldInstance? world = null,
                                      SceneNode? parent = null,
                                      bool maintainWorldTransform = false)

@@ -65,22 +65,6 @@
             "stopAtEntry": false
         },
         {
-            "name": "Debug P2P Client (Peer client separate, no server)",
-            "type": "coreclr",
-            "request": "launch",
-            "preLaunchTask": "Prep-DebugP2PClient-WithPeer",
-            "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.exe",
-            "args": [],
-            "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
-            "stopAtEntry": false,
-            "env": {
-                "XRE_NET_MODE": "P2PClient",
-                "XRE_UDP_CLIENT_RECEIVE_PORT": "5001",
-                "XRE_WINDOW_TITLE": "XRE Editor (P2P - Debug)"
-            }
-        },
-        {
             "name": "Debug VRClient (Editor runs separately)",
             "type": "coreclr",
             "request": "launch",

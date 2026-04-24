@@ -34,7 +34,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | GPU softbody rigging | Active | [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md) | Still an active work item. |
 | Voxel cone tracing / VXAO | Active | [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md) | Shared-voxel roadmap item. |
 | DDGI integration | Active | [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md) | Execution tracker derived from the [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md) roadmap. |
-| Multiplayer networking / dedicated server orchestration | Active | [todo/multiplayer-networking-implementation-todo.md](todo/multiplayer-networking-implementation-todo.md) | Execution tracker derived from [design/networking.md](design/networking.md); covers the XRENGINE realtime slice and the external control-plane boundary. |
+| Multiplayer networking / dedicated server orchestration | Stable doc | [../features/networking.md](../features/networking.md) | The completed realtime cleanup tracker was folded into the stable feature guide. Peer-to-peer host switching is tracked in [design/peer-to-peer-host-switching.md](design/peer-to-peer-host-switching.md). |
 | Vulkan backlog | Active | [todo/vulkan.md](todo/vulkan.md) | Canonical Vulkan backlog, status, audit, and preserved diagnostics. |
 | Startup FPS drops (2026-03-28) | Active | [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md) | Remaining startup stalls after the earlier GL warmup fixes; includes engine and editor attack order. |
 | Default pipeline regressions (2026-03-28) | Active | [audit/default-render-pipeline-regression-diagnosis-2026-03-28.md](audit/default-render-pipeline-regression-diagnosis-2026-03-28.md) | AO, AA, deferred grayscale, and sampler-binding diagnosis. |
@@ -52,7 +52,6 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/gpu-rendering.md](todo/gpu-rendering.md)
 - [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md)
 - [todo/hbao-hbao-plus-implementation-todo.md](todo/hbao-hbao-plus-implementation-todo.md)
-- [todo/multiplayer-networking-implementation-todo.md](todo/multiplayer-networking-implementation-todo.md)
 - [todo/non-hbao-ambient-occlusion-remediation.md](todo/non-hbao-ambient-occlusion-remediation.md)
 - [todo/physics-chain-speed-update-todo.md](todo/physics-chain-speed-update-todo.md)
 - [todo/physics-finalization.md](todo/physics-finalization.md)
@@ -76,6 +75,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/gpu-softbody-mesh-rigging-plan.md](design/gpu-softbody-mesh-rigging-plan.md)
 - [design/hbao-hbao-plus-implementation-plan.md](design/hbao-hbao-plus-implementation-plan.md)
 - [design/networking.md](design/networking.md)
+- [design/peer-to-peer-host-switching.md](design/peer-to-peer-host-switching.md)
 - [design/native-hierarchy-porting-plan.md](design/native-hierarchy-porting-plan.md)
 - [design/openxr-implementation-comparison.md](design/openxr-implementation-comparison.md)
 - [design/runtime-modularization-plan.md](design/runtime-modularization-plan.md)

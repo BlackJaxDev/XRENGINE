@@ -10,6 +10,9 @@ internal static class PublishedCookedAssetRegistryRegistration
     [ModuleInitializer]
     internal static void Register()
     {
+        RuntimeCookedBinarySerializer.RegisterRuntimeFactory(typeof(XRMesh), static () => new XRMesh());
+        RuntimeCookedBinarySerializer.RegisterRuntimeFactory(typeof(XRTexture2D), static () => new XRTexture2D());
+
         PublishedCookedAssetRegistry.Register(
             typeof(XRMesh),
             static asset => RuntimeCookedBinarySerializer.Serialize((XRMesh)asset),

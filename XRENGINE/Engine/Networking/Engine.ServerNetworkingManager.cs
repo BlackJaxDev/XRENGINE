@@ -17,7 +17,6 @@ namespace XREngine
         {
             public override bool IsServer => true;
             public override bool IsClient => false;
-            public override bool IsP2P => false;
 
             private readonly object _playerLock = new();
             private readonly Dictionary<int, NetworkPlayerConnection> _playersByIndex = new();
@@ -493,6 +492,9 @@ namespace XREngine
                 return new WorldSyncDescriptor
                 {
                     WorldName = world?.Name,
+                    WorldBootstrapId = GameModeBootstrapRegistry.TryGetBootstrapId(targetInstance.GameMode, out string? bootstrapId)
+                        ? bootstrapId
+                        : null,
                     GameModeType = targetInstance.GameMode?.GetType().FullName,
                     SceneNames = world?.Scenes.Select(s => s.Name ?? string.Empty).Where(static n => !string.IsNullOrWhiteSpace(n)).ToArray() ?? Array.Empty<string>(),
                     Asset = asset ?? CreateLocalWorldAsset(targetInstance)

@@ -15,11 +15,6 @@ public enum ENetworkingType
     /// </summary>
     Client,
     /// <summary>
-    /// The application is a peer-to-peer client.
-    /// The client will connect to other peer-to-peer clients.
-    /// </summary>
-    P2PClient,
-    /// <summary>
     /// The application is a local client.
     /// No network connection is used.
     /// </summary>

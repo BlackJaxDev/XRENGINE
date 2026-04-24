@@ -10,6 +10,48 @@ namespace XREngine.Rendering.Pipelines.Commands
 {
     public class ViewportRenderCommandContainer : XRBase, IReadOnlyList<ViewportRenderCommand>
     {
+        private static readonly object FactorySync = new();
+        private static readonly Dictionary<Type, Func<ViewportRenderCommand>> CommandFactories = [];
+
+        public static Type[] RegisteredCommandTypes
+        {
+            get
+            {
+                lock (FactorySync)
+                    return [.. CommandFactories.Keys];
+            }
+        }
+
+        public static void RegisterCommandFactory<TCommand>(Func<TCommand>? factory = null)
+            where TCommand : ViewportRenderCommand, new()
+        {
+            RegisterCommandFactory(typeof(TCommand), factory is null ? static () => new TCommand() : () => factory());
+        }
+
+        public static void RegisterCommandFactory(Type commandType, Func<ViewportRenderCommand> factory)
+        {
+            ArgumentNullException.ThrowIfNull(commandType);
+            ArgumentNullException.ThrowIfNull(factory);
+
+            if (!typeof(ViewportRenderCommand).IsAssignableFrom(commandType))
+                throw new ArgumentException($"Type must derive from {nameof(ViewportRenderCommand)}.", nameof(commandType));
+
+            lock (FactorySync)
+                CommandFactories[commandType] = factory;
+        }
+
+        public static bool TryCreateRegisteredCommand(Type commandType, out ViewportRenderCommand? command)
+        {
+            ArgumentNullException.ThrowIfNull(commandType);
+
+            Func<ViewportRenderCommand>? factory;
+            lock (FactorySync)
+                CommandFactories.TryGetValue(commandType, out factory);
+
+            command = factory?.Invoke();
+            return command is not null;
+        }
+
         public enum BranchResourceBehavior
         {
             PreserveResources,
@@ -130,7 +172,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!typeof(ViewportRenderCommand).IsAssignableFrom(t))
                 throw new ArgumentException("Type must be a subclass of ViewportRenderCommand.", nameof(t));
 
-            ViewportRenderCommand cmd = Activator.CreateInstance(t) as ViewportRenderCommand ?? throw new ArgumentException("Type must have a public parameterless constructor.", nameof(t));
+            if (!TryCreateRegisteredCommand(t, out ViewportRenderCommand? cmd) || cmd is null)
+            {
+                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                    throw new InvalidOperationException($"No registered viewport render command factory for type {t.FullName}.");
+
+                cmd = Activator.CreateInstance(t) as ViewportRenderCommand ?? throw new ArgumentException("Type must have a public parameterless constructor.", nameof(t));
+            }
+
             Add(cmd);
             return cmd;
         }
@@ -139,8 +188,19 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!typeof(ViewportRenderCommand).IsAssignableFrom(t))
                 throw new ArgumentException("Type must be a subclass of ViewportRenderCommand.", nameof(t));
 
-            ViewportRenderCommand cmd = Activator.CreateInstance(t, arguments) as ViewportRenderCommand
-                ?? throw new ArgumentException("Type must have a public constructor with the specified arguments.", nameof(t));
+            ViewportRenderCommand? cmd = null;
+            if (arguments.Length == 0)
+                TryCreateRegisteredCommand(t, out cmd);
+
+            if (cmd is null)
+            {
+                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                    throw new InvalidOperationException($"No registered argument-aware viewport render command factory for type {t.FullName}.");
+
+                cmd = Activator.CreateInstance(t, arguments) as ViewportRenderCommand
+                    ?? throw new ArgumentException("Type must have a public constructor with the specified arguments.", nameof(t));
+            }
+
             Add(cmd);
             return cmd;
         }

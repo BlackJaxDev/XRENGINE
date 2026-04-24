@@ -83,6 +83,32 @@ public sealed class NetworkingContractsTests
     }
 
     [Test]
+    public void WorldSyncDescriptor_RoundTripsBootstrapId()
+    {
+        WorldSyncDescriptor descriptor = CreateWorldDescriptor();
+
+        WorldSyncDescriptor clone = RoundTripThroughStateChangeSerializer(descriptor);
+
+        clone.WorldBootstrapId.ShouldBe(descriptor.WorldBootstrapId);
+        clone.GameModeType.ShouldBe(descriptor.GameModeType);
+        clone.WorldName.ShouldBe(descriptor.WorldName);
+    }
+
+    [TestCase(GameModeBootstrapRegistry.CustomBootstrapId, typeof(CustomGameMode))]
+    [TestCase(GameModeBootstrapRegistry.FlyingCameraBootstrapId, typeof(FlyingCameraGameMode))]
+    [TestCase(GameModeBootstrapRegistry.LocomotionBootstrapId, typeof(LocomotionGameMode))]
+    [TestCase(GameModeBootstrapRegistry.VrBootstrapId, typeof(VRGameMode))]
+    public void GameModeBootstrapRegistry_CreatesBuiltInsWithoutReflection(string bootstrapId, Type expectedType)
+    {
+        GameModeBootstrapRegistry.TryCreate(bootstrapId, out GameMode? gameMode).ShouldBeTrue();
+
+        gameMode.ShouldNotBeNull();
+        gameMode!.GetType().ShouldBe(expectedType);
+        GameModeBootstrapRegistry.TryGetBootstrapId(gameMode, out string? roundTripId).ShouldBeTrue();
+        roundTripId.ShouldBe(bootstrapId);
+    }
+
+    [Test]
     public void PlayerJoinRequest_RoundTripsDirectSessionAndWorldAsset()
     {
         Guid sessionId = Guid.NewGuid();
@@ -669,6 +695,7 @@ public sealed class NetworkingContractsTests
         => new()
         {
             WorldName = "Unit Test World",
+            WorldBootstrapId = GameModeBootstrapRegistry.FlyingCameraBootstrapId,
             GameModeType = "UnitTestGameMode",
             SceneNames = ["Arena"],
             Asset = CreateWorldAsset()

@@ -1,6 +1,8 @@
 # XREngine Dedicated Server Instance & Matchmaking Design Plan
 
-Implementation tracker: [../todo/multiplayer-networking-implementation-todo.md](../todo/multiplayer-networking-implementation-todo.md)
+Stable engine networking guide: [../../features/networking.md](../../features/networking.md)
+
+Peer-to-peer host switching roadmap: [peer-to-peer-host-switching.md](peer-to-peer-host-switching.md)
 
 ## Status
 
@@ -10,7 +12,7 @@ Implementation tracker: [../todo/multiplayer-networking-implementation-todo.md](
 - **Last updated:** 2026-04-24
 - **Boundary status:** XRENGINE now owns only direct realtime data-plane connections. Instance directory, allocation, join orchestration, host capacity, token issuance, and world artifact delivery live in the adjacent control-plane app.
 - **Realtime status:** engine-side contracts now carry session id/token and exact local world asset identity instead of control-plane room/ticket/artifact DTOs.
-- **Next status:** authoritative replication and per-peer UDP sequencing are implemented for the direct realtime path; next XRENGINE-owned work starts with AOT-safe world bootstrap.
+- **Next status:** authoritative replication, per-peer UDP sequencing, AOT-safe world bootstrap, and P2P disposition are implemented for the direct realtime path. Peer-to-peer host switching is now tracked as the next networking implementation focus.
 
 ## 1. Problem Statement
 
@@ -160,6 +162,8 @@ Current local-dev implementation note:
 - `XREngine.Server` rejects realtime joins when the client's local world asset identity does not exactly match the server's local world asset identity.
 - After admission, the server assigns a canonical `NetworkEntityId`, grants a `NetworkAuthorityLease`, validates client input/transform/pose traffic against that lease, and rebroadcasts server-stamped authoritative state.
 - Phase 2 relevance and budget policy now routes through per-client UDP endpoints with per-peer sequence/ACK state, so one client's budget can drop updates without disturbing another client's packet ordering.
+- Phase 3 bootstrap now sends an explicit `WorldBootstrapId` and resolves client game modes through `GameModeBootstrapRegistry`; `GameModeType`, world name, and scene names remain advisory hints only.
+- Phase 4 removes the P2P runtime mode from the v1 engine surface; NAT traversal, relay, and peer-to-peer product transport remain outside this direct endpoint/session data-plane slice.
 
 ### 5.4 Auto-Scale / No Capacity
 

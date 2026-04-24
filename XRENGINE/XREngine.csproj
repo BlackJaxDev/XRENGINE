@@ -8,7 +8,18 @@
     <PublishAot>false</PublishAot>
     <Platforms>AnyCPU;x64</Platforms>
     <BaseOutputPath>$(SolutionDir)Build\Engine\$(Configuration)\$(Platform)</BaseOutputPath>
+    <AotFactoryRegistrationGenerator>$(MSBuildProjectDirectory)\..\Tools\Generate-AotFactoryRegistrations.ps1</AotFactoryRegistrationGenerator>
+    <GeneratedAotFactoryRegistrations>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
+    <Compile Include="$(GeneratedAotFactoryRegistrations)" />
+  </ItemGroup>
+
+  <Target Name="GenerateAotFactoryRegistrations" BeforeTargets="CoreCompile" Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(AotFactoryRegistrationGenerator)')">
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedAotFactoryRegistrations)'))" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(AotFactoryRegistrationGenerator)&quot; -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(GeneratedAotFactoryRegistrations)&quot;" />
+  </Target>
 
   <PropertyGroup>
     <CoACDBuildScript Condition="'$(CoACDBuildScript)' == ''">$(SolutionDir)Tools\Dependencies\Build-CoACD.ps1</CoACDBuildScript>

@@ -4,7 +4,6 @@ using System.Linq;
 using System.Numerics;
 using System.Net;
 using System.Net.Sockets;
-using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Input;
@@ -19,7 +18,6 @@ namespace XREngine
         {
             public override bool IsServer => false;
             public override bool IsClient => true;
-            public override bool IsP2P => false;
 
             private readonly string _clientId = Guid.NewGuid().ToString("N");
             private bool _joinRequested;
@@ -147,11 +145,7 @@ namespace XREngine
                 {
                     case EStateChangeType.PlayerAssignment:
                         if (StateChangePayloadSerializer.TryDeserialize<PlayerAssignment>(change.Data, out var assignment) && assignment is not null)
-                        {
-#pragma warning disable IL2026
                             HandlePlayerAssignment(assignment);
-#pragma warning restore IL2026
-                        }
                         break;
                     case EStateChangeType.PlayerTransformUpdate:
                         if (StateChangePayloadSerializer.TryDeserialize<PlayerTransformUpdate>(change.Data, out var transformUpdate) && transformUpdate is not null)
@@ -368,7 +362,6 @@ namespace XREngine
                 }
             }
 
-            [RequiresUnreferencedCode("World/GameMode reflection for networking sync")]
             private void HandlePlayerAssignment(PlayerAssignment assignment)
             {
                 bool isLocal = string.Equals(assignment.ClientId, EffectiveClientId, StringComparison.OrdinalIgnoreCase);
@@ -422,7 +415,6 @@ namespace XREngine
                 }
             }
 
-            [RequiresUnreferencedCode("World/GameMode reflection for networking sync")]
             private void ApplyWorldDescriptor(WorldSyncDescriptor descriptor)
             {
                 XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
@@ -436,8 +428,7 @@ namespace XREngine
                 if (!string.IsNullOrWhiteSpace(descriptor.WorldName) && worldInstance.TargetWorld is not null)
                     worldInstance.TargetWorld.Name = descriptor.WorldName!;
 
-                if (!string.IsNullOrWhiteSpace(descriptor.GameModeType))
-                    EnsureClientGameMode(worldInstance, descriptor.GameModeType!);
+                EnsureClientGameModeBootstrap(worldInstance, descriptor);
 
                 // Scene list replication is advisory for now; loading scenes requires asset context.
                 WarnWhenWorldDiffers(descriptor);
@@ -464,61 +455,42 @@ namespace XREngine
                 return instance;
             }
 
-            [RequiresUnreferencedCode("Game mode reflection for networking sync")]
-            private static void EnsureClientGameMode(XRWorldInstance worldInstance, string gameModeTypeName)
+            private static void EnsureClientGameModeBootstrap(XRWorldInstance worldInstance, WorldSyncDescriptor descriptor)
             {
-                var gmType = ResolveTypeIgnoreCase(gameModeTypeName);
-                if (gmType is null || !typeof(GameMode).IsAssignableFrom(gmType))
+                if (string.IsNullOrWhiteSpace(descriptor.WorldBootstrapId))
                 {
-                    Debug.Out($"[Client] Unable to resolve game mode type '{gameModeTypeName}'.");
+                    if (worldInstance.GameMode is null)
+                        Debug.Out($"[Client] Server world descriptor did not include a bootstrap id; keeping the local default game mode. GameModeType hint: {descriptor.GameModeType ?? "<none>"}.");
                     return;
                 }
 
-                if (worldInstance.GameMode is not null && worldInstance.GameMode.GetType() == gmType)
+                if (!GameModeBootstrapRegistry.TryResolveBootstrapId(descriptor.WorldBootstrapId, out string? bootstrapId) || string.IsNullOrWhiteSpace(bootstrapId))
+                {
+                    Debug.Out($"[Client] Unable to resolve game mode bootstrap id '{descriptor.WorldBootstrapId}'. GameModeType hint: {descriptor.GameModeType ?? "<none>"}.");
                     return;
+                }
+
+                if (GameModeBootstrapRegistry.TryGetBootstrapId(worldInstance.GameMode, out string? activeBootstrapId)
+                    && string.Equals(activeBootstrapId, bootstrapId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
 
                 try
                 {
-                    var gameMode = (GameMode?)Activator.CreateInstance(gmType);
-                    if (gameMode is null)
+                    if (!GameModeBootstrapRegistry.TryCreate(bootstrapId, out GameMode? gameMode) || gameMode is null)
+                    {
+                        Debug.Out($"[Client] Failed to create game mode for bootstrap id '{bootstrapId}'.");
                         return;
+                    }
 
                     worldInstance.GameMode = gameMode;
                     gameMode.WorldInstance = worldInstance;
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"[Client] Failed to instantiate game mode '{gameModeTypeName}': {ex.Message}");
+                    Debug.Out($"[Client] Failed to instantiate game mode for bootstrap id '{bootstrapId}': {ex.Message}");
                 }
-            }
-
-            [RequiresUnreferencedCode("Type resolution via reflection for networking sync")]
-            private static Type? ResolveTypeIgnoreCase(string typeName)
-            {
-                Type? resolved = AotRuntimeMetadataStore.ResolveTypeIgnoreCase(typeName);
-                if (resolved is not null)
-                    return resolved;
-
-                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-                    return null;
-
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    Type? match = null;
-                    try
-                    {
-                        match = asm.GetTypes().FirstOrDefault(t => string.Equals(t.FullName, typeName, StringComparison.OrdinalIgnoreCase));
-                    }
-                    catch
-                    {
-                        // ignore reflection type load issues
-                    }
-
-                    if (match is not null)
-                        return match;
-                }
-
-                return null;
             }
 
             private void HandlePlayerLeave(PlayerLeaveNotice leave)

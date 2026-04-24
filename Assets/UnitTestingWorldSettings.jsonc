@@ -5,7 +5,7 @@
   "$id": "1",
   // Selects the WorldKind enum value.
   // WorldKind: Default, AudioTesting, MathIntersections, MeshEditing, UberShader, PhysxTesting, NetworkingPose
-  "WorldKind": "Default",
+  "WorldKind": "MathIntersections",
 
   // Debug visualize.
   // Enables or disables VisualizeOctree.

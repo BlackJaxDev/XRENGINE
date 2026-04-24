@@ -35,14 +35,22 @@ namespace XREngine.Core.Attributes
                 }
             }
 
-            if (Activator.CreateInstance(Type, null) is TransformBase transform)
+            if (TransformFactoryRegistry.TryCreate(Type, out TransformBase? transform) && transform is not null)
             {
                 node.SetTransform(transform);
                 return true;
             }
 
+            if (!XRRuntimeEnvironment.IsAotRuntimeBuild && Activator.CreateInstance(Type, null) is TransformBase dynamicTransform)
+            {
+                node.SetTransform(dynamicTransform);
+                return true;
+            }
+
             RuntimeSceneNodeServices.Current.LogWarning(
-                $"Could not create transform of type {Type.Name} required by component {comp.GetType().Name}; likely missing public parameterless constructor.");
+                XRRuntimeEnvironment.IsAotRuntimeBuild
+                    ? $"Could not create transform of type {Type.Name} required by component {comp.GetType().Name}; register it with {nameof(TransformFactoryRegistry)} for published AOT builds."
+                    : $"Could not create transform of type {Type.Name} required by component {comp.GetType().Name}; likely missing public parameterless constructor.");
             return false;
         }
     }

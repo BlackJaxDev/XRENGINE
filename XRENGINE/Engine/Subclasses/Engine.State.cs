@@ -145,7 +145,7 @@ namespace XREngine
                 if (asset != null)
                     return asset;
             }
-            asset = generateFactory?.Invoke() ?? Activator.CreateInstance<T>();
+            asset = generateFactory?.Invoke() ?? new T();
             asset.Name = assetName;
             string saveDirectory = System.IO.Path.Combine(Assets.GameAssetsPath, System.IO.Path.Combine(folderNames));
             Assets.SaveToImmediate(asset, saveDirectory);
@@ -286,11 +286,17 @@ namespace XREngine
                 if (!typeof(IPawnController).IsAssignableFrom(controllerType))
                     throw new ArgumentException($"Controller type {controllerType.FullName} must implement IPawnController", nameof(controllerType));
 
-                var ctorWithIndex = controllerType.GetConstructor([typeof(ELocalPlayerIndex)]);
-                var player = (ctorWithIndex is not null
-                    ? ctorWithIndex.Invoke([index]) as IPawnController
-                    : Activator.CreateInstance(controllerType) as IPawnController)
-                    ?? throw new InvalidOperationException($"Failed to instantiate controller of type {controllerType.FullName}");
+                if (!RuntimePlayerControllerServices.TryCreateLocalController(controllerType, index, out IPawnController? player) || player is null)
+                {
+                    if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                        throw new InvalidOperationException($"No registered local player controller factory for type {controllerType.FullName}.");
+
+                    var ctorWithIndex = controllerType.GetConstructor([typeof(ELocalPlayerIndex)]);
+                    player = (ctorWithIndex is not null
+                        ? ctorWithIndex.Invoke([index]) as IPawnController
+                        : Activator.CreateInstance(controllerType) as IPawnController)
+                        ?? throw new InvalidOperationException($"Failed to instantiate controller of type {controllerType.FullName}");
+                }
 
                 // Set the player index through the interface if not set by the constructor.
                 if (player.LocalPlayerIndex is null || player.LocalPlayerIndex != index)
@@ -308,11 +314,17 @@ namespace XREngine
                         "No default remote player controller type registered. " +
                         "Ensure XREngine.Runtime.InputIntegration is referenced and initialized.");
 
-                var ctor = remoteType.GetConstructor([typeof(int)]);
-                var player = (ctor is not null
-                    ? ctor.Invoke([serverPlayerIndex]) as IPawnController
-                    : Activator.CreateInstance(remoteType) as IPawnController)
-                    ?? throw new InvalidOperationException($"Failed to instantiate remote controller of type {remoteType.FullName}");
+                if (!RuntimePlayerControllerServices.TryCreateRemoteController(remoteType, serverPlayerIndex, out IPawnController? player) || player is null)
+                {
+                    if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                        throw new InvalidOperationException($"No registered remote player controller factory for type {remoteType.FullName}.");
+
+                    var ctor = remoteType.GetConstructor([typeof(int)]);
+                    player = (ctor is not null
+                        ? ctor.Invoke([serverPlayerIndex]) as IPawnController
+                        : Activator.CreateInstance(remoteType) as IPawnController)
+                        ?? throw new InvalidOperationException($"Failed to instantiate remote controller of type {remoteType.FullName}");
+                }
 
                 return player;
             }

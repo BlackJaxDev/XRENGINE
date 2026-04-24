@@ -130,7 +130,6 @@ public static class RealtimeJoinHandoff
         {
             ENetworkingType.Client => $"{settings.ServerIP}:{settings.UdpServerSendPort}",
             ENetworkingType.Server => $"bind=0.0.0.0:{settings.UdpServerBindPort}; advertised={settings.UdpServerSendPort}; multicast={settings.UdpMulticastGroupIP}:{settings.UdpMulticastPort}",
-            ENetworkingType.P2PClient => $"{settings.ServerIP}; multicast={settings.UdpMulticastGroupIP}:{settings.UdpMulticastPort}",
             _ => "<none>",
         };
 

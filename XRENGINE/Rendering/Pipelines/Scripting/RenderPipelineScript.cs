@@ -60,12 +60,28 @@ public sealed class RenderPipelineScript
         Dictionary<Type, string> methodNames = [];
         Type baseType = typeof(ViewportRenderCommand);
 
+        foreach (Type type in ViewportRenderCommandContainer.RegisteredCommandTypes)
+        {
+            if (type.IsAbstract || type.ContainsGenericParameters || !baseType.IsAssignableFrom(type))
+                continue;
+
+            string scriptMethodName = ResolveScriptCommandMethodName(type, inspectAttributes: !XRRuntimeEnvironment.IsAotRuntimeBuild);
+            TryAddLookupName(lookup, scriptMethodName, type);
+            methodNames[type] = scriptMethodName;
+        }
+
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            return new ScriptCommandRegistry(lookup, methodNames);
+
         foreach (Type type in baseType.Assembly.GetTypes())
         {
             if (type.IsAbstract || type.ContainsGenericParameters || !baseType.IsAssignableFrom(type) || type.GetConstructor(Type.EmptyTypes) is null)
                 continue;
 
-            string scriptMethodName = ResolveScriptCommandMethodName(type);
+            if (methodNames.ContainsKey(type))
+                continue;
+
+            string scriptMethodName = ResolveScriptCommandMethodName(type, inspectAttributes: true);
             TryAddLookupName(lookup, scriptMethodName, type);
             methodNames[type] = scriptMethodName;
 
@@ -83,11 +99,14 @@ public sealed class RenderPipelineScript
             throw new InvalidOperationException($"Duplicate render command script name '{name}'. Use unique command type names or script method names.");
     }
 
-    private static string ResolveScriptCommandMethodName(Type type)
+    private static string ResolveScriptCommandMethodName(Type type, bool inspectAttributes = true)
     {
-        RenderPipelineScriptCommandAttribute? attribute = type.GetCustomAttribute<RenderPipelineScriptCommandAttribute>();
-        if (!string.IsNullOrWhiteSpace(attribute?.MethodName))
-            return attribute.MethodName;
+        if (inspectAttributes)
+        {
+            RenderPipelineScriptCommandAttribute? attribute = type.GetCustomAttribute<RenderPipelineScriptCommandAttribute>();
+            if (!string.IsNullOrWhiteSpace(attribute?.MethodName))
+                return attribute.MethodName;
+        }
 
         return type.Name.StartsWith("VPRC_", StringComparison.Ordinal)
             ? JsonNamingPolicy.CamelCase.ConvertName(type.Name["VPRC_".Length..])
@@ -315,8 +334,14 @@ public sealed class RenderPipelineScript
             if (!CommandTypes.TryGetValue(_commandTypeName, out Type? commandType))
                 throw new InvalidOperationException($"Unknown render command type '{_commandTypeName}'.");
 
-            ViewportRenderCommand command = (ViewportRenderCommand)(Activator.CreateInstance(commandType)
-                ?? throw new InvalidOperationException($"Unable to create render command '{commandType.Name}'."));
+            if (!ViewportRenderCommandContainer.TryCreateRegisteredCommand(commandType, out ViewportRenderCommand? command) || command is null)
+            {
+                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                    throw new InvalidOperationException($"No registered render command factory for '{commandType.Name}'.");
+
+                command = (ViewportRenderCommand)(Activator.CreateInstance(commandType)
+                    ?? throw new InvalidOperationException($"Unable to create render command '{commandType.Name}'."));
+            }
 
             for (int i = 0; i < _propertyAssignments.Count; i++)
                 _propertyAssignments[i].Apply(command);
@@ -810,6 +835,9 @@ public sealed class RenderPipelineScript
                 throw new InvalidOperationException($"Unsupported list destination type '{destinationType.Name}'.");
 
             Type listType = typeof(List<>).MakeGenericType(element);
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                throw new InvalidOperationException($"Render pipeline scripts cannot construct list type '{listType.Name}' in published AOT builds; use arrays or a registered code-authored factory path.");
+
             var list = (System.Collections.IList)(Activator.CreateInstance(listType)
                 ?? throw new InvalidOperationException($"Unable to create list type '{listType.Name}'."));
             for (int i = 0; i < items.Count; i++)
@@ -933,7 +961,17 @@ public sealed class RenderPipelineScript
             object? defaultCommand = null;
             try
             {
-                defaultCommand = Activator.CreateInstance(command.GetType());
+                if (!ViewportRenderCommandContainer.TryCreateRegisteredCommand(command.GetType(), out ViewportRenderCommand? registeredDefault) || registeredDefault is null)
+                {
+                    if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                        return;
+
+                    defaultCommand = Activator.CreateInstance(command.GetType());
+                }
+                else
+                {
+                    defaultCommand = registeredDefault;
+                }
             }
             catch
             {

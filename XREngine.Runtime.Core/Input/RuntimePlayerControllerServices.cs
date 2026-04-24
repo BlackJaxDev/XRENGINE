@@ -93,6 +93,9 @@ namespace XREngine.Input
         private const string DefaultLocalControllerTypeName = "XREngine.Runtime.InputIntegration.LocalPlayerController, XREngine.Runtime.InputIntegration";
         private const string DefaultRemoteControllerTypeName = "XREngine.Runtime.InputIntegration.RemotePlayerController, XREngine.Runtime.InputIntegration";
 
+        private static readonly object FactorySync = new();
+        private static readonly Dictionary<Type, Func<ELocalPlayerIndex, IPawnController>> LocalControllerFactories = [];
+        private static readonly Dictionary<Type, Func<int, IPawnController>> RemoteControllerFactories = [];
         private static Type? _defaultLocalControllerType;
         private static Type? _defaultRemoteControllerType;
 
@@ -128,6 +131,76 @@ namespace XREngine.Input
             return type is not null && typeof(IPawnController).IsAssignableFrom(type)
                 ? type
                 : null;
+        }
+
+        public static void RegisterLocalControllerFactory<TController>(Func<ELocalPlayerIndex, TController> factory, bool makeDefault = false)
+            where TController : IPawnController
+        {
+            ArgumentNullException.ThrowIfNull(factory);
+            RegisterLocalControllerFactory(typeof(TController), index => factory(index), makeDefault);
+        }
+
+        public static void RegisterLocalControllerFactory(Type controllerType, Func<ELocalPlayerIndex, IPawnController> factory, bool makeDefault = false)
+        {
+            ArgumentNullException.ThrowIfNull(controllerType);
+            ArgumentNullException.ThrowIfNull(factory);
+
+            if (!typeof(IPawnController).IsAssignableFrom(controllerType))
+                throw new ArgumentException($"Type must implement {nameof(IPawnController)}.", nameof(controllerType));
+
+            lock (FactorySync)
+            {
+                LocalControllerFactories[controllerType] = factory;
+                if (makeDefault || _defaultLocalControllerType is null)
+                    _defaultLocalControllerType = controllerType;
+            }
+        }
+
+        public static void RegisterRemoteControllerFactory<TController>(Func<int, TController> factory, bool makeDefault = false)
+            where TController : IPawnController
+        {
+            ArgumentNullException.ThrowIfNull(factory);
+            RegisterRemoteControllerFactory(typeof(TController), serverPlayerIndex => factory(serverPlayerIndex), makeDefault);
+        }
+
+        public static void RegisterRemoteControllerFactory(Type controllerType, Func<int, IPawnController> factory, bool makeDefault = false)
+        {
+            ArgumentNullException.ThrowIfNull(controllerType);
+            ArgumentNullException.ThrowIfNull(factory);
+
+            if (!typeof(IPawnController).IsAssignableFrom(controllerType))
+                throw new ArgumentException($"Type must implement {nameof(IPawnController)}.", nameof(controllerType));
+
+            lock (FactorySync)
+            {
+                RemoteControllerFactories[controllerType] = factory;
+                if (makeDefault || _defaultRemoteControllerType is null)
+                    _defaultRemoteControllerType = controllerType;
+            }
+        }
+
+        public static bool TryCreateLocalController(Type controllerType, ELocalPlayerIndex index, out IPawnController? controller)
+        {
+            ArgumentNullException.ThrowIfNull(controllerType);
+
+            Func<ELocalPlayerIndex, IPawnController>? factory;
+            lock (FactorySync)
+                LocalControllerFactories.TryGetValue(controllerType, out factory);
+
+            controller = factory?.Invoke(index);
+            return controller is not null;
+        }
+
+        public static bool TryCreateRemoteController(Type controllerType, int serverPlayerIndex, out IPawnController? controller)
+        {
+            ArgumentNullException.ThrowIfNull(controllerType);
+
+            Func<int, IPawnController>? factory;
+            lock (FactorySync)
+                RemoteControllerFactories.TryGetValue(controllerType, out factory);
+
+            controller = factory?.Invoke(serverPlayerIndex);
+            return controller is not null;
         }
     }
 }

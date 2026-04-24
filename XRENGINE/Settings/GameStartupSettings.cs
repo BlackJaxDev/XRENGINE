@@ -110,7 +110,7 @@ namespace XREngine
             set => SetField(ref _texturesFolder, value);
         }
         [Category("Networking")]
-        [Description("Determines whether the application runs as Server, Client, P2P Client, or Local-only.")]
+        [Description("Determines whether the application runs as Server, Client, or Local-only.")]
         public ENetworkingType NetworkingType
         {
             get => _networkingType;

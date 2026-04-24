@@ -620,7 +620,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         UpdateParameters();
         _particlesVersion++;
         MarkGpuBuffersDirty();
-        RebuildGpuDrivenRendererBindings();
+        InvalidateGpuDrivenRenderers();
     }
 
     private void AppendParticleTree(Transform root)

@@ -152,7 +152,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         if (parameters.Count == 0)
             return null;
 
-        return new PostProcessStageDescriptor(definition.Key, definition.DisplayName, parameters, definition.BackingType);
+        return new PostProcessStageDescriptor(definition.Key, definition.DisplayName, parameters, definition.BackingType, definition.BackingFactory);
     }
 
     private static bool TryConvert(EShaderVarType? type, out PostProcessParameterKind kind)
@@ -199,6 +199,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         public Dictionary<string, UniformCustomization> Customizations { get; } = new(StringComparer.Ordinal);
         public List<CustomParameterDefinition> CustomParameters { get; } = new();
         public Type? BackingType { get; set; }
+        public Func<object>? BackingFactory { get; set; }
 
         public void SetShaderFactory(Func<IEnumerable<XRShader>> factory)
             => _shaderFactory = factory ?? throw new ArgumentNullException(nameof(factory));
@@ -253,6 +254,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         public PostProcessStageBuilder BackedBy<TSettings>() where TSettings : class, new()
         {
             _definition.BackingType = typeof(TSettings);
+            _definition.BackingFactory = static () => new TSettings();
             return this;
         }
 
@@ -260,6 +262,16 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         {
             ArgumentNullException.ThrowIfNull(settingsType);
             _definition.BackingType = settingsType;
+            _definition.BackingFactory = null;
+            return this;
+        }
+
+        public PostProcessStageBuilder BackedBy(Type settingsType, Func<object> factory)
+        {
+            ArgumentNullException.ThrowIfNull(settingsType);
+            ArgumentNullException.ThrowIfNull(factory);
+            _definition.BackingType = settingsType;
+            _definition.BackingFactory = factory;
             return this;
         }
 

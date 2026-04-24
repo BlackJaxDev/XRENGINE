@@ -21,7 +21,7 @@ namespace XREngine
     ///   <item><description>Window and viewport management</description></item>
     ///   <item><description>Settings (user, game, editor preferences)</description></item>
     ///   <item><description>Threading and task scheduling</description></item>
-    ///   <item><description>Networking (server, client, P2P)</description></item>
+    ///   <item><description>Networking (server, client)</description></item>
     ///   <item><description>VR initialization and state</description></item>
     ///   <item><description>World instance management</description></item>
     /// </list>

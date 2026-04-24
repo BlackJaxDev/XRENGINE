@@ -407,28 +407,21 @@ public unsafe partial class OpenXRAPI
             RenderPipeline created;
             try
             {
-                if (sourcePipeline is DefaultRenderPipeline srcDefault)
+                if (!RenderPipeline.TryCreateOpenXrPipeline(sourcePipeline, out RenderPipeline? registered) || registered is null)
                 {
-                    created = new DefaultRenderPipeline(stereo: false)
-                    {
-                        IsShadowPass = srcDefault.IsShadowPass,
-                    };
-                }
-                else if (sourcePipeline is DefaultRenderPipeline2 srcV2)
-                {
-                    created = new DefaultRenderPipeline2(stereo: false)
-                    {
-                        IsShadowPass = srcV2.IsShadowPass,
-                    };
-                }
-                else
-                {
+                    if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                        throw new InvalidOperationException($"No registered OpenXR render pipeline factory for type {sourcePipeline.GetType().FullName}.");
+
                     created = (RenderPipeline?)Activator.CreateInstance(sourcePipeline.GetType())
                               ?? Engine.Rendering.NewRenderPipeline(stereo: false);
                     created.IsShadowPass = sourcePipeline.IsShadowPass;
                 }
+                else
+                {
+                    created = registered;
+                }
             }
-            catch
+            catch when (!XRRuntimeEnvironment.IsAotRuntimeBuild)
             {
                 created = Engine.Rendering.NewRenderPipeline(stereo: false);
             }

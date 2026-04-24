@@ -146,52 +146,52 @@ public static partial class EditorUnitTests
                 "Physics Chain CPU Test",
                 "Runs a single-threaded CPU physics chain.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain CPU Test", useGpu: false, multithread: false, useBatchedDispatcher: false, gpuSyncToBones: false, phaseOffset: 0.0f, ColorF4.LightBlue, ColorF4.LightGold)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain CPU Test", useGpu: false, multithread: false, useBatchedDispatcher: false, gpuSyncToBones: false, phaseOffset: 0.0f, ColorF4.LightBlue, ColorF4.LightGold, controller: controller)),
             new(
                 "Physics Chain CPU Multithreaded Test",
                 "Runs a CPU physics chain with multithreaded execution enabled.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain CPU Multithreaded Test", useGpu: false, multithread: true, useBatchedDispatcher: false, gpuSyncToBones: false, phaseOffset: 0.35f, new ColorF4(0.39f, 0.58f, 0.93f, 1.0f), ColorF4.LightGold)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain CPU Multithreaded Test", useGpu: false, multithread: true, useBatchedDispatcher: false, gpuSyncToBones: false, phaseOffset: 0.35f, new ColorF4(0.39f, 0.58f, 0.93f, 1.0f), ColorF4.LightGold, controller: controller)),
             new(
                 "Physics Chain GPU Standalone Test",
                 "Runs a GPU physics chain without the batched dispatcher.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Standalone Test", useGpu: true, multithread: false, useBatchedDispatcher: false, gpuSyncToBones: false, phaseOffset: 0.7f, ColorF4.LightGreen, ColorF4.Orange)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Standalone Test", useGpu: true, multithread: false, useBatchedDispatcher: false, gpuSyncToBones: false, phaseOffset: 0.7f, ColorF4.LightGreen, ColorF4.Orange, controller: controller)),
             new(
                 "Physics Chain GPU Dispatcher Test",
                 "Runs a GPU physics chain through the shared batched dispatcher.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: false, phaseOffset: 1.05f, new ColorF4(0.0f, 1.0f, 0.5f, 1.0f), ColorF4.Orange)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: false, phaseOffset: 1.05f, new ColorF4(0.0f, 1.0f, 0.5f, 1.0f), ColorF4.Orange, controller: controller)),
             new(
                 "Physics Chain GPU Sync To Bones Test",
                 "Runs a standalone GPU physics chain with Sync To Bones enabled.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Sync To Bones Test", useGpu: true, multithread: false, useBatchedDispatcher: false, gpuSyncToBones: true, phaseOffset: 1.4f, new ColorF4(0.13f, 0.70f, 0.67f, 1.0f), ColorF4.Orange)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Sync To Bones Test", useGpu: true, multithread: false, useBatchedDispatcher: false, gpuSyncToBones: true, phaseOffset: 1.4f, new ColorF4(0.13f, 0.70f, 0.67f, 1.0f), ColorF4.Orange, controller: controller)),
             new(
                 "Physics Chain GPU Dispatcher Sync To Bones Test",
                 "Runs a dispatcher-backed GPU physics chain with Sync To Bones enabled.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Sync To Bones Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: true, phaseOffset: 1.75f, new ColorF4(0.24f, 0.88f, 0.55f, 1.0f), ColorF4.Orange)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Sync To Bones Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: true, phaseOffset: 1.75f, new ColorF4(0.24f, 0.88f, 0.55f, 1.0f), ColorF4.Orange, controller: controller)),
             new(
                 "Physics Chain GPU Dispatcher Skinned Mesh Test",
                 "Runs the dispatcher-backed GPU physics chain with a skinned box mesh driven directly from the GPU bone palette path.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Skinned Mesh Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: false, phaseOffset: 1.92f, new ColorF4(0.18f, 0.84f, 0.72f, 1.0f), ColorF4.Orange, includeSkinnedMesh: true)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Skinned Mesh Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: false, phaseOffset: 1.92f, new ColorF4(0.18f, 0.84f, 0.72f, 1.0f), ColorF4.Orange, includeSkinnedMesh: true, controller: controller)),
             new(
                 "Physics Chain GPU Dispatcher Skinned Mesh Sync To Bones Test",
                 "Runs the dispatcher-backed GPU physics chain with a skinned box mesh while the higher-cost CPU Sync To Bones compatibility path remains enabled.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Skinned Mesh Sync To Bones Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: true, phaseOffset: 2.0f, new ColorF4(0.32f, 0.79f, 0.58f, 1.0f), ColorF4.Orange, includeSkinnedMesh: true)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Skinned Mesh Sync To Bones Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: true, phaseOffset: 2.0f, new ColorF4(0.32f, 0.79f, 0.58f, 1.0f), ColorF4.Orange, includeSkinnedMesh: true, controller: controller)),
             new(
                 "Physics Chain GPU Dispatcher No Collider Test",
                 "Runs the dispatcher-backed GPU physics chain without colliders to isolate solver, upload, and transform costs.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher No Collider Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: false, phaseOffset: 2.1f, new ColorF4(0.31f, 0.76f, 0.97f, 1.0f), ColorF4.LightGold, PhysicsChainColliderScenario.None)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher No Collider Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: false, phaseOffset: 2.1f, new ColorF4(0.31f, 0.76f, 0.97f, 1.0f), ColorF4.LightGold, PhysicsChainColliderScenario.None, controller: controller)),
             new(
                 "Physics Chain GPU Dispatcher Heavy Collider Test",
                 "Runs the dispatcher-backed GPU physics chain with a heavier collider set to stress collider upload and collision cost.",
                 s_physicsChainTestBounds,
-                (parent, _) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Heavy Collider Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: false, phaseOffset: 2.45f, new ColorF4(0.0f, 0.84f, 0.84f, 1.0f), new ColorF4(1.0f, 0.76f, 0.25f, 1.0f), PhysicsChainColliderScenario.Heavy)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Heavy Collider Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: false, phaseOffset: 2.45f, new ColorF4(0.0f, 0.84f, 0.84f, 1.0f), new ColorF4(1.0f, 0.76f, 0.25f, 1.0f), PhysicsChainColliderScenario.Heavy, controller: controller)),
         ];
 
     private static SceneNode AddGeoUtilRayWithPointRig(SceneNode rootNode)
@@ -683,7 +683,8 @@ public static partial class EditorUnitTests
         ColorF4 chainColor,
         ColorF4 rootColor,
         PhysicsChainColliderScenario colliderScenario = PhysicsChainColliderScenario.Default,
-        bool includeSkinnedMesh = false)
+        bool includeSkinnedMesh = false,
+        MathIntersectionsWorldControllerComponent? controller = null)
     {
         var rigNode = rootNode.NewChild(rigName);
         rigNode.SetTransform<Transform>();
@@ -699,7 +700,8 @@ public static partial class EditorUnitTests
             chainColor,
             rootColor,
             colliderScenario,
-            includeSkinnedMesh);
+            includeSkinnedMesh,
+            controller);
         return rigNode;
     }
 

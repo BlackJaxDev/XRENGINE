@@ -20,6 +20,7 @@ using GPUParticleData = XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.GPU
 using GPUParticleStaticData = XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.GPUParticleStaticData;
 using GPUParticleTreeData = XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.GPUParticleTreeData;
 using GPUColliderData = XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.GPUColliderData;
+using GPUDrivenBoneMappingData = XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.GPUDrivenBoneMappingData;
 using GPUPerTreeParams = XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.GPUPerTreeParams;
 
 namespace XREngine.Components;
@@ -28,24 +29,24 @@ public partial class PhysicsChainComponent
 {
     private static readonly int Matrix4x4SizeBytes = Marshal.SizeOf<Matrix4x4>();
     private static readonly int ColliderDataSizeBytes = Marshal.SizeOf<GPUColliderData>();
+    private static readonly bool VerboseGpuDrivenRendererLogging = false;
+    private const int GpuDrivenRendererBindingRetryFrameCount = 8;
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct GPUDrivenBoneMappingData
-    {
-        public int ParticleIndex;
-        public int ChildParticleIndex;
-        public int BoneMatrixIndex;
-        public int Flags;
-        public Vector3 RestLocalDirection;
-        public float _pad0;
-    }
-
-    private sealed class GpuDrivenRendererState(XRMeshRenderer renderer, XRDataBuffer mappingBuffer, uint[] drivenBoneIndices)
+    private sealed class GpuDrivenRendererState(
+        XRMeshRenderer renderer,
+        XRDataBuffer mappingBuffer,
+        GPUDrivenBoneMappingData[] mappingData,
+        uint[] drivenBoneIndices,
+        uint boneMatrixElementCount,
+        bool drivesCompleteBonePalette)
     {
         public XRMeshRenderer Renderer { get; } = renderer;
         public XRDataBuffer MappingBuffer { get; } = mappingBuffer;
+        public GPUDrivenBoneMappingData[] MappingData { get; } = mappingData;
         public uint[] DrivenBoneIndices { get; } = drivenBoneIndices;
-        public int MappingCount => DrivenBoneIndices.Length;
+        public uint BoneMatrixElementCount { get; } = boneMatrixElementCount;
+        public bool DrivesCompleteBonePalette { get; } = drivesCompleteBonePalette;
+        public int MappingCount => MappingData.Length;
     }
 
     private readonly record struct StandaloneInFlightReadback(
@@ -113,9 +114,15 @@ public partial class PhysicsChainComponent
     private int _uploadedColliderSignature = int.MinValue;
     private bool _gpuParticleStateInitialized;
     private bool _gpuDispatcherRegistered;
+    private bool _gpuDrivenRendererBindingsDirty = true;
+    private int _gpuDrivenRendererBindingRetryFrames;
+    private int _gpuDrivenRendererBindingGeneration;
     private readonly List<GpuDrivenRendererState> _gpuDrivenRenderers = [];
     private readonly List<StandaloneInFlightReadback> _standaloneReadbacks = [];
     private readonly Stack<XRDataBuffer> _standaloneReadbackBufferPool = [];
+
+    internal bool HasGpuDrivenRenderers => _gpuDrivenRenderers.Count > 0;
+    internal int GpuDrivenRendererBindingGeneration => _gpuDrivenRendererBindingGeneration;
 
     private void ActivateGpuExecutionMode()
     {
@@ -146,6 +153,8 @@ public partial class PhysicsChainComponent
 
         _hasPendingGPUWork = false;
         ClearGpuDrivenRendererBindings();
+        _gpuDrivenRendererBindingsDirty = true;
+        _gpuDrivenRendererBindingRetryFrames = 0;
         CleanupBuffers();
         CleanupPrograms();
     }
@@ -297,6 +306,7 @@ public partial class PhysicsChainComponent
             UpdateBufferData();
 
         UpdatePerTreeParams(timeVar);
+        RefreshGpuDrivenRendererBindingsIfNeeded();
 
         if (loop <= 0)
             return;
@@ -323,6 +333,7 @@ public partial class PhysicsChainComponent
     private void SubmitToBatchedDispatcher(int loopCount, float timeVar)
     {
         PrepareGPUData();
+        RefreshGpuDrivenRendererBindingsIfNeeded();
         long submissionId = ++_latestGpuSubmissionId;
 
         GPUPhysicsChainDispatcher.Instance.SubmitData(
@@ -1048,14 +1059,46 @@ public partial class PhysicsChainComponent
         _gpuBonePaletteShader = null;
     }
 
-    private void RebuildGpuDrivenRendererBindings()
+    private void MarkGpuDrivenRendererBindingsDirty(int retryFrames = GpuDrivenRendererBindingRetryFrameCount)
+    {
+        _gpuDrivenRendererBindingsDirty = true;
+        _gpuDrivenRendererBindingRetryFrames = Math.Max(_gpuDrivenRendererBindingRetryFrames, retryFrames);
+    }
+
+    private void RefreshGpuDrivenRendererBindingsIfNeeded()
+    {
+        if (!_gpuDrivenRendererBindingsDirty)
+            return;
+
+        if (!UseGPU || SceneNode is null || _particleTrees.Count == 0)
+            return;
+
+        RebuildGpuDrivenRendererBindings(out int skinnedRendererCount);
+
+        if (_gpuDrivenRenderers.Count > 0 || _gpuDrivenRendererBindingRetryFrames <= 0)
+        {
+            _gpuDrivenRendererBindingsDirty = false;
+            _gpuDrivenRendererBindingRetryFrames = 0;
+            if (skinnedRendererCount > 0 && _gpuDrivenRenderers.Count == 0)
+            {
+                Debug.PhysicsWarning(
+                    $"[PhysicsChain] RebuildGpuDrivenRendererBindings: Found {skinnedRendererCount} skinned renderers but created 0 GPU-driven bindings. Component={GetHashCode():X}");
+            }
+            return;
+        }
+
+        --_gpuDrivenRendererBindingRetryFrames;
+    }
+
+    private void RebuildGpuDrivenRendererBindings(out int skinnedRendererCount)
     {
         int previousBindingCount = _gpuDrivenRenderers.Count;
         ClearGpuDrivenRendererBindings();
+        skinnedRendererCount = 0;
 
         if (!UseGPU || SceneNode is null || _particleTrees.Count == 0)
         {
-            if (previousBindingCount > 0)
+            if (VerboseGpuDrivenRendererLogging && previousBindingCount > 0)
                 Debug.Out($"[PhysicsChain] RebuildGpuDrivenRendererBindings: Cleared {previousBindingCount} bindings, not rebuilding (UseGPU={UseGPU}, SceneNode={SceneNode != null}, ParticleTrees={_particleTrees.Count}). Component={GetHashCode():X}");
             return;
         }
@@ -1096,24 +1139,28 @@ public partial class PhysicsChainComponent
             }
         }
 
-        int skinnedRendererCount = 0;
         // Scan from parent so we also discover skinned renderers on sibling nodes
         // (e.g. a ModelComponent alongside the skeleton root rather than under it).
         // The particle-transform filter ensures only renderers referencing our bones match.
+        int foundSkinnedRendererCount = 0;
         var searchRoot = SceneNode.Parent ?? SceneNode;
         searchRoot.IterateComponents<ModelComponent>(model =>
         {
             foreach (XRMeshRenderer renderer in model.GetAllRenderersWhere(static renderer => renderer.Mesh?.HasSkinning == true))
             {
-                ++skinnedRendererCount;
+                ++foundSkinnedRendererCount;
                 TryAddGpuDrivenRendererState(renderer, _gpuDrivenParticleIndexByTransform, _gpuDrivenFirstChildIndexByParticle, _gpuDrivenRestDirectionByParticle);
             }
         }, true);
+        skinnedRendererCount = foundSkinnedRendererCount;
 
-        Debug.Out($"[PhysicsChain] RebuildGpuDrivenRendererBindings: Scanned {skinnedRendererCount} skinned renderers, created {_gpuDrivenRenderers.Count} GPU-driven bindings. Component={GetHashCode():X}, TotalParticles={globalParticleIndex}, BoneTransformMappings={_gpuDrivenParticleIndexByTransform.Count}, PreviousBindings={previousBindingCount}");
+        unchecked
+        {
+            ++_gpuDrivenRendererBindingGeneration;
+        }
 
-        if (skinnedRendererCount > 0 && _gpuDrivenRenderers.Count == 0)
-            Debug.PhysicsWarning($"[PhysicsChain] RebuildGpuDrivenRendererBindings: Found {skinnedRendererCount} skinned renderers but created 0 GPU-driven bindings! Check if renderer bones match particle transforms. Component={GetHashCode():X}");
+        if (VerboseGpuDrivenRendererLogging)
+            Debug.Out($"[PhysicsChain] RebuildGpuDrivenRendererBindings: Scanned {skinnedRendererCount} skinned renderers, created {_gpuDrivenRenderers.Count} GPU-driven bindings. Component={GetHashCode():X}, TotalParticles={globalParticleIndex}, BoneTransformMappings={_gpuDrivenParticleIndexByTransform.Count}, PreviousBindings={previousBindingCount}");
     }
 
     /// <summary>
@@ -1123,10 +1170,39 @@ public partial class PhysicsChainComponent
     /// </summary>
     public void InvalidateGpuDrivenRenderers()
     {
-        if (!UseGPU || _particleTrees.Count == 0)
-            return;
+        MarkGpuDrivenRendererBindingsDirty();
+        RefreshGpuDrivenRendererBindingsIfNeeded();
+    }
 
-        RebuildGpuDrivenRendererBindings();
+    internal void AppendBatchedGpuDrivenBonePaletteBindings(
+        int particleBaseOffset,
+        List<GPUPhysicsChainDispatcher.GpuDrivenRendererPaletteBinding> bindings)
+    {
+        RefreshGpuDrivenRendererBindingsIfNeeded();
+
+        for (int i = 0; i < _gpuDrivenRenderers.Count; ++i)
+        {
+            GpuDrivenRendererState state = _gpuDrivenRenderers[i];
+            if (!state.DrivesCompleteBonePalette)
+                continue;
+
+            if (state.Renderer.BoneMatricesBuffer is null || state.Renderer.BoneInvBindMatricesBuffer is null)
+                continue;
+
+            bindings.Add(new GPUPhysicsChainDispatcher.GpuDrivenRendererPaletteBinding(
+                this,
+                state.Renderer,
+                state.MappingData,
+                particleBaseOffset,
+                state.BoneMatrixElementCount,
+                _gpuDrivenRendererBindingGeneration));
+        }
+    }
+
+    internal void ClearBatchedGpuDrivenBonePaletteSources()
+    {
+        for (int i = 0; i < _gpuDrivenRenderers.Count; ++i)
+            _gpuDrivenRenderers[i].Renderer.ClearGpuDrivenBoneMatrixSource(this);
     }
 
     private void TryAddGpuDrivenRendererState(
@@ -1191,7 +1267,8 @@ public partial class PhysicsChainComponent
 
         if (mappingData.Count == 0)
         {
-            Debug.Out($"[PhysicsChain] TryAddGpuDrivenRendererState: No bone mappings matched particle transforms. Component={GetHashCode():X}, Renderer={renderer.GetHashCode():X}, Mesh='{mesh.Name}', UtilizedBones={mesh.UtilizedBones.Length}, ParticleTransformCount={particleIndexByTransform.Count}");
+            if (VerboseGpuDrivenRendererLogging)
+                Debug.Out($"[PhysicsChain] TryAddGpuDrivenRendererState: No bone mappings matched particle transforms. Component={GetHashCode():X}, Renderer={renderer.GetHashCode():X}, Mesh='{mesh.Name}', UtilizedBones={mesh.UtilizedBones.Length}, ParticleTransformCount={particleIndexByTransform.Count}");
             return;
         }
 
@@ -1210,23 +1287,42 @@ public partial class PhysicsChainComponent
         mappingBuffer.SetDataRaw(mappingData);
         mappingBuffer.PushData();
 
+        GPUDrivenBoneMappingData[] mappings = mappingData.ToArray();
         uint[] drivenIndices = drivenBoneIndices.ToArray();
+        uint boneMatrixElementCount = (uint)mesh.UtilizedBones.Length + 1u;
+        bool drivesCompleteBonePalette = mappingData.Count == mesh.UtilizedBones.Length;
         renderer.RegisterGpuDrivenBoneIndices(drivenIndices);
-        _gpuDrivenRenderers.Add(new GpuDrivenRendererState(renderer, mappingBuffer, drivenIndices));
+        _gpuDrivenRenderers.Add(new GpuDrivenRendererState(
+            renderer,
+            mappingBuffer,
+            mappings,
+            drivenIndices,
+            boneMatrixElementCount,
+            drivesCompleteBonePalette));
 
-        Debug.Out($"[PhysicsChain] TryAddGpuDrivenRendererState: Successfully created GPU-driven binding. Component={GetHashCode():X}, Renderer={renderer.GetHashCode():X}, Mesh='{mesh.Name}', MappedBones={mappingData.Count}/{mesh.UtilizedBones.Length}");
+        if (VerboseGpuDrivenRendererLogging)
+            Debug.Out($"[PhysicsChain] TryAddGpuDrivenRendererState: Successfully created GPU-driven binding. Component={GetHashCode():X}, Renderer={renderer.GetHashCode():X}, Mesh='{mesh.Name}', MappedBones={mappingData.Count}/{mesh.UtilizedBones.Length}");
     }
 
     private void ClearGpuDrivenRendererBindings()
     {
+        bool hadBindings = _gpuDrivenRenderers.Count > 0;
         for (int i = 0; i < _gpuDrivenRenderers.Count; ++i)
         {
             GpuDrivenRendererState state = _gpuDrivenRenderers[i];
+            state.Renderer.ClearGpuDrivenBoneMatrixSource(this);
             state.Renderer.UnregisterGpuDrivenBoneIndices(state.DrivenBoneIndices);
             state.MappingBuffer.Destroy();
         }
 
         _gpuDrivenRenderers.Clear();
+        if (hadBindings)
+        {
+            unchecked
+            {
+                ++_gpuDrivenRendererBindingGeneration;
+            }
+        }
     }
 
     private void EnsureGpuBonePaletteProgram()
@@ -1238,7 +1334,11 @@ public partial class PhysicsChainComponent
         _gpuBonePaletteProgram = new XRRenderProgram(true, false, _gpuBonePaletteShader);
     }
 
-    internal void PublishGpuDrivenBoneMatrices(XRDataBuffer? particlesBuffer, XRDataBuffer? transformMatricesBuffer, int particleBaseOffset)
+    internal void PublishGpuDrivenBoneMatrices(
+        XRDataBuffer? particlesBuffer,
+        XRDataBuffer? transformMatricesBuffer,
+        int particleBaseOffset,
+        bool includeCompletePalettes = true)
     {
         using var profilerState = Engine.Profiler.Start("PhysicsChainComponent.GPU.PublishGpuDrivenBoneMatrices");
 
@@ -1259,6 +1359,9 @@ public partial class PhysicsChainComponent
         if (_gpuDrivenRenderers.Count == 0)
             return;
 
+        if (!includeCompletePalettes && !HasPartialGpuDrivenRendererPalette())
+            return;
+
         EnsureGpuBonePaletteProgram();
         if (_gpuBonePaletteProgram is null)
         {
@@ -1272,6 +1375,12 @@ public partial class PhysicsChainComponent
         for (int i = 0; i < _gpuDrivenRenderers.Count; ++i)
         {
             GpuDrivenRendererState state = _gpuDrivenRenderers[i];
+            if (state.DrivesCompleteBonePalette && !includeCompletePalettes)
+                continue;
+
+            if (state.DrivesCompleteBonePalette)
+                state.Renderer.ClearGpuDrivenBoneMatrixSource(this);
+
             XRDataBuffer? outputBoneMatrices = state.Renderer.BoneMatricesBuffer;
 
             if (outputBoneMatrices is null)
@@ -1288,7 +1397,8 @@ public partial class PhysicsChainComponent
                 continue;
             }
 
-            Debug.Out($"[PhysicsChain] PublishGpuDrivenBoneMatrices: Dispatching bone palette. Component={GetHashCode():X}, RendererIndex={i}, RendererHash={state.Renderer.GetHashCode():X}, ParticleBaseOffset={particleBaseOffset}, MappingCount={state.MappingCount}, OutputBufferHash={outputBoneMatrices.GetHashCode():X}");
+            if (VerboseGpuDrivenRendererLogging)
+                Debug.Out($"[PhysicsChain] PublishGpuDrivenBoneMatrices: Dispatching bone palette. Component={GetHashCode():X}, RendererIndex={i}, RendererHash={state.Renderer.GetHashCode():X}, ParticleBaseOffset={particleBaseOffset}, MappingCount={state.MappingCount}, OutputBufferHash={outputBoneMatrices.GetHashCode():X}");
 
             _gpuBonePaletteProgram.Uniform("particleBaseOffset", particleBaseOffset);
             _gpuBonePaletteProgram.Uniform("mappingCount", state.MappingCount);
@@ -1307,6 +1417,15 @@ public partial class PhysicsChainComponent
             Debug.PhysicsWarning($"[PhysicsChain] PublishGpuDrivenBoneMatrices: Dispatched {dispatchedCount} renderers, SKIPPED {skippedCount} renderers. Component={GetHashCode():X}, ParticleBaseOffset={particleBaseOffset}");
     }
 
+    private bool HasPartialGpuDrivenRendererPalette()
+    {
+        for (int i = 0; i < _gpuDrivenRenderers.Count; ++i)
+            if (!_gpuDrivenRenderers[i].DrivesCompleteBonePalette)
+                return true;
+
+        return false;
+    }
+
     private void RenderGpuDebug()
     {
         if (!DebugDrawChains)
@@ -1320,11 +1439,13 @@ public partial class PhysicsChainComponent
             || particleStaticBuffer is null
             || particleCount <= 0)
         {
-            Debug.LogWarning($"[PhysicsChain] RenderGpuDebug: Failed to get particle render source. Component={GetHashCode():X}, HasBuffer={particleBuffer is not null}, HasStatic={particleStaticBuffer is not null}, Offset={particleOffset}, Count={particleCount}");
+            if (VerboseGpuDrivenRendererLogging)
+                Debug.Out($"[PhysicsChain] RenderGpuDebug: Particle render source unavailable. Component={GetHashCode():X}, HasBuffer={particleBuffer is not null}, HasStatic={particleStaticBuffer is not null}, Offset={particleOffset}, Count={particleCount}");
             return;
         }
 
-        Debug.Out($"[PhysicsChain] RenderGpuDebug: Rendering debug. Component={GetHashCode():X}, ParticleOffset={particleOffset}, ParticleCount={particleCount}, ParticleBufferHash={particleBuffer.GetHashCode():X}");
+        if (VerboseGpuDrivenRendererLogging)
+            Debug.Out($"[PhysicsChain] RenderGpuDebug: Rendering debug. Component={GetHashCode():X}, ParticleOffset={particleOffset}, ParticleCount={particleCount}, ParticleBufferHash={particleBuffer.GetHashCode():X}");
 
         EnsureGpuDebugRenderProgram();
         EnsureGpuDebugResources((uint)particleCount);
