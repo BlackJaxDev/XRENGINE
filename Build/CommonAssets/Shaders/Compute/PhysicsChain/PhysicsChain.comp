@@ -98,6 +98,7 @@ layout(std430, binding = 5) readonly buffer PerTreeParamsBuffer
 // --- Uniforms ---
 
 uniform int ApplyObjectMove;
+uniform int ParticleCount;
 
 // --- Collision Helpers ---
 
@@ -211,6 +212,8 @@ void applyFreezeAxis(int freezeAxis, inout vec3 pos, vec3 parentPos, mat4 parent
 void main()
 {
     uint pid = gl_GlobalInvocationID.x;
+    if (ParticleCount <= 0 || pid >= uint(ParticleCount))
+        return;
     
     ParticleStatic particleStatic = ParticleStatics[pid];
     int treeIndex = particleStatic.TreeIndex;

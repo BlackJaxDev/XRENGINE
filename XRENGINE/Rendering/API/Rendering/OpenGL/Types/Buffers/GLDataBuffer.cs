@@ -447,6 +447,24 @@ namespace XREngine.Rendering.OpenGL
             public bool IsReadyForRendering
                 => _lastPushedLength > 0 && !_hasPendingUpload;
 
+            internal void EnsureStorageAllocatedForGpuCopy()
+            {
+                if (HasBlockingActiveMapping())
+                    return;
+
+                if (Engine.InvokeOnMainThread(EnsureStorageAllocatedForGpuCopy, "GLDataBuffer.EnsureStorageAllocatedForGpuCopy"))
+                    return;
+
+                if (!IsGenerated)
+                    Generate();
+
+                if (_hasPendingUpload)
+                    Renderer.UploadQueue.FlushAll();
+
+                if (_lastPushedLength < Data.Length)
+                    PushDataImmediate();
+            }
+
             public static GLEnum ToGLEnum(EBufferUsage usage) => usage switch
             {
                 EBufferUsage.StaticDraw => GLEnum.StaticDraw,

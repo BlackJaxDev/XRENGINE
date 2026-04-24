@@ -89,7 +89,6 @@ public sealed class GPUPhysicsChainDispatcher
     private readonly List<GPUPhysicsChainRequest> _dispatchGroup = [];
     private readonly List<InFlightDispatch> _inFlight = [];
     private readonly Stack<XRDataBuffer> _readbackBufferPool = new();
-    private readonly ConcurrentDictionary<PhysicsChainComponent, RetainedRenderFallback> _retainedRenderFallbacks = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     // Shared GPU resources
     private XRShader? _mainPhysicsShader;
@@ -195,16 +194,6 @@ public sealed class GPUPhysicsChainDispatcher
     {
         if (bytes != 0)
             Interlocked.Add(ref s_residentParticleBytes, bytes);
-    }
-
-    private sealed class RetainedRenderFallback(
-        XRDataBuffer? particlesBuffer,
-        XRDataBuffer? particleStaticBuffer,
-        int particleCount)
-    {
-        public XRDataBuffer? ParticlesBuffer { get; } = particlesBuffer;
-        public XRDataBuffer? ParticleStaticBuffer { get; } = particleStaticBuffer;
-        public int ParticleCount { get; } = particleCount;
     }
 
     #region GPU Data Structures
@@ -330,8 +319,6 @@ public sealed class GPUPhysicsChainDispatcher
             lock (_registeredComponentsSync)
                 _registeredComponentSnapshot.Add(request);
 
-            RestoreRetainedRenderFallback(request);
-
             XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] Register: Component registered. ComponentHash={component.GetHashCode():X}, RequestId={request.RequestId}, TotalRegistered={_registeredComponents.Count}");
         }
         else
@@ -353,13 +340,13 @@ public sealed class GPUPhysicsChainDispatcher
             lock (_registeredComponentsSync)
                 _registeredComponentSnapshot.Remove(request);
             RemoveRequestFromAuthoritativeGroup(request);
-            RetainResidentParticlesBuffer(request);
+            DisposeResidentParticlesBuffer(request);
 
             XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] Unregister: Component unregistered. ComponentHash={component.GetHashCode():X}, RequestId={request.RequestId}, WasInAuthoritativeGroup={wasInAuthoritativeGroup}, ParticleCount={particleCount}, TotalRegistered={_registeredComponents.Count}");
 
             if (wasInAuthoritativeGroup && particleCount > 0)
             {
-                XREngine.Debug.LogWarning($"[GPUPhysicsChainDispatcher] Unregister: Component was in authoritative group with {particleCount} particles. Particle state in combined buffer will NOT be synced back to resident buffer before disposal. ComponentHash={component.GetHashCode():X}");
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] Unregister: Component was in authoritative group with {particleCount} particles. Resident buffers were disposed; the component will recreate resident state if it is reactivated. ComponentHash={component.GetHashCode():X}");
             }
         }
         else
@@ -747,7 +734,7 @@ public sealed class GPUPhysicsChainDispatcher
 
         if (!canReuseAuthoritativeParticles)
         {
-            EnsureCombinedParticlesBufferAllocated();
+            EnsureCombinedParticlesBufferAllocated(renderer);
             XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] BuildCombinedBuffers: Copying resident particles into combined buffer. RequestCount={requests.Count}, LayoutSignatureMatch={_authoritativeParticleLayoutSignature == particleLayoutSignature}, HasCpuChanges={hasCpuParticleStateChanges}");
             CopyResidentParticlesIntoCombinedBuffer(renderer, requests);
         }
@@ -851,16 +838,12 @@ public sealed class GPUPhysicsChainDispatcher
         }
     }
 
-    private void EnsureCombinedParticlesBufferAllocated()
+    private void EnsureCombinedParticlesBufferAllocated(OpenGLRenderer renderer)
     {
         if (_particlesBuffer is null)
             return;
 
-        if (TryGetBufferId(_particlesBuffer, out uint bufferId) && bufferId != 0)
-            return;
-
-        _particlesBuffer.SetDataRaw(new GPUParticleData[Math.Max(TotalParticleCount, 1)]);
-        _particlesBuffer.PushData();
+        TryGetBufferIdForGpuCopy(renderer, _particlesBuffer, out _);
     }
 
     private void CopyResidentParticlesIntoCombinedBuffer(OpenGLRenderer renderer, IReadOnlyList<GPUPhysicsChainRequest> requests)
@@ -873,7 +856,7 @@ public sealed class GPUPhysicsChainDispatcher
             return;
         }
 
-        if (!TryGetBufferId(_particlesBuffer, out uint destinationBufferId) || destinationBufferId == 0)
+        if (!TryGetBufferIdForGpuCopy(renderer, _particlesBuffer, out uint destinationBufferId) || destinationBufferId == 0)
         {
             XREngine.Debug.LogWarning("[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: Failed to get destination buffer ID.");
             return;
@@ -894,7 +877,7 @@ public sealed class GPUPhysicsChainDispatcher
                 continue;
             }
 
-            if (!TryGetBufferId(residentBuffer, out uint sourceBufferId) || sourceBufferId == 0)
+            if (!TryGetBufferIdForGpuCopy(renderer, residentBuffer, out uint sourceBufferId) || sourceBufferId == 0)
             {
                 XREngine.Debug.LogWarning($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: Failed to get source buffer ID. RequestId={request.RequestId}");
                 ++skippedCount;
@@ -903,6 +886,12 @@ public sealed class GPUPhysicsChainDispatcher
 
             nuint byteCount = (nuint)(request.Particles.Count * ParticleStateSizeBytes);
             nint writeOffset = request.ParticleOffset * ParticleStateSizeBytes;
+            if (!ValidateGpuCopyRange(residentBuffer, 0, _particlesBuffer, writeOffset, byteCount, "resident->combined", request.RequestId))
+            {
+                ++skippedCount;
+                continue;
+            }
+
             XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: Copying. RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, ParticleOffset={request.ParticleOffset}, ParticleCount={request.Particles.Count}, ByteCount={byteCount}, WriteOffset={writeOffset}, SourceBufferId={sourceBufferId}, DestBufferId={destinationBufferId}");
             renderer.RawGL.CopyNamedBufferSubData(sourceBufferId, destinationBufferId, 0, writeOffset, byteCount);
             RecordGpuCopyBytes((long)byteCount, isBatched: true);
@@ -919,7 +908,7 @@ public sealed class GPUPhysicsChainDispatcher
         if (_particlesBuffer is null)
             return;
 
-        if (!TryGetBufferId(_particlesBuffer, out uint sourceBufferId) || sourceBufferId == 0)
+        if (!TryGetBufferIdForGpuCopy(renderer, _particlesBuffer, out uint sourceBufferId) || sourceBufferId == 0)
             return;
 
         for (int i = 0; i < requests.Count; ++i)
@@ -929,11 +918,14 @@ public sealed class GPUPhysicsChainDispatcher
             if (residentBuffer is null || request.Particles.Count == 0)
                 continue;
 
-            if (!TryGetBufferId(residentBuffer, out uint destinationBufferId) || destinationBufferId == 0)
+            if (!TryGetBufferIdForGpuCopy(renderer, residentBuffer, out uint destinationBufferId) || destinationBufferId == 0)
                 continue;
 
             nuint byteCount = (nuint)(request.Particles.Count * ParticleStateSizeBytes);
             nint readOffset = request.ParticleOffset * ParticleStateSizeBytes;
+            if (!ValidateGpuCopyRange(_particlesBuffer, readOffset, residentBuffer, 0, byteCount, "combined->resident", request.RequestId))
+                continue;
+
             renderer.RawGL.CopyNamedBufferSubData(sourceBufferId, destinationBufferId, readOffset, 0, byteCount);
             RecordGpuCopyBytes((long)byteCount, isBatched: true);
         }
@@ -952,6 +944,48 @@ public sealed class GPUPhysicsChainDispatcher
         return false;
     }
 
+    private static bool TryGetBufferIdForGpuCopy(OpenGLRenderer renderer, XRDataBuffer buffer, out uint bufferId)
+    {
+        bufferId = 0;
+        if (renderer.GetOrCreateAPIRenderObject(buffer, generateNow: true) is OpenGLRenderer.GLDataBuffer glBuffer)
+        {
+            glBuffer.EnsureStorageAllocatedForGpuCopy();
+            return glBuffer.TryGetBindingId(out bufferId) && bufferId != 0;
+        }
+
+        return TryGetBufferId(buffer, out bufferId);
+    }
+
+    private static bool ValidateGpuCopyRange(
+        XRDataBuffer source,
+        nint readOffset,
+        XRDataBuffer destination,
+        nint writeOffset,
+        nuint byteCount,
+        string operation,
+        int requestId)
+    {
+        if (IsBufferRangeValid(source, readOffset, byteCount) &&
+            IsBufferRangeValid(destination, writeOffset, byteCount))
+            return true;
+
+        XREngine.Debug.LogWarning(
+            $"[GPUPhysicsChainDispatcher] Skipping invalid GPU copy range. Operation={operation}, RequestId={requestId}, " +
+            $"ReadOffset={readOffset}, WriteOffset={writeOffset}, ByteCount={byteCount}, SourceLength={source.Length}, DestinationLength={destination.Length}");
+        return false;
+    }
+
+    private static bool IsBufferRangeValid(XRDataBuffer buffer, nint offset, nuint byteCount)
+    {
+        if (offset < 0)
+            return false;
+
+        ulong start = (ulong)offset;
+        ulong count = (ulong)byteCount;
+        ulong end = start + count;
+        return end >= start && end <= buffer.Length;
+    }
+
     private static void DisposeResidentParticlesBuffer(GPUPhysicsChainRequest request)
     {
         if (request.ResidentParticlesBuffer is not null)
@@ -968,48 +1002,6 @@ public sealed class GPUPhysicsChainDispatcher
         request.ResidentParticleStaticBuffer = null;
         request.ResidentParticleStaticCapacity = 0;
         request.ResidentStaticDataVersion = int.MinValue;
-    }
-
-    private void RestoreRetainedRenderFallback(GPUPhysicsChainRequest request)
-    {
-        if (!_retainedRenderFallbacks.TryRemove(request.Component, out RetainedRenderFallback? retained))
-            return;
-
-        request.ResidentParticlesBuffer = retained.ParticlesBuffer;
-        request.ResidentParticleCapacity = (int)(retained.ParticlesBuffer?.ElementCount ?? 0u);
-        request.ResidentParticlesInitialized = retained.ParticlesBuffer is not null;
-        request.ResidentParticleStateVersion = int.MinValue;
-        request.ResidentParticleStaticBuffer = retained.ParticleStaticBuffer;
-        request.ResidentParticleStaticCapacity = (int)(retained.ParticleStaticBuffer?.ElementCount ?? 0u);
-        request.ResidentStaticDataVersion = int.MinValue;
-        request.LastKnownParticleCount = retained.ParticleCount;
-    }
-
-    private void RetainResidentParticlesBuffer(GPUPhysicsChainRequest request)
-    {
-        int particleCount = Math.Max(request.Particles.Count, request.LastKnownParticleCount);
-        if (request.ResidentParticlesBuffer is null && request.ResidentParticleStaticBuffer is null)
-            return;
-
-        RetainedRenderFallback retained = new(request.ResidentParticlesBuffer, request.ResidentParticleStaticBuffer, particleCount);
-        if (_retainedRenderFallbacks.TryGetValue(request.Component, out RetainedRenderFallback? previous))
-            DisposeRetainedRenderFallback(previous);
-
-        _retainedRenderFallbacks[request.Component] = retained;
-
-        request.ResidentParticlesBuffer = null;
-        request.ResidentParticleCapacity = 0;
-        request.ResidentParticleStateVersion = int.MinValue;
-        request.ResidentParticlesInitialized = false;
-        request.ResidentParticleStaticBuffer = null;
-        request.ResidentParticleStaticCapacity = 0;
-        request.ResidentStaticDataVersion = int.MinValue;
-    }
-
-    private static void DisposeRetainedRenderFallback(RetainedRenderFallback retained)
-    {
-        retained.ParticlesBuffer?.Dispose();
-        retained.ParticleStaticBuffer?.Dispose();
     }
 
     private static bool EnsureBufferCapacity(ref XRDataBuffer? buffer, string name, uint elementCount, uint componentCount)
@@ -1303,8 +1295,8 @@ public sealed class GPUPhysicsChainDispatcher
             return;
 
         XRDataBuffer readbackBuffer = AcquireReadbackBuffer((uint)TotalParticleCount);
-        if (!TryGetBufferId(_particlesBuffer, out uint sourceBufferId)
-            || !TryGetBufferId(readbackBuffer, out uint destinationBufferId))
+        if (!TryGetBufferIdForGpuCopy(renderer, _particlesBuffer, out uint sourceBufferId)
+            || !TryGetBufferIdForGpuCopy(renderer, readbackBuffer, out uint destinationBufferId))
         {
             _readbackBufferPool.Push(readbackBuffer);
             NotifyAsyncReadbackUnavailable(requests, "batched-readback-buffer");
@@ -1314,6 +1306,13 @@ public sealed class GPUPhysicsChainDispatcher
         nuint byteCount = (nuint)(Math.Max(TotalParticleCount, 0) * ParticleStateSizeBytes);
         if (byteCount > 0)
         {
+            if (!ValidateGpuCopyRange(_particlesBuffer, 0, readbackBuffer, 0, byteCount, "combined->readback", 0))
+            {
+                _readbackBufferPool.Push(readbackBuffer);
+                NotifyAsyncReadbackUnavailable(requests, "batched-readback-range");
+                return;
+            }
+
             renderer.RawGL.CopyNamedBufferSubData(sourceBufferId, destinationBufferId, 0, 0, byteCount);
             RecordGpuCopyBytes((long)byteCount, isBatched: true);
         }
@@ -1359,8 +1358,11 @@ public sealed class GPUPhysicsChainDispatcher
     {
         if (_mainPhysicsProgram is null || _particlesBuffer is null)
             return;
+        if (TotalParticleCount <= 0)
+            return;
 
         _mainPhysicsProgram.Uniform("ApplyObjectMove", applyObjectMove ? 1 : 0);
+        _mainPhysicsProgram.Uniform("ParticleCount", TotalParticleCount);
 
         _mainPhysicsProgram.BindBuffer(_particlesBuffer, 0);
         _mainPhysicsProgram.BindBuffer(_particleStaticBuffer!, 1);
@@ -1376,7 +1378,10 @@ public sealed class GPUPhysicsChainDispatcher
     {
         if (_skipUpdateProgram is null || _particlesBuffer is null)
             return;
+        if (TotalParticleCount <= 0)
+            return;
 
+        _skipUpdateProgram.Uniform("ParticleCount", TotalParticleCount);
         _skipUpdateProgram.BindBuffer(_particlesBuffer, 0);
         _skipUpdateProgram.BindBuffer(_particleStaticBuffer!, 1);
         _skipUpdateProgram.BindBuffer(_transformMatricesBuffer!, 3);
@@ -1468,10 +1473,6 @@ public sealed class GPUPhysicsChainDispatcher
             }
         }
 
-        foreach ((_, RetainedRenderFallback retained) in _retainedRenderFallbacks)
-            DisposeRetainedRenderFallback(retained);
-
-        _retainedRenderFallbacks.Clear();
     }
 
     public void Dispose()

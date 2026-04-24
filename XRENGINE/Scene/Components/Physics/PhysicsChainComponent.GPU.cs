@@ -112,13 +112,14 @@ public partial class PhysicsChainComponent
     private int _uploadedTransformSignature = int.MinValue;
     private int _uploadedColliderSignature = int.MinValue;
     private bool _gpuParticleStateInitialized;
+    private bool _gpuDispatcherRegistered;
     private readonly List<GpuDrivenRendererState> _gpuDrivenRenderers = [];
     private readonly List<StandaloneInFlightReadback> _standaloneReadbacks = [];
     private readonly Stack<XRDataBuffer> _standaloneReadbackBufferPool = [];
 
     private void ActivateGpuExecutionMode()
     {
-        if (!UseGPU)
+        if (!UseGPU || _gpuDispatcherRegistered)
             return;
 
         unchecked
@@ -127,6 +128,7 @@ public partial class PhysicsChainComponent
         }
 
         GPUPhysicsChainDispatcher.Instance.Register(this);
+        _gpuDispatcherRegistered = true;
     }
 
     private void DeactivateGpuExecutionMode()
@@ -136,7 +138,12 @@ public partial class PhysicsChainComponent
             ++_gpuExecutionGeneration;
         }
 
-        GPUPhysicsChainDispatcher.Instance.Unregister(this);
+        if (_gpuDispatcherRegistered)
+        {
+            GPUPhysicsChainDispatcher.Instance.Unregister(this);
+            _gpuDispatcherRegistered = false;
+        }
+
         _hasPendingGPUWork = false;
         ClearGpuDrivenRendererBindings();
         CleanupBuffers();
@@ -637,8 +644,11 @@ public partial class PhysicsChainComponent
     {
         if (_mainPhysicsProgram is null || _particlesBuffer is null || _particleStaticBuffer is null || _transformMatricesBuffer is null || _collidersBuffer is null || _perTreeParamsBuffer is null)
             return;
+        if (_totalParticleCount <= 0)
+            return;
 
         _mainPhysicsProgram.Uniform("ApplyObjectMove", applyObjectMove ? 1 : 0);
+        _mainPhysicsProgram.Uniform("ParticleCount", _totalParticleCount);
 
         _mainPhysicsProgram.BindBuffer(_particlesBuffer, 0);
         _mainPhysicsProgram.BindBuffer(_particleStaticBuffer, 1);
@@ -654,7 +664,10 @@ public partial class PhysicsChainComponent
     {
         if (_skipUpdateParticlesProgram is null || _particlesBuffer is null || _particleStaticBuffer is null || _transformMatricesBuffer is null || _perTreeParamsBuffer is null)
             return;
+        if (_totalParticleCount <= 0)
+            return;
 
+        _skipUpdateParticlesProgram.Uniform("ParticleCount", _totalParticleCount);
         _skipUpdateParticlesProgram.BindBuffer(_particlesBuffer, 0);
         _skipUpdateParticlesProgram.BindBuffer(_particleStaticBuffer, 1);
         _skipUpdateParticlesProgram.BindBuffer(_transformMatricesBuffer, 3);
