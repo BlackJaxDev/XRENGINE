@@ -4,7 +4,7 @@ Last Updated: 2026-04-24
 
 Current Status: the project boundary has been reset. XRENGINE now owns only the realtime data plane: direct client-to-server and client-to-client connections using concrete IP/port/session information. Instance browsing, creation, joining, allocation, host capacity, admission token issuance, and world artifact distribution have moved to the adjacent control-plane app.
 
-Phase 0, Phase 1, and the transport-safe Phase 2 replication model are implemented on 2026-04-24. Remaining open work starts at Phase 3 plus the explicit UDP per-peer sequencing follow-up called out under Phase 2 notes.
+Phase 0, Phase 1, and Phase 2 are implemented on 2026-04-24. Remaining open work starts at Phase 3.
 
 Non-goal: this tracker is not the stable networking overview. It is the execution checklist for the remaining XRENGINE realtime work.
 
@@ -98,13 +98,18 @@ XRENGINE must not manage public instance lifecycle or world downloads.
 - Server stamps accepted transform and pose traffic with server tick ids and server time before rebroadcasting authoritative state.
 - Server keeps bounded input buffers for jitter/lag compensation policy and emits clock sync replies on heartbeats.
 - Stale players are moved into a short resume window before final removal; reconnecting with the same session/client id can reuse the previous server player index and pawn.
-- AOI/relevance and per-connection budget accounting gate server transform replication above the current multicast sender.
+- AOI/relevance and per-connection budget accounting select per-client UDP endpoints for server transform replication.
 
 ### Phase 2 Transport Note
 
-The Phase 2 replication model intentionally does **not** rewrite `BaseNetworkingManager` packet ordering. The existing UDP layer still owns packet headers, sequence comparison, ACK/resend, RTT, and token-bucket send limiting. Phase 2 adds authority/relevance/budget policy above that layer and uses the existing broadcast path.
+`BaseNetworkingManager` still owns packet headers, sequence comparison, ACK bitfields, resend tracking, RTT, and token-bucket send limiting. Phase 2 keeps those primitives but scopes them per UDP peer instead of one global manager-wide sequence context.
 
-Strict per-peer payload elision is a separate transport follow-up: the current server sender is multicast, while true per-connection bandwidth enforcement needs per-peer sequence/ACK state and per-endpoint send queues. That change touches the core UDP packet ordering system and should be planned explicitly before implementation.
+Realtime client/server traffic now uses per-endpoint unicast after join:
+
+- Clients bind `UdpClientRecievePort` and use that socket for both outbound client-to-server packets and inbound server replies.
+- The server uses each client's observed endpoint as a peer, with its own send queue, local sequence counter, received sequence window, ACK/resend map, RTT buffer, and token bucket.
+- Server AOI/relevance and per-connection bandwidth budgets can now elide transform updates for one client without corrupting packet ordering for another.
+- Multicast remains available for P2P/LAN-style flows and fallback transport paths, but the server-authoritative realtime path no longer depends on multicast fanout.
 
 ### World Asset Identity
 
@@ -201,14 +206,11 @@ Acceptance criteria:
 - [x] Add snapshot plus delta sequencing with tick ids.
 - [x] Add client prediction and server reconciliation for owned actors.
 - [x] Add clock sync, input buffering, and bounded lag compensation.
-- [x] Add AOI/relevance filtering and per-connection bandwidth budgeting policy above the existing multicast sender.
+- [x] Add AOI/relevance filtering and per-connection bandwidth budgeting with per-endpoint routing.
 - [x] Extend the existing ACK/resend and token-bucket primitives instead of replacing them.
 - [x] Make `HumanoidPoseFrame` a first-class replication channel.
 - [x] Add graceful reconnect and session-resume windows after direct endpoint admission succeeds.
-
-Transport follow-up deliberately not folded into this phase:
-
-- [ ] Add per-peer UDP sequence/ACK contexts and per-endpoint send queues so per-connection budgets can elide bytes for one client without affecting packet ordering for another client.
+- [x] Add per-peer UDP sequence/ACK contexts and per-endpoint send queues so per-connection budgets can elide bytes for one client without affecting packet ordering for another client.
 
 Acceptance criteria:
 

@@ -10,7 +10,7 @@ Implementation tracker: [../todo/multiplayer-networking-implementation-todo.md](
 - **Last updated:** 2026-04-24
 - **Boundary status:** XRENGINE now owns only direct realtime data-plane connections. Instance directory, allocation, join orchestration, host capacity, token issuance, and world artifact delivery live in the adjacent control-plane app.
 - **Realtime status:** engine-side contracts now carry session id/token and exact local world asset identity instead of control-plane room/ticket/artifact DTOs.
-- **Next status:** the transport-safe authoritative replication model is implemented; strict per-client packet elision remains a future UDP per-peer sequencing refactor.
+- **Next status:** authoritative replication and per-peer UDP sequencing are implemented for the direct realtime path; next XRENGINE-owned work starts with AOT-safe world bootstrap.
 
 ## 1. Problem Statement
 
@@ -159,7 +159,7 @@ Current local-dev implementation note:
 - The client validates an externally supplied expected `WorldAssetIdentity` before starting the UDP join loop.
 - `XREngine.Server` rejects realtime joins when the client's local world asset identity does not exactly match the server's local world asset identity.
 - After admission, the server assigns a canonical `NetworkEntityId`, grants a `NetworkAuthorityLease`, validates client input/transform/pose traffic against that lease, and rebroadcasts server-stamped authoritative state.
-- Phase 2 relevance and budget policy currently sits above the existing multicast UDP sender. True per-client payload elision needs a planned per-peer UDP sequence/ACK refactor.
+- Phase 2 relevance and budget policy now routes through per-client UDP endpoints with per-peer sequence/ACK state, so one client's budget can drop updates without disturbing another client's packet ordering.
 
 ### 5.4 Auto-Scale / No Capacity
 
@@ -240,7 +240,7 @@ Transfer flow:
 - Per-client relevance set maintained via spatial index (grid / BVH / octree) updated on tick.
 - Updates prioritized by (distance, recency, entity importance, bandwidth budget); low-priority entities get coarser quantization and lower update rate.
 - Per-connection outbound byte-rate cap with priority-aware shedding.
-- Current runtime gates authoritative transform emission with per-connection `NetworkBandwidthBudget` and relevance radius accounting. Because server sends through the existing multicast path, this is a transport-safe policy layer rather than strict per-endpoint packet routing.
+- Current runtime gates authoritative transform emission with per-connection `NetworkBandwidthBudget`, relevance radius accounting, and strict per-endpoint packet routing.
 
 ## 8. API Surface (Draft)
 

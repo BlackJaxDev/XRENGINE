@@ -38,14 +38,16 @@ namespace XREngine
             internal static long GetWindowStartTicks(long currentTicks, double windowSeconds)
                 => Math.Max(0L, currentTicks - SecondsToStopwatchTicks(windowSeconds));
 
-            protected ConcurrentQueue<(ushort sequenceNum, byte[])> UdpSendQueue { get; } = new();
+            private readonly ConcurrentDictionary<string, UdpPeerState> _udpPeers = new(StringComparer.Ordinal);
+            private readonly object _sendTargetSync = new();
+            private readonly List<IPEndPoint> _sendTargetsScratch = new(8);
 
             public abstract bool IsServer { get; }
             public abstract bool IsClient { get; }
             public abstract bool IsP2P { get; }
 
             public bool UDPServerConnectionEstablished
-                => UdpReceiver?.Client.Connected ?? false;
+                => UdpReceiver?.Client is { } socket && (socket.Connected || socket.IsBound);
             public string LocalPeerId { get; }
             protected static string CurrentProtocolVersion { get; } = typeof(Engine).Assembly.GetName().Version?.ToString() ?? "dev";
             public event Func<RemoteJobRequest, Task<RemoteJobResponse?>>? RemoteJobRequestReceived;
@@ -118,22 +120,29 @@ namespace XREngine
 
             protected virtual void DisposeSockets()
             {
-                try
-                {
-                    UdpReceiver?.Close();
-                    UdpReceiver?.Dispose();
-                }
-                catch { }
+                UdpClient? receiver = UdpReceiver;
+                UdpClient? sender = UdpMulticastSender;
 
                 try
                 {
-                    UdpMulticastSender?.Close();
-                    UdpMulticastSender?.Dispose();
+                    receiver?.Close();
+                    receiver?.Dispose();
                 }
                 catch { }
+
+                if (!ReferenceEquals(sender, receiver))
+                {
+                    try
+                    {
+                        sender?.Close();
+                        sender?.Dispose();
+                    }
+                    catch { }
+                }
 
                 UdpReceiver = null;
                 UdpMulticastSender = null;
+                _udpPeers.Clear();
             }
 
             public static bool IsConnected()
@@ -232,16 +241,58 @@ namespace XREngine
             }
 
             private readonly record struct PendingAckPacket(Guid OwnerId, byte[] Bytes, long FirstSendTicks, long TimeoutTicks);
+            private readonly record struct QueuedUdpPacket(ushort SequenceNum, byte[] Bytes);
 
-            private readonly ConcurrentDictionary<ushort, PendingAckPacket> _mustAck = new();
-
-            private void EnqueueBroadcast(ushort sequenceNum, byte[] bytes, bool resendOnFailedAck, Guid ownerId, float maxAckWaitSec, long? firstSendTicks = null)
+            private sealed class UdpPeerState
             {
-                UdpSendQueue.Enqueue((sequenceNum, bytes));
+                public UdpPeerState(IPEndPoint endPoint)
+                {
+                    EndPoint = endPoint;
+                    LastTokenUpdateTicks = CurrentEngineTicks();
+                }
+
+                public IPEndPoint EndPoint { get; set; }
+                public ConcurrentQueue<QueuedUdpPacket> SendQueue { get; } = new();
+                public ConcurrentDictionary<ushort, PendingAckPacket> MustAck { get; } = new();
+                public ConcurrentDictionary<ushort, long> RttBuffer { get; } = new();
+                public Deque<ushort> ReceivedRemoteSequences { get; } = [];
+                public ushort LocalSequence;
+                public double PacketTokens;
+                public long LastTokenUpdateTicks;
+            }
+
+            private UdpPeerState RegisterUdpPeer(IPEndPoint endPoint)
+            {
+                string key = CreatePeerKey(endPoint);
+                return _udpPeers.AddOrUpdate(
+                    key,
+                    static (_, endpoint) => new UdpPeerState(endpoint),
+                    static (_, peer, endpoint) =>
+                    {
+                        peer.EndPoint = endpoint;
+                        return peer;
+                    },
+                    endPoint);
+            }
+
+            protected void UnregisterUdpPeer(IPEndPoint? endPoint)
+            {
+                if (endPoint is null)
+                    return;
+
+                _udpPeers.TryRemove(CreatePeerKey(endPoint), out _);
+            }
+
+            private static string CreatePeerKey(IPEndPoint endPoint)
+                => $"{endPoint.Address}|{endPoint.Port}";
+
+            private void EnqueueForPeer(UdpPeerState peer, ushort sequenceNum, byte[] bytes, bool resendOnFailedAck, Guid ownerId, float maxAckWaitSec, long? firstSendTicks = null)
+            {
+                peer.SendQueue.Enqueue(new QueuedUdpPacket(sequenceNum, bytes));
                 if (resendOnFailedAck)
                 {
                     long firstSend = firstSendTicks ?? CurrentEngineTicks();
-                    _mustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes, firstSend, SecondsToStopwatchTicks(maxAckWaitSec));
+                    peer.MustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes, firstSend, SecondsToStopwatchTicks(maxAckWaitSec));
                 }
             }
 
@@ -268,8 +319,6 @@ namespace XREngine
                 set => SetField(ref _maxRoundTripSec, value);
             }
 
-            private readonly ConcurrentDictionary<ushort, long> _rttBuffer = [];
-
             private int? _maxSendablePacketsPerSecond = null;
             public int? MaxSendablePacketsPerSecond
             {
@@ -277,22 +326,18 @@ namespace XREngine
                 set => SetField(ref _maxSendablePacketsPerSecond, value);
             }
 
-            // Token bucket fields for rate limiting
-            private double _packetTokens = 0.0;
-            private long _lastTokenUpdateTicks = CurrentEngineTicks();
-
-            private void UpdatePacketTokens()
+            private void UpdatePacketTokens(UdpPeerState peer)
             {
                 var perSec = MaxSendablePacketsPerSecond;
                 if (perSec is null)
                     return;
 
                 long nowTicks = CurrentEngineTicks();
-                double elapsedSeconds = TickDeltaToSeconds(nowTicks, _lastTokenUpdateTicks);
-                _packetTokens += elapsedSeconds * perSec.Value;
-                if (_packetTokens > perSec.Value)
-                    _packetTokens = perSec.Value;
-                _lastTokenUpdateTicks = nowTicks;
+                double elapsedSeconds = TickDeltaToSeconds(nowTicks, peer.LastTokenUpdateTicks);
+                peer.PacketTokens += elapsedSeconds * perSec.Value;
+                if (peer.PacketTokens > perSec.Value)
+                    peer.PacketTokens = perSec.Value;
+                peer.LastTokenUpdateTicks = nowTicks;
             }
 
             // Add the following field and property near _totalBytesSent:
@@ -359,10 +404,24 @@ namespace XREngine
 
             protected async Task ConsumeAndSendUDPQueue(UdpClient? client, IPEndPoint? endPoint)
             {
-                ClearOldRTTs();
+                if (endPoint is null)
+                    return;
 
-                //Send queue MUST be consumed so it doesn't grow infinitely
-                if (UdpSendQueue.IsEmpty)
+                UdpPeerState peer = RegisterUdpPeer(endPoint);
+                await ConsumeAndSendUDPQueue(client, peer).ConfigureAwait(false);
+            }
+
+            protected async Task ConsumeAndSendUDPQueues(UdpClient? client)
+            {
+                foreach (UdpPeerState peer in _udpPeers.Values)
+                    await ConsumeAndSendUDPQueue(client, peer).ConfigureAwait(false);
+            }
+
+            private async Task ConsumeAndSendUDPQueue(UdpClient? client, UdpPeerState peer)
+            {
+                ClearOldRTTs(peer);
+
+                if (peer.SendQueue.IsEmpty)
                     return;
 
                 long nowTicks = CurrentEngineTicks();
@@ -371,60 +430,59 @@ namespace XREngine
                 int packetsAllowed = int.MaxValue;
                 if (MaxSendablePacketsPerSecond is not null)
                 {
-                    UpdatePacketTokens();
-                    packetsAllowed = (int)Math.Floor(_packetTokens);
+                    UpdatePacketTokens(peer);
+                    packetsAllowed = (int)Math.Floor(peer.PacketTokens);
                 }
 
                 int packetsSent = 0;
-                while (packetsSent < packetsAllowed && UdpSendQueue.TryDequeue(out (ushort sequenceNum, byte[] bytes) data))
+                while (packetsSent < packetsAllowed && peer.SendQueue.TryDequeue(out QueuedUdpPacket data))
                 {
-                    if (!_rttBuffer.ContainsKey(data.sequenceNum))
-                        _rttBuffer[data.sequenceNum] = CurrentEngineTicks();
+                    if (!peer.RttBuffer.ContainsKey(data.SequenceNum))
+                        peer.RttBuffer[data.SequenceNum] = CurrentEngineTicks();
 
                     if (client is null)
                         continue;
 
-                    await client.SendAsync(data.bytes, data.bytes.Length, endPoint);
+                    await client.SendAsync(data.Bytes, data.Bytes.Length, peer.EndPoint);
                     long timestampTicks = CurrentEngineTicks();
-                    _bytesSentLog.Enqueue((timestampTicks, data.bytes.Length));
+                    _bytesSentLog.Enqueue((timestampTicks, data.Bytes.Length));
                     TrimBytesSentLog(timestampTicks);
                     packetsSent++;
                 }
-                _packetTokens -= packetsSent;
-                if (_packetTokens < 0)
-                    _packetTokens = 0.0;
+
+                peer.PacketTokens -= packetsSent;
+                if (peer.PacketTokens < 0)
+                    peer.PacketTokens = 0.0;
             }
 
-            private void ClearOldRTTs()
+            private void ClearOldRTTs(UdpPeerState peer)
             {
-                if (_rttBuffer.IsEmpty)
+                if (peer.RttBuffer.IsEmpty)
                     return;
 
                 long nowTicks = CurrentEngineTicks();
                 long oldestTicks = GetWindowStartTicks(nowTicks, MaxRoundTripSec);
-                foreach (ushort key in _rttBuffer.Keys)
+                foreach (ushort key in peer.RttBuffer.Keys)
                 {
-                    if (!_rttBuffer.TryGetValue(key, out long timeTicks) || timeTicks >= oldestTicks)
+                    if (!peer.RttBuffer.TryGetValue(key, out long timeTicks) || timeTicks >= oldestTicks)
                         continue;
                     
-                    _rttBuffer.TryRemove(key, out _);
-                    if (_mustAck.TryRemove(key, out PendingAckPacket pending))
+                    peer.RttBuffer.TryRemove(key, out _);
+                    if (peer.MustAck.TryRemove(key, out PendingAckPacket pending))
                     {
                         if (pending.TimeoutTicks > 0L && nowTicks - pending.FirstSendTicks >= pending.TimeoutTicks)
                         {
                             double timeoutSeconds = EngineTimer.TicksToSecondsDouble(pending.TimeoutTicks);
-                            Debug.Out($"Required packet sequence {key} timed out after {timeoutSeconds:0.###}s, dropping...");
+                            Debug.Out($"Required packet sequence {key} to {peer.EndPoint} timed out after {timeoutSeconds:0.###}s, dropping...");
                             continue;
                         }
 
                         if (ShouldResendRequiredPacket(pending.OwnerId))
                         {
-                            Debug.Out($"Required packet sequence {key} failed to return, resending...");
-                            EnqueueBroadcast(key, pending.Bytes, true, pending.OwnerId, (float)EngineTimer.TicksToSecondsDouble(pending.TimeoutTicks), pending.FirstSendTicks);
+                            Debug.Out($"Required packet sequence {key} to {peer.EndPoint} failed to return, resending...");
+                            EnqueueForPeer(peer, key, pending.Bytes, true, pending.OwnerId, (float)EngineTimer.TicksToSecondsDouble(pending.TimeoutTicks), pending.FirstSendTicks);
                         }
                     }
-                    //else
-                    //    Debug.Out($"Packet sequence {key} failed to return, but was not required.");
                 }
             }
 
@@ -466,9 +524,6 @@ namespace XREngine
                 => left > right 
                 ? left - right 
                 : (left - 0) + (ushort.MaxValue - right) + 1; //+1, because if right is ushort.MaxValue and left is 0, the difference is 1
-
-            private ushort _localSequence = 0;
-            private readonly Deque<ushort> _receivedRemoteSequences = [];
 
             /// <summary>
             /// Broadcasts the entire object to all connected clients.
@@ -581,6 +636,12 @@ namespace XREngine
                 BroadcastStateChange(EStateChangeType.ClockSync, message, compress, resendOnFailedAck, maxAckWaitSec);
             }
 
+            protected void SendClockSyncTo(IPEndPoint target, ClockSyncMessage message, bool compress = false, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
+            {
+                ArgumentNullException.ThrowIfNull(message);
+                SendStateChangeTo(target, EStateChangeType.ClockSync, message, compress, resendOnFailedAck, maxAckWaitSec);
+            }
+
             public void BroadcastReplicationSnapshot(NetworkSnapshotEnvelope envelope, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 ArgumentNullException.ThrowIfNull(envelope);
@@ -597,6 +658,22 @@ namespace XREngine
             {
                 string serialized = StateChangePayloadSerializer.Serialize(payload);
                 ReplicateStateChange(new StateChangeInfo(type, serialized), compress, resendOnFailedAck, maxAckWaitSec);
+            }
+
+            protected void SendStateChangeTo<TPayload>(IPEndPoint target, EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
+            {
+                string serialized = StateChangePayloadSerializer.Serialize(payload);
+                StateChangeInfo change = new(type, serialized);
+                byte[] bytes = MemoryPackSerializer.Serialize(change);
+                SendToTarget(target, Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck, maxAckWaitSec);
+            }
+
+            protected void BroadcastStateChangeToTargets<TPayload>(IReadOnlyList<IPEndPoint> targets, EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
+            {
+                string serialized = StateChangePayloadSerializer.Serialize(payload);
+                StateChangeInfo change = new(type, serialized);
+                byte[] bytes = MemoryPackSerializer.Serialize(change);
+                SendToTargets(targets, Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck, maxAckWaitSec);
             }
 
             private const int HeaderLen = 16; //3 bytes for protocol, 1 byte for flags, 2 bytes for sequence, 2 bytes for ack, 4 bytes for ack bitfield, 4 bytes for data length (not including header or guid)
@@ -622,53 +699,83 @@ namespace XREngine
             /// <returns></returns>
             protected void Send(Guid id, bool compress, byte[] data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
-                ushort[] acks = ReadRemoteSeqs();
-                byte flags = EncodeFlags(compress, type);
-                _localSequence = _localSequence == ushort.MaxValue ? (ushort)0 : (ushort)(_localSequence + 1);
-                ushort seq = _localSequence;
-                bool noSeq = acks.Length == 0;
-                ushort maxAck = noSeq ? (ushort)0 : acks[^1];
-                uint prevAckBitfield = 0;
-                if (!noSeq)
-                    foreach (ushort ack in acks)
-                    {
-                        if (ack == maxAck)
-                            continue;
-                        int diff = DiffSeq(maxAck, ack);
-                        if (diff > 32)
-                            break;
-                        prevAckBitfield |= (uint)(1 << (diff - 1));
-                    }
+                lock (_sendTargetSync)
+                {
+                    _sendTargetsScratch.Clear();
+                    CollectUdpSendTargets(_sendTargetsScratch);
+                    SendToTargets(_sendTargetsScratch, id, compress, data, type, resendOnFailedAck, maxAckWaitSec);
+                    _sendTargetsScratch.Clear();
+                }
+            }
 
-                byte[] allData;
+            protected void SendToTarget(IPEndPoint target, Guid id, bool compress, byte[] data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+                => SendToTargets([target], id, compress, data, type, resendOnFailedAck, maxAckWaitSec);
+
+            protected void SendToTargets(IReadOnlyList<IPEndPoint> targets, Guid id, bool compress, byte[] data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+            {
+                if (targets.Count == 0)
+                    return;
+
+                byte flags = EncodeFlags(compress, type);
                 int uncompDataLen = data.Length;
+                byte[]? compData = null;
+                int payloadDataLen = uncompDataLen;
 
                 if (compress)
                 {
-                    //First, compress guid and data together
                     byte[] uncompData = new byte[GuidLen + uncompDataLen];
                     int offset = 0;
                     SetGuidAndData(id, data, uncompData, ref offset);
-                    byte[] compData;
                     lock (_compressionStateSync)
                         compData = Compression.Compress(uncompData, ref _encoder, ref _compStreamIn, ref _compStreamOut);
-
-                    //Then, create the full packet with header
-                    int compDataLen = compData.Length;
-                    allData = new byte[HeaderLen + compDataLen];
-                    SetHeader(flags, allData, compDataLen, seq, maxAck, prevAckBitfield);
-
-                    Buffer.BlockCopy(compData, 0, allData, HeaderLen, compDataLen);
+                    payloadDataLen = compData.Length;
                 }
-                else
+
+                foreach (IPEndPoint target in targets)
                 {
-                    allData = new byte[HeaderLen + GuidLen + uncompDataLen];
-                    SetHeader(flags, allData, uncompDataLen, seq, maxAck, prevAckBitfield);
+                    UdpPeerState peer = RegisterUdpPeer(target);
+                    ushort[] acks = ReadRemoteSeqs(peer);
+                    peer.LocalSequence = peer.LocalSequence == ushort.MaxValue ? (ushort)0 : (ushort)(peer.LocalSequence + 1);
+                    ushort seq = peer.LocalSequence;
+                    bool noSeq = acks.Length == 0;
+                    ushort maxAck = noSeq ? (ushort)0 : acks[^1];
+                    uint prevAckBitfield = 0;
+                    if (!noSeq)
+                    {
+                        foreach (ushort ack in acks)
+                        {
+                            if (ack == maxAck)
+                                continue;
+                            int diff = DiffSeq(maxAck, ack);
+                            if (diff > 32)
+                                break;
+                            prevAckBitfield |= (uint)(1 << (diff - 1));
+                        }
+                    }
 
-                    int offset = HeaderLen;
-                    SetGuidAndData(id, data, allData, ref offset);
+                    byte[] allData = compress
+                        ? new byte[HeaderLen + payloadDataLen]
+                        : new byte[HeaderLen + GuidLen + uncompDataLen];
+                    SetHeader(flags, allData, payloadDataLen, seq, maxAck, prevAckBitfield);
+
+                    if (compress)
+                    {
+                        Buffer.BlockCopy(compData!, 0, allData, HeaderLen, payloadDataLen);
+                    }
+                    else
+                    {
+                        int offset = HeaderLen;
+                        SetGuidAndData(id, data, allData, ref offset);
+                    }
+
+                    EnqueueForPeer(peer, seq, allData, resendOnFailedAck, id, maxAckWaitSec);
                 }
-                EnqueueBroadcast(seq, allData, resendOnFailedAck, id, maxAckWaitSec);
+            }
+
+            protected virtual void CollectUdpSendTargets(List<IPEndPoint> targets)
+            {
+                if (MulticastEndPoint is not null)
+                    targets.Add(MulticastEndPoint);
             }
 
             private static byte EncodeFlags(bool compress, EBroadcastType type)
@@ -685,11 +792,11 @@ namespace XREngine
                 type = (EBroadcastType)((flags >> 1) & 0b111);
             }
 
-            private ushort[] ReadRemoteSeqs()
+            private ushort[] ReadRemoteSeqs(UdpPeerState peer)
             {
                 ushort[] acks;
-                lock (_receivedRemoteSequences)
-                    acks = [.. _receivedRemoteSequences];
+                lock (peer.ReceivedRemoteSequences)
+                    acks = [.. peer.ReceivedRemoteSequences];
                 return acks;
             }
             /// <summary>
@@ -699,17 +806,17 @@ namespace XREngine
             /// </summary>
             /// <param name="seq"></param>
             /// <returns></returns>
-            private bool WriteToRemoteSeqs(ushort seq)
+            private bool WriteToRemoteSeqs(UdpPeerState peer, ushort seq)
             {
                 //If the sequence is more recent than the last one we received, update the last received sequence
-                lock (_receivedRemoteSequences)
+                lock (peer.ReceivedRemoteSequences)
                 {
                     // If we have no sequences yet, or this sequence is greater than our max sequence
-                    if (_receivedRemoteSequences.Count == 0 || SeqGreater(seq, _receivedRemoteSequences.PeekBack()))
+                    if (peer.ReceivedRemoteSequences.Count == 0 || SeqGreater(seq, peer.ReceivedRemoteSequences.PeekBack()))
                     {
-                        _receivedRemoteSequences.PushBack(seq);
-                        if (_receivedRemoteSequences.Count > 33) //32 bits + 1 for max ack
-                            _receivedRemoteSequences.PopFront();
+                        peer.ReceivedRemoteSequences.PushBack(seq);
+                        if (peer.ReceivedRemoteSequences.Count > 33) //32 bits + 1 for max ack
+                            peer.ReceivedRemoteSequences.PopFront();
 
                         return true; // This is a new sequence we haven't seen before
                     }
@@ -717,12 +824,12 @@ namespace XREngine
                     //Sequence as not greater than the last one we received, but it could still be a *new* sequence
 
                     // If we've already received this sequence before, don't process it again
-                    if (_receivedRemoteSequences.Contains(seq))
+                    if (peer.ReceivedRemoteSequences.Contains(seq))
                         return false;
                     
                     // Insert the sequence in the right position to maintain order
                     // This handles out-of-order packet reception
-                    var tempList = new List<ushort>(_receivedRemoteSequences.Cast<ushort>());
+                    var tempList = new List<ushort>(peer.ReceivedRemoteSequences.Cast<ushort>());
 
                     // Find the insertion point to maintain ordered sequences
                     int insertIndex = 0;
@@ -735,12 +842,12 @@ namespace XREngine
                     tempList.Insert(insertIndex, seq);
 
                     // Clear and rebuild the queue with the new ordered sequences
-                    _receivedRemoteSequences.Clear();
+                    peer.ReceivedRemoteSequences.Clear();
                     foreach (var s in tempList)
-                        _receivedRemoteSequences.PushBack(s);
+                        peer.ReceivedRemoteSequences.PushBack(s);
 
-                    if (_receivedRemoteSequences.Count > 33)
-                        _receivedRemoteSequences.PopFront();
+                    if (peer.ReceivedRemoteSequences.Count > 33)
+                        peer.ReceivedRemoteSequences.PopFront();
 
                     // We want to store this sequence for acknowledgment purposes
                     // but since it's out of order, we don't want to process its data
@@ -782,6 +889,7 @@ namespace XREngine
             
             protected int ReadReceivedData(byte[] inBuf, int availableDataLen, byte[] decompBuffer, ref bool anyAcked, IPEndPoint? sender)
             {
+                UdpPeerState? peer = sender is null ? null : RegisterUdpPeer(sender);
                 int offset = 0;
                 while (availableDataLen >= HeaderLen && offset < availableDataLen)
                 {
@@ -809,15 +917,20 @@ namespace XREngine
                         out uint ackBitfield,
                         out int dataLength);
 
-                    bool shouldRead = WriteToRemoteSeqs(seq);
+                    if (peer is null)
+                        return 0;
+
+                    bool shouldRead = WriteToRemoteSeqs(peer, seq);
 
                     //When a packet is received,
                     //ack bitfield is scanned and if bit n is set,
                     //then we acknowledge sequence number packet sequence - n,
                     //if it has not been acked already.
+                    if (ack != 0 || ackBitfield != 0)
+                        anyAcked |= AcknowledgeSeq(peer, ack);
                     for (int i = 0; i < 32; i++)
                         if ((ackBitfield & (1 << i)) != 0)
-                            anyAcked |= AcknowledgeSeq((ushort)(ack - i - 1));
+                            anyAcked |= AcknowledgeSeq(peer, (ushort)(ack - i - 1));
 
                     if (availableDataLen >= offset + dataLength)
                     {
@@ -831,15 +944,15 @@ namespace XREngine
                 return offset;
             }
 
-            private bool AcknowledgeSeq(ushort ackedSeq)
+            private bool AcknowledgeSeq(UdpPeerState peer, ushort ackedSeq)
             {
-                if (!_rttBuffer.TryRemove(ackedSeq, out long timeTicks))
+                if (!peer.RttBuffer.TryRemove(ackedSeq, out long timeTicks))
                     return false;
                 
                 UpdateRTT((float)TickDeltaToSeconds(CurrentEngineTicks(), timeTicks));
 
-                if (_mustAck.TryRemove(ackedSeq, out _))
-                    Debug.Out($"Acknowledged required sequence number: {ackedSeq}");
+                if (peer.MustAck.TryRemove(ackedSeq, out _))
+                    Debug.Out($"Acknowledged required sequence number {ackedSeq} from {peer.EndPoint}");
 
                 //Can't print here otherwise because it will be repeated up to 32 extra times according to the ack bitfield
                 return true; //We acknowledged the sequence number

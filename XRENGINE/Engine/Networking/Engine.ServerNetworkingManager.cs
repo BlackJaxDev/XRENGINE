@@ -24,6 +24,8 @@ namespace XREngine
             private readonly Dictionary<string, NetworkPlayerConnection> _playersByClientId = new(StringComparer.OrdinalIgnoreCase);
             private readonly Dictionary<string, NetworkPlayerConnection> _resumeByClientKey = new(StringComparer.OrdinalIgnoreCase);
             private readonly RealtimeReplicationCoordinator _replication = new();
+            private readonly object _transformTargetLock = new();
+            private readonly List<IPEndPoint> _transformTargets = new(16);
             private int _nextServerPlayerIndex = 1;
 
             public ServerNetworkingManager() : base(peerId: "server") { }
@@ -33,8 +35,8 @@ namespace XREngine
                 int udpMulticastPort,
                 int udpReceivePort)
             {
-                Debug.Out($"Starting server at udp(multicast:{udpMulticastGroupIP}:{udpMulticastPort} / receive:{udpReceivePort})");
-                StartUdpMulticastSender(udpMulticastGroupIP, udpMulticastPort);
+                Debug.Out($"Starting server at udp(receive/send:{udpReceivePort}; multicast fallback:{udpMulticastGroupIP}:{udpMulticastPort})");
+                MulticastEndPoint = new IPEndPoint(udpMulticastGroupIP, udpMulticastPort);
                 StartUdpReceiver(udpReceivePort);
             }
 
@@ -51,6 +53,7 @@ namespace XREngine
                 //listener.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                 listener.Client.Bind(new IPEndPoint(IPAddress.Any, udpPort));
                 UdpReceiver = listener;
+                UdpMulticastSender = listener;
             }
 
             protected override async Task SendUDP()
@@ -58,7 +61,19 @@ namespace XREngine
                 _replication.AdvanceServerTick();
                 PruneStalePlayers();
                 //Send to clients
-                await ConsumeAndSendUDPQueue(UdpMulticastSender, MulticastEndPoint);
+                await ConsumeAndSendUDPQueues(UdpMulticastSender);
+            }
+
+            protected override void CollectUdpSendTargets(List<IPEndPoint> targets)
+            {
+                lock (_playerLock)
+                {
+                    foreach (NetworkPlayerConnection connection in _playersByIndex.Values)
+                    {
+                        if (connection.LastEndpoint is not null)
+                            targets.Add(connection.LastEndpoint);
+                    }
+                }
             }
 
             protected override void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
@@ -120,7 +135,7 @@ namespace XREngine
                 ServerJoinAdmissionResult? joinAdmission = Engine.ServerJoinAdmissionResolver?.Invoke(request);
                 if (joinAdmission is { FailureReason: not AdmissionFailureReason.None })
                 {
-                    SendJoinAdmissionFailure(request.ClientId, joinAdmission.FailureReason, joinAdmission.Message);
+                    SendJoinAdmissionFailure(request.ClientId, joinAdmission.FailureReason, joinAdmission.Message, sender);
                     return;
                 }
 
@@ -135,7 +150,7 @@ namespace XREngine
                     out string validationMessage);
                 if (validationFailure != AdmissionFailureReason.None)
                 {
-                    SendJoinAdmissionFailure(request.ClientId, validationFailure, validationMessage);
+                    SendJoinAdmissionFailure(request.ClientId, validationFailure, validationMessage, sender);
                     return;
                 }
 
@@ -177,9 +192,10 @@ namespace XREngine
                         ?? (connection.SessionId != Guid.Empty ? connection.SessionId : Guid.NewGuid());
                     connection.WorldInstance = resolvedWorldInstance;
                     connection.WorldAsset = serverWorldAsset;
+                    connection.LastEndpoint = sender;
                     if (connection.WorldInstance is null)
                     {
-                        SendErrorToClient(request.ClientId, 500, "No World", "Server could not resolve a world instance for this connection.", null, fatal: true);
+                        SendErrorToClient(request.ClientId, 500, "No World", "Server could not resolve a world instance for this connection.", null, fatal: true, target: sender);
                         return;
                     }
 
@@ -187,7 +203,6 @@ namespace XREngine
                     EnsureAuthorityLease(connection);
 
                     connection.JoinRequest = request;
-                    connection.LastEndpoint = sender;
                     connection.LastHeardUtc = DateTime.UtcNow;
                     connection.ResumeUntilUtc = null;
                 }
@@ -326,8 +341,7 @@ namespace XREngine
                 if (connection.Pawn?.Controller is IPawnController remoteController)
                     remoteController.ApplyNetworkTransform(transform);
 
-                if (ShouldBroadcastAuthoritativeUpdate(transform, connection, nowUtc))
-                    BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, transform, compress: false);
+                SendAuthoritativeTransformUpdate(transform, connection, nowUtc);
             }
 
             private void HandleHeartbeat(PlayerHeartbeat hb, IPEndPoint sender)
@@ -362,7 +376,7 @@ namespace XREngine
                 if (playerEvent is not null)
                     Engine.ServerPlayerHeartbeatObserved?.Invoke(playerEvent);
                 if (clockSync is not null)
-                    BroadcastClockSync(clockSync);
+                    SendClockSyncTo(sender, clockSync);
             }
 
             private void HandleHumanoidPoseFrame(HumanoidPoseFrame frame)
@@ -438,7 +452,7 @@ namespace XREngine
                 RevokeAuthorityLease(connection, NetworkAuthorityRevocationReason.OwnerLeft, leave.Reason ?? "Client requested leave");
                 BroadcastPlayerLeave(connection, leave.Reason ?? "Client requested leave");
                 Engine.ServerPlayerDisconnected?.Invoke(CreatePlayerEvent(connection));
-                SendErrorToClient(connection.ClientId, 499, "Client Closed", leave.Reason ?? "Client requested leave", connection.ServerPlayerIndex, fatal: false);
+                SendErrorToClient(connection.ClientId, 499, "Client Closed", leave.Reason ?? "Client requested leave", connection.ServerPlayerIndex, fatal: false, target: connection.LastEndpoint);
             }
 
             public IReadOnlyList<ServerConnectionInfo> GetConnectionsSnapshot()
@@ -466,7 +480,7 @@ namespace XREngine
                 RevokeAuthorityLease(connection, NetworkAuthorityRevocationReason.OperatorRevoked, reason);
                 BroadcastPlayerLeave(connection, reason);
                 Engine.ServerPlayerDisconnected?.Invoke(CreatePlayerEvent(connection));
-                SendErrorToClient(connection.ClientId, 403, "Kicked", reason, connection.ServerPlayerIndex, fatal: true);
+                SendErrorToClient(connection.ClientId, 403, "Kicked", reason, connection.ServerPlayerIndex, fatal: true, target: connection.LastEndpoint);
             }
 
             private WorldSyncDescriptor BuildWorldDescriptor(XRWorldInstance? worldInstance, WorldAssetIdentity? asset)
@@ -594,38 +608,40 @@ namespace XREngine
                     ServerTickId = _replication.CurrentServerTickId
                 };
 
-            private bool ShouldBroadcastAuthoritativeUpdate(PlayerTransformUpdate update, NetworkPlayerConnection owner, double nowUtc)
+            private void SendAuthoritativeTransformUpdate(PlayerTransformUpdate update, NetworkPlayerConnection owner, double nowUtc)
             {
-                List<NetworkPlayerConnection> recipients;
-                lock (_playerLock)
-                    recipients = _playersByIndex.Values.ToList();
-
-                if (recipients.Count == 0)
-                    return false;
-
                 const int estimatedTransformBytes = 160;
-                bool relevantToAnyClient = false;
-                foreach (NetworkPlayerConnection recipient in recipients)
+                lock (_transformTargetLock)
                 {
-                    if (recipient.SessionId != owner.SessionId)
-                        continue;
+                    _transformTargets.Clear();
+                    lock (_playerLock)
+                    {
+                        foreach (NetworkPlayerConnection recipient in _playersByIndex.Values)
+                        {
+                            if (recipient.SessionId != owner.SessionId)
+                                continue;
 
-                    if (recipient.Budget is null)
-                        recipient.Budget = new NetworkBandwidthBudget(MultiplayerRuntimePolicy.DefaultReplicationBytesPerSecond, nowUtc);
+                            if (recipient.LastEndpoint is null)
+                                continue;
 
-                    if (!recipient.IsRelevant(update.Translation))
-                        continue;
+                            if (recipient.Budget is null)
+                                recipient.Budget = new NetworkBandwidthBudget(MultiplayerRuntimePolicy.DefaultReplicationBytesPerSecond, nowUtc);
 
-                    // The current server sender is multicast, so this is an admission gate and accounting
-                    // layer for relevance/budget policy. True per-peer packet routing requires per-peer
-                    // UDP sequence/ACK state and is intentionally not patched here.
-                    if (!recipient.Budget.TryConsume(estimatedTransformBytes, nowUtc))
-                        continue;
+                            if (!recipient.IsRelevant(update.Translation))
+                                continue;
 
-                    relevantToAnyClient = true;
+                            if (!recipient.Budget.TryConsume(estimatedTransformBytes, nowUtc))
+                                continue;
+
+                            _transformTargets.Add(recipient.LastEndpoint);
+                        }
+                    }
+
+                    if (_transformTargets.Count > 0)
+                        BroadcastStateChangeToTargets(_transformTargets, EStateChangeType.PlayerTransformUpdate, update, compress: false);
+
+                    _transformTargets.Clear();
                 }
-
-                return relevantToAnyClient;
             }
 
             private sealed class NetworkPlayerConnection
@@ -689,14 +705,14 @@ namespace XREngine
                     RevokeAuthorityLease(player, NetworkAuthorityRevocationReason.OwnerDisconnected, "Heartbeat timeout");
                     BroadcastPlayerLeave(player, "Heartbeat timeout");
                     Engine.ServerPlayerDisconnected?.Invoke(CreatePlayerEvent(player));
-                    SendErrorToClient(player.ClientId, 408, "Request Timeout", "Heartbeat timed out.", player.ServerPlayerIndex, fatal: true);
+                    SendErrorToClient(player.ClientId, 408, "Request Timeout", "Heartbeat timed out.", player.ServerPlayerIndex, fatal: true, target: player.LastEndpoint);
                 }
             }
 
             private static ServerSessionPlayerEvent CreatePlayerEvent(NetworkPlayerConnection connection)
                 => new(connection.SessionId, connection.ClientId, connection.ServerPlayerIndex, connection.TransformId);
 
-            private void SendJoinAdmissionFailure(string clientId, AdmissionFailureReason failureReason, string? message)
+            private void SendJoinAdmissionFailure(string clientId, AdmissionFailureReason failureReason, string? message, IPEndPoint? target)
             {
                 (int statusCode, string title, bool fatal) = failureReason switch
                 {
@@ -713,7 +729,7 @@ namespace XREngine
                     clientId,
                     failureReason,
                     message ?? title);
-                SendErrorToClient(clientId, statusCode, title, message ?? title, fatal: fatal);
+                SendErrorToClient(clientId, statusCode, title, message ?? title, fatal: fatal, target: target);
             }
 
             private void BroadcastPlayerLeave(NetworkPlayerConnection connection, string reason)
@@ -729,7 +745,7 @@ namespace XREngine
                 BroadcastStateChange(EStateChangeType.PlayerLeave, leave, compress: false);
             }
 
-            private void SendErrorToClient(string clientId, int statusCode, string title, string detail, int? serverPlayerIndex = null, bool fatal = false, string? requestId = null)
+            private void SendErrorToClient(string clientId, int statusCode, string title, string detail, int? serverPlayerIndex = null, bool fatal = false, string? requestId = null, IPEndPoint? target = null)
             {
                 var error = new ServerErrorMessage
                 {
@@ -742,7 +758,33 @@ namespace XREngine
                     Fatal = fatal
                 };
 
-                BroadcastServerError(error, compress: true, resendOnFailedAck: false);
+                IPEndPoint? resolvedTarget = target ?? ResolveClientEndpoint(clientId, serverPlayerIndex);
+                if (resolvedTarget is not null)
+                    SendStateChangeTo(resolvedTarget, EStateChangeType.ServerError, error, compress: true, resendOnFailedAck: false);
+                else
+                    BroadcastServerError(error, compress: true, resendOnFailedAck: false);
+            }
+
+            private IPEndPoint? ResolveClientEndpoint(string? clientId, int? serverPlayerIndex)
+            {
+                lock (_playerLock)
+                {
+                    if (serverPlayerIndex is int idx
+                        && _playersByIndex.TryGetValue(idx, out NetworkPlayerConnection? byIndex)
+                        && byIndex.LastEndpoint is not null)
+                    {
+                        return byIndex.LastEndpoint;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(clientId)
+                        && _playersByClientId.TryGetValue(clientId, out NetworkPlayerConnection? byClient)
+                        && byClient.LastEndpoint is not null)
+                    {
+                        return byClient.LastEndpoint;
+                    }
+                }
+
+                return null;
             }
 
             }

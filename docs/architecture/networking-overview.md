@@ -72,11 +72,11 @@ XRENGINE then performs the realtime handshake and rejects clients whose local wo
 ## Transport
 
 - Native realtime traffic uses the existing UDP data plane (`RealtimeTransportKind.NativeUdp`).
-- The server binds a UDP receiver and multicasts state changes to clients.
-- Clients open a multicast receiver and a unicast sender to the server IP.
-- `BaseNetworkingManager` handles outbound queues, ACK/resend for reliable packets, token-bucket send limiting, RTT, bytes/sec, and packets/sec metrics.
-- The Phase 2 replication layer sits above that packet system. It does not replace sequence comparison, ACK bitfields, resend tracking, or token-bucket throttling.
-- Server output still uses the current multicast sender. AOI/relevance and per-connection budgets gate whether authoritative transform updates are emitted, but strict per-client payload elision requires a later per-peer UDP sequence/ACK refactor.
+- The server binds one UDP socket for inbound client packets and outbound server replies.
+- Clients bind `UdpClientRecievePort` and use that socket for both outbound client-to-server packets and inbound server-to-client replies.
+- `BaseNetworkingManager` handles per-peer outbound queues, sequence counters, ACK/resend for reliable packets, token-bucket send limiting, RTT, bytes/sec, and packets/sec metrics.
+- The Phase 2 replication layer uses per-client endpoint routing so AOI/relevance and per-connection budgets can elide state for one client without disturbing another client's packet ordering.
+- Multicast remains available for P2P/LAN-style flows and fallback transport paths, but server-authoritative realtime replication no longer depends on multicast fanout.
 - WebRTC, QUIC, browser transport negotiation, and NAT traversal are not part of this engine slice.
 
 ## Message Envelope
@@ -190,7 +190,7 @@ Phase 2 realtime replication adds:
 - Ticked snapshot/delta envelopes for future channel payloads.
 - Client prediction metadata on input/transform messages and server reconciliation metadata on authoritative transform updates.
 - Clock sync replies, bounded input buffers, and lag-compensation timing policy.
-- AOI/relevance hints and per-connection bandwidth budget accounting above the current multicast sender.
+- AOI/relevance hints and per-connection bandwidth budget accounting with per-endpoint UDP routing.
 - `HumanoidPoseFrame` metadata so pose traffic is session/entity scoped and server stamped before rebroadcast.
 
 ## Remote Jobs

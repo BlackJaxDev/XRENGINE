@@ -65,6 +65,8 @@ namespace XREngine
                 }
 
                 base.Dispose(disposing);
+                if (disposing)
+                    UdpSender = null;
             }
 
             /// <summary>
@@ -86,18 +88,25 @@ namespace XREngine
                 IPAddress udpMulticastGroupIP,
                 int udpMulticastPort,
                 IPAddress serverIP,
-                int udpSendPort)
+                int udpSendPort,
+                int udpClientReceivePort)
             {
-                Debug.Out($"Starting client with udp(multicast: {udpMulticastGroupIP}:{udpMulticastPort}) sending to server at ({serverIP}:{udpSendPort})");
-                StartUdpMulticastReceiver(serverIP, udpMulticastGroupIP, udpMulticastPort);
-                StartUdpSender(serverIP, udpSendPort);
+                Debug.Out($"Starting client with udp(receive:{udpClientReceivePort}) sending to server at ({serverIP}:{udpSendPort})");
+                StartUdpSender(serverIP, udpSendPort, udpClientReceivePort);
                 EnsureClientTick();
                 SendJoinRequest();
             }
 
-            protected void StartUdpSender(IPAddress serverIP, int udpMulticastServerPort)
+            protected void StartUdpSender(IPAddress serverIP, int udpMulticastServerPort, int udpClientReceivePort)
             {
-                UdpSender = new UdpClient();
+                UdpClient udpClient = new(AddressFamily.InterNetwork)
+                {
+                    ExclusiveAddressUse = false,
+                };
+                udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, udpClientReceivePort));
+                UdpSender = udpClient;
+                UdpReceiver = udpClient;
                 ServerIP = new IPEndPoint(serverIP, udpMulticastServerPort);
                 //UdpSender.Connect(ServerIP);
             }
@@ -106,6 +115,12 @@ namespace XREngine
             {
                 //Send to server
                 await ConsumeAndSendUDPQueue(UdpSender, ServerIP);
+            }
+
+            protected override void CollectUdpSendTargets(List<IPEndPoint> targets)
+            {
+                if (ServerIP is not null)
+                    targets.Add(ServerIP);
             }
 
             public override void ConsumeQueues()
