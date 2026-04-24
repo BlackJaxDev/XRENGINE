@@ -147,7 +147,8 @@ namespace XREngine
                         IPAddress.Parse(startupSettings.UdpMulticastGroupIP),
                         startupSettings.UdpMulticastPort,
                         ResolveNetworkAddress(startupSettings.ServerIP),
-                        startupSettings.UdpServerSendPort);
+                        startupSettings.UdpServerSendPort,
+                        startupSettings.UdpClientRecievePort);
                     break;
                 case ENetworkingType.P2PClient:
                     var p2pClient = new PeerToPeerNetworkingManager();
