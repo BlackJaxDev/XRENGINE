@@ -37,7 +37,7 @@ public sealed class AotJsonContractsTests
             MulticastPort = 47777,
             UdpServerSendPort = 5010,
             UdpClientReceivePort = 5011,
-            AdvertisedRole = ENetworkingType.P2PClient,
+            AdvertisedRole = ENetworkingType.Server,
             TimestampUtc = 123456789,
         };
 

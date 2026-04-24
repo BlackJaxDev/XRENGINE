@@ -292,9 +292,45 @@ public static class RuntimeCookedBinarySerializer
     internal const string ReflectionWarningMessage = "Runtime cooked binary serialization relies on reflection and cannot be statically analyzed for trimming or AOT";
 
     private static readonly AsyncLocal<int> RecursionDepth = new();
+    private static readonly object FactorySync = new();
+    private static readonly Dictionary<Type, Func<object?>> RuntimeObjectFactories = [];
     private static readonly DataSourceYamlTypeConverter YamlPayloadConverter = new();
     private static readonly PropertyInfo? XRObjectIdProperty = typeof(XRObjectBase)
         .GetProperty(nameof(XRObjectBase.ID), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+    public static void RegisterRuntimeFactory<T>(Func<T> factory)
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+        RegisterRuntimeFactory(typeof(T), () => factory());
+    }
+
+    public static void RegisterRuntimeFactory(Type type, Func<object?> factory)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(factory);
+
+        lock (FactorySync)
+            RuntimeObjectFactories[type] = factory;
+    }
+
+    private static bool TryCreateRegisteredRuntimeObject(Type type, out object? value)
+    {
+        Func<object?>? factory;
+        lock (FactorySync)
+            RuntimeObjectFactories.TryGetValue(type, out factory);
+
+        if (factory is null)
+        {
+            value = null;
+            return false;
+        }
+
+        value = factory();
+        return true;
+    }
+
+    private static InvalidOperationException CreatePublishedAotUnsupportedException(string feature)
+        => new($"Runtime cooked binary {feature} is not available in published AOT builds without an explicit registered factory or typed serializer.");
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
@@ -805,9 +841,16 @@ public static class RuntimeCookedBinarySerializer
         if (string.IsNullOrWhiteSpace(name))
             return null;
 
-        Type? resolved = Type.GetType(name, throwOnError: false, ignoreCase: false);
+        Type? resolved = AotRuntimeMetadataStore.ResolveType(name);
         if (resolved is not null)
             return resolved;
+
+        resolved = Type.GetType(name, throwOnError: false, ignoreCase: false);
+        if (resolved is not null)
+            return resolved;
+
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            throw new InvalidOperationException($"Unable to resolve runtime cooked type '{name}' from published AOT metadata.");
 
         foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
         {
@@ -826,13 +869,19 @@ public static class RuntimeCookedBinarySerializer
     {
         try
         {
+            if (TryCreateRegisteredRuntimeObject(type, out object? registered))
+                return registered;
+
             if (type.IsValueType)
-                return Activator.CreateInstance(type);
+                return RuntimeHelpers.GetUninitializedObject(type);
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                throw CreatePublishedAotUnsupportedException($"object construction for '{type.FullName}'");
 
             ConstructorInfo? ctor = type.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, Type.EmptyTypes, modifiers: null);
             return ctor?.Invoke(null);
         }
-        catch
+        catch when (!XRRuntimeEnvironment.IsAotRuntimeBuild)
         {
             return null;
         }
@@ -844,7 +893,7 @@ public static class RuntimeCookedBinarySerializer
         {
             Type? nullableType = Nullable.GetUnderlyingType(targetType);
             return targetType.IsValueType && nullableType is null
-                ? Activator.CreateInstance(targetType)
+                ? RuntimeHelpers.GetUninitializedObject(targetType)
                 : null;
         }
 

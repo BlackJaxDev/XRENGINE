@@ -1,3 +1,5 @@
+using XREngine.Scene.Transforms;
+
 namespace XREngine.Scene;
 
 public interface IRuntimeSceneNodeServices
@@ -25,15 +27,7 @@ public static class RuntimeSceneNodeServices
             => null;
 
         public object CreateDefaultTransform()
-        {
-            Type? transformType =
-                Type.GetType("XREngine.Scene.Transforms.Transform, XREngine.Runtime.Core", throwOnError: false) ??
-                Type.GetType("XREngine.Scene.Transforms.Transform, XREngine", throwOnError: false);
-            return transformType is null
-                ? throw new InvalidOperationException("Unable to resolve the default transform type.")
-                : Activator.CreateInstance(transformType)
-                    ?? throw new InvalidOperationException("Unable to construct the default transform type.");
-        }
+            => new Transform();
 
         public bool TryValidateTransformAssignment(object node, object transform, out string? warningMessage)
         {

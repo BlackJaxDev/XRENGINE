@@ -126,7 +126,7 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
-            public EventList<GLRenderProgram> ActivePrograms { get; } = [];
+            public EventList<GLRenderProgram> ActivePrograms { get; } = new() { ThreadSafe = true };
 
             private static ShaderType ToGLEnum(EShaderType mode)
                 => mode switch

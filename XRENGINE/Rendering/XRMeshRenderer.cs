@@ -953,6 +953,7 @@ namespace XREngine.Rendering
             _dirtyBoneMatrices = null;
             _gpuDrivenBoneRefCounts = null;
             _gpuDrivenBoneCount = 0;
+            ClearGpuDrivenBoneMatrixSource();
 
             _bones = null;
 
@@ -1030,7 +1031,7 @@ namespace XREngine.Rendering
         public XRDataBuffer? BoneMatricesBuffer { get; private set; }
 
         [MemoryPackIgnore]
-        public XRDataBuffer? ActiveBoneMatricesBuffer => BoneMatricesBuffer;
+        public XRDataBuffer? ActiveBoneMatricesBuffer => HasExternalBoneMatrixSource ? _externalBoneMatricesBuffer : BoneMatricesBuffer;
 
         /// <summary>
         /// All bone inverse bind matrices for the mesh.
@@ -1039,16 +1040,23 @@ namespace XREngine.Rendering
         public XRDataBuffer? BoneInvBindMatricesBuffer { get; private set; }
 
         [MemoryPackIgnore]
-        public XRDataBuffer? ActiveBoneInvBindMatricesBuffer => BoneInvBindMatricesBuffer;
+        public XRDataBuffer? ActiveBoneInvBindMatricesBuffer => HasExternalBoneMatrixSource ? _externalBoneInvBindMatricesBuffer : BoneInvBindMatricesBuffer;
 
         [MemoryPackIgnore]
-        public uint ActiveBoneMatrixBase => 0u;
+        public uint ActiveBoneMatrixBase => HasExternalBoneMatrixSource ? _externalBoneMatrixBase : 0u;
 
         [MemoryPackIgnore]
-        public uint ActiveBoneMatrixCount => (uint)(Mesh?.UtilizedBones?.Length ?? 0) + 1u;
+        public uint ActiveBoneMatrixCount => HasExternalBoneMatrixSource ? _externalBoneMatrixCount : (uint)(Mesh?.UtilizedBones?.Length ?? 0) + 1u;
 
         [MemoryPackIgnore]
         public bool HasGpuDrivenBoneSource => _gpuDrivenBoneCount > 0;
+
+        [MemoryPackIgnore]
+        public bool HasExternalBoneMatrixSource
+            => Engine.Rendering.Settings.CalculateSkinningInComputeShader
+                && _externalBoneMatricesBuffer is not null
+                && _externalBoneInvBindMatricesBuffer is not null
+                && _externalBoneMatrixCount > 0u;
 
         /// <summary>
         /// All blendshape weights for the mesh.
@@ -1215,6 +1223,11 @@ namespace XREngine.Rendering
         private bool _blendshapesInvalidated = false;
     private int[]? _gpuDrivenBoneRefCounts;
     private int _gpuDrivenBoneCount;
+    private object? _externalBoneMatrixSourceOwner;
+    private XRDataBuffer? _externalBoneMatricesBuffer;
+    private XRDataBuffer? _externalBoneInvBindMatricesBuffer;
+    private uint _externalBoneMatrixBase;
+    private uint _externalBoneMatrixCount;
 
         private void BoneTransformRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
@@ -1366,6 +1379,37 @@ namespace XREngine.Rendering
                 if (refCount == 0 && _gpuDrivenBoneCount > 0)
                     --_gpuDrivenBoneCount;
             }
+        }
+
+        internal void SetGpuDrivenBoneMatrixSource(
+            object owner,
+            XRDataBuffer boneMatrices,
+            XRDataBuffer boneInvBindMatrices,
+            uint baseElement,
+            uint elementCount)
+        {
+            _externalBoneMatrixSourceOwner = owner;
+            _externalBoneMatricesBuffer = boneMatrices;
+            _externalBoneInvBindMatricesBuffer = boneInvBindMatrices;
+            _externalBoneMatrixBase = baseElement;
+            _externalBoneMatrixCount = elementCount;
+        }
+
+        internal void ClearGpuDrivenBoneMatrixSource(object owner)
+        {
+            if (!ReferenceEquals(_externalBoneMatrixSourceOwner, owner))
+                return;
+
+            ClearGpuDrivenBoneMatrixSource();
+        }
+
+        private void ClearGpuDrivenBoneMatrixSource()
+        {
+            _externalBoneMatrixSourceOwner = null;
+            _externalBoneMatricesBuffer = null;
+            _externalBoneInvBindMatricesBuffer = null;
+            _externalBoneMatrixBase = 0u;
+            _externalBoneMatrixCount = 0u;
         }
 
         private bool IsBoneGpuDriven(int index)

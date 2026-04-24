@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Collections.Generic;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XRBase = XREngine.Data.Core.XRBase;
@@ -16,6 +17,47 @@ namespace XREngine.Rendering
     /// </summary>
     public abstract class XRCameraParameters(float nearPlane, float farPlane) : XRBase
     {
+        private static readonly object FactorySync = new();
+        private static readonly Dictionary<Type, Func<float, float, XRCameraParameters>> Factories = [];
+
+        static XRCameraParameters()
+        {
+            RegisterFactory<XRPerspectiveCameraParameters>(static (nearZ, farZ) => new XRPerspectiveCameraParameters(nearZ, farZ));
+            RegisterFactory<XROrthographicCameraParameters>(static (_, _) => new XROrthographicCameraParameters());
+            RegisterFactory<XRPhysicalCameraParameters>(static (_, _) => new XRPhysicalCameraParameters());
+            RegisterFactory<XROVRCameraParameters>(static (nearZ, farZ) => new XROVRCameraParameters(true, nearZ, farZ));
+            RegisterFactory<XROpenXRFovCameraParameters>(static (nearZ, farZ) => new XROpenXRFovCameraParameters(nearZ, farZ));
+        }
+
+        public static void RegisterFactory<TParameters>(Func<float, float, TParameters> factory)
+            where TParameters : XRCameraParameters
+        {
+            ArgumentNullException.ThrowIfNull(factory);
+            RegisterFactory(typeof(TParameters), (nearZ, farZ) => factory(nearZ, farZ));
+        }
+
+        public static void RegisterFactory(Type parameterType, Func<float, float, XRCameraParameters> factory)
+        {
+            ArgumentNullException.ThrowIfNull(parameterType);
+            ArgumentNullException.ThrowIfNull(factory);
+
+            if (!typeof(XRCameraParameters).IsAssignableFrom(parameterType))
+                throw new ArgumentException($"Type must derive from {nameof(XRCameraParameters)}.", nameof(parameterType));
+
+            lock (FactorySync)
+                Factories[parameterType] = factory;
+        }
+
+        private static bool TryCreateRegistered(Type parameterType, float nearZ, float farZ, out XRCameraParameters? parameters)
+        {
+            Func<float, float, XRCameraParameters>? factory;
+            lock (FactorySync)
+                Factories.TryGetValue(parameterType, out factory);
+
+            parameters = factory?.Invoke(nearZ, farZ);
+            return parameters is not null;
+        }
+
         public XREvent<XRCameraParameters>? ProjectionMatrixChanged { get; }
 
         public uint ProjectionVersion => _projectionVersion;
@@ -187,8 +229,14 @@ namespace XREngine.Rendering
         /// <returns>A new instance with default values.</returns>
         protected virtual XRCameraParameters CreateDefaultInstance()
         {
-            // Try to create using parameterless constructor first
             var type = GetType();
+            if (TryCreateRegistered(type, 0.1f, 10000f, out XRCameraParameters? registered) && registered is not null)
+                return registered;
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                throw new InvalidOperationException($"No registered camera parameter factory for type {type.FullName}.");
+
+            // Try to create using parameterless constructor first
             try
             {
                 var instance = Activator.CreateInstance(type) as XRCameraParameters;
@@ -259,6 +307,12 @@ namespace XREngine.Rendering
             XRCameraParameters? template = null;
             float nearZ = previous?.NearZ ?? 0.1f;
             float farZ = previous?.FarZ ?? 10000f;
+
+            if (TryCreateRegistered(targetType, nearZ, farZ, out template) && template is not null)
+                return template.CreateFromPrevious(previous);
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                throw new InvalidOperationException($"No registered camera parameter factory for type {targetType.FullName}.");
             
             // Try parameterless constructor first
             try

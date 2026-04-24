@@ -100,7 +100,6 @@ namespace XREngine
         ///   <item><description><b>Local:</b> No networking (single-player)</description></item>
         ///   <item><description><b>Server:</b> Authoritative server for client-server architecture</description></item>
         ///   <item><description><b>Client:</b> Client connecting to a dedicated server</description></item>
-        ///   <item><description><b>P2PClient:</b> Peer-to-peer networking client</description></item>
         /// </list>
         /// </remarks>
         private static void InitializeNetworking(GameStartupSettings startupSettings)
@@ -149,14 +148,6 @@ namespace XREngine
                         ResolveNetworkAddress(startupSettings.ServerIP),
                         startupSettings.UdpServerSendPort,
                         startupSettings.UdpClientRecievePort);
-                    break;
-                case ENetworkingType.P2PClient:
-                    var p2pClient = new PeerToPeerNetworkingManager();
-                    Networking = p2pClient;
-                    p2pClient.Start(
-                        IPAddress.Parse(startupSettings.UdpMulticastGroupIP),
-                        startupSettings.UdpMulticastPort,
-                        ResolveNetworkAddress(startupSettings.ServerIP));
                     break;
             }
 

@@ -21,6 +21,40 @@ namespace XREngine.Rendering;
 [MemoryPackable(GenerateType.NoGenerate)]
 public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHost
 {
+    private static readonly object OpenXrFactorySync = new();
+    private static readonly Dictionary<Type, Func<RenderPipeline, RenderPipeline>> OpenXrPipelineFactories = [];
+
+    public static void RegisterOpenXrPipelineFactory<TPipeline>(Func<TPipeline, RenderPipeline> factory)
+        where TPipeline : RenderPipeline
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+        RegisterOpenXrPipelineFactory(typeof(TPipeline), source => factory((TPipeline)source));
+    }
+
+    public static void RegisterOpenXrPipelineFactory(Type pipelineType, Func<RenderPipeline, RenderPipeline> factory)
+    {
+        ArgumentNullException.ThrowIfNull(pipelineType);
+        ArgumentNullException.ThrowIfNull(factory);
+
+        if (!typeof(RenderPipeline).IsAssignableFrom(pipelineType))
+            throw new ArgumentException($"Type must derive from {nameof(RenderPipeline)}.", nameof(pipelineType));
+
+        lock (OpenXrFactorySync)
+            OpenXrPipelineFactories[pipelineType] = factory;
+    }
+
+    public static bool TryCreateOpenXrPipeline(RenderPipeline sourcePipeline, out RenderPipeline? pipeline)
+    {
+        ArgumentNullException.ThrowIfNull(sourcePipeline);
+
+        Func<RenderPipeline, RenderPipeline>? factory;
+        lock (OpenXrFactorySync)
+            OpenXrPipelineFactories.TryGetValue(sourcePipeline.GetType(), out factory);
+
+        pipeline = factory?.Invoke(sourcePipeline);
+        return pipeline is not null;
+    }
+
     [Browsable(false)]
     [YamlIgnore]
     public List<XRRenderPipelineInstance> Instances { get; } = [];

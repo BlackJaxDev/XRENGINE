@@ -304,7 +304,6 @@ public class GameStartupSettings : XRAsset
     {
         Server,
         Client,
-        P2PClient,
         Local
     }
     
@@ -562,4 +561,4 @@ public static class Engine
 - [Rendering System](rendering.md)
 - [Physics System](physics.md)
 - [Animation System](animation.md)
-- [VR Development](vr-development.md) 
+- [VR Development](vr-development.md)

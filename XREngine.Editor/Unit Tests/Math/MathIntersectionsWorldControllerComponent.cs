@@ -36,6 +36,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     private readonly List<SubLabelDefinition> _subLabelDefs = [];
     private readonly Dictionary<SubLabelDefinition, SubLabelRenderable> _subLabels = [];
     private readonly List<double> _benchmarkFrameTimesMs = [];
+    private readonly List<BenchmarkRootMotionGroup> _benchmarkRootMotionGroups = [];
     private readonly RenderInfo3D _renderInfo;
     private CustomUIComponent? _customUi;
     private FontGlyphSet? _titleLabelFont;
@@ -61,10 +62,14 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     private SceneNode? _pendingBenchmarkTeardownRoot;
     private MathIntersectionsWorldTestEntry? _pendingBenchmarkRestoreEntry;
     private bool _pendingBenchmarkRestoreSourceWasActive;
+    private bool _benchmarkRootMotionTickRegistered;
+    private bool _spawningBenchmarkInstances;
+    private float _benchmarkRootMotionElapsedSeconds;
     private const double MaxBenchmarkDestroyBudgetMs = 2.0;
 
     public RenderInfo RenderInfo => _renderInfo;
     public RenderInfo[] RenderedObjects { get; }
+    internal bool IsSpawningBenchmarkInstances => _spawningBenchmarkInstances;
 
     public MathIntersectionsWorldControllerComponent()
     {
@@ -306,22 +311,34 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             0.0f,
             -((MathF.Ceiling(copyCount / (float)columns) - 1) * cellDepth) * 0.5f);
 
-        for (int index = 0; index < copyCount; index++)
+        BeginBenchmarkRootMotionBatch();
+        _spawningBenchmarkInstances = true;
+        try
         {
-            int row = index / columns;
-            int column = index % columns;
-            SceneNode instanceRoot = entry.Factory(benchmarkRoot, null);
-            instanceRoot.IsActiveSelf = true;
-            instanceRoot.Name = $"{entry.DisplayName} Benchmark {index + 1}";
-            SyncBenchmarkInstanceSettings(entry.RootNode, instanceRoot, includeDebugDisplays);
-            Transform instanceTransform = instanceRoot.GetTransformAs<Transform>(true) ?? instanceRoot.SetTransform<Transform>();
-            Vector3 desiredCenter = new(
-                column * cellWidth,
-                0.0f,
-                row * cellDepth);
-            CenterWithinCell(instanceTransform, entry.Bounds, desiredCenter);
-            instanceTransform.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: true, childRecalcType: ELoopType.Parallel).Wait();
-            RefreshPhysicsChainRigAfterMove(instanceRoot);
+            for (int index = 0; index < copyCount; index++)
+            {
+                int row = index / columns;
+                int column = index % columns;
+                Vector3 desiredCenter = new(
+                    column * cellWidth,
+                    0.0f,
+                    row * cellDepth);
+
+                SceneNode instanceSlot = benchmarkRoot.NewChild($"{entry.DisplayName} Benchmark {index + 1}");
+                Transform slotTransform = instanceSlot.SetTransform<Transform>();
+                CenterWithinCell(slotTransform, entry.Bounds, desiredCenter);
+
+                SceneNode instanceRoot = entry.Factory(instanceSlot, this);
+                instanceRoot.IsActiveSelf = true;
+                instanceRoot.Name = $"{entry.DisplayName} Benchmark Rig";
+                SyncBenchmarkInstanceSettings(entry.RootNode, instanceRoot, includeDebugDisplays);
+                RefreshPhysicsChainGpuDrivenRendererBindings(instanceRoot);
+            }
+        }
+        finally
+        {
+            _spawningBenchmarkInstances = false;
+            EndBenchmarkRootMotionBatch();
         }
 
         // The spawn produced many new meshes that queue for GPU upload. Boost the
@@ -335,9 +352,12 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     {
         if (!_benchmarkRunning && _benchmarkRoot is null)
         {
+            StopBenchmarkRootMotion();
             _benchmarkRunToggle = false;
             return;
         }
+
+        StopBenchmarkRootMotion();
 
         Stopwatch? stopwatch = _benchmarkStopwatch;
         MathIntersectionsWorldTestEntry? entry = _benchmarkEntry;
@@ -471,12 +491,19 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
 
     private void RestoreSourceRigAfterBenchmark()
     {
+        MathIntersectionsWorldTestEntry? restoredEntry = null;
         if (_pendingBenchmarkRestoreEntry is { } entry && _pendingBenchmarkRestoreSourceWasActive)
+        {
             entry.RootNode.IsActiveSelf = true;
+            restoredEntry = entry;
+        }
 
         _pendingBenchmarkRestoreEntry = null;
         _pendingBenchmarkRestoreSourceWasActive = false;
         Relayout();
+
+        if (restoredEntry is not null)
+            RefreshPhysicsChainGpuDrivenRendererBindings(restoredEntry.RootNode);
     }
 
     private static void DisableBenchmarkDebugVisuals(SceneNode instanceRoot)
@@ -531,6 +558,77 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         bool rebuiltSkinnedVisual = EditorUnitTests.RebuildPhysicsChainSkinnedBoxVisual(instanceRoot);
         if (!rebuiltSkinnedVisual)
             ResetBenchmarkInstancePhysicsChains(instanceRoot);
+    }
+
+    private static void RefreshPhysicsChainGpuDrivenRendererBindings(SceneNode root)
+        => root.IterateComponents<PhysicsChainComponent>(static component => component.InvalidateGpuDrivenRenderers(), true);
+
+    internal void RegisterBenchmarkRootMotionTarget(Transform transform, float baseY, float amplitude, float frequency, float phaseOffset)
+    {
+        for (int i = 0; i < _benchmarkRootMotionGroups.Count; i++)
+        {
+            BenchmarkRootMotionGroup group = _benchmarkRootMotionGroups[i];
+            if (group.Matches(baseY, amplitude, frequency, phaseOffset))
+            {
+                group.Transforms.Add(transform);
+                return;
+            }
+        }
+
+        _benchmarkRootMotionGroups.Add(new BenchmarkRootMotionGroup(baseY, amplitude, frequency, phaseOffset, transform));
+    }
+
+    internal static float CalculateBenchmarkRootMotionY(float baseY, float amplitude, float frequency, float phaseOffset, float elapsedSeconds)
+        => baseY + MathF.Sin(elapsedSeconds * frequency + phaseOffset) * amplitude;
+
+    private void BeginBenchmarkRootMotionBatch()
+    {
+        _benchmarkRootMotionGroups.Clear();
+        _benchmarkRootMotionElapsedSeconds = 0.0f;
+        if (_benchmarkRootMotionTickRegistered)
+            return;
+
+        RegisterTick(ETickGroup.Normal, ETickOrder.Animation, UpdateBenchmarkRootMotion);
+        _benchmarkRootMotionTickRegistered = true;
+    }
+
+    private void EndBenchmarkRootMotionBatch()
+    {
+        if (_benchmarkRootMotionGroups.Count == 0)
+            StopBenchmarkRootMotion();
+    }
+
+    private void StopBenchmarkRootMotion()
+    {
+        if (_benchmarkRootMotionTickRegistered)
+        {
+            UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, UpdateBenchmarkRootMotion);
+            _benchmarkRootMotionTickRegistered = false;
+        }
+
+        _benchmarkRootMotionGroups.Clear();
+        _benchmarkRootMotionElapsedSeconds = 0.0f;
+    }
+
+    private void UpdateBenchmarkRootMotion()
+    {
+        if (_benchmarkRootMotionGroups.Count == 0)
+            return;
+
+        _benchmarkRootMotionElapsedSeconds += (float)Engine.Delta;
+        for (int groupIndex = 0; groupIndex < _benchmarkRootMotionGroups.Count; groupIndex++)
+        {
+            BenchmarkRootMotionGroup group = _benchmarkRootMotionGroups[groupIndex];
+            float y = CalculateBenchmarkRootMotionY(group.BaseY, group.Amplitude, group.Frequency, group.PhaseOffset, _benchmarkRootMotionElapsedSeconds);
+            List<Transform> transforms = group.Transforms;
+            for (int transformIndex = 0; transformIndex < transforms.Count; transformIndex++)
+            {
+                Transform transform = transforms[transformIndex];
+                Vector3 translation = transform.Translation;
+                translation.Y = y;
+                transform.Translation = translation;
+            }
+        }
     }
 
 
@@ -892,6 +990,30 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     }
 
     private sealed record MathIntersectionsWorldTestEntry(SceneNode RootNode, string DisplayName, string Description, AABB Bounds, Transform RootTransform, MathIntersectionsWorldTestFactory Factory);
+
+    private sealed class BenchmarkRootMotionGroup
+    {
+        public BenchmarkRootMotionGroup(float baseY, float amplitude, float frequency, float phaseOffset, Transform transform)
+        {
+            BaseY = baseY;
+            Amplitude = amplitude;
+            Frequency = frequency;
+            PhaseOffset = phaseOffset;
+            Transforms.Add(transform);
+        }
+
+        public float BaseY { get; }
+        public float Amplitude { get; }
+        public float Frequency { get; }
+        public float PhaseOffset { get; }
+        public List<Transform> Transforms { get; } = [];
+
+        public bool Matches(float baseY, float amplitude, float frequency, float phaseOffset)
+            => BaseY == baseY
+            && Amplitude == amplitude
+            && Frequency == frequency
+            && PhaseOffset == phaseOffset;
+    }
 
     private sealed record SubLabelDefinition(SceneNode TestRoot, Transform Target, string Text, float HeightOffset);
 

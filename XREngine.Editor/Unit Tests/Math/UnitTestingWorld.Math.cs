@@ -995,7 +995,8 @@ public static partial class EditorUnitTests
         ColorF4 chainColor,
         ColorF4 rootColor,
         PhysicsChainColliderScenario colliderScenario = PhysicsChainColliderScenario.Default,
-        bool includeSkinnedMesh = false)
+        bool includeSkinnedMesh = false,
+        MathIntersectionsWorldControllerComponent? controller = null)
     {
         var testNode = parentNode.NewChild(name);
         var testTransform = testNode.SetTransform<Transform>();
@@ -1006,10 +1007,27 @@ public static partial class EditorUnitTests
         Vector3 rootBaseTranslation = new(0.0f, 4.0f, 0.0f);
         rootTransform.Translation = rootBaseTranslation;
 
-        var rootAnimation = rootNode.AddComponent<AnimationClipComponent>()!;
-        rootAnimation.Name = $"{name}RootMotion";
-        rootAnimation.Animation = CreateSineTranslationClip(rootBaseTranslation.Y, amplitude: 0.9f, frequency: 1.8f, phaseOffset);
-        rootAnimation.StartOnActivate = true;
+        const float rootMotionAmplitude = 0.9f;
+        const float rootMotionFrequency = 1.8f;
+        float rootMotionBaseY = rootBaseTranslation.Y;
+        if (controller?.IsSpawningBenchmarkInstances == true)
+        {
+            rootBaseTranslation.Y = MathIntersectionsWorldControllerComponent.CalculateBenchmarkRootMotionY(
+                rootMotionBaseY,
+                rootMotionAmplitude,
+                rootMotionFrequency,
+                phaseOffset,
+                elapsedSeconds: 0.0f);
+            rootTransform.Translation = rootBaseTranslation;
+            controller.RegisterBenchmarkRootMotionTarget(rootTransform, rootMotionBaseY, rootMotionAmplitude, rootMotionFrequency, phaseOffset);
+        }
+        else
+        {
+            var rootAnimation = rootNode.AddComponent<AnimationClipComponent>()!;
+            rootAnimation.Name = $"{name}RootMotion";
+            rootAnimation.Animation = CreateSineTranslationClip(rootMotionBaseY, rootMotionAmplitude, rootMotionFrequency, phaseOffset);
+            rootAnimation.StartOnActivate = true;
+        }
 
         const float segmentLength = 0.55f;
         Transform[] chainBones = CreatePhysicsChainBones(rootNode, segmentCount: 6, segmentLength);

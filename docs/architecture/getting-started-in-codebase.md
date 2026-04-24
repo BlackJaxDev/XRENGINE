@@ -107,7 +107,7 @@ The day-to-day editor UI is the ImGui path. There is also a native UI pipeline u
 Start with:
 
 - `docs/architecture/networking-overview.md`
-- the VS Code tasks for server/client/P2P and pose sync
+- the VS Code tasks for server/client and pose sync
 - the Unit Testing World networking pose setup
 
 ## Practical workflow
@@ -157,8 +157,6 @@ Some startup paths depend on the process working directory being the repo root, 
 - `Start-Server-NoDebug`
 - `Start-Client-NoDebug`
 - `Start-Client2-NoDebug`
-- `Start-P2PPeer-NoDebug`
-- `Start-P2PPeer2-NoDebug`
 - `Start-LocalPoseSync-NoDebug`
 
 `ExecTool.bat` is also useful when you need to discover setup scripts, reports, or one-off maintenance tools without hunting through `Tools/` manually.

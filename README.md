@@ -14,7 +14,7 @@ If you want the fastest way in: build the editor, launch the Unit Testing World,
 - **Scene graph:** Traditional scene node tree with an attached component model. Nodes form a parent-child transform hierarchy, and components derive from `XRBase` for change tracking.
 - **Animation:** Skeletal animation with blend support, humanoid IK (VRIK for VR), and Assimp-based clip import.
 - **Asset import:** FBX uses the native `XREngine.Fbx` importer and glTF/GLB uses the native `XREngine.Gltf` importer by default. Other model formats still load through Assimp (via AssimpNetter).
-- **Networking:** Client/server and P2P topologies with entity replication and pose sync for multiplayer testing.
+- **Networking:** Client/server realtime transport with entity replication and pose sync for multiplayer testing.
 - **XR:** OpenXR and SteamVR/OpenVR paths. OpenVR is the one that's actually tested today.
 - **Editor UI:** ImGui is the day-to-day interface. A native UI pipeline is under development as the intended production UI.
 - **Input:** Silk.NET.Input for keyboard, mouse, and gamepad. GLFW for windowing.
@@ -93,7 +93,7 @@ If you are contributing code, the best follow-up docs are `docs/features/unit-te
 The repo includes ready-to-go `.vscode/` configs. Use **Run and Debug** (Ctrl+Shift+D) to pick a launch profile:
 
 - **Editor (Default World)** / **Editor (Unit Testing World)**
-- **Debug Client**, **Debug Server**, **Debug P2P Client**, **Debug VRClient**
+- **Debug Client**, **Debug Server**, **Debug VRClient**
 
 There are also no-debug tasks under **Terminal → Run Task** for the common editor, server, client, and networking scenarios.
 
@@ -103,7 +103,7 @@ To export the code-defined default render pipeline as an `.xrs` script, run the 
 
 ### Visual Studio
 
-Open `XRENGINE.slnx`, set your startup project (`XREngine.Editor`, `XREngine.Server`, etc.), and hit F5. Environment variables like `XRE_NET_MODE` and `XRE_WORLD_MODE` can be set in Project → Properties → Debug to switch between server/client/P2P modes.
+Open `XRENGINE.slnx`, set your startup project (`XREngine.Editor`, `XREngine.Server`, etc.), and hit F5. Environment variables like `XRE_NET_MODE` and `XRE_WORLD_MODE` can be set in Project → Properties → Debug to switch between server/client/local modes.
 
 If you are working on the legacy OpenVR path, use `XREngine.VRClient` as the companion process rather than treating it like a second copy of the main game. It collects VR-side player input and sends it to the main engine app over a pipe, while the engine streams back the left/right eye renders for presentation through SteamVR/OpenVR.
 

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 
 namespace XREngine.Rendering.PostProcessing;
@@ -51,13 +52,64 @@ public sealed class PostProcessStageDescriptor(
     string key,
     string displayName,
     IReadOnlyList<PostProcessParameterDescriptor> parameters,
-    Type? backingType)
+    Type? backingType,
+    Func<object>? backingFactory = null)
 {
     public string Key { get; } = key;
     public string DisplayName { get; } = string.IsNullOrWhiteSpace(displayName) ? key : displayName;
     public IReadOnlyList<PostProcessParameterDescriptor> Parameters { get; } = parameters ?? Array.Empty<PostProcessParameterDescriptor>();
     [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties)]
     public Type? BackingType { get; } = backingType;
+    public Func<object>? BackingFactory { get; } = backingFactory;
+
+    public bool TryCreateBacking(out object? backing)
+    {
+        if (BackingFactory is not null)
+        {
+            backing = BackingFactory.Invoke();
+            return backing is not null;
+        }
+
+        if (BackingType is not null && PostProcessBackingFactoryRegistry.TryCreate(BackingType, out backing))
+            return backing is not null;
+
+        backing = null;
+        return false;
+    }
+}
+
+public static class PostProcessBackingFactoryRegistry
+{
+    private static readonly ConcurrentDictionary<Type, Func<object>> Factories = new();
+
+    public static void Register<TBacking>(Func<TBacking> factory)
+        where TBacking : class
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+        Register(typeof(TBacking), () => factory());
+    }
+
+    public static void Register(Type backingType, Func<object> factory)
+    {
+        ArgumentNullException.ThrowIfNull(backingType);
+        ArgumentNullException.ThrowIfNull(factory);
+
+        Factories[backingType] = factory;
+    }
+
+    public static bool TryCreate(Type backingType, out object? backing)
+    {
+        ArgumentNullException.ThrowIfNull(backingType);
+
+        if (!Factories.TryGetValue(backingType, out Func<object>? factory))
+        {
+            backing = null;
+            return false;
+        }
+
+        backing = factory();
+        return backing is not null;
+    }
 }
 
 public sealed class PostProcessCategoryDescriptor(string key, string displayName, string? description, IReadOnlyList<string> stageKeys)

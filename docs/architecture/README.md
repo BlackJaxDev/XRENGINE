@@ -47,4 +47,5 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 - [Modeling XRMesh Editing Architecture](modeling-xrmesh-editing.md)
 - [Job System](../api/job-system.md)
 - [Networking Overview](networking-overview.md)
+- [Networking Feature Guide](../features/networking.md)
 - [Editor Undo System](undo-system.md)

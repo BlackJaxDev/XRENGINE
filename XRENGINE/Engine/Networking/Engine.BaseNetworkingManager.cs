@@ -44,7 +44,6 @@ namespace XREngine
 
             public abstract bool IsServer { get; }
             public abstract bool IsClient { get; }
-            public abstract bool IsP2P { get; }
 
             public bool UDPServerConnectionEstablished
                 => UdpReceiver?.Client is { } socket && (socket.Connected || socket.IsBound);
@@ -1387,21 +1386,6 @@ namespace XREngine
             //{
             //    TcpListener = new TcpListener(tcpListenerIP, tcpListenerPort);
             //    TcpListener.Start();
-            //}
-
-            //private void ClientSendTcp()
-            //{
-            //    //Send outgoing data
-            //    if (PeerToPeer)
-            //    {
-            //        //Multicast to other clients like a server would
-            //        BroadcastToTcpClients();
-            //    }
-            //    else
-            //    {
-            //        //Send directly to server
-            //        SendDirectTcp();
-            //    }
             //}
 
             //private void SendDirectTcp()

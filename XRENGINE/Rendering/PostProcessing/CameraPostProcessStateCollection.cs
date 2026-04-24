@@ -270,7 +270,15 @@ public sealed class PostProcessStageState : IDisposable
         if (descriptor.BackingType is null)
             return;
 
-        BackingInstance = Activator.CreateInstance(descriptor.BackingType);
+        if (!descriptor.TryCreateBacking(out object? backing) || backing is null)
+        {
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                throw new InvalidOperationException($"Post-process stage '{descriptor.Key}' uses backing type {descriptor.BackingType.FullName} without a registered factory.");
+
+            backing = Activator.CreateInstance(descriptor.BackingType);
+        }
+
+        BackingInstance = backing;
 
         // Build backing property map off-thread then publish under lock to avoid concurrent mutations.
         var backingMap = new Dictionary<string, PropertyPathAccessor>(StringComparer.OrdinalIgnoreCase);
@@ -291,7 +299,6 @@ public sealed class PostProcessStageState : IDisposable
         }
 
         KeyValuePair<string, PropertyPathAccessor>[]? propsSnapshot;
-        object? backing;
         lock (_backingSync)
         {
             backing = BackingInstance;

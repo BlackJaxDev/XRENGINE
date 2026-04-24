@@ -54,6 +54,7 @@ public readonly record struct GPUPhysicsChainBandwidthSnapshot(
 /// </summary>
 public sealed class GPUPhysicsChainDispatcher
 {
+    private static readonly bool VerboseLogging = false;
     private const uint LocalSizeX = 128u;
     private const int MaxIterationsPerFrame = 3;
     private static readonly int ParticleStateSizeBytes = Unsafe.SizeOf<GPUParticleData>();
@@ -93,8 +94,10 @@ public sealed class GPUPhysicsChainDispatcher
     // Shared GPU resources
     private XRShader? _mainPhysicsShader;
     private XRShader? _skipUpdateShader;
+    private XRShader? _gpuBonePaletteShader;
     private XRRenderProgram? _mainPhysicsProgram;
     private XRRenderProgram? _skipUpdateProgram;
+    private XRRenderProgram? _gpuBonePaletteProgram;
 
     // Combined buffers for all components
     private XRDataBuffer? _particlesBuffer;
@@ -102,16 +105,24 @@ public sealed class GPUPhysicsChainDispatcher
     private XRDataBuffer? _transformMatricesBuffer;
     private XRDataBuffer? _collidersBuffer;
     private XRDataBuffer? _perTreeParamsBuffer;
+    private XRDataBuffer? _gpuDrivenBonePaletteMappingsBuffer;
+    private XRDataBuffer? _gpuDrivenBoneMatricesBuffer;
+    private XRDataBuffer? _gpuDrivenBoneInvBindMatricesBuffer;
 
     // Combined data lists
     private readonly List<GPUParticleStaticData> _allParticleStaticData = [];
     private readonly List<Matrix4x4> _allTransformMatrices = [];
     private readonly List<GPUColliderData> _allColliders = [];
     private readonly List<GPUPerTreeParams> _allPerTreeParams = [];
+    private readonly List<GpuDrivenRendererPaletteBinding> _gpuDrivenPaletteBindings = [];
+    private readonly List<GPUDrivenBoneMappingData> _gpuDrivenBoneMappings = [];
+    private readonly List<Matrix4x4> _gpuDrivenBoneMatrices = [];
+    private readonly List<Matrix4x4> _gpuDrivenBoneInvBindMatrices = [];
     private readonly List<GPUPhysicsChainRequest> _authoritativeParticleRequests = [];
     private int _staticParticleSignature = int.MinValue;
     private int _transformSignature = int.MinValue;
     private int _colliderSignature = int.MinValue;
+    private int _gpuDrivenBonePaletteSignature = int.MinValue;
     private ulong _authoritativeParticleLayoutSignature;
     private int _authoritativeCombinedGeneration;
 
@@ -292,6 +303,25 @@ public sealed class GPUPhysicsChainDispatcher
         public int _pad1;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GPUDrivenBoneMappingData
+    {
+        public int ParticleIndex;
+        public int ChildParticleIndex;
+        public int BoneMatrixIndex;
+        public int Flags;
+        public Vector3 RestLocalDirection;
+        public float _pad0;
+    }
+
+    internal readonly record struct GpuDrivenRendererPaletteBinding(
+        PhysicsChainComponent Component,
+        XRMeshRenderer Renderer,
+        GPUDrivenBoneMappingData[] Mappings,
+        int ParticleBaseOffset,
+        uint BoneMatrixElementCount,
+        int BindingGeneration);
+
     #endregion
 
     #region Registration
@@ -319,7 +349,8 @@ public sealed class GPUPhysicsChainDispatcher
             lock (_registeredComponentsSync)
                 _registeredComponentSnapshot.Add(request);
 
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] Register: Component registered. ComponentHash={component.GetHashCode():X}, RequestId={request.RequestId}, TotalRegistered={_registeredComponents.Count}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] Register: Component registered. ComponentHash={component.GetHashCode():X}, RequestId={request.RequestId}, TotalRegistered={_registeredComponents.Count}");
         }
         else
         {
@@ -342,9 +373,10 @@ public sealed class GPUPhysicsChainDispatcher
             RemoveRequestFromAuthoritativeGroup(request);
             DisposeResidentParticlesBuffer(request);
 
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] Unregister: Component unregistered. ComponentHash={component.GetHashCode():X}, RequestId={request.RequestId}, WasInAuthoritativeGroup={wasInAuthoritativeGroup}, ParticleCount={particleCount}, TotalRegistered={_registeredComponents.Count}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] Unregister: Component unregistered. ComponentHash={component.GetHashCode():X}, RequestId={request.RequestId}, WasInAuthoritativeGroup={wasInAuthoritativeGroup}, ParticleCount={particleCount}, TotalRegistered={_registeredComponents.Count}");
 
-            if (wasInAuthoritativeGroup && particleCount > 0)
+            if (VerboseLogging && wasInAuthoritativeGroup && particleCount > 0)
             {
                 XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] Unregister: Component was in authoritative group with {particleCount} particles. Resident buffers were disposed; the component will recreate resident state if it is reactivated. ComponentHash={component.GetHashCode():X}");
             }
@@ -457,7 +489,8 @@ public sealed class GPUPhysicsChainDispatcher
 
         if (!_registeredComponents.TryGetValue(component, out GPUPhysicsChainRequest? request))
         {
-            XREngine.Debug.LogWarning($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: Component NOT registered. ComponentHash={component.GetHashCode():X}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: Component not registered. ComponentHash={component.GetHashCode():X}");
             return false;
         }
 
@@ -471,15 +504,18 @@ public sealed class GPUPhysicsChainDispatcher
             particleStaticBuffer = _particleStaticBuffer;
             particleOffset = request.ParticleOffset;
             particleCount = request.Particles.Count > 0 ? request.Particles.Count : request.LastKnownParticleCount;
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: Using COMBINED buffer. ComponentHash={component.GetHashCode():X}, ParticleOffset={particleOffset}, ParticleCount={particleCount}, CombinedBufferHash={_particlesBuffer?.GetHashCode():X}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: Using COMBINED buffer. ComponentHash={component.GetHashCode():X}, ParticleOffset={particleOffset}, ParticleCount={particleCount}, CombinedBufferHash={_particlesBuffer?.GetHashCode():X}");
             return particleCount > 0;
         }
 
-        XREngine.Debug.LogWarning($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: FALLBACK to resident buffer. ComponentHash={component.GetHashCode():X}, GenerationMatch={generationMatch} (request={request.ActiveCombinedGeneration}, auth={_authoritativeCombinedGeneration}), HasParticlesBuffer={hasParticlesBuffer}, HasStaticBuffer={hasStaticBuffer}");
+        if (VerboseLogging)
+            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: Falling back to resident buffer. ComponentHash={component.GetHashCode():X}, GenerationMatch={generationMatch} (request={request.ActiveCombinedGeneration}, auth={_authoritativeCombinedGeneration}), HasParticlesBuffer={hasParticlesBuffer}, HasStaticBuffer={hasStaticBuffer}");
 
         if (request.ResidentParticlesBuffer is null || request.ResidentParticleStaticBuffer is null)
         {
-            XREngine.Debug.LogWarning($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: Resident buffers are NULL. ComponentHash={component.GetHashCode():X}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: Resident buffers are unavailable. ComponentHash={component.GetHashCode():X}");
             return false;
         }
 
@@ -487,7 +523,8 @@ public sealed class GPUPhysicsChainDispatcher
         particleStaticBuffer = request.ResidentParticleStaticBuffer;
         particleOffset = 0;
         particleCount = request.Particles.Count > 0 ? request.Particles.Count : request.LastKnownParticleCount;
-        XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: Using RESIDENT buffer. ComponentHash={component.GetHashCode():X}, ParticleOffset=0 (resident), ParticleCount={particleCount}, ResidentBufferHash={request.ResidentParticlesBuffer?.GetHashCode():X}");
+        if (VerboseLogging)
+            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] TryGetRenderParticleBuffers: Using RESIDENT buffer. ComponentHash={component.GetHashCode():X}, ParticleOffset=0 (resident), ParticleCount={particleCount}, ResidentBufferHash={request.ResidentParticlesBuffer?.GetHashCode():X}");
         return particleCount > 0;
     }
 
@@ -583,6 +620,15 @@ public sealed class GPUPhysicsChainDispatcher
         _initialized = true;
     }
 
+    private void EnsureGpuBonePaletteProgram()
+    {
+        if (_gpuBonePaletteProgram is not null)
+            return;
+
+        _gpuBonePaletteShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/PhysicsChainBonePalette.comp", EShaderType.Compute);
+        _gpuBonePaletteProgram = new XRRenderProgram(true, false, _gpuBonePaletteShader);
+    }
+
     private void BuildCombinedBuffers(OpenGLRenderer renderer, IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
         int staticParticleSignature = ComputeStaticParticleSignature(requests);
@@ -621,7 +667,8 @@ public sealed class GPUPhysicsChainDispatcher
             request.TreeOffset = treeOffset;
             request.ColliderOffset = colliderOffset;
 
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] BuildCombinedBuffers: Assigning offsets. RequestIndex={requestIndex}, RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, ParticleOffset={particleOffset}, ParticleCount={request.Particles.Count}, TreeOffset={treeOffset}, ColliderOffset={colliderOffset}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] BuildCombinedBuffers: Assigning offsets. RequestIndex={requestIndex}, RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, ParticleOffset={particleOffset}, ParticleCount={request.Particles.Count}, TreeOffset={treeOffset}, ColliderOffset={colliderOffset}");
 
             EnsureResidentParticleBuffer(request);
             EnsureResidentStaticBuffer(request);
@@ -735,12 +782,14 @@ public sealed class GPUPhysicsChainDispatcher
         if (!canReuseAuthoritativeParticles)
         {
             EnsureCombinedParticlesBufferAllocated(renderer);
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] BuildCombinedBuffers: Copying resident particles into combined buffer. RequestCount={requests.Count}, LayoutSignatureMatch={_authoritativeParticleLayoutSignature == particleLayoutSignature}, HasCpuChanges={hasCpuParticleStateChanges}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] BuildCombinedBuffers: Copying resident particles into combined buffer. RequestCount={requests.Count}, LayoutSignatureMatch={_authoritativeParticleLayoutSignature == particleLayoutSignature}, HasCpuChanges={hasCpuParticleStateChanges}");
             CopyResidentParticlesIntoCombinedBuffer(renderer, requests);
         }
         else
         {
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] BuildCombinedBuffers: REUSING authoritative particles (no copy needed). RequestCount={requests.Count}, AuthoritativeLayoutSig={_authoritativeParticleLayoutSignature:X}, CurrentLayoutSig={particleLayoutSignature:X}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] BuildCombinedBuffers: REUSING authoritative particles (no copy needed). RequestCount={requests.Count}, AuthoritativeLayoutSig={_authoritativeParticleLayoutSignature:X}, CurrentLayoutSig={particleLayoutSignature:X}");
         }
 
         MarkAuthoritativeParticleGroup(requests, particleLayoutSignature);
@@ -751,7 +800,8 @@ public sealed class GPUPhysicsChainDispatcher
         int particleCount = Math.Max(request.Particles.Count, 1);
         if (request.ResidentParticlesBuffer is null)
         {
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] EnsureResidentParticleBuffer: Creating NEW resident buffer. RequestId={request.RequestId}, ParticleCount={particleCount}, ComponentHash={request.Component.GetHashCode():X}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] EnsureResidentParticleBuffer: Creating NEW resident buffer. RequestId={request.RequestId}, ParticleCount={particleCount}, ComponentHash={request.Component.GetHashCode():X}");
 
             request.ResidentParticlesBuffer = new XRDataBuffer(
                 $"PhysicsChainResidentParticles_{request.RequestId:X}",
@@ -798,7 +848,8 @@ public sealed class GPUPhysicsChainDispatcher
             request.ResidentParticleStateVersion = request.ParticleStateVersion;
             RecordCpuUploadBytes(fullParticlePush ? request.ResidentParticlesBuffer.Length : particleBytes, isBatched: true);
 
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] EnsureResidentParticleBuffer: Uploaded particle data. RequestId={request.RequestId}, ParticleCount={request.Particles.Count}, WasUninitialized={wasUninitialized}, VersionMismatch={versionMismatch}, FullPush={fullParticlePush}, BytesWritten={particleBytes}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] EnsureResidentParticleBuffer: Uploaded particle data. RequestId={request.RequestId}, ParticleCount={request.Particles.Count}, WasUninitialized={wasUninitialized}, VersionMismatch={versionMismatch}, FullPush={fullParticlePush}, BytesWritten={particleBytes}");
         }
     }
 
@@ -848,7 +899,8 @@ public sealed class GPUPhysicsChainDispatcher
 
     private void CopyResidentParticlesIntoCombinedBuffer(OpenGLRenderer renderer, IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
-        XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: BEGIN. RequestCount={requests.Count}, CombinedBufferHash={_particlesBuffer?.GetHashCode():X}");
+        if (VerboseLogging)
+            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: BEGIN. RequestCount={requests.Count}, CombinedBufferHash={_particlesBuffer?.GetHashCode():X}");
 
         if (_particlesBuffer is null)
         {
@@ -871,8 +923,8 @@ public sealed class GPUPhysicsChainDispatcher
             XRDataBuffer? residentBuffer = request.ResidentParticlesBuffer;
             if (residentBuffer is null || request.Particles.Count == 0)
             {
-                if (request.Particles.Count > 0)
-                    XREngine.Debug.LogWarning($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: Skipping request with NULL resident buffer. RequestId={request.RequestId}, ParticleCount={request.Particles.Count}");
+                if (VerboseLogging && request.Particles.Count > 0)
+                    XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: Skipping request with unavailable resident buffer. RequestId={request.RequestId}, ParticleCount={request.Particles.Count}");
                 ++skippedCount;
                 continue;
             }
@@ -892,15 +944,17 @@ public sealed class GPUPhysicsChainDispatcher
                 continue;
             }
 
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: Copying. RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, ParticleOffset={request.ParticleOffset}, ParticleCount={request.Particles.Count}, ByteCount={byteCount}, WriteOffset={writeOffset}, SourceBufferId={sourceBufferId}, DestBufferId={destinationBufferId}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: Copying. RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, ParticleOffset={request.ParticleOffset}, ParticleCount={request.Particles.Count}, ByteCount={byteCount}, WriteOffset={writeOffset}, SourceBufferId={sourceBufferId}, DestBufferId={destinationBufferId}");
             renderer.RawGL.CopyNamedBufferSubData(sourceBufferId, destinationBufferId, 0, writeOffset, byteCount);
             RecordGpuCopyBytes((long)byteCount, isBatched: true);
             ++copiedCount;
         }
 
-        XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: END. Copied={copiedCount}, Skipped={skippedCount}");
-        if (skippedCount > 0)
-            XREngine.Debug.LogWarning($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: Copied {copiedCount} requests, SKIPPED {skippedCount} requests.");
+        if (VerboseLogging)
+            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: END. Copied={copiedCount}, Skipped={skippedCount}");
+        if (VerboseLogging && skippedCount > 0)
+            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] CopyResidentParticlesIntoCombinedBuffer: Copied {copiedCount} requests, skipped {skippedCount} requests.");
     }
 
     private void CopyCombinedParticlesBackToResidentBuffers(OpenGLRenderer renderer, IReadOnlyList<GPUPhysicsChainRequest> requests)
@@ -1075,12 +1129,193 @@ public sealed class GPUPhysicsChainDispatcher
         return created;
     }
 
+    private bool PublishBatchedGpuDrivenBoneMatrices(IReadOnlyList<GPUPhysicsChainRequest> requests)
+    {
+        using var profilerState = Engine.Profiler.Start("GPUPhysicsChainDispatcher.PublishBatchedGpuDrivenBoneMatrices");
+
+        if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+        {
+            ClearBatchedGpuDrivenBonePaletteSources(requests);
+            return false;
+        }
+
+        if (_particlesBuffer is null || _transformMatricesBuffer is null || requests.Count == 0)
+            return false;
+
+        CollectBatchedGpuDrivenBonePaletteBindings(requests);
+        if (_gpuDrivenPaletteBindings.Count == 0)
+            return false;
+
+        EnsureGpuBonePaletteProgram();
+        if (_gpuBonePaletteProgram is null)
+        {
+            ClearBatchedGpuDrivenBonePaletteSources(requests);
+            return false;
+        }
+
+        int signature = ComputeGpuDrivenBonePaletteSignature(_gpuDrivenPaletteBindings);
+        bool needsRebuild = signature != _gpuDrivenBonePaletteSignature
+            || _gpuDrivenBonePaletteMappingsBuffer is null
+            || _gpuDrivenBoneMatricesBuffer is null
+            || _gpuDrivenBoneInvBindMatricesBuffer is null;
+
+        if (needsRebuild)
+            RebuildBatchedGpuDrivenBonePaletteBuffers(signature);
+
+        if (_gpuDrivenBoneMappings.Count == 0
+            || _gpuDrivenBonePaletteMappingsBuffer is null
+            || _gpuDrivenBoneMatricesBuffer is null
+            || _gpuDrivenBoneInvBindMatricesBuffer is null)
+            return false;
+
+        _gpuBonePaletteProgram.Uniform("particleBaseOffset", 0);
+        _gpuBonePaletteProgram.Uniform("mappingCount", _gpuDrivenBoneMappings.Count);
+        _gpuBonePaletteProgram.BindBuffer(_particlesBuffer, 0);
+        _gpuBonePaletteProgram.BindBuffer(_transformMatricesBuffer, 1);
+        _gpuBonePaletteProgram.BindBuffer(_gpuDrivenBonePaletteMappingsBuffer, 2);
+        _gpuBonePaletteProgram.BindBuffer(_gpuDrivenBoneMatricesBuffer, 3);
+
+        uint groupsX = (uint)(_gpuDrivenBoneMappings.Count + 63) / 64u;
+        _gpuBonePaletteProgram.DispatchCompute(Math.Max(groupsX, 1u), 1u, 1u);
+        return true;
+    }
+
+    private void CollectBatchedGpuDrivenBonePaletteBindings(IReadOnlyList<GPUPhysicsChainRequest> requests)
+    {
+        _gpuDrivenPaletteBindings.Clear();
+        for (int i = 0; i < requests.Count; ++i)
+        {
+            GPUPhysicsChainRequest request = requests[i];
+            if (!request.Component.HasGpuDrivenRenderers)
+                continue;
+
+            request.Component.AppendBatchedGpuDrivenBonePaletteBindings(request.ParticleOffset, _gpuDrivenPaletteBindings);
+        }
+    }
+
+    private static int ComputeGpuDrivenBonePaletteSignature(List<GpuDrivenRendererPaletteBinding> bindings)
+    {
+        var hash = new HashCode();
+        hash.Add(bindings.Count);
+
+        for (int i = 0; i < bindings.Count; ++i)
+        {
+            GpuDrivenRendererPaletteBinding binding = bindings[i];
+            hash.Add(RuntimeHelpers.GetHashCode(binding.Renderer));
+            hash.Add(binding.ParticleBaseOffset);
+            hash.Add(binding.BoneMatrixElementCount);
+            hash.Add(binding.Mappings.Length);
+            hash.Add(binding.BindingGeneration);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private void RebuildBatchedGpuDrivenBonePaletteBuffers(int signature)
+    {
+        _gpuDrivenBoneMappings.Clear();
+        _gpuDrivenBoneMatrices.Clear();
+        _gpuDrivenBoneInvBindMatrices.Clear();
+
+        uint boneCursor = 0u;
+        for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
+        {
+            GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
+            uint baseElement = boneCursor;
+            uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
+
+            AppendMatrixRange(binding.Renderer.BoneMatricesBuffer, _gpuDrivenBoneMatrices, elementCount);
+            AppendMatrixRange(binding.Renderer.BoneInvBindMatricesBuffer, _gpuDrivenBoneInvBindMatrices, elementCount);
+
+            for (int mappingIndex = 0; mappingIndex < binding.Mappings.Length; ++mappingIndex)
+            {
+                GPUDrivenBoneMappingData mapping = binding.Mappings[mappingIndex];
+                mapping.ParticleIndex += binding.ParticleBaseOffset;
+                if (mapping.ChildParticleIndex >= 0)
+                    mapping.ChildParticleIndex += binding.ParticleBaseOffset;
+                mapping.BoneMatrixIndex += (int)baseElement;
+                _gpuDrivenBoneMappings.Add(mapping);
+            }
+
+            boneCursor += elementCount;
+        }
+
+        bool mappingsResized = EnsureBufferCapacity(
+            ref _gpuDrivenBonePaletteMappingsBuffer,
+            "PhysicsChainGlobalBonePaletteMappings",
+            (uint)Math.Max(_gpuDrivenBoneMappings.Count, 1),
+            8);
+        bool matricesResized = EnsureBufferCapacity(
+            ref _gpuDrivenBoneMatricesBuffer,
+            "PhysicsChainGlobalBoneMatrices",
+            (uint)Math.Max(_gpuDrivenBoneMatrices.Count, 1),
+            16);
+        bool invBindMatricesResized = EnsureBufferCapacity(
+            ref _gpuDrivenBoneInvBindMatricesBuffer,
+            "PhysicsChainGlobalBoneInvBindMatrices",
+            (uint)Math.Max(_gpuDrivenBoneInvBindMatrices.Count, 1),
+            16);
+
+        uint mappingBytes = _gpuDrivenBonePaletteMappingsBuffer?.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuDrivenBoneMappings)) ?? 0u;
+        PushBufferUpdate(_gpuDrivenBonePaletteMappingsBuffer, mappingsResized, mappingBytes);
+
+        uint matrixBytes = _gpuDrivenBoneMatricesBuffer?.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuDrivenBoneMatrices)) ?? 0u;
+        PushBufferUpdate(_gpuDrivenBoneMatricesBuffer, matricesResized, matrixBytes);
+
+        uint invBindBytes = _gpuDrivenBoneInvBindMatricesBuffer?.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuDrivenBoneInvBindMatrices)) ?? 0u;
+        PushBufferUpdate(_gpuDrivenBoneInvBindMatricesBuffer, invBindMatricesResized, invBindBytes);
+
+        boneCursor = 0u;
+        for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
+        {
+            GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
+            uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
+            binding.Renderer.SetGpuDrivenBoneMatrixSource(
+                binding.Component,
+                _gpuDrivenBoneMatricesBuffer!,
+                _gpuDrivenBoneInvBindMatricesBuffer!,
+                boneCursor,
+                elementCount);
+            boneCursor += elementCount;
+        }
+
+        _gpuDrivenBonePaletteSignature = signature;
+    }
+
+    private static unsafe void AppendMatrixRange(XRDataBuffer? source, List<Matrix4x4> destination, uint elementCount)
+    {
+        int start = destination.Count;
+        for (uint i = 0; i < elementCount; ++i)
+            destination.Add(Matrix4x4.Identity);
+
+        if (source?.ClientSideSource is null || source.Address == VoidPtr.Zero)
+            return;
+
+        uint copyCount = Math.Min(elementCount, source.ElementCount);
+        if (copyCount == 0u)
+            return;
+
+        Span<Matrix4x4> destinationSpan = CollectionsMarshal.AsSpan(destination).Slice(start, (int)copyCount);
+        fixed (Matrix4x4* destinationPtr = destinationSpan)
+            Memory.Move(destinationPtr, source.Address, copyCount * (uint)Unsafe.SizeOf<Matrix4x4>());
+    }
+
+    private static void ClearBatchedGpuDrivenBonePaletteSources(IReadOnlyList<GPUPhysicsChainRequest> requests)
+    {
+        for (int i = 0; i < requests.Count; ++i)
+            requests[i].Component.ClearBatchedGpuDrivenBonePaletteSources();
+    }
+
     #endregion
 
     #region Dispatch
 
     private void ProcessDispatchGroups(OpenGLRenderer renderer)
     {
+        bool canUseBatchedBonePalette = HasSingleDispatchGroup(_activeRequests);
+        if (!canUseBatchedBonePalette)
+            ClearBatchedGpuDrivenBonePaletteSources(_activeRequests);
+
         for (int groupStart = 0; groupStart < _activeRequests.Count;)
         {
             GPUDispatchGroupKey key = GPUDispatchGroupKey.From(_activeRequests[groupStart]);
@@ -1120,18 +1355,41 @@ public sealed class GPUPhysicsChainDispatcher
             }
 
             renderer.RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] ProcessDispatchGroups: Publishing bone matrices for {_dispatchGroup.Count} components. TotalParticles={TotalParticleCount}, ParticlesBufferHash={_particlesBuffer?.GetHashCode():X}, TransformsBufferHash={_transformMatricesBuffer?.GetHashCode():X}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] ProcessDispatchGroups: Publishing bone matrices for {_dispatchGroup.Count} components. TotalParticles={TotalParticleCount}, ParticlesBufferHash={_particlesBuffer?.GetHashCode():X}, TransformsBufferHash={_transformMatricesBuffer?.GetHashCode():X}");
+            bool batchedBonePalettePublished = canUseBatchedBonePalette && PublishBatchedGpuDrivenBoneMatrices(_dispatchGroup);
             for (int requestIndex = 0; requestIndex < _dispatchGroup.Count; ++requestIndex)
             {
                 GPUPhysicsChainRequest request = _dispatchGroup[requestIndex];
-                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] ProcessDispatchGroups: Calling PublishGpuDrivenBoneMatrices. RequestIndex={requestIndex}, RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, ParticleOffset={request.ParticleOffset}, ParticleCount={request.Particles.Count}");
-                request.Component.PublishGpuDrivenBoneMatrices(_particlesBuffer, _transformMatricesBuffer, request.ParticleOffset);
+                if (request.Component.HasGpuDrivenRenderers)
+                {
+                    if (VerboseLogging)
+                        XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] ProcessDispatchGroups: Calling PublishGpuDrivenBoneMatrices. RequestIndex={requestIndex}, RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, ParticleOffset={request.ParticleOffset}, ParticleCount={request.Particles.Count}");
+                    request.Component.PublishGpuDrivenBoneMatrices(
+                        _particlesBuffer,
+                        _transformMatricesBuffer,
+                        request.ParticleOffset,
+                        includeCompletePalettes: !batchedBonePalettePublished);
+                }
             }
 
             renderer.RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
             QueueAsyncReadback(renderer, _dispatchGroup);
             groupStart = groupEnd;
         }
+    }
+
+    private static bool HasSingleDispatchGroup(IReadOnlyList<GPUPhysicsChainRequest> requests)
+    {
+        if (requests.Count <= 1)
+            return true;
+
+        GPUDispatchGroupKey key = GPUDispatchGroupKey.From(requests[0]);
+        for (int i = 1; i < requests.Count; ++i)
+            if (CompareKeys(GPUDispatchGroupKey.From(requests[i]), key) != 0)
+                return false;
+
+        return true;
     }
 
     private static ulong ComputeParticleLayoutSignature(IReadOnlyList<GPUPhysicsChainRequest> requests)
@@ -1184,7 +1442,8 @@ public sealed class GPUPhysicsChainDispatcher
 
     private void SyncAuthoritativeParticlesToResidents(OpenGLRenderer renderer)
     {
-        XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] SyncAuthoritativeParticlesToResidents: BEGIN. AuthoritativeCount={_authoritativeParticleRequests.Count}");
+        if (VerboseLogging)
+            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] SyncAuthoritativeParticlesToResidents: BEGIN. AuthoritativeCount={_authoritativeParticleRequests.Count}");
         if (_authoritativeParticleRequests.Count > 0)
             CopyCombinedParticlesBackToResidentBuffers(renderer, _authoritativeParticleRequests);
 
@@ -1193,24 +1452,28 @@ public sealed class GPUPhysicsChainDispatcher
 
         _authoritativeParticleRequests.Clear();
         _authoritativeParticleLayoutSignature = 0UL;
-        XREngine.Debug.Out("[GPUPhysicsChainDispatcher] SyncAuthoritativeParticlesToResidents: END. Cleared authoritative group.");
+        if (VerboseLogging)
+            XREngine.Debug.Out("[GPUPhysicsChainDispatcher] SyncAuthoritativeParticlesToResidents: END. Cleared authoritative group.");
     }
 
     private void RemoveRequestFromAuthoritativeGroup(GPUPhysicsChainRequest request)
     {
         if (request.ActiveCombinedGeneration != _authoritativeCombinedGeneration)
         {
-            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] RemoveRequestFromAuthoritativeGroup: Request not in authoritative group (generation mismatch). RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, RequestGen={request.ActiveCombinedGeneration}, AuthGen={_authoritativeCombinedGeneration}");
+            if (VerboseLogging)
+                XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] RemoveRequestFromAuthoritativeGroup: Request not in authoritative group (generation mismatch). RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, RequestGen={request.ActiveCombinedGeneration}, AuthGen={_authoritativeCombinedGeneration}");
             return;
         }
 
         request.ActiveCombinedGeneration = -1;
         _authoritativeParticleRequests.Remove(request);
-        XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] RemoveRequestFromAuthoritativeGroup: Removed from authoritative group. RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, RemainingInAuthGroup={_authoritativeParticleRequests.Count}");
+        if (VerboseLogging)
+            XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] RemoveRequestFromAuthoritativeGroup: Removed from authoritative group. RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, RemainingInAuthGroup={_authoritativeParticleRequests.Count}");
         if (_authoritativeParticleRequests.Count == 0)
         {
             _authoritativeParticleLayoutSignature = 0UL;
-            XREngine.Debug.Out("[GPUPhysicsChainDispatcher] RemoveRequestFromAuthoritativeGroup: Authoritative group is now EMPTY. Signature reset to 0.");
+            if (VerboseLogging)
+                XREngine.Debug.Out("[GPUPhysicsChainDispatcher] RemoveRequestFromAuthoritativeGroup: Authoritative group is now EMPTY. Signature reset to 0.");
         }
     }
 
@@ -1468,11 +1731,17 @@ public sealed class GPUPhysicsChainDispatcher
             for (int i = 0; i < _registeredComponentSnapshot.Count; ++i)
             {
                 GPUPhysicsChainRequest request = _registeredComponentSnapshot[i];
+                request.Component.ClearBatchedGpuDrivenBonePaletteSources();
                 DisposeResidentParticlesBuffer(request);
                 request.NeedsUpdate = false;
             }
         }
 
+        _gpuDrivenPaletteBindings.Clear();
+        _gpuDrivenBoneMappings.Clear();
+        _gpuDrivenBoneMatrices.Clear();
+        _gpuDrivenBoneInvBindMatrices.Clear();
+        _gpuDrivenBonePaletteSignature = int.MinValue;
     }
 
     public void Dispose()
@@ -1484,17 +1753,37 @@ public sealed class GPUPhysicsChainDispatcher
         _transformMatricesBuffer?.Dispose();
         _collidersBuffer?.Dispose();
         _perTreeParamsBuffer?.Dispose();
+        _gpuDrivenBonePaletteMappingsBuffer?.Dispose();
+        _gpuDrivenBoneMatricesBuffer?.Dispose();
+        _gpuDrivenBoneInvBindMatricesBuffer?.Dispose();
+        _particlesBuffer = null;
+        _particleStaticBuffer = null;
+        _transformMatricesBuffer = null;
+        _collidersBuffer = null;
+        _perTreeParamsBuffer = null;
+        _gpuDrivenBonePaletteMappingsBuffer = null;
+        _gpuDrivenBoneMatricesBuffer = null;
+        _gpuDrivenBoneInvBindMatricesBuffer = null;
         _authoritativeParticleRequests.Clear();
         _authoritativeParticleLayoutSignature = 0UL;
         _staticParticleSignature = int.MinValue;
         _transformSignature = int.MinValue;
         _colliderSignature = int.MinValue;
+        _gpuDrivenBonePaletteSignature = int.MinValue;
 
         while (_readbackBufferPool.Count > 0)
             _readbackBufferPool.Pop().Dispose();
 
         _mainPhysicsProgram?.Destroy();
         _skipUpdateProgram?.Destroy();
+        _gpuBonePaletteProgram?.Destroy();
+        _gpuBonePaletteShader?.Destroy();
+        _mainPhysicsProgram = null;
+        _skipUpdateProgram = null;
+        _gpuBonePaletteProgram = null;
+        _mainPhysicsShader = null;
+        _skipUpdateShader = null;
+        _gpuBonePaletteShader = null;
 
         lock (_registeredComponentsSync)
         {

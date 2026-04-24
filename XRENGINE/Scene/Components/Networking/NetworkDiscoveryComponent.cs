@@ -13,7 +13,7 @@ using XREngine;
 namespace XREngine.Components
 {
     /// <summary>
-    /// Lightweight LAN discovery helper. Hosts (servers or p2p peers) broadcast a magic tag and the
+    /// Lightweight LAN discovery helper. Servers broadcast a magic tag and the
     /// connection details needed by clients; listeners pick up those broadcasts and can request the
     /// engine to connect using the advertised settings.
     /// </summary>
@@ -124,7 +124,7 @@ namespace XREngine.Components
         }
 
         /// <summary>
-        /// Role this instance advertises (Server -> clients connect; P2PClient -> peers connect as p2p clients).
+        /// Role this instance advertises. Server announcements are converted to client connections.
         /// </summary>
         public ENetworkingType AdvertisedRole
         {
@@ -243,7 +243,7 @@ namespace XREngine.Components
         }
 
         /// <summary>
-        /// Initializes this application as a server (or p2p host) using the advertised settings and starts networking.
+        /// Initializes this application as a server using the advertised settings and starts networking.
         /// </summary>
         public Task<BaseNetworkingManager?> StartServerAsync(GameStartupSettings? settings = null, CancellationToken cancellationToken = default)
         {
@@ -284,7 +284,6 @@ namespace XREngine.Components
             settings.NetworkingType = announcement.AdvertisedRole switch
             {
                 ENetworkingType.Server => ENetworkingType.Client,
-                ENetworkingType.P2PClient => ENetworkingType.P2PClient,
                 _ => ENetworkingType.Local,
             };
 

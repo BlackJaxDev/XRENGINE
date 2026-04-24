@@ -236,36 +236,6 @@
 			"problemMatcher": []
 		},
 		{
-			"label": "Start-P2PPeer-NoDebug",
-			"type": "shell",
-			"command": "cmd",
-			"args": [
-				"/d",
-				"/c",
-				"set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-			],
-			"dependsOn": "Build-Editor",
-			"presentation": {
-				"reveal": "silent"
-			},
-			"problemMatcher": []
-		},
-		{
-			"label": "Start-P2PPeer2-NoDebug",
-			"type": "shell",
-			"command": "cmd",
-			"args": [
-				"/d",
-				"/c",
-				"set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
-			],
-			"dependsOn": "Build-Editor",
-			"presentation": {
-				"reveal": "silent"
-			},
-			"problemMatcher": []
-		},
-		{
 			"label": "Prep-DebugServer-With2Clients",
 			"type": "shell",
 			"command": "cmd",
@@ -314,24 +284,6 @@
 			"dependsOn": [
 				"Start-DedicatedServer-NoDebug",
 				"Start-Client2-NoDebug"
-			],
-			"dependsOrder": "sequence",
-			"presentation": {
-				"reveal": "silent"
-			},
-			"problemMatcher": []
-		},
-		{
-			"label": "Prep-DebugP2PClient-WithPeer",
-			"type": "shell",
-			"command": "cmd",
-			"args": [
-				"/d",
-				"/c",
-				"echo Preparing P2P client debug session (peer client only)..."
-			],
-			"dependsOn": [
-				"Start-P2PPeer2-NoDebug"
 			],
 			"dependsOrder": "sequence",
 			"presentation": {

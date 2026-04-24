@@ -2,10 +2,12 @@
 
 This document describes the engine networking code that lives in XRENGINE today. The engine owns realtime connections only. Directory, matchmaking, room creation/join orchestration, host capacity, admission token issuance, and world artifact delivery live in the adjacent control-plane app.
 
+For the stable feature guide, see [XRENGINE Networking](../features/networking.md). Planned peer-to-peer host switching is tracked in [Peer-To-Peer Host Switching Implementation](../work/design/peer-to-peer-host-switching.md).
+
 ## Roles And Startup
 
-- The networking role is chosen from `GameStartupSettings.NetworkingType`: `Local`, `Server`, `Client`, or `P2PClient`.
-- `Engine.InitializeNetworking` instantiates `ServerNetworkingManager`, `ClientNetworkingManager`, or `PeerToPeerNetworkingManager`; `Local` disables networking.
+- The networking role is chosen from `GameStartupSettings.NetworkingType`: `Local`, `Server`, or `Client`.
+- `Engine.InitializeNetworking` instantiates `ServerNetworkingManager` or `ClientNetworkingManager`; `Local` disables networking.
 - When networking starts, `Engine.Jobs.RemoteTransport` is set to `RemoteJobNetworkingTransport` so remote jobs can share the realtime socket path.
 - Direct endpoint settings remain in `GameStartupSettings`:
   - `ServerIP`
@@ -76,8 +78,8 @@ XRENGINE then performs the realtime handshake and rejects clients whose local wo
 - Clients bind `UdpClientRecievePort` and use that socket for both outbound client-to-server packets and inbound server-to-client replies.
 - `BaseNetworkingManager` handles per-peer outbound queues, sequence counters, ACK/resend for reliable packets, token-bucket send limiting, RTT, bytes/sec, and packets/sec metrics.
 - The Phase 2 replication layer uses per-client endpoint routing so AOI/relevance and per-connection budgets can elide state for one client without disturbing another client's packet ordering.
-- Multicast remains available for P2P/LAN-style flows and fallback transport paths, but server-authoritative realtime replication no longer depends on multicast fanout.
-- WebRTC, QUIC, browser transport negotiation, and NAT traversal are not part of this engine slice.
+- Multicast remains available for LAN discovery and fallback transport paths, but server-authoritative realtime replication no longer depends on multicast fanout.
+- Peer-to-peer product transport, WebRTC, QUIC, browser transport negotiation, relay, and NAT traversal are not part of this engine v1 slice.
 
 ## Message Envelope
 
@@ -118,7 +120,7 @@ Engine-owned realtime contracts are intentionally small:
 - `NetworkAuthorityLease`: owner client id, authority mode, lease expiry, and revocation reason for server-validated ownership.
 - `NetworkSnapshotEnvelope` / `NetworkDeltaEnvelope`: ticked replication envelopes for channel-specific snapshot/delta payloads.
 - `ClockSyncMessage`: NTP-style heartbeat reply carrying server receive/send time and server tick.
-- `WorldSyncDescriptor`: advisory world name/scenes/game-mode plus exact `WorldAssetIdentity`.
+- `WorldSyncDescriptor`: explicit `WorldBootstrapId`, advisory world name/scenes/game-mode hints, and exact `WorldAssetIdentity`.
 - `PlayerInputSnapshot`, `PlayerTransformUpdate`, `PlayerLeaveNotice`, `PlayerHeartbeat`.
 
 Control-plane DTOs such as room summaries, create/join requests, host capacity snapshots, manifests, chunks, and world artifact descriptors should not be added back to XRENGINE.
@@ -151,6 +153,7 @@ Exact matching uses `WorldId`, `RevisionId`, normalized `ContentHash`, and `Asse
 - Sends `PlayerJoinRequest` with build version, local world identity, optional `SessionId`, and optional `SessionToken` until `PlayerAssignment` arrives.
 - Stores the assigned `SessionId`.
 - Stores the assigned `NetworkEntityId` and `NetworkAuthorityLease`.
+- Applies the server-advertised `WorldBootstrapId` through `GameModeBootstrapRegistry`; `GameModeType` is retained only as a diagnostic hint.
 - Sends input, predicted transform, heartbeat, pose, and leave messages scoped to that session.
 - Tags input and predicted transform updates with client tick/input sequence so the server can echo reconciliation progress.
 - Applies server-correction transform updates for locally owned actors and tracks the last processed input sequence.
@@ -180,6 +183,10 @@ Exact matching uses `WorldId`, `RevisionId`, normalized `ContentHash`, and `Asse
 - The server stamps accepted transform and humanoid pose traffic with server tick ids/time and rebroadcasts it as authoritative state.
 - The server buffers a bounded input window for jitter/lag-compensation policy and reports clock sync data on heartbeat.
 - The server prunes stale players using `MultiplayerRuntimePolicy.PlayerHeartbeatTimeout + PlayerHeartbeatGracePeriod`, then keeps a short `SessionResumeWindow` for same session/client id reconnects.
+
+## World Bootstrap
+
+Realtime assignment no longer constructs game modes from `WorldSyncDescriptor.GameModeType`. The server sends a stable `WorldBootstrapId`, and the client resolves that id through `GameModeBootstrapRegistry`. Built-in ids are `xre.custom`, `xre.flying-camera`, `xre.locomotion`, and `xre.vr`; game projects can register additional ids during startup. `WorldName`, `SceneNames`, and `GameModeType` remain advisory metadata and are not compatibility gates.
 
 ## Replication Model
 
@@ -224,7 +231,7 @@ It does not browse, create, or join public rooms.
 - The engine assumes both sides already have the same world asset locally.
 - World downloads, manifests, signed URLs, chunk caches, and eviction policy are external to XRENGINE.
 - `Local` mode bypasses networking.
-- `P2PClient` remains present but its v1 product disposition is still open.
+- `P2PClient` and `PeerToPeerNetworkingManager` were removed from the current engine transport surface. The replacement design is peer mode with dynamic connection-host switching, tracked in [Peer-To-Peer Host Switching Implementation](../work/design/peer-to-peer-host-switching.md).
 - `Tools\Start-NetworkTest.bat` launches the live realtime smoke paths:
   - default / `two-clients`: dedicated server plus two clients with the same handoff payload.
   - `mismatch`: dedicated server plus one good client and one client with an intentionally mismatched expected world hash.
@@ -235,5 +242,6 @@ It does not browse, create, or join public rooms.
 - Add a new `EStateChangeType` only for realtime data-plane behavior.
 - Add a MemoryPackable DTO only when the payload belongs in realtime transport.
 - Register new DTOs in `NetworkingAotContractRegistry`.
+- Register custom realtime game modes in `GameModeBootstrapRegistry` with a stable bootstrap id.
 - Cover serialization and AOT metadata in tests.
 - Do not add directory, allocation, world artifact, or public lobby DTOs back to XRENGINE.

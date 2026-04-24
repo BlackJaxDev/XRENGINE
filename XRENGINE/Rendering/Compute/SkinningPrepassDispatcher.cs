@@ -104,7 +104,12 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         if (!doSkinning && !doBlendshapes)
             return;
 
-        bool useGlobalBones = doSkinning && Engine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning && !renderer.HasGpuDrivenBoneSource;
+        bool useExternalBoneSource = doSkinning && renderer.HasExternalBoneMatrixSource;
+        bool usePackedGlobalBones = doSkinning
+            && !useExternalBoneSource
+            && Engine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning
+            && !renderer.HasGpuDrivenBoneSource;
+        bool useSharedBoneBuffers = useExternalBoneSource || usePackedGlobalBones;
         bool useGlobalBlendWeights = doBlendshapes && Engine.Rendering.Settings.UseGlobalBlendshapeWeightsBufferForComputeSkinning;
 
         bool isInterleaved = mesh.Interleaved;
@@ -144,22 +149,26 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
             // Ensure this renderer's animation inputs are present in the global packed buffers (if enabled).
             // This may resize and/or re-upload global buffers.
-            if (useGlobalBones || useGlobalBlendWeights)
+            if (usePackedGlobalBones || useGlobalBlendWeights)
             {
-                bool changed = _globalInputs.EnsurePackedForRenderer(renderer, useGlobalBones, useGlobalBlendWeights);
-                _globalInputs.PushIfDirty(pushBones: useGlobalBones, pushBlendshapeWeights: useGlobalBlendWeights);
+                _globalInputs.EnsurePackedForRenderer(renderer, usePackedGlobalBones, useGlobalBlendWeights);
+                _globalInputs.PushIfDirty(pushBones: usePackedGlobalBones, pushBlendshapeWeights: useGlobalBlendWeights);
             }
 
             resources.SyncDynamicBuffers(
-                pushBoneMatrices: !useGlobalBones,
+                pushBoneMatrices: !useSharedBoneBuffers,
                 pushBlendshapeWeights: !useGlobalBlendWeights);
 
             uint boneBase = renderer.ActiveBoneMatrixBase;
             uint boneCount = renderer.ActiveBoneMatrixCount;
-            if (useGlobalBones && _globalInputs.TryGetBoneSlice(renderer, out uint packedBase, out uint packedCount))
+            XRDataBuffer? activeBoneMatrices = renderer.ActiveBoneMatricesBuffer;
+            XRDataBuffer? activeBoneInvBindMatrices = renderer.ActiveBoneInvBindMatricesBuffer;
+            if (usePackedGlobalBones && _globalInputs.TryGetBoneSlice(renderer, out uint packedBase, out uint packedCount))
             {
                 boneBase = packedBase;
                 boneCount = packedCount;
+                activeBoneMatrices = _globalInputs.GlobalBoneMatrices;
+                activeBoneInvBindMatrices = _globalInputs.GlobalBoneInvBindMatrices;
             }
 
             uint blendBase = 0u;
@@ -172,10 +181,9 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                     doSkinning,
                     doBlendshapes,
                     isInterleaved,
-                    useGlobalBones,
                     useGlobalBlendWeights,
-                    _globalInputs.GlobalBoneMatrices,
-                    _globalInputs.GlobalBoneInvBindMatrices,
+                    activeBoneMatrices,
+                    activeBoneInvBindMatrices,
                     _globalInputs.GlobalBlendshapeWeights);
 
                 uint vertexCount = (uint)mesh.VertexCount;
@@ -265,7 +273,10 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                     bool skinningInCompute = Engine.Rendering.Settings.CalculateSkinningInComputeShader
                         && mesh.HasSkinning
                         && Engine.Rendering.Settings.AllowSkinning;
-                    bool needsBones = globalBones && !renderer.HasGpuDrivenBoneSource && skinningInCompute;
+                    bool needsBones = globalBones
+                        && !renderer.HasExternalBoneMatrixSource
+                        && !renderer.HasGpuDrivenBoneSource
+                        && skinningInCompute;
                     bool needsBlend = globalBlend
                         && mesh.BlendshapeCount > 0
                         && Engine.Rendering.Settings.AllowBlendshapes
@@ -477,10 +488,9 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             bool doSkinning,
             bool doBlendshapes,
             bool isInterleaved,
-            bool useGlobalBones,
             bool useGlobalBlendshapeWeights,
-            XRDataBuffer? globalBoneMatrices,
-            XRDataBuffer? globalInvBindMatrices,
+            XRDataBuffer? boneMatrices,
+            XRDataBuffer? boneInvBindMatrices,
             XRDataBuffer? globalBlendshapeWeights)
         {
             var mesh = _renderer.Mesh;
@@ -508,16 +518,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
             if (doSkinning)
             {
-                if (useGlobalBones)
-                {
-                    globalBoneMatrices?.SetBlockIndex(0);
-                    globalInvBindMatrices?.SetBlockIndex(1);
-                }
-                else
-                {
-                    _renderer.ActiveBoneMatricesBuffer?.SetBlockIndex(0);
-                    _renderer.ActiveBoneInvBindMatricesBuffer?.SetBlockIndex(1);
-                }
+                boneMatrices?.SetBlockIndex(0);
+                boneInvBindMatrices?.SetBlockIndex(1);
                 mesh.BoneWeightOffsets?.SetBlockIndex(2);
                 mesh.BoneWeightCounts?.SetBlockIndex(3);
                 

@@ -1,6 +1,6 @@
 # AOT TODO For Final Game Builds
 
-Last Updated: 2026-03-09
+Last Updated: 2026-04-24
 Current Status: NativeAOT publish plumbing exists, but the runtime is not yet AOT-safe for shipped final game builds.
 Scope: Final cooked game/server/launcher builds only. The Editor remains CoreCLR/JIT and may continue loading user-written managed plugins during development.
 
@@ -86,10 +86,10 @@ What still blocks or weakens final AOT builds:
 - `XRENGINE/Core/XRTypeRedirectRegistry.cs` — scans all assemblies at first use to build a type-redirect map for deserialization backwards compatibility
 - `XRENGINE/Core/Engine/AssetManager.Serialization.cs` — creates static `Serializer` and `Deserializer` YamlDotNet instances at type initialization by scanning all assemblies for `IYamlTypeConverter` implementations. YamlDotNet itself is not NativeAOT-compatible without explicit type registration and is not on the AOT-friendly library list.
 - runtime type discovery in `XRENGINE/Scene/Transforms/TransformBase.cs` and nearby discovery paths
-- prefab override reflection in `XRENGINE/Scene/Prefabs/*` and `XRENGINE/Rendering/XRWorldInstance.cs`
+- prefab/component clone coverage for custom shipped prefabs now requires explicit handlers; the default published AOT prefab path no longer uses YAML/reflection
 - generic marshalling risk in `XRENGINE/Rendering/API/Rendering/Objects/Buffers/XRDataBuffer.cs`
-- networking game mode and controller type activation via reflection in `XRENGINE/Engine/Networking/Engine.ClientNetworkingManager.cs` and `XRENGINE/Engine/Subclasses/Engine.State.cs`
-- rendering type activation via `Activator.CreateInstance` in camera, post-process, render command, and OpenXR pipeline paths
+- networking controller type activation is now registry-backed in `XRENGINE/Engine/Subclasses/Engine.State.cs`; realtime game-mode bootstrap is also registry-backed through `WorldBootstrapId`
+- rendering type activation is now factory-backed for camera, post-process, render command, and OpenXR pipeline paths; dev/editor reflection fallbacks remain outside published AOT
 
 ## Phase 0 - Define The Shipping AOT Boundary
 
@@ -166,7 +166,6 @@ Outcome: shipping builds stop depending on “discover everything in loaded asse
   - `XRENGINE/Core/Files/XRAsset.MemoryPack.cs`
   - `XRENGINE/Core/Engine/PolymorphicYamlNodeDeserializer.cs`
   - `XRENGINE/Core/Engine/XRAssetYamlTypeConverter.cs`
-  - `XRENGINE/Engine/Networking/Engine.ClientNetworkingManager.cs`
 - [x] For the implemented Phase 2 scope, replace scan-heavy runtime registries with generated metadata.
   - `XRWorldObjectBase`
   - `TransformBase`
@@ -261,22 +260,30 @@ Acceptance criteria:
 
 Outcome: prefab instancing and runtime type creation work in shipping builds without open-ended reflection.
 
-- [ ] Audit prefab override application paths used in shipped runtime.
-- [ ] Replace reflection-heavy prefab apply/diff paths with generated or explicitly mapped handlers for shipping builds.
-- [ ] Audit and fix concrete `Activator.CreateInstance` call sites reachable from final game/runtime startup:
-  - `XRENGINE/Core/Attributes/RequiresTransformAttribute.cs` — creates transform instances by type; replace with a factory delegate or type-keyed registry
-  - `XRENGINE/Engine/Subclasses/Engine.State.cs` — creates assets via `Activator.CreateInstance<T>()` and instantiates local player controllers by type; the controller path has a partial `[DynamicallyAccessedMembers]` annotation that still requires AOT publish to know about the concrete controller types
-  - `XRENGINE/Engine/Networking/Engine.ClientNetworkingManager.cs` — creates game modes via `Activator.CreateInstance(gmType)` where the type is resolved from the network by string name; requires an explicit game mode registry
-  - `XRENGINE/Rendering/Camera/XRCameraParameters.cs` — creates camera parameter instances by type; replace with a type-keyed factory
-  - `XRENGINE/Rendering/PostProcessing/CameraPostProcessStateCollection.cs` — creates post-process state instances by type; replace with a factory or source-generated constructor call
-  - `XRENGINE/Rendering/Pipelines/Commands/ViewportRenderCommandContainer.cs` — creates render commands by type using `[DynamicallyAccessedMembers(PublicParameterlessConstructor)]`; callers must pass only statically known types for this to be AOT-safe
-  - `XRENGINE/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs` — clones render pipelines via `Activator.CreateInstance(sourcePipeline.GetType())`; replace with pipeline-type-specific clone logic or a registered factory
-  - `XRENGINE/Core/Files/CookedBinarySerializer.cs` — multiple `Activator.CreateInstance` for events, tuples, hash sets, and other runtime constructed types; needs per-type registered factories
-- [ ] Where unrestricted type activation is used, switch to:
+- [x] Audit prefab override application paths used in shipped runtime.
+  - implemented: published AOT prefab cloning now uses `SceneNodePrefabUtility.CloneHierarchyBounded(...)` instead of YAML serialize/deserialize.
+  - implemented: prefab property application checks explicit handlers first and fails fast in published AOT when no handler is registered.
+- [x] Replace reflection-heavy prefab apply/diff paths with generated or explicitly mapped handlers for shipping builds.
+  - implemented: built-in handlers cover `SceneNode.Name`, `IsActiveSelf`, `IsEditorOnly`, `Layer`, and default `Transform` translation/position/scale/rotation paths.
+  - implemented: custom prefab support is available through `RegisterPropertyOverrideHandler`, `RegisterTransformCloneHandler`, and `RegisterComponentCloneHandler`.
+  - implementation boundary: editor/dev still keeps the existing reflection/YAML fallback; published AOT never enters that fallback.
+- [x] Audit and fix concrete `Activator.CreateInstance` call sites reachable from final game/runtime startup:
+  - fixed 2026-04-24: `XREngine.Runtime.Core/Attributes/RequiresTransformAttribute.cs` resolves required transforms through `TransformFactoryRegistry`; published AOT rejects unregistered transform types.
+  - fixed 2026-04-24: `XRENGINE/Engine/Subclasses/Engine.State.cs` resolves local/remote player controllers through `RuntimePlayerControllerServices` factories; published AOT rejects unregistered controller types.
+  - fixed 2026-04-24: `XRENGINE/Engine/Networking/Engine.ClientNetworkingManager.cs` resolves realtime game modes by explicit `WorldBootstrapId` through `GameModeBootstrapRegistry`; `GameModeType` remains a hint and is no longer activated by reflection.
+  - fixed 2026-04-24: `XRENGINE/Rendering/Camera/XRCameraParameters.cs` uses type-keyed factories, including generated registrations for public concrete camera parameter types and primary constructors.
+  - fixed 2026-04-24: `XRENGINE/Rendering/PostProcessing/CameraPostProcessStateCollection.cs` creates backing state through `PostProcessBackingFactoryRegistry`; generated registrations cover concrete `PostProcessSettings` types.
+  - fixed 2026-04-24: `XRENGINE/Rendering/Pipelines/Commands/ViewportRenderCommandContainer.cs` creates render commands through generated factories; published AOT rejects unregistered or argument-only command construction.
+  - fixed 2026-04-24: `XRENGINE/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs` clones OpenXR render pipelines through `RenderPipeline.RegisterOpenXrPipelineFactory`; published AOT rejects unregistered pipeline types.
+  - fixed 2026-04-24: `XRENGINE/Core/Files/CookedBinary/CookedBinarySerializer.cs` uses registered runtime factories before object construction and throws before generic event, tuple, hash-set, or unknown object construction in published AOT.
+  - fixed 2026-04-24: `XREngine.Runtime.Rendering/Core/Files/RuntimeCookedBinarySerializer.cs` now has registered runtime factories and blocks assembly scanning / unknown object construction in published AOT; published mesh and texture runtime serializers register their factories at module initialization.
+- [x] Where unrestricted type activation is used, switch to:
   - explicit factory registration
-  - source-generated constructors
+  - generated constructor registrations
   - constrained type maps keyed on statically known types
-- [ ] Verify that any remaining `[DynamicallyAccessedMembers]`-annotated paths have their type sets fully knowable at publish time.
+- [x] Verify that any remaining `[DynamicallyAccessedMembers]`-annotated paths have their type sets fully knowable at publish time.
+  - implementation note: `Tools/Generate-AotFactoryRegistrations.ps1` runs before `CoreCompile` and emits `AotFactoryRegistrations.g.cs` for transforms, viewport render commands, camera parameter types, post-process backing types, OpenXR render pipelines, and player controllers.
+  - implementation note: dev/editor paths may still use reflection fallback; published AOT paths either use registered factories/handlers or throw with an actionable registration error.
 
 Acceptance criteria:
 
@@ -339,7 +346,7 @@ If work starts now, the highest-leverage first slice is:
 - [ ] fix `XRWorldObjectBase` static constructor — it triggers automatically and scans every assembly
 - [x] decide whether YAML is loaded at runtime in shipping builds; if not, gate `AssetManager.Serializer`/`Deserializer` and direct YAML asset loading out of the shipping runtime
 - [x] implement source-generated JSON context for engine-owned runtime DTOs
-- [ ] define a static registry strategy for transforms, prefabs, world objects, and runtime-created gameplay/rendering types
+- [x] define a static registry strategy for transforms, prefabs, world objects, and runtime-created gameplay/rendering types
 - [ ] prove one representative cooked final launcher can publish with NativeAOT
 - [ ] remove the dead `using System.Reflection.Emit;` import from `XREngine.Animation/State Machine/Layers/AnimLayer.cs` (unused import, avoids false AOT scan hits)
 
@@ -350,7 +357,7 @@ If work starts now, the highest-leverage first slice is:
 - [ ] Runtime type discovery replaced with registries
 - [ ] Shipping JSON paths converted to generated metadata
 - [ ] Cooked asset loading path made reflection-bounded
-- [ ] Prefab/runtime activation path made AOT-safe
+- [x] Prefab/runtime activation path made AOT-safe
 - [ ] Buffer marshalling path constrained to blittable/unmanaged types
 - [ ] Canonical AOT publish flow documented and validated
 
