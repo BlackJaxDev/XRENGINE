@@ -5,18 +5,23 @@ using ImGuiNET;
 using XREngine;
 using XREngine.Components;
 using XREngine.Diagnostics;
+using XREngine.Networking;
 using static XREngine.Engine;
 
 namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+        private static bool _netSettingsSeeded;
         private static ENetworkingType _netMode = ENetworkingType.Local;
         private static string _netServerIp = "127.0.0.1";
         private static string _netMulticastGroupIp = "239.0.0.222";
         private static int _netMulticastPort = 5000;
+        private static int _netServerBindPort = 5000;
         private static int _netServerSendPort = 5000;
         private static int _netClientReceivePort = 5001;
+        private static string _netSessionId = string.Empty;
+        private static string _netSessionToken = string.Empty;
         private static string _kickReason = "Kicked by operator";
 
         private static void DrawNetworkingPanel()
@@ -24,7 +29,9 @@ public static partial class EditorImGuiUI
             if (!_showNetworking)
                 return;
 
-            ImGui.SetNextWindowSize(new Vector2(440, 520), ImGuiCond.FirstUseEver);
+            EnsureNetworkingUiState();
+
+            ImGui.SetNextWindowSize(new Vector2(440, 430), ImGuiCond.FirstUseEver);
             if (!ImGui.Begin("Networking", ref _showNetworking))
             {
                 ImGui.End();
@@ -38,6 +45,23 @@ public static partial class EditorImGuiUI
             DrawNetworkingConnections();
 
             ImGui.End();
+        }
+
+        private static void EnsureNetworkingUiState()
+        {
+            if (_netSettingsSeeded || GameSettings is not GameStartupSettings settings)
+                return;
+
+            _netMode = settings.NetworkingType;
+            _netServerIp = settings.ServerIP;
+            _netMulticastGroupIp = settings.UdpMulticastGroupIP;
+            _netMulticastPort = settings.UdpMulticastPort;
+            _netServerBindPort = settings.UdpServerBindPort;
+            _netServerSendPort = settings.UdpServerSendPort;
+            _netClientReceivePort = settings.UdpClientRecievePort;
+            _netSessionId = settings.MultiplayerSessionId?.ToString("D") ?? string.Empty;
+            _netSessionToken = settings.MultiplayerSessionToken ?? string.Empty;
+            _netSettingsSeeded = true;
         }
 
         private static void DrawNetworkingControls()
@@ -60,8 +84,11 @@ public static partial class EditorImGuiUI
             ImGui.InputText("Server IP", ref _netServerIp, 64);
             ImGui.InputText("Multicast Group", ref _netMulticastGroupIp, 64);
             ImGui.InputInt("Multicast Port", ref _netMulticastPort);
+            ImGui.InputInt("Server Bind Port", ref _netServerBindPort);
             ImGui.InputInt("Server Send Port", ref _netServerSendPort);
             ImGui.InputInt("Client Receive Port", ref _netClientReceivePort);
+            ImGui.InputText("Session Id", ref _netSessionId, 64);
+            ImGui.InputText("Session Token", ref _netSessionToken, 256);
 
             if (ImGui.Button("Start / Apply", new Vector2(-1, 0)))
                 ApplyNetworking();
@@ -80,6 +107,14 @@ public static partial class EditorImGuiUI
             ImGui.TextUnformatted($"Peer Id: {net.LocalPeerId}");
             ImGui.TextUnformatted($"RTT: {net.AverageRoundTripTimeMs} ms (smoothing {net.RTTSmoothingPercent:P0})");
             ImGui.TextUnformatted($"Data: {net.DataPerSecondString}, Packets/s: {net.PacketsPerSecond}");
+
+            if (net is ClientNetworkingManager client && client.LocalWorldAsset is not null)
+            {
+                ImGui.Separator();
+                ImGui.TextUnformatted($"World: {client.LocalWorldAsset.WorldId}");
+                ImGui.TextUnformatted($"Revision: {client.LocalWorldAsset.RevisionId}");
+                ImGui.TextUnformatted($"Hash: {client.LocalWorldAsset.ContentHash}");
+            }
         }
 
         private static void DrawNetworkingConnections()
@@ -167,12 +202,16 @@ public static partial class EditorImGuiUI
                 NetworkingType = _netMode,
                 UdpMulticastGroupIP = _netMulticastGroupIp,
                 UdpMulticastPort = _netMulticastPort,
+                UdpServerBindPort = _netServerBindPort,
                 UdpServerSendPort = _netServerSendPort,
                 UdpClientRecievePort = _netClientReceivePort,
-                ServerIP = _netServerIp
+                ServerIP = _netServerIp,
+                MultiplayerSessionId = Guid.TryParse(_netSessionId, out Guid parsedSessionId) ? parsedSessionId : null,
+                MultiplayerSessionToken = string.IsNullOrWhiteSpace(_netSessionToken) ? null : _netSessionToken,
             };
 
             Engine.ConfigureNetworking(settings);
+            _netSettingsSeeded = true;
         }
 
         private static void StopNetworking()
@@ -183,10 +222,15 @@ public static partial class EditorImGuiUI
             }
             catch (Exception ex)
             {
-            Debug.Out($"[UI] Failed to dispose networking: {ex.Message}");
-        }
+                Debug.Out($"[UI] Failed to dispose networking: {ex.Message}");
+            }
 
-        GameStartupSettings settings = new() { NetworkingType = ENetworkingType.Local };
-        Engine.ConfigureNetworking(settings);
-    }
+            GameStartupSettings settings = new()
+            {
+                NetworkingType = ENetworkingType.Local,
+            };
+
+            Engine.ConfigureNetworking(settings);
+            _netSettingsSeeded = true;
+        }
 }

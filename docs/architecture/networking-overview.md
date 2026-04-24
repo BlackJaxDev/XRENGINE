@@ -1,87 +1,239 @@
 # XRENGINE Networking Overview
 
-This document describes how networking is wired in the engine today: roles, transports, message shapes, replication flows, remote jobs (including asset download), and operational guidance.
+This document describes the engine networking code that lives in XRENGINE today. The engine owns realtime connections only. Directory, matchmaking, room creation/join orchestration, host capacity, admission token issuance, and world artifact delivery live in the adjacent control-plane app.
 
-## Roles and startup
-- The networking role is chosen from `GameStartupSettings.NetworkingType`: `Local`, `Server`, `Client`, `P2PClient`.
-- `Engine.InitializeNetworking` instantiates one of `ServerNetworkingManager`, `ClientNetworkingManager`, or `PeerToPeerNetworkingManager`; for `Local`, networking is disabled.
-- When a manager is created, `Engine.Jobs.RemoteTransport` is set to `RemoteJobNetworkingTransport` so remote jobs can piggyback on the same sockets.
+## Roles And Startup
 
-## Transports
-- **UDP multicast + unicast**: all state-change traffic is UDP. The server binds a receiver and multicasts to clients; clients open a multicast receiver and a unicast sender to the server.
-- **Peer ID**: every manager has a `LocalPeerId` (server uses "server").
-- **Queues**: `BaseNetworkingManager` enqueues outbound payloads and drains them during the frame tick (`ConsumeQueues` → `SendUDP`).
+- The networking role is chosen from `GameStartupSettings.NetworkingType`: `Local`, `Server`, `Client`, or `P2PClient`.
+- `Engine.InitializeNetworking` instantiates `ServerNetworkingManager`, `ClientNetworkingManager`, or `PeerToPeerNetworkingManager`; `Local` disables networking.
+- When networking starts, `Engine.Jobs.RemoteTransport` is set to `RemoteJobNetworkingTransport` so remote jobs can share the realtime socket path.
+- Direct endpoint settings remain in `GameStartupSettings`:
+  - `ServerIP`
+  - `UdpServerBindPort`
+  - `UdpServerSendPort`
+  - `UdpClientRecievePort`
+  - `UdpMulticastGroupIP`
+  - `UdpMulticastPort`
+  - `MultiplayerTransport`
+  - optional `MultiplayerSessionId`
+  - optional `MultiplayerSessionToken`
+  - optional `ExpectedMultiplayerProtocolVersion`
+  - optional `ExpectedMultiplayerWorldAsset`
 
-## Message envelope
-- All messages are encoded as `StateChangeInfo`:
-  - `Type`: enum `EStateChangeType` (see below).
-  - `Data`: serialized payload (JSON/MemoryPack via `StateChangePayloadSerializer`).
-- Common `EStateChangeType` entries:
-  - `PlayerJoin`, `PlayerAssignment`, `PlayerLeave`
-  - `PlayerInputSnapshot`, `PlayerTransformUpdate`
-  - `WorldChange`, `GameModeChange`
-  - `RemoteJobRequest`, `RemoteJobResponse`
-  - `Heartbeat`, `ServerError`
+## External Handoff
 
-## Client flow (ClientNetworkingManager)
-- Opens multicast receiver, unicast sender to the server, registers a per-frame tick.
-- Sends `PlayerJoin` until `PlayerAssignment` arrives; assignment contains authoritative server index and current world descriptor.
-- Periodic sends:
-  - Input snapshots at 60 Hz.
-  - Transform snapshots at 20 Hz.
-  - Heartbeat every 3s while assigned.
-- Receives assignments, remote transforms, leave notices, server errors, and remote job responses.
-- Tracks remote players and applies server-driven world/game mode state.
+A control-plane or launcher can configure a realtime client without adding lobby or download data by setting either:
 
-## Server flow (ServerNetworkingManager)
-- Binds UDP receiver; starts multicast sender.
-- On `PlayerJoin`: registers/updates connection, assigns server index, broadcasts `PlayerAssignment` (includes world descriptor), and replays cached transforms to newcomers.
-- On `PlayerInputSnapshot` / `PlayerTransformUpdate`: updates connection state and rebroadcasts transforms to clients.
-- On `Heartbeat`: updates liveness timestamps.
-- On `PlayerLeave`: removes connection, broadcasts leave, emits a server error (499) to that client id.
-- Periodically prunes stale players (timeout + grace).
+- `XRE_REALTIME_JOIN_PAYLOAD_FILE`: path to a local JSON payload.
+- `XRE_REALTIME_JOIN_PAYLOAD`: inline JSON payload.
 
-## Remote jobs (binary RPC over the same transport)
-- Request/response envelope: `RemoteJobRequest` and `RemoteJobResponse` routed via `EStateChangeType.RemoteJobRequest/Response`.
-- Transfer modes: `RequestFromRemote` (ask remote to produce payload) or `PushDataToRemote` (caller provides payload).
-- Dispatch: `Engine.HandleRemoteJobRequestInternalAsync` switches on `Operation`; currently `asset/load` is supported.
-- Transport binding: `RemoteJobNetworkingTransport` sends jobs through the networking manager and surfaces responses back to callers (`Engine.Jobs.ScheduleRemote`).
+The payload shape is:
 
-## Asset loading over the network
-- Client-side fallback is in `AssetManager`:
-  - `LoadEngineAssetRemote(Async)`, `LoadGameAssetRemote(Async)` take optional metadata and first try local load, then remote fetch if connected.
-  - `LoadByIdRemote(Async)` loads by GUID; resolves local path via metadata or pulls from server.
-  - Remote requests include required fields (`path` or `id`, `type`) plus any caller-supplied metadata (e.g., LOD preferences, spawn-relative hints).
-- Server-side handling in `Engine.HandleRemoteAssetLoadAsync`:
-  - Accepts path or GUID; resolves the file (loaded asset cache or metadata path).
-  - Reads bytes and returns them in `RemoteJobResponse`; echoes a canonical `path` in response metadata when known.
-- Client persistence: downloaded bytes are written locally (using server path if provided), then loaded normally.
+```json
+{
+  "sessionId": "11111111-1111-1111-1111-111111111111",
+  "sessionToken": "opaque-token-issued-elsewhere",
+  "endpoint": {
+    "transport": "NativeUdp",
+    "host": "127.0.0.1",
+    "port": 5000,
+    "protocolVersion": "dev",
+    "metadata": {}
+  },
+  "worldAsset": {
+    "worldId": "world-guid-or-stable-id",
+    "revisionId": "immutable-revision",
+    "contentHash": "sha256-or-manifest-hash",
+    "assetSchemaVersion": 1,
+    "requiredBuildVersion": "dev",
+    "metadata": {}
+  }
+}
+```
 
-## Liveness and reliability
-- Heartbeats: clients send every 3s after assignment; server uses timestamps to detect stale connections (15s timeout + 5s grace) and prunes.
-- Leave handling: clients proactively send `PlayerLeave`; server broadcasts leave and emits a non-fatal error to that client id.
-- Version check: server compares client build version in `PlayerJoin` and can emit a 426 Upgrade Required warning.
+At startup XRENGINE maps this to client settings, validates the expected `WorldAssetIdentity` against the loaded local world before the UDP join loop starts, and logs endpoint/session/protocol/world identity without printing the session token.
 
-## Error channel
-- `ServerError` carries code, message, and optional player index; used for version mismatches, kicked/leaves, and other server notices.
+## Boundary
 
-## World/game mode sync
-- Server embeds a `WorldSyncDescriptor` in `PlayerAssignment`.
-- Client applies it on receipt: creates world if missing, sets world name, instantiates game mode via reflection, and logs trimming warnings when reflection metadata might be stripped.
+XRENGINE does not browse, create, allocate, manage, download, or cache multiplayer instances/world artifacts.
 
-## Extending networking
-- Add a new `EStateChangeType` for the feature and a payload DTO; serialize via `StateChangePayloadSerializer`.
-- Implement send/receive handling in client/server managers.
-- For remote RPC-style work, prefer `RemoteJobOperations` and reuse `RemoteJobRequest/Response` instead of adding bespoke message types.
+The external control-plane app should hand XRENGINE concrete realtime connection data only:
 
-## Operational notes
-- All traffic is UDP; large payloads (e.g., assets) ride inside remote jobs—consider size and chunking if payloads grow.
-- Multicast group/ports come from `GameStartupSettings` (`UdpMulticastGroupIP`, `UdpMulticastPort`, `UdpClientRecievePort`, `UdpServerSendPort`).
-- `Local` mode bypasses networking entirely; `P2PClient` uses similar plumbing but without a dedicated server (see `PeerToPeerNetworkingManager`).
+- host/IP or hostname
+- UDP port(s)
+- transport kind
+- protocol/build requirement
+- session id
+- optional opaque session token
+- exact local world asset identity
 
-## Quick checklist for consumers
-- Choose role in `GameStartupSettings.NetworkingType`.
-- Ensure remote job transport is connected before relying on remote asset fetches.
-- When requesting remote assets, supply metadata to guide the server (e.g., `{"lod":"low","origin":"spawnA"}`).
-- Handle `ServerError` events to surface actionable feedback to users.
-- Keep assets and build versions in sync between server and clients to minimize warnings and retries.
+XRENGINE then performs the realtime handshake and rejects clients whose local world asset identity does not exactly match the server's local world asset identity.
+
+## Transport
+
+- Native realtime traffic uses the existing UDP data plane (`RealtimeTransportKind.NativeUdp`).
+- The server binds a UDP receiver and multicasts state changes to clients.
+- Clients open a multicast receiver and a unicast sender to the server IP.
+- `BaseNetworkingManager` handles outbound queues, ACK/resend for reliable packets, token-bucket send limiting, RTT, bytes/sec, and packets/sec metrics.
+- The Phase 2 replication layer sits above that packet system. It does not replace sequence comparison, ACK bitfields, resend tracking, or token-bucket throttling.
+- Server output still uses the current multicast sender. AOI/relevance and per-connection budgets gate whether authoritative transform updates are emitted, but strict per-client payload elision requires a later per-peer UDP sequence/ACK refactor.
+- WebRTC, QUIC, browser transport negotiation, and NAT traversal are not part of this engine slice.
+
+## Message Envelope
+
+All realtime state changes are encoded as `StateChangeInfo`:
+
+- `Type`: `EStateChangeType`
+- `Data`: serialized payload via `StateChangePayloadSerializer`
+
+Common realtime message types:
+
+- `PlayerJoin`
+- `PlayerAssignment`
+- `PlayerLeave`
+- `PlayerInputSnapshot`
+- `PlayerTransformUpdate`
+- `Heartbeat`
+- `ServerError`
+- `RemoteJobRequest`
+- `RemoteJobResponse`
+- `HumanoidPoseFrame`
+- `AuthorityLeaseUpdate`
+- `ClockSync`
+- `ReplicationSnapshot`
+- `ReplicationDelta`
+
+New MemoryPackable networking DTOs must be added to `NetworkingAotContractRegistry`.
+
+## Realtime Contracts
+
+Engine-owned realtime contracts are intentionally small:
+
+- `WorldAssetIdentity`: exact local world compatibility key.
+- `RealtimeEndpointDescriptor`: concrete realtime endpoint metadata.
+- `AdmissionFailureReason`: engine-side realtime admission failure reason.
+- `PlayerJoinRequest`: client id, build version, local world identity, optional session id/token.
+- `PlayerAssignment`: authoritative server index, pawn/transform ids, world descriptor, session id.
+- `NetworkEntityId`: canonical server-assigned realtime entity identity, separate from player index and transform id.
+- `NetworkAuthorityLease`: owner client id, authority mode, lease expiry, and revocation reason for server-validated ownership.
+- `NetworkSnapshotEnvelope` / `NetworkDeltaEnvelope`: ticked replication envelopes for channel-specific snapshot/delta payloads.
+- `ClockSyncMessage`: NTP-style heartbeat reply carrying server receive/send time and server tick.
+- `WorldSyncDescriptor`: advisory world name/scenes/game-mode plus exact `WorldAssetIdentity`.
+- `PlayerInputSnapshot`, `PlayerTransformUpdate`, `PlayerLeaveNotice`, `PlayerHeartbeat`.
+
+Control-plane DTOs such as room summaries, create/join requests, host capacity snapshots, manifests, chunks, and world artifact descriptors should not be added back to XRENGINE.
+
+## World Asset Identity
+
+`WorldAssetIdentity` contains:
+
+- `WorldId`
+- `RevisionId`
+- `ContentHash`
+- `AssetSchemaVersion`
+- `RequiredBuildVersion`
+- `Metadata`
+
+Exact matching uses `WorldId`, `RevisionId`, normalized `ContentHash`, and `AssetSchemaVersion`. `Metadata` is descriptive.
+
+`WorldAssetIdentityProvider` derives the local identity from the loaded world. Local development or a host agent can override the derived identity:
+
+- `XRE_WORLD_ID`
+- `XRE_WORLD_REVISION`
+- `XRE_WORLD_CONTENT_HASH`
+- `XRE_WORLD_ASSET_SCHEMA_VERSION`
+- `XRE_WORLD_REQUIRED_BUILD_VERSION`
+
+## Client Flow
+
+- Opens the configured UDP receiver/sender.
+- Derives local `WorldAssetIdentity`.
+- Sends `PlayerJoinRequest` with build version, local world identity, optional `SessionId`, and optional `SessionToken` until `PlayerAssignment` arrives.
+- Stores the assigned `SessionId`.
+- Stores the assigned `NetworkEntityId` and `NetworkAuthorityLease`.
+- Sends input, predicted transform, heartbeat, pose, and leave messages scoped to that session.
+- Tags input and predicted transform updates with client tick/input sequence so the server can echo reconciliation progress.
+- Applies server-correction transform updates for locally owned actors and tracks the last processed input sequence.
+- Estimates server clock offset from `ClockSyncMessage`.
+- Ignores assignment, transform, and leave messages for other active sessions.
+- Logs when the server-advertised world asset does not match the local world asset.
+
+## Server Flow
+
+- Starts the realtime UDP receiver/sender only; it does not host an HTTP API.
+- `XRE_SESSION_ID` can pin the process session id. If omitted, the process generates one.
+- `XRE_SESSION_TOKEN` can require an opaque token on join. XRENGINE only verifies equality; token issuance is external.
+- `XRE_UDP_BIND_PORT` / `XRE_UDP_SERVER_BIND_PORT` set the local UDP bind port.
+- `XRE_UDP_ADVERTISED_PORT` / `XRE_UDP_SERVER_SEND_PORT` set the endpoint port advertised to clients.
+- `XRE_UDP_MULTICAST_GROUP` and `XRE_UDP_MULTICAST_PORT` override multicast settings.
+- `Engine.ServerSessionResolver` can supply the local realtime session context.
+- `Engine.ServerJoinAdmissionResolver` can reject a direct realtime join before player assignment.
+- On `PlayerJoin`, the server rejects:
+  - build/protocol mismatch
+  - requested session mismatch
+  - invalid optional session token
+  - missing client world identity
+  - incompatible required world build
+  - exact world asset mismatch
+- After admission, the server assigns a player index, creates/ensures a pawn, grants a `NetworkAuthorityLease`, broadcasts `PlayerAssignment`, and replays cached transforms to newcomers.
+- The server accepts input, transform, and humanoid pose traffic only when the sender owns an active lease for the referenced `NetworkEntityId`.
+- The server stamps accepted transform and humanoid pose traffic with server tick ids/time and rebroadcasts it as authoritative state.
+- The server buffers a bounded input window for jitter/lag-compensation policy and reports clock sync data on heartbeat.
+- The server prunes stale players using `MultiplayerRuntimePolicy.PlayerHeartbeatTimeout + PlayerHeartbeatGracePeriod`, then keeps a short `SessionResumeWindow` for same session/client id reconnects.
+
+## Replication Model
+
+Phase 2 realtime replication adds:
+
+- Canonical entity identity via `NetworkEntityId`.
+- Server-issued authority leases with owner client id, authority mode, expiry, and revocation reason.
+- Ticked snapshot/delta envelopes for future channel payloads.
+- Client prediction metadata on input/transform messages and server reconciliation metadata on authoritative transform updates.
+- Clock sync replies, bounded input buffers, and lag-compensation timing policy.
+- AOI/relevance hints and per-connection bandwidth budget accounting above the current multicast sender.
+- `HumanoidPoseFrame` metadata so pose traffic is session/entity scoped and server stamped before rebroadcast.
+
+## Remote Jobs
+
+Remote jobs still ride over the realtime transport for small RPC-style operations.
+
+- Request/response payloads are `RemoteJobRequest` and `RemoteJobResponse`.
+- `asset/load` remains a dev/debug fallback for small asset pulls.
+- Large world package distribution must stay outside XRENGINE in the control-plane/world delivery app.
+
+## Editor Panel
+
+The ImGui networking panel exposes direct realtime controls:
+
+- mode
+- server IP
+- multicast group/port
+- server/client UDP ports
+- optional session id/token
+- start/apply
+- disconnect
+- RTT/data/packet diagnostics
+- connected server clients and kick action
+- local player assignment status
+
+It does not browse, create, or join public rooms.
+
+## Operational Notes
+
+- Realtime traffic is UDP.
+- The engine assumes both sides already have the same world asset locally.
+- World downloads, manifests, signed URLs, chunk caches, and eviction policy are external to XRENGINE.
+- `Local` mode bypasses networking.
+- `P2PClient` remains present but its v1 product disposition is still open.
+- `Tools\Start-NetworkTest.bat` launches the live realtime smoke paths:
+  - default / `two-clients`: dedicated server plus two clients with the same handoff payload.
+  - `mismatch`: dedicated server plus one good client and one client with an intentionally mismatched expected world hash.
+  - `pose`: legacy pose sender/receiver flow.
+
+## Extension Checklist
+
+- Add a new `EStateChangeType` only for realtime data-plane behavior.
+- Add a MemoryPackable DTO only when the payload belongs in realtime transport.
+- Register new DTOs in `NetworkingAotContractRegistry`.
+- Cover serialization and AOT metadata in tests.
+- Do not add directory, allocation, world artifact, or public lobby DTOs back to XRENGINE.

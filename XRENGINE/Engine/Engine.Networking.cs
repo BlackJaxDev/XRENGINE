@@ -1,6 +1,9 @@
 using System.IO;
 using System.Net;
 using System.Threading.Tasks;
+using XREngine.Networking;
+using XREngine.Rendering;
+using XREngine.Scene;
 
 namespace XREngine
 {
@@ -9,6 +12,8 @@ namespace XREngine
     /// </summary>
     public static partial class Engine
     {
+        private static bool _environmentRealtimeHandoffApplied;
+
         #region VR Initialization
 
         /// <summary>
@@ -105,6 +110,17 @@ namespace XREngine
                 previousNet.RemoteJobRequestReceived -= HandleRemoteJobRequestAsync;
             }
 
+            if (!_environmentRealtimeHandoffApplied
+                && RealtimeJoinHandoff.TryApplyFromEnvironment(startupSettings, out _, out string? handoffSource))
+            {
+                _environmentRealtimeHandoffApplied = true;
+                Debug.Networking("[Realtime Handoff] Applied join payload from {0}.", handoffSource ?? "<unknown>");
+            }
+
+            WorldAssetIdentity? localWorldAsset = ResolveLocalWorldAsset();
+            RealtimeJoinHandoff.ValidateClientStartup(startupSettings, localWorldAsset, RealtimeJoinHandoff.CurrentProtocolVersion);
+            RealtimeJoinHandoff.LogStartupSummary(startupSettings, localWorldAsset, RealtimeJoinHandoff.CurrentProtocolVersion);
+
             var appType = startupSettings.NetworkingType;
             switch (appType)
             {
@@ -118,15 +134,19 @@ namespace XREngine
                     server.Start(
                         IPAddress.Parse(startupSettings.UdpMulticastGroupIP),
                         startupSettings.UdpMulticastPort,
-                        startupSettings.UdpClientRecievePort);
+                        startupSettings.UdpServerBindPort);
                     break;
                 case ENetworkingType.Client:
-                    var client = new ClientNetworkingManager();
+                    var client = new ClientNetworkingManager
+                    {
+                        SessionId = startupSettings.MultiplayerSessionId,
+                        SessionToken = startupSettings.MultiplayerSessionToken,
+                    };
                     Networking = client;
                     client.Start(
                         IPAddress.Parse(startupSettings.UdpMulticastGroupIP),
                         startupSettings.UdpMulticastPort,
-                        IPAddress.Parse(startupSettings.ServerIP),
+                        ResolveNetworkAddress(startupSettings.ServerIP),
                         startupSettings.UdpServerSendPort);
                     break;
                 case ENetworkingType.P2PClient:
@@ -135,7 +155,7 @@ namespace XREngine
                     p2pClient.Start(
                         IPAddress.Parse(startupSettings.UdpMulticastGroupIP),
                         startupSettings.UdpMulticastPort,
-                        IPAddress.Parse(startupSettings.ServerIP));
+                        ResolveNetworkAddress(startupSettings.ServerIP));
                     break;
             }
 
@@ -148,6 +168,37 @@ namespace XREngine
             {
                 Jobs.RemoteTransport = null;
             }
+        }
+
+        private static IPAddress ResolveNetworkAddress(string hostOrIp)
+        {
+            if (IPAddress.TryParse(hostOrIp, out IPAddress? parsedAddress))
+                return parsedAddress;
+
+            IPAddress[] resolved = Dns.GetHostAddresses(hostOrIp);
+            if (resolved.Length == 0)
+                throw new InvalidOperationException($"Unable to resolve network host '{hostOrIp}'.");
+
+            return resolved[0];
+        }
+
+        private static WorldAssetIdentity? ResolveLocalWorldAsset()
+        {
+            XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
+            return worldInstance?.TargetWorld is null
+                ? null
+                : WorldAssetIdentityProvider.Create(worldInstance.TargetWorld, RealtimeJoinHandoff.CurrentProtocolVersion);
+        }
+
+        private static XRWorldInstance? ResolvePrimaryWorldInstance()
+        {
+            foreach (var window in Windows)
+            {
+                if (window?.TargetWorldInstance is not null)
+                    return window.TargetWorldInstance;
+            }
+
+            return XRWorldInstance.WorldInstances.Values.FirstOrDefault();
         }
 
         #endregion

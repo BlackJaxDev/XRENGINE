@@ -139,6 +139,8 @@ If you do need to launch it manually, the important environment variables are:
 - `XRE_UNIT_TEST_WORLD_KIND=NetworkingPose`
 - `XRE_NETWORKING_POSE_ROLE=server|sender|receiver`
 - `XRE_NET_MODE=Server|Client`
+- `XRE_UDP_SERVER_BIND_PORT=5000`
+- `XRE_UDP_SERVER_SEND_PORT=5000`
 - `XRE_UDP_CLIENT_RECEIVE_PORT=5001|5002`
 - `XRE_POSE_ENTITY_ID=4242`
 - `XRE_POSE_BROADCAST_ENABLED=0|1`

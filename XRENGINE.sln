@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.5.11612.153 insiders
+VisualStudioVersion = 18.5.11612.153
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Animation", "XREngine.Animation\XREngine.Animation.csproj", "{CD4131DC-4664-4FDE-9072-22AAD258FA75}"
 EndProject

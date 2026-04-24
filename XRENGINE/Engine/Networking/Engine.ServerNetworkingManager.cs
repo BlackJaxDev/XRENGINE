@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Numerics;
 using XREngine.Networking;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -21,20 +22,20 @@ namespace XREngine
             private readonly object _playerLock = new();
             private readonly Dictionary<int, NetworkPlayerConnection> _playersByIndex = new();
             private readonly Dictionary<string, NetworkPlayerConnection> _playersByClientId = new(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, NetworkPlayerConnection> _resumeByClientKey = new(StringComparer.OrdinalIgnoreCase);
+            private readonly RealtimeReplicationCoordinator _replication = new();
             private int _nextServerPlayerIndex = 1;
-            private static readonly TimeSpan PlayerTimeout = TimeSpan.FromSeconds(15);
-            private static readonly TimeSpan HeartbeatGrace = TimeSpan.FromSeconds(5);
 
             public ServerNetworkingManager() : base(peerId: "server") { }
 
             public void Start(
                 IPAddress udpMulticastGroupIP,
                 int udpMulticastPort,
-                int udpRecievePort)
+                int udpReceivePort)
             {
-                Debug.Out($"Starting server at udp(multicast:{udpMulticastGroupIP}:{udpMulticastPort} / recieve:{udpRecievePort})");
+                Debug.Out($"Starting server at udp(multicast:{udpMulticastGroupIP}:{udpMulticastPort} / receive:{udpReceivePort})");
                 StartUdpMulticastSender(udpMulticastGroupIP, udpMulticastPort);
-                StartUdpReceiver(udpRecievePort);
+                StartUdpReceiver(udpReceivePort);
             }
 
             /// <summary>
@@ -54,6 +55,7 @@ namespace XREngine
 
             protected override async Task SendUDP()
             {
+                _replication.AdvanceServerTick();
                 PruneStalePlayers();
                 //Send to clients
                 await ConsumeAndSendUDPQueue(UdpMulticastSender, MulticastEndPoint);
@@ -61,7 +63,7 @@ namespace XREngine
 
             protected override void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
             {
-                if (change.Type is EStateChangeType.RemoteJobRequest or EStateChangeType.RemoteJobResponse or EStateChangeType.HumanoidPoseFrame)
+                if (change.Type is EStateChangeType.RemoteJobRequest or EStateChangeType.RemoteJobResponse)
                 {
                     base.HandleStateChange(change, sender);
                     return;
@@ -94,6 +96,17 @@ namespace XREngine
                             break;
                         HandleHeartbeat(hb, sender);
                         break;
+                    case EStateChangeType.HumanoidPoseFrame:
+                        if (!StateChangePayloadSerializer.TryDeserialize<HumanoidPoseFrame>(change.Data, out var pose) || pose is null)
+                            break;
+                        HandleHumanoidPoseFrame(pose);
+                        break;
+                    case EStateChangeType.AuthorityLeaseUpdate:
+                    case EStateChangeType.ClockSync:
+                    case EStateChangeType.ReplicationSnapshot:
+                    case EStateChangeType.ReplicationDelta:
+                        base.HandleStateChange(change, sender);
+                        break;
                 }
             }
 
@@ -102,35 +115,68 @@ namespace XREngine
                 if (string.IsNullOrWhiteSpace(request.ClientId))
                     request.ClientId = sender.ToString();
 
-                if (!string.Equals(request.BuildVersion, CurrentProtocolVersion, StringComparison.OrdinalIgnoreCase))
-                {
-                    Debug.Out($"[Server] Client {request.ClientId} version mismatch: client={request.BuildVersion}, server={CurrentProtocolVersion}");
-                    SendErrorToClient(request.ClientId, 426, "Upgrade Required", $"Server version {CurrentProtocolVersion}, client version {request.BuildVersion}.", fatal: false);
-                }
-
                 NetworkPlayerConnection connection;
                 bool isNewPlayer = false;
-                ServerInstanceContext? resolvedInstance = null;
+                ServerJoinAdmissionResult? joinAdmission = Engine.ServerJoinAdmissionResolver?.Invoke(request);
+                if (joinAdmission is { FailureReason: not AdmissionFailureReason.None })
+                {
+                    SendJoinAdmissionFailure(request.ClientId, joinAdmission.FailureReason, joinAdmission.Message);
+                    return;
+                }
+
+                ServerSessionContext? resolvedSession = joinAdmission?.SessionContext ?? Engine.ServerSessionResolver?.Invoke(request);
+                Guid? requestedSessionId = request.SessionId;
+                XRWorldInstance? resolvedWorldInstance = resolvedSession?.WorldInstance ?? ResolvePrimaryWorldInstance();
+                WorldAssetIdentity? serverWorldAsset = resolvedSession?.WorldAsset ?? CreateLocalWorldAsset(resolvedWorldInstance);
+                AdmissionFailureReason validationFailure = RealtimeAdmissionValidator.ValidateBuildAndWorld(
+                    request,
+                    serverWorldAsset,
+                    CurrentProtocolVersion,
+                    out string validationMessage);
+                if (validationFailure != AdmissionFailureReason.None)
+                {
+                    SendJoinAdmissionFailure(request.ClientId, validationFailure, validationMessage);
+                    return;
+                }
 
                 lock (_playerLock)
                 {
                     if (!_playersByClientId.TryGetValue(request.ClientId, out connection!))
                     {
-                        connection = new NetworkPlayerConnection
+                        string resumeKey = CreateResumeKey(resolvedSession?.SessionId ?? requestedSessionId, request.ClientId);
+                        if (!string.IsNullOrEmpty(resumeKey)
+                            && _resumeByClientKey.TryGetValue(resumeKey, out NetworkPlayerConnection? resumable)
+                            && resumable.ResumeUntilUtc > DateTime.UtcNow)
                         {
-                            ServerPlayerIndex = _nextServerPlayerIndex++,
-                            ClientId = request.ClientId
-                        };
+                            connection = resumable;
+                            _resumeByClientKey.Remove(resumeKey);
+                        }
+                        else
+                        {
+                            connection = new NetworkPlayerConnection
+                            {
+                                ServerPlayerIndex = _nextServerPlayerIndex++,
+                                ClientId = request.ClientId
+                            };
+                            isNewPlayer = true;
+                        }
+
+                        connection.IsResuming = !isNewPlayer;
+                        if (connection.Budget is null)
+                        {
+                            double nowUtc = GetUtcSeconds();
+                            connection.Budget = new NetworkBandwidthBudget(MultiplayerRuntimePolicy.DefaultReplicationBytesPerSecond, nowUtc);
+                        }
+
                         _playersByClientId[request.ClientId] = connection;
                         _playersByIndex[connection.ServerPlayerIndex] = connection;
-                        isNewPlayer = true;
                     }
 
-                    resolvedInstance = Engine.ServerInstanceResolver?.Invoke(request);
-                    connection.InstanceId = resolvedInstance?.InstanceId
-                        ?? request.InstanceId
-                        ?? (connection.InstanceId != Guid.Empty ? connection.InstanceId : Guid.NewGuid());
-                    connection.WorldInstance = resolvedInstance?.WorldInstance ?? ResolvePrimaryWorldInstance();
+                    connection.SessionId = resolvedSession?.SessionId
+                        ?? requestedSessionId
+                        ?? (connection.SessionId != Guid.Empty ? connection.SessionId : Guid.NewGuid());
+                    connection.WorldInstance = resolvedWorldInstance;
+                    connection.WorldAsset = serverWorldAsset;
                     if (connection.WorldInstance is null)
                     {
                         SendErrorToClient(request.ClientId, 500, "No World", "Server could not resolve a world instance for this connection.", null, fatal: true);
@@ -138,25 +184,41 @@ namespace XREngine
                     }
 
                     EnsureServerPawn(connection, request.DisplayName);
+                    EnsureAuthorityLease(connection);
 
                     connection.JoinRequest = request;
                     connection.LastEndpoint = sender;
                     connection.LastHeardUtc = DateTime.UtcNow;
+                    connection.ResumeUntilUtc = null;
                 }
 
                 var assignment = new PlayerAssignment
                 {
                     ServerPlayerIndex = connection.ServerPlayerIndex,
+                    PlayerEntityId = connection.NetworkEntityId,
                     PawnId = connection.Pawn?.ID ?? Guid.Empty,
                     TransformId = connection.TransformId,
                     ClientId = connection.ClientId,
                     DisplayName = request.DisplayName,
-                    World = BuildWorldDescriptor(connection.WorldInstance),
-                    InstanceId = connection.InstanceId,
-                    IsAuthoritative = true
+                    World = BuildWorldDescriptor(connection.WorldInstance, connection.WorldAsset),
+                    SessionId = connection.SessionId,
+                    IsAuthoritative = true,
+                    AuthorityLease = connection.AuthorityLease?.Clone(),
+                    ServerTickId = _replication.CurrentServerTickId,
+                    ServerTimeUtc = GetUtcSeconds()
                 };
 
                 BroadcastStateChange(EStateChangeType.PlayerAssignment, assignment, compress: true);
+                if (assignment.AuthorityLease is not null)
+                    BroadcastAuthorityLeaseUpdate(assignment.AuthorityLease);
+                Debug.Networking(
+                    "[Server] Accepted realtime join client={0}; playerIndex={1}; entity={2}; session={3}; world={4}",
+                    connection.ClientId,
+                    connection.ServerPlayerIndex,
+                    connection.NetworkEntityId,
+                    connection.SessionId,
+                    RealtimeJoinHandoff.DescribeWorldAsset(connection.WorldAsset));
+                Engine.ServerPlayerConnected?.Invoke(CreatePlayerEvent(connection));
 
                 if (isNewPlayer)
                     BroadcastExistingTransforms();
@@ -172,6 +234,7 @@ namespace XREngine
                     connection.TransformId = connection.TransformId == Guid.Empty
                         ? connection.Pawn.SceneNode?.Transform?.ID ?? Guid.Empty
                         : connection.TransformId;
+                    connection.NetworkEntityId = CreateEntityId(connection);
                     return;
                 }
 
@@ -184,6 +247,7 @@ namespace XREngine
                 if (connection.Pawn is not null)
                 {
                     connection.TransformId = connection.Pawn.SceneNode?.Transform?.ID ?? Guid.Empty;
+                    connection.NetworkEntityId = CreateEntityId(connection);
                     var controller = Engine.State.InstantiateRemoteController(connection.ServerPlayerIndex);
                     if (controller is not null)
                     {
@@ -204,15 +268,26 @@ namespace XREngine
 
             private void HandlePlayerInputSnapshot(PlayerInputSnapshot snapshot)
             {
+                double nowUtc = GetUtcSeconds();
                 lock (_playerLock)
                 {
                     if (!_playersByIndex.TryGetValue(snapshot.ServerPlayerIndex, out var connection))
                         return;
 
-                    if (connection.InstanceId != Guid.Empty && snapshot.InstanceId != Guid.Empty && snapshot.InstanceId != connection.InstanceId)
+                    if (connection.SessionId != Guid.Empty && snapshot.SessionId != Guid.Empty && snapshot.SessionId != connection.SessionId)
                         return;
 
-                    snapshot.InstanceId = connection.InstanceId;
+                    snapshot.SessionId = connection.SessionId;
+                    if (snapshot.EntityId.IsEmpty)
+                        snapshot.EntityId = connection.NetworkEntityId;
+                    if (!ValidateAuthority(connection, snapshot.EntityId, nowUtc, out NetworkAuthorityRevocationReason failureReason))
+                    {
+                        SendErrorToClient(connection.ClientId, 403, "Authority Rejected", $"Input rejected: {failureReason}.", connection.ServerPlayerIndex, fatal: false);
+                        return;
+                    }
+
+                    connection.InputBufferDepth = _replication.BufferInput(snapshot, nowUtc);
+                    connection.LastProcessedInputSequence = snapshot.InputSequence;
                     connection.LastInput = snapshot;
                     connection.LastHeardUtc = DateTime.UtcNow;
                 }
@@ -221,51 +296,107 @@ namespace XREngine
             private void HandlePlayerTransformUpdate(PlayerTransformUpdate transform)
             {
                 NetworkPlayerConnection? connection;
+                double nowUtc = GetUtcSeconds();
                 lock (_playerLock)
                 {
                     if (!_playersByIndex.TryGetValue(transform.ServerPlayerIndex, out connection))
                         return;
 
-                    if (connection.InstanceId != Guid.Empty && transform.InstanceId != Guid.Empty && transform.InstanceId != connection.InstanceId)
+                    if (connection.SessionId != Guid.Empty && transform.SessionId != Guid.Empty && transform.SessionId != connection.SessionId)
                         return;
 
+                    if (transform.EntityId.IsEmpty)
+                        transform.EntityId = connection.NetworkEntityId;
+                    if (!ValidateAuthority(connection, transform.EntityId, nowUtc, out NetworkAuthorityRevocationReason failureReason))
+                    {
+                        SendErrorToClient(connection.ClientId, 403, "Authority Rejected", $"Transform rejected: {failureReason}.", connection.ServerPlayerIndex, fatal: false);
+                        return;
+                    }
+
+                    transform.SessionId = transform.SessionId == Guid.Empty ? connection.SessionId : transform.SessionId;
+                    transform = _replication.StampAuthoritativeTransform(transform, nowUtc);
                     connection.LastTransform = transform;
                     connection.LastHeardUtc = DateTime.UtcNow;
+                    connection.RelevanceCenter = transform.Translation;
                 }
 
                 if (connection is null)
                     return;
 
-                transform.InstanceId = transform.InstanceId == Guid.Empty ? connection.InstanceId : transform.InstanceId;
                 if (connection.Pawn?.Controller is IPawnController remoteController)
                     remoteController.ApplyNetworkTransform(transform);
 
-                BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, transform, compress: false);
+                if (ShouldBroadcastAuthoritativeUpdate(transform, connection, nowUtc))
+                    BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, transform, compress: false);
             }
 
             private void HandleHeartbeat(PlayerHeartbeat hb, IPEndPoint sender)
             {
+                ServerSessionPlayerEvent? playerEvent = null;
+                ClockSyncMessage? clockSync = null;
+                double receiveUtc = GetUtcSeconds();
                 lock (_playerLock)
                 {
                     if (_playersByIndex.TryGetValue(hb.ServerPlayerIndex, out var connection))
                     {
-                        if (connection.InstanceId != Guid.Empty && hb.InstanceId.HasValue && hb.InstanceId.Value != connection.InstanceId)
+                        if (connection.SessionId != Guid.Empty && hb.SessionId.HasValue && hb.SessionId.Value != connection.SessionId)
                             return;
 
                         connection.LastHeardUtc = DateTime.UtcNow;
                         connection.LastEndpoint = sender;
+                        playerEvent = CreatePlayerEvent(connection);
+                        clockSync = CreateClockSync(connection, hb, receiveUtc);
+                    }
+                    else if (_playersByClientId.TryGetValue(hb.ClientId, out connection))
+                    {
+                        if (connection.SessionId != Guid.Empty && hb.SessionId.HasValue && hb.SessionId.Value != connection.SessionId)
+                            return;
+
+                        connection.LastHeardUtc = DateTime.UtcNow;
+                        connection.LastEndpoint = sender;
+                        playerEvent = CreatePlayerEvent(connection);
+                        clockSync = CreateClockSync(connection, hb, receiveUtc);
+                    }
+                }
+
+                if (playerEvent is not null)
+                    Engine.ServerPlayerHeartbeatObserved?.Invoke(playerEvent);
+                if (clockSync is not null)
+                    BroadcastClockSync(clockSync);
+            }
+
+            private void HandleHumanoidPoseFrame(HumanoidPoseFrame frame)
+            {
+                NetworkPlayerConnection? connection;
+                double nowUtc = GetUtcSeconds();
+                lock (_playerLock)
+                {
+                    if (string.IsNullOrWhiteSpace(frame.SourceClientId)
+                        || !_playersByClientId.TryGetValue(frame.SourceClientId, out connection))
+                    {
                         return;
                     }
 
-                    if (_playersByClientId.TryGetValue(hb.ClientId, out connection))
-                    {
-                        if (connection.InstanceId != Guid.Empty && hb.InstanceId.HasValue && hb.InstanceId.Value != connection.InstanceId)
-                            return;
+                    if (connection.SessionId != Guid.Empty && frame.SessionId != Guid.Empty && frame.SessionId != connection.SessionId)
+                        return;
 
-                        connection.LastHeardUtc = DateTime.UtcNow;
-                        connection.LastEndpoint = sender;
+                    if (frame.EntityIds.Length == 0)
+                        frame.EntityIds = [connection.NetworkEntityId];
+
+                    foreach (NetworkEntityId entityId in frame.EntityIds)
+                    {
+                        if (!ValidateAuthority(connection, entityId, nowUtc, out _))
+                            return;
                     }
+
+                    frame.SessionId = connection.SessionId;
+                    frame.ServerTickId = _replication.CurrentServerTickId == 0 ? _replication.AdvanceServerTick() : _replication.CurrentServerTickId;
+                    frame.ServerTimestampUtc = nowUtc;
+                    frame.AuthorityMode = NetworkAuthorityMode.ServerAuthoritative;
                 }
+
+                base.HandleStateChange(new StateChangeInfo(EStateChangeType.HumanoidPoseFrame, StateChangePayloadSerializer.Serialize(frame)), null);
+                BroadcastHumanoidPoseFrame(frame, compress: false, resendOnFailedAck: false);
             }
 
             private void BroadcastExistingTransforms()
@@ -278,7 +409,8 @@ namespace XREngine
                         .Select(p =>
                         {
                             var clone = p.LastTransform!;
-                            clone.InstanceId = p.InstanceId;
+                            clone.SessionId = p.SessionId;
+                            clone.EntityId = p.NetworkEntityId;
                             return clone;
                         })
                         .ToList();
@@ -296,14 +428,16 @@ namespace XREngine
                     if (!_playersByIndex.TryGetValue(leave.ServerPlayerIndex, out connection))
                         return;
 
-                    if (connection.InstanceId != Guid.Empty && leave.InstanceId != Guid.Empty && connection.InstanceId != leave.InstanceId)
+                    if (connection.SessionId != Guid.Empty && leave.SessionId != Guid.Empty && connection.SessionId != leave.SessionId)
                         return;
 
                     _playersByIndex.Remove(leave.ServerPlayerIndex);
                     _playersByClientId.Remove(connection.ClientId);
                 }
 
+                RevokeAuthorityLease(connection, NetworkAuthorityRevocationReason.OwnerLeft, leave.Reason ?? "Client requested leave");
                 BroadcastPlayerLeave(connection, leave.Reason ?? "Client requested leave");
+                Engine.ServerPlayerDisconnected?.Invoke(CreatePlayerEvent(connection));
                 SendErrorToClient(connection.ClientId, 499, "Client Closed", leave.Reason ?? "Client requested leave", connection.ServerPlayerIndex, fatal: false);
             }
 
@@ -329,22 +463,25 @@ namespace XREngine
                     _playersByClientId.Remove(connection.ClientId);
                 }
 
+                RevokeAuthorityLease(connection, NetworkAuthorityRevocationReason.OperatorRevoked, reason);
                 BroadcastPlayerLeave(connection, reason);
+                Engine.ServerPlayerDisconnected?.Invoke(CreatePlayerEvent(connection));
                 SendErrorToClient(connection.ClientId, 403, "Kicked", reason, connection.ServerPlayerIndex, fatal: true);
             }
 
-            private WorldSyncDescriptor BuildWorldDescriptor(XRWorldInstance? worldInstance)
+            private WorldSyncDescriptor BuildWorldDescriptor(XRWorldInstance? worldInstance, WorldAssetIdentity? asset)
             {
                 XRWorldInstance? targetInstance = worldInstance ?? ResolvePrimaryWorldInstance();
                 if (targetInstance is null)
-                    return new WorldSyncDescriptor();
+                    return new WorldSyncDescriptor { Asset = asset };
 
                 XRWorld? world = targetInstance.TargetWorld;
                 return new WorldSyncDescriptor
                 {
                     WorldName = world?.Name,
                     GameModeType = targetInstance.GameMode?.GetType().FullName,
-                    SceneNames = world?.Scenes.Select(s => s.Name ?? string.Empty).Where(static n => !string.IsNullOrWhiteSpace(n)).ToArray() ?? Array.Empty<string>()
+                    SceneNames = world?.Scenes.Select(s => s.Name ?? string.Empty).Where(static n => !string.IsNullOrWhiteSpace(n)).ToArray() ?? Array.Empty<string>(),
+                    Asset = asset ?? CreateLocalWorldAsset(targetInstance)
                 };
             }
 
@@ -359,19 +496,165 @@ namespace XREngine
                 return XRWorldInstance.WorldInstances.Values.FirstOrDefault();
             }
 
+            private static WorldAssetIdentity? CreateLocalWorldAsset(XRWorldInstance? worldInstance)
+                => worldInstance?.TargetWorld is null
+                    ? null
+                    : WorldAssetIdentityProvider.Create(worldInstance.TargetWorld, CurrentProtocolVersion);
+
+            private void EnsureAuthorityLease(NetworkPlayerConnection connection)
+            {
+                if (connection.NetworkEntityId.IsEmpty || connection.SessionId == Guid.Empty)
+                    return;
+
+                double nowUtc = GetUtcSeconds();
+                NetworkAuthorityLease? existing = _replication.GetLease(connection.NetworkEntityId);
+                if (existing is not null
+                    && existing.IsActive(nowUtc)
+                    && existing.SessionId == connection.SessionId
+                    && existing.OwnerServerPlayerIndex == connection.ServerPlayerIndex
+                    && string.Equals(existing.OwnerClientId, connection.ClientId, StringComparison.OrdinalIgnoreCase))
+                {
+                    connection.AuthorityLease = existing;
+                    return;
+                }
+
+                connection.AuthorityLease = _replication.GrantLease(
+                    connection.NetworkEntityId,
+                    connection.SessionId,
+                    connection.ClientId,
+                    connection.ServerPlayerIndex,
+                    nowUtc);
+            }
+
+            private void RevokeAuthorityLease(NetworkPlayerConnection connection, NetworkAuthorityRevocationReason reason, string detail)
+            {
+                if (connection.NetworkEntityId.IsEmpty)
+                    return;
+
+                NetworkAuthorityLease? revoked = _replication.RevokeLease(connection.NetworkEntityId, reason, detail);
+                if (revoked is null)
+                    return;
+
+                connection.AuthorityLease = revoked;
+                BroadcastAuthorityLeaseUpdate(revoked);
+            }
+
+            private bool ValidateAuthority(
+                NetworkPlayerConnection connection,
+                NetworkEntityId entityId,
+                double nowUtc,
+                out NetworkAuthorityRevocationReason failureReason)
+            {
+                if (entityId.IsEmpty)
+                    entityId = connection.NetworkEntityId;
+
+                bool valid = _replication.TryValidateOwner(
+                    entityId,
+                    connection.ClientId,
+                    connection.ServerPlayerIndex,
+                    connection.SessionId,
+                    nowUtc,
+                    out NetworkAuthorityLease? lease,
+                    out failureReason);
+
+                if (lease is not null)
+                    connection.AuthorityLease = lease;
+
+                return valid;
+            }
+
+            private static NetworkEntityId CreateEntityId(NetworkPlayerConnection connection)
+            {
+                Guid source = connection.Pawn?.ID ?? Guid.Empty;
+                if (source == Guid.Empty)
+                    source = connection.TransformId;
+                return NetworkEntityId.FromGuid(source);
+            }
+
+            private static string CreateResumeKey(Guid? sessionId, string? clientId)
+            {
+                if (sessionId is not Guid value || value == Guid.Empty || string.IsNullOrWhiteSpace(clientId))
+                    return string.Empty;
+
+                return $"{value:N}:{clientId.Trim()}";
+            }
+
+            private static double GetUtcSeconds()
+                => (DateTime.UtcNow - DateTime.UnixEpoch).TotalSeconds;
+
+            private ClockSyncMessage CreateClockSync(NetworkPlayerConnection connection, PlayerHeartbeat heartbeat, double receiveUtc)
+                => new()
+                {
+                    SessionId = connection.SessionId,
+                    ClientId = connection.ClientId,
+                    ServerPlayerIndex = connection.ServerPlayerIndex,
+                    ClientSendTimestampUtc = heartbeat.ClientSendTimestampUtc == 0.0d ? heartbeat.TimestampUtc : heartbeat.ClientSendTimestampUtc,
+                    ServerReceiveTimestampUtc = receiveUtc,
+                    ServerSendTimestampUtc = GetUtcSeconds(),
+                    ServerTickId = _replication.CurrentServerTickId
+                };
+
+            private bool ShouldBroadcastAuthoritativeUpdate(PlayerTransformUpdate update, NetworkPlayerConnection owner, double nowUtc)
+            {
+                List<NetworkPlayerConnection> recipients;
+                lock (_playerLock)
+                    recipients = _playersByIndex.Values.ToList();
+
+                if (recipients.Count == 0)
+                    return false;
+
+                const int estimatedTransformBytes = 160;
+                bool relevantToAnyClient = false;
+                foreach (NetworkPlayerConnection recipient in recipients)
+                {
+                    if (recipient.SessionId != owner.SessionId)
+                        continue;
+
+                    if (recipient.Budget is null)
+                        recipient.Budget = new NetworkBandwidthBudget(MultiplayerRuntimePolicy.DefaultReplicationBytesPerSecond, nowUtc);
+
+                    if (!recipient.IsRelevant(update.Translation))
+                        continue;
+
+                    // The current server sender is multicast, so this is an admission gate and accounting
+                    // layer for relevance/budget policy. True per-peer packet routing requires per-peer
+                    // UDP sequence/ACK state and is intentionally not patched here.
+                    if (!recipient.Budget.TryConsume(estimatedTransformBytes, nowUtc))
+                        continue;
+
+                    relevantToAnyClient = true;
+                }
+
+                return relevantToAnyClient;
+            }
+
             private sealed class NetworkPlayerConnection
             {
                 public required int ServerPlayerIndex { get; init; }
                 public required string ClientId { get; init; }
-                public Guid InstanceId { get; set; }
+                public Guid SessionId { get; set; }
                 public XRWorldInstance? WorldInstance { get; set; }
+                public WorldAssetIdentity? WorldAsset { get; set; }
                 public PawnComponent? Pawn { get; set; }
                 public Guid TransformId { get; set; }
+                public NetworkEntityId NetworkEntityId { get; set; }
+                public NetworkAuthorityLease? AuthorityLease { get; set; }
                 public PlayerJoinRequest? JoinRequest { get; set; }
                 public PlayerInputSnapshot? LastInput { get; set; }
                 public PlayerTransformUpdate? LastTransform { get; set; }
                 public IPEndPoint? LastEndpoint { get; set; }
                 public DateTime LastHeardUtc { get; set; }
+                public DateTime? ResumeUntilUtc { get; set; }
+                public bool IsResuming { get; set; }
+                public int InputBufferDepth { get; set; }
+                public uint LastProcessedInputSequence { get; set; }
+                public Vector3 RelevanceCenter { get; set; }
+                public float RelevanceRadius { get; set; } = MultiplayerRuntimePolicy.DefaultAreaOfInterestRadius;
+                public NetworkBandwidthBudget? Budget { get; set; }
+
+                public bool IsRelevant(Vector3 entityPosition)
+                    => RelevanceRadius <= 0.0f
+                        || Vector3.DistanceSquared(RelevanceCenter, entityPosition) <= RelevanceRadius * RelevanceRadius;
             }
 
             public readonly record struct ServerConnectionInfo(int ServerPlayerIndex, string ClientId, DateTime LastHeardUtc);
@@ -383,22 +666,54 @@ namespace XREngine
                 {
                     var now = DateTime.UtcNow;
                     stale = _playersByIndex.Values
-                        .Where(p => now - p.LastHeardUtc > PlayerTimeout + HeartbeatGrace)
+                        .Where(p => now - p.LastHeardUtc > MultiplayerRuntimePolicy.PlayerHeartbeatTimeout + MultiplayerRuntimePolicy.PlayerHeartbeatGracePeriod)
                         .ToList();
 
                     foreach (var player in stale)
                     {
                         _playersByIndex.Remove(player.ServerPlayerIndex);
                         _playersByClientId.Remove(player.ClientId);
+                        player.ResumeUntilUtc = now + MultiplayerRuntimePolicy.SessionResumeWindow;
+                        string resumeKey = CreateResumeKey(player.SessionId, player.ClientId);
+                        if (!string.IsNullOrEmpty(resumeKey))
+                            _resumeByClientKey[resumeKey] = player;
                     }
+
+                    foreach (var resume in _resumeByClientKey.Where(static pair => pair.Value.ResumeUntilUtc <= DateTime.UtcNow).Select(static pair => pair.Key).ToList())
+                        _resumeByClientKey.Remove(resume);
                 }
 
                 foreach (var player in stale)
                 {
                     Debug.Out($"[Server] Dropped stale player {player.ClientId} (index {player.ServerPlayerIndex}).");
+                    RevokeAuthorityLease(player, NetworkAuthorityRevocationReason.OwnerDisconnected, "Heartbeat timeout");
                     BroadcastPlayerLeave(player, "Heartbeat timeout");
+                    Engine.ServerPlayerDisconnected?.Invoke(CreatePlayerEvent(player));
                     SendErrorToClient(player.ClientId, 408, "Request Timeout", "Heartbeat timed out.", player.ServerPlayerIndex, fatal: true);
                 }
+            }
+
+            private static ServerSessionPlayerEvent CreatePlayerEvent(NetworkPlayerConnection connection)
+                => new(connection.SessionId, connection.ClientId, connection.ServerPlayerIndex, connection.TransformId);
+
+            private void SendJoinAdmissionFailure(string clientId, AdmissionFailureReason failureReason, string? message)
+            {
+                (int statusCode, string title, bool fatal) = failureReason switch
+                {
+                    AdmissionFailureReason.SessionNotFound => (404, "Session Not Found", true),
+                    AdmissionFailureReason.SessionFull => (409, "Session Full", false),
+                    AdmissionFailureReason.BuildVersionMismatch => (426, "Build Version Mismatch", false),
+                    AdmissionFailureReason.WorldAssetMismatch => (412, "World Asset Mismatch", false),
+                    AdmissionFailureReason.Unauthorized => (401, "Unauthorized", false),
+                    _ => (400, "Join Rejected", false),
+                };
+
+                Debug.NetworkingWarning(
+                    "[Server] Rejected realtime join client={0}; reason={1}; detail={2}",
+                    clientId,
+                    failureReason,
+                    message ?? title);
+                SendErrorToClient(clientId, statusCode, title, message ?? title, fatal: fatal);
             }
 
             private void BroadcastPlayerLeave(NetworkPlayerConnection connection, string reason)
@@ -408,7 +723,7 @@ namespace XREngine
                     ServerPlayerIndex = connection.ServerPlayerIndex,
                     ClientId = connection.ClientId,
                     Reason = reason,
-                    InstanceId = connection.InstanceId
+                    SessionId = connection.SessionId
                 };
 
                 BroadcastStateChange(EStateChangeType.PlayerLeave, leave, compress: false);

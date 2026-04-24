@@ -1,11 +1,16 @@
 # XREngine Dedicated Server Instance & Matchmaking Design Plan
 
+Implementation tracker: [../todo/multiplayer-networking-implementation-todo.md](../todo/multiplayer-networking-implementation-todo.md)
+
 ## Status
 
 - **Area:** Multiplayer networking + dedicated server orchestration
 - **State:** Active design proposal
 - **Audience:** Runtime/networking, editor tooling, backend/platform
 - **Last updated:** 2026-04-24
+- **Boundary status:** XRENGINE now owns only direct realtime data-plane connections. Instance directory, allocation, join orchestration, host capacity, token issuance, and world artifact delivery live in the adjacent control-plane app.
+- **Realtime status:** engine-side contracts now carry session id/token and exact local world asset identity instead of control-plane room/ticket/artifact DTOs.
+- **Next status:** the transport-safe authoritative replication model is implemented; strict per-client packet elision remains a future UDP per-peer sequencing refactor.
 
 ## 1. Problem Statement
 
@@ -16,7 +21,7 @@ XREngine needs a production-ready multiplayer architecture where:
 3. Each instance is budgeted CPU resources (thread budget / core-share) so multiple instances can safely coexist on one host.
 4. Clients (game clients and the editor) can **browse**, **create**, and **join** available instances.
 5. The platform can scale out using a control-plane service that knows available hosts and can place/spawn new instances when capacity is exhausted.
-6. Each instance loads a world asset from Azure Blob Storage and ensures connecting clients download/load the same world revision before synchronized play.
+6. The control-plane/world delivery app ensures clients and servers have the same immutable world asset before XRENGINE realtime admission.
 7. Physics is server-authoritative; object simulation authority can transfer dynamically between users while the server remains final authority.
 
 ## 2. Core Requirements
@@ -63,6 +68,12 @@ XREngine needs a production-ready multiplayer architecture where:
 ## 3. Proposed High-Level Architecture
 
 Use a **control plane + data plane** split.
+
+### Project / service boundary
+
+- The adjacent control-plane app owns directory, matchmaking, allocation, admission token issuance, auth, world catalog, world artifact manifests/chunks, and downloads.
+- **XRENGINE** owns the realtime data plane: direct endpoint/session admission, exact local world asset comparison, replication, authority, and low-latency client transport.
+- `XREngine.Server` should not expose public HTTP directory, allocation, load-balancer, or world-artifact APIs.
 
 ### 3.1 Data Plane (Realtime)
 
@@ -140,6 +151,16 @@ Placement rule example:
 4. Server validates compatibility and admits player.
 5. Server sends initial snapshot and begins delta replication.
 
+Current local-dev implementation note:
+
+- The adjacent control-plane app serves world manifests/chunks and performs any required download orchestration.
+- A control-plane or launcher can pass XRENGINE the concrete realtime endpoint/session/world identity through `XRE_REALTIME_JOIN_PAYLOAD_FILE` or `XRE_REALTIME_JOIN_PAYLOAD`.
+- `ClientNetworkingManager` now sends only the local `WorldAssetIdentity` during realtime join.
+- The client validates an externally supplied expected `WorldAssetIdentity` before starting the UDP join loop.
+- `XREngine.Server` rejects realtime joins when the client's local world asset identity does not exactly match the server's local world asset identity.
+- After admission, the server assigns a canonical `NetworkEntityId`, grants a `NetworkAuthorityLease`, validates client input/transform/pose traffic against that lease, and rebroadcasts server-stamped authoritative state.
+- Phase 2 relevance and budget policy currently sits above the existing multicast UDP sender. True per-client payload elision needs a planned per-peer UDP sequence/ACK refactor.
+
 ### 5.4 Auto-Scale / No Capacity
 
 If no host has capacity:
@@ -167,7 +188,12 @@ Client join:
 
 1. Compare local cache by `worldId + worldVersion + contentHash`.
 2. Download only missing chunks.
-3. Validate before connecting as `ReadyToSync`.
+3. Validate before requesting a realtime endpoint/session.
+
+Current implementation note:
+
+- World artifact manifest loading, chunk reuse, package hash verification, stable cache layout, eviction, and manual purge live outside XRENGINE.
+- XRENGINE treats the resulting local asset identity as the realtime compatibility key and does not download artifacts during join.
 
 ## 7. Authority, Physics, and Ownership Transfer
 
@@ -175,6 +201,7 @@ Client join:
 
 - **Server authoritative for final physics + replicated state.**
 - Clients may receive temporary **input authority** for interactables (grab, drag, drive), but server validates and can override.
+- Current runtime contracts use `NetworkEntityId`, `NetworkAuthorityLease`, `NetworkAuthorityMode`, and explicit revocation reasons. `PlayerAssignment` carries the lease, and the server rejects input/transform/pose traffic that does not match the active lease.
 
 ### 7.2 Dynamic Ownership Transfer
 
@@ -198,12 +225,14 @@ Transfer flow:
 - Snapshot + delta stream with tick ids.
 - Client prediction for owned objects and local avatar.
 - Server correction messages with rewind/replay on mismatch.
+- Current runtime DTOs carry server tick ids, baseline tick ids, client input sequence, and last processed input sequence. Clients apply server correction transforms for locally owned actors.
 
 ### 7.4 Clock Sync, Input Buffering, Lag Compensation
 
 - Periodic NTP-style exchange between client and server to estimate offset + jitter; clients render at `serverTime - renderDelay` where `renderDelay` is adaptive to measured jitter.
 - Inputs are timestamped with client tick; server buffers a small input window (e.g., 2-4 ticks) to absorb jitter before applying.
 - Server retains a short history of authoritative state (ring buffer, N ticks) so hit/interaction checks can rewind to the shooter's render-time view (lag compensation), bounded to a max rewind (e.g., 200 ms) to limit abuse.
+- Current runtime heartbeats include client send time and last received server tick. The server replies with `ClockSyncMessage`, keeps bounded input buffers via `RealtimeReplicationCoordinator`, and exposes lag-compensation timing policy in `MultiplayerRuntimePolicy`.
 
 ### 7.5 Interest Management (AOI)
 
@@ -211,6 +240,7 @@ Transfer flow:
 - Per-client relevance set maintained via spatial index (grid / BVH / octree) updated on tick.
 - Updates prioritized by (distance, recency, entity importance, bandwidth budget); low-priority entities get coarser quantization and lower update rate.
 - Per-connection outbound byte-rate cap with priority-aware shedding.
+- Current runtime gates authoritative transform emission with per-connection `NetworkBandwidthBudget` and relevance radius accounting. Because server sends through the existing multicast path, this is a transport-safe policy layer rather than strict per-endpoint packet routing.
 
 ## 8. API Surface (Draft)
 
@@ -242,7 +272,11 @@ Editor and runtime clients should expose the same multiplayer lobby model:
 - **Browse tab:** list active instances, filters (region/world/player count).
 - **Create tab:** choose world asset id/version, max players, visibility, simulation preset.
 - **Join flow:** join by list selection or invite code.
-- **Status panel:** world download progress, hash validation, connection quality, desync alerts.
+- **Status panel:** direct connection quality, assigned session, local world asset identity, desync alerts.
+
+Current implementation note:
+
+- The ImGui networking panel now exposes only direct realtime settings, optional session id/token, diagnostics, connected clients, and local player assignment status.
 
 Editor-specific capability:
 
@@ -283,8 +317,8 @@ Operational features:
 
 ## 12. Recommended Deployment Topology
 
-1. **Directory + Matchmaking Service** (stateless, horizontally scaled)
-2. **Placement/Fleet Manager** (stateful decision logic + host heartbeats)
+1. **Directory + Matchmaking Service** in the adjacent control-plane app (stateless, horizontally scaled)
+2. **Placement/Fleet Manager** in the non-realtime control-plane service (stateful decision logic + host heartbeats)
 3. **Host Agent** on each realtime machine
 4. **XREngine.Server workers** launched/managed by host agent
 5. **Azure Blob + CDN** for world packages and client asset fetch
@@ -292,6 +326,8 @@ Operational features:
 Start with single region, then extend to multi-region with latency-aware matchmaking.
 
 ## 13. Implementation Roadmap (Next Steps)
+
+The 2026-04-24 boundary cleanup moved directory/instance/world-delivery implementation out of XRENGINE. The next XRENGINE-owned step is realtime admission test coverage and authoritative replication hardening.
 
 ### Phase 0 — Foundations (1-2 sprints)
 
@@ -305,11 +341,13 @@ Start with single region, then extend to multi-region with latency-aware matchma
 
 ### Phase 1 — Single Host Multi-Instance (2-4 sprints)
 
-- Build local host agent in front of XREngine.Server workers.
-- Implement instance create/start/stop on one machine.
-- Implement room browser API (single-host backing store).
-- Implement client/editor browse-create-join flow against this API.
-- Add deterministic world compatibility handshake and asset download validation.
+Status: moved out of XRENGINE. Local directory, lifecycle, host capacity, and create/list/join orchestration belong to the adjacent control-plane app.
+
+- Build local host agent in front of XREngine.Server workers. External control-plane app.
+- Implement instance create/start/stop on one machine. External control-plane app.
+- Implement room browser / create / join API. External control-plane app.
+- Implement client/editor browse-create-join flow against this API. External control-plane app.
+- Add deterministic world compatibility handshake and asset download validation. External world-delivery flow; XRENGINE validates exact local identity at realtime join.
 
 ### Phase 2 — Authority + Physics Networking Hardening (2-4 sprints)
 
@@ -320,7 +358,7 @@ Start with single region, then extend to multi-region with latency-aware matchma
 
 ### Phase 3 — Fleet Placement and Scale-Out (3-6 sprints)
 
-- Implement fleet manager and host heartbeat/capacity reports.
+- Implement fleet manager and host heartbeat/capacity reports in the non-realtime control-plane service, not inside XREngine.Server.
 - Add placement strategy using cpu budget + player slots + headroom.
 - Add pending allocation flow when no host capacity exists.
 - Integrate VM/container auto-scale hooks.
@@ -335,7 +373,7 @@ Start with single region, then extend to multi-region with latency-aware matchma
 ## 14. Open Design Decisions
 
 1. Worker model: multi-instance in one process vs one-process-per-instance (see §16.2).
-2. Transport stack: ENet/UDP custom layer vs WebRTC/QUIC hybrid; WebRTC is required if browser clients must be supported.
+2. Transport stack: v1 native clients use the existing UDP data plane. WebRTC/QUIC remains a follow-up if browser clients are brought into scope.
 3. Snapshot format and compression strategy for large worlds (bitpacked quantized deltas vs schema-based diffing).
 4. Party reservation and invite-code semantics.
 5. Persistence model for room state (ephemeral only vs checkpoint resume).
@@ -346,15 +384,16 @@ Start with single region, then extend to multi-region with latency-aware matchma
 
 ## 15. Immediate Action Items (Concrete)
 
-1. Create a `MultiplayerInstanceConfig` contract in shared networking/runtime code.
-2. Add server-side instance state machine and max-player gate enforcement.
-3. Implement world manifest verification at server startup and client pre-join.
-4. Stand up minimal directory service (`create/list/join`) for local dev.
-5. Add editor UI panel for browse/create/join against the directory service.
+1. Keep `MultiplayerInstanceConfig` and create/list/join orchestration in the adjacent control-plane app, outside shared engine runtime code.
+2. Keep server-side instance lifecycle, max-player gate enforcement, and host capacity in the adjacent control-plane app; XRENGINE enforces only realtime session admission.
+3. Implement world manifest verification and download orchestration outside XRENGINE; the engine verifies only the exact local `WorldAssetIdentity` at realtime join.
+4. Stand up minimal directory service (`create/list/join`) for local dev. External control-plane app.
+5. Keep editor browse/create/join UI outside XRENGINE; the engine editor keeps only direct realtime controls.
 6. Add integration tests:
-   - create 3 instances with different max-player caps
-   - join until full and assert rejection behavior
-   - validate ownership transfer under contention
+  - create 3 instances with different max-player caps
+  - join until full and assert rejection behavior. Done.
+  - stop or drain an instance and assert rejection behavior. Done.
+  - validate ownership transfer under contention
 7. Define performance SLOs (tick budget, join latency, startup latency) and baseline them.
 
 ---
