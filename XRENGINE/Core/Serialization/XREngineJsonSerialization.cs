@@ -4,11 +4,13 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using OpenVR.NET.Manifest;
 using XREngine.Components;
+using XREngine.Networking;
 
 namespace XREngine;
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, PropertyNameCaseInsensitive = true, IncludeFields = true)]
 [JsonSerializable(typeof(DiscoveryAnnouncement))]
+[JsonSerializable(typeof(RealtimeJoinHandoffPayload))]
 [JsonSerializable(typeof(Engine.VRState.VRInputData))]
 public sealed partial class XREngineRuntimeJsonContext : JsonSerializerContext
 {

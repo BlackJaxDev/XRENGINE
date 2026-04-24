@@ -110,8 +110,9 @@ If you are working on the legacy OpenVR path, use `XREngine.VRClient` as the com
 ### Networking quick test
 
 ```powershell
-./Tools/Start-NetworkTest.bat          # server + client
-./Tools/Start-NetworkTest.bat pose     # server + pose source + pose receiver
+./Tools/Start-NetworkTest.bat              # dedicated server + two clients
+./Tools/Start-NetworkTest.bat mismatch     # one good client + one rejected world-hash mismatch
+./Tools/Start-NetworkTest.bat pose         # server + pose source + pose receiver
 ```
 
 ### ExecTool

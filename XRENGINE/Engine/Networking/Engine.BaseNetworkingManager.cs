@@ -52,6 +52,10 @@ namespace XREngine
             public event Action<RemoteJobResponse>? RemoteJobResponseReceived;
             public event Action<ServerErrorMessage>? ServerErrorReceived;
             public event Action<HumanoidPoseFrame>? HumanoidPoseFrameReceived;
+            public event Action<NetworkAuthorityLease>? AuthorityLeaseUpdated;
+            public event Action<ClockSyncMessage>? ClockSyncReceived;
+            public event Action<NetworkSnapshotEnvelope>? ReplicationSnapshotReceived;
+            public event Action<NetworkDeltaEnvelope>? ReplicationDeltaReceived;
 
             private readonly CancellationTokenSource _consumeCts = new();
             private Task _consumeTask = Task.CompletedTask;
@@ -556,8 +560,37 @@ namespace XREngine
             public void BroadcastHumanoidPoseFrame(HumanoidPoseFrame frame, bool compress = false, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 ArgumentNullException.ThrowIfNull(frame);
+                PrepareOutgoingHumanoidPoseFrame(frame);
                 string serialized = StateChangePayloadSerializer.Serialize(frame);
                 ReplicateStateChange(new StateChangeInfo(EStateChangeType.HumanoidPoseFrame, serialized), compress, resendOnFailedAck, maxAckWaitSec);
+            }
+
+            protected virtual void PrepareOutgoingHumanoidPoseFrame(HumanoidPoseFrame frame)
+            {
+            }
+
+            protected void BroadcastAuthorityLeaseUpdate(NetworkAuthorityLease lease, bool compress = true, bool resendOnFailedAck = true, float maxAckWaitSec = DefaultAckTimeoutSec)
+            {
+                ArgumentNullException.ThrowIfNull(lease);
+                BroadcastStateChange(EStateChangeType.AuthorityLeaseUpdate, lease, compress, resendOnFailedAck, maxAckWaitSec);
+            }
+
+            protected void BroadcastClockSync(ClockSyncMessage message, bool compress = false, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
+            {
+                ArgumentNullException.ThrowIfNull(message);
+                BroadcastStateChange(EStateChangeType.ClockSync, message, compress, resendOnFailedAck, maxAckWaitSec);
+            }
+
+            public void BroadcastReplicationSnapshot(NetworkSnapshotEnvelope envelope, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
+            {
+                ArgumentNullException.ThrowIfNull(envelope);
+                BroadcastStateChange(EStateChangeType.ReplicationSnapshot, envelope, compress, resendOnFailedAck, maxAckWaitSec);
+            }
+
+            public void BroadcastReplicationDelta(NetworkDeltaEnvelope envelope, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
+            {
+                ArgumentNullException.ThrowIfNull(envelope);
+                BroadcastStateChange(EStateChangeType.ReplicationDelta, envelope, compress, resendOnFailedAck, maxAckWaitSec);
             }
 
             protected void BroadcastStateChange<TPayload>(EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
@@ -995,6 +1028,34 @@ namespace XREngine
                 {
                     if (StateChangePayloadSerializer.TryDeserialize<HumanoidPoseFrame>(change.Data, out var frame) && frame is not null)
                         HumanoidPoseFrameReceived?.Invoke(frame);
+                    return;
+                }
+
+                if (change.Type == EStateChangeType.AuthorityLeaseUpdate)
+                {
+                    if (StateChangePayloadSerializer.TryDeserialize<NetworkAuthorityLease>(change.Data, out var lease) && lease is not null)
+                        AuthorityLeaseUpdated?.Invoke(lease);
+                    return;
+                }
+
+                if (change.Type == EStateChangeType.ClockSync)
+                {
+                    if (StateChangePayloadSerializer.TryDeserialize<ClockSyncMessage>(change.Data, out var clock) && clock is not null)
+                        ClockSyncReceived?.Invoke(clock);
+                    return;
+                }
+
+                if (change.Type == EStateChangeType.ReplicationSnapshot)
+                {
+                    if (StateChangePayloadSerializer.TryDeserialize<NetworkSnapshotEnvelope>(change.Data, out var snapshot) && snapshot is not null)
+                        ReplicationSnapshotReceived?.Invoke(snapshot);
+                    return;
+                }
+
+                if (change.Type == EStateChangeType.ReplicationDelta)
+                {
+                    if (StateChangePayloadSerializer.TryDeserialize<NetworkDeltaEnvelope>(change.Data, out var delta) && delta is not null)
+                        ReplicationDeltaReceived?.Invoke(delta);
                     return;
                 }
 

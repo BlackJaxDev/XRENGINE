@@ -26,6 +26,10 @@ public enum EStateChangeType : byte
     RemoteJobResponse,
     ServerError,
     HumanoidPoseFrame,
+    AuthorityLeaseUpdate,
+    ClockSync,
+    ReplicationSnapshot,
+    ReplicationDelta,
 }
 
 [MemoryPackable]

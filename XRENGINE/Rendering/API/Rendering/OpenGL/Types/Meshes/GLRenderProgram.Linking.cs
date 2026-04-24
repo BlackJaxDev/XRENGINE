@@ -136,7 +136,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void BindBuffer(uint index, XRDataBuffer buffer)
             {
-                var glObj = Renderer.GetOrCreateAPIRenderObject(buffer);
+                var glObj = Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: true);
                 if (glObj is not GLDataBuffer glBuf)
                     return;
 

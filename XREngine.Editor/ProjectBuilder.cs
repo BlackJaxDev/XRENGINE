@@ -15,6 +15,7 @@ using XREngine.Components.Scripting;
 using XREngine.Core.Attributes;
 using XREngine.Core.Files;
 using XREngine.Diagnostics;
+using XREngine.Networking;
 using XREngine.Scene.Transforms;
 using XREngine.Serialization;
 using YamlDotNet.Serialization;
@@ -369,6 +370,7 @@ internal static class ProjectBuilder
         try
         {
             Type[] allTypes = [.. EnumerateLoadableTypes(assemblies)
+                .Concat(NetworkingAotContractRegistry.ContractTypes)
                 .Where(t => t.AssemblyQualifiedName is not null)
                 .DistinctBy(t => t.AssemblyQualifiedName, StringComparer.Ordinal)];
 

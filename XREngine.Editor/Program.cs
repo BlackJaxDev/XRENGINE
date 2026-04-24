@@ -788,6 +788,11 @@ internal class Program
             settings.UdpServerSendPort = udpServerSendPort;
             EngineDebug.Out($"UDP server send port overridden to {udpServerSendPort} via XRE_UDP_SERVER_SEND_PORT.");
         }
+        if (TryGetIntEnv("XRE_UDP_SERVER_BIND_PORT", out int udpServerBindPort))
+        {
+            settings.UdpServerBindPort = udpServerBindPort;
+            EngineDebug.Out($"UDP server bind port overridden to {udpServerBindPort} via XRE_UDP_SERVER_BIND_PORT.");
+        }
         if (TryGetIntEnv("XRE_UDP_MULTICAST_PORT", out int udpMulticastPort))
         {
             settings.UdpMulticastPort = udpMulticastPort;

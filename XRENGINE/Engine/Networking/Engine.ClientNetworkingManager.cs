@@ -29,13 +29,21 @@ namespace XREngine
             private long _lastTransformSyncTicks;
             private long _lastJoinRequestTicks;
             private long _lastHeartbeatTicks;
-            private Guid _activeInstanceId = Guid.Empty;
+            private Guid _activeSessionId = Guid.Empty;
+            private uint _inputSequence;
+            private uint _poseFrameSequence;
+            private long _clientTickId;
+            private long _lastReceivedServerTickId;
+            private uint _lastProcessedInputSequence;
+            private double _clockOffsetSeconds;
             private const double InputSyncIntervalSeconds = 1.0 / 60.0;
             private const double TransformSyncIntervalSeconds = 1.0 / 20.0;
             private const double JoinRetrySeconds = 3.0;
             private const double HeartbeatIntervalSeconds = 3.0;
             private readonly Dictionary<int, RemotePlayerState> _remotePlayers = new();
             private readonly HashSet<int> _localServerIndices = new();
+            private WorldAssetIdentity? _localWorldAsset;
+            private string EffectiveClientId => _clientId;
 
             public ClientNetworkingManager() : base(peerId: null)
             {
@@ -67,6 +75,12 @@ namespace XREngine
             /// Sends from client to server.
             /// </summary>
             public UdpClient? UdpSender { get; set; }
+            public Guid? SessionId { get; set; }
+            public string? SessionToken { get; set; }
+            public WorldAssetIdentity? LocalWorldAsset => _localWorldAsset ??= CreateLocalWorldAsset();
+            public double EstimatedServerClockOffsetSeconds => _clockOffsetSeconds;
+            public long LastReceivedServerTickId => _lastReceivedServerTickId;
+            public uint LastProcessedInputSequence => _lastProcessedInputSequence;
 
             public void Start(
                 IPAddress udpMulticastGroupIP,
@@ -76,7 +90,7 @@ namespace XREngine
             {
                 Debug.Out($"Starting client with udp(multicast: {udpMulticastGroupIP}:{udpMulticastPort}) sending to server at ({serverIP}:{udpSendPort})");
                 StartUdpMulticastReceiver(serverIP, udpMulticastGroupIP, udpMulticastPort);
-                StartUdpSender(serverIP, udpMulticastPort);
+                StartUdpSender(serverIP, udpSendPort);
                 EnsureClientTick();
                 SendJoinRequest();
             }
@@ -136,6 +150,18 @@ namespace XREngine
                         if (StateChangePayloadSerializer.TryDeserialize<ServerErrorMessage>(change.Data, out var error) && error is not null)
                             HandleServerError(error);
                         break;
+                    case EStateChangeType.AuthorityLeaseUpdate:
+                        if (StateChangePayloadSerializer.TryDeserialize<NetworkAuthorityLease>(change.Data, out var lease) && lease is not null)
+                            HandleAuthorityLeaseUpdate(lease);
+                        break;
+                    case EStateChangeType.ClockSync:
+                        if (StateChangePayloadSerializer.TryDeserialize<ClockSyncMessage>(change.Data, out var clock) && clock is not null)
+                            HandleClockSync(clock);
+                        break;
+                    case EStateChangeType.ReplicationSnapshot:
+                    case EStateChangeType.ReplicationDelta:
+                        base.HandleStateChange(change, sender);
+                        break;
                 }
             }
 
@@ -154,6 +180,7 @@ namespace XREngine
                     return;
 
                 long nowTicks = CurrentEngineTicks();
+                _clientTickId++;
 
                 if (!_assignmentReceived && (!_joinRequested || HasElapsed(nowTicks, _lastJoinRequestTicks, JoinRetrySeconds)))
                     SendJoinRequest();
@@ -179,18 +206,23 @@ namespace XREngine
 
             private void SendJoinRequest()
             {
+                long nowTicks = CurrentEngineTicks();
+                _localWorldAsset ??= CreateLocalWorldAsset();
+
                 PlayerJoinRequest request = new()
                 {
-                    ClientId = _clientId,
+                    ClientId = EffectiveClientId,
                     DisplayName = Environment.UserName,
                     BuildVersion = CurrentProtocolVersion,
                     WorldName = ResolvePrimaryWorldInstance()?.TargetWorld?.Name,
-                    InstanceId = _activeInstanceId == Guid.Empty ? null : _activeInstanceId
+                    ClientWorldAsset = _localWorldAsset,
+                    SessionId = SessionId ?? (_activeSessionId == Guid.Empty ? null : _activeSessionId),
+                    SessionToken = SessionToken,
                 };
 
                 BroadcastStateChange(EStateChangeType.PlayerJoin, request, compress: true);
                 _joinRequested = true;
-                _lastJoinRequestTicks = CurrentEngineTicks();
+                _lastJoinRequestTicks = nowTicks;
             }
 
             private void SendHeartbeat()
@@ -210,9 +242,12 @@ namespace XREngine
                     var heartbeat = new PlayerHeartbeat
                     {
                         ServerPlayerIndex = serverIndex,
-                        ClientId = _clientId,
+                        ClientId = EffectiveClientId,
                         TimestampUtc = GetUtcSeconds(),
-                        InstanceId = _activeInstanceId == Guid.Empty ? null : _activeInstanceId
+                        ClientSendTimestampUtc = GetUtcSeconds(),
+                        LastReceivedServerTickId = _lastReceivedServerTickId,
+                        LastProcessedInputSequence = _lastProcessedInputSequence,
+                        SessionId = _activeSessionId == Guid.Empty ? null : _activeSessionId
                     };
 
                     BroadcastStateChange(EStateChangeType.Heartbeat, heartbeat, compress: false);
@@ -239,9 +274,13 @@ namespace XREngine
                     var snapshot = new PlayerInputSnapshot
                     {
                         ServerPlayerIndex = serverIndex,
+                        EntityId = playerInfo.NetworkEntityId,
                         Input = pawn.CaptureNetworkInputState(),
                         TimestampUtc = GetUtcSeconds(),
-                        InstanceId = playerInfo.InstanceId
+                        ClientSendTimestampUtc = GetUtcSeconds(),
+                        InputSequence = ++_inputSequence,
+                        ClientTickId = _clientTickId,
+                        SessionId = playerInfo.SessionId
                     };
 
                     BroadcastStateChange(EStateChangeType.PlayerInputSnapshot, snapshot, compress: true);
@@ -269,11 +308,14 @@ namespace XREngine
                     PlayerTransformUpdate update = new()
                     {
                         ServerPlayerIndex = serverIndex,
+                        EntityId = playerInfo.NetworkEntityId,
                         TransformId = transform.ID,
                         Translation = transform.Translation,
                         Rotation = transform.Rotation,
                         Velocity = Vector3.Zero,
-                        InstanceId = playerInfo.InstanceId
+                        SessionId = playerInfo.SessionId,
+                        ClientInputSequence = _inputSequence,
+                        AuthorityMode = NetworkAuthorityMode.ClientPredicted
                     };
 
                     BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, update, compress: false);
@@ -297,14 +339,16 @@ namespace XREngine
                     var leave = new PlayerLeaveNotice
                     {
                         ServerPlayerIndex = serverIndex,
-                        ClientId = _clientId,
+                        ClientId = EffectiveClientId,
                         Reason = reason,
-                        InstanceId = playerInfo.InstanceId
+                        SessionId = playerInfo.SessionId
                     };
 
                     BroadcastStateChange(EStateChangeType.PlayerLeave, leave, compress: false);
 
                     playerInfo.ServerIndex = -1;
+                    playerInfo.NetworkEntityId = NetworkEntityId.Empty;
+                    playerInfo.AuthorityLease = null;
                     _localServerIndices.Remove(serverIndex);
                 }
             }
@@ -312,18 +356,23 @@ namespace XREngine
             [RequiresUnreferencedCode("World/GameMode reflection for networking sync")]
             private void HandlePlayerAssignment(PlayerAssignment assignment)
             {
-                bool isLocal = string.Equals(assignment.ClientId, _clientId, StringComparison.OrdinalIgnoreCase);
+                bool isLocal = string.Equals(assignment.ClientId, EffectiveClientId, StringComparison.OrdinalIgnoreCase);
 
                 if (assignment.World is not null)
                     ApplyWorldDescriptor(assignment.World);
 
-                if (!isLocal && _activeInstanceId != Guid.Empty && assignment.InstanceId != _activeInstanceId)
+                if (!isLocal && _activeSessionId != Guid.Empty && assignment.SessionId != _activeSessionId)
                     return;
 
                 if (isLocal)
                 {
                     AttachAssignmentToLocalPlayer(assignment);
                     _assignmentReceived = true;
+                    Debug.Networking(
+                        "[Client] Realtime assignment accepted playerIndex={0}; session={1}; world={2}",
+                        assignment.ServerPlayerIndex,
+                        assignment.SessionId,
+                        RealtimeJoinHandoff.DescribeWorldAsset(assignment.World?.Asset));
                     return;
                 }
 
@@ -346,8 +395,11 @@ namespace XREngine
                     {
                         playerInfo.ServerIndex = assignment.ServerPlayerIndex;
                         playerInfo.LocalIndex ??= player.LocalPlayerIndex;
-                        playerInfo.InstanceId = assignment.InstanceId;
-                        _activeInstanceId = assignment.InstanceId;
+                        playerInfo.SessionId = assignment.SessionId;
+                        playerInfo.NetworkEntityId = assignment.PlayerEntityId;
+                        playerInfo.AuthorityLease = assignment.AuthorityLease;
+                        _activeSessionId = assignment.SessionId;
+                        _lastReceivedServerTickId = Math.Max(_lastReceivedServerTickId, assignment.ServerTickId);
                         _localServerIndices.Add(assignment.ServerPlayerIndex);
                         RemoveRemotePlayer(assignment.ServerPlayerIndex);
                         return;
@@ -456,7 +508,7 @@ namespace XREngine
 
             private void HandlePlayerLeave(PlayerLeaveNotice leave)
             {
-                if (_activeInstanceId != Guid.Empty && leave.InstanceId != _activeInstanceId)
+                if (_activeSessionId != Guid.Empty && leave.SessionId != _activeSessionId)
                     return;
 
                 // If this leave refers to a local player, clear the server index
@@ -471,6 +523,8 @@ namespace XREngine
                     if (playerInfo.ServerIndex == leave.ServerPlayerIndex)
                     {
                         playerInfo.ServerIndex = -1;
+                        playerInfo.NetworkEntityId = NetworkEntityId.Empty;
+                        playerInfo.AuthorityLease = null;
                         _localServerIndices.Remove(leave.ServerPlayerIndex);
                     }
                 }
@@ -481,7 +535,7 @@ namespace XREngine
 
             private void HandleServerError(ServerErrorMessage error)
             {
-                if (!string.IsNullOrWhiteSpace(error.ClientId) && !string.Equals(error.ClientId, _clientId, StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrWhiteSpace(error.ClientId) && !string.Equals(error.ClientId, EffectiveClientId, StringComparison.OrdinalIgnoreCase))
                     return;
 
                 if (error.ServerPlayerIndex is int idx && !_localServerIndices.Contains(idx) && !string.IsNullOrWhiteSpace(error.ClientId))
@@ -498,25 +552,110 @@ namespace XREngine
                             continue;
 
                         if (player.PlayerInfo is { } playerInfo)
+                        {
                             playerInfo.ServerIndex = -1;
+                            playerInfo.NetworkEntityId = NetworkEntityId.Empty;
+                            playerInfo.AuthorityLease = null;
+                        }
                     }
                     _localServerIndices.Clear();
                     ClearRemotePlayers();
                     _assignmentReceived = false;
-                    _activeInstanceId = Guid.Empty;
+                    _activeSessionId = Guid.Empty;
                 }
             }
 
             private void HandleRemoteTransform(PlayerTransformUpdate update)
             {
-                if (_activeInstanceId != Guid.Empty && update.InstanceId != _activeInstanceId)
+                if (_activeSessionId != Guid.Empty && update.SessionId != _activeSessionId)
                     return;
 
                 if (_localServerIndices.Contains(update.ServerPlayerIndex))
+                {
+                    ApplyServerCorrectionToLocal(update);
                     return;
+                }
 
                 var remote = GetOrCreateRemotePlayer(update.ServerPlayerIndex);
                 remote?.Controller.ApplyNetworkTransform(update);
+            }
+
+            private void ApplyServerCorrectionToLocal(PlayerTransformUpdate update)
+            {
+                _lastReceivedServerTickId = Math.Max(_lastReceivedServerTickId, update.ServerTickId);
+                _lastProcessedInputSequence = Math.Max(_lastProcessedInputSequence, update.LastProcessedInputSequence);
+                if (!update.IsServerCorrection)
+                    return;
+
+                foreach (var player in Engine.State.LocalPlayers)
+                {
+                    if (player?.PlayerInfo is not { } playerInfo || playerInfo.ServerIndex != update.ServerPlayerIndex)
+                        continue;
+
+                    player.ApplyNetworkTransform(update);
+                    return;
+                }
+            }
+
+            private void HandleAuthorityLeaseUpdate(NetworkAuthorityLease lease)
+            {
+                if (_activeSessionId != Guid.Empty && lease.SessionId != _activeSessionId)
+                    return;
+
+                foreach (var player in Engine.State.LocalPlayers)
+                {
+                    if (player?.PlayerInfo is not { } playerInfo)
+                        continue;
+
+                    if (playerInfo.ServerIndex != lease.OwnerServerPlayerIndex)
+                        continue;
+
+                    playerInfo.AuthorityLease = lease;
+                    if (lease.IsRevoked)
+                        playerInfo.NetworkEntityId = NetworkEntityId.Empty;
+                    else
+                        playerInfo.NetworkEntityId = lease.EntityId;
+                }
+            }
+
+            private void HandleClockSync(ClockSyncMessage clock)
+            {
+                if (!string.Equals(clock.ClientId, EffectiveClientId, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                if (_activeSessionId != Guid.Empty && clock.SessionId != _activeSessionId)
+                    return;
+
+                double receiveUtc = GetUtcSeconds();
+                double midpoint = (clock.ClientSendTimestampUtc + receiveUtc) * 0.5d;
+                _clockOffsetSeconds = clock.ServerSendTimestampUtc - midpoint;
+                _lastReceivedServerTickId = Math.Max(_lastReceivedServerTickId, clock.ServerTickId);
+            }
+
+            protected override void PrepareOutgoingHumanoidPoseFrame(HumanoidPoseFrame frame)
+            {
+                if (frame.SessionId == Guid.Empty)
+                    frame.SessionId = _activeSessionId;
+                if (string.IsNullOrWhiteSpace(frame.SourceClientId))
+                    frame.SourceClientId = EffectiveClientId;
+                if (frame.FrameSequence == 0)
+                    frame.FrameSequence = ++_poseFrameSequence;
+                if (frame.EntityIds.Length == 0)
+                    frame.EntityIds = GetLocalNetworkEntityIds();
+                frame.AuthorityMode = NetworkAuthorityMode.ClientPredicted;
+                frame.Channel = NetworkReplicationChannel.HumanoidPose;
+            }
+
+            private static NetworkEntityId[] GetLocalNetworkEntityIds()
+            {
+                List<NetworkEntityId> ids = [];
+                foreach (var player in Engine.State.LocalPlayers)
+                {
+                    if (player?.PlayerInfo is { NetworkEntityId.IsEmpty: false } playerInfo)
+                        ids.Add(playerInfo.NetworkEntityId);
+                }
+
+                return [.. ids];
             }
 
             private RemotePlayerState? GetOrCreateRemotePlayer(int serverPlayerIndex, string? displayName = null)
@@ -623,6 +762,14 @@ namespace XREngine
                 return XRWorldInstance.WorldInstances.Values.FirstOrDefault();
             }
 
+            private static WorldAssetIdentity? CreateLocalWorldAsset()
+            {
+                XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
+                return worldInstance?.TargetWorld is null
+                    ? null
+                    : WorldAssetIdentityProvider.Create(worldInstance.TargetWorld, CurrentProtocolVersion);
+            }
+
             private static double GetUtcSeconds()
                 => (DateTime.UtcNow - DateTime.UnixEpoch).TotalSeconds;
 
@@ -635,6 +782,10 @@ namespace XREngine
 
                 if (!string.Equals(world.Name, descriptor.WorldName, StringComparison.OrdinalIgnoreCase))
                     Debug.Out($"[Client] Connected to server world '{descriptor.WorldName}', but local world is '{world.Name}'.");
+
+                WorldAssetIdentity? localAsset = CreateLocalWorldAsset();
+                if (descriptor.Asset is not null && localAsset is not null && !localAsset.IsSameAssetAs(descriptor.Asset))
+                    Debug.Out("[Client] Server world asset identity differs from the local world asset identity.");
             }
 
             private sealed class RemotePlayerState

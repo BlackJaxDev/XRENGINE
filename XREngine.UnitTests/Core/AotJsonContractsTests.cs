@@ -6,6 +6,7 @@ using NUnit.Framework;
 using Shouldly;
 using Valve.VR;
 using XREngine.Components;
+using XREngine.Networking;
 
 namespace XREngine.UnitTests.Core;
 
@@ -49,6 +50,42 @@ public sealed class AotJsonContractsTests
         roundTrip.MulticastGroup.ShouldBe(announcement.MulticastGroup);
         roundTrip.AdvertisedRole.ShouldBe(announcement.AdvertisedRole);
         roundTrip.TimestampUtc.ShouldBe(announcement.TimestampUtc);
+    }
+
+    [Test]
+    public void RealtimeJoinHandoffPayload_SourceGeneratedContextRoundTrips()
+    {
+        RealtimeJoinHandoffPayload payload = new()
+        {
+            SessionId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            SessionToken = "opaque-token",
+            Endpoint = new RealtimeEndpointDescriptor
+            {
+                Transport = RealtimeTransportKind.NativeUdp,
+                Host = "127.0.0.1",
+                Port = 5000,
+                ProtocolVersion = "dev"
+            },
+            WorldAsset = new WorldAssetIdentity
+            {
+                WorldId = "world-a",
+                RevisionId = "rev-1",
+                ContentHash = "sha256:abcdef",
+                AssetSchemaVersion = 1,
+                RequiredBuildVersion = "dev"
+            }
+        };
+
+        byte[] json = JsonSerializer.SerializeToUtf8Bytes(payload, XREngineRuntimeJsonContext.Default.RealtimeJoinHandoffPayload);
+        RealtimeJoinHandoffPayload? roundTrip = JsonSerializer.Deserialize(json, XREngineRuntimeJsonContext.Default.RealtimeJoinHandoffPayload);
+
+        roundTrip.ShouldNotBeNull();
+        roundTrip.SessionId.ShouldBe(payload.SessionId);
+        roundTrip.SessionToken.ShouldBe(payload.SessionToken);
+        roundTrip.Endpoint.ShouldNotBeNull();
+        roundTrip.Endpoint!.Host.ShouldBe("127.0.0.1");
+        roundTrip.WorldAsset.ShouldNotBeNull();
+        roundTrip.WorldAsset!.IsSameAssetAs(payload.WorldAsset).ShouldBeTrue();
     }
 
     [Test]

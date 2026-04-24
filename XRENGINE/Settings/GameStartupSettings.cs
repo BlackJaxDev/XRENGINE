@@ -4,6 +4,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Networking;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
 
@@ -40,9 +41,15 @@ namespace XREngine
 
         private string _udpMulticastGroupIP = "239.0.0.222";
         private int _udpMulticastPort = 5000;
+        private int _udpServerBindPort = 5000;
         //private string _tcpListenerIP = "0.0.0.0";
         //private int _tcpListenerPort = 5001;
         private string _serverIP = "127.0.0.1";
+        private RealtimeTransportKind _multiplayerTransport = RealtimeTransportKind.NativeUdp;
+        private Guid? _multiplayerSessionId;
+        private string? _multiplayerSessionToken;
+        private string? _expectedMultiplayerProtocolVersion;
+        private WorldAssetIdentity? _expectedMultiplayerWorldAsset;
 
         [Category("Windows")]
         [Description("List of windows that will be created at startup (resolution, target world, local players, etc.).")]
@@ -111,6 +118,46 @@ namespace XREngine
         }
 
         [Category("Networking")]
+        [Description("Direct realtime transport selected by an external handoff payload. NativeUdp is the current supported transport.")]
+        public RealtimeTransportKind MultiplayerTransport
+        {
+            get => _multiplayerTransport;
+            set => SetField(ref _multiplayerTransport, value);
+        }
+
+        [Category("Networking")]
+        [Description("Optional realtime session/room id supplied by an external control plane or launch command.")]
+        public Guid? MultiplayerSessionId
+        {
+            get => _multiplayerSessionId;
+            set => SetField(ref _multiplayerSessionId, value);
+        }
+
+        [Category("Networking")]
+        [Description("Optional opaque realtime session token supplied by an external control plane.")]
+        public string? MultiplayerSessionToken
+        {
+            get => _multiplayerSessionToken;
+            set => SetField(ref _multiplayerSessionToken, value);
+        }
+
+        [Category("Networking")]
+        [Description("Optional expected realtime protocol/build version supplied by an external handoff payload.")]
+        public string? ExpectedMultiplayerProtocolVersion
+        {
+            get => _expectedMultiplayerProtocolVersion;
+            set => SetField(ref _expectedMultiplayerProtocolVersion, value);
+        }
+
+        [Category("Networking")]
+        [Description("Optional expected local world identity supplied by an external handoff payload and validated before realtime connect.")]
+        public WorldAssetIdentity? ExpectedMultiplayerWorldAsset
+        {
+            get => _expectedMultiplayerWorldAsset;
+            set => SetField(ref _expectedMultiplayerWorldAsset, value);
+        }
+
+        [Category("Networking")]
         [Description("UDP multicast group IP used for LAN discovery / multicast messaging when applicable.")]
         public string UdpMulticastGroupIP
         {
@@ -125,6 +172,15 @@ namespace XREngine
             get => _udpMulticastPort;
             set => SetField(ref _udpMulticastPort, value);
         }
+
+        [Category("Networking")]
+        [Description("Local UDP port that a server binds for inbound realtime client packets.")]
+        public int UdpServerBindPort
+        {
+            get => _udpServerBindPort;
+            set => SetField(ref _udpServerBindPort, value);
+        }
+
         private int _udpClientReceivePort = 5001;
 
         [Category("Networking")]

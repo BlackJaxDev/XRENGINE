@@ -1,14 +1,10 @@
-﻿using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.ResponseCompression;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
+using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Scene;
-using XREngine.Server.Instances;
 using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -21,65 +17,35 @@ using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using XREngine.Networking.LoadBalance;
-using XREngine.Networking.LoadBalance.Balancers;
-using XREngine.Server;
 using static XREngine.GameStartupSettings;
-
-using System.Linq;
-using System.IO;
 namespace XREngine.Networking
 {
     /// <summary>
-    /// There will be several of these programs running on different machines.
-    /// The user is first directed to a load balancer server, which will then redirect them to a game host server.
+    /// Dedicated realtime server entry point. Instance discovery, allocation, and asset delivery live outside
+    /// this engine process; this executable only accepts direct UDP joins against its loaded world.
     /// </summary>
     public class Program
     {
-        //private static readonly CommandServer _loadBalancer;
-
-        //static Program()
-        //{
-        //    _loadBalancer = new CommandServer(
-        //        8000,
-        //        new RoundRobinLeastLoadBalancer(new[]
-        //        {
-        //            new Server { IP = "192.168.0.2", Port = 8001 },
-        //            new Server { IP = "192.168.0.3", Port = 8002 },
-        //            new Server { IP = "192.168.0.4", Port = 8003 },
-        //        }),
-        //        new Authenticator(""));
-        //}
-
-        //public static async Task Main()
-        //{
-        //    await _loadBalancer.Start();
-        //}
-
-        public static Task? WebAppTask { get; private set; }
-        private static LoadBalancerService? _loadBalancerService;
-        private static readonly Guid _serverId = Guid.NewGuid();
-        private static ServerInstanceManager? _instanceManager;
-        private static WorldDownloadService? _worldDownloader;
+        private static readonly Guid _serverSessionId = ResolveConfiguredSessionId();
+        private static readonly string? _requiredSessionToken = GetOptionalEnvironmentValue("XRE_SESSION_TOKEN");
+        private static readonly string _udpMulticastGroup = GetOptionalEnvironmentValue("XRE_UDP_MULTICAST_GROUP") ?? "239.0.0.222";
+        private static readonly int _udpMulticastPort = GetOptionalIntEnvironmentValue("XRE_UDP_MULTICAST_PORT")
+            ?? 5000;
+        private static readonly int _udpBindPort = GetOptionalIntEnvironmentValue("XRE_UDP_BIND_PORT")
+            ?? GetOptionalIntEnvironmentValue("XRE_UDP_SERVER_BIND_PORT")
+            ?? 5000;
+        private static readonly int _udpAdvertisedPort = GetOptionalIntEnvironmentValue("XRE_UDP_ADVERTISED_PORT")
+            ?? GetOptionalIntEnvironmentValue("XRE_UDP_SERVER_SEND_PORT")
+            ?? _udpBindPort;
 
         private static void Main(string[] args)
         {
-            WebAppTask = BuildWebApi();
-            bool loadBalancerOnly = args.Any(a => string.Equals(a, "--load-balancer-only", StringComparison.OrdinalIgnoreCase));
-            bool enableDevRendering = args.Any(a => string.Equals(a, "--dev-render", StringComparison.OrdinalIgnoreCase));
-            if (loadBalancerOnly)
-            {
-                WebAppTask?.GetAwaiter().GetResult();
-                return;
-            }
-
             // Apply engine settings
             Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
             Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = false;
 
-            _worldDownloader = new WorldDownloadService();
-            _instanceManager = new ServerInstanceManager(_worldDownloader);
-            Engine.ServerInstanceResolver = ResolveServerInstance;
+            Engine.ServerSessionResolver = ResolveServerSession;
+            Engine.ServerJoinAdmissionResolver = ResolveServerJoin;
 
             //JsonConvert.DefaultSettings = DefaultJsonSettings;
 
@@ -121,81 +87,67 @@ namespace XREngine.Networking
             Debug.Assets($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.");
         }
 
-        private static Task BuildWebApi()
+        private static ServerJoinAdmissionResult? ResolveServerJoin(PlayerJoinRequest request)
         {
-            var builder = WebApplication.CreateBuilder();
+            AdmissionFailureReason sessionFailure = RealtimeAdmissionValidator.ValidateSession(
+                request,
+                _serverSessionId,
+                _requiredSessionToken,
+                out string sessionFailureMessage);
+            if (sessionFailure != AdmissionFailureReason.None)
+                return new ServerJoinAdmissionResult(null, sessionFailure, sessionFailureMessage);
 
-            builder.Services.AddControllers();
-            builder.Services.AddSingleton(sp =>
-            {
-                var strategy = new RoundRobinLeastLoadBalancer(Array.Empty<Server>());
-                _loadBalancerService = new LoadBalancerService(strategy, TimeSpan.FromSeconds(60));
-                return _loadBalancerService;
-            });
-            builder.Services.AddResponseCompression(opts =>
-            {
-                opts.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(["application/octet-stream"]);
-            });
-            var app = builder.Build();
-
-            app.UseResponseCompression();
-
-            // Configure the HTTP request pipeline.
-            if (app.Environment.IsDevelopment())
-                app.UseDeveloperExceptionPage();
-            else
-            {
-                app.UseExceptionHandler("/Error");
-                app.UseHsts();
-            }
-
-            app.UseHttpsRedirection();
-            app.UseStaticFiles();
-            app.UseRouting();
-            app.UseAuthorization();
-            app.MapControllers();
-
-            return app.RunAsync();
+            ServerSessionContext? session = ResolveServerSession(request);
+            return session is null
+                ? new ServerJoinAdmissionResult(null, AdmissionFailureReason.SessionNotFound, "No local world instance is ready for realtime joins.")
+                : new ServerJoinAdmissionResult(session);
         }
 
-        private static ServerInstanceContext? ResolveServerInstance(PlayerJoinRequest request)
+        private static ServerSessionContext? ResolveServerSession(PlayerJoinRequest request)
         {
-            if (_instanceManager is null)
+            XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
+            if (worldInstance?.TargetWorld is null)
                 return null;
 
-            var locator = request.WorldLocator ?? new WorldLocator
-            {
-                WorldId = request.InstanceId ?? Guid.NewGuid(),
-                Name = request.WorldName ?? "RemoteWorld",
-                Provider = request.WorldLocator?.Provider ?? "direct",
-                ContainerOrBucket = request.WorldLocator?.ContainerOrBucket,
-                ObjectPath = request.WorldLocator?.ObjectPath,
-                DownloadUri = request.WorldLocator?.DownloadUri,
-                AccessToken = request.WorldLocator?.AccessToken
-            };
+            WorldAssetIdentity worldAsset = WorldAssetIdentityProvider.Create(worldInstance.TargetWorld, CurrentProtocolVersion);
 
-            var instance = _instanceManager.GetOrCreateInstance(request.InstanceId, locator, request.EnableDevRendering);
-            RegisterOrUpdateBalancer(_instanceManager.Instances.Select(i => i.InstanceId));
-            return new ServerInstanceContext(instance.InstanceId, instance.WorldInstance);
+            return new ServerSessionContext(_serverSessionId, worldInstance, worldAsset);
         }
 
-        private static void RegisterOrUpdateBalancer(IEnumerable<Guid> instances)
+        private static XRWorldInstance? ResolvePrimaryWorldInstance()
         {
-            if (_loadBalancerService is null)
-                return;
-
-            var server = new Server
+            foreach (var window in Engine.Windows)
             {
-                Id = _serverId,
-                IP = Environment.GetEnvironmentVariable("XRE_SERVER_IP") ?? "127.0.0.1",
-                Port = Engine.GameSettings?.UdpServerSendPort ?? 5000,
-                MaxPlayers = 128,
-                CurrentLoad = _instanceManager?.Instances.Sum(i => i.Players.Count) ?? 0,
-                Instances = instances.Distinct().ToList()
-            };
+                if (window?.TargetWorldInstance is not null)
+                    return window.TargetWorldInstance;
+            }
 
-            _loadBalancerService.RegisterOrUpdate(server);
+            return XRWorldInstance.WorldInstances.Values.FirstOrDefault();
         }
+
+        private static Guid ResolveConfiguredSessionId()
+        {
+            string? configured = GetOptionalEnvironmentValue("XRE_SESSION_ID");
+            return Guid.TryParse(configured, out Guid sessionId)
+                ? sessionId
+                : Guid.NewGuid();
+        }
+
+        private static string? GetOptionalEnvironmentValue(string name)
+        {
+            string? value = Environment.GetEnvironmentVariable(name);
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        private static int? GetOptionalIntEnvironmentValue(string name)
+        {
+            string? value = GetOptionalEnvironmentValue(name);
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed is > 0 and <= 65535
+                ? parsed
+                : null;
+        }
+
+        private static string CurrentProtocolVersion { get; } = typeof(Engine).Assembly.GetName().Version?.ToString() ?? "dev";
 
         static XRWorld CreateServerDebugWorld()
         {
@@ -464,8 +416,11 @@ namespace XREngine.Networking
                 ],
                 OutputVerbosityOverride = new XREngine.Data.Core.OverrideableSetting<EOutputVerbosity>(EOutputVerbosity.Verbose, true),
                 UdpClientRecievePort = 5001,
-                UdpServerSendPort = 5000,
-                UdpMulticastPort = 5000,
+                UdpServerBindPort = _udpBindPort,
+                UdpServerSendPort = _udpAdvertisedPort,
+                UdpMulticastGroupIP = _udpMulticastGroup,
+                UdpMulticastPort = _udpMulticastPort,
+                MultiplayerSessionId = _serverSessionId,
                 NetworkingType = ENetworkingType.Server,
                 GPURenderDispatch = RuntimeBootstrapState.Settings.GPURenderDispatch,
                 DefaultUserSettings = new UserSettings()

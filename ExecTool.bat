@@ -26,7 +26,7 @@ call :AddTool "Build" "Tools\Test-CookCommonAssets.ps1" "Cook CommonAssets into 
 call :AddTool "Build" "Tools\Get-PixelFurnaceTextures.ps1" "Download free Pixel-Furnace texture ZIPs into Build\CommonAssets\Textures\Samples"
 call :AddSep
 call :AddTool "Editor" "Tools\Start-Editor.bat" "Launch the XREngine Editor via dotnet run"
-call :AddTool "Editor" "Tools\Start-NetworkTest.bat" "Launch a network test (server+client or pose sync)"
+call :AddTool "Editor" "Tools\Start-NetworkTest.bat" "Launch realtime networking smoke tests (two clients, mismatch, or pose sync)"
 call :AddTool "Editor" "Tools\Capture-EditorWindow.bat" "Capture a screenshot of the Editor window to Build\Logs\capture.png"
 call :AddTool "Editor" "Tools\Generate-UnitTestingWorldSettings.ps1" "Regenerate UnitTestingWorldSettings schema and JSONC files"
 call :AddSep
