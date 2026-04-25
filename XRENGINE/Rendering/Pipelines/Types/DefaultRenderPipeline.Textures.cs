@@ -1181,6 +1181,58 @@ public partial class DefaultRenderPipeline
         return t;
     }
 
+    /// <summary>
+    /// RGBA16F half-internal-resolution target containing the temporally
+    /// reprojected fog result for the current frame. Read by the full-res
+    /// bilateral upscale shader.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfTemporalTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = VolumetricFogHalfTemporalTextureName;
+        texture.Name = VolumetricFogHalfTemporalTextureName;
+        return texture;
+    }
+
+    /// <summary>
+    /// RGBA16F half-internal-resolution history texture sampled by
+    /// VolumetricFogReproject.fs. The current temporal output is copied into
+    /// this target after the upscale consumes it.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfHistoryTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = VolumetricFogHalfHistoryTextureName;
+        texture.Name = VolumetricFogHalfHistoryTextureName;
+        return texture;
+    }
+
     private XRTexture CreatePostProcessOutputTexture()
     {
         // Use internal resolution - FXAA pass will upscale to full resolution

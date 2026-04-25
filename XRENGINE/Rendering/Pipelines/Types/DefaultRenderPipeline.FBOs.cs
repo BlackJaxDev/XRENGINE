@@ -189,7 +189,66 @@ public partial class DefaultRenderPipeline
     }
 
     /// <summary>
-    /// Quad FBO that drives the bilateral upscale. Reads the half-res scatter,
+    /// Quad FBO that temporally reprojects the current half-res scatter result
+    /// against the previous half-res fog history.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogReprojectQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(VolumetricFogHalfScatterTextureName)!, // binding 0: sampler2D VolumetricFogHalfScatter
+            GetTexture<XRTexture>(VolumetricFogHalfHistoryTextureName)!, // binding 1: sampler2D VolumetricFogHalfHistory
+            GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)!,   // binding 2: sampler2D VolumetricFogHalfDepth
+        ];
+        XRShader reprojectShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogReproject.fs"),
+            EShaderType.Fragment);
+        XRMaterial reprojectMat = new(refs, reprojectShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+        var fbo = new XRQuadFrameBuffer(reprojectMat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = VolumetricFogReprojectQuadFBOName
+        };
+        fbo.SettingUniforms += VolumetricFogReprojectFBO_SettingUniforms;
+        return fbo;
+    }
+
+    /// <summary>
+    /// Destination FBO for the current-frame temporally reprojected fog result.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogReprojectFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfTemporalTextureName, CreateVolumetricFogHalfTemporalTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogReprojectFBOName
+        };
+    }
+
+    /// <summary>
+    /// Persistent previous-frame history target for the fog temporal pass.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHistoryFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfHistoryTextureName, CreateVolumetricFogHalfHistoryTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogHistoryFBOName
+        };
+    }
+
+    /// <summary>
+    /// Quad FBO that drives the bilateral upscale. Reads the temporal half-res fog,
     /// half-res depth, and full-res depth, emitting the full-resolution
     /// <see cref="VolumetricFogColorTextureName"/> consumed by PostProcess.fs.
     /// Fragment-only camera uniforms are pushed via
@@ -200,7 +259,7 @@ public partial class DefaultRenderPipeline
     {
         XRTexture[] refs =
         [
-            GetTexture<XRTexture>(VolumetricFogHalfScatterTextureName)!, // binding 0: sampler2D VolumetricFogHalfScatter
+            GetTexture<XRTexture>(VolumetricFogHalfTemporalTextureName)!, // binding 0: sampler2D VolumetricFogHalfTemporal
             GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)!,   // binding 1: sampler2D VolumetricFogHalfDepth
             GetTexture<XRTexture>(DepthViewTextureName)!,                // binding 2: sampler2D DepthView
         ];

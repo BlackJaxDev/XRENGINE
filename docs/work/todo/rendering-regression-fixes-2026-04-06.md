@@ -97,64 +97,32 @@ entirely wrong normals.
 
 ## Issue 2: Volumetric Fog Appears As Noise
 
-**Confidence: High** — all claims verified in shader code and settings.
+**Status: Resolved (2026-04-24)** — superseded by the separated half-res
+volumetric fog chain and temporal reprojection pass.
 
 ### Root Cause
 
-The volumetric fog is a single-pass screen-space raymarcher in
-[PostProcess.fs lines 369-440](../../../Build/CommonAssets/Shaders/Scene3D/PostProcess.fs#L369-L440)
-with no temporal reprojection, denoising, or bilateral blur. The jitter seed at
-line 400 is `rand(sourceUv + rawDepth)` — purely spatial with no frame counter.
-The noise pattern is **static per pixel**, so even TAA cannot average it out
-across frames.
+The original diagnosis was correct for the old inline path: the fog raymarch
+had no dedicated temporal reprojection, no bilateral upsample, and stale default
+notes. That path has now been replaced in the active `DefaultRenderPipeline`:
+`VolumetricFogScatter.fs` writes half-res scatter, `VolumetricFogReproject.fs`
+accumulates it against a half-res history texture, `VolumetricFogUpscale.fs`
+bilateral-upsamples the temporal result, and `PostProcess.fs` only composites
+`VolumetricFogColor`.
 
-Combined with a runtime default `JitterStrength = 1.0` (from the pipeline
-schema), the noise is maximally visible.
+The C# constructor defaults and both pipeline schemas are aligned at:
 
-### Secondary Issue: Default Mismatches
-
-The C# field defaults in [VolumetricFogSettings.cs lines 22-25](../../../XRENGINE/Rendering/Camera/VolumetricFogSettings.cs#L22-L25)
-and the pipeline schema defaults in [DefaultRenderPipeline2.PostProcessing.cs lines 1375-1400](../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs#L1375-L1400)
-disagree on three parameters:
-
-| Parameter | C# Field Default | Pipeline Schema Default |
-|-----------|------------------|-------------------------|
-| `MaxDistance` | 120.0 | 150.0 |
-| `StepSize` | 2.0 | 4.0 |
-| `JitterStrength` | 0.25 | 1.0 |
-
-The pipeline schema wins at runtime, so the effective default uses maximum
-jitter and coarser stepping than the field initializer suggests. This also
-means the unit test `Defaults_MatchPipelineSchemaDefaults` (which asserts the
-schema values) fails against the actual field initializers.
+| Parameter | Default |
+|-----------|---------|
+| `MaxDistance` | 150.0 |
+| `StepSize` | 1.0 |
+| `JitterStrength` | 0.5 |
 
 ### Fix Steps
 
-- [ ] **2a. Add temporal variation to jitter seed**
-  - File: [PostProcess.fs ~line 400](../../../Build/CommonAssets/Shaders/Scene3D/PostProcess.fs#L400)
-  - Change the jitter seed from `rand(sourceUv + rawDepth)` to
-    `rand(sourceUv + rawDepth + fract(RenderTime * 7.0))` (or similar).
-  - This lets TAA/temporal accumulation average out the noise across frames,
-    dramatically reducing visible noise without a dedicated denoiser pass.
-
-- [ ] **2b. Align C# field defaults with pipeline schema defaults**
-  - File: [VolumetricFogSettings.cs lines 23-25](../../../XRENGINE/Rendering/Camera/VolumetricFogSettings.cs#L23-L25)
-  - Change field initializers to match the pipeline schema so behavior is
-    identical regardless of which initialization path wins:
-    - `_maxDistance = 150.0f;`
-    - `_stepSize = 4.0f;`
-    - `_jitterStrength = 1.0f;`
-  - Alternatively, if the C# field defaults are preferred, update the pipeline
-    schema values. The key requirement is **consistency** — pick one source of
-    truth and align the other.
-
-- [ ] **2c. Reduce default JitterStrength for better out-of-box quality**
-  - After step 2a (temporal jitter), re-evaluate whether 1.0 or a lower value
-    (0.5-0.75) provides the best quality/noise tradeoff. With temporal variation,
-    higher jitter is more tolerable since it averages out over frames.
-  - If temporal jitter is NOT implemented (skipped for scope), reduce the default
-    to 0.25-0.5 to limit visible noise.
-
+- [x] **2a. Move fog out of `PostProcess.fs` and add temporal variation**
+- [x] **2b. Align C# field defaults with pipeline schema defaults**
+- [x] **2c. Reduce/re-tune default jitter for temporal history**
 - [ ] **2d. Validate fog appearance**
   - Place a directional light and a volumetric fog volume in the unit testing
     world and confirm the fog looks like smooth 3D raymarched fog rather than

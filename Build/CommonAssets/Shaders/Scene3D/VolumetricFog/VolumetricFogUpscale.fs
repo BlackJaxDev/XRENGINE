@@ -3,7 +3,7 @@
 // Volumetric fog bilateral upscale.
 //
 // Reads:
-//   VolumetricFogHalfScatter (RGBA16F, half-res) - scatter pass output
+//   VolumetricFogHalfTemporal (RGBA16F, half-res) - temporally reprojected fog
 //     rgb = in-scattered radiance, a = transmittance
 //   VolumetricFogHalfDepth   (R32F,  half-res)  - raw depth at each
 //     half-res pixel's raymarch sample
@@ -33,7 +33,7 @@
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
-uniform sampler2D VolumetricFogHalfScatter;
+uniform sampler2D VolumetricFogHalfTemporal;
 uniform sampler2D VolumetricFogHalfDepth;
 uniform sampler2D DepthView;
 
@@ -77,10 +77,10 @@ void main()
     float linearFull = LinearEyeDistance(rawFullDepth, uv);
 
     // Locate the four surrounding half-res taps in texel space.
-    vec2 halfSize = vec2(textureSize(VolumetricFogHalfScatter, 0));
+    vec2 halfSize = vec2(textureSize(VolumetricFogHalfTemporal, 0));
     if (halfSize.x <= 0.0f || halfSize.y <= 0.0f)
     {
-        OutColor = texture(VolumetricFogHalfScatter, uv);
+        OutColor = texture(VolumetricFogHalfTemporal, uv);
         return;
     }
 
@@ -122,7 +122,7 @@ void main()
         {
             int index = j * 2 + i;
             vec2 tapUV = (halfBase + vec2(float(i) + 0.5f, float(j) + 0.5f)) * halfTexel;
-            vec4 tapColor = textureLod(VolumetricFogHalfScatter, tapUV, 0.0f);
+            vec4 tapColor = textureLod(VolumetricFogHalfTemporal, tapUV, 0.0f);
             float tapRaw = textureLod(VolumetricFogHalfDepth, tapUV, 0.0f).r;
             float tapLinear = LinearEyeDistance(tapRaw, tapUV);
 
