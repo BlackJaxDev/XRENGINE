@@ -161,6 +161,27 @@ Many albedo textures carry non-transparency data in alpha (smoothness, AO, paddi
 
 ---
 
+## 11. Volumetric Fog: Separated Half-Res Temporal Chain
+
+**Rule:** In the active `DefaultRenderPipeline` path, volumetric fog is not part of `PostProcess.fs`. Keep the stage ordering as:
+
+`half-depth downsample -> half-res scatter -> half-res temporal reprojection -> full-res bilateral upscale -> PostProcess composite`.
+
+### Invariants
+
+- `VolumetricFogScatter.fs` writes raw half-res scatter/transmittance to `VolumetricFogHalfScatter`.
+- `VolumetricFogReproject.fs` samples `VolumetricFogHalfScatter`, `VolumetricFogHalfHistory`, and `VolumetricFogHalfDepth`, then writes `VolumetricFogHalfTemporal`.
+- `VolumetricFogUpscale.fs` must sample `VolumetricFogHalfTemporal`, not the raw scatter texture, so temporal filtering is included before the full-res composite.
+- After upscale, `VolumetricFogReprojectFBO` is blitted into `VolumetricFogHistoryFBO` and `VPRC_VolumetricFogHistoryPass` commits the current camera matrices for the next frame.
+- All half-res fog textures use `GetDesiredFBOSizeHalfInternal()` and `NeedsRecreateTextureHalfInternalSize`; history is reset on size changes, AA resource invalidation, first frame, and camera cuts.
+- The public camera-cut hook is `DefaultRenderPipeline.InvalidateVolumetricFogHistory(camera)`.
+
+### Defaults
+
+The shared `VolumetricFogSettings` constructor defaults and both pipeline schemas should stay aligned at `MaxDistance = 150`, `StepSize = 1.0`, and `JitterStrength = 0.5` unless a tuning pass updates all three places together.
+
+---
+
 ## 11. Transparency Scene Copy
 
 **Rule:** `ForwardPassFBO` often has a bright-pass shader attached as its quad material. Do **not** use it as the source for transparency background copies. Use a dedicated `SceneCopyFBO` sampling `HDRSceneTex`.

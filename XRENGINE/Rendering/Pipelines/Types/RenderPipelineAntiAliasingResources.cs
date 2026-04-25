@@ -88,6 +88,7 @@ internal static class RenderPipelineAntiAliasingResources
     internal static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance, string reason = "AntiAliasingSettingsChanged")
     {
         VPRC_TemporalAccumulationPass.ResetHistory(instance);
+        VPRC_VolumetricFogHistoryPass.ResetHistory(instance);
 
         foreach (string name in AntiAliasingFrameBufferDependencies)
             instance.RemoveFrameBufferResource(name, reason);

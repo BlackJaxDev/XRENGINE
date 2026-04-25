@@ -5,7 +5,7 @@
   "$id": "1",
   // Selects the WorldKind enum value.
   // WorldKind: Default, AudioTesting, MathIntersections, MeshEditing, UberShader, PhysxTesting, NetworkingPose
-  "WorldKind": "MathIntersections",
+  "WorldKind": "Default",
 
   // Debug visualize.
   // Enables or disables VisualizeOctree.
@@ -456,8 +456,8 @@
     // Generated from MaxDistance on VolumetricFogVolumeInitSettings.
     "MaxDistance": 150.0,
     // Generated from StepSize on VolumetricFogVolumeInitSettings.
-    "StepSize": 4.0,
+    "StepSize": 1.0,
     // Generated from JitterStrength on VolumetricFogVolumeInitSettings.
-    "JitterStrength": 0.0
+    "JitterStrength": 0.5
   }
 }

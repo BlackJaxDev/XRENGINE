@@ -62,8 +62,8 @@ namespace XREngine.Rendering
         private bool _enabled;
         private float _intensity = 1.0f;
         private float _maxDistance = 150.0f;
-        private float _stepSize = 4.0f;
-        private float _jitterStrength = 0.25f;
+        private float _stepSize = 1.0f;
+        private float _jitterStrength = 0.5f;
         private int _debugMode = 0;
 
         public bool Enabled

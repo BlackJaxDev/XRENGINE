@@ -1,10 +1,11 @@
 # Volumetric Fog Refactor & Separated Pass TODO
 
-Last Updated: 2026-04-22 (Phase 1 landed)
-Current Status: Scatter is extracted into its own full-resolution pass
-(`VolumetricFogScatter.fs`) driven by a dedicated quad FBO + destination FBO;
-`PostProcess.fs` composites a resolved `VolumetricFogColor` sampler. Phase 2
-(half-res scatter + bilateral upsample) is next.
+Last Updated: 2026-04-24 (Phase 3 landed)
+Current Status: Scatter is extracted into a half-resolution pass
+(`VolumetricFogScatter.fs`), temporally reprojected by
+`VolumetricFogReproject.fs`, upsampled by `VolumetricFogUpscale.fs`, and
+composited in `PostProcess.fs` through the resolved `VolumetricFogColor`
+sampler. Phase 4 polish / XR parity is next.
 
 Scope:
 
@@ -182,19 +183,20 @@ depth-aware bilateral filter back to full-res HDR space. Build validated.
   `CreateVolumetricFogUpscaleFBO`. PostProcess.fs composite unchanged —
   it still reads the same `VolumetricFogColor` sampler.
 
-### 2.4 Defaults Re-Tuning — DEFERRED
+### 2.4 Defaults Re-Tuning — DONE (2026-04-24)
 
-- [ ] With half-res + bilateral upsample active, sweep `StepSize` and
+- [x] With half-res + bilateral upsample active, sweep `StepSize` and
   `JitterStrength` and pick new schema defaults that keep noise below a
-  subjective threshold on the unit-testing demo volume. Expect `StepSize`
-  to shrink (e.g. 1.0–2.0) because we have 4× fewer rays.
-- [ ] Update C# field defaults and schema in lockstep (see Phase 0.2).
+  subjective threshold on the unit-testing demo volume. Landed defaults are
+  `StepSize = 1.0` and `JitterStrength = 0.5` now that temporal reprojection
+  can absorb moving per-pixel jitter.
+- [x] Update C# field defaults and schema in lockstep (see Phase 0.2).
 
 Pipeline wiring (for reference):
 `AppendVolumetricFog` in
 [DefaultRenderPipeline.CommandChain.cs](../../../XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs)
-chains three `VPRC_RenderQuadToFBO` stages
-(`halfDepth → halfScatter → upscale`), each using
+chains four `VPRC_RenderQuadToFBO` stages
+(`halfDepth → halfScatter → reproject → upscale`), each using
 `matchDestinationRenderArea: true` to inherit per-stage sizing from the
 destination FBO. Mono-only; stereo still skips the chain.
 
@@ -207,7 +209,7 @@ Acceptance criteria:
 
 ---
 
-## Phase 3 — Temporal Reprojection
+## Phase 3 — Temporal Reprojection — LANDED (2026-04-24)
 
 Outcome: A history buffer accumulates scatter/transmittance over frames with
 world-space reprojection, independent of the main TAA. This is the payoff
@@ -215,51 +217,50 @@ phase — it is what makes god-rays look like shafts instead of noise.
 
 ### 3.1 History Resources
 
-- [ ] Allocate two ping-pong half-res `RGBA16F` history textures (current +
-  previous) alongside the scatter target. Track per-view (left/right eye) in
-  XR configurations; see
-  [xr-quad-framebuffer-camera-nulling](../../../memories/repo/xr-quad-framebuffer-camera-nulling.md)
-  for the existing pattern.
-- [ ] Store the previous frame's view/projection matrices on the camera post-
-  process state alongside the scatter settings (matches how TAA already
-  snapshots view matrices).
+- [x] Allocate half-res `RGBA16F` temporal/history textures alongside the
+  scatter target: `VolumetricFogHalfTemporal` for the current reprojected
+  result and `VolumetricFogHalfHistory` for the previous frame. Mono-only;
+  stereo remains deferred to Phase 4.
+- [x] Store previous-frame view/projection matrices in camera-keyed
+  `VPRC_VolumetricFogHistoryPass` state, independent of the main TAA state.
 
 ### 3.2 Reproject Shader
 
-- [ ] New shader
+- [x] New shader
   `Build/CommonAssets/Shaders/Scene3D/VolumetricFog/VolumetricFogReproject.fs`.
-- [ ] For each half-res pixel: reconstruct current-frame world-space position
+- [x] For each half-res pixel: reconstruct current-frame world-space position
   at the ray-march midpoint (or at a representative t such as
   `min(MaxDistance * 0.5, rayToDepthSurface)`), project into the previous
   frame's clip space, sample the previous history if the UV is valid, and
   neighborhood-clamp the history against a 3x3 min/max of the current scatter
   output to reject disocclusions and lighting changes.
-- [ ] Blend `history = mix(current, clampedHistory, alpha)` with
+- [x] Blend `history = mix(current, clampedHistory, alpha)` with
   `alpha ≈ 0.9`, reduced toward 0 when:
   - Reprojected UV is out of bounds.
   - Depth delta vs. current half-res depth exceeds a threshold.
   - Neighborhood clamp had to clamp heavily (large distance between
     pre-clamp history and current).
-- [ ] Write the blended result as both the pass output (feeds upsample) and
-  the new history target.
+- [x] Write the blended result to `VolumetricFogHalfTemporal`; after upscale,
+  blit `VolumetricFogReprojectFBO` into `VolumetricFogHistoryFBO` for the next
+  frame.
 
 ### 3.3 Wire Ordering
 
-- [ ] Pipeline order becomes:
+- [x] Pipeline order becomes:
   `(Shadow / GBuffer) → VolumetricFogScatter (half-res) → VolumetricFogReproject (half-res)
    → VolumetricFogUpsample (full-res) → PostProcess composite`.
-- [ ] The upsample stage now reads the *reprojected* half-res texture.
-- [ ] History is swapped at end-of-frame, guarded by the same recreate-on-
+- [x] The upsample stage now reads the *reprojected* half-res texture.
+- [x] History is copied at end-of-frame, guarded by the same recreate-on-
   resize and recreate-on-pipeline-rebuild hooks as the scatter target.
 
 ### 3.4 First-Frame & Camera-Cut Handling
 
-- [ ] On first frame (history not populated) and on detected large camera jump
+- [x] On first frame (history not populated) and on detected large camera jump
   (translation or rotation delta exceeding a threshold), force `alpha = 0` so
   the history is re-seeded from a single undenoised frame instead of showing
   ghost trails.
-- [ ] Expose a "history invalidate on teleport" hook that existing teleport /
-  level-load flows can call.
+- [x] Expose a "history invalidate on teleport" hook that existing teleport /
+  level-load flows can call: `DefaultRenderPipeline.InvalidateVolumetricFogHistory(camera)`.
 
 Acceptance criteria:
 
@@ -364,7 +365,7 @@ Outcome: Changes are discoverable, testable, and regression-guarded.
 
 ### 5.3 Repo Memory
 
-- [ ] Record the final root-cause + fix summary in a new
+- [x] Record the final root-cause + fix summary in a new
   `/memories/repo/volumetric-fog-separated-pass.md` note once Phase 3 lands.
 
 ### 5.4 Release Notes

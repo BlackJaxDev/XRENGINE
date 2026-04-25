@@ -260,6 +260,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
         => RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame();
 
     /// <summary>
+    /// Invalidates the separated volumetric fog temporal history for a camera.
+    /// Call this after teleports, scene loads, or other discontinuous camera cuts.
+    /// </summary>
+    public static void InvalidateVolumetricFogHistory(XRCamera? camera)
+        => VPRC_VolumetricFogHistoryPass.ResetHistory(camera);
+
+    /// <summary>
     /// True when MSAA should be active for the current rendering camera.
     /// Evaluated at render time so per-camera overrides take effect.
     /// </summary>
@@ -743,7 +750,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
     }
 
-    private bool NeedsRecreateVolumetricFogUpscaleQuadFbo(XRFrameBuffer fbo)
+    private bool NeedsRecreateVolumetricFogReprojectQuadFbo(XRFrameBuffer fbo)
     {
         if (!fbo.IsLastCheckComplete)
             return true;
@@ -759,6 +766,62 @@ public partial class DefaultRenderPipeline : RenderPipeline
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(VolumetricFogHalfScatterTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VolumetricFogHalfHistoryTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogReproject.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateVolumetricFogReprojectFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogHalfTemporalTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateVolumetricFogHistoryFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogHalfHistoryTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateVolumetricFogUpscaleQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 3)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(VolumetricFogHalfTemporalTextureName))
             || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName))
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName)))
             return true;
@@ -931,10 +994,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string VolumetricFogColorTextureName = "VolumetricFogColor";
     public const string VolumetricFogHalfDepthTextureName = "VolumetricFogHalfDepth";
     public const string VolumetricFogHalfScatterTextureName = "VolumetricFogHalfScatter";
+    public const string VolumetricFogHalfTemporalTextureName = "VolumetricFogHalfTemporal";
+    public const string VolumetricFogHalfHistoryTextureName = "VolumetricFogHalfHistory";
     public const string VolumetricFogHalfDepthQuadFBOName = "VolumetricFogHalfDepthQuadFBO";
     public const string VolumetricFogHalfDepthFBOName = "VolumetricFogHalfDepthFBO";
     public const string VolumetricFogHalfScatterQuadFBOName = "VolumetricFogHalfScatterQuadFBO";
     public const string VolumetricFogHalfScatterFBOName = "VolumetricFogHalfScatterFBO";
+    public const string VolumetricFogReprojectQuadFBOName = "VolumetricFogReprojectQuadFBO";
+    public const string VolumetricFogReprojectFBOName = "VolumetricFogReprojectFBO";
+    public const string VolumetricFogHistoryFBOName = "VolumetricFogHistoryFBO";
     public const string VolumetricFogUpscaleQuadFBOName = "VolumetricFogUpscaleQuadFBO";
     public const string VolumetricFogUpscaleFBOName = "VolumetricFogUpscaleFBO";
     public const string FxaaFBOName = "FxaaFBO";

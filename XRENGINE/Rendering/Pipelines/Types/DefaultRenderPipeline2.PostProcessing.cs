@@ -1504,7 +1504,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(VolumetricFogSettings.StepSize),
             PostProcessParameterKind.Float,
-            4.0f,
+            1.0f,
             displayName: "Step Size",
             min: 0.25f,
             max: 128.0f,
@@ -1514,7 +1514,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(VolumetricFogSettings.JitterStrength),
             PostProcessParameterKind.Float,
-            0.25f,
+            0.5f,
             displayName: "Jitter Strength",
             min: 0.0f,
             max: 1.0f,

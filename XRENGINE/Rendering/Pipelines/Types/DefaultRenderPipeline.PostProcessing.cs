@@ -1504,7 +1504,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(VolumetricFogSettings.StepSize),
             PostProcessParameterKind.Float,
-            4.0f,
+            1.0f,
             displayName: "Step Size",
             min: 0.25f,
             max: 128.0f,
@@ -1514,7 +1514,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(VolumetricFogSettings.JitterStrength),
             PostProcessParameterKind.Float,
-            0.25f,
+            0.5f,
             displayName: "Jitter Strength",
             min: 0.0f,
             max: 1.0f,
@@ -1781,6 +1781,38 @@ public partial class DefaultRenderPipeline
 
     private void VolumetricFogUpscaleFBO_SettingUniforms(XRRenderProgram materialProgram)
         => VolumetricFog_SetFragmentCameraUniforms(materialProgram);
+
+    private void VolumetricFogReprojectFBO_SettingUniforms(XRRenderProgram materialProgram)
+    {
+        VolumetricFog_SetFragmentCameraUniforms(materialProgram);
+
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var volumetricFog = GetSettings<VolumetricFogSettings>(state);
+        float maxDistance = volumetricFog is not null && volumetricFog.Enabled && volumetricFog.Intensity > 0.0f
+            ? volumetricFog.MaxDistance
+            : 0.0f;
+        int debugMode = volumetricFog is null ? 0 : (int)volumetricFog.DebugMode;
+
+        bool historyReady = false;
+        Matrix4x4 previousViewProjection = Matrix4x4.Identity;
+        uint historyWidth = 1u;
+        uint historyHeight = 1u;
+        if (VPRC_VolumetricFogHistoryPass.TryGetTemporalUniformData(out var temporalData))
+        {
+            historyReady = temporalData.HistoryReady && maxDistance > 0.0f && debugMode == 0;
+            previousViewProjection = temporalData.PreviousViewProjection;
+            historyWidth = Math.Max(1u, temporalData.Width);
+            historyHeight = Math.Max(1u, temporalData.Height);
+        }
+
+        materialProgram.Uniform("VolumetricFogHistoryReady", historyReady);
+        materialProgram.Uniform("VolumetricFogPreviousViewProjection", previousViewProjection);
+        materialProgram.Uniform("VolumetricFogHistoryTexelSize", new Vector2(1.0f / historyWidth, 1.0f / historyHeight));
+        materialProgram.Uniform("VolumetricFogMaxDistance", maxDistance);
+        materialProgram.Uniform("VolumetricFogTemporalAlpha", 0.9f);
+        materialProgram.Uniform("VolumetricFogDepthRejectThreshold", 1.0f);
+        materialProgram.Uniform("VolumetricFogDebugMode", debugMode);
+    }
 
     private static TemporalResolveSettings ResolveTemporalSettings(PipelinePostProcessState? state)
     {
