@@ -24,6 +24,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRFrameBuffer? _perFaceFbo;
         private const float PointShadowNearPlaneDistanceDefault = 0.1f;
         private readonly PositionOnlyTransform _shadowCameraParentTransform = new();
+        private float _shadowNearPlaneDistance = PointShadowNearPlaneDistanceDefault;
 
         /// <summary>
         /// When enabled, renders all 6 cubemap shadow faces in a single draw call
@@ -43,10 +44,22 @@ namespace XREngine.Components.Capture.Lights.Types
             }
         }
 
+        [Category("Shadows")]
+        [DisplayName("Shadow Near Plane")]
+        [Description("Near clipping distance used by the point-light cubemap shadow cameras.")]
         public float ShadowNearPlaneDistance
-            => _shadowCameras is { Length: > 0 }
-                ? _shadowCameras[0].NearZ
-                : PointShadowNearPlaneDistanceDefault;
+        {
+            get => _shadowNearPlaneDistance;
+            set
+            {
+                float clamped = ClampShadowNearPlaneDistance(value, _influenceVolume.Radius);
+                if (!SetField(ref _shadowNearPlaneDistance, clamped))
+                    return;
+
+                foreach (XRCamera cam in _shadowCameras)
+                    cam.NearZ = clamped;
+            }
+        }
 
         public XRCamera[] ShadowCameras => _shadowCameras;
 
@@ -72,7 +85,8 @@ namespace XREngine.Components.Capture.Lights.Types
                 resolution = 1024u;
 
             _viewports = new XRViewport[6].Fill(_ => CreateShadowViewport(resolution));
-            _shadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(PointShadowNearPlaneDistanceDefault, _influenceVolume.Radius, true, _shadowCameraParentTransform);
+            float farPlane = MathF.Max(_influenceVolume.Radius, _shadowNearPlaneDistance + 0.001f);
+            _shadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(_shadowNearPlaneDistance, farPlane, true, _shadowCameraParentTransform);
 
             if (SceneNode is not null && !SceneNode.IsTransformNull)
                 _shadowCameraParentTransform.Parent = Transform;
@@ -215,12 +229,32 @@ namespace XREngine.Components.Capture.Lights.Types
             set
             {
                 SetField(ref _influenceVolume, new Sphere(_influenceVolume.Center, value));
+
+                float clampedNear = ClampShadowNearPlaneDistance(_shadowNearPlaneDistance, value);
+                if (clampedNear != _shadowNearPlaneDistance)
+                    SetField(ref _shadowNearPlaneDistance, clampedNear, nameof(ShadowNearPlaneDistance));
+
                 foreach (XRCamera cam in _shadowCameras)
-                    cam.FarZ = value;
+                {
+                    cam.NearZ = _shadowNearPlaneDistance;
+                    cam.FarZ = MathF.Max(value, _shadowNearPlaneDistance + 0.001f);
+                }
 
                 if (SceneNode is not null && !SceneNode.IsTransformNull)
                     MeshCenterAdjustMatrix = Matrix4x4.CreateScale(value);
             }
+        }
+
+        private static float ClampShadowNearPlaneDistance(float value, float radius)
+        {
+            if (!float.IsFinite(value))
+                value = PointShadowNearPlaneDistanceDefault;
+
+            if (radius <= 0.001f)
+                return MathF.Max(0.0001f, value);
+
+            float maxNear = MathF.Max(0.0001f, radius - 0.001f);
+            return Math.Clamp(value, 0.0001f, maxNear);
         }
 
         public override void SetShadowMapResolution(uint width, uint height)

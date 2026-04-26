@@ -1720,6 +1720,7 @@ public partial class DefaultRenderPipeline
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         var volumetricFog = GetSettings<VolumetricFogSettings>(state);
         (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
+        materialProgram.Uniform("GlobalAmbient", new Vector3(0.1f, 0.1f, 0.1f));
 
         var lights = Engine.Rendering.State.RenderingWorld?.Lights;
         if (lights is not null)
@@ -1780,7 +1781,13 @@ public partial class DefaultRenderPipeline
     }
 
     private void VolumetricFogUpscaleFBO_SettingUniforms(XRRenderProgram materialProgram)
-        => VolumetricFog_SetFragmentCameraUniforms(materialProgram);
+    {
+        VolumetricFog_SetFragmentCameraUniforms(materialProgram);
+
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var volumetricFog = GetSettings<VolumetricFogSettings>(state);
+        (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
+    }
 
     private void VolumetricFogReprojectFBO_SettingUniforms(XRRenderProgram materialProgram)
     {

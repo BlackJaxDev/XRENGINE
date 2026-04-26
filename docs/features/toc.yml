@@ -16,6 +16,11 @@
     - name: Ambient Occlusion
       href: gi/ambient-occlusion.md
 
+- name: Components
+  items:
+    - name: Procedural Skybox Ambient Lighting
+      href: components/procedural-skybox-ambient.md
+
 - name: MCP Server
   href: mcp-server.md
 

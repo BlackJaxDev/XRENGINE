@@ -20,6 +20,9 @@ internal static class LightComponentEditorShared
     private const float PreviewMaxEdge = 196.0f;
     private const float PreviewFallbackEdge = 96.0f;
     private const int ArrayPreviewsPerRow = 3;
+    private const string ShadowFilterModeItems =
+        "Hard / PCF\0Fixed Soft (Poisson)\0PCSS / Contact Hardening\0Fixed Soft (Vogel)\0";
+
     private static readonly ConditionalWeakTable<XRTexture2D, XRTexture2DView> Texture2DPreviewViews = new();
     private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> Texture2DArrayPreviewViews = new();
     private static readonly ConditionalWeakTable<XRTextureCube, CubemapPreviewCache> CubemapPreviewCaches = new();
@@ -91,100 +94,201 @@ internal static class LightComponentEditorShared
         if (!ImGui.CollapsingHeader("Shadows", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
+        DrawShadowMapControls(light, showCascadedOptions);
+        DrawShadowBiasControls(light);
+        DrawShadowFilteringControls(light);
+        DrawContactShadowControls(light);
+        DrawShadowDebugControls(light);
+        DrawLightmapBakeControls(light);
+    }
+
+    private static void DrawShadowMapControls(LightComponent light, bool showCascadedOptions)
+    {
+        ImGui.SeparatorText("Shadow Map");
+
         bool casts = light.CastsShadows;
         if (ImGui.Checkbox("Casts Shadows", ref casts))
             light.CastsShadows = casts;
 
-        uint width = light.ShadowMapResolutionWidth;
-        uint height = light.ShadowMapResolutionHeight;
-        int w = unchecked((int)width);
-        int h = unchecked((int)height);
-
-        bool changed = false;
-        if (ImGui.InputInt("Shadow Map Width", ref w))
+        if (light is PointLightComponent)
         {
-            w = Math.Max(1, w);
-            changed = true;
+            int resolution = unchecked((int)Math.Max(light.ShadowMapResolutionWidth, light.ShadowMapResolutionHeight));
+            if (ImGui.InputInt("Cubemap Face Resolution", ref resolution))
+            {
+                resolution = Math.Max(1, resolution);
+                light.SetShadowMapResolution(unchecked((uint)resolution), unchecked((uint)resolution));
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Point-light shadows render one square cubemap face per direction.");
         }
-        if (ImGui.InputInt("Shadow Map Height", ref h))
+        else
         {
-            h = Math.Max(1, h);
-            changed = true;
-        }
+            int w = unchecked((int)light.ShadowMapResolutionWidth);
+            int h = unchecked((int)light.ShadowMapResolutionHeight);
 
-        if (changed)
-            light.SetShadowMapResolution(unchecked((uint)w), unchecked((uint)h));
-
-        float minBias = light.ShadowMinBias;
-        if (ImGui.DragFloat("Min Bias", ref minBias, 0.0001f, 0.0f, 1000.0f, "%.6f"))
-            light.ShadowMinBias = MathF.Max(0.0f, minBias);
-
-        float maxBias = light.ShadowMaxBias;
-        if (ImGui.DragFloat("Max Bias", ref maxBias, 0.0001f, 0.0f, 1000.0f, "%.6f"))
-            light.ShadowMaxBias = MathF.Max(0.0f, maxBias);
-
-        float expBase = light.ShadowExponentBase;
-        if (ImGui.DragFloat("Exponent Base", ref expBase, 0.001f, 0.0f, 100.0f, "%.4f"))
-            light.ShadowExponentBase = MathF.Max(0.0f, expBase);
-
-        float exp = light.ShadowExponent;
-        if (ImGui.DragFloat("Shadow Exponent", ref exp, 0.001f, 0.0f, 100.0f, "%.4f"))
-            light.ShadowExponent = MathF.Max(0.0f, exp);
-
-        int softMode = (int)light.SoftShadowMode;
-        if (ImGui.Combo("Soft Shadow Mode", ref softMode, "Hard\0PCSS\0Contact Hardening\0Vogel Disk\0"))
-            light.SoftShadowMode = (ESoftShadowMode)Math.Clamp(softMode, 0, 3);
-
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Hard = PCF fallback, PCSS = fixed-radius Poisson disk, Contact Hardening = blocker-search variable penumbra (CHSS), Vogel Disk = configurable X-tap Vogel disk filter.");
-
-        if (light is not PointLightComponent || light.SoftShadowMode != ESoftShadowMode.Hard)
-        {
-            ImGui.Indent();
-
-            if (light.SoftShadowMode == ESoftShadowMode.VogelDisk)
+            bool changed = false;
+            if (ImGui.InputInt("Map Width", ref w))
             {
-                int vogelTapCount = light.VogelTapCount;
-                if (ImGui.InputInt("Vogel Tap Count", ref vogelTapCount))
-                    light.VogelTapCount = Math.Clamp(vogelTapCount, 1, LightComponent.MaxVogelTapCount);
-
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Number of taps used by the Vogel-disk shadow filter.");
+                w = Math.Max(1, w);
+                changed = true;
             }
-            else
+            if (ImGui.InputInt("Map Height", ref h))
             {
-                int samples = light.Samples;
-                if (ImGui.InputInt("Samples", ref samples))
-                    light.Samples = Math.Max(1, samples);
+                h = Math.Max(1, h);
+                changed = true;
             }
 
-            float filter = light.FilterRadius;
-            if (ImGui.DragFloat("Filter Radius", ref filter, 0.0001f, 0.0f, 1.0f, "%.6f"))
-                light.FilterRadius = MathF.Max(0.0f, filter);
-
-            if (light.SoftShadowMode == ESoftShadowMode.ContactHardening)
-            {
-                float lightRadius = light.LightSourceRadius;
-                if (ImGui.DragFloat("Light Source Radius", ref lightRadius, 0.001f, 0.0f, 10.0f, "%.4f"))
-                    light.LightSourceRadius = MathF.Max(0.0f, lightRadius);
-
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Physical radius of the light source. Larger values widen the penumbra for contact-hardening shadows.");
-            }
-
-            ImGui.Unindent();
+            if (changed)
+                light.SetShadowMapResolution(unchecked((uint)w), unchecked((uint)h));
         }
 
         if (showCascadedOptions)
         {
             bool cascaded = light.EnableCascadedShadows;
-            if (ImGui.Checkbox("Enable Cascaded Shadows", ref cascaded))
+            if (ImGui.Checkbox("Cascaded Shadows", ref cascaded))
                 light.EnableCascadedShadows = cascaded;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Use per-camera cascade slices for directional shadows.");
         }
+    }
+
+    private static void DrawShadowBiasControls(LightComponent light)
+    {
+        ImGui.SeparatorText("Bias");
+
+        float minBias = light.ShadowMinBias;
+        if (ImGui.DragFloat("Min Bias", ref minBias, 0.0001f, 0.0f, 1000.0f, "%.6f"))
+            light.ShadowMinBias = MathF.Max(0.0f, minBias);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Minimum compare bias. Raises the floor used on front-facing receivers.");
+
+        float maxBias = light.ShadowMaxBias;
+        if (ImGui.DragFloat("Max / Slope Bias", ref maxBias, 0.0001f, 0.0f, 1000.0f, "%.6f"))
+            light.ShadowMaxBias = MathF.Max(0.0f, maxBias);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Upper bias used at grazing angles and for receiver normal offset.");
+
+        float expBase = light.ShadowExponentBase;
+        if (ImGui.DragFloat("Bias Base", ref expBase, 0.001f, 0.0f, 100.0f, "%.4f"))
+            light.ShadowExponentBase = MathF.Max(0.0f, expBase);
+
+        float exp = light.ShadowExponent;
+        if (ImGui.DragFloat("Bias Exponent", ref exp, 0.001f, 0.0f, 100.0f, "%.4f"))
+            light.ShadowExponent = MathF.Max(0.0f, exp);
+    }
+
+    private static void DrawShadowFilteringControls(LightComponent light)
+    {
+        ImGui.SeparatorText("Filtering");
+
+        int softMode = (int)light.SoftShadowMode;
+        if (ImGui.Combo("Filter Mode", ref softMode, ShadowFilterModeItems))
+            light.SoftShadowMode = (ESoftShadowMode)Math.Clamp(softMode, 0, 3);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Hard / PCF = crisp compare or small PCF fallback.\nFixed Soft (Poisson) = constant-radius Poisson filter.\nPCSS / Contact Hardening = blocker search plus variable penumbra.\nFixed Soft (Vogel) = constant-radius golden-angle disk taps.");
+
+        ImGui.Indent();
+        switch (light.SoftShadowMode)
+        {
+            case ESoftShadowMode.VogelDisk:
+                DrawVogelTapControl(light);
+                DrawFilterRadiusControl(light, "Vogel Radius");
+                break;
+            case ESoftShadowMode.ContactHardeningPcss:
+                DrawBlockerSampleCountControl(light);
+                DrawFilterSampleCountControl(light, "Filter Samples", 32);
+                DrawBlockerSearchRadiusControl(light);
+                DrawPenumbraClampControls(light);
+                DrawLightSourceRadiusControl(light);
+                break;
+            case ESoftShadowMode.FixedPoisson:
+                DrawFilterSampleCountControl(light, "Poisson Samples", light is PointLightComponent ? 32 : 16);
+                DrawFilterRadiusControl(light, "Poisson Radius");
+                break;
+            default:
+                DrawFilterSampleCountControl(light, "PCF Samples", light is PointLightComponent ? 32 : 16);
+                DrawFilterRadiusControl(light, "PCF Radius");
+                break;
+        }
+        ImGui.Unindent();
+    }
+
+    private static void DrawFilterSampleCountControl(LightComponent light, string label, int maxSamples)
+    {
+        int samples = light.FilterSamples;
+        if (ImGui.InputInt(label, ref samples))
+            light.FilterSamples = Math.Clamp(samples, 1, maxSamples);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"Shader clamps this path to 1-{maxSamples} samples.");
+    }
+
+    private static void DrawBlockerSampleCountControl(LightComponent light)
+    {
+        int samples = light.BlockerSamples;
+        if (ImGui.InputInt("Blocker Samples", ref samples))
+            light.BlockerSamples = Math.Clamp(samples, 1, 32);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Samples used only by PCSS/contact-hardening blocker search.");
+    }
+
+    private static void DrawVogelTapControl(LightComponent light)
+    {
+        int vogelTapCount = light.VogelTapCount;
+        if (ImGui.InputInt("Vogel Taps", ref vogelTapCount))
+            light.VogelTapCount = Math.Clamp(vogelTapCount, 1, LightComponent.MaxVogelTapCount);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Number of golden-angle disk taps used by the Vogel filter.");
+    }
+
+    private static void DrawFilterRadiusControl(LightComponent light, string label)
+    {
+        float filter = light.FilterRadius;
+        if (ImGui.DragFloat(label, ref filter, 0.0001f, 0.0f, 1.0f, "%.6f"))
+            light.FilterRadius = MathF.Max(0.0f, filter);
+    }
+
+    private static void DrawBlockerSearchRadiusControl(LightComponent light)
+    {
+        float search = light.BlockerSearchRadius;
+        if (ImGui.DragFloat("Blocker Search Radius", ref search, 0.0001f, 0.0f, 1.0f, "%.6f"))
+            light.BlockerSearchRadius = MathF.Max(0.0f, search);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Shadow-map search radius used to find average blockers before the PCSS filter pass.");
+    }
+
+    private static void DrawPenumbraClampControls(LightComponent light)
+    {
+        float minPenumbra = light.MinPenumbra;
+        if (ImGui.DragFloat("Min Penumbra", ref minPenumbra, 0.0001f, 0.0f, 1.0f, "%.6f"))
+            light.MinPenumbra = MathF.Max(0.0f, minPenumbra);
+
+        float maxPenumbra = light.MaxPenumbra;
+        if (ImGui.DragFloat("Max Penumbra", ref maxPenumbra, 0.0001f, 0.0f, 1.0f, "%.6f"))
+            light.MaxPenumbra = MathF.Max(light.MinPenumbra, maxPenumbra);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Upper clamp for variable PCSS/contact-hardening blur size.");
+    }
+
+    private static void DrawLightSourceRadiusControl(LightComponent light)
+    {
+        float lightRadius = light.LightSourceRadius;
+        if (ImGui.DragFloat("Light Source Radius", ref lightRadius, 0.001f, 0.0f, 10.0f, "%.4f"))
+            light.LightSourceRadius = MathF.Max(0.0f, lightRadius);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Source size used by PCSS/contact-hardening to widen penumbrae with blocker distance.");
+    }
+
+    private static void DrawContactShadowControls(LightComponent light)
+    {
+        ImGui.SeparatorText("Short-Range Contact Shadows");
 
         bool contact = light.EnableContactShadows;
-        if (ImGui.Checkbox("Enable Contact Shadows", ref contact))
+        if (ImGui.Checkbox("Enable", ref contact))
             light.EnableContactShadows = contact;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Extra short-range shadow test multiplied with the normal shadow-map result. Separate from PCSS/contact-hardening filtering.");
 
         if (contact)
         {
@@ -195,20 +299,57 @@ internal static class LightComponentEditorShared
 
             int cs = light.ContactShadowSamples;
             if (ImGui.InputInt("Contact Samples", ref cs))
-                light.ContactShadowSamples = Math.Max(1, cs);
+                light.ContactShadowSamples = Math.Clamp(cs, 1, 32);
+
+            float thickness = light.ContactShadowThickness;
+            if (ImGui.DragFloat("Contact Thickness", ref thickness, 0.001f, 0.0f, 10.0f, "%.4f"))
+                light.ContactShadowThickness = MathF.Max(0.0f, thickness);
+
+            float fadeStart = light.ContactShadowFadeStart;
+            if (ImGui.DragFloat("Fade Start", ref fadeStart, 0.1f, 0.0f, 10000.0f, "%.2f"))
+                light.ContactShadowFadeStart = MathF.Max(0.0f, fadeStart);
+
+            float fadeEnd = light.ContactShadowFadeEnd;
+            if (ImGui.DragFloat("Fade End", ref fadeEnd, 0.1f, 0.0f, 10000.0f, "%.2f"))
+                light.ContactShadowFadeEnd = MathF.Max(0.0f, fadeEnd);
+
+            float normalOffset = light.ContactShadowNormalOffset;
+            if (ImGui.DragFloat("Normal Offset", ref normalOffset, 0.001f, 0.0f, 10.0f, "%.4f"))
+                light.ContactShadowNormalOffset = MathF.Max(0.0f, normalOffset);
+
+            float jitter = light.ContactShadowJitterStrength;
+            if (ImGui.DragFloat("Jitter Strength", ref jitter, 0.01f, 0.0f, 1.0f, "%.2f"))
+                light.ContactShadowJitterStrength = Math.Clamp(jitter, 0.0f, 1.0f);
             ImGui.Unindent();
         }
+    }
 
-        if (light.Type == ELightType.Static)
-        {
-            ImGui.Separator();
+    private static void DrawShadowDebugControls(LightComponent light)
+    {
+        if (light is DirectionalLightComponent)
+            return;
 
-            if (ImGui.Button("Bake Lightmaps"))
-                light.WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.LightmapBaking?.RequestBake(light);
+        ImGui.SeparatorText("Debug");
 
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Queues a lightmap bake for Static meshes. Hybrid auto-baking is disabled by default, and lightmap rendering remains experimental.");
-        }
+        int debugMode = light.ShadowDebugMode;
+        if (ImGui.Combo("Shadow Debug Mode", ref debugMode, "Off\0Shadow Only\0Margin Heatmap\0"))
+            light.ShadowDebugMode = debugMode;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Off: normal lighting.\nShadow Only: white=lit, black=shadow.\nMargin Heatmap: green=lit margin, red=false-shadow margin.");
+    }
+
+    private static void DrawLightmapBakeControls(LightComponent light)
+    {
+        if (light.Type != ELightType.Static)
+            return;
+
+        ImGui.SeparatorText("Baking");
+
+        if (ImGui.Button("Bake Lightmaps"))
+            light.WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.LightmapBaking?.RequestBake(light);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Queues a lightmap bake for Static meshes. Hybrid auto-baking is disabled by default, and lightmap rendering remains experimental.");
     }
 
     public static void DrawShadowMapPreview(LightComponent light)

@@ -8,10 +8,23 @@
     <EnableAotAnalyzer>false</EnableAotAnalyzer>
     <Nullable>disable</Nullable>
     <DefaultItemExcludes>$(DefaultItemExcludes);**/Build/Temp/**;**/Build/TempValidation/**</DefaultItemExcludes>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-dev</PackageVersion>
+    <Authors Condition="'$(Authors)' == ''">BlackJaxVR</Authors>
+    <Company Condition="'$(Company)' == ''">BlackJaxVR</Company>
+    <PackageProjectUrl Condition="'$(PackageProjectUrl)' == ''">https://blackjaxvr.com</PackageProjectUrl>
+    <RepositoryType Condition="'$(RepositoryType)' == ''">git</RepositoryType>
+    <PackageTags Condition="'$(PackageTags)' == ''">xre xr vr game-engine blackjaxvr</PackageTags>
+    <PackageLicenseFile Condition="'$(PackageLicenseFile)' == ''">LICENSE</PackageLicenseFile>
+    <PackageReadmeFile Condition="'$(PackageReadmeFile)' == '' and Exists('$(MSBuildThisFileDirectory)README.md')">README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('_wpftmp'))">
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AdditionalCscArguments>$(AdditionalCscArguments) /unsafe</AdditionalCscArguments>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' != 'false'">
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)LICENSE')" />
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
+  </ItemGroup>
 </Project>

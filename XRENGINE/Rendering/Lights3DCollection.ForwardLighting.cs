@@ -6,6 +6,7 @@ using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Rendering;
 
 namespace XREngine.Scene
@@ -17,31 +18,21 @@ namespace XREngine.Scene
         // Cached arrays for per-draw shadow metadata uploads.
         // Reused every call to avoid 24 heap allocations per draw on the render thread.
         // Safe because only the single render thread calls SetForwardLightingUniforms.
-        private static readonly int[] _pointShadowSlots = new int[16];
-        private static readonly float[] _pointShadowNearPlanes = new float[16];
-        private static readonly float[] _pointShadowFarPlanes = new float[16];
-        private static readonly float[] _pointShadowBase = new float[16];
-        private static readonly float[] _pointShadowExponent = new float[16];
-        private static readonly float[] _pointShadowBiasMin = new float[16];
-        private static readonly float[] _pointShadowBiasMax = new float[16];
-        private static readonly int[] _pointShadowSamples = new int[16];
-        private static readonly int[] _pointShadowVogelTapCount = new int[16];
-        private static readonly float[] _pointShadowFilterRadius = new float[16];
-        private static readonly int[] _pointShadowSoftShadowMode = new int[16];
-        private static readonly float[] _pointShadowLightSourceRadius = new float[16];
-        private static readonly int[] _pointShadowDebugModes = new int[16];
+        private static readonly IVector4 _inactiveShadowPack = new(-1, 0, 0, 0);
+        private static readonly IVector4[] _pointShadowPacked0 = new IVector4[16];
+        private static readonly IVector4[] _pointShadowPacked1 = new IVector4[16];
+        private static readonly Vector4[] _pointShadowParams0 = new Vector4[16];
+        private static readonly Vector4[] _pointShadowParams1 = new Vector4[16];
+        private static readonly Vector4[] _pointShadowParams2 = new Vector4[16];
+        private static readonly Vector4[] _pointShadowParams3 = new Vector4[16];
+        private static readonly Vector4[] _pointShadowParams4 = new Vector4[16];
 
-        private static readonly int[] _spotShadowSlots = new int[16];
-        private static readonly float[] _spotShadowBase = new float[16];
-        private static readonly float[] _spotShadowExponent = new float[16];
-        private static readonly float[] _spotShadowBiasMin = new float[16];
-        private static readonly float[] _spotShadowBiasMax = new float[16];
-        private static readonly int[] _spotShadowSamples = new int[16];
-        private static readonly int[] _spotShadowVogelTapCount = new int[16];
-        private static readonly float[] _spotShadowFilterRadius = new float[16];
-        private static readonly int[] _spotShadowSoftShadowMode = new int[16];
-        private static readonly float[] _spotShadowLightSourceRadius = new float[16];
-        private static readonly int[] _spotShadowDebugModes = new int[16];
+        private static readonly IVector4[] _spotShadowPacked0 = new IVector4[16];
+        private static readonly IVector4[] _spotShadowPacked1 = new IVector4[16];
+        private static readonly Vector4[] _spotShadowParams0 = new Vector4[16];
+        private static readonly Vector4[] _spotShadowParams1 = new Vector4[16];
+        private static readonly Vector4[] _spotShadowParams2 = new Vector4[16];
+        private static readonly Vector4[] _spotShadowParams3 = new Vector4[16];
 
         // Pre-computed uniform name strings for light array indices.
         // Avoids per-draw string interpolation allocations on the render thread.
@@ -78,7 +69,7 @@ namespace XREngine.Scene
             }
 
             // Global ambient light - required by ForwardLighting snippet
-            program.Uniform("GlobalAmbient", new Vector3(0.1f, 0.1f, 0.1f));
+            program.Uniform("GlobalAmbient", (Vector3)World.GetEffectiveAmbientColor());
 
             // Camera position for specular calculations
             program.Uniform("CameraPosition", Engine.Rendering.State.RenderingCamera?.Transform.RenderTranslation ?? Vector3.Zero);
@@ -228,19 +219,36 @@ namespace XREngine.Scene
             if (DynamicDirectionalLights.Count > 0)
             {
                 var firstDirLight = DynamicDirectionalLights[0];
-                program.Uniform("ShadowBase", firstDirLight.ShadowExponentBase);
-                program.Uniform("ShadowMult", firstDirLight.ShadowExponent);
-                program.Uniform("ShadowBiasMin", firstDirLight.ShadowMinBias);
-                program.Uniform("ShadowBiasMax", firstDirLight.ShadowMaxBias);
-                program.Uniform("ShadowSamples", firstDirLight.Samples);
-                program.Uniform("ShadowVogelTapCount", firstDirLight.VogelTapCount);
-                program.Uniform("ShadowFilterRadius", firstDirLight.FilterRadius);
-                program.Uniform("SoftShadowMode", (int)firstDirLight.SoftShadowMode);
-                program.Uniform("LightSourceRadius", firstDirLight.LightSourceRadius);
-                program.Uniform("EnableCascadedShadows", firstDirLight.EnableCascadedShadows);
-                program.Uniform("EnableContactShadows", firstDirLight.EnableContactShadows);
-                program.Uniform("ContactShadowDistance", firstDirLight.ContactShadowDistance);
-                program.Uniform("ContactShadowSamples", firstDirLight.ContactShadowSamples);
+                program.Uniform("ShadowPackedI0", new IVector4(
+                    firstDirLight.BlockerSamples,
+                    firstDirLight.FilterSamples,
+                    firstDirLight.VogelTapCount,
+                    (int)firstDirLight.SoftShadowMode));
+                program.Uniform("ShadowPackedI1", new IVector4(
+                    firstDirLight.EnableCascadedShadows ? 1 : 0,
+                    firstDirLight.EnableContactShadows ? 1 : 0,
+                    firstDirLight.ContactShadowSamples,
+                    0));
+                program.Uniform("ShadowParams0", new Vector4(
+                    firstDirLight.ShadowExponentBase,
+                    firstDirLight.ShadowExponent,
+                    firstDirLight.ShadowMinBias,
+                    firstDirLight.ShadowMaxBias));
+                program.Uniform("ShadowParams1", new Vector4(
+                    firstDirLight.FilterRadius,
+                    firstDirLight.BlockerSearchRadius,
+                    firstDirLight.MinPenumbra,
+                    firstDirLight.MaxPenumbra));
+                program.Uniform("ShadowParams2", new Vector4(
+                    firstDirLight.LightSourceRadius,
+                    firstDirLight.ContactShadowDistance,
+                    firstDirLight.ContactShadowThickness,
+                    firstDirLight.ContactShadowFadeStart));
+                program.Uniform("ShadowParams3", new Vector4(
+                    firstDirLight.ContactShadowFadeEnd,
+                    firstDirLight.ContactShadowNormalOffset,
+                    firstDirLight.ContactShadowJitterStrength,
+                    0.0f));
 
                 if (firstDirLight.CastsShadows)
                 {
@@ -364,109 +372,82 @@ namespace XREngine.Scene
                 DynamicPointLights[i].SetUniforms(program, _pointLightLegacyNames[i]);
             }
 
-            Array.Fill(_pointShadowSlots, -1);
-            Array.Clear(_pointShadowNearPlanes);
-            Array.Clear(_pointShadowFarPlanes);
-            Array.Clear(_pointShadowBase);
-            Array.Clear(_pointShadowExponent);
-            Array.Clear(_pointShadowBiasMin);
-            Array.Clear(_pointShadowBiasMax);
-            Array.Clear(_pointShadowSamples);
-            Array.Clear(_pointShadowVogelTapCount);
-            Array.Clear(_pointShadowFilterRadius);
-            Array.Clear(_pointShadowSoftShadowMode);
-            Array.Clear(_pointShadowLightSourceRadius);
-            Array.Clear(_pointShadowDebugModes);
+            Array.Fill(_pointShadowPacked0, _inactiveShadowPack);
+            Array.Clear(_pointShadowPacked1);
+            Array.Clear(_pointShadowParams0);
+            Array.Clear(_pointShadowParams1);
+            Array.Clear(_pointShadowParams2);
+            Array.Clear(_pointShadowParams3);
+            Array.Clear(_pointShadowParams4);
             int pointShadowSlot = 0;
-            for (int i = 0; i < DynamicPointLights.Count && i < _pointShadowSlots.Length; ++i)
+            for (int i = 0; i < DynamicPointLights.Count && i < _pointShadowPacked0.Length; ++i)
             {
                 PointLightComponent light = DynamicPointLights[i];
-                _pointShadowNearPlanes[i] = light.ShadowNearPlaneDistance;
-                _pointShadowFarPlanes[i] = light.Radius;
-                _pointShadowBase[i] = light.ShadowExponentBase;
-                _pointShadowExponent[i] = light.ShadowExponent;
-                _pointShadowBiasMin[i] = light.ShadowMinBias;
-                _pointShadowBiasMax[i] = light.ShadowMaxBias;
-                _pointShadowSamples[i] = light.Samples;
-                _pointShadowVogelTapCount[i] = light.VogelTapCount;
-                _pointShadowFilterRadius[i] = light.FilterRadius;
-                _pointShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
-                _pointShadowLightSourceRadius[i] = light.LightSourceRadius;
-                _pointShadowDebugModes[i] = light.ShadowDebugMode;
+                int shadowSlot = -1;
 
                 XRTexture? shadowTexture = FindShadowMapTexture(light);
                 if (shadowTexture is XRTextureCube shadowCube && pointShadowSlot < maxForwardShadowedPointLights)
                 {
-                    _pointShadowSlots[i] = pointShadowSlot;
+                    shadowSlot = pointShadowSlot;
                     program.Sampler(_pointShadowMapNames[pointShadowSlot], shadowCube, pointShadowStartUnit + pointShadowSlot);
                     pointShadowSlot++;
                 }
+
+                _pointShadowPacked0[i] = new IVector4(shadowSlot, light.FilterSamples, light.BlockerSamples, light.VogelTapCount);
+                _pointShadowPacked1[i] = new IVector4((int)light.SoftShadowMode, light.ShadowDebugMode, light.EnableContactShadows ? 1 : 0, light.ContactShadowSamples);
+                _pointShadowParams0[i] = new Vector4(light.ShadowNearPlaneDistance, light.Radius, light.ShadowExponentBase, light.ShadowExponent);
+                _pointShadowParams1[i] = new Vector4(light.ShadowMinBias, light.ShadowMaxBias, light.FilterRadius, light.BlockerSearchRadius);
+                _pointShadowParams2[i] = new Vector4(light.MinPenumbra, light.MaxPenumbra, light.LightSourceRadius, light.ContactShadowDistance);
+                _pointShadowParams3[i] = new Vector4(light.ContactShadowThickness, light.ContactShadowFadeStart, light.ContactShadowFadeEnd, light.ContactShadowNormalOffset);
+                _pointShadowParams4[i] = new Vector4(light.ContactShadowJitterStrength, 0.0f, 0.0f, 0.0f);
             }
             for (; pointShadowSlot < maxForwardShadowedPointLights; ++pointShadowSlot)
                 program.Sampler(_pointShadowMapNames[pointShadowSlot], DummyPointShadowMap, pointShadowStartUnit + pointShadowSlot);
 
-            Array.Fill(_spotShadowSlots, -1);
-            Array.Clear(_spotShadowBase);
-            Array.Clear(_spotShadowExponent);
-            Array.Clear(_spotShadowBiasMin);
-            Array.Clear(_spotShadowBiasMax);
-            Array.Clear(_spotShadowSamples);
-            Array.Clear(_spotShadowVogelTapCount);
-            Array.Clear(_spotShadowFilterRadius);
-            Array.Clear(_spotShadowSoftShadowMode);
-            Array.Clear(_spotShadowLightSourceRadius);
-            Array.Clear(_spotShadowDebugModes);
+            Array.Fill(_spotShadowPacked0, _inactiveShadowPack);
+            Array.Clear(_spotShadowPacked1);
+            Array.Clear(_spotShadowParams0);
+            Array.Clear(_spotShadowParams1);
+            Array.Clear(_spotShadowParams2);
+            Array.Clear(_spotShadowParams3);
             int spotShadowSlot = 0;
-            for (int i = 0; i < DynamicSpotLights.Count && i < _spotShadowSlots.Length; ++i)
+            for (int i = 0; i < DynamicSpotLights.Count && i < _spotShadowPacked0.Length; ++i)
             {
                 SpotLightComponent light = DynamicSpotLights[i];
-                _spotShadowBase[i] = light.ShadowExponentBase;
-                _spotShadowExponent[i] = light.ShadowExponent;
-                _spotShadowBiasMin[i] = light.ShadowMinBias;
-                _spotShadowBiasMax[i] = light.ShadowMaxBias;
-                _spotShadowSamples[i] = light.Samples;
-                _spotShadowVogelTapCount[i] = light.VogelTapCount;
-                _spotShadowFilterRadius[i] = light.FilterRadius;
-                _spotShadowSoftShadowMode[i] = (int)light.SoftShadowMode;
-                _spotShadowLightSourceRadius[i] = light.LightSourceRadius;
-                _spotShadowDebugModes[i] = light.ShadowDebugMode;
+                int shadowSlot = -1;
 
                 XRTexture? shadowTexture = FindShadowMapTexture(light);
                 if (shadowTexture is XRTexture2D shadowMap && spotShadowSlot < maxForwardShadowedSpotLights)
                 {
-                    _spotShadowSlots[i] = spotShadowSlot;
+                    shadowSlot = spotShadowSlot;
                     program.Sampler(_spotShadowMapNames[spotShadowSlot], shadowMap, spotShadowStartUnit + spotShadowSlot);
                     spotShadowSlot++;
                 }
+
+                _spotShadowPacked0[i] = new IVector4(shadowSlot, light.FilterSamples, light.BlockerSamples, light.VogelTapCount);
+                _spotShadowPacked1[i] = new IVector4((int)light.SoftShadowMode, light.ShadowDebugMode, light.EnableContactShadows ? 1 : 0, light.ContactShadowSamples);
+                _spotShadowParams0[i] = new Vector4(light.ShadowExponentBase, light.ShadowExponent, light.ShadowMinBias, light.ShadowMaxBias);
+                _spotShadowParams1[i] = new Vector4(light.FilterRadius, light.BlockerSearchRadius, light.MinPenumbra, light.MaxPenumbra);
+                _spotShadowParams2[i] = new Vector4(light.LightSourceRadius, light.ContactShadowDistance, light.ContactShadowThickness, light.ContactShadowFadeStart);
+                _spotShadowParams3[i] = new Vector4(light.ContactShadowFadeEnd, light.ContactShadowNormalOffset, light.ContactShadowJitterStrength, 0.0f);
             }
             for (; spotShadowSlot < maxForwardShadowedSpotLights; ++spotShadowSlot)
                 program.Sampler(_spotShadowMapNames[spotShadowSlot], DummyShadowMap, spotShadowStartUnit + spotShadowSlot);
 
-            program.Uniform("PointLightShadowSlots", _pointShadowSlots);
-            program.Uniform("PointLightShadowNearPlanes", _pointShadowNearPlanes);
-            program.Uniform("PointLightShadowFarPlanes", _pointShadowFarPlanes);
-            program.Uniform("PointLightShadowBase", _pointShadowBase);
-            program.Uniform("PointLightShadowExponent", _pointShadowExponent);
-            program.Uniform("PointLightShadowBiasMin", _pointShadowBiasMin);
-            program.Uniform("PointLightShadowBiasMax", _pointShadowBiasMax);
-            program.Uniform("PointLightShadowSamples", _pointShadowSamples);
-            program.Uniform("PointLightShadowVogelTapCount", _pointShadowVogelTapCount);
-            program.Uniform("PointLightShadowFilterRadius", _pointShadowFilterRadius);
-            program.Uniform("PointLightShadowSoftShadowMode", _pointShadowSoftShadowMode);
-            program.Uniform("PointLightShadowLightSourceRadius", _pointShadowLightSourceRadius);
-            program.Uniform("PointLightShadowDebugModes", _pointShadowDebugModes);
+            program.Uniform("PointLightShadowPacked0", _pointShadowPacked0);
+            program.Uniform("PointLightShadowPacked1", _pointShadowPacked1);
+            program.Uniform("PointLightShadowParams0", _pointShadowParams0);
+            program.Uniform("PointLightShadowParams1", _pointShadowParams1);
+            program.Uniform("PointLightShadowParams2", _pointShadowParams2);
+            program.Uniform("PointLightShadowParams3", _pointShadowParams3);
+            program.Uniform("PointLightShadowParams4", _pointShadowParams4);
 
-            program.Uniform("SpotLightShadowSlots", _spotShadowSlots);
-            program.Uniform("SpotLightShadowBase", _spotShadowBase);
-            program.Uniform("SpotLightShadowExponent", _spotShadowExponent);
-            program.Uniform("SpotLightShadowBiasMin", _spotShadowBiasMin);
-            program.Uniform("SpotLightShadowBiasMax", _spotShadowBiasMax);
-            program.Uniform("SpotLightShadowSamples", _spotShadowSamples);
-            program.Uniform("SpotLightShadowVogelTapCount", _spotShadowVogelTapCount);
-            program.Uniform("SpotLightShadowFilterRadius", _spotShadowFilterRadius);
-            program.Uniform("SpotLightShadowSoftShadowMode", _spotShadowSoftShadowMode);
-            program.Uniform("SpotLightShadowLightSourceRadius", _spotShadowLightSourceRadius);
-            program.Uniform("SpotLightShadowDebugModes", _spotShadowDebugModes);
+            program.Uniform("SpotLightShadowPacked0", _spotShadowPacked0);
+            program.Uniform("SpotLightShadowPacked1", _spotShadowPacked1);
+            program.Uniform("SpotLightShadowParams0", _spotShadowParams0);
+            program.Uniform("SpotLightShadowParams1", _spotShadowParams1);
+            program.Uniform("SpotLightShadowParams2", _spotShadowParams2);
+            program.Uniform("SpotLightShadowParams3", _spotShadowParams3);
 
             // Bind the actual shadow texture after per-light SetUniforms.
             // ALWAYS bind a texture to unit 15 - if no shadow map, use a 1x1 white dummy.

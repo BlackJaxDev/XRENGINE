@@ -40,6 +40,8 @@ public sealed class SpotLightComponentEditor : IXRComponentEditor
         float distance = light.Distance;
         if (ImGui.DragFloat("Distance", ref distance, 0.1f, 0.01f, 1000000.0f, "%.3f"))
             light.Distance = MathF.Max(0.01f, distance);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Also acts as the spot-shadow far plane.");
 
         float brightness = light.Brightness;
         if (ImGui.DragFloat("Brightness", ref brightness, 0.01f, 0.0f, 100000.0f, "%.3f"))
@@ -60,5 +62,14 @@ public sealed class SpotLightComponentEditor : IXRComponentEditor
 
         if (changed)
             light.SetCutoffs(inner, outer);
+
+        ImGui.SeparatorText("Shadow Projection");
+
+        float near = light.ShadowNearPlaneDistance;
+        float maxNear = MathF.Max(0.0001f, light.Distance - 0.001f);
+        if (ImGui.DragFloat("Near Plane", ref near, 0.001f, 0.0001f, maxNear, "%.4f"))
+            light.ShadowNearPlaneDistance = Math.Clamp(near, 0.0001f, maxNear);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Keep this as large as possible without clipping nearby shadow casters to improve depth precision.");
     }
 }

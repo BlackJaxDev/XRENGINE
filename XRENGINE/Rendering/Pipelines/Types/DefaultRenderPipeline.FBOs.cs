@@ -251,9 +251,10 @@ public partial class DefaultRenderPipeline
     /// Quad FBO that drives the bilateral upscale. Reads the temporal half-res fog,
     /// half-res depth, and full-res depth, emitting the full-resolution
     /// <see cref="VolumetricFogColorTextureName"/> consumed by PostProcess.fs.
-    /// Fragment-only camera uniforms are pushed via
+    /// Fragment-only camera and volume uniforms are pushed via
     /// <see cref="VolumetricFogUpscaleFBO_SettingUniforms"/> so the fullscreen
-    /// quad stays in screenspace while the shader still receives the scene camera.
+    /// quad stays in screenspace while the shader can full-res-gate output against
+    /// the current fog OBBs.
     /// </summary>
     private XRFrameBuffer CreateVolumetricFogUpscaleQuadFBO()
     {

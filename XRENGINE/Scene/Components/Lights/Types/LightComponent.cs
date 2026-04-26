@@ -32,15 +32,24 @@ namespace XREngine.Components.Capture.Lights.Types
         private readonly List<FrustumIntersectionAabb> _cameraIntersections = new(6);
         private bool _previewBoundingVolume = false;
         private XRWorldInstance? _registeredDynamicWorld;
-        private int _samples = 4;
+        private int _filterSamples = 4;
+        private int _blockerSamples = 4;
         private int _vogelTapCount = 5;
         private float _filterRadius = 0.0012f;
-        private ESoftShadowMode _softShadowMode = ESoftShadowMode.PCSS;
+        private float _blockerSearchRadius = 0.0012f;
+        private float _minPenumbra = 0.0002f;
+        private float _maxPenumbra = 0.0048f;
+        private ESoftShadowMode _softShadowMode = ESoftShadowMode.FixedPoisson;
         private float _lightSourceRadius = 0.01f;
         private bool _enableCascadedShadows = true;
         private bool _enableContactShadows = true;
         private float _contactShadowDistance = 0.1f;
         private int _contactShadowSamples = 4;
+        private float _contactShadowThickness = 0.25f;
+        private float _contactShadowFadeStart = 10.0f;
+        private float _contactShadowFadeEnd = 40.0f;
+        private float _contactShadowNormalOffset = 0.0f;
+        private float _contactShadowJitterStrength = 1.0f;
         private int _shadowDebugMode = 0;
 
         private long _lastMovedTicks;
@@ -331,8 +340,20 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public int Samples
         {
-            get => _samples;
-            set => SetField(ref _samples, Math.Max(1, value));
+            get => FilterSamples;
+            set => FilterSamples = value;
+        }
+
+        public int FilterSamples
+        {
+            get => _filterSamples;
+            set => SetField(ref _filterSamples, Math.Max(1, value));
+        }
+
+        public int BlockerSamples
+        {
+            get => _blockerSamples;
+            set => SetField(ref _blockerSamples, Math.Max(1, value));
         }
 
         /// <summary>
@@ -351,9 +372,27 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _filterRadius, MathF.Max(0.0f, value));
         }
 
+        public float BlockerSearchRadius
+        {
+            get => _blockerSearchRadius;
+            set => SetField(ref _blockerSearchRadius, MathF.Max(0.0f, value));
+        }
+
+        public float MinPenumbra
+        {
+            get => _minPenumbra;
+            set => SetField(ref _minPenumbra, MathF.Max(0.0f, value));
+        }
+
+        public float MaxPenumbra
+        {
+            get => _maxPenumbra;
+            set => SetField(ref _maxPenumbra, MathF.Max(0.0f, value));
+        }
+
         /// <summary>
-        /// Selects the soft shadow technique: Hard (PCF fallback), PCSS (fixed-radius Poisson disk),
-        /// VogelDisk (fixed-radius Vogel disk), or ContactHardening (blocker-search variable penumbra).
+        /// Selects the soft shadow technique: Hard (PCF fallback), FixedPoisson (fixed-radius Poisson disk),
+        /// VogelDisk (fixed-radius Vogel disk), or ContactHardeningPcss (blocker-search variable penumbra).
         /// </summary>
         public ESoftShadowMode SoftShadowMode
         {
@@ -362,7 +401,7 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         /// <summary>
-        /// Physical radius of the light source in world units. Used by <see cref="ESoftShadowMode.ContactHardening"/>
+        /// Physical radius of the light source in world units. Used by <see cref="ESoftShadowMode.ContactHardeningPcss"/>
         /// to compute the penumbra width. Larger values produce wider, softer penumbrae.
         /// </summary>
         [Category("Shadows")]
@@ -393,7 +432,37 @@ namespace XREngine.Components.Capture.Lights.Types
         public int ContactShadowSamples
         {
             get => _contactShadowSamples;
-            set => SetField(ref _contactShadowSamples, Math.Max(1, value));
+            set => SetField(ref _contactShadowSamples, Math.Clamp(value, 1, 32));
+        }
+
+        public float ContactShadowThickness
+        {
+            get => _contactShadowThickness;
+            set => SetField(ref _contactShadowThickness, MathF.Max(0.0f, value));
+        }
+
+        public float ContactShadowFadeStart
+        {
+            get => _contactShadowFadeStart;
+            set => SetField(ref _contactShadowFadeStart, MathF.Max(0.0f, value));
+        }
+
+        public float ContactShadowFadeEnd
+        {
+            get => _contactShadowFadeEnd;
+            set => SetField(ref _contactShadowFadeEnd, MathF.Max(0.0f, value));
+        }
+
+        public float ContactShadowNormalOffset
+        {
+            get => _contactShadowNormalOffset;
+            set => SetField(ref _contactShadowNormalOffset, MathF.Max(0.0f, value));
+        }
+
+        public float ContactShadowJitterStrength
+        {
+            get => _contactShadowJitterStrength;
+            set => SetField(ref _contactShadowJitterStrength, Math.Clamp(value, 0.0f, 1.0f));
         }
 
         /// <summary>
@@ -415,9 +484,14 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform(Engine.Rendering.Constants.ShadowBiasMinUniform, ShadowMinBias);
             program.Uniform(Engine.Rendering.Constants.ShadowBiasMaxUniform, ShadowMaxBias);
 
-            program.Uniform(Engine.Rendering.Constants.ShadowSamples, Samples);
+            program.Uniform(Engine.Rendering.Constants.ShadowSamples, FilterSamples);
+            program.Uniform(Engine.Rendering.Constants.ShadowBlockerSamples, BlockerSamples);
+            program.Uniform(Engine.Rendering.Constants.ShadowFilterSamples, FilterSamples);
             program.Uniform(Engine.Rendering.Constants.ShadowVogelTapCount, VogelTapCount);
             program.Uniform(Engine.Rendering.Constants.ShadowFilterRadius, FilterRadius);
+            program.Uniform(Engine.Rendering.Constants.ShadowBlockerSearchRadius, BlockerSearchRadius);
+            program.Uniform(Engine.Rendering.Constants.ShadowMinPenumbra, MinPenumbra);
+            program.Uniform(Engine.Rendering.Constants.ShadowMaxPenumbra, MaxPenumbra);
             program.Uniform(Engine.Rendering.Constants.SoftShadowMode, (int)SoftShadowMode);
             program.Uniform(Engine.Rendering.Constants.LightSourceRadius, LightSourceRadius);
 
@@ -425,6 +499,11 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform(Engine.Rendering.Constants.EnableContactShadows, EnableContactShadows);
             program.Uniform(Engine.Rendering.Constants.ContactShadowDistance, ContactShadowDistance);
             program.Uniform(Engine.Rendering.Constants.ContactShadowSamples, ContactShadowSamples);
+            program.Uniform(Engine.Rendering.Constants.ContactShadowThickness, ContactShadowThickness);
+            program.Uniform(Engine.Rendering.Constants.ContactShadowFadeStart, ContactShadowFadeStart);
+            program.Uniform(Engine.Rendering.Constants.ContactShadowFadeEnd, ContactShadowFadeEnd);
+            program.Uniform(Engine.Rendering.Constants.ContactShadowNormalOffset, ContactShadowNormalOffset);
+            program.Uniform(Engine.Rendering.Constants.ContactShadowJitterStrength, ContactShadowJitterStrength);
 
             program.Uniform("ShadowDebugMode", _shadowDebugMode);
         }

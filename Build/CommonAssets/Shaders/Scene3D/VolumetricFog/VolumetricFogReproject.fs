@@ -95,6 +95,11 @@ vec4 ClipToAABB(vec4 value, vec4 boundsMin, vec4 boundsMax)
     return center + offset * clipAmount;
 }
 
+bool IsNeutralFog(vec4 fog)
+{
+    return fog.a >= 0.9999f && all(lessThanEqual(abs(fog.rgb), vec3(1e-5f)));
+}
+
 void ComputeNeighborhoodBounds(vec2 uv, out vec4 boundsMin, out vec4 boundsMax)
 {
     boundsMin = vec4(1.0e20f);
@@ -120,6 +125,12 @@ void main()
 
     vec2 uv = ndc * 0.5f + 0.5f;
     vec4 currentFog = texture(VolumetricFogHalfScatter, uv);
+
+    if (IsNeutralFog(currentFog))
+    {
+        OutColor = currentFog;
+        return;
+    }
 
     if (!VolumetricFogHistoryReady || VolumetricFogMaxDistance <= 0.0f || VolumetricFogDebugMode != 0)
     {

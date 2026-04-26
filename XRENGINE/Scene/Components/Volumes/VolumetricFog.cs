@@ -10,6 +10,7 @@ namespace XREngine.Components.Scene.Volumes
     /// <summary>
     /// Bounded local-space volume that contributes volumetric fog during the post-process pass.
     /// </summary>
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.VolumetricFogVolumeComponentEditor")]
     [Description("A bounded local-space volume that contributes volumetric fog during post-processing.")]
     public class VolumetricFogVolumeComponent : XRComponent
     {
@@ -21,7 +22,7 @@ namespace XREngine.Components.Scene.Volumes
         private Vector3 _noiseVelocity = new(0.0f, 0.05f, 0.0f);
         private float _noiseThreshold = 0.35f;
         private float _noiseAmount = 0.7f;
-        private float _edgeFade = 0.2f;
+        private float _edgeFade = 2.0f;
         private float _anisotropy = 0.2f;
         private float _lightContribution = 1.0f;
         private int _priority;
@@ -98,10 +99,12 @@ namespace XREngine.Components.Scene.Volumes
         }
 
         [Category("Volumetric Fog")]
+        [DisplayName("Edge Fade Distance")]
+        [Description("Local-space distance over which density fades to zero near the volume bounds. Existing volume noise erodes this fade band when NoiseAmount is above zero.")]
         public float EdgeFade
         {
             get => _edgeFade;
-            set => SetField(ref _edgeFade, Math.Clamp(value, 0.0f, 1.0f));
+            set => SetField(ref _edgeFade, MathF.Max(0.0f, value));
         }
 
         [Category("Volumetric Fog")]

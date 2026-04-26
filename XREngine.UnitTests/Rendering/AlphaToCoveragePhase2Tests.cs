@@ -616,17 +616,44 @@ public sealed class AlphaToCoveragePhase2Tests
     }
 
     [Test]
-    public void VolumetricFog_UsesLightDrivenStableDither()
+    public void VolumetricFog_ScatterCombinesAmbientFillWithDirectionalShadows()
     {
-        string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/PostProcess.fs").Replace("\r\n", "\n");
+        string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/VolumetricFog/VolumetricFogScatter.fs").Replace("\r\n", "\n");
         shaderSource.ShouldContain("float interleavedGradientNoise(vec2 pixelCoord)");
-        shaderSource.ShouldContain("return vec3(0.0f);");
-        shaderSource.ShouldContain("return lightColor * shadowFactor * lightContribution * phase * 4.0f;");
-        shaderSource.ShouldContain("float jitter = (interleavedGradientNoise(gl_FragCoord.xy) - 0.5f) * stepSize * VolumetricFog.JitterStrength;");
-        shaderSource.ShouldContain("float t = max(0.0f, 0.5f * stepSize + jitter);");
+        shaderSource.ShouldContain("uniform vec3 GlobalAmbient;");
+        shaderSource.ShouldContain("vec3 ambientLighting = GlobalAmbient * 0.35f;");
+        shaderSource.ShouldContain("return ambientLighting;");
+        shaderSource.ShouldContain("vec3 directLighting = lightColor * shadowFactor * lightContribution * phase * 4.0f;");
+        shaderSource.ShouldContain("return ambientLighting + directLighting;");
+        shaderSource.ShouldContain("float ComputeNoisyEdgeFade(float distanceToBounds, float edgeFade, float noiseValue, float noiseAmount)");
+        shaderSource.ShouldContain("float edgeErosion = fadeDistance * 0.85f * saturate(noiseAmount) * (1.0f - clamp(noiseValue, 0.0f, 1.0f));");
+        shaderSource.ShouldContain("float ComputeRayIntervalFade(int index, vec3 rayDirWS, float sampleT, float tNear, float tFar, float noiseValue, float noiseAmount)");
+        shaderSource.ShouldContain("float densityTerms = EvaluateVolumeDensityTerms(volumeIndex, samplePosWS, edgeMask, noiseMask, noiseValue, noiseAmount);");
+        shaderSource.ShouldContain("* rayEdgeMask * VolumetricFog.Intensity;");
+        shaderSource.ShouldContain("float temporalSeedOffset = fract(RenderTime * 7.0f) * 64.0f * VolumetricFog.JitterStrength;");
+        shaderSource.ShouldContain("float t = unionTNear + ign * stepSize;");
         shaderSource.ShouldNotContain("return vec3(1.0f);");
         shaderSource.ShouldNotContain("vec3(1.0f) + lightColor");
-        shaderSource.ShouldNotContain("fract(RenderTime * 7.0)");
+    }
+
+    [Test]
+    public void VolumetricFog_TemporalAndUpscaleRespectCurrentVolumeMisses()
+    {
+        string reprojectSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/VolumetricFog/VolumetricFogReproject.fs").Replace("\r\n", "\n");
+        reprojectSource.ShouldContain("bool IsNeutralFog(vec4 fog)");
+        reprojectSource.ShouldContain("if (IsNeutralFog(currentFog))");
+        reprojectSource.ShouldContain("OutColor = currentFog;\n        return;\n    }\n\n    if (!VolumetricFogHistoryReady");
+
+        string upscaleSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/VolumetricFog/VolumetricFogUpscale.fs").Replace("\r\n", "\n");
+        upscaleSource.ShouldContain("uniform mat4 VolumetricFogWorldToLocal[MaxVolumetricFogVolumes];");
+        upscaleSource.ShouldContain("uniform vec4 VolumetricFogNoiseScaleThreshold[MaxVolumetricFogVolumes];");
+        upscaleSource.ShouldContain("float SampleVolumeNoise01(int index, vec3 localPos, out float noiseAmount)");
+        upscaleSource.ShouldContain("float ViewRayFogFade(float rawDepth, float resolvedDepth, vec2 uv)");
+        upscaleSource.ShouldContain("vec4 ApplyFogOutputFade(vec4 fog, float fade)");
+        upscaleSource.ShouldContain("if (volumeFade <= 0.0f)");
+
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("private void VolumetricFogUpscaleFBO_SettingUniforms(XRRenderProgram materialProgram)\n    {\n        VolumetricFog_SetFragmentCameraUniforms(materialProgram);\n\n        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();\n        var volumetricFog = GetSettings<VolumetricFogSettings>(state);\n        (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);\n    }");
     }
 
     [Test]

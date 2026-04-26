@@ -226,6 +226,26 @@ public sealed class ProbeGridLookupTests
     }
 
     [Test]
+    public void ForwardLighting_ProbeAmbientMultipliesGlobalAmbient()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl");
+
+        source.ShouldContain("return GlobalAmbient * albedo * diffuseAO;");
+        source.ShouldContain("vec3 diffuse = GlobalAmbient * irradianceColor * albedo;");
+    }
+
+    [Test]
+    public void DeferredLightCombine_ProbeAmbientMultipliesGlobalAmbient()
+    {
+        string source = ReadShaderFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
+
+        source.ShouldContain("uniform vec3 GlobalAmbient");
+        source.ShouldContain("vec3 probeAmbient = vec3(1.0f);");
+        source.ShouldContain("probeAmbient = irradianceColor;");
+        source.ShouldContain("vec3 diffuse = GlobalAmbient * probeAmbient * albedoColor;");
+    }
+
+    [Test]
     public void ProbePacking_SphereRadiiAreStoredInWComponents()
     {
         string source = ReadCSharpFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");

@@ -124,6 +124,11 @@ namespace XREngine.Components.Scene.Mesh
 
         private float _sunIntensity = 6.0f;
         private float _moonIntensity = 0.35f;
+        private bool _syncGlobalAmbientLighting = true;
+        private float _sunGlobalAmbientScale = 0.018f;
+        private float _moonGlobalAmbientScale = 0.08f;
+        private float _minimumGlobalAmbientIntensity = 0.006f;
+        private ColorF3 _minimumGlobalAmbientColor = new(0.12f, 0.16f, 0.28f);
 
         private bool _sunColorTemperatureEnabled = false;
         private bool _animateSunColorTemperature = true;
@@ -474,6 +479,67 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         /// <summary>
+        /// When enabled, the procedural sky drives the world's global ambient term from sun/moon elevation.
+        /// Deferred and forward/uber lighting consume this same world ambient value.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sync Global Ambient Lighting")]
+        [Description("When enabled, DynamicProcedural sky updates the world ambient light from procedural sun/moon elevation.")]
+        public bool SyncGlobalAmbientLighting
+        {
+            get => _syncGlobalAmbientLighting;
+            set => SetField(ref _syncGlobalAmbientLighting, value);
+        }
+
+        /// <summary>
+        /// Fraction of <see cref="SunIntensity"/> contributed to the world global ambient term at full sun elevation.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Sun Global Ambient Scale")]
+        [Description("Fraction of SunIntensity contributed to the world global ambient term when the sun is above the horizon.")]
+        public float SunGlobalAmbientScale
+        {
+            get => _sunGlobalAmbientScale;
+            set => SetField(ref _sunGlobalAmbientScale, Math.Max(0.0f, value));
+        }
+
+        /// <summary>
+        /// Fraction of <see cref="MoonIntensity"/> contributed to the world global ambient term at full moon elevation.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Moon Global Ambient Scale")]
+        [Description("Fraction of MoonIntensity contributed to the world global ambient term when the moon is above the horizon.")]
+        public float MoonGlobalAmbientScale
+        {
+            get => _moonGlobalAmbientScale;
+            set => SetField(ref _moonGlobalAmbientScale, Math.Max(0.0f, value));
+        }
+
+        /// <summary>
+        /// Low floor added to the procedural global ambient so the scene never collapses to pure black.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Minimum Global Ambient Intensity")]
+        [Description("Low ambient floor added by the procedural sky even when both sun and moon are below the horizon.")]
+        public float MinimumGlobalAmbientIntensity
+        {
+            get => _minimumGlobalAmbientIntensity;
+            set => SetField(ref _minimumGlobalAmbientIntensity, Math.Max(0.0f, value));
+        }
+
+        /// <summary>
+        /// Tint for the low procedural global ambient floor.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Minimum Global Ambient Color")]
+        [Description("Tint for the low ambient floor added by the procedural sky.")]
+        public ColorF3 MinimumGlobalAmbientColor
+        {
+            get => _minimumGlobalAmbientColor;
+            set => SetField(ref _minimumGlobalAmbientColor, value);
+        }
+
+        /// <summary>
         /// When true, the synced sun directional light's Color is driven every tick by <see cref="SunColorTemperatureKelvin"/>.
         /// </summary>
         [Category("Skybox Dynamic")]
@@ -674,29 +740,30 @@ namespace XREngine.Components.Scene.Mesh
             DirectionalLightComponent? sun = _syncDirectionalLightWithSun ? ResolveSunLight() : null;
             DirectionalLightComponent? moon = _syncDirectionalLightWithMoon ? ResolveMoonLight(sun) : null;
 
+            Vector3 sunDirection = GetSunDirection();
+            float sunKelvin = ResolveAnimatedColorTemperatureKelvin(
+                sunDirection,
+                _animateSunColorTemperature,
+                _sunColorTemperatureKelvin,
+                _sunHorizonColorTemperatureKelvin,
+                _sunZenithColorTemperatureKelvin);
+
+            Vector3 moonDirection = GetMoonDirection();
+            float moonKelvin = ResolveAnimatedColorTemperatureKelvin(
+                moonDirection,
+                _animateMoonColorTemperature,
+                _moonColorTemperatureKelvin,
+                _moonHorizonColorTemperatureKelvin,
+                _moonZenithColorTemperatureKelvin);
+
             if (sun is not null)
-            {
-                Vector3 sunDirection = GetSunDirection();
-                float sunKelvin = ResolveAnimatedColorTemperatureKelvin(
-                    sunDirection,
-                    _animateSunColorTemperature,
-                    _sunColorTemperatureKelvin,
-                    _sunHorizonColorTemperatureKelvin,
-                    _sunZenithColorTemperatureKelvin);
                 ApplyDirectionalLightSync(sun, sunDirection, _sunColorTemperatureEnabled, sunKelvin, _sunIntensity);
-            }
 
             if (moon is not null)
-            {
-                Vector3 moonDirection = GetMoonDirection();
-                float moonKelvin = ResolveAnimatedColorTemperatureKelvin(
-                    moonDirection,
-                    _animateMoonColorTemperature,
-                    _moonColorTemperatureKelvin,
-                    _moonHorizonColorTemperatureKelvin,
-                    _moonZenithColorTemperatureKelvin);
                 ApplyDirectionalLightSync(moon, moonDirection, _moonColorTemperatureEnabled, moonKelvin, _moonIntensity);
-            }
+
+            if (_syncGlobalAmbientLighting)
+                ApplyGlobalAmbientSync(sun, moon, sunDirection, moonDirection, sunKelvin, moonKelvin);
         }
 
         /// <summary>
@@ -765,22 +832,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ApplyDirectionalLightSync(DirectionalLightComponent light, Vector3 direction, bool temperatureEnabled, float kelvin, float baseIntensity)
         {
-            // Smoothly fade the light in/out across a band above the horizon threshold so switching between
-            // sun and moon doesn't cause a one-frame pop with no directional lighting on the scene.
-            float fade;
-            if (_horizonAutoDisable)
-            {
-                float threshold = _horizonDisableThreshold;
-                float range = MathF.Max(_horizonFadeRange, 1e-4f);
-                float t = (direction.Y - threshold) / range;
-                t = Math.Clamp(t, 0.0f, 1.0f);
-                // Smoothstep for a soft shoulder at both ends.
-                fade = t * t * (3.0f - 2.0f * t);
-            }
-            else
-            {
-                fade = 1.0f;
-            }
+            float fade = _horizonAutoDisable ? ComputeHorizonFade(direction) : 1.0f;
 
             // Fully below the fade band -> deactivate to skip shadow/lighting work.
             bool shouldBeActive = fade > 0.0f;
@@ -800,6 +852,74 @@ namespace XREngine.Components.Scene.Mesh
                 light.Color = KelvinToColorF3(kelvin);
 
             OrientLightToDirection(light, direction);
+        }
+
+        private void ApplyGlobalAmbientSync(
+            DirectionalLightComponent? sun,
+            DirectionalLightComponent? moon,
+            Vector3 sunDirection,
+            Vector3 moonDirection,
+            float sunKelvin,
+            float moonKelvin)
+        {
+            var settings = WorldAs<XRWorldInstance>()?.TargetWorld?.Settings;
+            if (settings is null)
+                return;
+
+            float sunFade = ComputeHorizonFade(sunDirection);
+            float moonFade = ComputeHorizonFade(moonDirection);
+
+            Vector3 sunColor = sun is not null ? sun.Color : KelvinToColorF3(sunKelvin);
+            Vector3 moonColor = moon is not null ? moon.Color : KelvinToColorF3(moonKelvin);
+
+            Vector3 ambient =
+                ((Vector3)_minimumGlobalAmbientColor * _minimumGlobalAmbientIntensity) +
+                (sunColor * (_sunIntensity * _sunGlobalAmbientScale * sunFade)) +
+                (moonColor * (_moonIntensity * _moonGlobalAmbientScale * moonFade));
+
+            ApplyEffectiveAmbient(settings, ambient);
+        }
+
+        private float ComputeHorizonFade(Vector3 direction)
+        {
+            float threshold = _horizonDisableThreshold;
+            float range = MathF.Max(_horizonFadeRange, 1e-4f);
+            float t = Math.Clamp((direction.Y - threshold) / range, 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+        }
+
+        private static void ApplyEffectiveAmbient(XREngine.Scene.WorldSettings settings, Vector3 ambient)
+        {
+            ambient = new Vector3(
+                MathF.Max(0.0f, ambient.X),
+                MathF.Max(0.0f, ambient.Y),
+                MathF.Max(0.0f, ambient.Z));
+
+            float intensity = MathF.Max(ambient.X, MathF.Max(ambient.Y, ambient.Z));
+            if (intensity <= 1e-6f)
+            {
+                SetAmbientIfChanged(settings, ColorF3.Black, 0.0f);
+                return;
+            }
+
+            ColorF3 color = new(ambient.X / intensity, ambient.Y / intensity, ambient.Z / intensity);
+            SetAmbientIfChanged(settings, color, intensity);
+        }
+
+        private static void SetAmbientIfChanged(XREngine.Scene.WorldSettings settings, ColorF3 color, float intensity)
+        {
+            const float epsilon = 0.00001f;
+
+            ColorF3 current = settings.AmbientLightColor;
+            if (MathF.Abs(current.R - color.R) > epsilon ||
+                MathF.Abs(current.G - color.G) > epsilon ||
+                MathF.Abs(current.B - color.B) > epsilon)
+            {
+                settings.AmbientLightColor = color;
+            }
+
+            if (MathF.Abs(settings.AmbientLightIntensity - intensity) > epsilon)
+                settings.AmbientLightIntensity = intensity;
         }
 
         private static void OrientLightToDirection(DirectionalLightComponent light, Vector3 direction)
