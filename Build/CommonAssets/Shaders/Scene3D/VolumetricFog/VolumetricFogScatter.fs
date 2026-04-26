@@ -33,6 +33,7 @@ uniform mat4 InverseProjMatrix;
 uniform float RenderTime;
 uniform int DirLightCount;
 uniform int DepthMode;
+uniform vec3 GlobalAmbient;
 
 uniform bool ShadowMapEnabled;
 uniform bool UseCascadedDirectionalShadows;
@@ -178,16 +179,40 @@ float PhaseHenyeyGreenstein(float cosTheta, float anisotropy)
   float denom = pow(max(1.0f + g2 - 2.0f * g * cosTheta, 0.001f), 1.5f);
   return (1.0f - g2) / (4.0f * Pi * denom);
 }
-float ComputeBoxFade(vec3 localPos, vec3 halfExtents, float edgeFade)
+float DistanceToVolumeBounds(vec3 localPos, vec3 halfExtents)
 {
   vec3 safeExtents = max(halfExtents, vec3(0.0001f));
-  vec3 normalized = abs(localPos) / safeExtents;
-  float boundary = max(max(normalized.x, normalized.y), normalized.z);
-  if (boundary >= 1.0f)
+  vec3 distanceToFace = safeExtents - abs(localPos);
+  return min(min(distanceToFace.x, distanceToFace.y), distanceToFace.z);
+}
+float ComputeNoisyEdgeFade(float distanceToBounds, float edgeFade, float noiseValue, float noiseAmount)
+{
+  if (distanceToBounds <= 0.0f)
     return 0.0f;
 
-  float fadeWidth = clamp(edgeFade, 0.0001f, 1.0f);
-  return 1.0f - smoothstep(1.0f - fadeWidth, 1.0f, boundary);
+  float fadeDistance = max(edgeFade, 0.0f);
+  if (fadeDistance <= 0.0001f)
+    return 1.0f;
+
+  float edgeErosion = fadeDistance * 0.85f * saturate(noiseAmount) * (1.0f - clamp(noiseValue, 0.0f, 1.0f));
+  float noisyDistance = max(distanceToBounds - edgeErosion, 0.0f);
+  return smoothstep(0.0f, fadeDistance, noisyDistance);
+}
+float ComputeRayIntervalFade(int index, vec3 rayDirWS, float sampleT, float tNear, float tFar, float noiseValue, float noiseAmount)
+{
+  if (tFar <= tNear)
+    return 0.0f;
+
+  float edgeFade = max(VolumetricFogHalfExtentsEdgeFade[index].w, 0.0f);
+  if (edgeFade <= 0.0001f)
+    return 1.0f;
+
+  vec3 localRayDir = (VolumetricFogWorldToLocal[index] * vec4(rayDirWS, 0.0f)).xyz;
+  float edgeFadeOnRay = edgeFade / max(length(localRayDir), 1e-5f);
+  float distanceToRayBounds = max(min(sampleT - tNear, tFar - sampleT), 0.0f);
+  float edgeErosion = edgeFadeOnRay * 0.85f * saturate(noiseAmount) * (1.0f - clamp(noiseValue, 0.0f, 1.0f));
+  float noisyDistance = max(distanceToRayBounds - edgeErosion, 0.0f);
+  return smoothstep(0.0f, edgeFadeOnRay, noisyDistance);
 }
 vec3 ProjectShadowCoord(mat4 lightMatrix, vec3 samplePosWS)
 {
@@ -286,35 +311,44 @@ float EvaluatePrimaryDirectionalShadow(vec3 samplePosWS)
     ? SampleShadowMapSimple(ShadowMap, shadowCoord, bias)
     : SampleShadowMapTent4(ShadowMap, shadowCoord, bias, ShadowFilterRadius);
 }
-float EvaluateVolumeDensityTerms(int index, vec3 samplePosWS, out float edgeMask, out float noiseMask)
+float EvaluateVolumeDensityTerms(int index, vec3 samplePosWS, out float edgeMask, out float noiseMask, out float noiseValue, out float noiseAmount)
 {
   vec3 localPos = (VolumetricFogWorldToLocal[index] * vec4(samplePosWS, 1.0f)).xyz;
   vec3 halfExtents = VolumetricFogHalfExtentsEdgeFade[index].xyz;
-  edgeMask = ComputeBoxFade(localPos, halfExtents, VolumetricFogHalfExtentsEdgeFade[index].w);
-  if (edgeMask <= 0.0f)
+  float distanceToBounds = DistanceToVolumeBounds(localPos, halfExtents);
+  if (distanceToBounds <= 0.0f)
   {
+    edgeMask = 0.0f;
     noiseMask = 0.0f;
+    noiseValue = 0.0f;
+    noiseAmount = 0.0f;
     return 0.0f;
   }
 
   vec4 noiseParams = VolumetricFogNoiseScaleThreshold[index];
+  noiseValue = 1.0f;
+  noiseAmount = saturate(noiseParams.z);
   noiseMask = 1.0f;
-  if (noiseParams.x > 0.0f && noiseParams.z > 0.0f)
+  if (noiseParams.x > 0.0f && noiseAmount > 0.0f)
   {
     vec3 noiseSamplePos = localPos * noiseParams.x
       + VolumetricFogNoiseOffsetAmount[index].xyz
       + VolumetricFogNoiseVelocity[index].xyz * RenderTime;
-    float noiseValue = fbm3(noiseSamplePos);
+    noiseValue = clamp(fbm3(noiseSamplePos), 0.0f, 1.0f);
     float thresholdMask = smoothstep(noiseParams.y - 0.15f, noiseParams.y + 0.15f, noiseValue);
-    noiseMask = mix(1.0f, thresholdMask, saturate(noiseParams.z));
+    noiseMask = mix(1.0f, thresholdMask, noiseAmount);
   }
+
+  edgeMask = ComputeNoisyEdgeFade(distanceToBounds, VolumetricFogHalfExtentsEdgeFade[index].w, noiseValue, noiseAmount);
   return VolumetricFogColorDensity[index].w * edgeMask * noiseMask;
 }
 float EvaluateVolumeDensity(int index, vec3 samplePosWS)
 {
   float edgeMask;
   float noiseMask;
-  return EvaluateVolumeDensityTerms(index, samplePosWS, edgeMask, noiseMask);
+  float noiseValue;
+  float noiseAmount;
+  return EvaluateVolumeDensityTerms(index, samplePosWS, edgeMask, noiseMask, noiseValue, noiseAmount);
 }
 vec3 GetPrimaryDirectionalShadowDebugState(vec3 samplePosWS)
 {
@@ -338,14 +372,16 @@ vec3 GetPrimaryDirectionalShadowDebugState(vec3 samplePosWS)
 }
 vec3 EvaluateVolumeLighting(int index, vec3 viewToCamera, float shadowFactor)
 {
+  vec3 ambientLighting = GlobalAmbient * 0.35f;
   float lightContribution = VolumetricFogLightParams[index].x;
   if (DirLightCount <= 0 || lightContribution <= 0.0f)
-    return vec3(0.0f);
+    return ambientLighting;
 
   vec3 lightDir = normalize(-LightData.Direction);
   vec3 lightColor = LightData.Color * LightData.DiffuseIntensity;
   float phase = PhaseHenyeyGreenstein(dot(viewToCamera, lightDir), VolumetricFogLightParams[index].y);
-  return lightColor * shadowFactor * lightContribution * phase * 4.0f;
+  vec3 directLighting = lightColor * shadowFactor * lightContribution * phase * 4.0f;
+  return ambientLighting + directLighting;
 }
 // Slab test against a single volume OBB in its local space.
 bool IntersectVolumeOBB(int index, vec3 rayOriginWS, vec3 rayDirWS, out float tNear, out float tFar)
@@ -503,6 +539,14 @@ vec4 ComputeVolumetricFog(vec2 uv)
   // extinction, so we skip the march entirely.
   float unionTNear = rayLength;
   float unionTFar = 0.0f;
+  float volumeTNear[MaxVolumetricFogVolumes];
+  float volumeTFar[MaxVolumetricFogVolumes];
+  for (int volumeIndex = 0; volumeIndex < MaxVolumetricFogVolumes; ++volumeIndex)
+  {
+    volumeTNear[volumeIndex] = 0.0f;
+    volumeTFar[volumeIndex] = -1.0f;
+  }
+
   bool anyHit = false;
   for (int volumeIndex = 0; volumeIndex < VolumetricFog.VolumeCount; ++volumeIndex)
   {
@@ -513,6 +557,8 @@ vec4 ComputeVolumetricFog(vec2 uv)
     tFar  = min(tFar, rayLength);
     if (tFar <= tNear)
       continue;
+    volumeTNear[volumeIndex] = tNear;
+    volumeTFar[volumeIndex] = tFar;
     unionTNear = min(unionTNear, tNear);
     unionTFar  = max(unionTFar, tFar);
     anyHit = true;
@@ -565,7 +611,8 @@ vec4 ComputeVolumetricFog(vec2 uv)
       break;
 
     float currentStep = min(stepSize, unionTFar - t);
-    vec3 samplePosWS = CameraPosition + rayDir * (t + currentStep * 0.5f);
+    float sampleT = t + currentStep * 0.5f;
+    vec3 samplePosWS = CameraPosition + rayDir * sampleT;
     vec3 stepScattering = vec3(0.0f);
     float stepExtinction = 0.0f;
     vec3 viewToCamera = -rayDir;
@@ -579,10 +626,14 @@ vec4 ComputeVolumetricFog(vec2 uv)
     {
       float edgeMask;
       float noiseMask;
-      float density = EvaluateVolumeDensityTerms(volumeIndex, samplePosWS, edgeMask, noiseMask) * VolumetricFog.Intensity;
+      float noiseValue;
+      float noiseAmount;
+      float densityTerms = EvaluateVolumeDensityTerms(volumeIndex, samplePosWS, edgeMask, noiseMask, noiseValue, noiseAmount);
+      float rayEdgeMask = ComputeRayIntervalFade(volumeIndex, rayDir, sampleT, volumeTNear[volumeIndex], volumeTFar[volumeIndex], noiseValue, noiseAmount);
+      float density = densityTerms * rayEdgeMask * VolumetricFog.Intensity;
       debugDensitySum += density;
       debugNoiseMaskSum += noiseMask;
-      debugEdgeMaskSum += edgeMask;
+      debugEdgeMaskSum += edgeMask * rayEdgeMask;
       debugDensitySamples += 1;
       if (density <= 0.0f)
         continue;

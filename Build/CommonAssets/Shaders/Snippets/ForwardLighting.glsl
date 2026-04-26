@@ -83,19 +83,35 @@ uniform bool ShadowMapEnabled;
 uniform bool UseCascadedDirectionalShadows;
 uniform mat4 PrimaryDirLightWorldToLightInvViewMatrix;
 uniform mat4 PrimaryDirLightWorldToLightProjMatrix;
-uniform float ShadowBase = 0.035;
-uniform float ShadowMult = 1.221;
-uniform float ShadowBiasMin = 0.00001;
-uniform float ShadowBiasMax = 0.004;
-uniform int ShadowSamples = 4;
-uniform int ShadowVogelTapCount = 5;
-uniform float ShadowFilterRadius = 0.0012;
-uniform int SoftShadowMode = 1;
-uniform float LightSourceRadius = 0.01;
-uniform bool EnableCascadedShadows = true;
-uniform bool EnableContactShadows = true;
-uniform float ContactShadowDistance = 0.1;
-uniform int ContactShadowSamples = 4;
+uniform ivec4 ShadowPackedI0 = ivec4(4, 4, 5, 1); // blocker samples, filter samples, vogel taps, soft mode
+uniform ivec4 ShadowPackedI1 = ivec4(1, 1, 4, 0); // cascades enabled, contact enabled, contact samples, reserved
+uniform vec4 ShadowParams0 = vec4(0.035, 1.221, 0.00001, 0.004); // base, exponent, bias min, bias max
+uniform vec4 ShadowParams1 = vec4(0.0012, 0.0012, 0.0002, 0.0048); // filter radius, blocker radius, min penumbra, max penumbra
+uniform vec4 ShadowParams2 = vec4(0.01, 0.1, 0.25, 10.0); // source radius, contact distance, contact thickness, contact fade start
+uniform vec4 ShadowParams3 = vec4(40.0, 0.0, 1.0, 0.0); // contact fade end, normal offset, jitter, reserved
+
+#define ShadowBlockerSamples ShadowPackedI0.x
+#define ShadowFilterSamples ShadowPackedI0.y
+#define ShadowVogelTapCount ShadowPackedI0.z
+#define SoftShadowMode ShadowPackedI0.w
+#define EnableCascadedShadows (ShadowPackedI1.x != 0)
+#define EnableContactShadows (ShadowPackedI1.y != 0)
+#define ContactShadowSamples ShadowPackedI1.z
+#define ShadowBase ShadowParams0.x
+#define ShadowMult ShadowParams0.y
+#define ShadowBiasMin ShadowParams0.z
+#define ShadowBiasMax ShadowParams0.w
+#define ShadowFilterRadius ShadowParams1.x
+#define ShadowBlockerSearchRadius ShadowParams1.y
+#define ShadowMinPenumbra ShadowParams1.z
+#define ShadowMaxPenumbra ShadowParams1.w
+#define LightSourceRadius ShadowParams2.x
+#define ContactShadowDistance ShadowParams2.y
+#define ContactShadowThickness ShadowParams2.z
+#define ContactShadowFadeStart ShadowParams2.w
+#define ContactShadowFadeEnd ShadowParams3.x
+#define ContactShadowNormalOffset ShadowParams3.y
+#define ContactShadowJitterStrength ShadowParams3.z
 
 uniform int DirLightCount; 
 uniform DirLight DirectionalLights[2];
@@ -118,31 +134,22 @@ layout(binding = 17) uniform samplerCube PointLightShadowMaps[XRENGINE_MAX_FORWA
 layout(binding = 21) uniform sampler2D SpotLightShadowMaps[XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS];
 
 #if !defined(XRENGINE_FORWARD_DISABLE_LOCAL_LIGHT_SHADOWS)
-uniform int PointLightShadowSlots[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float PointLightShadowNearPlanes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float PointLightShadowFarPlanes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float PointLightShadowBase[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float PointLightShadowExponent[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float PointLightShadowBiasMin[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float PointLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform int PointLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform int PointLightShadowVogelTapCount[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float PointLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform int PointLightShadowSoftShadowMode[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float PointLightShadowLightSourceRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform int PointLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+// Pack local shadow tuning into vec4/ivec4 arrays. Loose scalar arrays are
+// expensive on NVIDIA's default uniform path and can exceed 1024 constants.
+uniform ivec4 PointLightShadowPacked0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS]; // slot, filter samples, blocker samples, vogel taps
+uniform ivec4 PointLightShadowPacked1[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS]; // soft mode, debug mode, contact enabled, contact samples
+uniform vec4 PointLightShadowParams0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // near plane, far plane, shadow base, shadow exponent
+uniform vec4 PointLightShadowParams1[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // bias min, bias max, filter radius, blocker radius
+uniform vec4 PointLightShadowParams2[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // min penumbra, max penumbra, source radius, contact distance
+uniform vec4 PointLightShadowParams3[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // contact thickness, fade start, fade end, normal offset
+uniform vec4 PointLightShadowParams4[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // contact jitter, reserved
 
-uniform int SpotLightShadowSlots[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float SpotLightShadowBase[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float SpotLightShadowExponent[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float SpotLightShadowBiasMin[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float SpotLightShadowBiasMax[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform int SpotLightShadowSamples[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform int SpotLightShadowVogelTapCount[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float SpotLightShadowFilterRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform int SpotLightShadowSoftShadowMode[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform float SpotLightShadowLightSourceRadius[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
-uniform int SpotLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];
+uniform ivec4 SpotLightShadowPacked0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS]; // slot, filter samples, blocker samples, vogel taps
+uniform ivec4 SpotLightShadowPacked1[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS]; // soft mode, debug mode, contact enabled, contact samples
+uniform vec4 SpotLightShadowParams0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // shadow base, shadow exponent, bias min, bias max
+uniform vec4 SpotLightShadowParams1[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // filter radius, blocker radius, min penumbra, max penumbra
+uniform vec4 SpotLightShadowParams2[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // source radius, contact distance, contact thickness, fade start
+uniform vec4 SpotLightShadowParams3[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // fade end, normal offset, jitter, reserved
 #endif
 
 // Forward+ tiled light culling uniforms
@@ -565,7 +572,7 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
     prefilteredColor /= totalWeight;
 
     vec2 brdfValue = texture(BRDF, vec2(NoV, roughness)).rg;
-    vec3 diffuse = irradianceColor * albedo;
+    vec3 diffuse = GlobalAmbient * irradianceColor * albedo;
     vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
     return kD * diffuse * diffuseAO + specular * specularOcclusion;
 }
@@ -597,9 +604,10 @@ float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseF
         return -1.0;
 
     float bias = XRENGINE_GetShadowBias(diffuseFactor);
+    float viewDepth = XRENGINE_ViewDepthFromWorldPos(fragPos);
     int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
         ContactShadowSamples,
-        XRENGINE_ViewDepthFromWorldPos(fragPos),
+        viewDepth,
         ContactShadowDistance);
     float contact = EnableContactShadows
         ? XRENGINE_SampleContactShadowArray(
@@ -612,19 +620,30 @@ float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseF
             ShadowBiasMax,
             bias,
             ContactShadowDistance,
-            contactSampleCount)
+            contactSampleCount,
+            ContactShadowThickness,
+            ContactShadowFadeStart,
+            ContactShadowFadeEnd,
+            ContactShadowNormalOffset,
+            ContactShadowJitterStrength,
+            viewDepth)
         : 1.0;
 
-    float filterRadius = ShadowFilterRadius * (1.0 + float(cascadeIndex) * 0.35);
+    float cascadeScale = 1.0 + float(cascadeIndex) * 0.35;
+    float filterRadius = ShadowFilterRadius * cascadeScale;
     return XRENGINE_SampleShadowMapArrayFiltered(
         ShadowMapArray,
         fragCoord,
         float(cascadeIndex),
         bias,
-        ShadowSamples,
+        ShadowBlockerSamples,
+        ShadowFilterSamples,
         filterRadius,
+        ShadowBlockerSearchRadius * cascadeScale,
         SoftShadowMode,
         LightSourceRadius,
+        ShadowMinPenumbra * cascadeScale,
+        ShadowMaxPenumbra * cascadeScale,
         ShadowVogelTapCount) * contact;
 }
 
@@ -683,9 +702,10 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
         return 1.0;
 
     float bias = XRENGINE_GetShadowBias(diffuseFactor);
+    float viewDepth = XRENGINE_ViewDepthFromWorldPos(fragPos);
     int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
         ContactShadowSamples,
-        XRENGINE_ViewDepthFromWorldPos(fragPos),
+        viewDepth,
         ContactShadowDistance);
     float contact = EnableContactShadows
         ? XRENGINE_SampleContactShadow2D(
@@ -697,17 +717,27 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
             ShadowBiasMax,
             bias,
             ContactShadowDistance,
-            contactSampleCount)
+            contactSampleCount,
+            ContactShadowThickness,
+            ContactShadowFadeStart,
+            ContactShadowFadeEnd,
+            ContactShadowNormalOffset,
+            ContactShadowJitterStrength,
+            viewDepth)
         : 1.0;
 
     return XRENGINE_SampleShadowMapFiltered(
         ShadowMap,
         fragCoord,
         bias,
-        ShadowSamples,
+        ShadowBlockerSamples,
+        ShadowFilterSamples,
         ShadowFilterRadius,
+        ShadowBlockerSearchRadius,
         SoftShadowMode,
         LightSourceRadius,
+        ShadowMinPenumbra,
+        ShadowMaxPenumbra,
         ShadowVogelTapCount) * contact;
 }
 
@@ -753,8 +783,16 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
     if (lightIndex < 0 || lightIndex >= PointLightCount)
         return 1.0;
 
-    int debugMode = PointLightShadowDebugModes[lightIndex];
-    int shadowSlot = PointLightShadowSlots[lightIndex];
+    ivec4 shadowI0 = PointLightShadowPacked0[lightIndex];
+    ivec4 shadowI1 = PointLightShadowPacked1[lightIndex];
+    vec4 shadowF0 = PointLightShadowParams0[lightIndex];
+    vec4 shadowF1 = PointLightShadowParams1[lightIndex];
+    vec4 shadowF2 = PointLightShadowParams2[lightIndex];
+    vec4 shadowF3 = PointLightShadowParams3[lightIndex];
+    vec4 shadowF4 = PointLightShadowParams4[lightIndex];
+
+    int shadowSlot = shadowI0.x;
+    int debugMode = shadowI1.y;
     if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS)
     {
         XRENGINE_TrySetForwardShadowDebug(debugMode, 1.0, 1.0);
@@ -764,21 +802,21 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
     float NoL = max(dot(normal, normalize(light.Position - fragPos)), 0.0);
     float bias = XRENGINE_GetLocalShadowBias(
         NoL,
-        PointLightShadowBase[lightIndex],
-        PointLightShadowExponent[lightIndex],
-        PointLightShadowBiasMin[lightIndex],
-        PointLightShadowBiasMax[lightIndex]);
-    vec3 offsetPosWS = fragPos + normal * PointLightShadowBiasMax[lightIndex];
+        shadowF0.z,
+        shadowF0.w,
+        shadowF1.x,
+        shadowF1.y);
+    vec3 offsetPosWS = fragPos + normal * shadowF1.y;
     vec3 fragToLight = offsetPosWS - light.Position;
     float lightDist = length(fragToLight);
-    float nearPlaneDist = max(PointLightShadowNearPlanes[lightIndex], 0.0);
-    float farPlaneDist = PointLightShadowFarPlanes[lightIndex];
+    float nearPlaneDist = max(shadowF0.x, 0.0);
+    float farPlaneDist = shadowF0.y;
     if (lightDist >= farPlaneDist)
         return 1.0;
     // The cubemap shadow cameras clip everything inside the near plane.
     // Geometry crossing that plane can create a synthetic blocker shell near the light,
     // so receivers in that blind zone should be treated as unshadowed.
-    if (lightDist <= nearPlaneDist + PointLightShadowBiasMax[lightIndex])
+    if (lightDist <= nearPlaneDist + shadowF1.y)
     {
         if (debugMode != 0)
             XRENGINE_TrySetForwardShadowDebug(debugMode, 1.0, nearPlaneDist / max(farPlaneDist, 0.001));
@@ -788,7 +826,34 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
     // quantization error in world space is approximately lightDist / 2048.
     // Ensure the bias is at least ~4 ULPs to prevent universal shadow acne.
     bias = max(bias, lightDist * (1.0 / 512.0));
-    float sampleRadius = XRENGINE_GetPointShadowSampleRadius(PointLightShadowMaps[shadowSlot], PointLightShadowFilterRadius[lightIndex]);
+    float sampleRadius = XRENGINE_GetPointShadowSampleRadius(PointLightShadowMaps[shadowSlot], shadowF1.z);
+    float blockerSearchRadius = XRENGINE_GetPointShadowSampleRadius(PointLightShadowMaps[shadowSlot], shadowF1.w);
+    float minPenumbra = XRENGINE_GetPointShadowSampleRadius(PointLightShadowMaps[shadowSlot], shadowF2.x);
+    float maxPenumbra = XRENGINE_GetPointShadowSampleRadius(PointLightShadowMaps[shadowSlot], shadowF2.y);
+    float viewDepth = XRENGINE_ViewDepthFromWorldPos(fragPos);
+    int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
+        shadowI1.w,
+        viewDepth,
+        shadowF2.w);
+    float contact = shadowI1.z != 0
+        ? XRENGINE_SampleContactShadowCube(
+            PointLightShadowMaps[shadowSlot],
+            fragPos,
+            normal,
+            light.Position,
+            shadowF1.y,
+            bias,
+            farPlaneDist,
+            shadowF2.w,
+            contactSampleCount,
+            shadowF3.x,
+            shadowF3.y,
+            shadowF3.z,
+            shadowF3.w,
+            shadowF4.x,
+            viewDepth)
+        : 1.0;
+
     float shadow = XRENGINE_SampleShadowCubeFiltered(
         PointLightShadowMaps[shadowSlot],
         fragToLight,
@@ -796,10 +861,14 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
         bias,
         farPlaneDist,
         sampleRadius,
-        PointLightShadowSamples[lightIndex],
-        PointLightShadowSoftShadowMode[lightIndex],
-        PointLightShadowLightSourceRadius[lightIndex],
-        PointLightShadowVogelTapCount[lightIndex]);
+        blockerSearchRadius,
+        shadowI0.z,
+        shadowI0.y,
+        shadowI1.x,
+        shadowF2.z,
+        minPenumbra,
+        maxPenumbra,
+        shadowI0.w) * contact;
 
     if (debugMode != 0)
     {
@@ -820,8 +889,15 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
     if (lightIndex < 0 || lightIndex >= SpotLightCount)
         return 1.0;
 
-    int debugMode = SpotLightShadowDebugModes[lightIndex];
-    int shadowSlot = SpotLightShadowSlots[lightIndex];
+    ivec4 shadowI0 = SpotLightShadowPacked0[lightIndex];
+    ivec4 shadowI1 = SpotLightShadowPacked1[lightIndex];
+    vec4 shadowF0 = SpotLightShadowParams0[lightIndex];
+    vec4 shadowF1 = SpotLightShadowParams1[lightIndex];
+    vec4 shadowF2 = SpotLightShadowParams2[lightIndex];
+    vec4 shadowF3 = SpotLightShadowParams3[lightIndex];
+
+    int shadowSlot = shadowI0.x;
+    int debugMode = shadowI1.y;
     if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS)
     {
         XRENGINE_TrySetForwardShadowDebug(debugMode, 1.0, 1.0);
@@ -831,41 +907,52 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
     float NoL = max(dot(normal, lightDir), 0.0);
     float bias = XRENGINE_GetLocalShadowBias(
         NoL,
-        SpotLightShadowBase[lightIndex],
-        SpotLightShadowExponent[lightIndex],
-        SpotLightShadowBiasMin[lightIndex],
-        SpotLightShadowBiasMax[lightIndex]);
-    vec3 offsetPosWS = fragPos + normal * SpotLightShadowBiasMax[lightIndex];
+        shadowF0.x,
+        shadowF0.y,
+        shadowF0.z,
+        shadowF0.w);
+    vec3 offsetPosWS = fragPos + normal * shadowF0.w;
     vec3 fragCoord = XRENGINE_ProjectShadowCoord(light.Base.Base.WorldToLightSpaceProjMatrix, offsetPosWS);
     if (!XRENGINE_ShadowCoordInBounds(fragCoord))
         return 1.0;
 
+    float viewDepth = XRENGINE_ViewDepthFromWorldPos(fragPos);
     int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
-        ContactShadowSamples,
-        XRENGINE_ViewDepthFromWorldPos(fragPos),
-        ContactShadowDistance);
-    float contact = EnableContactShadows
+        shadowI1.w,
+        viewDepth,
+        shadowF2.y);
+    float contact = shadowI1.z != 0
         ? XRENGINE_SampleContactShadow2D(
             SpotLightShadowMaps[shadowSlot],
             light.Base.Base.WorldToLightSpaceProjMatrix,
             fragPos,
             normal,
             lightDir,
-            SpotLightShadowBiasMax[lightIndex],
+            shadowF0.w,
             bias,
-            ContactShadowDistance,
-            contactSampleCount)
+            shadowF2.y,
+            contactSampleCount,
+            shadowF2.z,
+            shadowF2.w,
+            shadowF3.x,
+            shadowF3.y,
+            shadowF3.z,
+            viewDepth)
         : 1.0;
 
     float shadow = XRENGINE_SampleShadowMapFiltered(
         SpotLightShadowMaps[shadowSlot],
         fragCoord,
         bias,
-        SpotLightShadowSamples[lightIndex],
-        SpotLightShadowFilterRadius[lightIndex],
-        SpotLightShadowSoftShadowMode[lightIndex],
-        SpotLightShadowLightSourceRadius[lightIndex],
-        SpotLightShadowVogelTapCount[lightIndex]) * contact;
+        shadowI0.z,
+        shadowI0.y,
+        shadowF1.x,
+        shadowF1.y,
+        shadowI1.x,
+        shadowF2.x,
+        shadowF1.z,
+        shadowF1.w,
+        shadowI0.w) * contact;
 
     if (debugMode != 0)
     {
@@ -988,3 +1075,26 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
 
     return totalLight + XRENGINE_CalculateAmbientPbr(normal, fragPos, albedo, viewDir, rms, ambientOcclusion) + albedo * Emission;
 }
+
+#undef ShadowBlockerSamples
+#undef ShadowFilterSamples
+#undef ShadowVogelTapCount
+#undef SoftShadowMode
+#undef EnableCascadedShadows
+#undef EnableContactShadows
+#undef ContactShadowSamples
+#undef ShadowBase
+#undef ShadowMult
+#undef ShadowBiasMin
+#undef ShadowBiasMax
+#undef ShadowFilterRadius
+#undef ShadowBlockerSearchRadius
+#undef ShadowMinPenumbra
+#undef ShadowMaxPenumbra
+#undef LightSourceRadius
+#undef ContactShadowDistance
+#undef ContactShadowThickness
+#undef ContactShadowFadeStart
+#undef ContactShadowFadeEnd
+#undef ContactShadowNormalOffset
+#undef ContactShadowJitterStrength

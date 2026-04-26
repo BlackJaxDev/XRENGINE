@@ -35,10 +35,23 @@ uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 uniform bool LightHasShadowMap = true; // Added
 uniform int ShadowSamples = 4;
+uniform int ShadowBlockerSamples = 4;
+uniform int ShadowFilterSamples = 4;
 uniform int ShadowVogelTapCount = 5;
 uniform float ShadowFilterRadius = 0.0012f;
+uniform float ShadowBlockerSearchRadius = 0.0012f;
+uniform float ShadowMinPenumbra = 0.0002f;
+uniform float ShadowMaxPenumbra = 0.0048f;
 uniform int SoftShadowMode = 1;
 uniform float LightSourceRadius = 0.01f;
+uniform bool EnableContactShadows = true;
+uniform float ContactShadowDistance = 0.1f;
+uniform int ContactShadowSamples = 4;
+uniform float ContactShadowThickness = 0.25f;
+uniform float ContactShadowFadeStart = 10.0f;
+uniform float ContactShadowFadeEnd = 40.0f;
+uniform float ContactShadowNormalOffset = 0.0f;
+uniform float ContactShadowJitterStrength = 1.0f;
 // Debug: 0=normal, 1=shadow-only (white=lit), 2=margin heatmap (green=lit, red=shadow)
 uniform int ShadowDebugMode = 0;
 
@@ -121,51 +134,36 @@ float BlockerSearchCubeLocal(in samplerCube shadowMap, in vec3 shadowDir, in flo
 	return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0f;
 }
 
-float SampleShadowCubeFilteredLocal(in samplerCube shadowMap, in vec3 shadowDir, in float biasedLightDist, in float farPlaneDist, in float sampleRadius, in int requestedSamples, in int softMode, in float lightSourceRadius, in int vogelTapCount)
+float SampleShadowCubeFilteredLocal(
+	in samplerCube shadowMap,
+	in vec3 shadowDir,
+	in float biasedLightDist,
+	in float farPlaneDist,
+	in float sampleRadius,
+	in float blockerSearchRadius,
+	in int blockerSamples,
+	in int filterSamples,
+	in int softMode,
+	in float lightSourceRadius,
+	in float minPenumbra,
+	in float maxPenumbra,
+	in int vogelTapCount)
 {
-	if (softMode == 3)
-		return XRENGINE_SampleShadowCubeVogel(shadowMap, shadowDir, biasedLightDist, 0.0f, farPlaneDist, sampleRadius, vogelTapCount);
-
-	int sampleCount = clamp(requestedSamples, 1, 20);
-	if (sampleCount <= 1)
-	{
-		float sampleDepth = texture(shadowMap, normalize(shadowDir)).r * farPlaneDist;
-		return biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
-	}
-
-	if (softMode == 2)
-	{
-		float avgBlocker = BlockerSearchCubeLocal(shadowMap, shadowDir, biasedLightDist, farPlaneDist, sampleRadius, sampleCount);
-		if (avgBlocker < 0.0f) return 1.0f;
-		float penumbra = clamp((biasedLightDist - avgBlocker) / max(avgBlocker, 0.0001f) * lightSourceRadius, sampleRadius * 0.1f, sampleRadius * 4.0f);
-		float lit = 0.0f;
-		for (int i = 0; i < 20; ++i)
-		{
-			if (i >= sampleCount) break;
-			vec3 sampleDir = normalize(shadowDir + GetShadowCubeKernelTapLocal(i) * penumbra);
-			float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
-			lit += biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
-		}
-		return lit / float(sampleCount);
-	}
-
-	if (softMode == 1 || sampleCount <= 4)
-	{
-		float lit = 0.0f;
-		for (int i = 0; i < 20; ++i)
-		{
-			if (i >= sampleCount)
-				break;
-
-			vec3 sampleDir = normalize(shadowDir + GetShadowCubeKernelTapLocal(i) * sampleRadius);
-			float sampleDepth = texture(shadowMap, sampleDir).r * farPlaneDist;
-			lit += biasedLightDist <= sampleDepth ? 1.0f : 0.0f;
-		}
-
-		return lit / float(sampleCount);
-	}
-
-	return SampleShadowCubePCFLocal(shadowMap, shadowDir, biasedLightDist, farPlaneDist, sampleRadius);
+	return XRENGINE_SampleShadowCubeFiltered(
+		shadowMap,
+		shadowDir,
+		biasedLightDist,
+		0.0f,
+		farPlaneDist,
+		sampleRadius,
+		blockerSearchRadius,
+		blockerSamples,
+		filterSamples,
+		softMode,
+		lightSourceRadius,
+		minPenumbra,
+		maxPenumbra,
+		vogelTapCount);
 }
 
 // Global debug state written by ReadPointShadowMap for visualization
@@ -229,6 +227,33 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 	float biasedLightDist = lightDist * (1.0f - relThreshold);
 
 	float sampleRadius = GetShadowCubeSampleRadius(ShadowMap, ShadowFilterRadius);
+	float blockerSearchRadius = GetShadowCubeSampleRadius(ShadowMap, ShadowBlockerSearchRadius);
+	float minPenumbra = GetShadowCubeSampleRadius(ShadowMap, ShadowMinPenumbra);
+	float maxPenumbra = GetShadowCubeSampleRadius(ShadowMap, ShadowMaxPenumbra);
+	float contactBias = max(userBias, lightDist * relThreshold);
+	float viewDepth = length(fragPosWS - vec3(InverseViewMatrix[3]));
+	int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
+		ContactShadowSamples,
+		viewDepth,
+		ContactShadowDistance);
+	float contact = EnableContactShadows
+		? XRENGINE_SampleContactShadowCube(
+			ShadowMap,
+			fragPosWS,
+			N,
+			LightData.Position,
+			ShadowBiasMax,
+			contactBias,
+			farPlaneDist,
+			ContactShadowDistance,
+			contactSampleCount,
+			ContactShadowThickness,
+			ContactShadowFadeStart,
+			ContactShadowFadeEnd,
+			ContactShadowNormalOffset,
+			ContactShadowJitterStrength,
+			viewDepth)
+		: 1.0f;
 
 	float lit = SampleShadowCubeFilteredLocal(
 		ShadowMap,
@@ -236,10 +261,14 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 		biasedLightDist,
 		farPlaneDist,
 		sampleRadius,
-		ShadowSamples,
+		blockerSearchRadius,
+		ShadowBlockerSamples,
+		ShadowFilterSamples,
 		SoftShadowMode,
 		LightSourceRadius,
-		ShadowVogelTapCount);
+		minPenumbra,
+		maxPenumbra,
+		ShadowVogelTapCount) * contact;
 
 	// Write debug state for visualisation (single center sample)
 	if (ShadowDebugMode != 0)

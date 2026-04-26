@@ -749,7 +749,7 @@
         },
         "EdgeFade": {
           "type": "number",
-          "description": "Generated from EdgeFade on VolumetricFogVolumeInitSettings."
+          "description": "Local-space distance over which density fades to zero near the volumetric fog bounds. Existing volume noise erodes this fade band when NoiseAmount is above zero."
         },
         "Anisotropy": {
           "type": "number",

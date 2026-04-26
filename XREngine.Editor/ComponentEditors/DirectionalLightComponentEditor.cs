@@ -52,8 +52,10 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
 
     private static void DrawDirectionalShadowSection(DirectionalLightComponent light)
     {
-        if (!ImGui.CollapsingHeader("Directional Shadows", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Directional Shadow Projection", ImGuiTreeNodeFlags.DefaultOpen))
             return;
+
+        ImGui.SeparatorText("Orthographic Volume");
 
         Vector3 scale = light.Scale;
         if (ImGui.DragFloat3("Shadow Volume Scale", ref scale, 0.1f, 0.01f, 100000.0f, "%.3f"))
@@ -64,6 +66,8 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
             light.Scale = scale;
         }
         ImGuiUndoHelper.TrackDragUndo("Shadow Volume Scale", light);
+
+        ImGui.SeparatorText("Cascade Layout");
 
         int cascades = light.CascadeCount;
         if (ImGui.SliderInt("Cascade Count", ref cascades, 1, 8))

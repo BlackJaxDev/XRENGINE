@@ -90,6 +90,7 @@ uniform bool UseAmbientOcclusion = true;
 uniform float AmbientOcclusionPower = 1.0f;
 uniform bool AmbientOcclusionMultiBounce = false;
 uniform bool SpecularOcclusionEnabled = false;
+uniform vec3 GlobalAmbient = vec3(0.03f);
 
 // Debug: set via XRE_DEFERRED_DEBUG env var.
 // 0 = normal, 1 = raw albedo, 2 = InLo, 3 = RMSE, 4 = normal, 5 = depth, 6 = world pos
@@ -395,6 +396,7 @@ void main()
                 ResolveProbeWeights(fragPosWS, probeWeights, probeIndices);
 #endif
 
+        vec3 probeAmbient = vec3(1.0f);
         vec3 irradianceColor = vec3(0.0f); 
         vec3 prefilteredColor = vec3(0.0f); 
         float totalWeight = 0.0f;
@@ -433,6 +435,7 @@ void main()
         {
                 irradianceColor /= totalWeight;
                 prefilteredColor /= totalWeight;
+                probeAmbient = irradianceColor;
         }
         else if (ProbeCount > 0) 
         { 
@@ -440,9 +443,10 @@ void main()
                 float clampedLod = min(roughness * MAX_REFLECTION_LOD, maxMip);
                 irradianceColor = XRENGINE_SampleOctaArray(IrradianceArray, normal, 0.0f); 
                 prefilteredColor = XRENGINE_SampleOctaArrayLod(PrefilterArray, normal, 0.0f, clampedLod); 
+                probeAmbient = irradianceColor;
         } 
 
-        vec3 diffuse = irradianceColor * albedoColor;
+        vec3 diffuse = GlobalAmbient * probeAmbient * albedoColor;
         vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
 
         // Apply AO and specular occlusion (Jimenez et al. 2016 GTAO/GTSO)

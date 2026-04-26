@@ -237,6 +237,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll')" />
+    <None Include="..\Build\Submodules\OscCore-NET9\bin\$(Configuration)\net9.0\OscCore.dll" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('..\Build\Submodules\OscCore-NET9\bin\$(Configuration)\net9.0\OscCore.dll')" />
+    <None Include="..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll')" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\Build\Dependencies\FFmpeg\HlsReference\win-x64\*.dll" Condition="Exists('..\Build\Dependencies\FFmpeg\HlsReference\win-x64')">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

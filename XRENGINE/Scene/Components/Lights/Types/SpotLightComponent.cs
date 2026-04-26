@@ -18,6 +18,7 @@ namespace XREngine.Components.Capture.Lights.Types
             _outerCutoff = (float)Math.Cos(DegToRad(outerCutoffDeg));
             _innerCutoff = (float)Math.Cos(DegToRad(innerCutoffDeg));
             _distance = distance;
+            _shadowNearPlaneDistance = ClampShadowNearPlaneDistance(_shadowNearPlaneDistance, _distance);
             _exponent = exponent;
             _brightness = brightness;
 
@@ -39,8 +40,11 @@ namespace XREngine.Components.Capture.Lights.Types
             ShadowExponentBase = 0.2f;
             ShadowExponent = 1.0f;
             Samples = 8;
+            BlockerSamples = 8;
             FilterRadius = 0.0012f;
-            SoftShadowMode = ESoftShadowMode.PCSS;
+            BlockerSearchRadius = 0.0012f;
+            MaxPenumbra = 0.0048f;
+            SoftShadowMode = ESoftShadowMode.FixedPoisson;
             EnableContactShadows = true;
             ContactShadowDistance = 0.1f;
             ContactShadowSamples = 4;
@@ -48,13 +52,15 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override XRPerspectiveCameraParameters GetCameraParameters() => new(
             Math.Max(OuterCutoffAngleDegrees, InnerCutoffAngleDegrees) * 2.0f,
-            1.0f, 1.0f,
-            _distance);
+            1.0f,
+            _shadowNearPlaneDistance,
+            MathF.Max(_distance, _shadowNearPlaneDistance + 0.001f));
 
         private float 
             _outerCutoff,
             _innerCutoff,
             _distance,
+            _shadowNearPlaneDistance = 1.0f,
             _exponent,
             _brightness;
 
@@ -67,6 +73,11 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             get => _distance;
             set => SetField(ref _distance, value);
+        }
+        public float ShadowNearPlaneDistance
+        {
+            get => _shadowNearPlaneDistance;
+            set => SetField(ref _shadowNearPlaneDistance, ClampShadowNearPlaneDistance(value, _distance));
         }
         public float Exponent
         {
@@ -213,9 +224,43 @@ namespace XREngine.Components.Capture.Lights.Types
             {
                 case nameof(Transform):
                 case nameof(Distance):
+                    ClampShadowNearPlaneToDistance();
+                    UpdateShadowCameraClipPlanes();
+                    UpdateConesFromAttachedTransform();
+                    break;
+                case nameof(ShadowNearPlaneDistance):
+                    UpdateShadowCameraClipPlanes();
                     UpdateConesFromAttachedTransform();
                     break;
             }
+        }
+
+        private void ClampShadowNearPlaneToDistance()
+        {
+            float clamped = ClampShadowNearPlaneDistance(_shadowNearPlaneDistance, _distance);
+            if (clamped != _shadowNearPlaneDistance)
+                SetField(ref _shadowNearPlaneDistance, clamped, nameof(ShadowNearPlaneDistance));
+        }
+
+        private void UpdateShadowCameraClipPlanes()
+        {
+            if (ShadowCamera is null)
+                return;
+
+            ShadowCamera.NearZ = _shadowNearPlaneDistance;
+            ShadowCamera.FarZ = MathF.Max(_distance, _shadowNearPlaneDistance + 0.001f);
+        }
+
+        private static float ClampShadowNearPlaneDistance(float value, float distance)
+        {
+            if (!float.IsFinite(value))
+                value = 1.0f;
+
+            if (distance <= 0.001f)
+                return MathF.Max(0.0001f, value);
+
+            float maxNear = MathF.Max(0.0001f, distance - 0.001f);
+            return Math.Clamp(value, 0.0001f, maxNear);
         }
 
         private void UpdateConesFromAttachedTransform()
@@ -263,7 +308,7 @@ namespace XREngine.Components.Capture.Lights.Types
             SetField(ref _outerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(OuterCutoffAngleDegrees)) * d));
             SetField(ref _innerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(InnerCutoffAngleDegrees)) * d));
 
-            ShadowCamera?.FarZ = d;
+            UpdateShadowCameraClipPlanes();
 
             MeshCenterAdjustMatrix = Matrix4x4.CreateScale(OuterCone.Radius, OuterCone.Radius, OuterCone.Height) * Matrix4x4.CreateTranslation(Globals.Forward * (Distance * 0.5f));
         }

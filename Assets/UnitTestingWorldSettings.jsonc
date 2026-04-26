@@ -444,7 +444,7 @@
     // Generated from NoiseAmount on VolumetricFogVolumeInitSettings.
     "NoiseAmount": 0.5,
     // Generated from EdgeFade on VolumetricFogVolumeInitSettings.
-    "EdgeFade": 0.25,
+    "EdgeFade": 4.0,
     // Generated from Anisotropy on VolumetricFogVolumeInitSettings.
     "Anisotropy": 0.75,
     // Generated from LightContribution on VolumetricFogVolumeInitSettings.

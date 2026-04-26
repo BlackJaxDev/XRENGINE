@@ -27,6 +27,7 @@ uniform bool UseAmbientOcclusion = true;
 uniform float AmbientOcclusionPower = 1.0f;
 uniform bool AmbientOcclusionMultiBounce = false;
 uniform bool SpecularOcclusionEnabled = false;
+uniform vec3 GlobalAmbient = vec3(0.03f);
 
 vec3 MultiBounceAO(float ao, vec3 albedo)
 {
@@ -90,7 +91,7 @@ void main()
 
 	//TODO: fix reflection vector, blend environment cubemaps via influence radius
 
-	vec3 diffuse = irradianceColor * albedoColor;
+	vec3 diffuse = GlobalAmbient * irradianceColor * albedoColor;
 	vec3 prefilteredColor = XRENGINE_SampleOctaLod(Prefilter, R, roughness * MAX_REFLECTION_LOD);
 	vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
 

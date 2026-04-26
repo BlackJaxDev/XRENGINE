@@ -26,9 +26,9 @@
 // Depth comparison runs in eye-linear distance derived from raw depth via the
 // inverse projection, so the bilateral threshold is scene-scale invariant.
 //
-// Far-plane (sky) pixels early-out to (0,0,0,1): the scatter pass also
-// produces (0,0,0,1) there since ComputeVolumetricFog's ray exits all
-// volumes, and the bilateral would only slightly soften that constant.
+// Before the 2x2 filter, the full-res pixel ray is tested against the current
+// fog OBB set. This keeps half-res taps from bleeding fog outside the authored
+// bounds at the projected silhouette.
 
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
@@ -37,8 +37,93 @@ uniform sampler2D VolumetricFogHalfTemporal;
 uniform sampler2D VolumetricFogHalfDepth;
 uniform sampler2D DepthView;
 
+uniform vec3 CameraPosition;
+uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
+uniform float RenderTime;
 uniform int DepthMode;
+uniform int VolumetricFogDebugMode;
+
+const int MaxVolumetricFogVolumes = 4;
+
+struct VolumetricFogStruct
+{
+    bool Enabled;
+    float Intensity;
+    float MaxDistance;
+    float StepSize;
+    float JitterStrength;
+    int VolumeCount;
+};
+uniform VolumetricFogStruct VolumetricFog;
+uniform mat4 VolumetricFogWorldToLocal[MaxVolumetricFogVolumes];
+uniform vec4 VolumetricFogHalfExtentsEdgeFade[MaxVolumetricFogVolumes];
+uniform vec4 VolumetricFogNoiseScaleThreshold[MaxVolumetricFogVolumes];
+uniform vec4 VolumetricFogNoiseOffsetAmount[MaxVolumetricFogVolumes];
+uniform vec4 VolumetricFogNoiseVelocity[MaxVolumetricFogVolumes];
+
+float saturate(float value)
+{
+    return clamp(value, 0.0f, 1.0f);
+}
+
+float hash13(vec3 p)
+{
+    p = fract(p * 0.1031f);
+    p += dot(p, p.zyx + 31.32f);
+    return fract((p.x + p.y) * p.z);
+}
+
+float valueNoise(vec3 p)
+{
+    vec3 cell = floor(p);
+    vec3 local = fract(p);
+    vec3 smoothLocal = local * local * (3.0f - 2.0f * local);
+
+    float n000 = hash13(cell + vec3(0.0f, 0.0f, 0.0f));
+    float n100 = hash13(cell + vec3(1.0f, 0.0f, 0.0f));
+    float n010 = hash13(cell + vec3(0.0f, 1.0f, 0.0f));
+    float n110 = hash13(cell + vec3(1.0f, 1.0f, 0.0f));
+    float n001 = hash13(cell + vec3(0.0f, 0.0f, 1.0f));
+    float n101 = hash13(cell + vec3(1.0f, 0.0f, 1.0f));
+    float n011 = hash13(cell + vec3(0.0f, 1.0f, 1.0f));
+    float n111 = hash13(cell + vec3(1.0f, 1.0f, 1.0f));
+
+    float nx00 = mix(n000, n100, smoothLocal.x);
+    float nx10 = mix(n010, n110, smoothLocal.x);
+    float nx01 = mix(n001, n101, smoothLocal.x);
+    float nx11 = mix(n011, n111, smoothLocal.x);
+    float nxy0 = mix(nx00, nx10, smoothLocal.y);
+    float nxy1 = mix(nx01, nx11, smoothLocal.y);
+    return mix(nxy0, nxy1, smoothLocal.z);
+}
+
+float fbm3(vec3 p)
+{
+    float sum = 0.0f;
+    float amplitude = 0.6f;
+    float frequency = 1.0f;
+    for (int octave = 0; octave < 3; ++octave)
+    {
+        sum += valueNoise(p * frequency) * amplitude;
+        frequency *= 2.02f;
+        amplitude *= 0.5f;
+    }
+    return sum;
+}
+
+float SampleVolumeNoise01(int index, vec3 localPos, out float noiseAmount)
+{
+    vec4 noiseParams = VolumetricFogNoiseScaleThreshold[index];
+    noiseAmount = saturate(noiseParams.z);
+    if (noiseParams.x <= 0.0f || noiseAmount <= 0.0f)
+        return 1.0f;
+
+    vec3 noiseSamplePos = localPos * noiseParams.x
+        + VolumetricFogNoiseOffsetAmount[index].xyz
+        + VolumetricFogNoiseVelocity[index].xyz * RenderTime;
+    return clamp(fbm3(noiseSamplePos), 0.0f, 1.0f);
+}
 
 float ResolveDepth(float d)
 {
@@ -56,6 +141,98 @@ float LinearEyeDistance(float rawDepth, vec2 uv)
     return abs(view.z / w);
 }
 
+vec3 WorldPosFromDepthRaw(float rawDepth, vec2 uv)
+{
+    vec4 clip = vec4(vec3(uv, rawDepth) * 2.0f - 1.0f, 1.0f);
+    vec4 view = InverseProjMatrix * clip;
+    view /= max(abs(view.w), 1e-5f) * sign(view.w == 0.0f ? 1.0f : view.w);
+    return (InverseViewMatrix * view).xyz;
+}
+
+bool IntersectVolumeOBB(int index, vec3 rayOriginWS, vec3 rayDirWS, out float tNear, out float tFar)
+{
+    mat4 worldToLocal = VolumetricFogWorldToLocal[index];
+    vec3 localOrigin = (worldToLocal * vec4(rayOriginWS, 1.0f)).xyz;
+    vec3 localDir = (worldToLocal * vec4(rayDirWS, 0.0f)).xyz;
+    vec3 halfExtents = VolumetricFogHalfExtentsEdgeFade[index].xyz;
+
+    vec3 safeDir = mix(localDir, vec3(1e-5f), lessThan(abs(localDir), vec3(1e-5f)));
+    vec3 invDir = 1.0f / safeDir;
+    vec3 t0 = (-halfExtents - localOrigin) * invDir;
+    vec3 t1 = ( halfExtents - localOrigin) * invDir;
+    vec3 tMinV = min(t0, t1);
+    vec3 tMaxV = max(t0, t1);
+    tNear = max(max(tMinV.x, tMinV.y), tMinV.z);
+    tFar  = min(min(tMaxV.x, tMaxV.y), tMaxV.z);
+    return tFar >= max(tNear, 0.0f);
+}
+
+float ComputeRayIntervalFade(int index, vec3 rayDirWS, float tNear, float tFar, float noiseValue, float noiseAmount)
+{
+    if (tFar <= tNear)
+        return 0.0f;
+
+    float edgeFade = max(VolumetricFogHalfExtentsEdgeFade[index].w, 0.0f);
+    if (edgeFade <= 0.0001f)
+        return 1.0f;
+
+    vec3 localRayDir = (VolumetricFogWorldToLocal[index] * vec4(rayDirWS, 0.0f)).xyz;
+    float edgeFadeOnRay = edgeFade / max(length(localRayDir), 1e-5f);
+    float edgeErosion = edgeFadeOnRay * 0.85f * saturate(noiseAmount) * (1.0f - clamp(noiseValue, 0.0f, 1.0f));
+    float noisyThickness = max((tFar - tNear) - edgeErosion, 0.0f);
+    return smoothstep(0.0f, edgeFadeOnRay, noisyThickness);
+}
+
+float ViewRayFogFade(float rawDepth, float resolvedDepth, vec2 uv)
+{
+    if (!VolumetricFog.Enabled || VolumetricFog.VolumeCount <= 0 || VolumetricFog.Intensity <= 0.0f || VolumetricFog.MaxDistance <= 0.0f)
+        return 0.0f;
+
+    float rayLength = VolumetricFog.MaxDistance;
+    float farRawDepth = DepthMode == 1 ? 0.0f : 1.0f;
+    vec3 rayEnd = resolvedDepth >= 0.999999f
+        ? WorldPosFromDepthRaw(farRawDepth, uv)
+        : WorldPosFromDepthRaw(rawDepth, uv);
+    vec3 rayVector = rayEnd - CameraPosition;
+    float rayVectorLength = length(rayVector);
+    if (rayVectorLength <= 1e-5f)
+        return 0.0f;
+
+    if (resolvedDepth < 0.999999f)
+        rayLength = min(rayLength, rayVectorLength);
+    if (rayLength <= 0.0f)
+        return 0.0f;
+
+    vec3 rayDir = rayVector / rayVectorLength;
+    float bestFade = 0.0f;
+    for (int volumeIndex = 0; volumeIndex < VolumetricFog.VolumeCount; ++volumeIndex)
+    {
+        float tNear, tFar;
+        if (!IntersectVolumeOBB(volumeIndex, CameraPosition, rayDir, tNear, tFar))
+            continue;
+
+        tNear = max(tNear, 0.0f);
+        tFar = min(tFar, rayLength);
+        if (tFar > tNear)
+        {
+            float sampleT = (tNear + tFar) * 0.5f;
+            vec3 samplePosWS = CameraPosition + rayDir * sampleT;
+            vec3 localPos = (VolumetricFogWorldToLocal[volumeIndex] * vec4(samplePosWS, 1.0f)).xyz;
+            float noiseAmount;
+            float noiseValue = SampleVolumeNoise01(volumeIndex, localPos, noiseAmount);
+            bestFade = max(bestFade, ComputeRayIntervalFade(volumeIndex, rayDir, tNear, tFar, noiseValue, noiseAmount));
+        }
+    }
+
+    return bestFade;
+}
+
+vec4 ApplyFogOutputFade(vec4 fog, float fade)
+{
+    float clampedFade = clamp(fade, 0.0f, 1.0f);
+    return vec4(fog.rgb * clampedFade, mix(1.0f, fog.a, clampedFade));
+}
+
 void main()
 {
     vec2 ndc = FragPos.xy;
@@ -66,9 +243,10 @@ void main()
     float rawFullDepth = texture(DepthView, uv).r;
     float resolvedFullDepth = ResolveDepth(rawFullDepth);
 
-    // Sky / far-plane pixels have no scatter contribution; match the
-    // scatter shader's early-out so PostProcess.fs composites a clean scene.
-    if (resolvedFullDepth >= 0.999999f)
+    float volumeFade = VolumetricFogDebugMode == 0
+        ? ViewRayFogFade(rawFullDepth, resolvedFullDepth, uv)
+        : 1.0f;
+    if (volumeFade <= 0.0f)
     {
         OutColor = vec4(0.0f, 0.0f, 0.0f, 1.0f);
         return;
@@ -80,7 +258,7 @@ void main()
     vec2 halfSize = vec2(textureSize(VolumetricFogHalfTemporal, 0));
     if (halfSize.x <= 0.0f || halfSize.y <= 0.0f)
     {
-        OutColor = texture(VolumetricFogHalfTemporal, uv);
+        OutColor = ApplyFogOutputFade(texture(VolumetricFogHalfTemporal, uv), volumeFade);
         return;
     }
 
@@ -145,9 +323,9 @@ void main()
     // If nothing survived the depth rejection, fall back to the nearest tap.
     if (weightSum < 1e-4f)
     {
-        OutColor = bestColor;
+        OutColor = ApplyFogOutputFade(bestColor, volumeFade);
         return;
     }
 
-    OutColor = accum / weightSum;
+    OutColor = ApplyFogOutputFade(accum / weightSum, volumeFade);
 }

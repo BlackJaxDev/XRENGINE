@@ -14,7 +14,7 @@ namespace XREngine.Components.Capture.Lights
         /// Fixed-radius Poisson-disk soft shadows (the original "PCSS" toggle).
         /// Penumbra width is constant regardless of blocker distance.
         /// </summary>
-        PCSS = 1,
+        FixedPoisson = 1,
 
         /// <summary>
         /// Fixed-radius Vogel-disk soft shadows with a configurable tap count.
@@ -28,6 +28,16 @@ namespace XREngine.Components.Capture.Lights
         /// producing physically plausible penumbrae.
         /// Requires <see cref="LightComponent.LightSourceRadius"/> to control penumbra scale.
         /// </summary>
-        ContactHardening = 2,
+        ContactHardeningPcss = 2,
+
+        /// <summary>
+        /// Legacy name for <see cref="FixedPoisson"/>.
+        /// </summary>
+        PCSS = FixedPoisson,
+
+        /// <summary>
+        /// Legacy name for <see cref="ContactHardeningPcss"/>.
+        /// </summary>
+        ContactHardening = ContactHardeningPcss,
     }
 }

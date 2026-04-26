@@ -170,8 +170,12 @@ Many albedo textures carry non-transparency data in alpha (smoothness, AO, paddi
 ### Invariants
 
 - `VolumetricFogScatter.fs` writes raw half-res scatter/transmittance to `VolumetricFogHalfScatter`.
+- `VolumetricFogVolumeComponent.EdgeFade` is a local-space distance, not a normalized fraction. The scatter shader applies it to both local box-face density falloff and ray entry/exit feathering, then erodes that fade band with the volume noise when `NoiseAmount > 0` so selected bounds do not read as hard or perfectly linear clipping planes.
 - `VolumetricFogReproject.fs` samples `VolumetricFogHalfScatter`, `VolumetricFogHalfHistory`, and `VolumetricFogHalfDepth`, then writes `VolumetricFogHalfTemporal`.
+- Shadowed fog keeps a low `GlobalAmbient` fill term in addition to primary directional scattering; unlit volume samples should not collapse to extinction-only darkening.
+- `VolumetricFogReproject.fs` must pass through neutral current pixels `(0,0,0,1)` without history blending so stale fog cannot persist after the current ray misses every volume.
 - `VolumetricFogUpscale.fs` must sample `VolumetricFogHalfTemporal`, not the raw scatter texture, so temporal filtering is included before the full-res composite.
+- `VolumetricFogUpscale.fs` also re-tests the full-resolution pixel ray against `VolumetricFogWorldToLocal` / `VolumetricFogHalfExtentsEdgeFade` before bilateral filtering. This fades normal-mode output to the current volume silhouettes, using the same noise erosion as scatter, and prevents half-res taps from smearing fog outside selected bounds.
 - After upscale, `VolumetricFogReprojectFBO` is blitted into `VolumetricFogHistoryFBO` and `VPRC_VolumetricFogHistoryPass` commits the current camera matrices for the next frame.
 - All half-res fog textures use `GetDesiredFBOSizeHalfInternal()` and `NeedsRecreateTextureHalfInternalSize`; history is reset on size changes, AA resource invalidation, first frame, and camera cuts.
 - The public camera-cut hook is `DefaultRenderPipeline.InvalidateVolumetricFogHistory(camera)`.
@@ -190,9 +194,11 @@ The shared `VolumetricFogSettings` constructor defaults and both pipeline schema
 
 ## 12. Forward Lighting: Shadow Uniform Binding
 
-**Rule:** Shadow tuning uniforms in `ForwardLighting.glsl` (`ShadowBase`, `ShadowMult`, `ShadowBias`, `ShadowSamples`, `ShadowFilterRadius`, plus contact-shadow controls) are **global**, not per-light array fields.
+**Rule:** Primary directional shadow tuning uniforms in `ForwardLighting.glsl` (`ShadowBase`, `ShadowMult`, `ShadowBias*`, `ShadowBlockerSamples`, `ShadowFilterSamples`, `ShadowFilterRadius`, `ShadowBlockerSearchRadius`, penumbra clamps, plus contact-shadow controls) are **global**, not per-light array fields.
 
 `Lights3DCollection.SetForwardLightingUniforms` must bind these globals from `DynamicDirectionalLights[0]`. Without this, the forward path silently uses shader-literal defaults even when per-light values differ.
+
+Local point and spot lights use per-light uniform arrays for the same tuning values. Keep those arrays in sync with `LightComponent.SetUniforms(...)` whenever a new shadow control is added.
 
 ---
 
@@ -206,7 +212,7 @@ The shared `VolumetricFogSettings` constructor defaults and both pipeline schema
 
 ### Fix
 
-- Route deferred directional and spot contact shadows through `XRENGINE_SampleContactShadow2D` / `XRENGINE_SampleContactShadowArray`.
+- Route deferred directional and spot contact shadows through `XRENGINE_SampleContactShadow2D` / `XRENGINE_SampleContactShadowArray`, and point-light contact shadows through `XRENGINE_SampleContactShadowCube`.
 - Reuse `XRENGINE_ResolveContactShadowSampleCount` so forward and deferred scale contact-shadow step counts identically.
 - Pass the same receiver offset and compare bias inputs used by the forward path (`ShadowBiasMax` plus the angle-scaled shadow bias).
 
@@ -293,3 +299,18 @@ The temporal resolve already used motion vectors, depth rejection, neighborhood 
 - Use `HistoryAcceptance` to distinguish outright history rejection from low-confidence blending.
 - In the editor, these Temporal AA controls only affect the camera that is actually driving the active viewport. If the scene panel is rendering through the editor flying camera, changing a different camera component's Temporal AA settings will not change the scene panel output.
 - The Temporal AA controls only affect the live output when the active camera's effective AA mode is `TAA` or `TSR`; if the camera is using `None`, `MSAA`, `FXAA`, or `SMAA`, the temporal stage settings are intentionally inert.
+
+---
+
+## 20. Light Shadow Inspector Naming
+
+**Rule:** Keep the light inspector labels aligned with the actual shader paths.
+
+- `Hard / PCF` is the crisp compare path with small PCF/tent fallbacks.
+- `Fixed Soft (Poisson)` maps to `ESoftShadowMode.FixedPoisson`. It is not true PCSS; it is fixed-radius filtering.
+- `PCSS / Contact Hardening` maps to `ESoftShadowMode.ContactHardeningPcss` and is the blocker-search variable-penumbra path.
+- `Fixed Soft (Vogel)` is a fixed-radius golden-angle disk filter.
+- `PCSS / Contact Hardening` exposes separate blocker samples, filter samples, blocker-search radius, penumbra clamps, and source radius. Blocker search and the variable filter pass use rotated Vogel taps to reduce repeated low-sample patterns.
+- `Short-Range Contact Shadows` are separate from contact-hardening soft shadows. They are multiplied with the normal shadow-map result for directional, spot, and point lights.
+
+Contact shadows expose distance, sample count, thickness, fade range, normal offset, and jitter strength. Use the fade range to limit near-field detail work to the camera distances where the extra ray march is visible.

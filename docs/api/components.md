@@ -44,12 +44,13 @@ XRENGINE composes behaviour through components that attach to `SceneNode`s. Each
 ### `VolumetricFogVolumeComponent`
 - Located at `XRENGINE/Scene/Components/Volumes/VolumetricFog.cs`; registers a bounded box volume consumed by the separated volumetric fog pipeline for local volumetric fog.
 - Shape is driven by the node transform plus the component's `HalfExtents`, so non-uniform scaling and rotation are respected automatically.
+- Selecting the component in the ImGui editor draws a wireframe bounds preview over the volume; inactive or non-renderable volumes use an orange preview color.
 - Use the component to author local fog banks, god-ray pockets, or dusty interior shafts without changing global world fog.
 - The camera must also enable the `Volumetric Fog` post-process stage in the pipeline's `Atmosphere` category; the stage controls global march distance, step size, jitter, debug mode, and overall intensity.
-- In the default OpenGL path, fog is raymarched at half internal resolution, temporally reprojected in a half-res history buffer, then bilateral-upsampled to the full-res `VolumetricFogColor` composite texture. Default tuning is `StepSize = 1.0` and `JitterStrength = 0.5`; the temporal pass turns the moving per-pixel jitter into stable shafts rather than full-screen speckle.
+- In the default OpenGL path, fog is raymarched at half internal resolution, temporally reprojected in a half-res history buffer, then bilateral-upsampled to the full-res `VolumetricFogColor` composite texture. The upscale pass re-tests the full-res view ray against the active fog boxes so half-res filtering does not bleed fog outside the authored bounds. Default tuning is `StepSize = 1.0` and `JitterStrength = 0.5`; the temporal pass turns the moving per-pixel jitter into stable shafts rather than full-screen speckle.
 - Call `DefaultRenderPipeline.InvalidateVolumetricFogHistory(camera)` after teleports, scene loads, or discontinuous camera cuts so the history reseeds from the current frame instead of blending stale fog.
-- Per-volume controls include scattering color, density, edge fade, noise tiling/threshold, scroll velocity, anisotropy, and light contribution from the primary directional light.
-- When the primary directional light has shadows enabled, volumetric scattering now respects the same cascaded shadow data, allowing shadowed fog shafts and occluded light pockets inside the volume.
+- Per-volume controls include scattering color, density, local-space edge fade distance, noise tiling/threshold, scroll velocity, anisotropy, and light contribution from the primary directional light. When `NoiseAmount` is above zero, the same volume noise also erodes the edge fade band so bounds feather organically instead of reading as a linear box ramp.
+- When the primary directional light has shadows enabled, volumetric scattering respects the same cascaded shadow data. Shadowed regions still receive a small ambient fill from `GlobalAmbient`, so they remain visible as fog instead of becoming only a scene-darkening extinction layer.
 - For the unit-testing world, set `InitializeVolumetricFog` in `Assets/UnitTestingWorldSettings.jsonc` to create a demo fog volume and enable the volumetric fog post-process stage on the spawned camera automatically.
 
 ```csharp
@@ -59,7 +60,7 @@ fog.HalfExtents = new Vector3(12.0f, 6.0f, 12.0f);
 fog.ScatteringColor = new ColorF3(0.8f, 0.85f, 1.0f);
 fog.Density = 0.05f;
 fog.NoiseScale = 0.15f;
-fog.EdgeFade = 0.3f;
+fog.EdgeFade = 4.0f;
 
 var stage = camera.GetPostProcessStageState<VolumetricFogSettings>();
 if (stage?.TryGetBacking(out VolumetricFogSettings? fogSettings) == true)

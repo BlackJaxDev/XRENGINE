@@ -2994,9 +2994,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
         public Vector4 Indices;
     }
 
+    private static Vector3 ResolveGlobalAmbient()
+    {
+        ColorF3 ambient = RenderingWorld?.GetEffectiveAmbientColor() ?? new ColorF3(0.03f, 0.03f, 0.03f);
+        return ambient;
+    }
+
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
     {
         program.Uniform("DeferredDebugMode", (int)DeferredDebugView);
+        program.Uniform("GlobalAmbient", ResolveGlobalAmbient());
 
         bool useAo = ShouldUseAmbientOcclusion();
         program.Uniform("UseAmbientOcclusion", useAo);
