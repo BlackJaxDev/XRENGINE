@@ -149,6 +149,11 @@ public partial class GLTexture2D
             return false;
         }
 
+        int previousCommittedBaseMipLevel = Data.SparseTextureStreamingCommittedBaseMipLevel;
+        bool hasPreviousCommit = previousCommittedBaseMipLevel != int.MaxValue;
+        if (!hasPreviousCommit)
+            return false;
+
         Generate();
 
         IGLTexture? previousTexture = Renderer.BoundTexture;
@@ -169,10 +174,8 @@ public partial class GLTexture2D
 
             int requestedBaseMipLevel = Math.Clamp(request.RequestedBaseMipLevel, 0, Math.Max(0, request.LogicalMipCount - 1));
             int committedBaseMipLevel = XRTexture2D.ResolveSparseCommittedBaseMipLevel(requestedBaseMipLevel, numSparseLevels, request.LogicalMipCount);
-            int previousCommittedBaseMipLevel = Data.SparseTextureStreamingCommittedBaseMipLevel;
-            bool hasPreviousCommit = previousCommittedBaseMipLevel != int.MaxValue;
             bool isDemotion = hasPreviousCommit && committedBaseMipLevel > previousCommittedBaseMipLevel;
-            if (!hasPreviousCommit || isDemotion)
+            if (isDemotion)
                 return false;
 
             int currentVisibleBaseMipLevel = Math.Clamp(Data.SparseTextureStreamingResidentBaseMipLevel, 0, Math.Max(0, request.LogicalMipCount - 1));
@@ -185,6 +188,7 @@ public partial class GLTexture2D
                 desiredPageSelection = SparseTextureStreamingPageSelection.Full;
 
             SetSparseMipSamplingRange(currentVisibleBaseMipLevel, request.LogicalMipCount - 1);
+            ClearInvalidation();
 
             long committedBytes = XRTexture2D.EstimateSparsePageSelectionBytes(
                 request.LogicalWidth,

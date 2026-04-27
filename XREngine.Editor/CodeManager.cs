@@ -5,6 +5,7 @@ using Microsoft.Build.Logging;
 using DiagnosticsProcess = System.Diagnostics.Process;
 using DiagnosticsProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 using System.Text;
+using System.Text.Json;
 using System.Xml.Linq;
 using XREngine;
 using XREngine.Components.Scripting;
@@ -166,8 +167,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
         // Get the engine assembly references so the game code can access engine types
         string[] engineAssemblies = GetEngineAssemblyPaths();
+        (string name, string version)[] enginePackages = GetEngineRuntimePackageReferences();
 
         CreateCSProj(sourceRootFolder, dllProjPath, projectName, false, true, true, true, false, true, true, builds, platforms,
+            packageReferences: enginePackages,
             assemblyReferencePaths: engineAssemblies);
 
         CreateSolutionFile(builds, platforms, (dllProjPath, Guid.NewGuid()));
@@ -194,10 +197,13 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
         // Get the engine assembly references so the game code can access engine types
         string[] engineAssemblies = GetEngineAssemblyPaths();
+        (string name, string version)[] enginePackages = GetEngineRuntimePackageReferences();
 
         CreateCSProj(sourceRootFolder, dllProjPath, projectName, false, true, true, true, true, true, true, builds, platforms,
+            packageReferences: enginePackages,
             assemblyReferencePaths: engineAssemblies);
         CreateCSProj(sourceRootFolder, exeProjPath, projectName, true, true, true, true, true, true, true, builds, platforms, 
+            packageReferences: enginePackages,
             includedProjectPaths: [dllProjPath]);
 
         // Place launcher first so IDEs default to running the generated launcher entrypoint.
@@ -239,6 +245,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 new XElement("AssemblyName", Path.GetFileNameWithoutExtension(projectFilePath)),
                 new XElement("ImplicitUsings", implicitUsings ? "enable" : "disable"),
                 new XElement("EnableDefaultCompileItems", "false"),
+                new XElement("CopyLocalLockFileAssemblies", "true"),
                 new XElement("AllowUnsafeBlocks", allowUnsafeBlocks ? "true" : "false"),
                 new XElement("PublishAot", aot ? "true" : "false"),
                 new XElement("LangVersion", languageVersion), //https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/configure-language-version
@@ -518,6 +525,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             launcherAssemblyName,
             platform,
             GetEngineAssemblyPaths(),
+            GetEngineRuntimePackageReferences(),
             includeGameProject: gameProjectPath);
 
         if (settings.PublishLauncherAsNativeAot)
@@ -641,12 +649,138 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         return [.. validPaths];
     }
 
+    private static (string name, string version)[] GetEngineRuntimePackageReferences()
+    {
+        string? depsPath = ResolveEditorDependencyManifestPath();
+        return depsPath is null
+            ? []
+            : ReadEnginePackageReferencesFromDeps(depsPath);
+    }
+
+    private static string? ResolveEditorDependencyManifestPath()
+    {
+        string editorDirectory = AppContext.BaseDirectory;
+        string editorDepsPath = Path.Combine(editorDirectory, "XREngine.Editor.deps.json");
+        if (File.Exists(editorDepsPath))
+            return editorDepsPath;
+
+        return Directory
+            .EnumerateFiles(editorDirectory, "*.deps.json", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => string.Equals(Path.GetFileName(path), "XREngine.Editor.deps.json", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .FirstOrDefault();
+    }
+
+    internal static (string name, string version)[] ReadEnginePackageReferencesFromDeps(string depsJsonPath)
+    {
+        if (!File.Exists(depsJsonPath))
+            return [];
+
+        using FileStream stream = File.OpenRead(depsJsonPath);
+        using JsonDocument document = JsonDocument.Parse(stream);
+
+        if (!document.RootElement.TryGetProperty("libraries", out JsonElement libraries) ||
+            !document.RootElement.TryGetProperty("targets", out JsonElement targets))
+        {
+            return [];
+        }
+
+        Dictionary<string, string> packageVersions = new(StringComparer.OrdinalIgnoreCase);
+        foreach (JsonProperty library in libraries.EnumerateObject())
+        {
+            if (!library.Value.TryGetProperty("type", out JsonElement type) ||
+                !string.Equals(type.GetString(), "package", StringComparison.OrdinalIgnoreCase) ||
+                !TrySplitDependencyKey(library.Name, out string packageName, out string packageVersion))
+            {
+                continue;
+            }
+
+            packageVersions[packageName] = packageVersion;
+        }
+
+        Dictionary<string, JsonElement> targetLibraries = new(StringComparer.OrdinalIgnoreCase);
+        foreach (JsonProperty target in targets.EnumerateObject())
+        {
+            foreach (JsonProperty targetLibrary in target.Value.EnumerateObject())
+                targetLibraries[targetLibrary.Name] = targetLibrary.Value;
+        }
+
+        Dictionary<string, string> enginePackageReferences = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> visitedLibraries = new(StringComparer.OrdinalIgnoreCase);
+        Queue<string> libraryQueue = new(targetLibraries.Keys.Where(IsRuntimeEngineLibrary));
+
+        while (libraryQueue.TryDequeue(out string? libraryKey))
+        {
+            if (!visitedLibraries.Add(libraryKey) ||
+                !targetLibraries.TryGetValue(libraryKey, out JsonElement targetLibrary) ||
+                !targetLibrary.TryGetProperty("dependencies", out JsonElement dependencies))
+            {
+                continue;
+            }
+
+            foreach (JsonProperty dependency in dependencies.EnumerateObject())
+            {
+                string? dependencyVersion = dependency.Value.GetString();
+                if (string.IsNullOrWhiteSpace(dependencyVersion))
+                    continue;
+
+                if (packageVersions.TryGetValue(dependency.Name, out string? packageVersion) &&
+                    !string.IsNullOrWhiteSpace(packageVersion))
+                {
+                    enginePackageReferences[dependency.Name] = packageVersion;
+                    EnqueueLibrary(dependency.Name, packageVersion);
+                }
+                else if (IsRuntimeEngineLibrary($"{dependency.Name}/{dependencyVersion}"))
+                {
+                    EnqueueLibrary(dependency.Name, dependencyVersion);
+                }
+            }
+        }
+
+        void EnqueueLibrary(string name, string version)
+        {
+            string targetLibraryKey = $"{name}/{version}";
+            if (targetLibraries.ContainsKey(targetLibraryKey) && !visitedLibraries.Contains(targetLibraryKey))
+            {
+                libraryQueue.Enqueue(targetLibraryKey);
+            }
+        }
+
+        return [.. enginePackageReferences
+            .OrderBy(package => package.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(package => (package.Key, package.Value))];
+    }
+
+    private static bool IsRuntimeEngineLibrary(string dependencyKey)
+    {
+        if (!TrySplitDependencyKey(dependencyKey, out string libraryName, out _))
+            return false;
+
+        return libraryName.StartsWith("XREngine", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(libraryName, "XREngine.Editor", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TrySplitDependencyKey(string dependencyKey, out string name, out string version)
+    {
+        int separatorIndex = dependencyKey.LastIndexOf('/');
+        if (separatorIndex <= 0 || separatorIndex == dependencyKey.Length - 1)
+        {
+            name = string.Empty;
+            version = string.Empty;
+            return false;
+        }
+
+        name = dependencyKey[..separatorIndex];
+        version = dependencyKey[(separatorIndex + 1)..];
+        return true;
+    }
+
     private static void CreateLauncherProject(
         string projectFilePath,
         string programFilePath,
         string assemblyName,
         string platform,
         IReadOnlyCollection<string> engineAssemblyPaths,
+        IReadOnlyCollection<(string name, string version)> packageReferences,
         string? includeGameProject)
     {
         string projectDirectory = Path.GetDirectoryName(projectFilePath) ?? AppContext.BaseDirectory;
@@ -671,6 +805,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     new XElement("ImplicitUsings", "enable"),
                     new XElement("Nullable", "enable"),
                     new XElement("EnableDefaultCompileItems", "false"),
+                    new XElement("CopyLocalLockFileAssemblies", "true"),
                     new XElement("AllowUnsafeBlocks", "true"),
                     new XElement("PublishAot", "false"),
                     new XElement("SelfContained", "false"),
@@ -690,6 +825,15 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             project.Root?.Add(
                 new XElement("ItemGroup",
                     new XElement("ProjectReference", new XAttribute("Include", relativeGameProjectPath))));
+        }
+
+        if (packageReferences.Count > 0)
+        {
+            project.Root?.Add(
+                new XElement("ItemGroup",
+                    packageReferences.Select(x => new XElement("PackageReference",
+                        new XAttribute("Include", x.name),
+                        new XAttribute("Version", x.version)))));
         }
 
         if (referenceElements.Count > 0)

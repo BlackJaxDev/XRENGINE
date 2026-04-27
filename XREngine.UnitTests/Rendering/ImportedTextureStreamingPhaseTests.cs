@@ -113,6 +113,19 @@ public sealed class ImportedTextureStreamingPhaseTests
     }
 
     [Test]
+    public void SmoothPromotionFadeProgress_EasesMipPromotions()
+    {
+        ImportedTextureStreamingManager.SmoothPromotionFadeProgress(-1.0f).ShouldBe(0.0f);
+        ImportedTextureStreamingManager.SmoothPromotionFadeProgress(0.0f).ShouldBe(0.0f);
+        ImportedTextureStreamingManager.SmoothPromotionFadeProgress(0.5f).ShouldBe(0.5f, 0.0001f);
+        ImportedTextureStreamingManager.SmoothPromotionFadeProgress(1.0f).ShouldBe(1.0f);
+        ImportedTextureStreamingManager.SmoothPromotionFadeProgress(2.0f).ShouldBe(1.0f);
+
+        ImportedTextureStreamingManager.SmoothPromotionFadeProgress(0.25f).ShouldBeLessThan(0.25f);
+        ImportedTextureStreamingManager.SmoothPromotionFadeProgress(0.75f).ShouldBeGreaterThan(0.75f);
+    }
+
+    [Test]
     public void ShouldRecordImportedTextureStreamingUsage_OnlyAllowsMainNonShadowPass()
     {
         RenderableMesh.ShouldRecordImportedTextureStreamingUsage(isShadowPass: false, isMainPass: true).ShouldBeTrue();

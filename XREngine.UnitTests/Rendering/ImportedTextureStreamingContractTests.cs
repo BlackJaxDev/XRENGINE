@@ -21,6 +21,29 @@ public sealed class ImportedTextureStreamingContractTests
         source.ShouldContain("XRTexture2D.ApplyResidentData(target, residentData, includeMipChain);");
     }
 
+    [Test]
+    public void ImportedTextureStreaming_FinalizesDeferredSparseTransitionsOnRenderThread()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+
+        source.ShouldContain("private int _sparseFinalizeScheduled;");
+        source.ShouldContain("if (!RuntimeRenderingHostServices.Current.IsRenderThread)");
+        source.ShouldContain("TextureStreaming.FinalizeSparseTransitions");
+        source.ShouldContain("FinalizePendingSparseTransitionOnRenderThread(");
+        source.ShouldContain("IsCurrentDeferredSparseTransition(");
+    }
+
+    [Test]
+    public void ImportedTextureStreaming_UsesFullSparsePageCoverageUntilPageTrackingIsMaterialAware()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+
+        source.ShouldContain("private static readonly bool EnablePartialSparsePageResidency = false;");
+        source.ShouldContain("material UV transforms, wrapping, filtering, or rapid camera movement");
+        source.ShouldContain("if (!EnablePartialSparsePageResidency)");
+        source.ShouldContain("return SparseTextureStreamingPageSelection.Full;");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string repoRoot = ResolveRepoRoot();

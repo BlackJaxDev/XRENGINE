@@ -61,6 +61,12 @@ namespace XREngine
                 {
                     using var sample = Engine.Profiler.Start("Rendering.Debug.SwapBuffers");
 
+                    if (Engine.ShuttingDown)
+                    {
+                        ClearQueues();
+                        return;
+                    }
+
                     if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
                     {
                         _debugPoints.Clear();
@@ -72,36 +78,58 @@ namespace XREngine
                     var mode = Engine.EditorPreferences?.Debug?.DebugShapePopulationMode
                         ?? EDebugShapePopulationMode.Tasks;
 
-                    switch (mode)
+                    try
                     {
-                        case EDebugShapePopulationMode.Tasks:
+                        switch (mode)
                         {
-                            Task tp = Task.Run(PopulatePoints);
-                            Task tl = Task.Run(PopulateLines);
-                            Task tt = Task.Run(PopulateTriangles);
-                            Task.WaitAll(tp, tl, tt);
-                            break;
+                            case EDebugShapePopulationMode.Tasks:
+                            {
+                                Task tp = Task.Run(PopulatePoints);
+                                Task tl = Task.Run(PopulateLines);
+                                Task tt = Task.Run(PopulateTriangles);
+                                Task.WaitAll(tp, tl, tt);
+                                break;
+                            }
+                            case EDebugShapePopulationMode.ParallelInvoke:
+                                Parallel.Invoke(PopulatePoints, PopulateLines, PopulateTriangles);
+                                break;
+                            case EDebugShapePopulationMode.JobSystem:
+                            {
+                                var hp = Engine.Jobs.Schedule(new ActionJob(PopulatePoints), JobPriority.High);
+                                var hl = Engine.Jobs.Schedule(new ActionJob(PopulateLines), JobPriority.High);
+                                var ht = Engine.Jobs.Schedule(new ActionJob(PopulateTriangles), JobPriority.High);
+                                hp.Wait();
+                                hl.Wait();
+                                ht.Wait();
+                                break;
+                            }
+                            case EDebugShapePopulationMode.Sequential:
+                            default:
+                                PopulatePoints();
+                                PopulateLines();
+                                PopulateTriangles();
+                                break;
                         }
-                        case EDebugShapePopulationMode.ParallelInvoke:
-                            Parallel.Invoke(PopulatePoints, PopulateLines, PopulateTriangles);
-                            break;
-                        case EDebugShapePopulationMode.JobSystem:
-                        {
-                            var hp = Engine.Jobs.Schedule(new ActionJob(PopulatePoints), JobPriority.High);
-                            var hl = Engine.Jobs.Schedule(new ActionJob(PopulateLines), JobPriority.High);
-                            var ht = Engine.Jobs.Schedule(new ActionJob(PopulateTriangles), JobPriority.High);
-                            hp.Wait();
-                            hl.Wait();
-                            ht.Wait();
-                            break;
-                        }
-                        case EDebugShapePopulationMode.Sequential:
-                        default:
-                            PopulatePoints();
-                            PopulateLines();
-                            PopulateTriangles();
-                            break;
                     }
+                    catch (OperationCanceledException) when (Engine.ShuttingDown)
+                    {
+                        ClearQueues();
+                    }
+                    catch (AggregateException ex) when (Engine.ShuttingDown && IsCancellationOnly(ex))
+                    {
+                        ClearQueues();
+                    }
+                }
+
+                private static bool IsCancellationOnly(AggregateException exception)
+                {
+                    foreach (Exception inner in exception.Flatten().InnerExceptions)
+                    {
+                        if (inner is not OperationCanceledException)
+                            return false;
+                    }
+
+                    return true;
                 }
 
                 private static void PopulateTriangles()

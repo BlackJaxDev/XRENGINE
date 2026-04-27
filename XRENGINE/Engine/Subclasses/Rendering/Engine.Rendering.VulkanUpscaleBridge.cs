@@ -15,6 +15,7 @@ namespace XREngine
         SourceDepth = 1 << 1,
         SourceMotion = 1 << 2,
         OutputColor = 1 << 3,
+        Exposure = 1 << 4,
     }
 
     public enum EVulkanUpscaleBridgeOwnershipMode
@@ -83,7 +84,7 @@ namespace XREngine
             public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar, defaultValue: true);
             public static bool VulkanUpscaleBridgeWindowsOnly => true;
             public static bool VulkanUpscaleBridgeMonoViewportOnly => true;
-            public static bool VulkanUpscaleBridgeHdrSupported => false;
+            public static bool VulkanUpscaleBridgeHdrSupported => true;
             public static bool VulkanUpscaleBridgeDlssFirst => true;
             public static EVulkanUpscaleBridgeQueueModel VulkanUpscaleBridgeQueueModel => EVulkanUpscaleBridgeQueueModel.Graphics;
             public static EVulkanUpscaleBridgeOwnershipMode VulkanUpscaleBridgeOwnershipMode => EVulkanUpscaleBridgeOwnershipMode.PerViewport;
@@ -92,7 +93,8 @@ namespace XREngine
                 EVulkanUpscaleBridgeSurfaceSet.SourceColor |
                 EVulkanUpscaleBridgeSurfaceSet.SourceDepth |
                 EVulkanUpscaleBridgeSurfaceSet.SourceMotion |
-                EVulkanUpscaleBridgeSurfaceSet.OutputColor;
+                EVulkanUpscaleBridgeSurfaceSet.OutputColor |
+                EVulkanUpscaleBridgeSurfaceSet.Exposure;
 
             public static VulkanUpscaleBridgeCapabilitySnapshot VulkanUpscaleBridgeSnapshot
             {
@@ -343,7 +345,7 @@ namespace XREngine
                     reasons.Add("bridge MVP excludes stereo/XR render pipelines");
 
                 if (!snapshot.HdrSupported && hdrRequested)
-                    reasons.Add("bridge MVP is SDR only");
+                    reasons.Add("bridge HDR output is unavailable");
 
                 if (!snapshot.HasOpenGlExternalMemory)
                     reasons.Add("GL_EXT_memory_object is unavailable");

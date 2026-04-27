@@ -13,6 +13,7 @@ namespace XREngine.Rendering.DLSS
         {
             private const string StreamlineLibrary = "sl.interposer.dll";
             private const ulong StreamlineSdkVersion = 0x000200090000FEDC;
+            private const string StreamlineProjectId = "f61b5f80-6a02-4c83-8bb2-96ab8e33d2d7";
             private const uint FeatureDlss = 0;
             private const uint BufferTypeDepth = 0;
             private const uint BufferTypeMotionVectors = 1;
@@ -21,6 +22,8 @@ namespace XREngine.Rendering.DLSS
             private const uint BufferTypeExposure = 13;
 
             private static readonly object Sync = new();
+            private static readonly SlLogMessageCallbackDelegate LogMessageCallbackDelegate = OnStreamlineLogMessage;
+            private static readonly IntPtr LogMessageCallbackPtr = Marshal.GetFunctionPointerForDelegate(LogMessageCallbackDelegate);
 
             private static bool _initialized;
             private static bool _runtimeInitialized;
@@ -32,6 +35,10 @@ namespace XREngine.Rendering.DLSS
             private static nint _boundPhysicalDeviceHandle;
             private static IntPtr _libraryHandle;
             private static string? _lastError;
+            private static string? _lastStreamlineMessage;
+            private static string? _lastStreamlineWarningOrError;
+            private static string? _terminalBridgeFailureReason;
+            private static int _bridgeFailureGeneration;
 
             private static SlInitDelegate? _init;
             private static SlShutdownDelegate? _shutdown;
@@ -68,18 +75,41 @@ namespace XREngine.Rendering.DLSS
                 }
             }
 
-            internal readonly struct StreamlineQueueRequirements
+            internal static int BridgeFailureGeneration
             {
-                public StreamlineQueueRequirements(uint graphicsQueues, uint computeQueues, uint opticalFlowQueues)
+                get
                 {
-                    GraphicsQueues = graphicsQueues;
-                    ComputeQueues = computeQueues;
-                    OpticalFlowQueues = opticalFlowQueues;
+                    lock (Sync)
+                        return _bridgeFailureGeneration;
                 }
+            }
 
-                public uint GraphicsQueues { get; }
-                public uint ComputeQueues { get; }
-                public uint OpticalFlowQueues { get; }
+            internal static bool HasTerminalBridgeFailure
+            {
+                get
+                {
+                    lock (Sync)
+                        return !string.IsNullOrWhiteSpace(_terminalBridgeFailureReason);
+                }
+            }
+
+            internal static bool IsTerminalBridgeFailureMessage(string? failureReason)
+                => !string.IsNullOrWhiteSpace(failureReason)
+                    && (failureReason.Contains("Streamline", StringComparison.OrdinalIgnoreCase)
+                        || failureReason.Contains("slInit", StringComparison.OrdinalIgnoreCase)
+                        || failureReason.Contains("slGetFeatureRequirements", StringComparison.OrdinalIgnoreCase)
+                        || failureReason.Contains("slSetVulkanInfo", StringComparison.OrdinalIgnoreCase)
+                        || failureReason.Contains("slAllocateResources", StringComparison.OrdinalIgnoreCase)
+                        || failureReason.Contains("slDLSS", StringComparison.OrdinalIgnoreCase)
+                        || failureReason.Contains("slGetNewFrameToken", StringComparison.OrdinalIgnoreCase)
+                        || failureReason.Contains("slSetConstants", StringComparison.OrdinalIgnoreCase)
+                        || failureReason.Contains("slEvaluateFeature", StringComparison.OrdinalIgnoreCase));
+
+            internal readonly struct StreamlineQueueRequirements(uint graphicsQueues, uint computeQueues, uint opticalFlowQueues)
+            {
+                public uint GraphicsQueues { get; } = graphicsQueues;
+                public uint ComputeQueues { get; } = computeQueues;
+                public uint OpticalFlowQueues { get; } = opticalFlowQueues;
             }
 
             internal static bool TryGetRequiredVulkanRequirements(
@@ -111,14 +141,14 @@ namespace XREngine.Rendering.DLSS
                     if (requirementsResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slGetFeatureRequirements failed with {requirementsResult}.";
-                        _lastError = failureReason;
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
 
                     if ((requirements.Flags & StreamlineFeatureRequirementFlags.VulkanSupported) == 0)
                     {
                         failureReason = "Streamline DLSS reported no Vulkan support for the current runtime configuration.";
-                        _lastError = failureReason;
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
 
@@ -195,7 +225,7 @@ namespace XREngine.Rendering.DLSS
                     if (setInfoResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slSetVulkanInfo failed with {setInfoResult}.";
-                        _lastError = failureReason;
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
 
@@ -207,7 +237,7 @@ namespace XREngine.Rendering.DLSS
 
                 if (!_featureFunctionsResolved && !ResolveFeatureFunctions(out failureReason))
                 {
-                    _lastError = failureReason;
+                    MarkTerminalBridgeFailure(failureReason);
                     return false;
                 }
 
@@ -217,6 +247,13 @@ namespace XREngine.Rendering.DLSS
             private static unsafe bool EnsureRuntimeInitialized(out string failureReason)
             {
                 failureReason = string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(_terminalBridgeFailureReason))
+                {
+                    failureReason = _terminalBridgeFailureReason;
+                    _lastError = failureReason;
+                    return false;
+                }
 
                 if (!EnsureLibraryLoaded())
                 {
@@ -235,7 +272,7 @@ namespace XREngine.Rendering.DLSS
                     if (initResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slInit failed with {initResult}.";
-                        _lastError = failureReason;
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
 
@@ -373,7 +410,7 @@ namespace XREngine.Rendering.DLSS
                     PathToLogsAndData = runtimeDirectoryPtr,
                     AllocateCallback = IntPtr.Zero,
                     ReleaseCallback = IntPtr.Zero,
-                    LogMessageCallback = IntPtr.Zero,
+                    LogMessageCallback = LogMessageCallbackPtr,
                     Flags = StreamlinePreferenceFlags.DisableCommandListStateTracking
                         | StreamlinePreferenceFlags.DisableDebugText
                         | StreamlinePreferenceFlags.UseManualHooking
@@ -383,7 +420,7 @@ namespace XREngine.Rendering.DLSS
                     ApplicationId = 0,
                     Engine = StreamlineEngineType.Custom,
                     EngineVersion = Marshal.StringToHGlobalAnsi("XRENGINE"),
-                    ProjectId = Marshal.StringToHGlobalAnsi("xrengine-vulkan-upscale-bridge"),
+                    ProjectId = Marshal.StringToHGlobalAnsi(StreamlineProjectId),
                     RenderApi = StreamlineRenderApi.Vulkan,
                 };
             }
@@ -465,6 +502,25 @@ namespace XREngine.Rendering.DLSS
                     && _boundInstanceHandle == sidecar.Instance.Handle
                     && _boundPhysicalDeviceHandle == sidecar.PhysicalDevice.Handle;
 
+            private static void MarkTerminalBridgeFailure(string failureReason)
+            {
+                if (string.IsNullOrWhiteSpace(failureReason))
+                    return;
+
+                lock (Sync)
+                {
+                    _lastError = failureReason;
+                    if (string.Equals(_terminalBridgeFailureReason, failureReason, StringComparison.Ordinal))
+                        return;
+
+                    _terminalBridgeFailureReason = failureReason;
+                    unchecked
+                    {
+                        _bridgeFailureGeneration++;
+                    }
+                }
+            }
+
             private static void ShutdownRuntimeUnsafe()
             {
                 if (_runtimeInitialized && _shutdown is not null)
@@ -501,6 +557,31 @@ namespace XREngine.Rendering.DLSS
                     StructVersion = version,
                 };
 
+            private static void OnStreamlineLogMessage(StreamlineLogType type, IntPtr messagePtr)
+            {
+                try
+                {
+                    string? message = Marshal.PtrToStringAnsi(messagePtr);
+                    if (string.IsNullOrWhiteSpace(message))
+                        return;
+
+                    string formatted = $"[Streamline:{type}] {message}";
+                    _lastStreamlineMessage = formatted;
+                    if (type is StreamlineLogType.Warn or StreamlineLogType.Error)
+                        _lastStreamlineWarningOrError = formatted;
+
+                    global::XREngine.Debug.Log(
+                        global::XREngine.ELogCategory.Rendering,
+                        type == StreamlineLogType.Info ? global::XREngine.EOutputVerbosity.Verbose : global::XREngine.EOutputVerbosity.Normal,
+                        debugOnly: false,
+                        formatted);
+                }
+                catch
+                {
+                    // Native callbacks must never let managed exceptions escape.
+                }
+            }
+
             private static StreamlineStructType CreateStructType(uint data1, ushort data2, ushort data3, byte d4, byte d5, byte d6, byte d7, byte d8, byte d9, byte d10, byte d11)
                 => new()
                 {
@@ -524,6 +605,7 @@ namespace XREngine.Rendering.DLSS
             private static readonly StreamlineStructType ConstantsStructType = CreateStructType(0xDCD35AD7, 0x4E4A, 0x4BAD, 0xA9, 0x0C, 0xE0, 0xC4, 0x9E, 0xB2, 0x3A, 0xFE);
             private static readonly StreamlineStructType VulkanInfoStructType = CreateStructType(0x0EED6FD5, 0x82CD, 0x43A9, 0xBD, 0xB5, 0x47, 0xA5, 0xBA, 0x2F, 0x45, 0xD6);
             private static readonly StreamlineStructType DlssOptionsStructType = CreateStructType(0x6AC826E4, 0x4C61, 0x4101, 0xA9, 0x2D, 0x63, 0x8D, 0x42, 0x10, 0x57, 0xB8);
+            private static readonly StreamlineStructType DlssOptimalSettingsStructType = CreateStructType(0xEF1D0957, 0xFD58, 0x4DF7, 0xB5, 0x04, 0x8B, 0x69, 0xD8, 0xAA, 0x6B, 0x76);
             private static readonly StreamlineStructType FeatureRequirementsStructType = CreateStructType(0x66714097, 0xAC6D, 0x4BC6, 0x89, 0x15, 0x1E, 0x0F, 0x55, 0xA6, 0xB6, 0x1F);
 
             internal sealed class BridgeSession : IDisposable
@@ -554,8 +636,7 @@ namespace XREngine.Rendering.DLSS
                         return false;
                     }
 
-                    if (_allocateResources is null
-                        || _freeResources is null
+                    if (_freeResources is null
                         || _setTagForFrame is null
                         || _setConstants is null
                         || _evaluateFeature is null
@@ -563,29 +644,19 @@ namespace XREngine.Rendering.DLSS
                         || _setOptions is null)
                     {
                         failureReason = "Streamline core exports are not fully initialized.";
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
 
                     IntPtr commandBuffer = ToIntPtr(slot.CommandBuffer.Handle);
                     StreamlineViewportHandle viewport = _viewport;
 
-                    if (!_resourcesAllocated)
-                    {
-                        StreamlineResult allocateResult = _allocateResources(commandBuffer, FeatureDlss, ref viewport);
-                        if (allocateResult != StreamlineResult.Ok)
-                        {
-                            failureReason = $"slAllocateResources failed with {allocateResult}.";
-                            return false;
-                        }
-
-                        _resourcesAllocated = true;
-                    }
-
                     StreamlineDlssOptions options = CreateDlssOptions(parameters);
                     StreamlineResult setOptionsResult = _setOptions(ref viewport, ref options);
                     if (setOptionsResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slDLSSSetOptions failed with {setOptionsResult}.";
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
 
@@ -595,6 +666,7 @@ namespace XREngine.Rendering.DLSS
                     if (frameTokenResult != StreamlineResult.Ok || frameToken == IntPtr.Zero)
                     {
                         failureReason = $"slGetNewFrameToken failed with {frameTokenResult}.";
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
 
@@ -629,25 +701,37 @@ namespace XREngine.Rendering.DLSS
                     };
 
                     StreamlineResourceTag* tags = stackalloc StreamlineResourceTag[5];
-                    tags[0] = CreateResourceTag(&colorInput, BufferTypeScalingInputColor, StreamlineResourceLifecycle.OnlyValidNow, inputExtent);
-                    tags[1] = CreateResourceTag(&colorOutput, BufferTypeScalingOutputColor, StreamlineResourceLifecycle.OnlyValidNow, outputExtent);
-                    tags[2] = CreateResourceTag(&depth, BufferTypeDepth, StreamlineResourceLifecycle.OnlyValidNow, inputExtent);
-                    tags[3] = CreateResourceTag(&motion, BufferTypeMotionVectors, StreamlineResourceLifecycle.OnlyValidNow, inputExtent);
+                    tags[0] = CreateResourceTag(&colorInput, BufferTypeScalingInputColor, StreamlineResourceLifecycle.ValidUntilEvaluate, inputExtent);
+                    tags[1] = CreateResourceTag(&colorOutput, BufferTypeScalingOutputColor, StreamlineResourceLifecycle.ValidUntilEvaluate, outputExtent);
+                    tags[2] = CreateResourceTag(&depth, BufferTypeDepth, StreamlineResourceLifecycle.ValidUntilEvaluate, inputExtent);
+                    tags[3] = CreateResourceTag(&motion, BufferTypeMotionVectors, StreamlineResourceLifecycle.ValidUntilEvaluate, inputExtent);
                     uint tagCount = 4;
                     if (parameters.HasExposureTexture)
-                        tags[tagCount++] = CreateResourceTag(&exposure, BufferTypeExposure, StreamlineResourceLifecycle.OnlyValidNow, exposureExtent);
+                        tags[tagCount++] = CreateResourceTag(&exposure, BufferTypeExposure, StreamlineResourceLifecycle.ValidUntilEvaluate, exposureExtent);
 
                     StreamlineResult tagResult = _setTagForFrame(frameToken, ref viewport, (IntPtr)tags, tagCount, commandBuffer);
                     if (tagResult != StreamlineResult.Ok)
                     {
-                        failureReason = $"slSetTagForFrame failed with {tagResult}.";
+                        failureReason = DescribeStreamlineFailure(
+                            "slSetTagForFrame",
+                            tagResult,
+                            in parameters,
+                            ref options,
+                            $"tagCount={tagCount}");
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
 
                     StreamlineResult constantsResult = _setConstants(ref constants, frameToken, ref viewport);
                     if (constantsResult != StreamlineResult.Ok)
                     {
-                        failureReason = $"slSetConstants failed with {constantsResult}.";
+                        failureReason = DescribeStreamlineFailure(
+                            "slSetConstants",
+                            constantsResult,
+                            in parameters,
+                            ref options,
+                            $"reset={constants.Reset}");
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
 
@@ -658,9 +742,17 @@ namespace XREngine.Rendering.DLSS
                     StreamlineResult evaluateResult = _evaluateFeature(FeatureDlss, frameToken, (IntPtr)inputs, 1, commandBuffer);
                     if (evaluateResult != StreamlineResult.Ok)
                     {
-                        failureReason = $"slEvaluateFeature failed with {evaluateResult}.";
+                        failureReason = DescribeStreamlineFailure(
+                            "slEvaluateFeature",
+                            evaluateResult,
+                            in parameters,
+                            ref options,
+                            "inputs=viewport");
+                        MarkTerminalBridgeFailure(failureReason);
                         return false;
                     }
+
+                    _resourcesAllocated = true;
 
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
                     _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
@@ -721,6 +813,9 @@ namespace XREngine.Rendering.DLSS
 
                 private static StreamlineDlssMode ResolveDlssMode(in VulkanUpscaleBridgeDispatchParameters parameters)
                 {
+                    if (parameters.InputWidth == parameters.OutputWidth && parameters.InputHeight == parameters.OutputHeight)
+                        return StreamlineDlssMode.Dlaa;
+
                     if (parameters.DlssQuality != EDlssQualityMode.Custom)
                     {
                         return parameters.DlssQuality switch
@@ -744,6 +839,53 @@ namespace XREngine.Rendering.DLSS
                         <= 0.86f => StreamlineDlssMode.UltraQuality,
                         _ => StreamlineDlssMode.MaxQuality,
                     };
+                }
+
+                private static string DescribeStreamlineFailure(
+                    string apiName,
+                    StreamlineResult result,
+                    in VulkanUpscaleBridgeDispatchParameters parameters,
+                    ref StreamlineDlssOptions options,
+                    string? additionalContext)
+                {
+                    string reason =
+                        $"{apiName} failed with {result}. " +
+                        $"DLSS mode={options.Mode}, input={parameters.InputWidth}x{parameters.InputHeight}, " +
+                        $"output={parameters.OutputWidth}x{parameters.OutputHeight}, hdr={parameters.OutputHdr}, " +
+                        $"quality={parameters.DlssQuality}, exposureTexture={parameters.HasExposureTexture}";
+
+                    if (!string.IsNullOrWhiteSpace(additionalContext))
+                        reason += $", {additionalContext}";
+
+                    string optimalSettings = DescribeOptimalSettings(ref options);
+                    if (!string.IsNullOrWhiteSpace(optimalSettings))
+                        reason += $". {optimalSettings}";
+
+                    string? streamlineMessage = _lastStreamlineWarningOrError ?? _lastStreamlineMessage;
+                    if (!string.IsNullOrWhiteSpace(streamlineMessage))
+                        reason += $". Last Streamline message: {streamlineMessage}";
+
+                    return reason + ".";
+                }
+
+                private static string DescribeOptimalSettings(ref StreamlineDlssOptions options)
+                {
+                    if (_getOptimalSettings is null)
+                        return string.Empty;
+
+                    StreamlineDlssOptimalSettings settings = new()
+                    {
+                        Base = CreateBase(DlssOptimalSettingsStructType, 1),
+                    };
+
+                    StreamlineResult result = _getOptimalSettings(ref options, ref settings);
+                    if (result != StreamlineResult.Ok)
+                        return $"slDLSSGetOptimalSettings failed with {result}";
+
+                    return
+                        $"DLSS optimal input={settings.OptimalRenderWidth}x{settings.OptimalRenderHeight}, " +
+                        $"range={settings.RenderWidthMin}x{settings.RenderHeightMin}-{settings.RenderWidthMax}x{settings.RenderHeightMax}, " +
+                        $"sharpness={settings.OptimalSharpness:0.###}";
                 }
 
                 private static StreamlineConstants CreateConstants(in VulkanUpscaleBridgeDispatchParameters parameters, bool firstDispatch)
@@ -868,7 +1010,10 @@ namespace XREngine.Rendering.DLSS
             private delegate StreamlineResult SlDlssSetOptionsDelegate(ref StreamlineViewportHandle viewport, ref StreamlineDlssOptions options);
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlDlssGetOptimalSettingsDelegate(ref StreamlineDlssOptions options, out IntPtr settings);
+            private delegate StreamlineResult SlDlssGetOptimalSettingsDelegate(ref StreamlineDlssOptions options, ref StreamlineDlssOptimalSettings settings);
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate void SlLogMessageCallbackDelegate(StreamlineLogType type, IntPtr message);
 
             private enum StreamlineResult
             {
@@ -919,6 +1064,14 @@ namespace XREngine.Rendering.DLSS
                 Off = 0,
                 Default = 1,
                 Verbose = 2,
+            }
+
+            private enum StreamlineLogType : uint
+            {
+                Info = 0,
+                Warn = 1,
+                Error = 2,
+                Count = 3,
             }
 
             [Flags]
@@ -1245,6 +1398,19 @@ namespace XREngine.Rendering.DLSS
                 public StreamlineDlssPreset UltraQualityPreset;
                 public StreamlineBoolean UseAutoExposure;
                 public StreamlineBoolean AlphaUpscalingEnabled;
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct StreamlineDlssOptimalSettings
+            {
+                public StreamlineBaseStructure Base;
+                public uint OptimalRenderWidth;
+                public uint OptimalRenderHeight;
+                public float OptimalSharpness;
+                public uint RenderWidthMin;
+                public uint RenderHeightMin;
+                public uint RenderWidthMax;
+                public uint RenderHeightMax;
             }
         }
     }

@@ -879,10 +879,11 @@ internal sealed class ImportedTextureStreamingManager
     private const int MaxResidentTransitionsPerFrame = 4;
     private const int MaxPromotionTransitionsPerFrame = 2;
     private const int MinTransitionCooldownFrames = 2;
-    private const int PromotionFadeFrames = 60;
+    private const int PromotionFadeFrames = 90;
     private const long MaxPromotionBytesPerFrame = 24L * 1024L * 1024L;
     private const int RecordRefCompactionIntervalFrames = 600;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
+    private static readonly bool EnablePartialSparsePageResidency = false;
 
     /// <summary>
     /// If a pending transition has been stuck for this many frames with no active
@@ -915,6 +916,7 @@ internal sealed class ImportedTextureStreamingManager
     private int _activeImportedModelImports;
     private long _collectFrameId;
     private int _queuedTransitionsThisFrame;
+    private int _sparseFinalizeScheduled;
     private long _lastTelemetryFrameId;
     private long _lastCurrentManagedBytes;
     private long _lastAvailableManagedBytes;
@@ -1292,6 +1294,12 @@ internal sealed class ImportedTextureStreamingManager
         return Math.Max(0, previousBaseMipLevel - nextBaseMipLevel);
     }
 
+    internal static float SmoothPromotionFadeProgress(float t)
+    {
+        t = Math.Clamp(t, 0.0f, 1.0f);
+        return t * t * (3.0f - (2.0f * t));
+    }
+
     internal uint FitResidentSizeToBudget(
         ImportedTextureStreamingBudgetInput input,
         uint desiredResidentSize,
@@ -1387,6 +1395,14 @@ internal sealed class ImportedTextureStreamingManager
         if (snapshot.Backend is not GLSparseTextureResidencyBackend)
             return SparseTextureStreamingPageSelection.Full;
 
+        // Conservative for now: partial sparse page residency can expose black holes
+        // when material UV transforms, wrapping, filtering, or rapid camera movement
+        // sample outside the last recorded mesh UV rectangle. Keep sparse mip-level
+        // residency, but fully commit the resident sparse mips until page tracking is
+        // driven by the actual material sampling domain.
+        if (!EnablePartialSparsePageResidency)
+            return SparseTextureStreamingPageSelection.Full;
+
         uint sourceMaxDimension = Math.Max(snapshot.SourceWidth, snapshot.SourceHeight);
         uint previewResidentSize = XRTexture2D.GetPreviewResidentSize(sourceMaxDimension);
         if (residentSize <= previewResidentSize
@@ -1455,6 +1471,28 @@ internal sealed class ImportedTextureStreamingManager
 
     private void FinalizePendingSparseTransitions(long frameId)
     {
+        if (!RuntimeRenderingHostServices.Current.IsRenderThread)
+        {
+            if (Interlocked.Exchange(ref _sparseFinalizeScheduled, 1) == 0)
+            {
+                RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                    () =>
+                    {
+                        try
+                        {
+                            FinalizePendingSparseTransitions(Volatile.Read(ref _collectFrameId));
+                        }
+                        finally
+                        {
+                            Volatile.Write(ref _sparseFinalizeScheduled, 0);
+                        }
+                    },
+                    "TextureStreaming.FinalizeSparseTransitions");
+            }
+
+            return;
+        }
+
         WeakReference<ImportedTextureStreamingRecord>[] refs = s_recordRefs.ToArray();
         for (int i = 0; i < refs.Length; i++)
         {
@@ -1483,24 +1521,52 @@ internal sealed class ImportedTextureStreamingManager
                 pendingResidentSize = record.PendingMaxDimension;
             }
 
-            SparseTextureStreamingFinalizeResult finalizeResult = RuntimeRenderingHostServices.Current.FinalizeSparseTextureStreamingTransition(
-                texture,
-                request,
-                transitionResult);
-            if (!finalizeResult.Completed)
-                continue;
-
-            if (!finalizeResult.Succeeded)
-            {
-                string textureLabel = texture.Name ?? record.FilePath ?? "(unnamed texture)";
-                RuntimeRenderingHostServices.Current.LogWarning(
-                    $"Deferred sparse texture transition failed for '{textureLabel}': {finalizeResult.FailureReason ?? "unknown reason"}.");
-                ClearPendingTransition(record, cts, texture: null, completedResidentSize: 0, frameId);
-                continue;
-            }
-
-            ClearPendingTransition(record, cts, texture, pendingResidentSize, frameId);
+            FinalizePendingSparseTransitionOnRenderThread(record, texture, cts, request, transitionResult, pendingResidentSize, frameId);
         }
+    }
+
+    private void FinalizePendingSparseTransitionOnRenderThread(
+        ImportedTextureStreamingRecord record,
+        XRTexture2D texture,
+        CancellationTokenSource cts,
+        SparseTextureStreamingTransitionRequest request,
+        SparseTextureStreamingTransitionResult transitionResult,
+        uint pendingResidentSize,
+        long frameId)
+    {
+        lock (record.Sync)
+        {
+            if (!IsCurrentDeferredSparseTransition(record, cts, transitionResult))
+                return;
+        }
+
+        SparseTextureStreamingFinalizeResult finalizeResult = RuntimeRenderingHostServices.Current.FinalizeSparseTextureStreamingTransition(
+            texture,
+            request,
+            transitionResult);
+        if (!finalizeResult.Completed)
+            return;
+
+        if (!finalizeResult.Succeeded)
+        {
+            string textureLabel = texture.Name ?? record.FilePath ?? "(unnamed texture)";
+            RuntimeRenderingHostServices.Current.LogWarning(
+                $"Deferred sparse texture transition failed for '{textureLabel}': {finalizeResult.FailureReason ?? "unknown reason"}.");
+            ClearPendingTransition(record, cts, texture: null, completedResidentSize: 0, frameId);
+            return;
+        }
+
+        ClearPendingTransition(record, cts, texture, pendingResidentSize, frameId);
+    }
+
+    private static bool IsCurrentDeferredSparseTransition(
+        ImportedTextureStreamingRecord record,
+        CancellationTokenSource cts,
+        SparseTextureStreamingTransitionResult transitionResult)
+    {
+        return ReferenceEquals(record.PendingLoadCts, cts)
+            && record.PendingSparseTransitionResult is { ExposureDeferred: true } current
+            && current.FenceSync == transitionResult.FenceSync;
     }
 
     private ImportedTextureStreamingRecord GetOrCreateRecord(XRTexture2D texture, string? filePath = null)
@@ -1562,7 +1628,7 @@ internal sealed class ImportedTextureStreamingManager
                 {
                     long fadeDurationFrames = Math.Max(1L, record.PromotionFadeEndFrameId - record.PromotionFadeStartFrameId);
                     float t = Math.Clamp((frameId - record.PromotionFadeStartFrameId) / (float)fadeDurationFrames, 0.0f, 1.0f);
-                    float streamingLodBias = record.PromotionFadeStartBias * (1.0f - t);
+                    float streamingLodBias = record.PromotionFadeStartBias * (1.0f - SmoothPromotionFadeProgress(t));
                     record.CurrentStreamingLodBias = streamingLodBias;
                     targetLodBias = record.BaseLodBias + streamingLodBias;
                     shouldApply = true;

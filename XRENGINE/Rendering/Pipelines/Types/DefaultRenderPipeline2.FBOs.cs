@@ -236,7 +236,7 @@ public partial class DefaultRenderPipeline2
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = DeferredTransparencyBlurFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DeferredTransparencyBlurFBOName };
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
         fbo.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         return fbo;
@@ -281,7 +281,7 @@ public partial class DefaultRenderPipeline2
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = TransparentResolveFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = TransparentResolveFBOName };
         fbo.SettingUniforms += TransparentResolveFBO_SettingUniforms;
 
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);

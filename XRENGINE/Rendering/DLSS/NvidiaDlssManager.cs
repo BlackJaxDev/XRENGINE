@@ -25,6 +25,7 @@ namespace XREngine.Rendering.DLSS
         private static bool _cachedIsSupported;
         private static bool _lastIsNvidia;
         private static bool _lastIsVulkan;
+        private static int _lastNativeFailureGeneration;
         private static string? _lastBridgeFingerprint;
         private static string? _lastError;
 
@@ -50,9 +51,11 @@ namespace XREngine.Rendering.DLSS
         {
             // Vulkan sets IsNVIDIA during adapter selection; OpenGL sets it when the context is created.
             // The original static ctor probe could run before either of those, permanently caching false.
+            int nativeFailureGeneration = Native.BridgeFailureGeneration;
             if (_probed &&
                 _lastIsNvidia == Engine.Rendering.State.IsNVIDIA &&
                 _lastIsVulkan == Engine.Rendering.State.IsVulkan &&
+                _lastNativeFailureGeneration == nativeFailureGeneration &&
                 string.Equals(_lastBridgeFingerprint, Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint, StringComparison.Ordinal))
                 return;
 
@@ -64,6 +67,7 @@ namespace XREngine.Rendering.DLSS
             _probed = true;
             _lastIsNvidia = Engine.Rendering.State.IsNVIDIA;
             _lastIsVulkan = Engine.Rendering.State.IsVulkan;
+            _lastNativeFailureGeneration = Native.BridgeFailureGeneration;
             _lastBridgeFingerprint = Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint;
             _lastError = null;
 
@@ -87,6 +91,13 @@ namespace XREngine.Rendering.DLSS
             if (!Engine.Rendering.State.IsNVIDIA)
             {
                 _lastError = "No NVIDIA GPU detected.";
+                _cachedIsSupported = false;
+                return;
+            }
+
+            if (usingBridge && Native.HasTerminalBridgeFailure)
+            {
+                _lastError = Native.LastError ?? "Streamline bridge runtime is unavailable.";
                 _cachedIsSupported = false;
                 return;
             }
@@ -186,11 +197,14 @@ namespace XREngine.Rendering.DLSS
             viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
         }
 
+        internal static float GetRecommendedRenderScale(Engine.Rendering.EngineSettings settings)
+            => ComputeScale(settings);
+
         private static float ComputeScale(Engine.Rendering.EngineSettings settings)
         {
             EnsureDetected();
 
-            if (!settings.EnableNvidiaDlss || !_cachedIsSupported)
+            if (!Engine.EffectiveSettings.EnableNvidiaDlss || !_cachedIsSupported)
                 return MaxScale;
 
             static float ScaleForMode(EDlssQualityMode mode)

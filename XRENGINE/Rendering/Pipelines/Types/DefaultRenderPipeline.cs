@@ -13,10 +13,12 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
+using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
+using XREngine.Rendering.XeSS;
 using XREngine.Scene;
 using static XREngine.Engine.Rendering.State;
 
@@ -242,8 +244,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
     {
-        if (Engine.Rendering.Settings.EnableNvidiaDlss || Engine.Rendering.Settings.EnableIntelXess)
-            return null;
+        if (TryResolveVendorInternalResolutionScale(out float vendorScale))
+            return vendorScale;
 
         EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
         return mode == EAntiAliasingMode.Tsr
@@ -274,6 +276,27 @@ public partial class DefaultRenderPipeline : RenderPipeline
         => ResolveAntiAliasingMode() == EAntiAliasingMode.Msaa
         && ResolveEffectiveMsaaSampleCount() > 1u;
 
+    private static bool RuntimeEnableVendorUpscale
+    {
+        get
+        {
+            bool preferDlss = Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
+            if (preferDlss && RuntimeEnableDlssUpscale)
+                return true;
+
+            if (RuntimeEnableXessUpscale)
+                return true;
+
+            return !preferDlss && RuntimeEnableDlssUpscale;
+        }
+    }
+
+    private static bool RuntimeEnableDlssUpscale
+        => Engine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported;
+
+    private static bool RuntimeEnableXessUpscale
+        => Engine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported;
+
     private DeferredDebugViewMode _deferredDebugView = DeferredDebugViewMode.Disabled;
     [Category("Debug")]
     [DisplayName("Deferred Debug View")]
@@ -289,21 +312,21 @@ public partial class DefaultRenderPipeline : RenderPipeline
     /// Evaluated at render time so per-camera overrides take effect.
     /// </summary>
     private static bool RuntimeEnableFxaa
-        => ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;
+        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;
 
     /// <summary>
     /// True when SMAA should be active for the current rendering camera.
     /// Evaluated at render time so per-camera overrides take effect.
     /// </summary>
     private static bool RuntimeEnableSmaa
-        => ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;
+        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;
 
     /// <summary>
     /// True when the current camera's AA mode is TSR and internal resolution is
     /// below 100%, meaning a dedicated upscale pass is required.
     /// </summary>
     private static bool RuntimeNeedsTsrUpscale
-        => ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;
+        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;
 
     // Build-time checks: used only during command chain generation to decide
     // whether to include FBOs/textures. True if the global setting requests
@@ -967,7 +990,6 @@ public partial class DefaultRenderPipeline : RenderPipeline
     protected override Lazy<XRMaterial> InvalidMaterialFactory => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);
 
     private XRMaterial MakeInvalidMaterial() =>
-        //Debug.Out("Generating invalid material");
         XRMaterial.CreateColorMaterialDeferred();
 
     //FBOs
@@ -1243,10 +1265,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private void ApplyAntiAliasingResolutionHint()
     {
-        // Avoid fighting other upscalers when DLSS or XeSS is enabled.
-        if (Engine.Rendering.Settings.EnableNvidiaDlss || Engine.Rendering.Settings.EnableIntelXess)
+        if (TryResolveVendorInternalResolutionScale(out float vendorScale))
         {
-            RequestedInternalResolution = null;
+            RequestedInternalResolution = vendorScale;
             return;
         }
 
@@ -1259,6 +1280,44 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // Null means "use viewport default".
             RequestedInternalResolution = null;
         }
+    }
+
+    private static bool TryResolveVendorInternalResolutionScale(out float scale)
+    {
+        bool preferDlss = Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
+        if (preferDlss && TryResolveDlssInternalResolutionScale(out scale))
+            return true;
+        if (TryResolveXessInternalResolutionScale(out scale))
+            return true;
+        if (!preferDlss && TryResolveDlssInternalResolutionScale(out scale))
+            return true;
+
+        scale = 1.0f;
+        return false;
+    }
+
+    private static bool TryResolveDlssInternalResolutionScale(out float scale)
+    {
+        if (Engine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported)
+        {
+            scale = NvidiaDlssManager.GetRecommendedRenderScale(Engine.Rendering.Settings);
+            return scale < 1.0f;
+        }
+
+        scale = 1.0f;
+        return false;
+    }
+
+    private static bool TryResolveXessInternalResolutionScale(out float scale)
+    {
+        if (Engine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported)
+        {
+            scale = IntelXessManager.GetRecommendedRenderScale(Engine.Rendering.Settings);
+            return scale < 1.0f;
+        }
+
+        scale = 1.0f;
+        return false;
     }
 
     internal XRMaterial GetVoxelConeTracingVoxelizationMaterial()

@@ -161,6 +161,9 @@ namespace XREngine.Rendering.XeSS
             viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
         }
 
+        internal static float GetRecommendedRenderScale(Engine.Rendering.EngineSettings settings)
+            => ComputeScale(settings);
+
         private static float ComputeScale(Engine.Rendering.EngineSettings settings)
         {
             EnsureDetected();

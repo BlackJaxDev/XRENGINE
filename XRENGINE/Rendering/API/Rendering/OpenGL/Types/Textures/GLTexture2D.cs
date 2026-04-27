@@ -50,9 +50,22 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         {
             uint newWidth = sourceMipmaps[0].Width;
             uint newHeight = sourceMipmaps[0].Height;
+            uint requiredLevels = (uint)sourceMipmaps.Length;
+            if (Data.SparseTextureStreamingEnabled)
+            {
+                if (Data.SparseTextureStreamingLogicalWidth > 0)
+                    newWidth = Data.SparseTextureStreamingLogicalWidth;
+                if (Data.SparseTextureStreamingLogicalHeight > 0)
+                    newHeight = Data.SparseTextureStreamingLogicalHeight;
+
+                requiredLevels = Data.SparseTextureStreamingLogicalMipCount > 0
+                    ? (uint)Data.SparseTextureStreamingLogicalMipCount
+                    : (uint)(SparseTextureResidentBaseMipLevelOrZero + sourceMipmaps.Length);
+            }
+
             if (newWidth != _allocatedWidth
                 || newHeight != _allocatedHeight
-                || (uint)sourceMipmaps.Length > _allocatedLevels)
+                || requiredLevels > _allocatedLevels)
             {
                 DataResized();
             }
@@ -68,6 +81,15 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         => Data.MultiSample
         ? ETextureTarget.Texture2DMultisample
         : ETextureTarget.Texture2D;
+
+    private int SparseTextureResidentBaseMipLevelOrZero
+    {
+        get
+        {
+            int baseMipLevel = Data.SparseTextureStreamingResidentBaseMipLevel;
+            return baseMipLevel == int.MaxValue ? 0 : Math.Max(0, baseMipLevel);
+        }
+    }
 
     protected override void UnlinkData()
     {

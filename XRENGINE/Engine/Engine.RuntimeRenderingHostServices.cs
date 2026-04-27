@@ -142,7 +142,17 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
                     return;
                 }
 
-                if (!glTexture.TryScheduleSparseTextureStreamingTransitionAsync(request, cancellationToken, onCompleted, onError))
+                void CompleteAsyncTransition(SparseTextureStreamingTransitionResult result)
+                    => Engine.EnqueueRenderThreadTask(
+                        () => onCompleted(result),
+                        $"XRTexture2D.CompleteSparseTransition[{textureName}]");
+
+                void ReportAsyncTransitionError(Exception ex)
+                    => Engine.EnqueueRenderThreadTask(
+                        () => onError?.Invoke(ex),
+                        $"XRTexture2D.FailSparseTransition[{textureName}]");
+
+                if (!glTexture.TryScheduleSparseTextureStreamingTransitionAsync(request, cancellationToken, CompleteAsyncTransition, ReportAsyncTransitionError))
                     onCompleted(texture.ApplySparseTextureStreamingTransition(request));
             }
             catch (Exception ex)

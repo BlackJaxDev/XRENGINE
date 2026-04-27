@@ -193,6 +193,9 @@ public partial class GLTexture2D
         StorageSet = true;
         _sparseStorageAllocated = true;
         _allocatedLevels = (uint)request.LogicalMipCount;
+        _allocatedWidth = request.LogicalWidth;
+        _allocatedHeight = request.LogicalHeight;
+        _allocatedInternalFormat = request.SizedInternalFormat;
         _sparseLogicalWidth = request.LogicalWidth;
         _sparseLogicalHeight = request.LogicalHeight;
         _sparseLogicalMipCount = request.LogicalMipCount;

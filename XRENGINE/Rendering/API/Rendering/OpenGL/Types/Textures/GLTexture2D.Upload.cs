@@ -21,7 +21,7 @@ public partial class GLTexture2D
     /// synchronous path, but asset textures defer uploads across frames.
     /// </summary>
     private const long ProgressivePushDataThresholdBytes = 4 * 1024;
-    private const long ProgressiveMipUploadChunkBytes = 64 * 1024;
+    private const long ProgressiveMipUploadChunkBytes = 16 * 1024;
 
     private void ResetUnpackStateForTextureUpload()
         => ResetUnpackStateForTextureUpload(Api);
@@ -72,6 +72,16 @@ public partial class GLTexture2D
                 return;
             }
 
+            if (Data.SparseTextureStreamingEnabled
+                && Data.SparseTextureStreamingResidentBaseMipLevel == int.MaxValue)
+            {
+                // Sparse storage has been prepared, but the shared-context upload has not
+                // been exposed yet. Do not reinterpret stale CPU mip data at int.MaxValue.
+                ClearInvalidation();
+                IsPushing = false;
+                return;
+            }
+
             ApplyPendingImmutableStorageRecreate();
             Bind();
 
@@ -112,7 +122,7 @@ public partial class GLTexture2D
                     }
 
                     int mipLevelOffset = Data.SparseTextureStreamingEnabled
-                        ? Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel)
+                        ? SparseTextureResidentBaseMipLevelOrZero
                         : 0;
                     int smallestResidentMip = Mipmaps!.Length - 1;
                     int lockMipLevel = Data.StreamingLockMipLevel;
@@ -151,7 +161,7 @@ public partial class GLTexture2D
                 else
                 {
                     int mipLevelOffset = Data.SparseTextureStreamingEnabled
-                        ? Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel)
+                        ? SparseTextureResidentBaseMipLevelOrZero
                         : 0;
                     for (int i = 0; i < Mipmaps.Length; ++i)
                         PushMipmap(glTarget, i + mipLevelOffset, Mipmaps[i], internalFormatForce);
@@ -209,7 +219,7 @@ public partial class GLTexture2D
     private void ScheduleProgressiveMipUpload(GLEnum glTarget, EPixelInternalFormat? internalFormatForce, bool allowPostPushCallback)
     {
         int mipLevelOffset = Data.SparseTextureStreamingEnabled
-            ? Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel)
+            ? SparseTextureResidentBaseMipLevelOrZero
             : 0;
 
         int mipCount = Mipmaps!.Length;
@@ -312,7 +322,7 @@ public partial class GLTexture2D
         EPixelInternalFormat? internalFormatForce,
         ref int nextRow)
     {
-        int glLevel = mipLevel - (Data.SparseTextureStreamingEnabled ? Data.SparseTextureStreamingResidentBaseMipLevel : 0);
+        int glLevel = mipLevel;
         if (!IsMipLevelInAllocatedRange(glLevel))
         {
             Debug.OpenGLWarning(
@@ -423,7 +433,7 @@ public partial class GLTexture2D
 
             EPixelInternalFormat? internalFormatForce = EnsureStorageAllocated();
             int actualMipIndex = Data.SparseTextureStreamingEnabled
-                ? mipIndex + Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel)
+                ? mipIndex + SparseTextureResidentBaseMipLevelOrZero
                 : mipIndex;
             PushMipmap(ToGLEnum(TextureTarget), actualMipIndex, Mipmaps[mipIndex], internalFormatForce);
 
@@ -449,7 +459,7 @@ public partial class GLTexture2D
     private unsafe void PushMipmap(GLEnum glTarget, int mipIndex, MipmapInfo? info, EPixelInternalFormat? internalFormatForce)
     {
         using var sample = Engine.Profiler.Start("GLTexture2D.PushMipmap");
-        int glLevel = mipIndex - (Data.SparseTextureStreamingEnabled ? Data.SparseTextureStreamingResidentBaseMipLevel : 0);
+        int glLevel = mipIndex;
         if (!Data.Resizable && !StorageSet)
         {
             Debug.OpenGLWarning("Texture storage not set on non-resizable texture, can't push mipmaps.");
@@ -534,7 +544,13 @@ public partial class GLTexture2D
         else
         {
             using var uploadSample = Engine.Profiler.Start("GLTexture2D.PushMipmap.AllocateNoData");
-            PushWithNoData(glTarget, glLevel, Data.Width >> mipIndex, Data.Height >> mipIndex, pixelFormat, pixelType, internalPixelFormat, fullPush);
+            uint width = Data.SparseTextureStreamingEnabled && Data.SparseTextureStreamingLogicalWidth > 0
+                ? Data.SparseTextureStreamingLogicalWidth >> mipIndex
+                : Data.Width >> mipIndex;
+            uint height = Data.SparseTextureStreamingEnabled && Data.SparseTextureStreamingLogicalHeight > 0
+                ? Data.SparseTextureStreamingLogicalHeight >> mipIndex
+                : Data.Height >> mipIndex;
+            PushWithNoData(glTarget, glLevel, width, height, pixelFormat, pixelType, internalPixelFormat, fullPush);
         }
 
         if (info is not null)

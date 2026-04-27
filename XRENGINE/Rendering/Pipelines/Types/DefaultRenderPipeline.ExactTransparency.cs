@@ -152,7 +152,7 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, GPURenderDispatch);
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
         }
-        c.Add<VPRC_RenderQuadFBO>().FrameBufferName = PpllResolveFBOName;
+        c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
 
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
         for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
@@ -166,7 +166,7 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, GPURenderDispatch);
             }
         }
-        c.Add<VPRC_RenderQuadFBO>().FrameBufferName = DepthPeelingResolveFBOName;
+        c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
         c.Add<VPRC_Manual>().ManualAction = () => _activeDepthPeelLayerIndex = -1;
     }
 
@@ -329,7 +329,7 @@ public partial class DefaultRenderPipeline
         };
         material.SettingUniforms += PpllResolveMaterial_SettingUniforms;
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = PpllResolveFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = PpllResolveFBOName };
         fbo.SettingUniforms += PpllResolveFBO_SettingUniforms;
 
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
@@ -375,7 +375,7 @@ public partial class DefaultRenderPipeline
         };
         material.SettingUniforms += DepthPeelingResolveMaterial_SettingUniforms;
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = DepthPeelingResolveFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DepthPeelingResolveFBOName };
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
         fbo.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         return fbo;
