@@ -482,7 +482,7 @@ public partial class DefaultRenderPipeline
     private void AppendTransparencyPasses(ViewportRenderCommandContainer c)
     {
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
-        c.Add<VPRC_RenderQuadFBO>().FrameBufferName = DeferredTransparencyBlurFBOName;
+        c.Add<VPRC_RenderQuadFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
         c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
         c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
@@ -492,7 +492,7 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_DepthWrite>().Allow = false;
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
         }
-        c.Add<VPRC_RenderQuadFBO>().FrameBufferName = TransparentResolveFBOName;
+        c.Add<VPRC_RenderQuadFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
 
         AppendExactTransparencyCommands(c);
     }

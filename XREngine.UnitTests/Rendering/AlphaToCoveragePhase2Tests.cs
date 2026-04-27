@@ -334,6 +334,46 @@ public sealed class AlphaToCoveragePhase2Tests
     }
 
     [Test]
+    public void TransparencyResolveQuads_RenderIntoTheirOwnExplicitTargets()
+    {
+        string pipelineCommandSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        pipelineCommandSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);");
+        pipelineCommandSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);");
+
+        string pipelineExactSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.ExactTransparency.cs").Replace("\r\n", "\n");
+        pipelineExactSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);");
+        pipelineExactSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);");
+
+        string pipeline2CommandSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        pipeline2CommandSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);");
+        pipeline2CommandSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);");
+
+        string pipeline2ExactSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.ExactTransparency.cs").Replace("\r\n", "\n");
+        pipeline2ExactSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);");
+        pipeline2ExactSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);");
+    }
+
+    [Test]
+    public void TransparencyResolveQuads_DisableMaterialDerivedTargets()
+    {
+        string pipelineFboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs");
+        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DeferredTransparencyBlurFBOName }");
+        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = TransparentResolveFBOName }");
+
+        string pipelineExactSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.ExactTransparency.cs");
+        pipelineExactSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = PpllResolveFBOName }");
+        pipelineExactSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DepthPeelingResolveFBOName }");
+
+        string pipeline2FboSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs");
+        pipeline2FboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DeferredTransparencyBlurFBOName }");
+        pipeline2FboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = TransparentResolveFBOName }");
+
+        string pipeline2ExactSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.ExactTransparency.cs");
+        pipeline2ExactSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = PpllResolveFBOName }");
+        pipeline2ExactSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DepthPeelingResolveFBOName }");
+    }
+
+    [Test]
     public void MsaaAttachmentFbos_ValidateCurrentDepthAndColorAttachments()
     {
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");

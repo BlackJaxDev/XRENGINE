@@ -91,6 +91,55 @@ public sealed class GLTexture2DContractTests
     }
 
     [Test]
+    public void GLTexture2D_SparseStorageTracksLogicalAllocationMetadata()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+
+        source.ShouldContain("_allocatedWidth = request.LogicalWidth;");
+        source.ShouldContain("_allocatedHeight = request.LogicalHeight;");
+        source.ShouldContain("_allocatedInternalFormat = request.SizedInternalFormat;");
+        source.ShouldContain("newWidth = Data.SparseTextureStreamingLogicalWidth;");
+        source.ShouldContain("requiredLevels = Data.SparseTextureStreamingLogicalMipCount > 0");
+    }
+
+    [Test]
+    public void GLTexture2D_SparseResidentUploadsUseLogicalMipLevels()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+
+        source.ShouldContain("int actualMipIndex = Data.SparseTextureStreamingEnabled");
+        source.ShouldContain("Data.SparseTextureStreamingResidentBaseMipLevel == int.MaxValue");
+        source.ShouldContain("ClearInvalidation();");
+        source.ShouldContain("int glLevel = mipLevel;");
+        source.ShouldContain("int glLevel = mipIndex;");
+        source.ShouldNotContain("mipLevel - (Data.SparseTextureStreamingEnabled");
+        source.ShouldNotContain("mipIndex - (Data.SparseTextureStreamingEnabled");
+    }
+
+    [Test]
+    public void GLTexture2D_SparseAsyncPromotionRequiresExistingVisibleCommit()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+
+        source.ShouldContain("bool hasPreviousCommit = previousCommittedBaseMipLevel != int.MaxValue;");
+        source.ShouldContain("if (!hasPreviousCommit)");
+        source.ShouldContain("if (isDemotion)");
+        source.ShouldContain("SetSparseMipSamplingRange(currentVisibleBaseMipLevel, request.LogicalMipCount - 1);");
+        source.ShouldContain("ClearInvalidation();");
+    }
+
+    [Test]
+    public void GLTexture2D_LodBiasChangesAreFlushedToOpenGL()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture.cs");
+
+        source.ShouldContain("LodBias = 1 << 4");
+        source.ShouldContain("nameof(XRTexture2D.LodBias) => TexturePropertyUpdateMask.LodBias");
+        source.ShouldContain("Data is XRTexture2D texture2D");
+        source.ShouldContain("Api.TextureParameter(id, GLEnum.TextureLodBias, texture2D.LodBias);");
+    }
+
+    [Test]
     public void XRTexture2D_ApplyResidentDataLogsPromotion()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.ImportedStreaming.cs");

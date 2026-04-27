@@ -1,6 +1,5 @@
 using System;
 using XREngine.Rendering.RenderGraph;
-using System.Linq;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -9,6 +8,18 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         public string? FrameBufferName { get; set; }
         public string? TargetFrameBufferName { get; set; }
+        public bool RenderToSourceFrameBuffer { get; set; }
+
+        public VPRC_RenderQuadFBO SetOptions(
+            string frameBufferName,
+            string? targetFrameBufferName = null,
+            bool renderToSourceFrameBuffer = false)
+        {
+            FrameBufferName = frameBufferName;
+            TargetFrameBufferName = targetFrameBufferName;
+            RenderToSourceFrameBuffer = renderToSourceFrameBuffer;
+            return this;
+        }
 
         protected override void Execute()
         {
@@ -16,6 +27,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             string target = TargetFrameBufferName
+                ?? (RenderToSourceFrameBuffer ? FrameBufferName : null)
                 ?? ActivePipelineInstance.RenderState.OutputFBO?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
@@ -28,7 +40,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (inputFBO is null)
                 return;
 
-            inputFBO.Render(TargetFrameBufferName != null ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName) : null);
+            XRFrameBuffer? targetFBO = TargetFrameBufferName is not null
+                ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
+                : RenderToSourceFrameBuffer ? inputFBO : null;
+
+            inputFBO.Render(targetFBO);
         }
 
         private int ResolvePassIndex(string passName)
@@ -37,8 +53,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (metadata is null)
                 return int.MinValue;
 
-            var match = metadata.FirstOrDefault(m => string.Equals(m.Name, passName, StringComparison.OrdinalIgnoreCase));
-            return match?.PassIndex ?? int.MinValue;
+            foreach (var match in metadata)
+            {
+                if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
+                    return match.PassIndex;
+            }
+
+            return int.MinValue;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
@@ -49,6 +70,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             string target = TargetFrameBufferName
+                ?? (RenderToSourceFrameBuffer ? FrameBufferName : null)
                 ?? context.CurrentRenderTarget?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 

@@ -124,7 +124,7 @@ Reference points:
 
 Implemented in code via `Engine.Rendering.VulkanUpscaleBridge.cs`, `VulkanUpscaleBridgeProbe.cs`, OpenGL startup capability logging, and OpenGL fallback diagnostics in `VPRC_VendorUpscale`.
 
-- [x] **0.1** Lock MVP scope: Windows, mono viewport, DLSS first, SDR first.
+- [x] **0.1** Lock MVP scope: Windows, mono viewport, DLSS first, with SDR and HDR output supported by the bridge.
 - [x] **0.2** Decide ownership model: per-window vs per-viewport bridge. Default to per-viewport unless a hard reason appears otherwise.
 - [x] **0.3** Add environment override: `XRE_ENABLE_VULKAN_UPSCALE_BRIDGE` defaults to enabled and accepts `0`/`false` to disable bridge dispatch.
 - [x] **0.4** Add a startup capability snapshot for bridge prerequisites:
@@ -141,6 +141,7 @@ Implemented in code via `Engine.Rendering.VulkanUpscaleBridge.cs`, `VulkanUpscal
   - source depth
   - source motion
   - output color
+  - exposure
 - [x] **0.8** Decide whether the initial bridge uses copy/resolve into bridge surfaces or direct render-to-bridge textures. Default to copy/resolve first for lower risk.
 
 ---
@@ -290,7 +291,7 @@ Current status:
   - source color: `RGBA16f` (internal res)
   - source depth: `Depth24Stencil8` (internal res)
   - source motion: `RG16f` (internal res)
-  - output color: `RGBA8` for the active SDR MVP, with `RGBA16f` already wired for the future HDR-capable output path
+  - output color: `RGBA8` for SDR output, `RGBA16f` for HDR output
 - [x] **7.7** Expose the auto-exposure result (scalar float) to the bridge. Currently it lives in the history exposure FBO — the bridge needs a readback-free path to pass it (GPU buffer copy or shared uniform).
 - [x] **7.8** Decide whether to emit a reactive/transparency mask texture for improved upscaler quality. MVP decision: keep the current shader-side reactive logic and do not emit a dedicated bridge mask yet.
 - [x] **7.9** Apply any necessary resource-name or final-output changes to both `DefaultRenderPipeline` and `DefaultRenderPipeline2`.
@@ -326,7 +327,7 @@ Automated coverage now lives in `XREngine.UnitTests/Rendering/VulkanUpscaleBridg
 
 ## Phase 9 - Future Expansion Notes
 
-- HDR-aware bridge formats and color-space handling.
+- Expanded HDR color-space validation across vendor runtimes and displays.
 - XR / stereo support.
 - Editor multi-viewport support.
 - Optional direct Vulkan present path instead of round-tripping output back to GL.
@@ -340,7 +341,7 @@ Automated coverage now lives in `XREngine.UnitTests/Rendering/VulkanUpscaleBridg
 - [x] **Q1** Per-viewport or per-window bridge ownership? Per-viewport.
 - [x] **Q2** Copy/resolve into bridge surfaces first, or render directly into external-memory-backed GL textures? Copy/resolve first.
 - [x] **Q3** Keep the whole bridge in managed Silk.NET, or move the Vulkan import + vendor glue into a native helper DLL if SDK friction gets too high? Managed Silk.NET for the shipping MVP bridge.
-- [x] **Q4** What exact internal formats are required for color, depth, motion, and output in the first supported DLSS/XeSS path? `RGBA16f` source color, `Depth24Stencil8` source depth, `RG16f` source motion, shared `R32f` exposure, and `RGBA8` output for the active SDR MVP with `RGBA16f` already wired for future HDR output.
+- [x] **Q4** What exact internal formats are required for color, depth, motion, and output in the first supported DLSS/XeSS path? `RGBA16f` source color, `Depth24Stencil8` source depth, `RG16f` source motion, shared `R32f` exposure, and `RGBA8`/`RGBA16f` output for SDR/HDR respectively.
 - [x] **Q5** Do we return the final upscaled image to GL for present in all MVP cases, or are there any scenarios where Vulkan-owned present is worth taking earlier? Return the upscaled image to OpenGL for present in all MVP cases.
 - [x] **Q6** What exact GL depth convention conversion is required before feeding the Vulkan-side vendor path? None beyond preserving `Depth24Stencil8` and forwarding the reversed-Z flag to the vendor SDKs.
 - [x] **Q7** What motion-vector convention does the velocity pass output — NDC, screen-space pixels, or UV-space? The velocity pass outputs NDC-delta motion in `RG16f`; the bridge normalizes it with a `0.5` scale before DLSS/XeSS dispatch.

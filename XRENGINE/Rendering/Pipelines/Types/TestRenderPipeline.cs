@@ -12,10 +12,7 @@ public class TestRenderPipeline : RenderPipeline
     protected override Lazy<XRMaterial> InvalidMaterialFactory => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);
 
     private XRMaterial MakeInvalidMaterial()
-    {
-        Debug.Out("Generating invalid material");
-        return XRMaterial.CreateUnlitColorMaterialForward();
-    }
+        => XRMaterial.CreateUnlitColorMaterialForward();
 
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         => new() { { (int)EDefaultRenderPass.OpaqueForward, _farToNearSorter }, };

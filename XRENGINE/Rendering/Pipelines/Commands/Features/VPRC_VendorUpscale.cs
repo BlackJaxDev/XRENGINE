@@ -398,9 +398,13 @@ void main()
 
             if (!ok || bridgeOutput is null)
             {
-                bridge.MarkNeedsRecreate(string.IsNullOrWhiteSpace(bridgeFailure)
-                    ? $"{vendor} bridge dispatch failed"
-                    : bridgeFailure);
+                if (ShouldRecreateBridgeAfterDispatchFailure(bridgeFailure))
+                {
+                    bridge.MarkNeedsRecreate(string.IsNullOrWhiteSpace(bridgeFailure)
+                        ? $"{vendor} bridge dispatch failed"
+                        : bridgeFailure);
+                }
+
                 failureReason = string.IsNullOrWhiteSpace(bridgeFailure)
                     ? $"bridge {vendor} submission failed"
                     : bridgeFailure;
@@ -759,6 +763,19 @@ void main()
             out XRFrameBuffer? bridgeSourceFbo,
             out string failureReason)
         {
+            if (!string.IsNullOrWhiteSpace(SourceTextureName))
+            {
+                return TryEnsureBridgeHelperFrameBuffer(
+                    renderer,
+                    resolvedColorTexture,
+                    EFrameBufferAttachment.ColorAttachment0,
+                    "VendorUpscale.Bridge.SourceColorFBO",
+                    ref _bridgeSourceTextureFbo,
+                    ref _bridgeSourceTexture,
+                    out bridgeSourceFbo,
+                    out failureReason);
+            }
+
             if (sourceFrameBuffer is not null && FrameBufferHasColorAttachment(sourceFrameBuffer))
             {
                 bridgeSourceFbo = sourceFrameBuffer;
@@ -951,6 +968,9 @@ void main()
 
         private static bool IsBridgePathRequested()
             => Engine.EffectiveSettings.EnableIntelXess || Engine.EffectiveSettings.EnableNvidiaDlss;
+
+        private static bool ShouldRecreateBridgeAfterDispatchFailure(string failureReason)
+            => !NvidiaDlssManager.Native.IsTerminalBridgeFailureMessage(failureReason);
 
         private static void DestroyBridgeHelperFrameBuffer(ref XRFrameBuffer? frameBuffer, ref XRTexture? cachedTexture)
         {

@@ -4,7 +4,9 @@ using System.Diagnostics;
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.DLSS;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.XeSS;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -531,14 +533,16 @@ public sealed class VulkanUpscaleBridge : IDisposable
         _state = newState;
         _lastStateReason = reason;
 
-        if (newState is EVulkanUpscaleBridgeState.Initializing or EVulkanUpscaleBridgeState.NeedsRecreate or EVulkanUpscaleBridgeState.Ready)
-            _loggedStateFingerprints.Clear();
-
         if (!log)
             return;
 
         string reasonText = string.IsNullOrWhiteSpace(reason) ? "<none>" : reason;
-        string logFingerprint = string.Concat(newState.ToString(), "|", reasonText);
+        string logFingerprint = string.Concat(
+            newState.ToString(),
+            "|",
+            reasonText,
+            "|",
+            _resourceGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         if (!_loggedStateFingerprints.Add(logFingerprint))
             return;
 
@@ -628,7 +632,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
 
         if (frameResources.OutputHdr && !snapshot.HdrSupported)
         {
-            reason = "bridge MVP is SDR only";
+            reason = "bridge HDR output is unavailable";
             return EVulkanUpscaleBridgeState.Unsupported;
         }
 
@@ -656,8 +660,32 @@ public sealed class VulkanUpscaleBridge : IDisposable
             return EVulkanUpscaleBridgeState.Unsupported;
         }
 
+        if (!TryResolveRequestedVendorRuntime(in frameResources, out reason))
+            return EVulkanUpscaleBridgeState.Unsupported;
+
         reason = "bridge prerequisites satisfied";
         return EVulkanUpscaleBridgeState.Ready;
+    }
+
+    private static bool TryResolveRequestedVendorRuntime(
+        in VulkanUpscaleBridgeFrameResources frameResources,
+        out string reason)
+    {
+        bool dlssSupported = frameResources.EnableDlss && NvidiaDlssManager.IsSupported;
+        bool xessSupported = frameResources.EnableXess && IntelXessManager.IsSupported;
+        if (dlssSupported || xessSupported)
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        bool preferDlss = Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
+        string? dlssFailure = frameResources.EnableDlss ? NvidiaDlssManager.LastError : null;
+        string? xessFailure = frameResources.EnableXess ? IntelXessManager.LastError : null;
+        reason = preferDlss
+            ? dlssFailure ?? xessFailure ?? "No supported bridge vendor runtime is currently available."
+            : xessFailure ?? dlssFailure ?? "No supported bridge vendor runtime is currently available.";
+        return false;
     }
 
     private static string ResolveConfigurationChangeReason(

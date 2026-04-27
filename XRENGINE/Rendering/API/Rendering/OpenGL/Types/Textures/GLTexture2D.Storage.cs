@@ -42,7 +42,7 @@ public partial class GLTexture2D
                 requestedLevels = mipmapCount;
             if (Data.SparseTextureStreamingEnabled)
             {
-                int residentBaseMipLevel = Math.Max(0, Data.SparseTextureStreamingResidentBaseMipLevel);
+                int residentBaseMipLevel = SparseTextureResidentBaseMipLevelOrZero;
                 int residentMipCount = Math.Max(0, Mipmaps?.Length ?? 0);
                 int logicalMipCount = Math.Max(0, Data.SparseTextureStreamingLogicalMipCount);
 

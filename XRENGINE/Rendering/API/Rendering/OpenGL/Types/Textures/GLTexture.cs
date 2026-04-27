@@ -67,7 +67,8 @@ namespace XREngine.Rendering.OpenGL
             MaxLOD = 1 << 1,
             LargestMipmapLevel = 1 << 2,
             SmallestAllowedMipmapLevel = 1 << 3,
-            All = MinLOD | MaxLOD | LargestMipmapLevel | SmallestAllowedMipmapLevel
+            LodBias = 1 << 4,
+            All = MinLOD | MaxLOD | LargestMipmapLevel | SmallestAllowedMipmapLevel | LodBias
         }
 
         private static readonly ConcurrentQueue<GLTexture<T>> s_pendingPropertyUpdateTextures = new();
@@ -86,6 +87,7 @@ namespace XREngine.Rendering.OpenGL
                 nameof(XRTexture.MaxLOD) => TexturePropertyUpdateMask.MaxLOD,
                 nameof(XRTexture.LargestMipmapLevel) => TexturePropertyUpdateMask.LargestMipmapLevel,
                 nameof(XRTexture.SmallestAllowedMipmapLevel) => TexturePropertyUpdateMask.SmallestAllowedMipmapLevel,
+                nameof(XRTexture2D.LodBias) => TexturePropertyUpdateMask.LodBias,
                 _ => TexturePropertyUpdateMask.None
             };
 
@@ -159,6 +161,13 @@ namespace XREngine.Rendering.OpenGL
             {
                 int param = Data.SmallestAllowedMipmapLevel;
                 Api.TextureParameterI(id, TextureParameterName.TextureMaxLevel, ref param);
+            }
+
+            if (mask.HasFlag(TexturePropertyUpdateMask.LodBias)
+                && !IsMultisampleTarget
+                && Data is XRTexture2D texture2D)
+            {
+                Api.TextureParameter(id, GLEnum.TextureLodBias, texture2D.LodBias);
             }
         }
 

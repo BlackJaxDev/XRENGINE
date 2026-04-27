@@ -297,7 +297,7 @@ namespace XREngine
                 {
                     foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                     {
-                        if (!NvidiaDlssManager.IsSupported || !Settings.EnableNvidiaDlss)
+                        if (!NvidiaDlssManager.IsSupported || !EffectiveSettings.EnableNvidiaDlss)
                             NvidiaDlssManager.ResetViewport(viewport);
                         else
                             NvidiaDlssManager.ApplyToViewport(viewport, Settings);
