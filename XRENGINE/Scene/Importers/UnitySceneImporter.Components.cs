@@ -880,25 +880,19 @@ internal static partial class UnitySceneImporter
 
     private static XRMaterial? LoadUnityMaterial(string materialPath, ImportState state)
     {
-        if (LoadUnityDocumentMapping(materialPath, "Material") is not YamlMappingNode materialMapping)
-            return null;
-
-        string materialName = GetScalarString(materialMapping, "m_Name") ?? Path.GetFileNameWithoutExtension(materialPath);
-        ColorF4 baseColor = ResolveMaterialColor(materialMapping);
-        XRTexture2D? mainTexture = ResolveMaterialTexture(materialMapping, state);
-
         try
         {
-            XRMaterial material = mainTexture is not null
-                ? XRMaterial.CreateLitTextureMaterial(mainTexture)
-                : XRMaterial.CreateLitColorMaterial(baseColor);
-            material.Name = materialName;
-            return material;
+            UnityMaterialImportResult result = UnityMaterialImporter.ImportWithReport(materialPath, state.ProjectRoot);
+            foreach (string warning in result.Warnings)
+                Debug.LogWarning(warning);
+
+            return result.Material;
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Unity material '{materialName}' could not resolve engine shaders during import; using a placeholder material instead. {ex.Message}");
-            return CreateFallbackUnityMaterial(materialName, baseColor);
+            string materialName = Path.GetFileNameWithoutExtension(materialPath);
+            Debug.LogWarning($"Unity material '{materialName}' could not be imported; using a placeholder material instead. {ex.Message}");
+            return CreateFallbackUnityMaterial(materialName, ColorF4.White);
         }
     }
 

@@ -18,6 +18,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
 | Default render pipeline V2 | Active | [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
+| Forward depth-normal TransformId | Active | [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md) | Shared forward prepass follow-up so depth, normal, and transform ID describe the same surface. |
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
 | Physics-chain performance | Active | [todo/physics-chain-speed-update-todo.md](todo/physics-chain-speed-update-todo.md) | Prior compatibility notes were merged into the active TODO. |
 | Native FBX import/export | Active | [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md) | Assimp replacement roadmap for a low-allocation native FBX path. |
@@ -49,6 +50,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md)
 - [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md)
 - [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md)
+- [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md)
 - [todo/gpu-rendering.md](todo/gpu-rendering.md)
 - [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md)
 - [todo/hbao-hbao-plus-implementation-todo.md](todo/hbao-hbao-plus-implementation-todo.md)

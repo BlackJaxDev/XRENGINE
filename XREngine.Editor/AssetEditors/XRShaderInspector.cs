@@ -6,6 +6,8 @@ using System.Linq;
 using ImGuiNET;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Editor.IMGUI;
+using XREngine.Editor.UI.Tools;
 using XREngine.Rendering;
 
 namespace XREngine.Editor.AssetEditors;
@@ -17,6 +19,7 @@ public sealed class XRShaderInspector : IXRAssetInspector
     private static readonly Vector4 ValidationErrorColor = new(0.93f, 0.36f, 0.31f, 1f);
     private static readonly Vector4 ValidationWarningColor = new(0.96f, 0.74f, 0.23f, 1f);
     private static readonly Vector4 ValidationOkColor = new(0.32f, 0.82f, 0.52f, 1f);
+    private static readonly IReadOnlyList<ShaderEditorShaderPreset> ShaderPresets = ShaderEditorServices.GetShaderPresets();
 
     public void DrawInspector(EditorImGuiUI.InspectorTargetSet targets, HashSet<object> visitedObjects)
     {
@@ -55,6 +58,15 @@ public sealed class XRShaderInspector : IXRAssetInspector
             ImGui.TextColored(DirtyBadgeColor, "Modified");
         }
 
+        if (ImGui.Button("Open in Shader Editor"))
+        {
+            ShaderEditorWindow.Instance.LoadShader(shader);
+            ShaderEditorWindow.Instance.Open();
+        }
+
+        ImGui.SameLine();
+        DrawPresetDropdown(shader);
+
         ImGui.Separator();
     }
 
@@ -65,6 +77,33 @@ public sealed class XRShaderInspector : IXRAssetInspector
         if (!string.IsNullOrWhiteSpace(shader.FilePath))
             return Path.GetFileName(shader.FilePath) ?? shader.GetType().Name;
         return shader.GetType().Name;
+    }
+
+    private static void DrawPresetDropdown(XRShader shader)
+    {
+        ImGui.SetNextItemWidth(185f);
+        if (!ImGui.BeginCombo("##XRShaderPreset", "Load Preset"))
+            return;
+
+        foreach (ShaderEditorShaderPreset preset in ShaderPresets)
+        {
+            if (ImGui.Selectable(preset.DisplayName))
+            {
+                using var _ = Undo.TrackChange($"Load {preset.DisplayName} Shader Preset", shader);
+                TextFile? previousSource = shader.Source;
+                if (previousSource is not null)
+                    Undo.Track(previousSource);
+
+                ShaderEditorServices.ApplyShaderPreset(shader, preset);
+                Undo.Track(shader.Source);
+                ShaderEditorWindow.Instance.LoadShader(shader);
+            }
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(preset.RelativePath);
+        }
+
+        ImGui.EndCombo();
     }
 
     private static void DrawCompilationSettings(XRShader shader)
@@ -80,7 +119,10 @@ public sealed class XRShaderInspector : IXRAssetInspector
             {
                 bool selected = value == shaderType;
                 if (ImGui.Selectable(value.ToString(), selected) && !selected)
+                {
+                    using var _ = Undo.TrackChange("Set Shader Type", shader);
                     shader.Type = value;
+                }
 
                 if (selected)
                     ImGui.SetItemDefaultFocus();
@@ -90,7 +132,11 @@ public sealed class XRShaderInspector : IXRAssetInspector
 
         bool generateAsync = shader.GenerateAsync;
         if (ImGui.Checkbox("Compile Asynchronously", ref generateAsync))
+        {
+            using var _ = Undo.TrackChange("Toggle Shader Async Compile", shader);
             shader.GenerateAsync = generateAsync;
+        }
+        ImGuiUndoHelper.TrackDragUndo("Toggle Shader Async Compile", shader);
 
         ImGui.Separator();
     }
@@ -104,7 +150,10 @@ public sealed class XRShaderInspector : IXRAssetInspector
         if (source is null)
         {
             if (ImGui.Button("Create Embedded Source"))
+            {
+                using var _ = Undo.TrackChange("Create Shader Source", shader);
                 shader.Source = TextFile.FromText(string.Empty);
+            }
             ImGui.Separator();
             return;
         }
@@ -119,7 +168,10 @@ public sealed class XRShaderInspector : IXRAssetInspector
         {
             ImGui.SameLine();
             if (ImGui.SmallButton("Reload##ShaderSourceReload"))
+            {
+                using var _ = Undo.TrackChange("Reload Shader Source", source);
                 source.Reload();
+            }
         }
 
         ImGui.Separator();

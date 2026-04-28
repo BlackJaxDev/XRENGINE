@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using MemoryPack;
 using NUnit.Framework;
@@ -18,7 +19,8 @@ public sealed class AnimationClipSerializationTests
         AnimationClip original = CreateSampleClip();
 
         string yaml = AssetManager.Serializer.Serialize(original, typeof(AnimationClip));
-        yaml.ShouldContain("RootMember:");
+        yaml.ShouldContain("Format: CookedBinary");
+        yaml.ShouldContain("Payload:");
         yaml.ShouldNotContain("Initialize:");
         yaml.ShouldNotContain("ParentClip:");
 
@@ -26,6 +28,40 @@ public sealed class AnimationClipSerializationTests
         clone.ShouldNotBeNull();
 
         AssertClipsEquivalent(original, clone!);
+    }
+
+    [Test]
+    public void SerializeTo_CreatesEmptyAnimationClipAssetFile_WithCookedPayload()
+    {
+        string directory = Path.Combine(TestContext.CurrentContext.WorkDirectory, "AnimationClipSerialization", Guid.NewGuid().ToString("N"));
+        string path = Path.Combine(directory, "Animation Clip.asset");
+        AnimationClip original = new()
+        {
+            Name = "Animation Clip",
+            FilePath = path,
+            SampleRate = 30,
+        };
+
+        try
+        {
+            original.SerializeTo(path, AssetManager.Serializer);
+
+            File.Exists(path).ShouldBeTrue();
+            string yaml = File.ReadAllText(path);
+            yaml.ShouldContain("Format: CookedBinary");
+            yaml.ShouldContain("Payload:");
+
+            AnimationClip? clone = AssetManager.DeserializeAssetFile(path, typeof(AnimationClip)) as AnimationClip;
+            clone.ShouldNotBeNull();
+            clone!.Name.ShouldBe(original.Name);
+            clone.SampleRate.ShouldBe(original.SampleRate);
+            clone.RootMember.ShouldBeNull();
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Test]

@@ -16,14 +16,19 @@ Model imports can route through a native format-specific importer or the older A
 Current limitations:
 
 - Non-hierarchy scene settings such as `RenderSettings`, `LightmapSettings`, `NavMeshSettings`, and `OcclusionCullingSettings` are currently skipped.
-- Material import currently covers the common `_BaseColor` / `_Color` tint and `_BaseMap` / `_MainTex` texture paths, but does not attempt shader-specific Unity material feature parity.
+- Material import covers common Unity `_BaseColor` / `_Color` tint and `_BaseMap` / `_MainTex` texture paths. Unity 2022 materials using Poiyomi Toon 9.3 or lilToon are additionally converted to the engine Uber shader path. See [Unity Conversion Integrations](unity-conversion-integrations.md) for the shader mapping scope.
 - Serialized Unity mesh assets currently import the common uncompressed vertex layouts used for positions, normals, tangents, colors, and UV0. More exotic compressed or multi-stream layouts may still need fallback handling.
 
 ## Default routing
 
+- The ImGui editor exposes `Tools > Import External Files...` and `Tools > Import External Folder...` to copy external sources into the project `Assets/` tree and optionally run the registered third-party import pipeline immediately. Folder import is the preferred path for Unity exports because it preserves `.meta` files and referenced material, shader, and texture dependencies.
 - `.fbx` files route through the native `XREngine.Fbx` importer by default.
 - `.gltf` and `.glb` files route through the native fastgltf-backed path by default.
+- `.anim` files route to `AnimationClip` through the Unity YAML animation importer.
+- `.unity`, `.prefab`, and `.mat` files route through the Unity YAML scene, prefab, and material importers.
 - Other third-party model formats still import through Assimp.
+
+For Unity-specific conversion behavior, including `.anim` caveats and Poiyomi/lilToon material mapping, see [Unity Conversion Integrations](unity-conversion-integrations.md).
 
 Compatibility overrides stay explicit and per format:
 

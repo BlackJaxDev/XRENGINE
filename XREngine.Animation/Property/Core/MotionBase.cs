@@ -138,7 +138,11 @@ namespace XREngine.Animation
             object? prevObject = parentObject;
             
             // Fallback: If Initialize delegate is null but we have a valid MemberType, call the appropriate method directly
-            if (member.Initialize is null && member.MemberType != EAnimationMemberType.Group)
+            if (member.MemberType == EAnimationMemberType.Group)
+            {
+                parentObject = prevObject;
+            }
+            else if (member.Initialize is null)
             {
                 LogWarningOnce($"[Animation] Initialize delegate was null for member '{member.MemberName}' (type={member.MemberType}). Calling initialization directly.");
                 parentObject = member.MemberType switch

@@ -1,19 +1,18 @@
 using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
+using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.UI;
-using XREngine.Scene;
 
 namespace XREngine.Editor.UI.Tools;
 
 /// <summary>
-/// A tool panel for generating "locked" versions of shaders.
-/// Replaces non-animated uniforms with constant values and optimizes code paths.
+/// Generates optimized shader variants by replacing non-animated uniforms with constants
+/// and running lightweight source cleanup passes.
 /// </summary>
-public partial class ShaderLockingTool : EditorPanel
+public sealed partial class ShaderVariantOptimizer : XRBase
 {
     #region Fields
 
@@ -75,52 +74,56 @@ public partial class ShaderLockingTool : EditorPanel
     public bool OptimizeDeadCode
     {
         get => _optimizeDeadCode;
-        set => SetField(ref _optimizeDeadCode, value);
+        set
+        {
+            if (SetField(ref _optimizeDeadCode, value))
+                UpdatePreview();
+        }
     }
 
     public bool EvaluateConstantExpressions
     {
         get => _evaluateConstantExpressions;
-        set => SetField(ref _evaluateConstantExpressions, value);
+        set
+        {
+            if (SetField(ref _evaluateConstantExpressions, value))
+                UpdatePreview();
+        }
     }
 
     public bool RemoveUnusedUniforms
     {
         get => _removeUnusedUniforms;
-        set => SetField(ref _removeUnusedUniforms, value);
+        set
+        {
+            if (SetField(ref _removeUnusedUniforms, value))
+                UpdatePreview();
+        }
     }
 
     public bool InlineSingleUseConstants
     {
         get => _inlineSingleUseConstants;
-        set => SetField(ref _inlineSingleUseConstants, value);
-    }
-
-    #endregion
-
-    #region Lifecycle
-
-    protected override void OnComponentActivated()
-    {
-        base.OnComponentActivated();
-        RemakeUI();
-    }
-
-    protected override void OnComponentDeactivated()
-    {
-        base.OnComponentDeactivated();
-        SceneNode.Transform.Clear();
-    }
-
-    private void RemakeUI()
-    {
-        // UI will be rendered via ImGui in the actual implementation
-        // This is a placeholder for component-based UI
+        set
+        {
+            if (SetField(ref _inlineSingleUseConstants, value))
+                UpdatePreview();
+        }
     }
 
     #endregion
 
     #region Material/Shader Handling
+
+    public void LoadShaderSource(string source, string? sourcePath, EShaderType shaderType)
+    {
+        _uniforms.Clear();
+        SelectedMaterial = null;
+        SelectedShader = new XRShader(shaderType)
+        {
+            Source = new TextFile { Text = source, FilePath = sourcePath }
+        };
+    }
 
     private void OnMaterialChanged()
     {
@@ -221,12 +224,12 @@ public partial class ShaderLockingTool : EditorPanel
 
     #endregion
 
-    #region Shader Locking
+    #region Variant Generation
 
     /// <summary>
-    /// Generates a locked version of the shader with non-animated uniforms replaced by constants.
+    /// Generates an optimized variant of the shader with non-animated uniforms replaced by constants.
     /// </summary>
-    public string GenerateLockedShader(string source, Dictionary<string, UniformLockInfo> uniforms)
+    public string GenerateOptimizedShader(string source, Dictionary<string, UniformLockInfo> uniforms)
     {
         var result = new StringBuilder(source);
 
@@ -577,19 +580,21 @@ public partial class ShaderLockingTool : EditorPanel
             return;
         }
 
-        _previewText = GenerateLockedShader(_selectedShader.Source.Text, _uniforms);
+        _previewText = GenerateOptimizedShader(_selectedShader.Source.Text, _uniforms);
     }
 
     public string GetPreviewText() => _previewText;
+
+    public void RegeneratePreview() => UpdatePreview();
 
     #endregion
 
     #region Export
 
     /// <summary>
-    /// Exports the locked shader to a file.
+    /// Exports the optimized shader variant to a file.
     /// </summary>
-    public bool ExportLockedShader(string outputPath)
+    public bool ExportOptimizedShader(string outputPath)
     {
         if (string.IsNullOrEmpty(_previewText))
         {
@@ -603,11 +608,11 @@ public partial class ShaderLockingTool : EditorPanel
             // Add header comment
             var header = new StringBuilder();
             header.AppendLine("// ============================================");
-            header.AppendLine("// LOCKED SHADER - Auto-generated");
+            header.AppendLine("// OPTIMIZED SHADER VARIANT - Auto-generated");
             header.AppendLine($"// Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             header.AppendLine($"// Source: {_selectedShader?.Source?.FilePath ?? "Unknown"}");
             header.AppendLine("// ");
-            header.AppendLine("// Locked uniforms (converted to constants):");
+            header.AppendLine("// Constant uniforms:");
             foreach (var kvp in _uniforms.Where(u => !u.Value.IsAnimated))
             {
                 header.AppendLine($"//   {kvp.Key} = {kvp.Value.Value}");
@@ -627,7 +632,7 @@ public partial class ShaderLockingTool : EditorPanel
         }
         catch (Exception ex)
         {
-            Debug.LogError($"Failed to export locked shader: {ex.Message}");
+            Debug.LogError($"Failed to export optimized shader variant: {ex.Message}");
             return false;
         }
     }
@@ -654,7 +659,7 @@ public partial class ShaderLockingTool : EditorPanel
             string extension = Path.GetExtension(shader.Source.FilePath ?? ".glsl");
             string outputPath = Path.Combine(outputDirectory, $"{fileName}{_outputSuffix}{extension}");
 
-            ExportLockedShader(outputPath);
+            ExportOptimizedShader(outputPath);
         }
     }
 

@@ -589,6 +589,8 @@ public static partial class EditorImGuiUI
                 EditorUnitTests.UserInterface.DrawNewProjectDialog();
             using (Engine.Profiler.Start("UI.DrawArchiveImportDialog"))
                 DrawArchiveImportDialog();
+            using (Engine.Profiler.Start("UI.DrawExternalFileImportDialog"))
+                DrawExternalFileImportDialog();
 
             using (Engine.Profiler.Start("UI.DrawProfilerPanel"))
                 DrawProfilerPanel();
@@ -636,14 +638,10 @@ public static partial class EditorImGuiUI
                 PersistPanelVisibilityToImGuiIniIfChanged();
 
             // Tool windows
-            using (Engine.Profiler.Start("UI.Tools.ShaderLockingWindow.Render"))
-                UI.Tools.ShaderLockingWindow.Instance.Render();
-            using (Engine.Profiler.Start("UI.Tools.ShaderLockingWindow.RenderDialogs"))
-                UI.Tools.ShaderLockingWindow.Instance.RenderDialogs();
-            using (Engine.Profiler.Start("UI.Tools.ShaderAnalyzerWindow.Render"))
-                UI.Tools.ShaderAnalyzerWindow.Instance.Render();
-            using (Engine.Profiler.Start("UI.Tools.ShaderCrossCompilerWindow.Render"))
-                UI.Tools.ShaderCrossCompilerWindow.Instance.Render();
+            using (Engine.Profiler.Start("UI.Tools.ShaderEditorWindow.Render"))
+                UI.Tools.ShaderEditorWindow.Instance.Render();
+            using (Engine.Profiler.Start("UI.Tools.ShaderEditorWindow.RenderDialogs"))
+                UI.Tools.ShaderEditorWindow.Instance.RenderDialogs();
             using (Engine.Profiler.Start("UI.Tools.McpAssistantWindow.Render"))
                 UI.Tools.McpAssistantWindow.Instance.Render();
 
@@ -1249,20 +1247,20 @@ public static partial class EditorImGuiUI
 
             if (ImGui.BeginMenu("Tools"))
             {
+                if (ImGui.MenuItem("Import External Files..."))
+                    OpenExternalFilesImportDialog();
+
+                if (ImGui.MenuItem("Import External Folder..."))
+                    OpenExternalFolderImportDialog();
+
                 if (ImGui.MenuItem("Import Archive..."))
                     OpenArchiveImportDialog();
 
                 if (ImGui.MenuItem("Archive Inspector"))
                     _showArchiveInspector = true;
 
-                if (ImGui.MenuItem("Shader Locking Tool"))
-                    ShaderLockingWindow.Instance.Open();
-
-                if (ImGui.MenuItem("Shader Analyzer Tool"))
-                    ShaderAnalyzerWindow.Instance.Open();
-
-                if (ImGui.MenuItem("Shader Cross-Compiler"))
-                    ShaderCrossCompilerWindow.Instance.Open();
+                if (ImGui.MenuItem("Shader Editor"))
+                    ShaderEditorWindow.Instance.Open();
 
                 if (ImGui.MenuItem("MCP Assistant"))
                     McpAssistantWindow.Instance.Open();
