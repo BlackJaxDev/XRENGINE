@@ -49,11 +49,12 @@ const float FLT_MAX = 3.402823466e+38;
 shared vec4 sharedMin[gl_WorkGroupSize.x];
 shared vec4 sharedMax[gl_WorkGroupSize.x];
 
-// Keep the atomic compare-swap inline so drivers retain the original storage qualifiers.
-void atomicMinVec(inout uvec4 target, vec4 value)
+// Keep compare-swap targets as direct SSBO lvalues; passing them through an inout
+// parameter strips the storage qualifier on some GLSL compilers.
+void atomicMinVec(vec4 value)
 {
     {
-        uint oldValue = target.x;
+        uint oldValue = MinBoundsBits.x;
         uint assumed;
         uint encoded = floatBitsToUint(value.x);
         do
@@ -61,12 +62,12 @@ void atomicMinVec(inout uvec4 target, vec4 value)
             assumed = oldValue;
             if (value.x >= uintBitsToFloat(assumed))
                 break;
-            oldValue = atomicCompSwap(target.x, assumed, encoded);
+            oldValue = atomicCompSwap(MinBoundsBits.x, assumed, encoded);
         } while (assumed != oldValue);
     }
 
     {
-        uint oldValue = target.y;
+        uint oldValue = MinBoundsBits.y;
         uint assumed;
         uint encoded = floatBitsToUint(value.y);
         do
@@ -74,12 +75,12 @@ void atomicMinVec(inout uvec4 target, vec4 value)
             assumed = oldValue;
             if (value.y >= uintBitsToFloat(assumed))
                 break;
-            oldValue = atomicCompSwap(target.y, assumed, encoded);
+            oldValue = atomicCompSwap(MinBoundsBits.y, assumed, encoded);
         } while (assumed != oldValue);
     }
 
     {
-        uint oldValue = target.z;
+        uint oldValue = MinBoundsBits.z;
         uint assumed;
         uint encoded = floatBitsToUint(value.z);
         do
@@ -87,15 +88,15 @@ void atomicMinVec(inout uvec4 target, vec4 value)
             assumed = oldValue;
             if (value.z >= uintBitsToFloat(assumed))
                 break;
-            oldValue = atomicCompSwap(target.z, assumed, encoded);
+            oldValue = atomicCompSwap(MinBoundsBits.z, assumed, encoded);
         } while (assumed != oldValue);
     }
 }
 
-void atomicMaxVec(inout uvec4 target, vec4 value)
+void atomicMaxVec(vec4 value)
 {
     {
-        uint oldValue = target.x;
+        uint oldValue = MaxBoundsBits.x;
         uint assumed;
         uint encoded = floatBitsToUint(value.x);
         do
@@ -103,12 +104,12 @@ void atomicMaxVec(inout uvec4 target, vec4 value)
             assumed = oldValue;
             if (value.x <= uintBitsToFloat(assumed))
                 break;
-            oldValue = atomicCompSwap(target.x, assumed, encoded);
+            oldValue = atomicCompSwap(MaxBoundsBits.x, assumed, encoded);
         } while (assumed != oldValue);
     }
 
     {
-        uint oldValue = target.y;
+        uint oldValue = MaxBoundsBits.y;
         uint assumed;
         uint encoded = floatBitsToUint(value.y);
         do
@@ -116,12 +117,12 @@ void atomicMaxVec(inout uvec4 target, vec4 value)
             assumed = oldValue;
             if (value.y <= uintBitsToFloat(assumed))
                 break;
-            oldValue = atomicCompSwap(target.y, assumed, encoded);
+            oldValue = atomicCompSwap(MaxBoundsBits.y, assumed, encoded);
         } while (assumed != oldValue);
     }
 
     {
-        uint oldValue = target.z;
+        uint oldValue = MaxBoundsBits.z;
         uint assumed;
         uint encoded = floatBitsToUint(value.z);
         do
@@ -129,7 +130,7 @@ void atomicMaxVec(inout uvec4 target, vec4 value)
             assumed = oldValue;
             if (value.z <= uintBitsToFloat(assumed))
                 break;
-            oldValue = atomicCompSwap(target.z, assumed, encoded);
+            oldValue = atomicCompSwap(MaxBoundsBits.z, assumed, encoded);
         } while (assumed != oldValue);
     }
 }
@@ -209,7 +210,7 @@ void main()
 
     if (localIndex == 0u && sharedMin[0].x < FLT_MAX)
     {
-        atomicMinVec(MinBoundsBits, sharedMin[0]);
-        atomicMaxVec(MaxBoundsBits, sharedMax[0]);
+        atomicMinVec(sharedMin[0]);
+        atomicMaxVec(sharedMax[0]);
     }
 }

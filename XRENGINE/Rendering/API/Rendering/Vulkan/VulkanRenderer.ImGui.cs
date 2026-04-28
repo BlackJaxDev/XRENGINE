@@ -1378,7 +1378,7 @@ public unsafe partial class VulkanRenderer
                 -1.0f - clipOff.Y * (2.0f / displaySize.Y))
         };
 
-        Api.CmdPushConstants(commandBuffer, _imguiPipelineLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(ImGuiPushConstants), &pushConstants);
+        PushConstantsTracked(commandBuffer, _imguiPipelineLayout, ShaderStageFlags.VertexBit, 0, pushConstants);
 
         uint fbWidth = (uint)(displaySize.X * clipScale.X);
         uint fbHeight = (uint)(displaySize.Y * clipScale.Y);

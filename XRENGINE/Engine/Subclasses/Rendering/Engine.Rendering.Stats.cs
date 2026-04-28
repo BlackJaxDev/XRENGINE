@@ -69,6 +69,7 @@ namespace XREngine
                 private static int _vulkanIndexBufferBindSkips;
                 private static int _vulkanPipelineCacheLookupHits;
                 private static int _vulkanPipelineCacheLookupMisses;
+                private static string _vulkanPipelineCacheMissSummary = string.Empty;
                 private static long _vulkanRequestedDraws;
                 private static long _vulkanCulledDraws;
                 private static long _vulkanEmittedIndirectDraws;
@@ -119,6 +120,7 @@ namespace XREngine
                 private static int _lastFrameVulkanIndexBufferBindSkips;
                 private static int _lastFrameVulkanPipelineCacheLookupHits;
                 private static int _lastFrameVulkanPipelineCacheLookupMisses;
+                private static string _lastFrameVulkanPipelineCacheMissSummary = string.Empty;
                 private static long _lastFrameVulkanRequestedDraws;
                 private static long _lastFrameVulkanCulledDraws;
                 private static long _lastFrameVulkanEmittedIndirectDraws;
@@ -159,6 +161,81 @@ namespace XREngine
                 private static int _lastFrameVulkanQueueSubmitCount;
                 private static int _vulkanOomFallbackCount;
                 private static int _lastFrameVulkanOomFallbackCount;
+                private static int _vulkanDroppedFrameOps;
+                private static int _vulkanDroppedDrawOps;
+                private static int _vulkanDroppedComputeOps;
+                private static int _vulkanSceneSwapchainWriters;
+                private static int _vulkanOverlaySwapchainWriters;
+                private static int _vulkanForcedDiagnosticSwapchainWriters;
+                private static int _vulkanFboOnlyDrawOps;
+                private static int _vulkanFboOnlyBlitOps;
+                private static int _vulkanMissingSceneSwapchainWriteFrames;
+                private static int _vulkanFirstFailedFrameOpPassIndex = int.MinValue;
+                private static int _vulkanFirstFailedFrameOpPipelineIdentity;
+                private static int _vulkanFirstFailedFrameOpViewportIdentity;
+                private static string _vulkanFirstFailedFrameOpType = string.Empty;
+                private static string _vulkanFirstFailedFrameOpTargetName = string.Empty;
+                private static string _vulkanFirstFailedFrameOpMaterialName = string.Empty;
+                private static string _vulkanFirstFailedFrameOpShaderName = string.Empty;
+                private static string _vulkanFirstFailedFrameOpMessage = string.Empty;
+                private static string _vulkanFrameDiagnosticSummary = string.Empty;
+                private static int _lastFrameVulkanDroppedFrameOps;
+                private static int _lastFrameVulkanDroppedDrawOps;
+                private static int _lastFrameVulkanDroppedComputeOps;
+                private static int _lastFrameVulkanSceneSwapchainWriters;
+                private static int _lastFrameVulkanOverlaySwapchainWriters;
+                private static int _lastFrameVulkanForcedDiagnosticSwapchainWriters;
+                private static int _lastFrameVulkanFboOnlyDrawOps;
+                private static int _lastFrameVulkanFboOnlyBlitOps;
+                private static int _lastFrameVulkanMissingSceneSwapchainWriteFrames;
+                private static int _lastFrameVulkanFirstFailedFrameOpPassIndex = int.MinValue;
+                private static int _lastFrameVulkanFirstFailedFrameOpPipelineIdentity;
+                private static int _lastFrameVulkanFirstFailedFrameOpViewportIdentity;
+                private static string _lastFrameVulkanFirstFailedFrameOpType = string.Empty;
+                private static string _lastFrameVulkanFirstFailedFrameOpTargetName = string.Empty;
+                private static string _lastFrameVulkanFirstFailedFrameOpMaterialName = string.Empty;
+                private static string _lastFrameVulkanFirstFailedFrameOpShaderName = string.Empty;
+                private static string _lastFrameVulkanFirstFailedFrameOpMessage = string.Empty;
+                private static string _lastFrameVulkanFrameDiagnosticSummary = string.Empty;
+                private static int _vulkanValidationMessageCount;
+                private static int _vulkanValidationErrorCount;
+                private static string _vulkanLastValidationMessage = string.Empty;
+                private static int _lastFrameVulkanValidationMessageCount;
+                private static int _lastFrameVulkanValidationErrorCount;
+                private static string _lastFrameVulkanLastValidationMessage = string.Empty;
+                private static int _vulkanDescriptorFallbackSampledImages;
+                private static int _vulkanDescriptorFallbackStorageImages;
+                private static int _vulkanDescriptorFallbackUniformBuffers;
+                private static int _vulkanDescriptorFallbackStorageBuffers;
+                private static int _vulkanDescriptorFallbackTexelBuffers;
+                private static int _vulkanDescriptorBindingFailures;
+                private static int _vulkanDescriptorSkippedDraws;
+                private static int _vulkanDescriptorSkippedDispatches;
+                private static string _vulkanDescriptorFallbackSummary = string.Empty;
+                private static string _vulkanDescriptorFailureSummary = string.Empty;
+                private static int _lastFrameVulkanDescriptorFallbackSampledImages;
+                private static int _lastFrameVulkanDescriptorFallbackStorageImages;
+                private static int _lastFrameVulkanDescriptorFallbackUniformBuffers;
+                private static int _lastFrameVulkanDescriptorFallbackStorageBuffers;
+                private static int _lastFrameVulkanDescriptorFallbackTexelBuffers;
+                private static int _lastFrameVulkanDescriptorBindingFailures;
+                private static int _lastFrameVulkanDescriptorSkippedDraws;
+                private static int _lastFrameVulkanDescriptorSkippedDispatches;
+                private static string _lastFrameVulkanDescriptorFallbackSummary = string.Empty;
+                private static string _lastFrameVulkanDescriptorFailureSummary = string.Empty;
+                private static int _vulkanDynamicUniformAllocations;
+                private static long _vulkanDynamicUniformAllocatedBytes;
+                private static int _vulkanDynamicUniformExhaustions;
+                private static int _lastFrameVulkanDynamicUniformAllocations;
+                private static long _lastFrameVulkanDynamicUniformAllocatedBytes;
+                private static int _lastFrameVulkanDynamicUniformExhaustions;
+                private static int _vulkanRetiredResourcePlanReplacements;
+                private static int _vulkanRetiredResourcePlanImages;
+                private static int _vulkanRetiredResourcePlanBuffers;
+                private static int _lastFrameVulkanRetiredResourcePlanReplacements;
+                private static int _lastFrameVulkanRetiredResourcePlanImages;
+                private static int _lastFrameVulkanRetiredResourcePlanBuffers;
+                private static readonly object _vulkanDiagnosticLock = new();
 
                 // GPU->CPU readback / mapping counters (per-frame)
                 private static int _gpuMappedBuffers;
@@ -344,6 +421,7 @@ namespace XREngine
                                 public static int VulkanIndexBufferBindSkips => _lastFrameVulkanIndexBufferBindSkips;
                                 public static int VulkanPipelineCacheLookupHits => _lastFrameVulkanPipelineCacheLookupHits;
                                 public static int VulkanPipelineCacheLookupMisses => _lastFrameVulkanPipelineCacheLookupMisses;
+                                public static string VulkanPipelineCacheMissSummary => _lastFrameVulkanPipelineCacheMissSummary;
                                 public static long VulkanRequestedDraws => _lastFrameVulkanRequestedDraws;
                                 public static long VulkanCulledDraws => _lastFrameVulkanCulledDraws;
                                 public static long VulkanEmittedIndirectDraws => _lastFrameVulkanEmittedIndirectDraws;
@@ -377,6 +455,52 @@ namespace XREngine
                                 public static int VulkanDescriptorPoolResetCount => _lastFrameVulkanDescriptorPoolResetCount;
                                 public static int VulkanQueueSubmitCount => _lastFrameVulkanQueueSubmitCount;
                                 public static int VulkanOomFallbackCount => _lastFrameVulkanOomFallbackCount;
+                                public static int VulkanDroppedFrameOps => _lastFrameVulkanDroppedFrameOps;
+                                public static int VulkanDroppedDrawOps => _lastFrameVulkanDroppedDrawOps;
+                                public static int VulkanDroppedComputeOps => _lastFrameVulkanDroppedComputeOps;
+                                public static int VulkanSceneSwapchainWriters => _lastFrameVulkanSceneSwapchainWriters;
+                                public static int VulkanOverlaySwapchainWriters => _lastFrameVulkanOverlaySwapchainWriters;
+                                public static int VulkanForcedDiagnosticSwapchainWriters => _lastFrameVulkanForcedDiagnosticSwapchainWriters;
+                                public static int VulkanFboOnlyDrawOps => _lastFrameVulkanFboOnlyDrawOps;
+                                public static int VulkanFboOnlyBlitOps => _lastFrameVulkanFboOnlyBlitOps;
+                                public static int VulkanMissingSceneSwapchainWriteFrames => _lastFrameVulkanMissingSceneSwapchainWriteFrames;
+                                public static int VulkanFirstFailedFrameOpPassIndex => _lastFrameVulkanFirstFailedFrameOpPassIndex;
+                                public static int VulkanFirstFailedFrameOpPipelineIdentity => _lastFrameVulkanFirstFailedFrameOpPipelineIdentity;
+                                public static int VulkanFirstFailedFrameOpViewportIdentity => _lastFrameVulkanFirstFailedFrameOpViewportIdentity;
+                                public static string VulkanFirstFailedFrameOpType => _lastFrameVulkanFirstFailedFrameOpType;
+                                public static string VulkanFirstFailedFrameOpTargetName => _lastFrameVulkanFirstFailedFrameOpTargetName;
+                                public static string VulkanFirstFailedFrameOpMaterialName => _lastFrameVulkanFirstFailedFrameOpMaterialName;
+                                public static string VulkanFirstFailedFrameOpShaderName => _lastFrameVulkanFirstFailedFrameOpShaderName;
+                                public static string VulkanFirstFailedFrameOpMessage => _lastFrameVulkanFirstFailedFrameOpMessage;
+                                public static string VulkanFrameDiagnosticSummary => _lastFrameVulkanFrameDiagnosticSummary;
+                                public static int VulkanValidationMessageCount => _lastFrameVulkanValidationMessageCount;
+                                public static int VulkanValidationErrorCount => _lastFrameVulkanValidationErrorCount;
+                                public static string VulkanLastValidationMessage => _lastFrameVulkanLastValidationMessage;
+                                public static int VulkanValidationMessageCountCurrentFrame => Volatile.Read(ref _vulkanValidationMessageCount);
+                                public static int VulkanValidationErrorCountCurrentFrame => Volatile.Read(ref _vulkanValidationErrorCount);
+                                public static int VulkanDescriptorFallbackSampledImages => _lastFrameVulkanDescriptorFallbackSampledImages;
+                                public static int VulkanDescriptorFallbackStorageImages => _lastFrameVulkanDescriptorFallbackStorageImages;
+                                public static int VulkanDescriptorFallbackUniformBuffers => _lastFrameVulkanDescriptorFallbackUniformBuffers;
+                                public static int VulkanDescriptorFallbackStorageBuffers => _lastFrameVulkanDescriptorFallbackStorageBuffers;
+                                public static int VulkanDescriptorFallbackTexelBuffers => _lastFrameVulkanDescriptorFallbackTexelBuffers;
+                                public static int VulkanDescriptorBindingFailures => _lastFrameVulkanDescriptorBindingFailures;
+                                public static int VulkanDescriptorSkippedDraws => _lastFrameVulkanDescriptorSkippedDraws;
+                                public static int VulkanDescriptorSkippedDispatches => _lastFrameVulkanDescriptorSkippedDispatches;
+                                public static string VulkanDescriptorFallbackSummary => _lastFrameVulkanDescriptorFallbackSummary;
+                                public static string VulkanDescriptorFailureSummary => _lastFrameVulkanDescriptorFailureSummary;
+                                public static int VulkanDescriptorFallbacksCurrentFrame =>
+                                    Volatile.Read(ref _vulkanDescriptorFallbackSampledImages) +
+                                    Volatile.Read(ref _vulkanDescriptorFallbackStorageImages) +
+                                    Volatile.Read(ref _vulkanDescriptorFallbackUniformBuffers) +
+                                    Volatile.Read(ref _vulkanDescriptorFallbackStorageBuffers) +
+                                    Volatile.Read(ref _vulkanDescriptorFallbackTexelBuffers);
+                                public static int VulkanDescriptorBindingFailuresCurrentFrame => Volatile.Read(ref _vulkanDescriptorBindingFailures);
+                                public static int VulkanDynamicUniformAllocations => _lastFrameVulkanDynamicUniformAllocations;
+                                public static long VulkanDynamicUniformAllocatedBytes => _lastFrameVulkanDynamicUniformAllocatedBytes;
+                                public static int VulkanDynamicUniformExhaustions => _lastFrameVulkanDynamicUniformExhaustions;
+                                public static int VulkanRetiredResourcePlanReplacements => _lastFrameVulkanRetiredResourcePlanReplacements;
+                                public static int VulkanRetiredResourcePlanImages => _lastFrameVulkanRetiredResourcePlanImages;
+                                public static int VulkanRetiredResourcePlanBuffers => _lastFrameVulkanRetiredResourcePlanBuffers;
                                 public static double VulkanPipelineCacheLookupHitRate
                                         => (_lastFrameVulkanPipelineCacheLookupHits + _lastFrameVulkanPipelineCacheLookupMisses) <= 0
                                                 ? 1.0
@@ -659,6 +783,47 @@ namespace XREngine
                     _lastFrameVulkanDescriptorPoolResetCount = _vulkanDescriptorPoolResetCount;
                     _lastFrameVulkanQueueSubmitCount = _vulkanQueueSubmitCount;
                     _lastFrameVulkanOomFallbackCount = _vulkanOomFallbackCount;
+                    _lastFrameVulkanDroppedFrameOps = _vulkanDroppedFrameOps;
+                    _lastFrameVulkanDroppedDrawOps = _vulkanDroppedDrawOps;
+                    _lastFrameVulkanDroppedComputeOps = _vulkanDroppedComputeOps;
+                    _lastFrameVulkanSceneSwapchainWriters = _vulkanSceneSwapchainWriters;
+                    _lastFrameVulkanOverlaySwapchainWriters = _vulkanOverlaySwapchainWriters;
+                    _lastFrameVulkanForcedDiagnosticSwapchainWriters = _vulkanForcedDiagnosticSwapchainWriters;
+                    _lastFrameVulkanFboOnlyDrawOps = _vulkanFboOnlyDrawOps;
+                    _lastFrameVulkanFboOnlyBlitOps = _vulkanFboOnlyBlitOps;
+                    _lastFrameVulkanMissingSceneSwapchainWriteFrames = _vulkanMissingSceneSwapchainWriteFrames;
+                    _lastFrameVulkanFirstFailedFrameOpPassIndex = _vulkanFirstFailedFrameOpPassIndex;
+                    _lastFrameVulkanFirstFailedFrameOpPipelineIdentity = _vulkanFirstFailedFrameOpPipelineIdentity;
+                    _lastFrameVulkanFirstFailedFrameOpViewportIdentity = _vulkanFirstFailedFrameOpViewportIdentity;
+                    _lastFrameVulkanValidationMessageCount = _vulkanValidationMessageCount;
+                    _lastFrameVulkanValidationErrorCount = _vulkanValidationErrorCount;
+                    _lastFrameVulkanDescriptorFallbackSampledImages = _vulkanDescriptorFallbackSampledImages;
+                    _lastFrameVulkanDescriptorFallbackStorageImages = _vulkanDescriptorFallbackStorageImages;
+                    _lastFrameVulkanDescriptorFallbackUniformBuffers = _vulkanDescriptorFallbackUniformBuffers;
+                    _lastFrameVulkanDescriptorFallbackStorageBuffers = _vulkanDescriptorFallbackStorageBuffers;
+                    _lastFrameVulkanDescriptorFallbackTexelBuffers = _vulkanDescriptorFallbackTexelBuffers;
+                    _lastFrameVulkanDescriptorBindingFailures = _vulkanDescriptorBindingFailures;
+                    _lastFrameVulkanDescriptorSkippedDraws = _vulkanDescriptorSkippedDraws;
+                    _lastFrameVulkanDescriptorSkippedDispatches = _vulkanDescriptorSkippedDispatches;
+                    _lastFrameVulkanDynamicUniformAllocations = _vulkanDynamicUniformAllocations;
+                    _lastFrameVulkanDynamicUniformAllocatedBytes = _vulkanDynamicUniformAllocatedBytes;
+                    _lastFrameVulkanDynamicUniformExhaustions = _vulkanDynamicUniformExhaustions;
+                    _lastFrameVulkanRetiredResourcePlanReplacements = _vulkanRetiredResourcePlanReplacements;
+                    _lastFrameVulkanRetiredResourcePlanImages = _vulkanRetiredResourcePlanImages;
+                    _lastFrameVulkanRetiredResourcePlanBuffers = _vulkanRetiredResourcePlanBuffers;
+                    lock (_vulkanDiagnosticLock)
+                    {
+                        _lastFrameVulkanFirstFailedFrameOpType = _vulkanFirstFailedFrameOpType;
+                        _lastFrameVulkanFirstFailedFrameOpTargetName = _vulkanFirstFailedFrameOpTargetName;
+                        _lastFrameVulkanFirstFailedFrameOpMaterialName = _vulkanFirstFailedFrameOpMaterialName;
+                        _lastFrameVulkanFirstFailedFrameOpShaderName = _vulkanFirstFailedFrameOpShaderName;
+                        _lastFrameVulkanFirstFailedFrameOpMessage = _vulkanFirstFailedFrameOpMessage;
+                        _lastFrameVulkanFrameDiagnosticSummary = _vulkanFrameDiagnosticSummary;
+                        _lastFrameVulkanLastValidationMessage = _vulkanLastValidationMessage;
+                        _lastFrameVulkanPipelineCacheMissSummary = _vulkanPipelineCacheMissSummary;
+                        _lastFrameVulkanDescriptorFallbackSummary = _vulkanDescriptorFallbackSummary;
+                        _lastFrameVulkanDescriptorFailureSummary = _vulkanDescriptorFailureSummary;
+                    }
                     _lastFrameVrLeftEyeDraws = _vrLeftEyeDraws;
                     _lastFrameVrRightEyeDraws = _vrRightEyeDraws;
                     _lastFrameVrLeftEyeVisible = _vrLeftEyeVisible;
@@ -748,6 +913,47 @@ namespace XREngine
                     _vulkanDescriptorPoolResetCount = 0;
                     _vulkanQueueSubmitCount = 0;
                     _vulkanOomFallbackCount = 0;
+                    _vulkanDroppedFrameOps = 0;
+                    _vulkanDroppedDrawOps = 0;
+                    _vulkanDroppedComputeOps = 0;
+                    _vulkanSceneSwapchainWriters = 0;
+                    _vulkanOverlaySwapchainWriters = 0;
+                    _vulkanForcedDiagnosticSwapchainWriters = 0;
+                    _vulkanFboOnlyDrawOps = 0;
+                    _vulkanFboOnlyBlitOps = 0;
+                    _vulkanMissingSceneSwapchainWriteFrames = 0;
+                    _vulkanFirstFailedFrameOpPassIndex = int.MinValue;
+                    _vulkanFirstFailedFrameOpPipelineIdentity = 0;
+                    _vulkanFirstFailedFrameOpViewportIdentity = 0;
+                    _vulkanValidationMessageCount = 0;
+                    _vulkanValidationErrorCount = 0;
+                    _vulkanDescriptorFallbackSampledImages = 0;
+                    _vulkanDescriptorFallbackStorageImages = 0;
+                    _vulkanDescriptorFallbackUniformBuffers = 0;
+                    _vulkanDescriptorFallbackStorageBuffers = 0;
+                    _vulkanDescriptorFallbackTexelBuffers = 0;
+                    _vulkanDescriptorBindingFailures = 0;
+                    _vulkanDescriptorSkippedDraws = 0;
+                    _vulkanDescriptorSkippedDispatches = 0;
+                    _vulkanDynamicUniformAllocations = 0;
+                    _vulkanDynamicUniformAllocatedBytes = 0;
+                    _vulkanDynamicUniformExhaustions = 0;
+                    _vulkanRetiredResourcePlanReplacements = 0;
+                    _vulkanRetiredResourcePlanImages = 0;
+                    _vulkanRetiredResourcePlanBuffers = 0;
+                    lock (_vulkanDiagnosticLock)
+                    {
+                        _vulkanFirstFailedFrameOpType = string.Empty;
+                        _vulkanFirstFailedFrameOpTargetName = string.Empty;
+                        _vulkanFirstFailedFrameOpMaterialName = string.Empty;
+                        _vulkanFirstFailedFrameOpShaderName = string.Empty;
+                        _vulkanFirstFailedFrameOpMessage = string.Empty;
+                        _vulkanFrameDiagnosticSummary = string.Empty;
+                        _vulkanLastValidationMessage = string.Empty;
+                        _vulkanPipelineCacheMissSummary = string.Empty;
+                        _vulkanDescriptorFallbackSummary = string.Empty;
+                        _vulkanDescriptorFailureSummary = string.Empty;
+                    }
                     _vrLeftEyeDraws = 0;
                     _vrRightEyeDraws = 0;
                     _vrLeftEyeVisible = 0;
@@ -852,6 +1058,202 @@ namespace XREngine
                         return;
 
                     Interlocked.Add(ref _vulkanOomFallbackCount, count);
+                }
+
+                public static void RecordVulkanFrameDiagnostics(
+                    int droppedFrameOps,
+                    int droppedDrawOps,
+                    int droppedComputeOps,
+                    int sceneSwapchainWriters,
+                    int overlaySwapchainWriters,
+                    int forcedDiagnosticSwapchainWriters,
+                    int fboOnlyDrawOps,
+                    int fboOnlyBlitOps,
+                    bool missingSceneSwapchainWriters,
+                    string? firstFailedOpType,
+                    int firstFailedPassIndex,
+                    int firstFailedPipelineIdentity,
+                    int firstFailedViewportIdentity,
+                    string? firstFailedTargetName,
+                    string? firstFailedMaterialName,
+                    string? firstFailedShaderName,
+                    string? firstFailedMessage,
+                    string? diagnosticSummary)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    AddNonNegative(ref _vulkanDroppedFrameOps, droppedFrameOps);
+                    AddNonNegative(ref _vulkanDroppedDrawOps, droppedDrawOps);
+                    AddNonNegative(ref _vulkanDroppedComputeOps, droppedComputeOps);
+                    AddNonNegative(ref _vulkanSceneSwapchainWriters, sceneSwapchainWriters);
+                    AddNonNegative(ref _vulkanOverlaySwapchainWriters, overlaySwapchainWriters);
+                    AddNonNegative(ref _vulkanForcedDiagnosticSwapchainWriters, forcedDiagnosticSwapchainWriters);
+                    AddNonNegative(ref _vulkanFboOnlyDrawOps, fboOnlyDrawOps);
+                    AddNonNegative(ref _vulkanFboOnlyBlitOps, fboOnlyBlitOps);
+
+                    if (missingSceneSwapchainWriters)
+                        Interlocked.Increment(ref _vulkanMissingSceneSwapchainWriteFrames);
+
+                    bool hasFirstFailure = !string.IsNullOrWhiteSpace(firstFailedOpType);
+                    bool hasDiagnosticSummary = !string.IsNullOrWhiteSpace(diagnosticSummary);
+                    if (!hasFirstFailure && !hasDiagnosticSummary)
+                        return;
+
+                    lock (_vulkanDiagnosticLock)
+                    {
+                        if (hasFirstFailure && string.IsNullOrEmpty(_vulkanFirstFailedFrameOpType))
+                        {
+                            _vulkanFirstFailedFrameOpType = firstFailedOpType!;
+                            _vulkanFirstFailedFrameOpPassIndex = firstFailedPassIndex;
+                            _vulkanFirstFailedFrameOpPipelineIdentity = firstFailedPipelineIdentity;
+                            _vulkanFirstFailedFrameOpViewportIdentity = firstFailedViewportIdentity;
+                            _vulkanFirstFailedFrameOpTargetName = firstFailedTargetName ?? string.Empty;
+                            _vulkanFirstFailedFrameOpMaterialName = firstFailedMaterialName ?? string.Empty;
+                            _vulkanFirstFailedFrameOpShaderName = firstFailedShaderName ?? string.Empty;
+                            _vulkanFirstFailedFrameOpMessage = TruncateDiagnosticText(firstFailedMessage);
+                        }
+
+                        if (hasDiagnosticSummary)
+                            _vulkanFrameDiagnosticSummary = TruncateDiagnosticText(diagnosticSummary, 2048);
+                    }
+                }
+
+                public static void RecordVulkanValidationMessage(bool isError, string? message)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vulkanValidationMessageCount);
+                    if (isError)
+                        Interlocked.Increment(ref _vulkanValidationErrorCount);
+
+                    lock (_vulkanDiagnosticLock)
+                        _vulkanLastValidationMessage = TruncateDiagnosticText(message, 1024);
+                }
+
+                public static void RecordVulkanDescriptorFallback(
+                    string? programName,
+                    string? bindingClass,
+                    string? bindingName,
+                    uint set,
+                    uint binding,
+                    int count = 1)
+                {
+                    if (!EnableTracking || count <= 0)
+                        return;
+
+                    switch (NormalizeDescriptorBindingClass(bindingClass))
+                    {
+                        case "storage-image":
+                            Interlocked.Add(ref _vulkanDescriptorFallbackStorageImages, count);
+                            break;
+                        case "uniform-buffer":
+                            Interlocked.Add(ref _vulkanDescriptorFallbackUniformBuffers, count);
+                            break;
+                        case "storage-buffer":
+                            Interlocked.Add(ref _vulkanDescriptorFallbackStorageBuffers, count);
+                            break;
+                        case "texel-buffer":
+                            Interlocked.Add(ref _vulkanDescriptorFallbackTexelBuffers, count);
+                            break;
+                        default:
+                            Interlocked.Add(ref _vulkanDescriptorFallbackSampledImages, count);
+                            break;
+                    }
+
+                    string summary = $"{programName ?? "<program>"}:{bindingClass ?? "descriptor"}:{bindingName ?? "<unnamed>"}@set{set}/binding{binding} x{count}";
+                    lock (_vulkanDiagnosticLock)
+                        _vulkanDescriptorFallbackSummary = AppendDiagnosticToken(_vulkanDescriptorFallbackSummary, summary);
+                }
+
+                public static void RecordVulkanDescriptorBindingFailure(
+                    string? programName,
+                    string? bindingClass,
+                    string? bindingName,
+                    uint set,
+                    uint binding,
+                    bool skippedDraw,
+                    bool skippedDispatch,
+                    string? message)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vulkanDescriptorBindingFailures);
+                    if (skippedDraw)
+                        Interlocked.Increment(ref _vulkanDescriptorSkippedDraws);
+                    if (skippedDispatch)
+                        Interlocked.Increment(ref _vulkanDescriptorSkippedDispatches);
+
+                    string summary =
+                        $"{programName ?? "<program>"}:{bindingClass ?? "descriptor"}:{bindingName ?? "<unnamed>"}@set{set}/binding{binding}: {message ?? "binding failed"}";
+                    lock (_vulkanDiagnosticLock)
+                        _vulkanDescriptorFailureSummary = AppendDiagnosticToken(_vulkanDescriptorFailureSummary, summary);
+                }
+
+                public static void RecordVulkanDynamicUniformAllocation(long bytes)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vulkanDynamicUniformAllocations);
+                    if (bytes > 0)
+                        Interlocked.Add(ref _vulkanDynamicUniformAllocatedBytes, bytes);
+                }
+
+                public static void RecordVulkanDynamicUniformExhaustion()
+                {
+                    if (EnableTracking)
+                        Interlocked.Increment(ref _vulkanDynamicUniformExhaustions);
+                }
+
+                public static void RecordVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vulkanRetiredResourcePlanReplacements);
+                    AddNonNegative(ref _vulkanRetiredResourcePlanImages, imageCount);
+                    AddNonNegative(ref _vulkanRetiredResourcePlanBuffers, bufferCount);
+                }
+
+                private static void AddNonNegative(ref int field, int value)
+                {
+                    if (value > 0)
+                        Interlocked.Add(ref field, value);
+                }
+
+                private static string NormalizeDescriptorBindingClass(string? bindingClass)
+                {
+                    if (string.IsNullOrWhiteSpace(bindingClass))
+                        return "sampled-image";
+
+                    return bindingClass.Trim().ToLowerInvariant();
+                }
+
+                private static string AppendDiagnosticToken(string existing, string token, int maxLength = 2048)
+                {
+                    token = TruncateDiagnosticText(token, 512);
+                    if (string.IsNullOrEmpty(token))
+                        return existing;
+
+                    if (string.IsNullOrEmpty(existing))
+                        return token.Length <= maxLength ? token : token[..maxLength];
+
+                    string appended = existing + " | " + token;
+                    return appended.Length <= maxLength ? appended : appended[..maxLength];
+                }
+
+                private static string TruncateDiagnosticText(string? value, int maxLength = 512)
+                {
+                    if (string.IsNullOrWhiteSpace(value))
+                        return string.Empty;
+
+                    value = value.Trim();
+                    return value.Length <= maxLength
+                        ? value
+                        : value[..maxLength];
                 }
 
                 public static void RecordRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime)
@@ -1602,6 +2004,20 @@ namespace XREngine
                         Interlocked.Increment(ref _vulkanPipelineCacheLookupHits);
                     else
                         Interlocked.Increment(ref _vulkanPipelineCacheLookupMisses);
+                }
+
+                public static void RecordVulkanPipelineCacheMiss(string? summary)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vulkanPipelineCacheLookupMisses);
+
+                    if (string.IsNullOrWhiteSpace(summary))
+                        return;
+
+                    lock (_vulkanDiagnosticLock)
+                        _vulkanPipelineCacheMissSummary = AppendDiagnosticToken(_vulkanPipelineCacheMissSummary, summary);
                 }
 
                 public static void RecordVulkanIndirectEffectiveness(

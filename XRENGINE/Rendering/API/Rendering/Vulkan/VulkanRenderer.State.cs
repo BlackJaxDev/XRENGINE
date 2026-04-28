@@ -512,14 +512,14 @@ public unsafe partial class VulkanRenderer
         if (plannerSignature == _resourcePlannerSignature)
             return;
 
-        // Destroy old physical Vulkan resources BEFORE UpdatePlan clears the allocator
+        // Retire old physical Vulkan resources BEFORE UpdatePlan clears the allocator
         // dictionaries. UpdatePlan wipes _physicalGroups / _physicalBufferGroups, which
-        // would orphan live VkImage / DeviceMemory handles and leak GPU memory.
-        //
-        // Wait for ALL in-flight frame slots first.  Physical images from the old plan
-        // may still be referenced by command buffers from other frame slots that haven't
-        // completed yet.  Without this wait, the GPU would access freed memory.
-        WaitForAllInFlightWork();
+        // would orphan live VkImage/VkBuffer handles and leak GPU memory. Destruction is
+        // fence-retired so steady-state plan changes do not globally wait for all slots.
+        int retiredImageCount = _resourceAllocator.EnumeratePhysicalGroups().Count(static g => g.IsAllocated);
+        int retiredBufferCount = _resourceAllocator.EnumeratePhysicalBufferGroups().Count(static g => g.IsAllocated);
+        if (retiredImageCount > 0 || retiredBufferCount > 0)
+            Engine.Rendering.Stats.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
         _resourceAllocator.DestroyPhysicalImages(this);
         _resourceAllocator.DestroyPhysicalBuffers(this);
 
@@ -1201,19 +1201,7 @@ public unsafe partial class VulkanRenderer
 
     internal void DestroyPhysicalBuffer(ref Buffer buffer, ref DeviceMemory memory)
     {
-        if (buffer.Handle != 0)
-        {
-            Api!.DestroyBuffer(device, buffer, null);
-            if (_bufferAllocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation alloc))
-                FreeMemoryAllocation(alloc);
-            else if (memory.Handle != 0)
-                Api!.FreeMemory(device, memory, null);
-        }
-        else if (memory.Handle != 0)
-        {
-            Api!.FreeMemory(device, memory, null);
-        }
-
+        RetireBuffer(buffer, memory);
         buffer = default;
         memory = default;
     }

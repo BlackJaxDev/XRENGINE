@@ -29,14 +29,15 @@ namespace XREngine.Components.Capture.Lights
             };
 
         public string GetPreviewShaderPath()
-            => PreviewDisplay switch
+            => GetPreviewShaderPath(GetPreviewTexture());
+
+        private string GetPreviewShaderPath(XRTexture? previewTexture)
+            => previewTexture switch
             {
-                ERenderPreview.Irradiance or ERenderPreview.Prefilter => "Scene3D\\OctahedralEnv.fs",
-                _ => EnvironmentTextureOctahedral is not null || PrefilterTexture is not null || IrradianceTexture is not null
-                    ? "Scene3D\\OctahedralEnv.fs"
-                    : EnvironmentTextureCubemap is not null
-                        ? "Scene3D\\Cubemap.fs"
-                    : "Scene3D\\Equirect.fs",
+                XRTextureCube => "Scene3D\\Cubemap.fs",
+                _ when ReferenceEquals(previewTexture, _environmentTextureEquirect) => "Scene3D\\Equirect.fs",
+                null => "Scene3D\\Equirect.fs",
+                _ => "Scene3D\\OctahedralEnv.fs",
             };
 
         private bool OnPreCollectRenderInfo(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
@@ -87,8 +88,15 @@ namespace XREngine.Components.Capture.Lights
                 return;
             }
 
-            if (!_previewSphereDirty && PreviewSphere is not null)
+            XRTexture? previewTexture = GetPreviewTexture();
+            string previewShaderPath = GetPreviewShaderPath(previewTexture);
+
+            if (!_previewSphereDirty && PreviewSphere is not null &&
+                ReferenceEquals(_previewSphereTexture, previewTexture) &&
+                string.Equals(_previewSphereShaderPath, previewShaderPath, StringComparison.Ordinal))
+            {
                 return;
+            }
 
             if (!TryGetAttachedPreviewRenderMatrix(out Matrix4x4 renderMatrix))
             {
@@ -97,8 +105,7 @@ namespace XREngine.Components.Capture.Lights
             }
 
             int pass = (int)EDefaultRenderPass.OpaqueForward;
-            XRTexture? previewTexture = GetPreviewTexture();
-            XRShader previewShader = XRShader.EngineShader(GetPreviewShaderPath(), EShaderType.Fragment);
+            XRShader previewShader = XRShader.EngineShader(previewShaderPath, EShaderType.Fragment);
 
             if (PreviewSphere is null)
             {
@@ -121,6 +128,8 @@ namespace XREngine.Components.Capture.Lights
 
             VisualRenderInfo.LocalCullingVolume = SharedPreviewSphereMesh.Bounds;
             UpdatePreviewRenderMatrix(renderMatrix);
+            _previewSphereTexture = previewTexture;
+            _previewSphereShaderPath = previewShaderPath;
             _previewSphereDirty = false;
         }
 

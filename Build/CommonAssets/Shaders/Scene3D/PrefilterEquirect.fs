@@ -5,7 +5,7 @@ layout (location = 20) in vec3 FragPosLocal;
 
 uniform sampler2D Texture0;
 uniform float Roughness = 0.0f;
-uniform int CubemapDim = 512;
+uniform int SourceDim = 512;
 
 const float PI = 3.14159265359f;
 
@@ -63,9 +63,22 @@ vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness)
 	return normalize(sampleVec);
 }
 
+vec2 DirectionToEquirect(vec3 dir)
+{
+    float phi = atan(dir.z, dir.x);
+    float theta = asin(clamp(dir.y, -1.0f, 1.0f));
+    return vec2((phi / (2.0f * PI)) + 0.5f, 1.0f - ((theta / PI) + 0.5f));
+}
+
 void main()
 {
     vec3 N = normalize(FragPosLocal);
+
+    if (Roughness <= 0.0001f)
+    {
+        OutColor = textureLod(Texture0, DirectionToEquirect(N), 0.0f).rgb;
+        return;
+    }
 
     // make the simplyfying assumption that V equals R equals the normal
     vec3 R = N;
@@ -91,24 +104,16 @@ void main()
             float HdotV = max(dot(H, V), 0.0f);
             float pdf   = D * NdotH / (4.0f * HdotV) + 0.0001f;
 
-            float res		= float(CubemapDim); // resolution of source cubemap (per face)
+            float res		= float(SourceDim);
             float saTexel	= 4.0f * PI / (6.0f * res * res);
             float saSample	= 1.0f / (float(SAMPLE_COUNT) * pdf + 0.0001f);
 
             float mipLevel = Roughness == 0.0f ? 0.0f : 0.5f * log2(saSample / saTexel);
 
-            // Convert the direction vector to spherical coordinates
-            float phi = atan(L.z, L.x); // Angle around the Y axis
-            float theta = asin(L.y); // Angle from the Y axis
-            // Map spherical coordinates to [0, 1] range for texture sampling
-            // phi ranges from -PI to PI, so we map it to [0, 1]
-            // theta ranges from -PI/2 to PI/2, so we map it to [0, 1]
-            vec2 uv = vec2((phi / (2.0f * PI)) + 0.5f, ((theta / PI) + 0.5f));
-
-            prefilteredColor += textureLod(Texture0, uv, mipLevel).rgb * NdotL;
+            prefilteredColor += textureLod(Texture0, DirectionToEquirect(L), mipLevel).rgb * NdotL;
             totalWeight      += NdotL;
         }
     }
 
-    OutColor = prefilteredColor / totalWeight;
+    OutColor = prefilteredColor / max(totalWeight, 1e-4f);
 }

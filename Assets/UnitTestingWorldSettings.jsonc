@@ -339,13 +339,13 @@
   // Imports a .anim clip for testing.
   "AnimationClipAnim": true,
   // Generated from AnimClipPath on Settings.
-  "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
+  "AnimClipPath": "Assets\\Walks\\Test Anim.anim",
   // Enables or disables AnimLooped.
   "AnimLooped": true,
   // Exports raw humanoid playback samples for Unity/XREngine comparison.
   "HumanoidPoseAuditEnabled": false,
   // Generated from HumanoidPoseAuditOutputPath on Settings.
-  "HumanoidPoseAuditOutputPath": "Build\\Logs\\pose_audit\\xrengine_sexy_walk_pose.json",
+  "HumanoidPoseAuditOutputPath": "Build\\Logs\\pose_audit\\xrengine_test_anim_pose.json",
   // Generated from HumanoidPoseAuditReferencePath on Settings.
   "HumanoidPoseAuditReferencePath": null,
   // Generated from HumanoidPoseAuditComparisonOutputPath on Settings.

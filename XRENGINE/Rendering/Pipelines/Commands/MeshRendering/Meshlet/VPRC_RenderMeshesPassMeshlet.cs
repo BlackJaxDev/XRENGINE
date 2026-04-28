@@ -5,8 +5,14 @@ internal static class VPRC_RenderMeshesPassMeshlet
     public static void Execute(VPRC_RenderMeshesPassShared command)
     {
         using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
-        var activeInstance = ViewportRenderCommand.ActivePipelineInstance;
-        var camera = activeInstance.RenderState.SceneCamera;
+        var activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        if (activeInstance is null)
+            return;
+
+        var camera = activeInstance.RenderState.SceneCamera
+            ?? activeInstance.RenderState.RenderingCamera
+            ?? activeInstance.LastSceneCamera
+            ?? activeInstance.LastRenderingCamera;
 
         activeInstance.MeshRenderCommands.RenderCPU(
             command.RenderPass,

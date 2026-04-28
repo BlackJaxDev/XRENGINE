@@ -115,6 +115,43 @@ public sealed class ProfilerProtocolTests
             VulkanDescriptorPoolDestroyCount = 4,
             VulkanDescriptorPoolResetCount = 6,
             VulkanQueueSubmitCount = 8,
+            VulkanDroppedFrameOps = 3,
+            VulkanDroppedDrawOps = 2,
+            VulkanDroppedComputeOps = 1,
+            VulkanSceneSwapchainWriters = 0,
+            VulkanOverlaySwapchainWriters = 1,
+            VulkanForcedDiagnosticSwapchainWriters = 1,
+            VulkanFboOnlyDrawOps = 4,
+            VulkanFboOnlyBlitOps = 5,
+            VulkanMissingSceneSwapchainWriteFrames = 1,
+            VulkanFirstFailedFrameOpPassIndex = 42,
+            VulkanFirstFailedFrameOpPipelineIdentity = 1001,
+            VulkanFirstFailedFrameOpViewportIdentity = 2002,
+            VulkanFirstFailedFrameOpType = "MeshDrawOp",
+            VulkanFirstFailedFrameOpTargetName = "<swapchain/null>",
+            VulkanFirstFailedFrameOpMaterialName = "BrokenMaterial",
+            VulkanFirstFailedFrameOpShaderName = "BrokenShader.fs",
+            VulkanFirstFailedFrameOpMessage = "descriptor set mismatch",
+            VulkanFrameDiagnosticSummary = "ops=8 writers scene=0 overlay=1",
+            VulkanValidationMessageCount = 2,
+            VulkanValidationErrorCount = 1,
+            VulkanLastValidationMessage = "validation error",
+            VulkanDescriptorFallbackSampledImages = 3,
+            VulkanDescriptorFallbackStorageImages = 4,
+            VulkanDescriptorFallbackUniformBuffers = 5,
+            VulkanDescriptorFallbackStorageBuffers = 6,
+            VulkanDescriptorFallbackTexelBuffers = 7,
+            VulkanDescriptorBindingFailures = 8,
+            VulkanDescriptorSkippedDraws = 9,
+            VulkanDescriptorSkippedDispatches = 10,
+            VulkanDescriptorFallbackSummary = "sampled-image:Material.Albedo",
+            VulkanDescriptorFailureSummary = "storage-buffer:ComputeParticles",
+            VulkanDynamicUniformAllocations = 11,
+            VulkanDynamicUniformAllocatedBytes = 12_288,
+            VulkanDynamicUniformExhaustions = 1,
+            VulkanRetiredResourcePlanReplacements = 2,
+            VulkanRetiredResourcePlanImages = 13,
+            VulkanRetiredResourcePlanBuffers = 14,
             AllocatedVRAMBytes = 512 * 1024 * 1024L,
             AllocatedBufferBytes = 128 * 1024 * 1024L,
             AllocatedTextureBytes = 256 * 1024 * 1024L,
@@ -227,6 +264,43 @@ public sealed class ProfilerProtocolTests
         clone.VulkanDescriptorPoolDestroyCount.ShouldBe(4);
         clone.VulkanDescriptorPoolResetCount.ShouldBe(6);
         clone.VulkanQueueSubmitCount.ShouldBe(8);
+        clone.VulkanDroppedFrameOps.ShouldBe(3);
+        clone.VulkanDroppedDrawOps.ShouldBe(2);
+        clone.VulkanDroppedComputeOps.ShouldBe(1);
+        clone.VulkanSceneSwapchainWriters.ShouldBe(0);
+        clone.VulkanOverlaySwapchainWriters.ShouldBe(1);
+        clone.VulkanForcedDiagnosticSwapchainWriters.ShouldBe(1);
+        clone.VulkanFboOnlyDrawOps.ShouldBe(4);
+        clone.VulkanFboOnlyBlitOps.ShouldBe(5);
+        clone.VulkanMissingSceneSwapchainWriteFrames.ShouldBe(1);
+        clone.VulkanFirstFailedFrameOpType.ShouldBe("MeshDrawOp");
+        clone.VulkanFirstFailedFrameOpPassIndex.ShouldBe(42);
+        clone.VulkanFirstFailedFrameOpPipelineIdentity.ShouldBe(1001);
+        clone.VulkanFirstFailedFrameOpViewportIdentity.ShouldBe(2002);
+        clone.VulkanFirstFailedFrameOpTargetName.ShouldBe("<swapchain/null>");
+        clone.VulkanFirstFailedFrameOpMaterialName.ShouldBe("BrokenMaterial");
+        clone.VulkanFirstFailedFrameOpShaderName.ShouldBe("BrokenShader.fs");
+        clone.VulkanFirstFailedFrameOpMessage.ShouldBe("descriptor set mismatch");
+        clone.VulkanFrameDiagnosticSummary.ShouldBe("ops=8 writers scene=0 overlay=1");
+        clone.VulkanValidationMessageCount.ShouldBe(2);
+        clone.VulkanValidationErrorCount.ShouldBe(1);
+        clone.VulkanLastValidationMessage.ShouldBe("validation error");
+        clone.VulkanDescriptorFallbackSampledImages.ShouldBe(3);
+        clone.VulkanDescriptorFallbackStorageImages.ShouldBe(4);
+        clone.VulkanDescriptorFallbackUniformBuffers.ShouldBe(5);
+        clone.VulkanDescriptorFallbackStorageBuffers.ShouldBe(6);
+        clone.VulkanDescriptorFallbackTexelBuffers.ShouldBe(7);
+        clone.VulkanDescriptorBindingFailures.ShouldBe(8);
+        clone.VulkanDescriptorSkippedDraws.ShouldBe(9);
+        clone.VulkanDescriptorSkippedDispatches.ShouldBe(10);
+        clone.VulkanDescriptorFallbackSummary.ShouldBe("sampled-image:Material.Albedo");
+        clone.VulkanDescriptorFailureSummary.ShouldBe("storage-buffer:ComputeParticles");
+        clone.VulkanDynamicUniformAllocations.ShouldBe(11);
+        clone.VulkanDynamicUniformAllocatedBytes.ShouldBe(12_288);
+        clone.VulkanDynamicUniformExhaustions.ShouldBe(1);
+        clone.VulkanRetiredResourcePlanReplacements.ShouldBe(2);
+        clone.VulkanRetiredResourcePlanImages.ShouldBe(13);
+        clone.VulkanRetiredResourcePlanBuffers.ShouldBe(14);
         clone.AllocatedVRAMBytes.ShouldBe(512 * 1024 * 1024L);
         clone.FBOBandwidthBytes.ShouldBe(100_000_000);
         clone.FBOBindCount.ShouldBe(42);

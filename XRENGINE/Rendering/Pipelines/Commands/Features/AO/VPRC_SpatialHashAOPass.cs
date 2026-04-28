@@ -24,7 +24,6 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private const uint HashMapScale = 2u;
         private const uint LocalGroupSize = 8u;
-        private const uint ShaderMaxFrameAge = 20u;
         private const string ComputeShaderFile = "AO/SpatialHashAO.comp";
         private const string ComputeShaderFileStereo = "AO/SpatialHashAOStereo.comp";
 
@@ -67,9 +66,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             public uint HashCapacity;
             public uint FrameIndex;
             public bool HistoryReady;
-            public bool HasCachedViewProjection;
             public bool UseHistoryTextureA = true;
-            public Matrix4x4 LastUnjitteredViewProjection = Matrix4x4.Identity;
             public XRTexture? AoTexture;
             public XRTexture? HistoryAoTextureA;
             public XRTexture? HistoryAoTextureB;
@@ -178,9 +175,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                 forceRebuild = true;
             }
 
-            Matrix4x4 currentUnjitteredViewProjection = GetCurrentUnjitteredViewProjection(camera, temporalData, hasTemporalData);
-            bool cameraMovedSinceLastFrame = !Stereo && !forceRebuild && ShouldInvalidateForCameraMotion(state, currentUnjitteredViewProjection);
-
             if (!Stereo && runtimeSettings.TemporalReuseEnabled && state.HistoryReady && (!hasTemporalData || !temporalData.HistoryReady))
                 forceRebuild = true;
 
@@ -208,6 +202,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             }
 
+/*
             Log($"Execute start: forceRebuild={forceRebuild}, last={state.LastWidth}x{state.LastHeight}, current={width}x{height}");
 
             Debug.RenderingEvery(
@@ -221,6 +216,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 normalTex.Name ?? "null",
                 depthViewTex.Name ?? "null",
                 IntensityTextureName);
+*/
 
             if (!forceRebuild)
                 forceRebuild = !instance.TryGetFBO(GenerationFBOName, out _);
@@ -240,72 +236,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                     height);
             }
 
-            // Soft-clear spatial hash data when the camera moves: zero out the
-            // SSBO hit/sample/key buffers so stale view-dependent occlusion data
-            // is discarded, but keep temporal history textures intact so the
-            // reprojection pass can smooth the reconvergence.
-            if (cameraMovedSinceLastFrame && !forceRebuild)
-                ClearSpatialHashData(state);
-
             EnsureComputeProgram();
             DispatchSpatialHashAO(state, normalTex, depthViewTex, width, height, runtimeSettings, hasTemporalData ? temporalData : default, hasTemporalData);
         }
 
-        private static void ClearSpatialHashData(InstanceState state)
-        {
-            // Advancing FrameIndex past the shader's MaxFrameAge window makes
-            // every cell appear stale on next lookup. The shader will lazily
-            // re-initialize each cell as it's accessed — no GPU clear needed.
-            state.FrameIndex += ShaderMaxFrameAge + 1;
-        }
-
-        private static Matrix4x4 GetCurrentUnjitteredViewProjection(
-            XRCamera? camera,
-            VPRC_TemporalAccumulationPass.TemporalUniformData temporalData,
-            bool hasTemporalData)
-        {
-            if (hasTemporalData)
-                return temporalData.CurrViewProjectionUnjittered;
-
-            if (camera is null)
-                return Matrix4x4.Identity;
-
-            Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
-            return viewMatrix * camera.ProjectionMatrixUnjittered;
-        }
-
-        private static bool ShouldInvalidateForCameraMotion(InstanceState state, in Matrix4x4 currentUnjitteredViewProjection)
-        {
-            if (!state.HasCachedViewProjection)
-            {
-                state.HasCachedViewProjection = true;
-                state.LastUnjitteredViewProjection = currentUnjitteredViewProjection;
-                return false;
-            }
-
-            if (IsMatrixApproximatelyEqual(state.LastUnjitteredViewProjection, currentUnjitteredViewProjection, 1e-4f))
-                return false;
-
-            state.LastUnjitteredViewProjection = currentUnjitteredViewProjection;
-            return true;
-        }
-
-        private static bool IsMatrixApproximatelyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon)
-        {
-            return MathF.Abs(a.M11 - b.M11) < epsilon && MathF.Abs(a.M12 - b.M12) < epsilon && MathF.Abs(a.M13 - b.M13) < epsilon && MathF.Abs(a.M14 - b.M14) < epsilon &&
-                   MathF.Abs(a.M21 - b.M21) < epsilon && MathF.Abs(a.M22 - b.M22) < epsilon && MathF.Abs(a.M23 - b.M23) < epsilon && MathF.Abs(a.M24 - b.M24) < epsilon &&
-                   MathF.Abs(a.M31 - b.M31) < epsilon && MathF.Abs(a.M32 - b.M32) < epsilon && MathF.Abs(a.M33 - b.M33) < epsilon && MathF.Abs(a.M34 - b.M34) < epsilon &&
-                   MathF.Abs(a.M41 - b.M41) < epsilon && MathF.Abs(a.M42 - b.M42) < epsilon && MathF.Abs(a.M43 - b.M43) < epsilon && MathF.Abs(a.M44 - b.M44) < epsilon;
-        }
-
         private static SpatialHashRuntimeSettings ResolveRuntimeSettings(AmbientOcclusionSettings? settings)
         {
-            float spatialMaxDistance = settings?.SpatialHashMaxDistance > 0.0f ? settings.SpatialHashMaxDistance : 0.0f;
-            float fallbackRadius = settings?.Radius > 0.0f ? settings.Radius : 2.0f;
-
             return new SpatialHashRuntimeSettings
             {
-                Radius = spatialMaxDistance > 0.0f ? spatialMaxDistance : fallbackRadius,
+                Radius = settings?.Radius > 0.0f ? settings.Radius : AmbientOcclusionSettings.DefaultRadius,
                 Power = settings?.Power > 0.0f ? settings.Power : 1.0f,
                 Steps = settings?.SpatialHashSteps > 0 ? settings.SpatialHashSteps : 8,
                 Bias = settings?.Bias > 0.0f ? settings.Bias : 0.01f,
@@ -379,7 +318,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.LastHeight = height;
             state.FrameIndex = 0;
             state.HistoryReady = false;
-            state.HasCachedViewProjection = false;
             state.UseHistoryTextureA = true;
 
             //Log($"Regenerating resources: size={width}x{height}, stereo={Stereo}");
@@ -775,6 +713,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgram.Uniform("InverseViewMatrix", inverseView);
             _computeProgram.Uniform("ViewMatrix", viewMatrix);
 
+/*
             Debug.RenderingEvery(
                 $"AO.SpatialHash.DispatchMono.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
                 TimeSpan.FromSeconds(1),
@@ -785,11 +724,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 height,
                 runtimeSettings.Radius,
                 runtimeSettings.SamplesPerPixel);
+*/
 
             uint groupX = (uint)(width + LocalGroupSize - 1) / LocalGroupSize;
             uint groupY = (uint)(height + LocalGroupSize - 1) / LocalGroupSize;
             _computeProgram.DispatchCompute(groupX, groupY, 1u, EMemoryBarrierMask.TextureFetch | EMemoryBarrierMask.ShaderStorage);
-            Log($"Dispatch mono: frameIndex={state.FrameIndex}, groups={groupX}x{groupY}, hashCapacity={state.HashCapacity}");
+            //Log($"Dispatch mono: frameIndex={state.FrameIndex}, groups={groupX}x{groupY}, hashCapacity={state.HashCapacity}");
             state.HistoryReady = true;
             state.UseHistoryTextureA = !state.UseHistoryTextureA;
         }
@@ -819,8 +759,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.HashCapacity = 0;
             state.FrameIndex = 0;
             state.HistoryReady = false;
-            state.HasCachedViewProjection = false;
-            state.LastUnjitteredViewProjection = Matrix4x4.Identity;
             state.UseHistoryTextureA = true;
         }
 
@@ -909,6 +847,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgramStereo.Uniform("RightEyeCurrViewProjectionUnjittered", rightViewMatrix * (rightCamera?.ProjectionMatrixUnjittered ?? leftCamera.ProjectionMatrixUnjittered));
             _computeProgramStereo.Uniform("RightEyePrevViewProjectionUnjittered", rightViewMatrix * (rightCamera?.ProjectionMatrixUnjittered ?? leftCamera.ProjectionMatrixUnjittered));
 
+/*
             Debug.RenderingEvery(
                 $"AO.SpatialHash.DispatchStereo.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
                 TimeSpan.FromSeconds(1),
@@ -918,11 +857,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 height,
                 runtimeSettings.Radius,
                 runtimeSettings.SamplesPerPixel);
+*/
 
             uint groupX = (uint)(width + LocalGroupSize - 1) / LocalGroupSize;
             uint groupY = (uint)(height + LocalGroupSize - 1) / LocalGroupSize;
             _computeProgramStereo.DispatchCompute(groupX, groupY, 1u, EMemoryBarrierMask.TextureFetch | EMemoryBarrierMask.ShaderStorage);
-            Log($"Dispatch stereo: frameIndex={state.FrameIndex}, groups={groupX}x{groupY}, hashCapacity={state.HashCapacity}");
+            //Log($"Dispatch stereo: frameIndex={state.FrameIndex}, groups={groupX}x{groupY}, hashCapacity={state.HashCapacity}");
             state.HistoryReady = true;
             state.UseHistoryTextureA = !state.UseHistoryTextureA;
         }

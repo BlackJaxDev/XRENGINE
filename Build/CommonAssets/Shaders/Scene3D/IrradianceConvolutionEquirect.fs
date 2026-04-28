@@ -7,16 +7,22 @@ uniform sampler2D Texture0;
 
 const float PI = 3.14159265359f;
 
+vec2 DirectionToEquirect(vec3 dir)
+{
+    float phi = atan(dir.z, dir.x);
+    float theta = asin(clamp(dir.y, -1.0f, 1.0f));
+    return vec2((phi / (2.0f * PI)) + 0.5f, 1.0f - ((theta / PI) + 0.5f));
+}
+
 void main()
 {
     vec3 N = normalize(FragPosLocal);
 
     vec3 irradiance = vec3(0.0f);
 
-    // tangent space calculation from origin point
-    vec3 up    = vec3(0.0f, 1.0f, 0.0f);
-    vec3 right = cross(up, N);
-    up         = cross(N, right);
+    vec3 up    = abs(N.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(0.0f, 0.0f, 1.0f);
+    vec3 right = normalize(cross(up, N));
+    up         = normalize(cross(N, right));
 
     float sampleDelta = 0.025f;
     int numSamples = 0;
@@ -29,9 +35,9 @@ void main()
             float tanY = sin(theta) * sin(phi);
             float tanZ = cos(theta);
 
-            vec2 uv = vec2((phi / (2.0f * PI)) + 0.5f, 1.0f - ((theta / PI) + 0.5f));
+            vec3 sampleVec = tanX * right + tanY * up + tanZ * N;
 
-            irradiance += texture(Texture0, uv).rgb * cos(theta) * sin(theta);
+            irradiance += texture(Texture0, DirectionToEquirect(sampleVec)).rgb * cos(theta) * sin(theta);
             ++numSamples;
         }
     }

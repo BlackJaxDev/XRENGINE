@@ -33,7 +33,14 @@ namespace XREngine.Components.Lights
             ShadowExponent = 1.221f;
             ShadowMinBias = 0.00001f;
             ShadowMaxBias = 0.004f;
+            BlockerSamples = 16;
+            FilterSamples = 16;
             FilterRadius = 0.0012f;
+            BlockerSearchRadius = 0.01f;
+            MinPenumbra = 0.001f;
+            MaxPenumbra = 0.015f;
+            SoftShadowMode = ESoftShadowMode.ContactHardeningPcss;
+            LightSourceRadius = 1.2f;
         }
 
         /// <summary>

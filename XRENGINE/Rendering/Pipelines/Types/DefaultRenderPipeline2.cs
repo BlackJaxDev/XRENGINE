@@ -1828,7 +1828,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             Name = "LightProbeIrradianceArray",
             MinFilter = ETexMinFilter.Linear,
             MagFilter = ETexMagFilter.Linear,
-            SizedInternalFormat = ESizedInternalFormat.Rgb8,  // Match irradiance texture format
+            SizedInternalFormat = ESizedInternalFormat.Rgb16f,
         };
 
         _probePrefilterArray = new XRTexture2DArray([.. preTextures])

@@ -118,7 +118,10 @@ public unsafe partial class VulkanRenderer
             return Vk.False;
         }
 
-        if (messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt))
+        bool isError = messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt);
+        Engine.Rendering.Stats.RecordVulkanValidationMessage(isError, msg);
+
+        if (isError)
             Debug.VulkanError($"[Vulkan] {msg}");
         else if (messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.WarningBitExt))
             Debug.VulkanWarning($"[Vulkan] {msg}");

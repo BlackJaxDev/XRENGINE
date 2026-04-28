@@ -25,9 +25,9 @@ void main()
 
     vec3 irradiance = vec3(0.0f);
 
-    vec3 up    = vec3(0.0f, 1.0f, 0.0f);
-    vec3 right = cross(up, N);
-    up         = cross(N, right);
+    vec3 up    = abs(N.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(0.0f, 0.0f, 1.0f);
+    vec3 right = normalize(cross(up, N));
+    up         = normalize(cross(N, right));
 
     float sampleDelta = 0.025f;
     int numSamples = 0;

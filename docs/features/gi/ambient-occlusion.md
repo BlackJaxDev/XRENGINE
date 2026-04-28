@@ -160,8 +160,8 @@ Ray-marched AO using spatial hashing for acceleration:
 aoSettings.Type = AmbientOcclusionSettings.EType.SpatialHashExperimental;
 
 // Spatial hash settings
+aoSettings.Radius = 1.5f;                  // Maximum ray distance
 aoSettings.SpatialHashCellSize = 0.07f;    // Grid cell size (smin)
-aoSettings.SpatialHashMaxDistance = 1.5f;  // Maximum ray distance
 aoSettings.SpatialHashSteps = 8;           // Ray march steps
 aoSettings.SpatialHashJitterScale = 0.35f; // Sample jittering
 ```

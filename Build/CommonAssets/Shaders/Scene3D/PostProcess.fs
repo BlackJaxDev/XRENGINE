@@ -154,6 +154,17 @@ vec3 ApplyVignette(vec3 sceneColor, vec2 uv)
   return mix(sceneColor, Vignette.Color, vignetteFactor);
 }
 vec2 ApplyLensDistortionByMode(vec2 uv);
+
+vec2 SceneSourceUv(vec2 uv)
+{
+  return ApplyLensDistortionByMode(uv);
+}
+
+uint SampleSceneStencil(vec2 uv)
+{
+  return texture(StencilView, SceneSourceUv(uv)).r;
+}
+
 float GetStencilMaskBit(uint stencilValue, uint bit)
 {
   return (stencilValue & bit) != 0u ? 1.0f : 0.0f;
@@ -167,7 +178,7 @@ vec2 GetStencilOutlineIntensity(vec2 uv)
     vec2 texelX = vec2(texelSize.x, 0.0f);
     vec2 texelY = vec2(0.0f, texelSize.y);
 
-    uint stencilCurrent = texture(StencilView, uv).r;
+    uint stencilCurrent = SampleSceneStencil(uv);
   float currentHover = GetStencilMaskBit(stencilCurrent, 1u);
   float currentSelection = GetStencilMaskBit(stencilCurrent, 2u);
 
@@ -185,10 +196,10 @@ vec2 GetStencilOutlineIntensity(vec2 uv)
       vec2 xPos = clamp(uv + texelX * step, zero, one);
       vec2 xNeg = clamp(uv - texelX * step, zero, one);
 
-      uint sYPos = texture(StencilView, yPos).r;
-      uint sYNeg = texture(StencilView, yNeg).r;
-      uint sXPos = texture(StencilView, xPos).r;
-      uint sXNeg = texture(StencilView, xNeg).r;
+      uint sYPos = SampleSceneStencil(yPos);
+      uint sYNeg = SampleSceneStencil(yNeg);
+      uint sXPos = SampleSceneStencil(xPos);
+      uint sXNeg = SampleSceneStencil(xNeg);
 
       if (currentHover == 0.0f)
       {
@@ -306,12 +317,12 @@ vec2 ApplyLensDistortionByMode(vec2 uv)
 
 vec3 SampleHDR(vec2 uv)
 {
-  vec2 duv = ApplyLensDistortionByMode(uv);
+  vec2 duv = SceneSourceUv(uv);
   return texture(HDRSceneTex, duv).rgb;
 }
 vec3 SampleBloom(vec2 uv, float lod)
 {
-  vec2 duv = ApplyLensDistortionByMode(uv);
+  vec2 duv = SceneSourceUv(uv);
   return textureLod(BloomBlurTexture, duv, lod).rgb;
 }
 
@@ -322,6 +333,7 @@ void main()
       discard;
   //Normalize uv from [-1, 1] to [0, 1]
   uv = uv * 0.5f + 0.5f;
+  vec2 sceneUv = SceneSourceUv(uv);
   
   //Perform HDR operations
   vec3 hdrSceneColor;
@@ -405,7 +417,7 @@ void main()
   // the entire scene. Only apply the composite when the fog pass has written meaningful
   // transmittance/scatter data (alpha > 0 OR rgb > 0). A fully opaque fog volume that wants
   // to occlude the scene must still write a non-zero alpha (transmittance) or non-zero rgb.
-  vec4 volumetricFog = texture(VolumetricFogColor, uv);
+  vec4 volumetricFog = texture(VolumetricFogColor, sceneUv);
   if (volumetricFog.a > 0.0f || any(greaterThan(volumetricFog.rgb, vec3(0.0f))))
     hdrSceneColor = hdrSceneColor * volumetricFog.a + volumetricFog.rgb;
 
@@ -423,7 +435,7 @@ void main()
   //Apply depth-based fog
   if (DepthFog.Intensity > 0.0f)
   {
-      float depth = texture(DepthView, uv).r;
+      float depth = texture(DepthView, sceneUv).r;
       float fogFactor = clamp((depth - DepthFog.Start) / (DepthFog.End - DepthFog.Start), 0.0f, 1.0f);
       sceneColor = mix(sceneColor, DepthFog.Color, fogFactor * DepthFog.Intensity);
   }

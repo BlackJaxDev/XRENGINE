@@ -28,6 +28,24 @@ public partial class GLTexture2D
             int naturalSmallestMipIndex = Data.SmallestMipmapLevel;
             int mipmapCount = Math.Max(0, Mipmaps?.Length ?? 0);
             int requestedLevels = Math.Max(1, naturalSmallestMipIndex + 1);
+            bool sparseLogicalAllocation = Data.SparseTextureStreamingEnabled
+                && Data.SparseTextureStreamingLogicalWidth > 0
+                && Data.SparseTextureStreamingLogicalHeight > 0
+                && Data.SparseTextureStreamingLogicalMipCount > 0;
+            if (sparseLogicalAllocation)
+            {
+                width = Math.Max(1u, Data.SparseTextureStreamingLogicalWidth);
+                height = Math.Max(1u, Data.SparseTextureStreamingLogicalHeight);
+            }
+            else if (Data.SparseTextureStreamingEnabled)
+            {
+                Debug.OpenGLWarning(
+                    $"[GLTexture2D] Clearing incomplete sparse state before storage allocation for '{GetDescribingName()}': " +
+                    $"residentDims={width}x{height} residentBase={Data.SparseTextureStreamingResidentBaseMipLevel} " +
+                    $"logicalDims={Data.SparseTextureStreamingLogicalWidth}x{Data.SparseTextureStreamingLogicalHeight} " +
+                    $"logicalMipCount={Data.SparseTextureStreamingLogicalMipCount}.");
+                Data.ClearSparseTextureStreamingState();
+            }
 
             // CRITICAL: `Data.SmallestMipmapLevel` is clamped by `Data.SmallestAllowedMipmapLevel`.
             // The progressive streaming coroutine pins `SmallestAllowedMipmapLevel = lockMipLevel`
@@ -40,7 +58,7 @@ public partial class GLTexture2D
             int requestedLevelsBeforeMipFloor = requestedLevels;
             if (mipmapCount > requestedLevels)
                 requestedLevels = mipmapCount;
-            if (Data.SparseTextureStreamingEnabled)
+            if (sparseLogicalAllocation)
             {
                 int residentBaseMipLevel = SparseTextureResidentBaseMipLevelOrZero;
                 int residentMipCount = Math.Max(0, Mipmaps?.Length ?? 0);
@@ -66,16 +84,27 @@ public partial class GLTexture2D
             }
 
             uint levels = (uint)requestedLevels;
+            uint legalLevels = GetLegalMipLevelCount(width, height);
+            if (levels > legalLevels && !Data.UsesOpenGlExternalMemoryImport)
+            {
+                Debug.OpenGLWarning(
+                    $"[GLTexture2D] Clamping storage levels for '{GetDescribingName()}' from {levels} to {legalLevels}: " +
+                    $"dims={width}x{height} mipmapCount={mipmapCount} sparseEnabled={Data.SparseTextureStreamingEnabled} " +
+                    $"logicalDims={Data.SparseTextureStreamingLogicalWidth}x{Data.SparseTextureStreamingLogicalHeight} " +
+                    $"logicalMipCount={Data.SparseTextureStreamingLogicalMipCount} residentBase={Data.SparseTextureStreamingResidentBaseMipLevel}.");
+                levels = legalLevels;
+            }
             if (Data.UsesOpenGlExternalMemoryImport)
             {
                 uint importedLevels = Math.Max(1u, Data.OpenGlExternalMemoryImportMipLevels);
+/*
                 if (levels != importedLevels)
                 {
                     Debug.OpenGL(
                         $"[GLTexture2D] Clamping external-memory import levels for '{GetDescribingName()}' from {levels} to {importedLevels}. " +
                         $"ImportLabel={Data.OpenGlExternalMemoryLabel ?? Data.Name ?? BindingId.ToString()} dims={width}x{height}.");
                 }
-
+*/
                 levels = importedLevels;
             }
 
@@ -169,6 +198,19 @@ public partial class GLTexture2D
 
     private bool IsMipLevelInAllocatedRange(int glLevel)
         => glLevel >= 0 && glLevel < _allocatedLevels;
+
+    private static uint GetLegalMipLevelCount(uint width, uint height)
+    {
+        uint largestDimension = Math.Max(1u, Math.Max(width, height));
+        uint levels = 1u;
+        while (largestDimension > 1u)
+        {
+            largestDimension >>= 1;
+            levels++;
+        }
+
+        return levels;
+    }
 
     /// <summary>
     /// Calculates the approximate VRAM size for a 2D texture including all mipmap levels.

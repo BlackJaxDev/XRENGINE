@@ -10,6 +10,8 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        internal const uint CommonPushConstantSize = 16;
+
         private CommandBuffer[]? _commandBuffers;
         private ulong[]? _commandBufferFrameOpSignatures;
         private ulong[]? _commandBufferPlannerRevisions;
@@ -28,6 +30,60 @@ namespace XREngine.Rendering.Vulkan
         private string? _vulkanDiagnosticLastTitle;
         private int _vulkanLastFrameDroppedDrawOps;
         private int _vulkanLastFrameDroppedOps;
+
+        private readonly record struct FrameOpFailureSnapshot(
+            string OpType,
+            int PassIndex,
+            int PipelineIdentity,
+            int ViewportIdentity,
+            string TargetName,
+            string MaterialName,
+            string ShaderName,
+            string Message);
+
+        private readonly struct ComputeDispatchPushConstants
+        {
+            public readonly uint GroupsX;
+            public readonly uint GroupsY;
+            public readonly uint GroupsZ;
+            public readonly uint DebugFlags;
+
+            public ComputeDispatchPushConstants(uint groupsX, uint groupsY, uint groupsZ, uint debugFlags)
+            {
+                GroupsX = groupsX;
+                GroupsY = groupsY;
+                GroupsZ = groupsZ;
+                DebugFlags = debugFlags;
+            }
+        }
+
+        private static FrameOpFailureSnapshot CaptureFrameOpFailure(FrameOp op, Exception exception)
+        {
+            string targetName = op.Target?.Name ?? "<swapchain/null>";
+            string materialName = string.Empty;
+            string shaderName = string.Empty;
+
+            if (op is MeshDrawOp drawOp)
+            {
+                var meshRenderer = drawOp.Draw.Renderer.MeshRenderer;
+                var material = drawOp.Draw.MaterialOverride ?? meshRenderer.Material;
+                materialName = material?.Name ?? "<unnamed material>";
+                shaderName =
+                    material is not null && material.FragmentShaders.Count > 0
+                        ? material.FragmentShaders[0].Name ?? material.FragmentShaders[0].Source?.Name ?? "<unnamed shader>"
+                        : "<none>";
+            }
+
+            return new FrameOpFailureSnapshot(
+                op.GetType().Name,
+                op.PassIndex,
+                op.Context.PipelineIdentity,
+                op.Context.ViewportIdentity,
+                targetName,
+                materialName,
+                shaderName,
+                exception.Message);
+        }
 
         private static string BuildFrameOpFailureContext(FrameOp op)
         {
@@ -76,6 +132,48 @@ namespace XREngine.Rendering.Vulkan
                 _ =>
                     $"pass={op.PassIndex} pipe={op.Context.PipelineIdentity}({pipelineLabel}) vp={op.Context.ViewportIdentity} op={op.GetType().Name}"
             };
+        }
+
+        private string BuildVulkanFrameDiagnosticSummary(
+            FrameOp[] ops,
+            int clearCount,
+            int drawCount,
+            int blitCount,
+            int computeCount,
+            int sceneSwapchainWriters,
+            int overlaySwapchainWriters,
+            int forcedDiagnosticSwapchainWriters,
+            int fboOnlyDrawOps,
+            int fboOnlyBlitOps,
+            string swapchainWriterSummary,
+            in FrameOpContext context,
+            FrameOpFailureSnapshot? firstFailure)
+        {
+            string opSummary = string.Join(", ",
+                ops.Take(12).Select(op =>
+                    $"{op.GetType().Name}:p{op.PassIndex}:pipe{op.Context.PipelineIdentity}:vp{op.Context.ViewportIdentity}:target={op.Target?.Name ?? "<swapchain>"}"));
+
+            string passSummary = context.PassMetadata is null
+                ? "passes=<null>"
+                : $"passes={context.PassMetadata.Count}[{string.Join(", ", context.PassMetadata.Take(10).Select(p => $"{p.PassIndex}:{p.Name}"))}]";
+
+            string registrySummary = context.ResourceRegistry is null
+                ? "registry=<null>"
+                : $"registry=fbo({string.Join(", ", context.ResourceRegistry.FrameBufferRecords.Keys.Take(8))}) tex({string.Join(", ", context.ResourceRegistry.TextureRecords.Keys.Take(8))}) buf({string.Join(", ", context.ResourceRegistry.BufferRecords.Keys.Take(8))})";
+
+            string physicalSummary =
+                $"plannerRev={ResourcePlannerRevision} logicalImages={_resourceAllocator.LogicalTextureAllocations.Count} physicalImages={_resourceAllocator.EnumeratePhysicalGroups().Count()} logicalBuffers={_resourceAllocator.LogicalBufferAllocations.Count} physicalBuffers={_resourceAllocator.EnumeratePhysicalBufferGroups().Count()}";
+
+            string failureSummary = firstFailure is { } failure
+                ? $"firstFailure={failure.OpType} pass={failure.PassIndex} pipe={failure.PipelineIdentity} vp={failure.ViewportIdentity} target={failure.TargetName} material={failure.MaterialName} shader={failure.ShaderName} message={failure.Message}"
+                : "firstFailure=<none>";
+
+            return
+                $"ops={ops.Length} C/D/B/Comp={clearCount}/{drawCount}/{blitCount}/{computeCount}; " +
+                $"writers scene={sceneSwapchainWriters} overlay={overlaySwapchainWriters} forcedDiag={forcedDiagnosticSwapchainWriters} fboOnlyD/B={fboOnlyDrawOps}/{fboOnlyBlitOps}; " +
+                $"swapchain={swapchainWriterSummary}; descriptorSkips={Engine.Rendering.Stats.VulkanDescriptorBindSkips} descriptorFallbacks={Engine.Rendering.Stats.VulkanDescriptorFallbacksCurrentFrame} descriptorFailures={Engine.Rendering.Stats.VulkanDescriptorBindingFailuresCurrentFrame} oomFallbacks={Engine.Rendering.Stats.VulkanOomFallbackCount}; " +
+                $"validationCurrent={Engine.Rendering.Stats.VulkanValidationMessageCountCurrentFrame}/{Engine.Rendering.Stats.VulkanValidationErrorCountCurrentFrame}; " +
+                $"{failureSummary}; {passSummary}; {registrySummary}; {physicalSummary}; opList=[{opSummary}]";
         }
 
         private void UpdateVulkanOnScreenDiagnostic(string pipelineLabel, ColorF4 clearColor, int droppedDrawOps, int droppedOps, string swapchainWriter)
@@ -261,6 +359,27 @@ namespace XREngine.Rendering.Vulkan
                 Api!.CmdBindDescriptorSets(commandBuffer, bindPoint, layout, firstSet, (uint)sets.Length, setPtr, (uint)dynamicOffsets.Length, offsetPtr);
 
             Engine.Rendering.Stats.RecordVulkanBindChurn(descriptorBinds: 1);
+        }
+
+        internal void PushConstantsTracked<T>(
+            CommandBuffer commandBuffer,
+            PipelineLayout layout,
+            ShaderStageFlags stageFlags,
+            uint offset,
+            in T value) where T : unmanaged
+        {
+            if (layout.Handle == 0)
+                return;
+
+            T localValue = value;
+            Api!.CmdPushConstants(
+                commandBuffer,
+                layout,
+                stageFlags,
+                offset,
+                (uint)sizeof(T),
+                &localValue);
+            Engine.Rendering.Stats.RecordVulkanBindChurn(pushConstantWrites: 1);
         }
 
         internal void BindVertexBuffersTracked(
@@ -723,7 +842,9 @@ namespace XREngine.Rendering.Vulkan
         {
             var commandBuffer = _commandBuffers![imageIndex];
             int droppedDrawOps = 0;
+            int droppedComputeOps = 0;
             int droppedFrameOps = 0;
+            FrameOpFailureSnapshot? firstFailure = null;
 
             ReleaseDeferredSecondaryCommandBuffers(imageIndex);
             Api!.ResetCommandBuffer(commandBuffer, 0);
@@ -798,6 +919,11 @@ namespace XREngine.Rendering.Vulkan
             int swapchainClearWrites = 0;
             int swapchainDrawWrites = 0;
             int swapchainBlitWrites = 0;
+            int sceneSwapchainWriters = 0;
+            int overlaySwapchainWriters = 0;
+            int forcedDiagnosticSwapchainWriters = 0;
+            int fboOnlyDrawOps = 0;
+            int fboOnlyBlitOps = 0;
             string swapchainLastWriter = "None";
             int swapchainLastWriterPass = int.MinValue;
             int swapchainLastWriterOpIndex = -1;
@@ -914,6 +1040,10 @@ namespace XREngine.Rendering.Vulkan
                             swapchainDrawWrites++;
                             MarkSwapchainWriter(nameof(MeshDrawOp), BuildSwapchainWriterDetail(meshDraw), meshDraw.PassIndex, opScanIndex, meshDraw.Context.PipelineIdentity);
                         }
+                        else
+                        {
+                            fboOnlyDrawOps++;
+                        }
                         break;
                     case BlitOp blit:
                         RememberPipelineName(blit.Context);
@@ -924,12 +1054,17 @@ namespace XREngine.Rendering.Vulkan
                             swapchainBlitWrites++;
                             MarkSwapchainWriter(nameof(BlitOp), BuildSwapchainWriterDetail(blit), blit.PassIndex, opScanIndex, blit.Context.PipelineIdentity);
                         }
+                        else
+                        {
+                            fboOnlyBlitOps++;
+                        }
                         break;
                     case ComputeDispatchOp: computeCount++; break;
                 }
 
                 opScanIndex++;
             }
+            sceneSwapchainWriters = swapchainWriteCount;
 
             Debug.VulkanEvery(
                 $"Vulkan.FrameOps.{GetHashCode()}",
@@ -993,6 +1128,8 @@ namespace XREngine.Rendering.Vulkan
             // the finalLayout of each attachment so the next BeginRenderPassForTarget
             // can set initialLayout correctly and preserve content across passes.
             Dictionary<XRFrameBuffer, ImageLayout[]> fboLayoutTracking = [];
+            int swapchainPresentTransitions = 0;
+            bool usedSwapchainDynamicRendering = false;
 
             void ApplyPipelineOverride(in FrameOpContext context)
             {
@@ -1043,6 +1180,7 @@ namespace XREngine.Rendering.Vulkan
                             null,
                             1,
                             &presentBarrier);
+                        swapchainPresentTransitions++;
                     }
                 }
                 else
@@ -1218,6 +1356,7 @@ namespace XREngine.Rendering.Vulkan
 
                         renderPassActive = true;
                         activeDynamicRendering = true;
+                        usedSwapchainDynamicRendering = true;
                         activeTarget = null;
                         activeRenderPass = default;
                         activeFramebuffer = default;
@@ -1506,6 +1645,16 @@ namespace XREngine.Rendering.Vulkan
 
                         if (opPassIndex == int.MinValue)
                         {
+                            System.Diagnostics.Debug.Assert(
+                                op.PassIndex != int.MinValue || activePassIndex != int.MinValue,
+                                "Vulkan frame op reached recording with int.MinValue pass index outside a documented active-pass bootstrap.");
+                            droppedFrameOps++;
+                            if (op is MeshDrawOp or IndirectDrawOp)
+                                droppedDrawOps++;
+                            if (op is ComputeDispatchOp)
+                                droppedComputeOps++;
+                            firstFailure ??= CaptureFrameOpFailure(op, new InvalidOperationException("No valid render-graph pass index could be resolved."));
+
                             Debug.VulkanWarningEvery(
                                 $"Vulkan.OpDroppedNoPass.{op.GetType().Name}",
                                 TimeSpan.FromSeconds(1),
@@ -1519,6 +1668,8 @@ namespace XREngine.Rendering.Vulkan
                             droppedFrameOps++;
                             if (op is MeshDrawOp or IndirectDrawOp)
                                 droppedDrawOps++;
+                            if (op is ComputeDispatchOp)
+                                droppedComputeOps++;
 
                             Debug.VulkanEvery(
                                 $"Vulkan.SkipUiPipeline.{GetHashCode()}",
@@ -1634,7 +1785,10 @@ namespace XREngine.Rendering.Vulkan
                             activeRenderPass,
                             activeDynamicRendering && drawOp.Target is null,
                             swapChainImageFormat,
-                            _swapchainDepthFormat);
+                            _swapchainDepthFormat,
+                            opPassIndex,
+                            drawOp.Context.PassMetadata,
+                            drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>");
                         break;
 
                     case IndirectDrawOp indirectOp:
@@ -1687,6 +1841,9 @@ namespace XREngine.Rendering.Vulkan
                         droppedFrameOps++;
                         if (op is MeshDrawOp or IndirectDrawOp)
                             droppedDrawOps++;
+                        if (op is ComputeDispatchOp)
+                            droppedComputeOps++;
+                        firstFailure ??= CaptureFrameOpFailure(op, opEx);
 
                         EndActiveRenderPass();
                         if (renderPassLabelActive)
@@ -1749,7 +1906,22 @@ namespace XREngine.Rendering.Vulkan
                 Api!.CmdSetViewport(commandBuffer, 0, 1, &swapViewport);
                 Api!.CmdSetScissor(commandBuffer, 0, 1, &swapScissor);
 
-                if (swapchainWriteCount == 0)
+                bool hasSceneFrameWork = clearCount > 0 || drawCount > 0 || blitCount > 0 || computeCount > 0;
+                bool missingSceneSwapchainWriters = hasSceneFrameWork && sceneSwapchainWriters == 0;
+                if (missingSceneSwapchainWriters)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.MissingSceneSwapchainWrites.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan][FrameFailure] Scene frame recorded zero pre-overlay swapchain writers (clears={0}, draws={1}, blits={2}, computes={3}, fboOnlyDraws={4}, fboOnlyBlits={5}). Overlay or diagnostic clears may still present.",
+                        clearCount,
+                        drawCount,
+                        blitCount,
+                        computeCount,
+                        fboOnlyDrawOps,
+                        fboOnlyBlitOps);
+                }
+                else if (swapchainWriteCount == 0)
                 {
                     Debug.VulkanWarningEvery(
                         $"Vulkan.NoSwapchainWrites.{GetHashCode()}",
@@ -1791,6 +1963,7 @@ namespace XREngine.Rendering.Vulkan
                     Api!.CmdClearAttachments(commandBuffer, 1, &magentaAttachment, 1, &clearRect);
                     swapchainWriteCount++;
                     swapchainClearWrites++;
+                    forcedDiagnosticSwapchainWriters++;
                     MarkSwapchainWriter("ForceMagenta", "forced debug clear", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
 
                     Debug.VulkanEvery(
@@ -1809,6 +1982,8 @@ namespace XREngine.Rendering.Vulkan
                     CmdBeginLabel(commandBuffer, "ImGui");
                     RenderImGui(commandBuffer, imageIndex);
                     CmdEndLabel(commandBuffer);
+                    swapchainWriteCount++;
+                    overlaySwapchainWriters++;
                     MarkSwapchainWriter("ImGui", "overlay draw", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
                     LogSwapchainWritersByPipeline("PostOverlay");
                 }
@@ -1827,10 +2002,58 @@ namespace XREngine.Rendering.Vulkan
                     : "None";
                 ColorF4 clearColor = GetClearColorValue();
                 string swapchainWriterSummary =
-                    $"{swapchainLastWriter}@p{swapchainLastWriterPass}:w{swapchainWriteCount}(C{swapchainClearWrites}D{swapchainDrawWrites}B{swapchainBlitWrites}) ops={ops.Length} fboD={drawCount - swapchainDrawWrites} fboB={blitCount - swapchainBlitWrites} comp={computeCount}";
+                    $"{swapchainLastWriter}@p{swapchainLastWriterPass}:w{swapchainWriteCount}(scene={sceneSwapchainWriters} overlay={overlaySwapchainWriters} diag={forcedDiagnosticSwapchainWriters} C{swapchainClearWrites}D{swapchainDrawWrites}B{swapchainBlitWrites}) presentTransitions={swapchainPresentTransitions} ops={ops.Length} fboD={fboOnlyDrawOps} fboB={fboOnlyBlitOps} comp={computeCount}";
                 UpdateVulkanOnScreenDiagnostic(pipelineLabel, clearColor, droppedDrawOps, droppedFrameOps, swapchainWriterSummary);
 
+                string? frameDiagnosticSummary = null;
+                if (droppedFrameOps > 0 || missingSceneSwapchainWriters)
+                {
+                    frameDiagnosticSummary = BuildVulkanFrameDiagnosticSummary(
+                        ops,
+                        clearCount,
+                        drawCount,
+                        blitCount,
+                        computeCount,
+                        sceneSwapchainWriters,
+                        overlaySwapchainWriters,
+                        forcedDiagnosticSwapchainWriters,
+                        fboOnlyDrawOps,
+                        fboOnlyBlitOps,
+                        swapchainWriterSummary,
+                        hasActiveContext ? activeContext : initialContext,
+                        firstFailure);
+                }
+
+                Engine.Rendering.Stats.RecordVulkanFrameDiagnostics(
+                    droppedFrameOps,
+                    droppedDrawOps,
+                    droppedComputeOps,
+                    sceneSwapchainWriters,
+                    overlaySwapchainWriters,
+                    forcedDiagnosticSwapchainWriters,
+                    fboOnlyDrawOps,
+                    fboOnlyBlitOps,
+                    missingSceneSwapchainWriters,
+                    firstFailure?.OpType,
+                    firstFailure?.PassIndex ?? int.MinValue,
+                    firstFailure?.PipelineIdentity ?? 0,
+                    firstFailure?.ViewportIdentity ?? 0,
+                    firstFailure?.TargetName,
+                    firstFailure?.MaterialName,
+                    firstFailure?.ShaderName,
+                    firstFailure?.Message,
+                    frameDiagnosticSummary);
+
                 EndActiveRenderPass();
+
+                if (usedSwapchainDynamicRendering && swapchainPresentTransitions != 1)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.DynamicRendering.PresentTransitions.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Dynamic-rendering swapchain transitioned to PresentSrcKhr {0} times this command buffer; expected exactly once.",
+                        swapchainPresentTransitions);
+                }
 
                 EndFrameTimingQueries(commandBuffer, currentFrame);
 
@@ -2314,7 +2537,7 @@ namespace XREngine.Rendering.Vulkan
             Pipeline pipeline;
             try
             {
-                pipeline = op.Program.GetOrCreateComputePipeline();
+                pipeline = op.Program.GetOrCreateComputePipeline(op.PassIndex, op.Context.PassMetadata);
             }
             catch (Exception ex)
             {
@@ -2344,10 +2567,25 @@ namespace XREngine.Rendering.Vulkan
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] Skipping compute dispatch for '{0}' — descriptor binding failed.",
                     op.Program.Data.Name ?? "UnnamedProgram");
+                Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                    op.Program.Data.Name,
+                    "descriptor-set",
+                    "<compute-dispatch>",
+                    0,
+                    0,
+                    skippedDraw: false,
+                    skippedDispatch: true,
+                    "compute dispatch skipped because descriptor binding failed");
                 return;
             }
 
             RegisterComputeTransientUniformBuffers(imageIndex, tempBuffers);
+            PushConstantsTracked(
+                commandBuffer,
+                op.Program.PipelineLayout,
+                ShaderStageFlags.ComputeBit,
+                0,
+                new ComputeDispatchPushConstants(op.GroupsX, op.GroupsY, op.GroupsZ, 0u));
             Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);
         }
 

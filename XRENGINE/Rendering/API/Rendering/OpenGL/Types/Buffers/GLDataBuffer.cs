@@ -363,7 +363,22 @@ namespace XREngine.Rendering.OpenGL
                 {
                     if (_immutableStorageSet && Data.Length == _lastPushedLength)
                     {
-                        Api.NamedBufferSubData(BindingId, 0, Data.Length, addr);
+                        if (!Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage))
+                        {
+                            if (remapAfterUpload)
+                                UnmapBufferData();
+
+                            RecreateBuffer();
+                            AllocateImmutable();
+
+                            if (remapAfterUpload)
+                                MapBufferData();
+                        }
+                        else
+                        {
+                            Api.NamedBufferSubData(BindingId, 0, Data.Length, addr);
+                        }
+
                         _lastPushedLength = Data.Length;
 
                         if (Data.DisposeOnPush)
@@ -538,6 +553,12 @@ namespace XREngine.Rendering.OpenGL
                     }
 
                     void* addr = (Data.Address + (uint)offset).Pointer;
+                    if (_immutableStorageSet && !Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage))
+                    {
+                        PushData();
+                        return;
+                    }
+
                     Api.NamedBufferSubData(BindingId, offset, length, addr);
                 }
             }

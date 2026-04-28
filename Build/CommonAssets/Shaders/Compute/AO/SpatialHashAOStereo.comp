@@ -55,6 +55,7 @@ uniform mat4 RightEyePrevViewProjectionUnjittered;
 const uint SEARCH_COUNT = 16u;
 const uint EmptyCell = 0u;
 const uint MaxFrameAge = 20u;
+const uint OcclusionScale = 1024u;
 
 uint pcg(inout uint v)
 {
@@ -220,7 +221,11 @@ float RayMarchOcclusion(vec3 viewOrigin, vec3 viewDir, float maxDistance, int st
         float rayDepthVS = samplePos.z;
         float depthDiff = rayDepthVS - sceneDepthVS;
         if (depthDiff < 0.0 && depthDiff > -thickness)
-            return 1.0;
+        {
+            float distanceWeight = clamp(1.0 - marchDist / max(maxDistance, 1e-4), 0.0, 1.0);
+            float thicknessWeight = clamp(1.0 + depthDiff / max(thickness, 1e-4), 0.0, 1.0);
+            return distanceWeight * thicknessWeight;
+        }
     }
 
     return 0.0;
@@ -272,7 +277,7 @@ void ProcessEye(
         return;
     }
 
-    uint originalHits = atomicAdd(spatialData[cellIndex].x, 0u);
+    uint originalOcclusion = atomicAdd(spatialData[cellIndex].x, 0u);
     uint originalSamples = atomicAdd(spatialData[cellIndex].y, 0u);
 
     float occlusionRatio;
@@ -282,14 +287,15 @@ void ProcessEye(
         vec3 hemi = SampleHemisphere(sampleXi);
         vec3 worldDir = normalize(hemi.x * tangent + hemi.y * bitangent + hemi.z * worldNormal);
         vec3 viewDir = normalize((viewMatrix * vec4(worldDir, 0.0)).xyz);
-        uint hit = uint(RayMarchOcclusion(viewPos, viewDir, Radius, RayStepCount, Bias, Thickness, projMatrix, inverseProjMatrix, eyeIndex));
-        occlusionRatio = float(originalHits + hit) / float(originalSamples + 1u);
-        atomicAdd(spatialData[cellIndex].x, hit);
+        float occlusionSample = RayMarchOcclusion(viewPos, viewDir, Radius, RayStepCount, Bias, Thickness, projMatrix, inverseProjMatrix, eyeIndex);
+        uint encodedOcclusion = uint(clamp(occlusionSample, 0.0, 1.0) * float(OcclusionScale) + 0.5);
+        occlusionRatio = float(originalOcclusion + encodedOcclusion) / (float(originalSamples + 1u) * float(OcclusionScale));
+        atomicAdd(spatialData[cellIndex].x, encodedOcclusion);
         atomicAdd(spatialData[cellIndex].y, 1u);
     }
     else
     {
-        occlusionRatio = float(originalHits) / float(max(originalSamples, 1u));
+        occlusionRatio = float(originalOcclusion) / (float(max(originalSamples, 1u)) * float(OcclusionScale));
     }
 
     float rawAO = pow(clamp(1.0 - occlusionRatio, 0.0, 1.0), Power);

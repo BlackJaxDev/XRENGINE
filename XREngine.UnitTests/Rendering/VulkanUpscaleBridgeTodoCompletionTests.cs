@@ -148,6 +148,8 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         dlssSource.ShouldContain("DepthInverted = parameters.ReverseDepth ? StreamlineBoolean.True : StreamlineBoolean.False,");
         dlssSource.ShouldContain("ColorBuffersHdr = parameters.OutputHdr ? StreamlineBoolean.True : StreamlineBoolean.False,");
         dlssSource.ShouldContain("if (parameters.InputWidth == parameters.OutputWidth && parameters.InputHeight == parameters.OutputHeight)\n                        return StreamlineDlssMode.Dlaa;");
+        dlssSource.ShouldContain("EDlssQualityMode.UltraQuality => StreamlineDlssMode.MaxQuality,");
+        dlssSource.ShouldNotContain("=> StreamlineDlssMode.UltraQuality");
         dlssSource.ShouldContain("LogMessageCallback = LogMessageCallbackPtr,");
         dlssSource.ShouldContain("StreamlineResourceLifecycle.ValidUntilEvaluate, inputExtent");
         dlssSource.ShouldContain("private delegate StreamlineResult SlDlssGetOptimalSettingsDelegate(ref StreamlineDlssOptions options, ref StreamlineDlssOptimalSettings settings);");
@@ -233,6 +235,19 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         bridgeSource.ShouldContain("private void HandleInternalResolutionResized(XRViewport _)\n        => MarkNeedsRecreate(InternalResolutionResizeReason);");
         bridgeSource.ShouldContain("private readonly HashSet<string> _loggedStateFingerprints = [];");
         bridgeSource.ShouldContain("if (!_loggedStateFingerprints.Add(logFingerprint))");
+        bridgeSource.ShouldContain("CanRecreateFrameSlotsInPlace(");
+        bridgeSource.ShouldContain("IsFrameSlotOnlyRecreateReason(recreateReason)");
+        bridgeSource.ShouldContain("string.Equals(recreateReason, \"output HDR changed\", StringComparison.Ordinal)");
+        bridgeSource.ShouldContain("_sidecar.RecreateFrameSlots(renderer, frameResources, SanitizeLabel(DescribeViewport()))");
+
+        string sidecarSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
+        sidecarSource.ShouldContain("public VulkanUpscaleBridgeFrameSlot[] RecreateFrameSlots(OpenGLRenderer renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)");
+        sidecarSource.ShouldContain("ResetVendorSessionsForFrameResourceRecreate();");
+        sidecarSource.ShouldContain("_dlssSession?.ResetResources();");
+
+        string dlssSource = ReadWorkspaceFile("XRENGINE/Rendering/DLSS/StreamlineNative.cs").Replace("\r\n", "\n");
+        dlssSource.ShouldContain("public void ResetResources()");
+        dlssSource.ShouldContain("FreeAllocatedResources();");
 
         string bridgeEnvSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.VulkanUpscaleBridge.cs").Replace("\r\n", "\n");
         bridgeEnvSource.ShouldContain("public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar, defaultValue: true);");

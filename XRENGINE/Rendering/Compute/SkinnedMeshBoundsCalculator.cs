@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -215,13 +216,16 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _outputPositions = new XRDataBuffer($"{meshName}_SkinnedBoundsOutput", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(1, mesh.VertexCount), EComponentType.Float, 4, false, false)
             {
                 AttributeName = $"{meshName}_SkinnedBoundsOutput",
-                ShouldMap = true
+                ShouldMap = true,
+                Resizable = false,
+                StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
+                RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent
             };
             _bounds = new XRDataBuffer($"{meshName}_SkinnedBoundsReduction", EBufferTarget.ShaderStorageBuffer, 2, EComponentType.UInt, 4, false, false)
             {
                 AttributeName = $"{meshName}_SkinnedBoundsReduction",
-                ShouldMap = true,
-                Resizable = false
+                Resizable = false,
+                StorageFlags = EBufferMapStorageFlags.DynamicStorage
             };
 
             if (_positions is null || _boneIndices is null || _boneWeights is null || _outputPositions is null || _bounds is null)
@@ -245,7 +249,13 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 return;
 
             if (_outputPositions.ElementCount < vertexCount)
+            {
                 _outputPositions.Resize(vertexCount, false, true);
+                _outputPositions.PushData();
+            }
+
+            if (!_outputPositions.IsMapped)
+                _outputPositions.MapBufferData();
         }
 
         public bool TryReadPositions(int vertexCount, out Vector3[] positions)
@@ -254,12 +264,12 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             if (_outputPositions is null)
                 return false;
 
-            if (_outputPositions.ClientSideSource is null)
+            if (!TryGetMappedAddress(_outputPositions, out VoidPtr mappedAddress))
                 return false;
 
             unsafe
             {
-                Vector4* ptr = (Vector4*)_outputPositions.Address.Pointer;
+                Vector4* ptr = (Vector4*)mappedAddress.Pointer;
                 for (int i = 0; i < vertexCount; i++)
                 {
                     Vector4 v = ptr[i];
@@ -268,6 +278,21 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             }
 
             return true;
+        }
+
+        private static bool TryGetMappedAddress(XRDataBuffer buffer, out VoidPtr mappedAddress)
+        {
+            foreach (VoidPtr address in buffer.GetMappedAddresses())
+            {
+                if (address != VoidPtr.Zero)
+                {
+                    mappedAddress = address;
+                    return true;
+                }
+            }
+
+            mappedAddress = VoidPtr.Zero;
+            return false;
         }
 
         public void ResetBoundsBuffer()

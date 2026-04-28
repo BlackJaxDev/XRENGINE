@@ -772,14 +772,27 @@ namespace XREngine.Rendering.DLSS
 
                     _disposed = true;
 
+                    FreeAllocatedResources();
+                    ReleaseBridgeRuntime();
+                }
+
+                public void ResetResources()
+                {
+                    if (_disposed)
+                        return;
+
+                    FreeAllocatedResources();
+                    _firstDispatch = true;
+                }
+
+                private void FreeAllocatedResources()
+                {
                     if (_resourcesAllocated && _freeResources is not null)
                     {
                         StreamlineViewportHandle viewport = _viewport;
                         _freeResources(FeatureDlss, ref viewport);
                         _resourcesAllocated = false;
                     }
-
-                    ReleaseBridgeRuntime();
                 }
 
                 private static StreamlineDlssOptions CreateDlssOptions(in VulkanUpscaleBridgeDispatchParameters parameters)
@@ -824,7 +837,7 @@ namespace XREngine.Rendering.DLSS
                             EDlssQualityMode.Performance => StreamlineDlssMode.MaxPerformance,
                             EDlssQualityMode.Balanced => StreamlineDlssMode.Balanced,
                             EDlssQualityMode.Quality => StreamlineDlssMode.MaxQuality,
-                            EDlssQualityMode.UltraQuality => StreamlineDlssMode.UltraQuality,
+                            EDlssQualityMode.UltraQuality => StreamlineDlssMode.MaxQuality,
                             _ => StreamlineDlssMode.MaxQuality,
                         };
                     }
@@ -835,8 +848,6 @@ namespace XREngine.Rendering.DLSS
                         <= 0.40f => StreamlineDlssMode.UltraPerformance,
                         <= 0.54f => StreamlineDlssMode.MaxPerformance,
                         <= 0.62f => StreamlineDlssMode.Balanced,
-                        <= 0.72f => StreamlineDlssMode.MaxQuality,
-                        <= 0.86f => StreamlineDlssMode.UltraQuality,
                         _ => StreamlineDlssMode.MaxQuality,
                     };
                 }

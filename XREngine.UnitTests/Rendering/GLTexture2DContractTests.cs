@@ -117,6 +117,63 @@ public sealed class GLTexture2DContractTests
     }
 
     [Test]
+    public void GLTexture2D_SparseStorageAllocationUsesLogicalDimensionsAndLegalLevelCount()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+
+        source.ShouldContain("bool sparseLogicalAllocation = Data.SparseTextureStreamingEnabled");
+        source.ShouldContain("width = Math.Max(1u, Data.SparseTextureStreamingLogicalWidth);");
+        source.ShouldContain("height = Math.Max(1u, Data.SparseTextureStreamingLogicalHeight);");
+        source.ShouldContain("uint legalLevels = GetLegalMipLevelCount(width, height);");
+        source.ShouldContain("Clamping storage levels");
+    }
+
+    [Test]
+    public void GLDataBuffer_DoesNotSubDataImmutableStorageWithoutDynamicStorageBit()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs");
+
+        source.ShouldContain("!Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage)");
+        source.ShouldContain("RecreateBuffer();");
+        source.ShouldContain("AllocateImmutable();");
+        source.ShouldContain("PushData();");
+    }
+
+    [Test]
+    public void SkinnedBoundsComputeReadsMappedGpuOutputAndUsesDynamicResetBuffer()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/SkinnedMeshBoundsCalculator.cs");
+        string shader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Animation/SkinnedBounds.comp");
+
+        source.ShouldContain("StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent");
+        source.ShouldContain("RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent");
+        source.ShouldContain("StorageFlags = EBufferMapStorageFlags.DynamicStorage");
+        source.ShouldContain("TryGetMappedAddress(_outputPositions, out VoidPtr mappedAddress)");
+        source.ShouldContain("Vector4* ptr = (Vector4*)mappedAddress.Pointer;");
+
+        shader.ShouldContain("atomicCompSwap(MinBoundsBits.x");
+        shader.ShouldContain("atomicCompSwap(MaxBoundsBits.x");
+        shader.ShouldNotContain("void atomicMinVec(inout uvec4 target");
+        shader.ShouldNotContain("void atomicMaxVec(inout uvec4 target");
+    }
+
+    [Test]
+    public void RenderMeshAndQuadCommandsGuardMissingPipelineState()
+    {
+        string meshPass = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs");
+        string meshletPass = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs");
+        string quadPass = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/VPRC_RenderQuadToFBO.cs");
+
+        meshPass.ShouldContain("Engine.Rendering.State.CurrentRenderingPipeline");
+        meshPass.ShouldContain("activeInstance.LastRenderingCamera");
+        meshPass.ShouldContain("RenderMeshesPassTraditional.MissingPipeline");
+        meshletPass.ShouldContain("Engine.Rendering.State.CurrentRenderingPipeline");
+        meshletPass.ShouldContain("activeInstance.LastRenderingCamera");
+        quadPass.ShouldContain("Engine.Rendering.State.CurrentRenderingPipeline");
+        quadPass.ShouldContain("QuadBlit.MissingPipeline");
+    }
+
+    [Test]
     public void GLTexture2D_SparseAsyncPromotionRequiresExistingVisibleCommit()
     {
         string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");

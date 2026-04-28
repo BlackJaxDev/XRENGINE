@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
@@ -183,76 +184,119 @@ public unsafe partial class VulkanRenderer
         layout = default;
         usesUpdateAfterBind = false;
 
-        DescriptorSetLayoutCreateFlags flags = 0;
-        DescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo = new()
+        DescriptorSetLayoutBinding[] layoutBindings = bindings.Length == 0
+            ? Array.Empty<DescriptorSetLayoutBinding>()
+            : [.. bindings];
+        uint immutableSamplerCount = 0;
+        for (int i = 0; i < layoutBindings.Length; i++)
         {
-            SType = StructureType.DescriptorSetLayoutBindingFlagsCreateInfo
-        };
-
-        DescriptorBindingFlags[]? bindingFlags = null;
-        if (_supportsDescriptorIndexing && bindings.Length > 0)
-        {
-            bindingFlags = new DescriptorBindingFlags[bindings.Length];
-            bool hasUpdateAfterBindBinding = false;
-            for (int i = 0; i < bindings.Length; i++)
+            if (layoutBindings[i].DescriptorType == DescriptorType.Sampler &&
+                TryGetCanonicalImmutableSampler(VulkanCanonicalSampler.LinearClamp, out _))
             {
-                DescriptorBindingFlags flagsForBinding = 0;
+                immutableSamplerCount += Math.Max(layoutBindings[i].DescriptorCount, 1u);
+            }
+        }
 
-                if (_supportsDescriptorBindingPartiallyBound)
-                    flagsForBinding |= DescriptorBindingFlags.PartiallyBoundBit;
+        Sampler* immutableSamplers = immutableSamplerCount > 0
+            ? (Sampler*)NativeMemory.Alloc((nuint)immutableSamplerCount, (nuint)sizeof(Sampler))
+            : null;
 
-                if (CanUseUpdateAfterBind(bindings[i].DescriptorType))
+        try
+        {
+            if (immutableSamplers is not null &&
+                TryGetCanonicalImmutableSampler(VulkanCanonicalSampler.LinearClamp, out Sampler linearClampSampler))
+            {
+                int samplerOffset = 0;
+                for (int i = 0; i < layoutBindings.Length; i++)
                 {
-                    flagsForBinding |= DescriptorBindingFlags.UpdateAfterBindBit;
-                    hasUpdateAfterBindBinding = true;
-                }
+                    if (layoutBindings[i].DescriptorType != DescriptorType.Sampler)
+                        continue;
 
-                bindingFlags[i] = flagsForBinding;
+                    uint count = Math.Max(layoutBindings[i].DescriptorCount, 1u);
+                    for (uint n = 0; n < count; n++)
+                        immutableSamplers[samplerOffset + n] = linearClampSampler;
+
+                    layoutBindings[i].PImmutableSamplers = immutableSamplers + samplerOffset;
+                    samplerOffset += (int)count;
+                }
             }
 
-            usesUpdateAfterBind = hasUpdateAfterBindBinding;
-            flags = hasUpdateAfterBindBinding
-                ? DescriptorSetLayoutCreateFlags.UpdateAfterBindPoolBit
-                : 0;
-
-            fixed (DescriptorBindingFlags* bindingFlagsPtr = bindingFlags)
+            DescriptorSetLayoutCreateFlags flags = 0;
+            DescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo = new()
             {
-                bindingFlagsInfo.BindingCount = (uint)bindingFlags.Length;
-                bindingFlagsInfo.PBindingFlags = bindingFlagsPtr;
+                SType = StructureType.DescriptorSetLayoutBindingFlagsCreateInfo
+            };
 
-                fixed (DescriptorSetLayoutBinding* bindingsPtr = bindings)
+            DescriptorBindingFlags[]? bindingFlags = null;
+            if (_supportsDescriptorIndexing && layoutBindings.Length > 0)
+            {
+                bindingFlags = new DescriptorBindingFlags[layoutBindings.Length];
+                bool hasUpdateAfterBindBinding = false;
+                for (int i = 0; i < layoutBindings.Length; i++)
                 {
-                    DescriptorSetLayoutCreateInfo layoutInfo = new()
-                    {
-                        SType = StructureType.DescriptorSetLayoutCreateInfo,
-                        Flags = flags,
-                        BindingCount = (uint)bindings.Length,
-                        PBindings = bindingsPtr,
-                        PNext = &bindingFlagsInfo
-                    };
+                    DescriptorBindingFlags flagsForBinding = 0;
 
-                    if (Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, out layout) != Result.Success)
-                        return false;
+                    if (_supportsDescriptorBindingPartiallyBound)
+                        flagsForBinding |= DescriptorBindingFlags.PartiallyBoundBit;
+
+                    if (CanUseUpdateAfterBind(layoutBindings[i].DescriptorType))
+                    {
+                        flagsForBinding |= DescriptorBindingFlags.UpdateAfterBindBit;
+                        hasUpdateAfterBindBinding = true;
+                    }
+
+                    bindingFlags[i] = flagsForBinding;
                 }
+
+                usesUpdateAfterBind = hasUpdateAfterBindBinding;
+                flags = hasUpdateAfterBindBinding
+                    ? DescriptorSetLayoutCreateFlags.UpdateAfterBindPoolBit
+                    : 0;
+
+                fixed (DescriptorBindingFlags* bindingFlagsPtr = bindingFlags)
+                {
+                    bindingFlagsInfo.BindingCount = (uint)bindingFlags.Length;
+                    bindingFlagsInfo.PBindingFlags = bindingFlagsPtr;
+
+                    fixed (DescriptorSetLayoutBinding* bindingsPtr = layoutBindings)
+                    {
+                        DescriptorSetLayoutCreateInfo layoutInfo = new()
+                        {
+                            SType = StructureType.DescriptorSetLayoutCreateInfo,
+                            Flags = flags,
+                            BindingCount = (uint)layoutBindings.Length,
+                            PBindings = bindingsPtr,
+                            PNext = &bindingFlagsInfo
+                        };
+
+                        if (Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, out layout) != Result.Success)
+                            return false;
+                    }
+                }
+
+                return true;
+            }
+
+            fixed (DescriptorSetLayoutBinding* bindingsPtr = layoutBindings)
+            {
+                DescriptorSetLayoutCreateInfo layoutInfo = new()
+                {
+                    SType = StructureType.DescriptorSetLayoutCreateInfo,
+                    BindingCount = (uint)layoutBindings.Length,
+                    PBindings = bindingsPtr,
+                };
+
+                if (Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, out layout) != Result.Success)
+                    return false;
             }
 
             return true;
         }
-
-        fixed (DescriptorSetLayoutBinding* bindingsPtr = bindings)
+        finally
         {
-            DescriptorSetLayoutCreateInfo layoutInfo = new()
-            {
-                SType = StructureType.DescriptorSetLayoutCreateInfo,
-                BindingCount = (uint)bindings.Length,
-                PBindings = bindingsPtr,
-            };
-
-            if (Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, out layout) != Result.Success)
-                return false;
+            if (immutableSamplers is not null)
+                NativeMemory.Free(immutableSamplers);
         }
-
-        return true;
     }
 
     private bool CanUseUpdateAfterBind(DescriptorType descriptorType)

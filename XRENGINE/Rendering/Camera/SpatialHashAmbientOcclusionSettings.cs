@@ -9,7 +9,6 @@ namespace XREngine.Rendering
         private float _thickness = 0.5f;
         private int _samples = 64;
         private float _cellSize = 0.07f;
-        private float _maxDistance = 1.5f;
         private int _steps = 8;
         private float _jitterScale = 0.35f;
         private bool _temporalReuseEnabled = true;
@@ -55,8 +54,8 @@ namespace XREngine.Rendering
 
         public float MaxDistance
         {
-            get => _maxDistance;
-            set => SetValue(ref _maxDistance, value, nameof(AmbientOcclusionSettings.SpatialHashMaxDistance));
+            get => Owner.Radius;
+            set => Owner.Radius = value;
         }
 
         public int Steps
@@ -109,7 +108,7 @@ namespace XREngine.Rendering
             program.Uniform("RayStepCount", PositiveOr(Steps, 6));
             program.Uniform("Bias", PositiveOr(Owner.Bias, 0.03f));
             program.Uniform("CellSize", PositiveOr(CellSize, 0.75f));
-            program.Uniform("MaxRayDistance", PositiveOr(MaxDistance, 1.5f));
+            program.Uniform("MaxRayDistance", PositiveOr(Owner.Radius, AmbientOcclusionSettings.DefaultRadius));
             program.Uniform("Thickness", PositiveOr(Thickness, 0.1f));
             program.Uniform("DistanceFade", PositiveOr(DistanceIntensity, 1.0f));
             program.Uniform("TemporalReuseEnabled", TemporalReuseEnabled);

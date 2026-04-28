@@ -64,8 +64,12 @@ public unsafe partial class VulkanRenderer
         {
             ulong aligned = AlignUp(_currentOffset, _alignment);
             if (aligned + size > _capacity)
+            {
+                Engine.Rendering.Stats.RecordVulkanDynamicUniformExhaustion();
                 return ulong.MaxValue;
+            }
             _currentOffset = aligned + size;
+            Engine.Rendering.Stats.RecordVulkanDynamicUniformAllocation(size);
             return aligned;
         }
 

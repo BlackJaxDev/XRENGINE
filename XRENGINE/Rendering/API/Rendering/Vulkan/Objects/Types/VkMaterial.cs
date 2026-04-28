@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
 using XREngine;
 using XREngine.Data.Core;
@@ -757,7 +758,46 @@ namespace XREngine.Rendering.Vulkan
                         writePtr[writeIndex].PTexelBufferView = texelPtr + texelIndex;
 
                     if (writeArray.Length > 0)
-                        Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+                    {
+                        if (!TryUpdateDescriptorSetsWithTemplates(state, frameIndex, writeArray))
+                            Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+                    }
+                }
+
+                return true;
+            }
+
+            private bool TryUpdateDescriptorSetsWithTemplates(ProgramDescriptorState state, int frameIndex, WriteDescriptorSet[] writeArray)
+            {
+                if (Engine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
+                    return false;
+
+                if (state.Program.DescriptorSetLayouts.Count < state.DescriptorSets[frameIndex].Length)
+                    return false;
+
+                DescriptorSet[] frameSets = state.DescriptorSets[frameIndex];
+                for (int setIndex = 0; setIndex < frameSets.Length; setIndex++)
+                {
+                    List<WriteDescriptorSet> setWrites = [];
+                    for (int i = 0; i < writeArray.Length; i++)
+                    {
+                        if (writeArray[i].DstSet.Handle == frameSets[setIndex].Handle)
+                            setWrites.Add(writeArray[i]);
+                    }
+
+                    if (setWrites.Count == 0)
+                        continue;
+
+                    if (!Renderer.TryUpdateDescriptorSetWithTemplate(
+                        frameSets[setIndex],
+                        state.Program.DescriptorSetLayouts[setIndex],
+                        PipelineBindPoint.Graphics,
+                        state.Program.PipelineLayout,
+                        (uint)setIndex,
+                        CollectionsMarshal.AsSpan(setWrites)))
+                    {
+                        return false;
+                    }
                 }
 
                 return true;
@@ -900,11 +940,23 @@ namespace XREngine.Rendering.Vulkan
                 imageInfo = default;
                 if (!TryResolveBoundTexture(binding, arrayIndex, out XRTexture? texture) || texture is null)
                 {
+                    imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType);
+                    if (imageInfo.ImageView.Handle != 0)
+                    {
+                        RecordDescriptorFallback(binding);
+                        return true;
+                    }
+
                     WarnOnce($"No texture available for material descriptor binding '{binding.Name}'.");
+                    RecordDescriptorFailure(binding, "missing material texture and placeholder unavailable");
                     return false;
                 }
 
-                return TryCreateTextureDescriptor(texture, descriptorType, out imageInfo);
+                if (TryCreateTextureDescriptor(texture, descriptorType, out imageInfo))
+                    return true;
+
+                RecordDescriptorFailure(binding, "material texture descriptor creation failed");
+                return false;
             }
 
             /// <summary>
@@ -918,10 +970,15 @@ namespace XREngine.Rendering.Vulkan
                 if (!TryResolveBoundTexture(binding, arrayIndex, out XRTexture? texture) || texture is null)
                 {
                     WarnOnce($"No texture available for material texel descriptor binding '{binding.Name}'.");
+                    RecordDescriptorFailure(binding, "missing material texel texture");
                     return false;
                 }
 
-                return TryCreateTexelBufferDescriptor(texture, out texelView);
+                if (TryCreateTexelBufferDescriptor(texture, out texelView))
+                    return true;
+
+                RecordDescriptorFailure(binding, "material texel descriptor creation failed");
+                return false;
             }
 
             /// <summary>
@@ -1157,6 +1214,36 @@ namespace XREngine.Rendering.Vulkan
                 if (_warnedMessages.Add(message))
                     Debug.VulkanWarning(message);
             }
+
+            private static string GetDescriptorBindingClass(DescriptorType descriptorType)
+                => descriptorType switch
+                {
+                    DescriptorType.StorageImage => "storage-image",
+                    DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic => "uniform-buffer",
+                    DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic => "storage-buffer",
+                    DescriptorType.UniformTexelBuffer or DescriptorType.StorageTexelBuffer => "texel-buffer",
+                    _ => "sampled-image",
+                };
+
+            private void RecordDescriptorFallback(DescriptorBindingInfo binding, int count = 1)
+                => Engine.Rendering.Stats.RecordVulkanDescriptorFallback(
+                    Data.Name,
+                    GetDescriptorBindingClass(binding.DescriptorType),
+                    binding.Name,
+                    binding.Set,
+                    binding.Binding,
+                    count);
+
+            private void RecordDescriptorFailure(DescriptorBindingInfo binding, string reason)
+                => Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                    Data.Name,
+                    GetDescriptorBindingClass(binding.DescriptorType),
+                    binding.Name,
+                    binding.Set,
+                    binding.Binding,
+                    skippedDraw: true,
+                    skippedDispatch: false,
+                    reason);
 
             #endregion
         }
