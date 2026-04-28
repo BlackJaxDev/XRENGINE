@@ -142,7 +142,10 @@ namespace XREngine.Components.Scene.Mesh
             Meshes.Clear();
             _meshLinks.Clear();
             if (Model is null)
+            {
+                ModelChanged?.Invoke();
                 return;
+            }
             
             foreach (SubMesh mesh in Model.Meshes)
             {
@@ -209,6 +212,8 @@ namespace XREngine.Components.Scene.Mesh
             };
             Meshes.Add(mesh);
             _meshLinks.TryAdd(item, mesh);
+            WarmupMeshBVH(mesh);
+            ModelChanged?.Invoke();
 
             // BVH generation can be expensive; run it on the job worker threads.
             //var job = Engine.Jobs.Schedule(() => WarmupMeshBVHJob(mesh), priority: JobPriority.Low);
@@ -288,6 +293,7 @@ namespace XREngine.Components.Scene.Mesh
             {
                 Meshes.Remove(mesh);
                 mesh.Dispose();
+                ModelChanged?.Invoke();
             }
         }
 

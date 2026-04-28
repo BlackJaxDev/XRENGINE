@@ -18,6 +18,8 @@ public unsafe partial class VulkanRenderer
             return;
 
         Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+        InitializeVulkanPipelinePrewarmDatabase(properties);
+
         string cacheDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "XREngine",
@@ -107,6 +109,8 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyVulkanPipelineCache()
     {
+        SaveVulkanPipelinePrewarmDatabase();
+
         if (_pipelineCache.Handle == 0)
             return;
 

@@ -109,9 +109,9 @@ namespace XREngine.Components.Capture.Lights
 
                 vec3 irradiance = vec3(0.0f);
 
-                vec3 up    = vec3(0.0f, 1.0f, 0.0f);
-                vec3 right = cross(up, N);
-                up         = cross(N, right);
+                vec3 up    = abs(N.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(0.0f, 0.0f, 1.0f);
+                vec3 right = normalize(cross(up, N));
+                up         = normalize(cross(N, right));
 
                 float sampleDelta = 0.025f;
                 int numSamples = 0;
@@ -199,6 +199,13 @@ namespace XREngine.Components.Capture.Lights
             void main()
             {
                 vec3 N = normalize(FragPosLocal);
+
+                if (Roughness <= 0.0001f)
+                {
+                    OutColor = textureLod(Texture0, N, 0.0f).rgb;
+                    return;
+                }
+
                 vec3 R = N;
                 vec3 V = R;
 
@@ -231,7 +238,7 @@ namespace XREngine.Components.Capture.Lights
                     }
                 }
 
-                OutColor = prefilteredColor / totalWeight;
+                OutColor = prefilteredColor / max(totalWeight, 1e-4f);
             }
             """;
 
@@ -312,6 +319,8 @@ namespace XREngine.Components.Capture.Lights
         private XRTextureCube? _irradianceTextureCubemap;
         private XRTextureCube? _prefilterTextureCubemap;
         private XRMeshRenderer? _previewSphere;
+        private XRTexture? _previewSphereTexture;
+        private string? _previewSphereShaderPath;
         private Matrix4x4 _previewRenderMatrix = Matrix4x4.Identity;
         private bool _previewSphereDirty = true;
         private XRTexture2D? _environmentTextureEquirect;

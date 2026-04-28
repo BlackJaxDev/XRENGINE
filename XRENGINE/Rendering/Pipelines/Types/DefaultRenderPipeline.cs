@@ -2125,46 +2125,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 }
                 else
                 {
-                    string? overrideSource = Environment.GetEnvironmentVariable("XRE_OUTPUT_SOURCE_FBO");
-                    if (!string.IsNullOrWhiteSpace(overrideSource))
-                    {
-                        // Env var override takes absolute precedence (debug tooling).
-                        if (bypassVendorUpscale)
-                        {
-                            c.Add<VPRC_RenderQuadToFBO>().SetTargets(overrideSource, null);
-                        }
-                        else
-                        {
-                            var vendorBlit = c.Add<VPRC_VendorUpscale>();
-                            vendorBlit.FrameBufferName = overrideSource;
-                            vendorBlit.DepthTextureName = DepthViewTextureName;
-                            vendorBlit.MotionTextureName = VelocityTextureName;
-                        }
-                    }
-                    else
-                    {
-                        // Dynamic AA/upscale selection: choose the correct source at render time.
-                        // FXAA, SMAA, and TSR each publish a distinct post-AA output FBO; when none
-                        // are active, present the texture-backed post-process output directly.
-                        var upscaleOutputChoice = c.Add<VPRC_IfElse>();
-                        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
-                        {
-                            var upscaleOutput = new ViewportRenderCommandContainer(this);
-                            var tsrOrPostAaFinal = upscaleOutput.Add<VPRC_IfElse>();
-                            tsrOrPostAaFinal.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
-                            tsrOrPostAaFinal.TrueCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
-                            {
-                                var postAaOutput = new ViewportRenderCommandContainer(this);
-                                var fxaaOrSmaaFinal = postAaOutput.Add<VPRC_IfElse>();
-                                fxaaOrSmaaFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
-                                fxaaOrSmaaFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
-                                fxaaOrSmaaFinal.FalseCommands = CreateFinalBlitCommands(SmaaFBOName, bypassVendorUpscale);
-                                tsrOrPostAaFinal.FalseCommands = postAaOutput;
-                            }
-                            upscaleOutputChoice.TrueCommands = upscaleOutput;
-                        }
-                        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessOutputFBOName, bypassVendorUpscale);
-                    }
+                    AppendViewportFinalOutputSourceCommands(c, bypassVendorUpscale);
                 }
             }
         }
@@ -2181,20 +2142,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private ViewportRenderCommandContainer CreateFinalBlitCommands(string sourceFboName, bool bypassVendorUpscale)
     {
         var cmds = new ViewportRenderCommandContainer(this);
-        if (bypassVendorUpscale)
-        {
-            cmds.Add<VPRC_RenderToWindow>().SourceFBOName = sourceFboName;
-        }
-        else
-        {
-            var vendorBlit = cmds.Add<VPRC_VendorUpscale>();
-            vendorBlit.FrameBufferName = sourceFboName;
-            vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
-            vendorBlit.DepthTextureName = DepthViewTextureName;
-            vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
-            vendorBlit.MotionTextureName = VelocityTextureName;
-            vendorBlit.MotionFrameBufferName = VelocityFBOName;
-        }
+        var vendorBlit = cmds.Add<VPRC_VendorUpscale>();
+        vendorBlit.FrameBufferName = sourceFboName;
+        vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
+        vendorBlit.DepthTextureName = DepthViewTextureName;
+        vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
+        vendorBlit.MotionTextureName = VelocityTextureName;
+        vendorBlit.MotionFrameBufferName = VelocityFBOName;
+        vendorBlit.ForceFallbackBlit = bypassVendorUpscale;
         return cmds;
     }
 
@@ -3794,7 +3749,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             Name = "LightProbeIrradianceArray",
             MinFilter = ETexMinFilter.Linear,
             MagFilter = ETexMagFilter.Linear,
-            SizedInternalFormat = ESizedInternalFormat.Rgb8,  // Match irradiance texture format
+            SizedInternalFormat = ESizedInternalFormat.Rgb16f,
         };
 
         _probePrefilterArray = new XRTexture2DArray([.. preTextures])

@@ -32,8 +32,20 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (SourceQuadFBOName is null)
                 return;
 
+            var activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+            if (activeInstance is null)
+            {
+                Debug.RenderingWarningEvery(
+                    $"QuadBlit.MissingPipeline.{SourceQuadFBOName}.{DestinationFBOName}",
+                    TimeSpan.FromSeconds(5),
+                    "[QuadBlitDiag] Skipping quad blit from '{0}' to '{1}': no active render pipeline instance.",
+                    SourceQuadFBOName,
+                    DestinationFBOName ?? "<current>");
+                return;
+            }
+
             string destination = DestinationFBOName
-                ?? ActivePipelineInstance.RenderState.OutputFBO?.Name
+                ?? activeInstance.RenderState.OutputFBO?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
             int passIndex = ResolvePassIndex($"QuadBlit_{SourceQuadFBOName}_to_{destination}");
@@ -41,7 +53,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? Engine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
 
-            XRQuadFrameBuffer? sourceFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);
+            XRQuadFrameBuffer? sourceFBO = activeInstance.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);
             if (sourceFBO is null)
             {
                 if (_diagEnabled)
@@ -49,7 +61,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var destFBO = DestinationFBOName is null ? null : ActivePipelineInstance.GetFBO<XRFrameBuffer>(DestinationFBOName);
+            var destFBO = DestinationFBOName is null ? null : activeInstance.GetFBO<XRFrameBuffer>(DestinationFBOName);
             if (_diagEnabled && DestinationFBOName is not null && destFBO is null)
                 Debug.LogWarning($"[QuadBlitDiag] Dest FBO '{DestinationFBOName}' not found.");
 
@@ -82,7 +94,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             using var renderAreaScope = MatchDestinationRenderArea && destFBO is { Width: > 0, Height: > 0 }
-                ? ActivePipelineInstance.RenderState.PushRenderArea((int)destFBO.Width, (int)destFBO.Height)
+                ? activeInstance.RenderState.PushRenderArea((int)destFBO.Width, (int)destFBO.Height)
                 : default;
 
             sourceFBO.Render(destFBO);

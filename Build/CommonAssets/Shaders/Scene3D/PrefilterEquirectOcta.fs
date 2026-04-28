@@ -85,12 +85,19 @@ vec2 DirectionToEquirect(vec3 dir)
 {
     float phi = atan(dir.z, dir.x);
     float theta = asin(clamp(dir.y, -1.0f, 1.0f));
-    return vec2((phi / (2.0f * PI)) + 0.5f, ((theta / PI) + 0.5f));
+    return vec2((phi / (2.0f * PI)) + 0.5f, 1.0f - ((theta / PI) + 0.5f));
 }
 
 void main()
 {
     vec3 N = DirectionFromFragPos(FragPos);
+
+    if (Roughness <= 0.0001f)
+    {
+        OutColor = textureLod(Texture0, DirectionToEquirect(N), 0.0f).rgb;
+        return;
+    }
+
     vec3 R = N;
     vec3 V = R;
 

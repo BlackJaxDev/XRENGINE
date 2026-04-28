@@ -375,7 +375,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
             }
 
-            hostServices.PrepareUpscaleBridgeForFrame(viewport, this);
+            if (!Engine.Rendering.State.IsSceneCapturePass && !Engine.Rendering.State.IsLightProbePass)
+                hostServices.PrepareUpscaleBridgeForFrame(viewport, this);
         }
 
         using (hostServices.PushRenderingPipeline(this))

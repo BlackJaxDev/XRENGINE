@@ -1115,7 +1115,10 @@ internal sealed class ImportedTextureStreamingManager
                 continue;
             }
 
-            lock (record.Sync)
+            if (!Monitor.TryEnter(record.Sync))
+                continue;
+
+            try
             {
                 if (record.LastVisibleFrameId != frameId)
                 {
@@ -1142,6 +1145,10 @@ internal sealed class ImportedTextureStreamingManager
 
                     record.VisiblePageSelection = record.VisiblePageSelection.Union(pageSelection);
                 }
+            }
+            finally
+            {
+                Monitor.Exit(record.Sync);
             }
         }
     }
@@ -1502,11 +1509,15 @@ internal sealed class ImportedTextureStreamingManager
                 continue;
             }
 
-            CancellationTokenSource? cts;
-            SparseTextureStreamingTransitionRequest request;
-            SparseTextureStreamingTransitionResult transitionResult;
-            uint pendingResidentSize;
-            lock (record.Sync)
+            CancellationTokenSource? cts = null;
+            SparseTextureStreamingTransitionRequest request = default;
+            SparseTextureStreamingTransitionResult transitionResult = default;
+            uint pendingResidentSize = 0;
+            bool hasDeferredTransition = false;
+            if (!Monitor.TryEnter(record.Sync))
+                continue;
+
+            try
             {
                 if (record.PendingLoadCts is null
                     || record.PendingSparseTransitionResult is not { ExposureDeferred: true } deferredResult
@@ -1519,7 +1530,15 @@ internal sealed class ImportedTextureStreamingManager
                 request = record.PendingSparseTransitionRequest;
                 transitionResult = deferredResult;
                 pendingResidentSize = record.PendingMaxDimension;
+                hasDeferredTransition = true;
             }
+            finally
+            {
+                Monitor.Exit(record.Sync);
+            }
+
+            if (!hasDeferredTransition || cts is null)
+                continue;
 
             FinalizePendingSparseTransitionOnRenderThread(record, texture, cts, request, transitionResult, pendingResidentSize, frameId);
         }
@@ -1534,10 +1553,17 @@ internal sealed class ImportedTextureStreamingManager
         uint pendingResidentSize,
         long frameId)
     {
-        lock (record.Sync)
+        if (!Monitor.TryEnter(record.Sync))
+            return;
+
+        try
         {
             if (!IsCurrentDeferredSparseTransition(record, cts, transitionResult))
                 return;
+        }
+        finally
+        {
+            Monitor.Exit(record.Sync);
         }
 
         SparseTextureStreamingFinalizeResult finalizeResult = RuntimeRenderingHostServices.Current.FinalizeSparseTextureStreamingTransition(
@@ -1607,16 +1633,18 @@ internal sealed class ImportedTextureStreamingManager
                 continue;
             }
 
-            float targetLodBias;
-            bool shouldApply;
-            lock (record.Sync)
+            if (Volatile.Read(ref record.PromotionFadeEndFrameId) == long.MinValue)
+                continue;
+
+            float targetLodBias = 0.0f;
+            bool shouldApply = false;
+            if (!Monitor.TryEnter(record.Sync))
+                continue;
+
+            try
             {
                 if (record.PromotionFadeEndFrameId == long.MinValue)
-                {
-                    record.BaseLodBias = texture.LodBias;
-                    record.CurrentStreamingLodBias = 0.0f;
                     continue;
-                }
 
                 if (frameId >= record.PromotionFadeEndFrameId)
                 {
@@ -1633,6 +1661,10 @@ internal sealed class ImportedTextureStreamingManager
                     targetLodBias = record.BaseLodBias + streamingLodBias;
                     shouldApply = true;
                 }
+            }
+            finally
+            {
+                Monitor.Exit(record.Sync);
             }
 
             if (shouldApply && !NearlyEquals(texture.LodBias, targetLodBias))
@@ -1864,8 +1896,17 @@ internal sealed class ImportedTextureStreamingManager
                 desiredPageSelection);
 
             assignedManagedBytes += targetCommittedBytes;
-            lock (snapshot.Record.Sync)
+            if (!Monitor.TryEnter(snapshot.Record.Sync))
+                continue;
+
+            try
+            {
                 snapshot.Record.DesiredMaxDimension = assignedResidentSize;
+            }
+            finally
+            {
+                Monitor.Exit(snapshot.Record.Sync);
+            }
 
             _ = TryQueueCandidate(snapshot, assignedResidentSize, desiredPageSelection, targetCommittedBytes, enforceFairness: true);
         }
@@ -1938,7 +1979,10 @@ internal sealed class ImportedTextureStreamingManager
                 continue;
             }
 
-            lock (record.Sync)
+            if (!Monitor.TryEnter(record.Sync))
+                continue;
+
+            try
             {
                 if (string.IsNullOrWhiteSpace(record.FilePath) || record.Source is null)
                     continue;
@@ -1970,6 +2014,10 @@ internal sealed class ImportedTextureStreamingManager
                     record.VisiblePageSelection,
                     record.PreviewReady,
                     record.LastTransitionFrameId));
+            }
+            finally
+            {
+                Monitor.Exit(record.Sync);
             }
         }
 
@@ -2050,7 +2098,10 @@ internal sealed class ImportedTextureStreamingManager
         uint normalizedTarget = Math.Max(minimumResidentSize, targetResidentSize);
         SparseTextureStreamingPageSelection normalizedPageSelection = pageSelection.Normalize(PageSelectionFullCoverageThreshold);
 
-        lock (record.Sync)
+        if (!Monitor.TryEnter(record.Sync))
+            return false;
+
+        try
         {
             if (record.PendingSparseTransitionResult is { ExposureDeferred: true })
                 return false;
@@ -2064,6 +2115,10 @@ internal sealed class ImportedTextureStreamingManager
                 && snapshot.CurrentPageSelection.NearlyEquals(normalizedPageSelection))
                 return false;
         }
+        finally
+        {
+            Monitor.Exit(record.Sync);
+        }
 
         if (!record.Texture.TryGetTarget(out XRTexture2D? texture))
             return false;
@@ -2074,7 +2129,13 @@ internal sealed class ImportedTextureStreamingManager
         CancellationTokenSource cts = new();
         CancellationTokenSource? previousPendingLoadCts;
         bool includeMipChain;
-        lock (record.Sync)
+        if (!Monitor.TryEnter(record.Sync))
+        {
+            cts.Dispose();
+            return false;
+        }
+
+        try
         {
             filePath = record.FilePath;
             source = record.Source;
@@ -2084,6 +2145,10 @@ internal sealed class ImportedTextureStreamingManager
             record.PendingLoadCts = cts;
             record.PendingMaxDimension = normalizedTarget;
             record.PendingPageSelection = normalizedPageSelection;
+        }
+        finally
+        {
+            Monitor.Exit(record.Sync);
         }
 
         CancelPendingLoad(previousPendingLoadCts);
@@ -2149,6 +2214,8 @@ internal sealed class ImportedTextureStreamingManager
     {
         float targetLodBias = 0.0f;
         bool shouldApplyLodBias = false;
+        float textureLodBias = texture?.LodBias ?? 0.0f;
+        int sparseNumLevels = texture?.SparseTextureStreamingNumSparseLevels ?? 0;
         lock (record.Sync)
         {
             if (!ReferenceEquals(record.PendingLoadCts, cts))
@@ -2166,7 +2233,7 @@ internal sealed class ImportedTextureStreamingManager
                 if (texture is not null)
                 {
                     float currentStreamingLodBias = Math.Max(0.0f, record.CurrentStreamingLodBias);
-                    record.BaseLodBias = texture.LodBias - currentStreamingLodBias;
+                    record.BaseLodBias = textureLodBias - currentStreamingLodBias;
                     if (completedResidentSize > previousResidentSize)
                     {
                         float promotionFadeBias = CalculatePromotionFadeBias(
@@ -2180,7 +2247,7 @@ internal sealed class ImportedTextureStreamingManager
                             record.CurrentStreamingLodBias = startBias;
                             record.PromotionFadeStartBias = startBias;
                             record.PromotionFadeStartFrameId = frameId;
-                            record.PromotionFadeEndFrameId = frameId + PromotionFadeFrames;
+                            Volatile.Write(ref record.PromotionFadeEndFrameId, frameId + PromotionFadeFrames);
                             targetLodBias = record.BaseLodBias + startBias;
                             shouldApplyLodBias = true;
                         }
@@ -2201,7 +2268,7 @@ internal sealed class ImportedTextureStreamingManager
             }
 
             if (texture is not null)
-                record.SparseNumLevels = texture.SparseTextureStreamingNumSparseLevels;
+                record.SparseNumLevels = sparseNumLevels;
 
             record.PendingMaxDimension = 0;
             record.PendingLoadCts = null;
@@ -2222,7 +2289,7 @@ internal sealed class ImportedTextureStreamingManager
         record.CurrentStreamingLodBias = 0.0f;
         record.PromotionFadeStartBias = 0.0f;
         record.PromotionFadeStartFrameId = long.MinValue;
-        record.PromotionFadeEndFrameId = long.MinValue;
+        Volatile.Write(ref record.PromotionFadeEndFrameId, long.MinValue);
     }
 
     private static bool NearlyEquals(float left, float right, float epsilon = 0.001f)

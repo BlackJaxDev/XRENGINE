@@ -25,6 +25,7 @@ namespace XREngine.Rendering.Vulkan
             CreateSurface();
             PickPhysicalDevice();
             CreateLogicalDevice();
+            InitializeCanonicalImmutableSamplers();
             CreateCommandPool();
 
             CreateDescriptorSetLayout();

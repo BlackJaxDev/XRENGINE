@@ -1,5 +1,6 @@
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Vulkan;
+using System;
 using System.Threading;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -21,8 +22,17 @@ internal static class VPRC_RenderMeshesPassTraditional
     private static void RenderGPU(VPRC_RenderMeshesPassShared command)
     {
         using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
-        var activeInstance = ViewportRenderCommand.ActivePipelineInstance;
-        var camera = activeInstance.RenderState.SceneCamera;
+        var activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        if (activeInstance is null)
+        {
+            WarnMissingPipeline(nameof(RenderGPU), command.RenderPass);
+            return;
+        }
+
+        var camera = activeInstance.RenderState.SceneCamera
+            ?? activeInstance.RenderState.RenderingCamera
+            ?? activeInstance.LastSceneCamera
+            ?? activeInstance.LastRenderingCamera;
 
         activeInstance.MeshRenderCommands.RenderCPU(
             command.RenderPass,
@@ -56,10 +66,27 @@ internal static class VPRC_RenderMeshesPassTraditional
     private static void RenderCPU(VPRC_RenderMeshesPassShared command)
     {
         using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
-        var activeInstance = ViewportRenderCommand.ActivePipelineInstance;
-        var camera = activeInstance.RenderState.SceneCamera;
+        var activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        if (activeInstance is null)
+        {
+            WarnMissingPipeline(nameof(RenderCPU), command.RenderPass);
+            return;
+        }
+
+        var camera = activeInstance.RenderState.SceneCamera
+            ?? activeInstance.RenderState.RenderingCamera
+            ?? activeInstance.LastSceneCamera
+            ?? activeInstance.LastRenderingCamera;
         activeInstance.MeshRenderCommands.RenderCPU(command.RenderPass, false, camera);
     }
+
+    private static void WarnMissingPipeline(string path, int renderPass)
+        => XREngine.Debug.RenderingWarningEvery(
+            $"RenderMeshesPassTraditional.MissingPipeline.{path}.{renderPass}",
+            TimeSpan.FromSeconds(5),
+            "[RenderDiag] Skipping {0} for pass {1}: no active render pipeline instance.",
+            path,
+            renderPass);
 
     private static bool IsExplicitCpuFallbackAllowed()
     {

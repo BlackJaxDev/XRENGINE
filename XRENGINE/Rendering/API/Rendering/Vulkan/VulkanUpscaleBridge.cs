@@ -177,7 +177,12 @@ public sealed class VulkanUpscaleBridge : IDisposable
                 string readyReason = _pendingRecreateReason ?? "initial bridge configuration";
                 TransitionState(EVulkanUpscaleBridgeState.Initializing, readyReason, log: false);
 
-                RecreateInteropResources(renderer, snapshot, in frameResources);
+                RecreateInteropResources(
+                    renderer,
+                    snapshot,
+                    in frameResources,
+                    hadFrameResources ? previousFrameResources : null,
+                    readyReason);
                 SidecarDeviceOwned = _sidecar is not null;
                 _pendingRecreateReason = null;
                 _lastFaultFingerprint = null;
@@ -722,8 +727,27 @@ public sealed class VulkanUpscaleBridge : IDisposable
     private void RecreateInteropResources(
         OpenGLRenderer renderer,
         global::XREngine.VulkanUpscaleBridgeCapabilitySnapshot snapshot,
-        in VulkanUpscaleBridgeFrameResources frameResources)
+        in VulkanUpscaleBridgeFrameResources frameResources,
+        VulkanUpscaleBridgeFrameResources? previousFrameResources,
+        string recreateReason)
     {
+        if (_sidecar is not null
+            && previousFrameResources is VulkanUpscaleBridgeFrameResources previous
+            && CanRecreateFrameSlotsInPlace(in previous, in frameResources, recreateReason))
+        {
+            _frameSlots = _sidecar.RecreateFrameSlots(renderer, frameResources, SanitizeLabel(DescribeViewport()));
+            _frameSlotIndex = _frameSlots.Length > 0 ? 0 : -1;
+            unchecked
+            {
+                _resourceGeneration++;
+            }
+
+            if (_frameSlots.Length == 0)
+                throw new InvalidOperationException("The Vulkan upscale bridge sidecar did not recreate any interop frame slots.");
+
+            return;
+        }
+
         DestroyInteropResources();
 
         _sidecar = new VulkanUpscaleBridgeSidecar(snapshot.OpenGlVendor, snapshot.OpenGlRenderer, in frameResources);
@@ -738,16 +762,36 @@ public sealed class VulkanUpscaleBridge : IDisposable
             throw new InvalidOperationException("The Vulkan upscale bridge sidecar did not create any interop frame slots.");
     }
 
+    private static bool CanRecreateFrameSlotsInPlace(
+        in VulkanUpscaleBridgeFrameResources previous,
+        in VulkanUpscaleBridgeFrameResources current,
+        string recreateReason)
+    {
+        if (previous.EnableDlss != current.EnableDlss
+            || previous.EnableXess != current.EnableXess
+            || previous.QueueModel != current.QueueModel
+            || previous.Stereo != current.Stereo)
+        {
+            return false;
+        }
+
+        return IsFrameSlotOnlyRecreateReason(recreateReason);
+    }
+
+    private static bool IsFrameSlotOnlyRecreateReason(string recreateReason)
+        => string.Equals(recreateReason, ViewportResizeReason, StringComparison.Ordinal)
+            || string.Equals(recreateReason, InternalResolutionResizeReason, StringComparison.Ordinal)
+            || string.Equals(recreateReason, "internal resolution changed", StringComparison.Ordinal)
+            || string.Equals(recreateReason, "output HDR changed", StringComparison.Ordinal)
+            || string.Equals(recreateReason, "anti-aliasing resources changed", StringComparison.Ordinal)
+            || string.Equals(recreateReason, "vendor quality changed", StringComparison.Ordinal);
+
     private void DestroyInteropResources()
     {
-        for (int i = _frameSlots.Length - 1; i >= 0; i--)
-            _frameSlots[i].Dispose();
-
-        _frameSlots = [];
-        _frameSlotIndex = -1;
-
         _sidecar?.Dispose();
         _sidecar = null;
+        _frameSlots = [];
+        _frameSlotIndex = -1;
     }
 
     private void AdvanceFrameSlot()

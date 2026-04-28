@@ -1,6 +1,7 @@
 using System.IO;
 using System.Numerics;
 using XREngine.Core.Files;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -220,6 +221,7 @@ namespace XREngine.Components.Capture.Lights
                 };
 
                 fbo = new XRQuadFrameBuffer(createdMaterial);
+                ConfigureProbeFullscreenFramebuffer(fbo);
                 return createdMaterial;
             }
 
@@ -234,7 +236,16 @@ namespace XREngine.Components.Capture.Lights
             if (!ReferenceEquals(fbo.FullScreenMesh.Material, material))
                 fbo.FullScreenMesh.Material = material;
 
+            ConfigureProbeFullscreenFramebuffer(fbo);
+
             return material;
+        }
+
+        private static void ConfigureProbeFullscreenFramebuffer(XRQuadFrameBuffer fbo)
+        {
+            fbo.FullScreenMesh.GetDefaultVersion().AllowShaderPipelines = false;
+            fbo.FullScreenMesh.GetOVRMultiViewVersion().AllowShaderPipelines = false;
+            fbo.FullScreenMesh.GetNVStereoVersion().AllowShaderPipelines = false;
         }
 
         private void ConfigureIrradianceFramebufferTarget()
@@ -425,6 +436,7 @@ namespace XREngine.Components.Capture.Lights
                 if (renderArea is null)
                     AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
 
+                Engine.Rendering.State.ClearColor(ColorF4.Black);
                 Engine.Rendering.State.ClearByBoundFBO();
                 fbo.Render(null, true);
             }
@@ -463,6 +475,7 @@ namespace XREngine.Components.Capture.Lights
                 SynchronizeCaptureTextureWrites();
                 GenerateIrradianceInternal();
                 GeneratePrefilterInternal();
+                SynchronizeCaptureTextureWrites();
                 ReleaseTransientEnvironmentTexturesAfterIblGeneration();
                 CaptureVersion++;
             }
@@ -497,6 +510,7 @@ namespace XREngine.Components.Capture.Lights
                 SynchronizeCaptureTextureWrites();
                 GenerateIrradianceInternal();
                 GeneratePrefilterInternal();
+                SynchronizeCaptureTextureWrites();
                 ReleaseTransientEnvironmentTexturesAfterIblGeneration();
                 CaptureVersion++;
             }
@@ -543,14 +557,14 @@ namespace XREngine.Components.Capture.Lights
             => Math.Max(1u, baseResolution * OctahedralResolutionMultiplier);
 
         private static XRTexture2D CreateIrradianceTexture(uint extent)
-            => ConfigureFullMipChain(new XRTexture2D(extent, extent, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, false)
+            => ConfigureFullMipChain(new XRTexture2D(extent, extent, EPixelInternalFormat.Rgb16f, EPixelFormat.Rgb, EPixelType.HalfFloat, false)
             {
                 MinFilter = ETexMinFilter.Linear,
                 MagFilter = ETexMagFilter.Linear,
                 UWrap = ETexWrapMode.ClampToEdge,
                 VWrap = ETexWrapMode.ClampToEdge,
                 Resizable = false,
-                SizedInternalFormat = ESizedInternalFormat.Rgb8,
+                SizedInternalFormat = ESizedInternalFormat.Rgb16f,
                 AutoGenerateMipmaps = false,
                 Name = "LightProbeIrradianceOcta",
             });
@@ -578,10 +592,12 @@ namespace XREngine.Components.Capture.Lights
             => new()
             {
                 DepthTest = new() { Enabled = ERenderParamUsage.Disabled },
+                StencilTest = new() { Enabled = ERenderParamUsage.Disabled },
+                CullMode = ECullMode.None,
                 WriteRed = true,
                 WriteGreen = true,
                 WriteBlue = true,
-                WriteAlpha = false,
+                WriteAlpha = true,
             };
 
         private static XRShader GetFullscreenTriVertexShader()

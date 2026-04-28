@@ -241,6 +241,46 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
         barrier.DstQueueFamilyIndex.ShouldBe(3u);
     }
 
+    [Test]
+    public void PipelinePrewarmDatabase_CapturesRuntimeMissesAndProfilerSummaries()
+    {
+        string prewarmSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanPipelinePrewarmDatabase.cs");
+        string pipelineCacheSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanPipelineCache.cs");
+        string meshPipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs");
+        string meshDrawSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Drawing.cs");
+        string programSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
+        string commandBufferSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs");
+        string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
+        string senderSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
+        string editorSource = ReadWorkspaceFile("XRENGINE.Editor/EngineProfilerDataSource.cs");
+        string profilerUiSource = ReadWorkspaceFile("XREngine.Profiler.UI/ProfilerPanelRenderer.cs");
+
+        prewarmSource.ShouldContain("VulkanPipelinePrewarmDatabase");
+        prewarmSource.ShouldContain("CurrentVersion");
+        prewarmSource.ShouldContain("CreateGraphicsEntry");
+        prewarmSource.ShouldContain("CreateComputeEntry");
+        prewarmSource.ShouldContain("XRE_VK_PIPELINE_PREWARM_CAPTURE");
+        prewarmSource.ShouldContain("SaveVulkanPipelinePrewarmDatabase");
+        pipelineCacheSource.ShouldContain("InitializeVulkanPipelinePrewarmDatabase(properties)");
+        pipelineCacheSource.ShouldContain("SaveVulkanPipelinePrewarmDatabase()");
+
+        meshDrawSource.ShouldContain("IReadOnlyCollection<RenderPassMetadata>? passMetadata");
+        meshPipelineSource.ShouldContain("RecordVulkanGraphicsPipelineCacheMiss");
+        meshPipelineSource.ShouldContain("programPipelineHash");
+        meshPipelineSource.ShouldContain("vertexLayoutHash");
+        commandBufferSource.ShouldContain("GetOrCreateComputePipeline(op.PassIndex, op.Context.PassMetadata)");
+        commandBufferSource.ShouldContain("drawOp.Context.PassMetadata");
+        programSource.ShouldContain("RecordVulkanComputePipelineCacheMiss");
+
+        statsSource.ShouldContain("RecordVulkanPipelineCacheMiss");
+        statsSource.ShouldContain("VulkanPipelineCacheMissSummary");
+        packetSource.ShouldContain("VulkanPipelineCacheMissSummary");
+        senderSource.ShouldContain("VulkanPipelineCacheMissSummary = Rendering.Stats.VulkanPipelineCacheMissSummary");
+        editorSource.ShouldContain("VulkanPipelineCacheMissSummary = Engine.Rendering.Stats.VulkanPipelineCacheMissSummary");
+        profilerUiSource.ShouldContain("Vulkan Pipeline Misses");
+    }
+
     private static RenderCommandCollection CreateCommandCollection(int passIndex)
         => new(new Dictionary<int, IComparer<RenderCommand>?>
         {
@@ -352,5 +392,27 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
                 Name = Path.GetFileNameWithoutExtension(fullPath),
             };
         }
+    }
+
+    private static string ReadWorkspaceFile(string relativePath)
+    {
+        string repoRoot = ResolveRepoRoot();
+        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
+        return File.ReadAllText(path);
+    }
+
+    private static string ResolveRepoRoot()
+    {
+        string? directory = TestContext.CurrentContext.TestDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            if (File.Exists(Path.Combine(directory, "XRENGINE.slnx")))
+                return directory;
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root from test directory.");
     }
 }

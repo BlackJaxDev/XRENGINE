@@ -29,6 +29,9 @@ public partial class DefaultRenderPipeline
         ViewportRenderCommandContainer c = new(this);
         bool enableComputePasses = EnableComputeDependentPasses;
 
+        c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+        c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+        c.Add<VPRC_DepthWrite>().Allow = true;
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
@@ -55,6 +58,9 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+                c.Add<VPRC_DepthWrite>().Allow = true;
+                c.Add<VPRC_ColorMask>().Set(true, true, true, true);
             }
         }
 
@@ -77,6 +83,9 @@ public partial class DefaultRenderPipeline
         CacheTextures(c);
         AppendVoxelConeTracingPass(c, enableComputePasses);
 
+        c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+        c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+        c.Add<VPRC_DepthWrite>().Allow = true;
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
@@ -575,6 +584,9 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
+            c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+            c.Add<VPRC_DepthWrite>().Allow = true;
+            c.Add<VPRC_ColorMask>().Set(true, true, true, true);
         }
     }
 
@@ -866,10 +878,38 @@ public partial class DefaultRenderPipeline
 
     private void AppendFinalOutput(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
     {
+        var outputChoice = c.Add<VPRC_IfElse>();
+        outputChoice.ConditionEvaluator = IsOffscreenSceneCaptureOutput;
+        outputChoice.TrueCommands = CreateOffscreenCaptureFinalOutputCommands();
+        outputChoice.FalseCommands = CreateViewportFinalOutputCommands(bypassVendorUpscale);
+    }
+
+    private static bool IsOffscreenSceneCaptureOutput()
+        => State.OutputFBO is not null &&
+           (Engine.Rendering.State.IsSceneCapturePass || Engine.Rendering.State.IsLightProbePass);
+
+    private ViewportRenderCommandContainer CreateOffscreenCaptureFinalOutputCommands()
+    {
+        ViewportRenderCommandContainer c = new(this);
+        using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
+        {
+            using (c.AddUsing<VPRC_BindOutputFBO>())
+            {
+                c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                c.Add<VPRC_RenderQuadFBO>().SetOptions(ForwardPassFBOName);
+            }
+        }
+        return c;
+    }
+
+    private ViewportRenderCommandContainer CreateViewportFinalOutputCommands(bool bypassVendorUpscale)
+    {
+        ViewportRenderCommandContainer c = new(this);
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
         {
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
+                c.Add<VPRC_ColorMask>().Set(true, true, true, true);
                 if (EnableTransformIdVisualization)
                 {
                     c.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
@@ -880,44 +920,122 @@ public partial class DefaultRenderPipeline
                 }
                 else
                 {
-                    string? overrideSource = Environment.GetEnvironmentVariable("XRE_OUTPUT_SOURCE_FBO");
-                    if (!string.IsNullOrWhiteSpace(overrideSource))
-                    {
-                        if (bypassVendorUpscale)
-                        {
-                            c.Add<VPRC_RenderQuadToFBO>().SetTargets(overrideSource, null);
-                        }
-                        else
-                        {
-                            var vendorBlit = c.Add<VPRC_VendorUpscale>();
-                            vendorBlit.FrameBufferName = overrideSource;
-                            vendorBlit.DepthTextureName = DepthViewTextureName;
-                            vendorBlit.MotionTextureName = VelocityTextureName;
-                        }
-                    }
-                    else
-                    {
-                        var upscaleOutputChoice = c.Add<VPRC_IfElse>();
-                        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
-                        {
-                            var upscaleOutput = new ViewportRenderCommandContainer(this);
-                            var tsrOrPostAaFinal = upscaleOutput.Add<VPRC_IfElse>();
-                            tsrOrPostAaFinal.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
-                            tsrOrPostAaFinal.TrueCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
-                            {
-                                var postAaOutput = new ViewportRenderCommandContainer(this);
-                                var fxaaOrSmaaFinal = postAaOutput.Add<VPRC_IfElse>();
-                                fxaaOrSmaaFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
-                                fxaaOrSmaaFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
-                                fxaaOrSmaaFinal.FalseCommands = CreateFinalBlitCommands(SmaaFBOName, bypassVendorUpscale);
-                                tsrOrPostAaFinal.FalseCommands = postAaOutput;
-                            }
-                            upscaleOutputChoice.TrueCommands = upscaleOutput;
-                        }
-                        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessOutputFBOName, bypassVendorUpscale);
-                    }
+                    AppendViewportFinalOutputSourceCommands(c, bypassVendorUpscale);
                 }
             }
+        }
+        return c;
+    }
+
+    private void AppendViewportFinalOutputSourceCommands(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
+    {
+        string? overrideSource = ResolveOutputSourceFboOverride();
+        if (overrideSource is not null)
+        {
+            var overrideChoice = c.Add<VPRC_IfElse>();
+            overrideChoice.ConditionEvaluator = () => IsValidFinalOutputSourceFboOverride(overrideSource, bypassVendorUpscale);
+            overrideChoice.TrueCommands = CreateOutputSourceOverrideCommands(overrideSource, bypassVendorUpscale);
+            overrideChoice.FalseCommands = CreateStandardViewportFinalOutputCommands(bypassVendorUpscale);
+            return;
+        }
+
+        AppendStandardViewportFinalOutputCommands(c, bypassVendorUpscale);
+    }
+
+    private ViewportRenderCommandContainer CreateStandardViewportFinalOutputCommands(bool bypassVendorUpscale)
+    {
+        var commands = new ViewportRenderCommandContainer(this);
+        AppendStandardViewportFinalOutputCommands(commands, bypassVendorUpscale);
+        return commands;
+    }
+
+    private void AppendStandardViewportFinalOutputCommands(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
+    {
+        var upscaleOutputChoice = c.Add<VPRC_IfElse>();
+        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
+        {
+            var upscaleOutput = new ViewportRenderCommandContainer(this);
+            var tsrOrPostAaFinal = upscaleOutput.Add<VPRC_IfElse>();
+            tsrOrPostAaFinal.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
+            tsrOrPostAaFinal.TrueCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
+            {
+                var postAaOutput = new ViewportRenderCommandContainer(this);
+                var fxaaOrSmaaFinal = postAaOutput.Add<VPRC_IfElse>();
+                fxaaOrSmaaFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
+                fxaaOrSmaaFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
+                fxaaOrSmaaFinal.FalseCommands = CreateFinalBlitCommands(SmaaFBOName, bypassVendorUpscale);
+                tsrOrPostAaFinal.FalseCommands = postAaOutput;
+            }
+            upscaleOutputChoice.TrueCommands = upscaleOutput;
+        }
+        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessOutputFBOName, bypassVendorUpscale);
+    }
+
+    private ViewportRenderCommandContainer CreateOutputSourceOverrideCommands(string sourceFboName, bool bypassVendorUpscale)
+    {
+        var commands = new ViewportRenderCommandContainer(this);
+        if (bypassVendorUpscale)
+        {
+            commands.Add<VPRC_RenderQuadToFBO>().SetTargets(sourceFboName, null);
+        }
+        else
+        {
+            var vendorBlit = commands.Add<VPRC_VendorUpscale>();
+            vendorBlit.FrameBufferName = sourceFboName;
+            vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
+            vendorBlit.DepthTextureName = DepthViewTextureName;
+            vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
+            vendorBlit.MotionTextureName = VelocityTextureName;
+            vendorBlit.MotionFrameBufferName = VelocityFBOName;
+        }
+
+        return commands;
+    }
+
+    private static string? ResolveOutputSourceFboOverride()
+    {
+        string? overrideSource = Environment.GetEnvironmentVariable("XRE_OUTPUT_SOURCE_FBO");
+        return string.IsNullOrWhiteSpace(overrideSource)
+            ? null
+            : overrideSource.Trim();
+    }
+
+    private static bool IsValidFinalOutputSourceFboOverride(string sourceFboName, bool bypassVendorUpscale)
+    {
+        try
+        {
+            if (bypassVendorUpscale)
+            {
+                if (GetFBO<XRQuadFrameBuffer>(sourceFboName) is not null)
+                    return true;
+
+                Debug.RenderingWarningEvery(
+                    $"DefaultRenderPipeline.InvalidOutputSourceFbo.Quad.{sourceFboName}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] XRE_OUTPUT_SOURCE_FBO='{0}' does not resolve to an XRQuadFrameBuffer required by XRE_BYPASS_VENDOR_UPSCALE=1. Falling back to standard final output.",
+                    sourceFboName);
+                return false;
+            }
+
+            if (TryGetFBO(sourceFboName, out XRFrameBuffer? fbo) && fbo is not null)
+                return true;
+
+            Debug.RenderingWarningEvery(
+                $"DefaultRenderPipeline.InvalidOutputSourceFbo.{sourceFboName}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] XRE_OUTPUT_SOURCE_FBO='{0}' does not resolve to a known FBO. Falling back to standard final output.",
+                sourceFboName);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Debug.RenderingWarningEvery(
+                $"DefaultRenderPipeline.InvalidOutputSourceFbo.Exception.{sourceFboName}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] XRE_OUTPUT_SOURCE_FBO='{0}' could not be validated before final blit: {1}. Falling back to standard final output.",
+                sourceFboName,
+                ex.Message);
+            return false;
         }
     }
 

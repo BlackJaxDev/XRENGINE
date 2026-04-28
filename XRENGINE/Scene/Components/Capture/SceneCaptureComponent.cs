@@ -542,6 +542,8 @@ namespace XREngine.Components.Lights
             {
                 RenderingParameters renderParams = new();
                 renderParams.DepthTest.Enabled = ERenderParamUsage.Disabled;
+                renderParams.StencilTest.Enabled = ERenderParamUsage.Disabled;
+                renderParams.CullMode = ECullMode.None;
                 renderParams.WriteRed = true;
                 renderParams.WriteGreen = true;
                 renderParams.WriteBlue = true;

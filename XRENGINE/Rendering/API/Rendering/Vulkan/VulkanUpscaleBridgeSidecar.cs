@@ -373,8 +373,22 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
                 submitFence);
         }
 
-            _ownedSlots = slots;
+        _ownedSlots = slots;
         return slots;
+    }
+
+    public VulkanUpscaleBridgeFrameSlot[] RecreateFrameSlots(OpenGLRenderer renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
+
+        if (_device.Handle == 0)
+            throw new InvalidOperationException("The Vulkan upscale bridge sidecar device is unavailable.");
+
+        _api.DeviceWaitIdle(_device);
+        ResetVendorSessionsForFrameResourceRecreate();
+        DestroyOwnedFrameSlots();
+        return CreateFrameSlots(renderer, frameResources, viewportTag);
     }
 
     public void SubmitNoOpHandoff(VulkanUpscaleBridgeFrameSlot slot)
@@ -653,6 +667,25 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         }
     }
 
+    private void ResetVendorSessionsForFrameResourceRecreate()
+    {
+        _dlssSession?.ResetResources();
+
+        _xessSession?.Dispose();
+        _xessSession = null;
+    }
+
+    private void DestroyOwnedFrameSlots()
+    {
+        for (int i = _ownedSlots.Length - 1; i >= 0; i--)
+            _ownedSlots[i].Dispose();
+
+        for (int i = _ownedSlots.Length - 1; i >= 0; i--)
+            _ownedSlots[i].DestroyVulkanResources(_api, _device);
+
+        _ownedSlots = [];
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -667,9 +700,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             _xessSession = null;
             _dlssSession?.Dispose();
             _dlssSession = null;
-            for (int i = _ownedSlots.Length - 1; i >= 0; i--)
-                _ownedSlots[i].DestroyVulkanResources(_api, _device);
-            _ownedSlots = [];
+            DestroyOwnedFrameSlots();
 
             if (_commandPool.Handle != 0)
                 _api.DestroyCommandPool(_device, _commandPool, null);

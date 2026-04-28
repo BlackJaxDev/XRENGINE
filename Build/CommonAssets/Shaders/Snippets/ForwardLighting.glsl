@@ -83,11 +83,11 @@ uniform bool ShadowMapEnabled;
 uniform bool UseCascadedDirectionalShadows;
 uniform mat4 PrimaryDirLightWorldToLightInvViewMatrix;
 uniform mat4 PrimaryDirLightWorldToLightProjMatrix;
-uniform ivec4 ShadowPackedI0 = ivec4(4, 4, 5, 1); // blocker samples, filter samples, vogel taps, soft mode
+uniform ivec4 ShadowPackedI0 = ivec4(16, 16, 5, 2); // blocker samples, filter samples, vogel taps, soft mode
 uniform ivec4 ShadowPackedI1 = ivec4(1, 1, 4, 0); // cascades enabled, contact enabled, contact samples, reserved
 uniform vec4 ShadowParams0 = vec4(0.035, 1.221, 0.00001, 0.004); // base, exponent, bias min, bias max
-uniform vec4 ShadowParams1 = vec4(0.0012, 0.0012, 0.0002, 0.0048); // filter radius, blocker radius, min penumbra, max penumbra
-uniform vec4 ShadowParams2 = vec4(0.01, 0.1, 0.25, 10.0); // source radius, contact distance, contact thickness, contact fade start
+uniform vec4 ShadowParams1 = vec4(0.0012, 0.01, 0.001, 0.015); // filter radius, blocker radius, min penumbra, max penumbra
+uniform vec4 ShadowParams2 = vec4(1.2, 0.1, 0.25, 10.0); // source radius, contact distance, contact thickness, contact fade start
 uniform vec4 ShadowParams3 = vec4(40.0, 0.0, 1.0, 0.0); // contact fade end, normal offset, jitter, reserved
 
 #define ShadowBlockerSamples ShadowPackedI0.x

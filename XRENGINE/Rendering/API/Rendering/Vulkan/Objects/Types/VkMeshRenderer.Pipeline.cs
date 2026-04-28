@@ -16,6 +16,7 @@ using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -177,6 +178,9 @@ public unsafe partial class VulkanRenderer
 			bool useDynamicRendering,
 			Format colorAttachmentFormat,
 			Format depthAttachmentFormat,
+			int passIndex,
+			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			string pipelineName,
 			out Pipeline pipeline)
 		{
 			pipeline = default;
@@ -239,7 +243,25 @@ public unsafe partial class VulkanRenderer
 				return true;
 			}
 
-			Engine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit: false);
+			Renderer.RecordVulkanGraphicsPipelineCacheMiss(
+				passIndex,
+				passMetadata,
+				pipelineName,
+				Mesh?.Name,
+				material,
+				_program!.Data?.Name,
+				topology,
+				useDynamicRendering,
+				renderPass,
+				colorAttachmentFormat,
+				depthAttachmentFormat,
+				programPipelineHash,
+				vertexLayoutHash,
+				draw.RasterizationSamples,
+				draw.DepthTestEnabled,
+				draw.BlendEnabled,
+				draw.AlphaToCoverageEnabled,
+				draw.ColorWriteMask);
 
 			var vertexInput = new PipelineVertexInputStateCreateInfo
 			{

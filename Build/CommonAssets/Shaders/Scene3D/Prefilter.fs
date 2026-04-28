@@ -67,6 +67,12 @@ void main()
 {
     vec3 N = normalize(FragPosLocal);
 
+    if (Roughness <= 0.0001f)
+    {
+        OutColor = textureLod(Texture0, N, 0.0f).rgb;
+        return;
+    }
+
     // make the simplyfying assumption that V equals R equals the normal
     vec3 R = N;
     vec3 V = R;

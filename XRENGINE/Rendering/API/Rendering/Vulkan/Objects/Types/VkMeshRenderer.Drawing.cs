@@ -17,6 +17,7 @@ using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -39,7 +40,10 @@ public unsafe partial class VulkanRenderer
 			RenderPass renderPass,
 			bool useDynamicRendering,
 			Format colorAttachmentFormat,
-			Format depthAttachmentFormat)
+			Format depthAttachmentFormat,
+			int passIndex,
+			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			string pipelineName)
 		{
 			EnsureBuffers();
 
@@ -91,7 +95,7 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, out var pipeline))
+				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, pipelineName, out var pipeline))
 				{
 					if (verboseTrace)
 						Debug.RenderingWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colorFmt={3} depthFmt={4}",
@@ -124,6 +128,8 @@ public unsafe partial class VulkanRenderer
 						Debug.RenderingWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
 					return false;
 				}
+
+				PushPerDrawConstants(commandBuffer, material, drawCopy);
 
 				if (verboseTrace)
 					Debug.RenderingWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pipeline=0x{2:X} topology={3} cull={4} blend={5} depthTest={6} depthWrite={7} depthCmp={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) prog={18}",
@@ -163,7 +169,7 @@ public unsafe partial class VulkanRenderer
 					EPrimitiveType.Patches => PrimitiveTopology.PatchList,
 					_ => PrimitiveTopology.TriangleList,
 				};
-				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, out var pipeline))
+				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, pipelineName, out var pipeline))
 				{
 					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
@@ -182,6 +188,8 @@ public unsafe partial class VulkanRenderer
 
 					if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy))
 						return;
+
+					PushPerDrawConstants(commandBuffer, material, drawCopy);
 
 					Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
 					Engine.Rendering.Stats.IncrementDrawCalls();
@@ -249,12 +257,30 @@ public unsafe partial class VulkanRenderer
 			if (!EnsureDescriptorSets(material))
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=EnsureDescriptorSets returned false");
+				Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+					programName,
+					"descriptor-set",
+					materialName,
+					0,
+					0,
+					skippedDraw: true,
+					skippedDispatch: false,
+					$"mesh={meshName} EnsureDescriptorSets returned false");
 				return false;
 			}
 
 			if (_descriptorSets is null || _descriptorSets.Length == 0)
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array is null or empty");
+				Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+					programName,
+					"descriptor-set",
+					materialName,
+					0,
+					0,
+					skippedDraw: true,
+					skippedDispatch: false,
+					$"mesh={meshName} descriptor set array is null or empty");
 				return false;
 			}
 
@@ -268,11 +294,61 @@ public unsafe partial class VulkanRenderer
 			if (sets.Length == 0)
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array at imageIndex {imageIndex} is empty");
+				Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+					programName,
+					"descriptor-set",
+					materialName,
+					0,
+					0,
+					skippedDraw: true,
+					skippedDispatch: false,
+					$"mesh={meshName} descriptor set array at imageIndex {imageIndex} is empty");
 				return false;
 			}
 
 			Renderer.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics, _program.PipelineLayout, 0, sets);
 			return true;
+		}
+
+		private readonly struct MeshDrawPushConstants
+		{
+			public readonly uint MaterialIdentity;
+			public readonly uint InstanceCount;
+			public readonly uint BillboardMode;
+			public readonly uint DebugFlags;
+
+			public MeshDrawPushConstants(uint materialIdentity, uint instanceCount, uint billboardMode, uint debugFlags)
+			{
+				MaterialIdentity = materialIdentity;
+				InstanceCount = instanceCount;
+				BillboardMode = billboardMode;
+				DebugFlags = debugFlags;
+			}
+		}
+
+		private void PushPerDrawConstants(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw)
+		{
+			if (_program is null)
+				return;
+
+			uint debugFlags = 0;
+			if (draw.IsStereoPass)
+				debugFlags |= 1u;
+			if (draw.UseUnjitteredProjection)
+				debugFlags |= 2u;
+
+			MeshDrawPushConstants constants = new(
+				unchecked((uint)(material.GetHashCode() & int.MaxValue)),
+				draw.Instances,
+				(uint)draw.BillboardMode,
+				debugFlags);
+
+			Renderer.PushConstantsTracked(
+				commandBuffer,
+				_program.PipelineLayout,
+				ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+				0,
+				constants);
 		}
 
 		/// <summary>

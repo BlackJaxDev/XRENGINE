@@ -28,10 +28,10 @@ uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 
 // Enhanced shadow quality settings
-uniform int ShadowSamples = 4; // 4-tap soft by default; raise explicitly for higher quality
+uniform int ShadowSamples = 16;
 uniform float ShadowFilterRadius = 0.01f;
-uniform int SoftShadowMode = 1;
-uniform float LightSourceRadius = 0.01f;
+uniform int SoftShadowMode = 2;
+uniform float LightSourceRadius = 1.2f;
 uniform bool EnableCascadedShadows = true;
 uniform bool EnableContactShadows = true;
 uniform float ContactShadowDistance = 0.1f;

@@ -33,6 +33,7 @@ public sealed partial class RenderStatsPacket
     public int VulkanPipelineCacheLookupHits { get; set; }
     public int VulkanPipelineCacheLookupMisses { get; set; }
     public double VulkanPipelineCacheLookupHitRate { get; set; }
+    public string VulkanPipelineCacheMissSummary { get; set; } = string.Empty;
     public double VulkanFrameWaitFenceMs { get; set; }
     public double VulkanFrameAcquireImageMs { get; set; }
     public double VulkanFrameRecordCommandBufferMs { get; set; }
@@ -51,6 +52,43 @@ public sealed partial class RenderStatsPacket
     public int VulkanDescriptorPoolDestroyCount { get; set; }
     public int VulkanDescriptorPoolResetCount { get; set; }
     public int VulkanQueueSubmitCount { get; set; }
+    public int VulkanDroppedFrameOps { get; set; }
+    public int VulkanDroppedDrawOps { get; set; }
+    public int VulkanDroppedComputeOps { get; set; }
+    public int VulkanSceneSwapchainWriters { get; set; }
+    public int VulkanOverlaySwapchainWriters { get; set; }
+    public int VulkanForcedDiagnosticSwapchainWriters { get; set; }
+    public int VulkanFboOnlyDrawOps { get; set; }
+    public int VulkanFboOnlyBlitOps { get; set; }
+    public int VulkanMissingSceneSwapchainWriteFrames { get; set; }
+    public int VulkanFirstFailedFrameOpPassIndex { get; set; }
+    public int VulkanFirstFailedFrameOpPipelineIdentity { get; set; }
+    public int VulkanFirstFailedFrameOpViewportIdentity { get; set; }
+    public string VulkanFirstFailedFrameOpType { get; set; } = string.Empty;
+    public string VulkanFirstFailedFrameOpTargetName { get; set; } = string.Empty;
+    public string VulkanFirstFailedFrameOpMaterialName { get; set; } = string.Empty;
+    public string VulkanFirstFailedFrameOpShaderName { get; set; } = string.Empty;
+    public string VulkanFirstFailedFrameOpMessage { get; set; } = string.Empty;
+    public string VulkanFrameDiagnosticSummary { get; set; } = string.Empty;
+    public int VulkanValidationMessageCount { get; set; }
+    public int VulkanValidationErrorCount { get; set; }
+    public string VulkanLastValidationMessage { get; set; } = string.Empty;
+    public int VulkanDescriptorFallbackSampledImages { get; set; }
+    public int VulkanDescriptorFallbackStorageImages { get; set; }
+    public int VulkanDescriptorFallbackUniformBuffers { get; set; }
+    public int VulkanDescriptorFallbackStorageBuffers { get; set; }
+    public int VulkanDescriptorFallbackTexelBuffers { get; set; }
+    public int VulkanDescriptorBindingFailures { get; set; }
+    public int VulkanDescriptorSkippedDraws { get; set; }
+    public int VulkanDescriptorSkippedDispatches { get; set; }
+    public string VulkanDescriptorFallbackSummary { get; set; } = string.Empty;
+    public string VulkanDescriptorFailureSummary { get; set; } = string.Empty;
+    public int VulkanDynamicUniformAllocations { get; set; }
+    public long VulkanDynamicUniformAllocatedBytes { get; set; }
+    public int VulkanDynamicUniformExhaustions { get; set; }
+    public int VulkanRetiredResourcePlanReplacements { get; set; }
+    public int VulkanRetiredResourcePlanImages { get; set; }
+    public int VulkanRetiredResourcePlanBuffers { get; set; }
 
     // VRAM
     public long AllocatedVRAMBytes { get; set; }

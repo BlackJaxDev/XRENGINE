@@ -33,8 +33,10 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyLogicalDevice()
     {
+        DestroyDescriptorUpdateTemplateCache();
         DestroyCachedDescriptorSetLayouts();
         DestroyVulkanPipelineCache();
+        DestroyCanonicalImmutableSamplers();
         Api!.DestroyDevice(device, null);
     }
 

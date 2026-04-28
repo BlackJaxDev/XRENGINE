@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
@@ -19,6 +20,145 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class VulkanP0ValidationTests
 {
+    #region P0 Black-Frame Diagnostics
+
+    [Test]
+    public void VulkanBlackFrameDiagnostics_AreStructuredAndProfilerVisible()
+    {
+        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs");
+        string commandBufferSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
+        string profilerSenderSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
+        string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
+        string profilerUiSource = ReadWorkspaceFile("XREngine.Profiler.UI/ProfilerPanelRenderer.cs");
+
+        statsSource.ShouldContain("RecordVulkanFrameDiagnostics");
+        statsSource.ShouldContain("VulkanDroppedFrameOps");
+        statsSource.ShouldContain("VulkanFirstFailedFrameOpMaterialName");
+        statsSource.ShouldContain("VulkanFrameDiagnosticSummary");
+        statsSource.ShouldContain("VulkanValidationMessageCount");
+
+        commandBufferSource.ShouldContain("sceneSwapchainWriters");
+        commandBufferSource.ShouldContain("overlaySwapchainWriters");
+        commandBufferSource.ShouldContain("forcedDiagnosticSwapchainWriters");
+        commandBufferSource.ShouldContain("fboOnlyDrawOps");
+        commandBufferSource.ShouldContain("BuildVulkanFrameDiagnosticSummary");
+        commandBufferSource.ShouldContain("[Vulkan][FrameFailure]");
+
+        packetSource.ShouldContain("VulkanDroppedFrameOps");
+        packetSource.ShouldContain("VulkanFrameDiagnosticSummary");
+        profilerSenderSource.ShouldContain("VulkanDroppedFrameOps = Rendering.Stats.VulkanDroppedFrameOps");
+        editorSource.ShouldContain("VulkanDroppedFrameOps = Engine.Rendering.Stats.VulkanDroppedFrameOps");
+        profilerUiSource.ShouldContain("Vulkan Frame Diagnostics:");
+    }
+
+    [Test]
+    public void VulkanValidationLayerMessages_FeedFrameDiagnostics()
+    {
+        string validationSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Validation.cs");
+        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs");
+
+        validationSource.ShouldContain("RecordVulkanValidationMessage");
+        statsSource.ShouldContain("VulkanLastValidationMessage");
+        statsSource.ShouldContain("VulkanValidationErrorCountCurrentFrame");
+    }
+
+    #endregion
+
+    #region Final Output Contract
+
+    [Test]
+    public void DefaultPipelineFinalOutput_ValidatesEnvOverrideBeforeRecordingFinalBlit()
+    {
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
+
+        foreach (string source in new[] { pipelineSource, pipeline2Source })
+        {
+            source.ShouldContain("ResolveOutputSourceFboOverride");
+            source.ShouldContain("IsValidFinalOutputSourceFboOverride");
+            source.ShouldContain("CreateOutputSourceOverrideCommands");
+            source.ShouldContain("CreateStandardViewportFinalOutputCommands");
+            source.ShouldContain("XRE_OUTPUT_SOURCE_FBO");
+            source.ShouldContain("Falling back to standard final output");
+            source.ShouldContain("GetFBO<XRQuadFrameBuffer>(sourceFboName)");
+            source.ShouldContain("TryGetFBO(sourceFboName, out XRFrameBuffer? fbo)");
+        }
+    }
+
+    [Test]
+    public void DefaultPipelineFinalOutput_CoversDebugOverrideAaAndFallbackSources()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+
+        source.ShouldContain("TransformIdDebugQuadFBOName");
+        source.ShouldContain("ActiveTransparencyDebugFboName");
+        source.ShouldContain("CreateOutputSourceOverrideCommands");
+        source.ShouldContain("RuntimeNeedsTsrUpscale");
+        source.ShouldContain("FxaaFBOName");
+        source.ShouldContain("SmaaFBOName");
+        source.ShouldContain("PostProcessOutputFBOName");
+        source.ShouldContain("ForceFallbackBlit = bypassVendorUpscale");
+    }
+
+    #endregion
+
+    #region Frame-Op And Planner Contracts
+
+    [Test]
+    public void FrameOpContracts_RejectUndocumentedMinValuePassAtRecording()
+    {
+        string commandBufferSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string meshSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+
+        commandBufferSource.ShouldContain("System.Diagnostics.Debug.Assert");
+        commandBufferSource.ShouldContain("op.PassIndex != int.MinValue || activePassIndex != int.MinValue");
+        commandBufferSource.ShouldContain("Dropping op");
+        meshSource.ShouldContain("EnsureValidFrameOpPassIndex");
+        meshSource.ShouldContain("EnsureValidPassIndex(op.PassIndex");
+    }
+
+    [Test]
+    public void CommandBufferReuse_InvalidatesOnFrameOpsPlannerRevisionResourcesAndViewport()
+    {
+        string commandBufferSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string stateSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
+        string meshSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+
+        commandBufferSource.ShouldContain("_commandBufferFrameOpSignatures");
+        commandBufferSource.ShouldContain("_commandBufferPlannerRevisions");
+        commandBufferSource.ShouldContain("ResourcePlannerRevision");
+        stateSource.ShouldContain("ComputeResourcePlannerSignature");
+        stateSource.ShouldContain("ComputePassMetadataSignature(passMetadata)");
+        stateSource.ShouldContain("registry.TextureRecords.OrderBy");
+        stateSource.ShouldContain("registry.FrameBufferRecords.OrderBy");
+        stateSource.ShouldContain("viewport?.Width ?? 0");
+        stateSource.ShouldContain("viewport?.InternalWidth ?? 0");
+        meshSource.ShouldContain("hash.Add(op.Context.ViewportIdentity)");
+        meshSource.ShouldContain("hash.Add(blit.OutFbo?.GetHashCode() ?? 0)");
+    }
+
+    [Test]
+    public void DefaultCommandChain_DocumentsCommonDynamicBranchesForVulkanCoverage()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+
+        source.ShouldContain("RuntimeEnableMsaa");
+        source.ShouldContain("RuntimeEnableMsaaDeferred");
+        source.ShouldContain("EvaluateAmbientOcclusionMode");
+        source.ShouldContain("CreateAmbientOcclusionDisabledPassCommands");
+        source.ShouldContain("CreateSSAOPassCommands");
+        source.ShouldContain("CreateGTAOPassCommands");
+        source.ShouldContain("EnableTransparencyAccumulationVisualization");
+        source.ShouldContain("EnableTransparencyRevealageVisualization");
+        source.ShouldContain("EnableTransparencyOverdrawVisualization");
+        source.ShouldContain("RuntimeNeedsTsrUpscale");
+        source.ShouldContain("CreateOutputSourceOverrideCommands");
+        source.ShouldContain("VPRC_RenderScreenSpaceUI");
+    }
+
+    #endregion
+
     #region Pass-Index Validity
 
     [Test]
@@ -320,4 +460,26 @@ public sealed class VulkanP0ValidationTests
     }
 
     #endregion
+
+    private static string ReadWorkspaceFile(string relativePath)
+    {
+        string repoRoot = ResolveRepoRoot();
+        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
+        return File.ReadAllText(path);
+    }
+
+    private static string ResolveRepoRoot()
+    {
+        string? directory = TestContext.CurrentContext.TestDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            if (File.Exists(Path.Combine(directory, "XRENGINE.slnx")))
+                return directory;
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root from test directory.");
+    }
 }

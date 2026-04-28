@@ -88,8 +88,8 @@ namespace XREngine.Rendering
 
         public float SpatialHashMaxDistance
         {
-            get => SpatialHash.MaxDistance;
-            set => SpatialHash.MaxDistance = value;
+            get => Radius;
+            set => Radius = value;
         }
 
         public int SpatialHashSteps

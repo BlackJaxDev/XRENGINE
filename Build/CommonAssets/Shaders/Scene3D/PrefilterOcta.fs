@@ -74,6 +74,13 @@ vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness)
 void main()
 {
     vec3 N = DirectionFromFragPos(FragPos);
+
+    if (Roughness <= 0.0001f)
+    {
+        OutColor = XRENGINE_SampleOctaLod(Texture0, N, 0.0f);
+        return;
+    }
+
     vec3 R = N;
     vec3 V = R;
 

@@ -186,7 +186,13 @@ public unsafe partial class VulkanRenderer
 
             if (layouts.Count == 0)
             {
-                PipelineLayoutCreateInfo info = new() { SType = StructureType.PipelineLayoutCreateInfo };
+                PushConstantRange pushRange = CreateCommonPushConstantRange();
+                PipelineLayoutCreateInfo info = new()
+                {
+                    SType = StructureType.PipelineLayoutCreateInfo,
+                    PushConstantRangeCount = 1,
+                    PPushConstantRanges = &pushRange
+                };
                 if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                     throw new InvalidOperationException("Failed to create pipeline layout for pipeline object.");
                 return;
@@ -195,17 +201,28 @@ public unsafe partial class VulkanRenderer
             DescriptorSetLayout[] layoutArray = layouts.ToArray();
             fixed (DescriptorSetLayout* layoutPtr = layoutArray)
             {
+                PushConstantRange pushRange = CreateCommonPushConstantRange();
                 PipelineLayoutCreateInfo info = new()
                 {
                     SType = StructureType.PipelineLayoutCreateInfo,
                     SetLayoutCount = (uint)layoutArray.Length,
                     PSetLayouts = layoutPtr,
+                    PushConstantRangeCount = 1,
+                    PPushConstantRanges = &pushRange
                 };
 
                 if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                     throw new InvalidOperationException("Failed to create pipeline layout for pipeline object.");
             }
         }
+
+        private static PushConstantRange CreateCommonPushConstantRange()
+            => new()
+            {
+                StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit | ShaderStageFlags.ComputeBit,
+                Offset = 0,
+                Size = CommonPushConstantSize
+            };
 
         private void MarkLayoutsDirty()
             => _layoutsDirty = true;

@@ -563,6 +563,11 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"  Vertex Buffer Binds: {stats.VulkanVertexBufferBinds:N0} (skipped {stats.VulkanVertexBufferBindSkips:N0})");
         ImGui.Text($"  Index Buffer Binds: {stats.VulkanIndexBufferBinds:N0} (skipped {stats.VulkanIndexBufferBindSkips:N0})");
         ImGui.Text($"  Pipeline Cache Lookups: {stats.VulkanPipelineCacheLookupHits:N0} hits / {stats.VulkanPipelineCacheLookupMisses:N0} misses ({stats.VulkanPipelineCacheLookupHitRate * 100.0:F1}% hit)");
+        if (!string.IsNullOrWhiteSpace(stats.VulkanPipelineCacheMissSummary) &&
+            ImGui.CollapsingHeader("Vulkan Pipeline Misses"))
+        {
+            ImGui.TextWrapped(stats.VulkanPipelineCacheMissSummary);
+        }
 
         double pipelineSkipRate = (stats.VulkanPipelineBinds + stats.VulkanPipelineBindSkips) <= 0
             ? 0.0
@@ -598,6 +603,45 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             DrawRenderStatsHistoryPlot("CPU Wait Fence", _vulkanFrameWaitFenceMsHistory, "ms", 0f, 0f);
             DrawRenderStatsHistoryPlot("CPU Record CmdBuf", _vulkanFrameRecordCommandBufferMsHistory, "ms", 0f, 0f);
             DrawRenderStatsHistoryPlot("GPU CmdBuf", _vulkanFrameGpuCommandBufferMsHistory, "ms", 0f, 0f);
+        }
+
+        ImGui.Separator();
+        ImGui.Text("Vulkan Frame Diagnostics:");
+        ImGui.Text($"  Dropped Ops: {stats.VulkanDroppedFrameOps:N0} total / {stats.VulkanDroppedDrawOps:N0} draw / {stats.VulkanDroppedComputeOps:N0} compute");
+        ImGui.Text($"  Swapchain Writers: scene {stats.VulkanSceneSwapchainWriters:N0} | overlay {stats.VulkanOverlaySwapchainWriters:N0} | diagnostic {stats.VulkanForcedDiagnosticSwapchainWriters:N0}");
+        ImGui.Text($"  FBO-only Work: draws {stats.VulkanFboOnlyDrawOps:N0} | blits {stats.VulkanFboOnlyBlitOps:N0}");
+        ImGui.Text($"  Validation: {stats.VulkanValidationMessageCount:N0} messages / {stats.VulkanValidationErrorCount:N0} errors");
+        ImGui.Text($"  Descriptor Fallbacks: sampled {stats.VulkanDescriptorFallbackSampledImages:N0} | storage image {stats.VulkanDescriptorFallbackStorageImages:N0} | UBO {stats.VulkanDescriptorFallbackUniformBuffers:N0} | SSBO {stats.VulkanDescriptorFallbackStorageBuffers:N0} | texel {stats.VulkanDescriptorFallbackTexelBuffers:N0}");
+        ImGui.Text($"  Descriptor Failures: {stats.VulkanDescriptorBindingFailures:N0} total | skipped draws {stats.VulkanDescriptorSkippedDraws:N0} | skipped dispatches {stats.VulkanDescriptorSkippedDispatches:N0}");
+        ImGui.Text($"  Dynamic UBO Ring: {stats.VulkanDynamicUniformAllocations:N0} allocations / {stats.VulkanDynamicUniformAllocatedBytes / 1024.0:F1} KB / {stats.VulkanDynamicUniformExhaustions:N0} exhaustions");
+        ImGui.Text($"  Retired Plan Resources: {stats.VulkanRetiredResourcePlanReplacements:N0} replacements | images {stats.VulkanRetiredResourcePlanImages:N0} | buffers {stats.VulkanRetiredResourcePlanBuffers:N0}");
+        if (stats.VulkanMissingSceneSwapchainWriteFrames > 0)
+            ImGui.TextColored(new Vector4(1.0f, 0.35f, 0.25f, 1.0f), $"  Missing scene swapchain writers: {stats.VulkanMissingSceneSwapchainWriteFrames:N0}");
+        if (!string.IsNullOrWhiteSpace(stats.VulkanDescriptorFallbackSummary) &&
+            ImGui.CollapsingHeader("Vulkan Descriptor Fallbacks"))
+        {
+            ImGui.TextWrapped(stats.VulkanDescriptorFallbackSummary);
+        }
+        if (!string.IsNullOrWhiteSpace(stats.VulkanDescriptorFailureSummary) &&
+            ImGui.CollapsingHeader("Vulkan Descriptor Failures"))
+        {
+            ImGui.TextWrapped(stats.VulkanDescriptorFailureSummary);
+        }
+        if (!string.IsNullOrWhiteSpace(stats.VulkanFirstFailedFrameOpType))
+        {
+            ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.2f, 1.0f),
+                $"  First Failure: {stats.VulkanFirstFailedFrameOpType} pass {stats.VulkanFirstFailedFrameOpPassIndex} pipe {stats.VulkanFirstFailedFrameOpPipelineIdentity} vp {stats.VulkanFirstFailedFrameOpViewportIdentity}");
+            if (!string.IsNullOrWhiteSpace(stats.VulkanFirstFailedFrameOpTargetName))
+                ImGui.Text($"    Target: {stats.VulkanFirstFailedFrameOpTargetName}");
+            if (!string.IsNullOrWhiteSpace(stats.VulkanFirstFailedFrameOpMaterialName) || !string.IsNullOrWhiteSpace(stats.VulkanFirstFailedFrameOpShaderName))
+                ImGui.Text($"    Material/Shader: {stats.VulkanFirstFailedFrameOpMaterialName} / {stats.VulkanFirstFailedFrameOpShaderName}");
+            if (!string.IsNullOrWhiteSpace(stats.VulkanFirstFailedFrameOpMessage))
+                ImGui.TextWrapped($"    {stats.VulkanFirstFailedFrameOpMessage}");
+        }
+        if (!string.IsNullOrWhiteSpace(stats.VulkanFrameDiagnosticSummary) &&
+            ImGui.CollapsingHeader("Vulkan Diagnostic Bundle"))
+        {
+            ImGui.TextWrapped(stats.VulkanFrameDiagnosticSummary);
         }
 
         ImGui.Separator();

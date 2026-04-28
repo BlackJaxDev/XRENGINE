@@ -26,6 +26,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string? DepthStencilTextureName { get; set; }
         public string? MotionTextureName { get; set; }
         public string? MotionFrameBufferName { get; set; }
+        public bool ForceFallbackBlit { get; set; }
         public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
 
         private static bool _reportedDlssFailure;
@@ -170,7 +171,7 @@ void main()
                 out string resolveFailure)
                 && resolvedColorTexture is not null;
 
-            if (viewport?.Window?.Renderer is VulkanRenderer)
+            if (!ForceFallbackBlit && viewport?.Window?.Renderer is VulkanRenderer)
             {
                 if (TryRunXess())
                     return;
@@ -180,7 +181,8 @@ void main()
 
                 ReportNativeFallback();
             }
-            else if (viewport?.Window?.Renderer is OpenGLRenderer openGlRenderer &&
+            else if (!ForceFallbackBlit &&
+                viewport?.Window?.Renderer is OpenGLRenderer openGlRenderer &&
                 IsBridgePathRequested() &&
                 hasColorTexture &&
                 resolvedColorTexture is not null)
@@ -190,7 +192,7 @@ void main()
 
                 ReportBridgeFallback(viewport, bridgeFailure);
             }
-            else if (viewport is not null && IsBridgePathRequested())
+            else if (!ForceFallbackBlit && viewport is not null && IsBridgePathRequested())
             {
                 ReportBridgeFallback(
                     viewport,

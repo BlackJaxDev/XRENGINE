@@ -9,6 +9,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 using Silk.NET.Vulkan;
 
@@ -228,6 +229,36 @@ public unsafe partial class VulkanRenderer
 			return poolSizes;
 		}
 
+		private static string GetDescriptorBindingClass(DescriptorType descriptorType)
+			=> descriptorType switch
+			{
+				DescriptorType.StorageImage => "storage-image",
+				DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic => "uniform-buffer",
+				DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic => "storage-buffer",
+				DescriptorType.UniformTexelBuffer or DescriptorType.StorageTexelBuffer => "texel-buffer",
+				_ => "sampled-image",
+			};
+
+		private void RecordDescriptorFailure(DescriptorBindingInfo binding, string reason, bool skippedDraw = true)
+			=> Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+				_program?.Data?.Name,
+				GetDescriptorBindingClass(binding.DescriptorType),
+				binding.Name,
+				binding.Set,
+				binding.Binding,
+				skippedDraw,
+				skippedDispatch: false,
+				reason);
+
+		private void RecordDescriptorFallback(DescriptorBindingInfo binding, int count = 1)
+			=> Engine.Rendering.Stats.RecordVulkanDescriptorFallback(
+				_program?.Data?.Name,
+				GetDescriptorBindingClass(binding.DescriptorType),
+				binding.Name,
+				binding.Set,
+				binding.Binding,
+				count);
+
 		/// <summary>
 		/// Writes all descriptor bindings for a single frame's descriptor sets.
 		/// Resolves buffers, images, and texel buffers, then issues a batched
@@ -260,6 +291,7 @@ public unsafe partial class VulkanRenderer
 						if (!TryResolveBuffers(binding, frameIndex, descriptorCount, bufferInfos, out int bufferStart))
 						{
 							WarnOnce($"[WriteDesc] FAILED to resolve buffer binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}' program '{_program?.Data?.Name ?? "?"}'");
+							RecordDescriptorFailure(binding, "buffer resolution failed");
 							return false;
 						}
 
@@ -282,6 +314,7 @@ public unsafe partial class VulkanRenderer
 						if (!TryResolveImages(binding, material, descriptorCount, imageInfos, out int imageStart))
 						{
 							WarnOnce($"[WriteDesc] FAILED to resolve image binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}' program '{_program?.Data?.Name ?? "?"}'");
+							RecordDescriptorFailure(binding, "image resolution failed");
 							return false;
 						}
 
@@ -299,7 +332,10 @@ public unsafe partial class VulkanRenderer
 					case DescriptorType.UniformTexelBuffer:
 					case DescriptorType.StorageTexelBuffer:
 						if (!TryResolveTexelBuffers(binding, material, descriptorCount, texelBufferViews, out int texelStart))
+						{
+							RecordDescriptorFailure(binding, "texel buffer resolution failed");
 							return false;
+						}
 
 						texelMap.Add((writes.Count, texelStart));
 						writes.Add(new WriteDescriptorSet
@@ -338,7 +374,45 @@ public unsafe partial class VulkanRenderer
 					writePtr[writeIndex].PTexelBufferView = texelPtr + texelIndex;
 
 				if (writeArray.Length > 0)
-					Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+				{
+					if (!TryUpdateDescriptorSetsWithTemplates(frameSets, writeArray))
+						Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+				}
+			}
+
+			return true;
+		}
+
+		private bool TryUpdateDescriptorSetsWithTemplates(DescriptorSet[] frameSets, WriteDescriptorSet[] writeArray)
+		{
+			if (Engine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
+				return false;
+
+			if (_program is null || _program.DescriptorSetLayouts.Count < frameSets.Length)
+				return false;
+
+			for (int setIndex = 0; setIndex < frameSets.Length; setIndex++)
+			{
+				List<WriteDescriptorSet> setWrites = [];
+				for (int i = 0; i < writeArray.Length; i++)
+				{
+					if (writeArray[i].DstSet.Handle == frameSets[setIndex].Handle)
+						setWrites.Add(writeArray[i]);
+				}
+
+				if (setWrites.Count == 0)
+					continue;
+
+				if (!Renderer.TryUpdateDescriptorSetWithTemplate(
+					frameSets[setIndex],
+					_program.DescriptorSetLayouts[setIndex],
+					PipelineBindPoint.Graphics,
+					_program.PipelineLayout,
+					(uint)setIndex,
+					CollectionsMarshal.AsSpan(setWrites)))
+				{
+					return false;
+				}
 			}
 
 			return true;
@@ -441,6 +515,7 @@ public unsafe partial class VulkanRenderer
 
 			if (!string.IsNullOrWhiteSpace(binding.Name))
 				WarnOnce($"Using fallback descriptor buffer for unresolved {binding.DescriptorType} binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
+			RecordDescriptorFallback(binding);
 			bufferInfo = new DescriptorBufferInfo
 			{
 				Buffer = target.Buffer,
@@ -474,15 +549,20 @@ public unsafe partial class VulkanRenderer
 				// instead of failing the entire descriptor set write.
 				imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType);
 				if (imageInfo.ImageView.Handle != 0)
+				{
+					RecordDescriptorFallback(binding);
 					return true;
+				}
 
 				WarnOnce($"No texture available for descriptor binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
+				RecordDescriptorFailure(binding, "missing texture and placeholder unavailable");
 				return false;
 			}
 
 			if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
 			{
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' is not a Vulkan texture.");
+				RecordDescriptorFailure(binding, "texture has no Vulkan descriptor source");
 				return false;
 			}
 
@@ -490,12 +570,14 @@ public unsafe partial class VulkanRenderer
 			if (requiresSampledUsage && (source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
 			{
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' is missing VK_IMAGE_USAGE_SAMPLED_BIT.");
+				RecordDescriptorFailure(binding, "texture missing VK_IMAGE_USAGE_SAMPLED_BIT");
 				return false;
 			}
 
 			if (descriptorType == DescriptorType.StorageImage && (source.DescriptorUsage & ImageUsageFlags.StorageBit) == 0)
 			{
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' is missing VK_IMAGE_USAGE_STORAGE_BIT.");
+				RecordDescriptorFailure(binding, "texture missing VK_IMAGE_USAGE_STORAGE_BIT");
 				return false;
 			}
 
@@ -516,6 +598,7 @@ public unsafe partial class VulkanRenderer
 				}
 
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' uses a combined depth-stencil format and no depth-only view is available.");
+				RecordDescriptorFailure(binding, "combined depth-stencil texture has no depth-only view");
 				return false;
 			}
 
@@ -553,12 +636,14 @@ public unsafe partial class VulkanRenderer
 			if (texture is null)
 			{
 				WarnOnce($"No texture available for texel descriptor binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
+				RecordDescriptorFailure(binding, "missing texel buffer texture");
 				return false;
 			}
 
 			if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkTexelBufferDescriptorSource source)
 			{
 				WarnOnce($"Texture for texel descriptor binding '{binding.Name}' is not a Vulkan texel-buffer texture.");
+				RecordDescriptorFailure(binding, "texture has no Vulkan texel-buffer source");
 				return false;
 			}
 
