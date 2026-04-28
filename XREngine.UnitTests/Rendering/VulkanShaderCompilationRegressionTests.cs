@@ -57,6 +57,12 @@ public sealed class VulkanShaderCompilationRegressionTests
         "Uber/outline.frag",
     ];
 
+    private static readonly string[] ComputeShaders =
+    [
+        "Compute/AO/SpatialHashAO.comp",
+        "Compute/AO/SpatialHashAOStereo.comp",
+    ];
+
     [TestCaseSource(nameof(VertexShaders))]
     public void VertexShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
     {
@@ -145,6 +151,29 @@ public sealed class VulkanShaderCompilationRegressionTests
         };
 
         XRShader shader = new(EShaderType.Fragment, shaderSource);
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out string entryPoint,
+            out _,
+            out _);
+
+        entryPoint.ShouldBe("main");
+        spirv.ShouldNotBeNull();
+        spirv.Length.ShouldBeGreaterThan(0);
+    }
+
+    [TestCaseSource(nameof(ComputeShaders))]
+    public void ComputeShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource(shaderRelativePath);
+        var shaderSource = new TextFile
+        {
+            FilePath = loadedShader.FullPath,
+            Text = loadedShader.Source
+        };
+
+        XRShader shader = new(EShaderType.Compute, shaderSource);
 
         byte[] spirv = VulkanShaderCompiler.Compile(
             shader,

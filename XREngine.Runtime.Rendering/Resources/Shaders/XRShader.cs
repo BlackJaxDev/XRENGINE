@@ -8,9 +8,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering
 {
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRShaderInspector")]
-    [XRAssetContextMenu("Optimize Shader...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderLockingTool")]
-    [XRAssetContextMenu("Analyze Shader...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderAnalyzer")]
-    [XRAssetContextMenu("Cross-Compile Shader...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderCrossCompiler")]
+    [XRAssetContextMenu("Open Shader Editor...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderEditor")]
     [XR3rdPartyExtensions(typeof(XREngine.Data.XRShaderImportOptions),
         "glsl", "shader",
         "frag", "vert", "geom", "tesc", "tese", "comp", "task", "mesh",

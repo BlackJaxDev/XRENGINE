@@ -269,24 +269,31 @@ namespace XREngine.Animation
 
         public void CollectAnimations(string? path, Dictionary<string, BasePropAnim> animations)
         {
-            if (!string.IsNullOrEmpty(path))
-                path += $".{_memberName}";
-            else
-                path = _memberName ?? string.Empty;
-
-            if (MemberType == EAnimationMemberType.Method)
+            if (MemberType != EAnimationMemberType.Group)
             {
-                for (int i = 0; i < _methodArguments.Length; i++)
+                if (!string.IsNullOrEmpty(path))
+                    path += $".{_memberName}";
+                else
+                    path = _memberName ?? string.Empty;
+
+                if (MemberType == EAnimationMemberType.Method)
                 {
-                    path += ":";
-                    object? arg = _methodArguments[i];
-                    if (AnimatedMethodArgumentIndex == i)
-                        path += "<AnimatedValue>";
-                    else if (arg is null)
-                        path += "<null>";
-                    else
-                        path += $"{arg}";
+                    for (int i = 0; i < _methodArguments.Length; i++)
+                    {
+                        path += ":";
+                        object? arg = _methodArguments[i];
+                        if (AnimatedMethodArgumentIndex == i)
+                            path += "<AnimatedValue>";
+                        else if (arg is null)
+                            path += "<null>";
+                        else
+                            path += $"{arg}";
+                    }
                 }
+            }
+            else
+            {
+                path ??= string.Empty;
             }
 
             if (Animation != null)

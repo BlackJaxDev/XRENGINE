@@ -8,6 +8,7 @@ using System.Linq;
 using ImGuiNET;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Editor.IMGUI;
 
 namespace XREngine.Editor.AssetEditors;
 
@@ -130,6 +131,7 @@ public sealed class TextFileInspector : IXRAssetInspector
                 string presetLabel = $"{preset.Label} ({preset.Encoding.CodePage})";
                 if (ImGui.Selectable(presetLabel, selected) && !selected)
                 {
+                    using var _ = Undo.TrackChange("Set Text Encoding", textFile);
                     textFile.Encoding = preset.Encoding;
                     SetStatus(state, $"Encoding set to {preset.Label}.", StatusKind.Info);
                 }
@@ -142,6 +144,7 @@ public sealed class TextFileInspector : IXRAssetInspector
         ImGui.SetNextItemWidth(110f);
         if (ImGui.InputInt("Code Page", ref codePage))
             TryApplyCodePage(textFile, state, codePage);
+        ImGuiUndoHelper.TrackDragUndo("Set Text Encoding Code Page", textFile);
 
         if (!string.IsNullOrEmpty(state.EncodingError))
         {
@@ -158,6 +161,7 @@ public sealed class TextFileInspector : IXRAssetInspector
         {
             ApplyBuffer(textFile, state);
         }
+        ImGuiUndoHelper.TrackDragUndo("Edit Text File", textFile);
 
         var metrics = GetMetrics(state.Buffer);
         int byteCount = textFile.Encoding.GetByteCount(state.Buffer);
@@ -198,6 +202,7 @@ public sealed class TextFileInspector : IXRAssetInspector
             if (textFile.FilePath is null)
                 return;
 
+            using var _ = Undo.TrackChange("Reload Text File", textFile);
             textFile.Reload();
             SyncState(textFile, state, force: true);
             SetStatus(state, "Reloaded from disk.", StatusKind.Info);
@@ -231,6 +236,7 @@ public sealed class TextFileInspector : IXRAssetInspector
     {
         try
         {
+            using var _ = Undo.TrackChange("Set Text Encoding Code Page", textFile);
             textFile.Encoding = Encoding.GetEncoding(codePage);
             state.EncodingError = null;
             SetStatus(state, $"Encoding changed to {textFile.Encoding.EncodingName}.", StatusKind.Info);

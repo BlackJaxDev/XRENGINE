@@ -324,6 +324,7 @@ namespace XREngine.Scene
             // Diagnostic: log every transition of shadowEnabled / primary-dir-light state so we can
             // diff "CastsShadows=true" vs "CastsShadows=false" uniforms upstream of the uber shader.
             // Covers the reported bump-mapped-goes-fully-bright symptom when shadows are toggled off.
+            /*
             if (DynamicDirectionalLights.Count > 0)
             {
                 var diagLight = DynamicDirectionalLights[0];
@@ -348,6 +349,7 @@ namespace XREngine.Scene
                         $"shadowMap={(diagLight.ShadowMap?.Material?.Textures.Count ?? -1)} textures");
                 }
             }
+            */
 
             // ALWAYS set the ShadowMap sampler to point to unit 15, even when shadows are disabled.
             // This prevents stale state from deferred passes (which use unit 4) from leaking through.

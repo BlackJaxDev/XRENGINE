@@ -40,9 +40,6 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [GPU Physics Chain Zero-Readback Skinned Mesh Plan](work/design/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
 - [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md)
 
-## Diagnostics
-- [Humanoid Pose Audit](features/humanoid-pose-audit.md)
-
 ## Features
 - [Audio2Face-3D Component](features/audio2face-3d.md)
 - [Audio2Face-3D Engine Setup](features/audio2face-3d-engine-setup.md)
@@ -51,7 +48,9 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Model Import](features/model-import.md)
 - [Native Dependencies](features/native-dependencies.md)
 - [Networking](features/networking.md)
+- [ImGui Shader Editor](features/shader-editor.md)
 - [Steam Audio Integration](features/steam-audio.md)
+- [Unity Conversion Integrations](features/unity-conversion-integrations.md)
 - [Tick-Based Animation Timing](features/tick-based-animation-timing.md)
 - [Unit Testing World](features/unit-testing-world.md)
 

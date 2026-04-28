@@ -66,7 +66,7 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
         if (envelope?.Payload is not null && envelope.Payload.Length > 0)
         {
             byte[] payload = envelope.Payload.GetBytes();
-            AnimationClip? cookedClip = RuntimeCookedBinarySerializer.Deserialize(typeof(AnimationClip), payload) as AnimationClip;
+            AnimationClip? cookedClip = CookedBinarySerializer.Deserialize(typeof(AnimationClip), payload) as AnimationClip;
             return cookedClip ?? new AnimationClip();
         }
 
@@ -89,7 +89,7 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
         if (TryWriteAsReference.TryEmitReference(emitter, clip))
             return;
 
-        byte[] payloadBytes = RuntimeCookedBinarySerializer.Serialize(clip);
+        byte[] payloadBytes = CookedBinarySerializer.Serialize(clip);
         AnimationClipYamlEnvelope envelope = new()
         {
             ID = clip.ID,

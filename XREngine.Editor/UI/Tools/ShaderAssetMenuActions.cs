@@ -11,26 +11,12 @@ namespace XREngine.Editor.UI.Tools;
 /// </summary>
 public static class ShaderAssetMenuActions
 {
-    public static void OpenInShaderLockingTool(XRAssetContextMenuContext context)
+    public static void OpenInShaderEditor(XRAssetContextMenuContext context)
         => WithShaderPath(context, path =>
         {
-            ShaderLockingWindow.Instance.Open();
-            ShaderLockingWindow.Instance.LoadShaderFromPath(path);
-        }, "Shader Locking Tool");
-
-    public static void OpenInShaderAnalyzer(XRAssetContextMenuContext context)
-        => WithShaderPath(context, path =>
-        {
-            ShaderAnalyzerWindow.Instance.Open();
-            ShaderAnalyzerWindow.Instance.LoadShaderFromPath(path);
-        }, "Shader Analyzer");
-
-    public static void OpenInShaderCrossCompiler(XRAssetContextMenuContext context)
-        => WithShaderPath(context, path =>
-        {
-            ShaderCrossCompilerWindow.Instance.Open();
-            ShaderCrossCompilerWindow.Instance.LoadShaderFromPath(path);
-        }, "Shader Cross-Compiler");
+            ShaderEditorWindow.Instance.Open();
+            ShaderEditorWindow.Instance.LoadShaderFromPath(path);
+        }, "Shader Editor");
 
     private static void WithShaderPath(XRAssetContextMenuContext context, Action<string> action, string actionName)
     {
