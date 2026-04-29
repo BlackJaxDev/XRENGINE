@@ -202,7 +202,7 @@ echo.
 set "BOOT_FAIL=0"
 
 REM Step 1: Initialize submodules
-echo  [1/6] Initializing git submodules...
+echo  [1/7] Initializing git submodules...
 echo  ------------------------------------------------------------
 call "Tools\Initialize-Submodules.bat"
 if !ERRORLEVEL! NEQ 0 (
@@ -212,7 +212,7 @@ if !ERRORLEVEL! NEQ 0 (
 echo.
 
 REM Step 2: Download all dependencies
-echo  [2/6] Downloading all dependencies...
+echo  [2/7] Downloading all dependencies...
 echo  ------------------------------------------------------------
 for /L %%i in (1,1,%TOOL_COUNT%) do (
     if "!TOOL_%%i_CAT!"=="Deps" if not "!TOOL_%%i_CMD!"=="" if not "!TOOL_%%i_CMD!"=="__RUNALL__" (
@@ -232,7 +232,7 @@ for /L %%i in (1,1,%TOOL_COUNT%) do (
 echo.
 
 REM Step 3: Build submodules
-echo  [3/6] Building submodules...
+echo  [3/7] Building submodules...
 echo  ------------------------------------------------------------
 call "Tools\Build-Submodules.bat"
 if !ERRORLEVEL! NEQ 0 (
@@ -241,8 +241,18 @@ if !ERRORLEVEL! NEQ 0 (
 )
 echo.
 
-REM Step 4: Build DocFX site
-echo  [4/6] Building DocFX documentation site...
+REM Step 4: Generate local unit-testing world settings
+echo  [4/7] Generating UnitTestingWorldSettings files...
+echo  ------------------------------------------------------------
+powershell -NoProfile -ExecutionPolicy Bypass -File "Tools\Generate-UnitTestingWorldSettings.ps1"
+if !ERRORLEVEL! NEQ 0 (
+    echo  WARNING: UnitTestingWorldSettings generation reported errors.
+    set "BOOT_FAIL=1"
+)
+echo.
+
+REM Step 5: Build DocFX site
+echo  [5/7] Building DocFX documentation site...
 echo  ------------------------------------------------------------
 call "Tools\Build-DocFx.bat"
 if !ERRORLEVEL! NEQ 0 (
@@ -254,8 +264,8 @@ if !ERRORLEVEL! NEQ 0 (
 )
 echo.
 
-REM Step 5: Launch DocFX server in a new window and open browser
-echo  [5/6] Launching DocFX server (new window) and opening docs...
+REM Step 6: Launch DocFX server in a new window and open browser
+echo  [6/7] Launching DocFX server (new window) and opening docs...
 echo  ------------------------------------------------------------
 if "!DOCFX_OK!"=="1" (
     start "XRENGINE DocFX Server" cmd /c "cd /d "%~dp0" ^& Tools\Start-DocFxServer.bat"
@@ -267,8 +277,8 @@ if "!DOCFX_OK!"=="1" (
 )
 echo.
 
-REM Step 6: Launch the Editor in a new window
-echo  [6/6] Launching XREngine Editor (new window)...
+REM Step 7: Launch the Editor in a new window
+echo  [7/7] Launching XREngine Editor (new window)...
 echo  ------------------------------------------------------------
 start "XRENGINE Editor" cmd /c "cd /d "%~dp0" ^& Tools\Start-Editor.bat"
 echo  Editor launched.
@@ -300,7 +310,7 @@ echo.
 echo  Usage:
 echo    ExecTool              Launch interactive menu
 echo    ExecTool ^<number^>     Run a specific tool by its menu number
-echo    ExecTool --bootstrap  Full project setup (submodules, deps, build, launch)
+echo    ExecTool --bootstrap  Full project setup (submodules, deps, settings, build, launch)
 echo    ExecTool --list       Print the tool list and exit
 echo    ExecTool --help       Show this help
 echo.
@@ -364,7 +374,7 @@ exit /b
 set /a "TOOL_COUNT+=1"
 set "TOOL_%TOOL_COUNT%_CAT=Setup"
 set "TOOL_%TOOL_COUNT%_CMD=__BOOTSTRAP__"
-set "TOOL_%TOOL_COUNT%_DESC=*** Full Bootstrap (submodules + deps + build + launch) ***"
+set "TOOL_%TOOL_COUNT%_DESC=*** Full Bootstrap (submodules + deps + settings + build + launch) ***"
 exit /b
 
 :End

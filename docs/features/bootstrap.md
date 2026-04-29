@@ -17,9 +17,10 @@ The bootstrap flow in `ExecTool.bat` currently does these steps:
 1. initializes all git submodules
 2. runs every dependency installer in the `Deps` group
 3. builds submodules
-4. builds the DocFX site
-5. launches the DocFX server
-6. launches the editor
+4. generates the local Unit Testing World JSONC settings files and schema
+5. builds the DocFX site
+6. launches the DocFX server
+7. launches the editor
 
 If all you want is the standard working repo setup, this is the right place to start.
 
@@ -62,6 +63,12 @@ Tools\Initialize-Submodules.bat
 
 Then install the dependency set you need, for example through `ExecTool` or the individual scripts under `Tools/Dependencies/`.
 
+Generate the local Unit Testing World settings before launching editor test-world flows:
+
+```powershell
+pwsh Tools/Generate-UnitTestingWorldSettings.ps1
+```
+
 Then build the solution:
 
 ```powershell
@@ -73,10 +80,11 @@ dotnet build XRENGINE.slnx
 
 After bootstrap, you should be able to do the following:
 
-1. build the editor
-2. launch the editor
-3. launch the Unit Testing World
-4. open local docs if DocFX built successfully
+1. find a generated `Assets/UnitTestingWorldSettings.jsonc`
+2. build the editor
+3. launch the editor
+4. launch the Unit Testing World
+5. open local docs if DocFX built successfully
 
 Useful checks:
 

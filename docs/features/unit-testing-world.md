@@ -8,6 +8,8 @@ The Unit Testing World is the main sandbox for validating engine changes inside 
 - Server mirror: `XREngine.Server/Assets/UnitTestingWorldSettings.jsonc`
 - VS Code schema: `.vscode/schemas/unit-testing-world-settings.schema.json`
 
+The main file is generated locally and ignored by Git so each workstation can keep its own test-world tuning. On a fresh checkout, `ExecTool --bootstrap` creates it before launching the editor; you can also create or refresh it with `pwsh Tools/Generate-UnitTestingWorldSettings.ps1`.
+
 For day-to-day work, edit `Assets/UnitTestingWorldSettings.jsonc` directly. The JSONC comments are part of the intended workflow, and the schema gives you hover docs and enum completion in VS Code.
 
 ## How to launch it
@@ -160,7 +162,7 @@ Or run the VS Code task:
 Generate-UnitTestingWorldSettings
 ```
 
-This refreshes the schema and keeps the generated JSONC files aligned with the current settings type.
+This refreshes the schema and keeps the generated JSONC files aligned with the current settings type. The root `Assets/UnitTestingWorldSettings.jsonc` file remains local-only.
 
 ## Troubleshooting
 

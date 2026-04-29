@@ -373,6 +373,9 @@ Build/Dependencies/FFmpeg/**
 Build/Dependencies/YoutubeDL/
 Build/RestirGI/
 
+# Generated local workflow settings
+/Assets/UnitTestingWorldSettings.jsonc
+
 # Submodules
 !Build/Submodules/
 !Build/Submodules/**
