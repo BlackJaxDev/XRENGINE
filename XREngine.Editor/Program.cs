@@ -18,6 +18,7 @@ using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Core.Files;
 using XREngine.Editor;
 using XREngine.Editor.Mcp;
@@ -560,10 +561,15 @@ internal class Program
             return;
         }
 
+        // The OpenGL front-buffer luminance probe can force a large first-frame sync.
+        // The second-frame fallback gives a stable startup marker without blocking presentation.
+        if (renderer is OpenGLRenderer)
+            return;
+
         if (Interlocked.CompareExchange(ref s_captureInFlight, 1, 0) != 0)
             return;
 
-        renderer.CalcDotLuminanceFrontAsync(viewport.Region, false, (success, luminance) =>
+        renderer.CalcDotLuminanceFrontAsync(GetStartupLuminanceRegion(viewport.Region), false, (success, luminance) =>
         {
             try
             {
@@ -578,6 +584,16 @@ internal class Program
                 Interlocked.Exchange(ref s_captureInFlight, 0);
             }
         });
+    }
+
+    private static BoundingRectangle GetStartupLuminanceRegion(BoundingRectangle viewportRegion)
+    {
+        const int maxSampleEdge = 96;
+        int width = Math.Min(Math.Max(1, viewportRegion.Width), maxSampleEdge);
+        int height = Math.Min(Math.Max(1, viewportRegion.Height), maxSampleEdge);
+        int x = viewportRegion.X + Math.Max(0, (viewportRegion.Width - width) / 2);
+        int y = viewportRegion.Y + Math.Max(0, (viewportRegion.Height - height) / 2);
+        return new BoundingRectangle(x, y, width, height);
     }
 
     private static void StopStartupTimer(XRWindow window, string messagePrefix)

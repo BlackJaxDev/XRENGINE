@@ -60,6 +60,7 @@ uniform float ShadowFilterRadius;
 //        Helps verify cascade selection and texture binding.
 //   11 = shadow coord UV at surface pos (R=u, G=v, B=z). Should look like the shadow map's UVs swept
 //        across visible geometry. If it's garbage or flat, the cascade matrix is wrong.
+//   16 = marched fog distance normalized by VolumetricFog.MaxDistance (red).
 // All debug modes write alpha = 0 so the composite `hdrScene * a + rgb` replaces the scene with the debug color.
 uniform int VolumetricFogDebugMode;
 
@@ -109,6 +110,8 @@ uniform vec4 VolumetricFogNoiseScaleThreshold[MaxVolumetricFogVolumes];
 uniform vec4 VolumetricFogNoiseOffsetAmount[MaxVolumetricFogVolumes];
 uniform vec4 VolumetricFogNoiseVelocity[MaxVolumetricFogVolumes];
 uniform vec4 VolumetricFogLightParams[MaxVolumetricFogVolumes];
+
+const vec3 VolumetricFogNoiseDomainOffset = vec3(17.37f, 41.13f, 29.91f);
 
 float saturate(float value)
 {
@@ -198,7 +201,7 @@ float ComputeNoisyEdgeFade(float distanceToBounds, float edgeFade, float noiseVa
   float noisyDistance = max(distanceToBounds - edgeErosion, 0.0f);
   return smoothstep(0.0f, fadeDistance, noisyDistance);
 }
-float ComputeRayIntervalFade(int index, vec3 rayDirWS, float sampleT, float tNear, float tFar, float noiseValue, float noiseAmount)
+float ComputeRayIntervalFade(int index, vec3 rayDirWS, float sampleT, float tNear, float tFar, bool fadeRayEntry, bool fadeRayExit, float noiseValue, float noiseAmount)
 {
   if (tFar <= tNear)
     return 0.0f;
@@ -209,7 +212,9 @@ float ComputeRayIntervalFade(int index, vec3 rayDirWS, float sampleT, float tNea
 
   vec3 localRayDir = (VolumetricFogWorldToLocal[index] * vec4(rayDirWS, 0.0f)).xyz;
   float edgeFadeOnRay = edgeFade / max(length(localRayDir), 1e-5f);
-  float distanceToRayBounds = max(min(sampleT - tNear, tFar - sampleT), 0.0f);
+  float distanceToEntry = fadeRayEntry ? sampleT - tNear : edgeFadeOnRay;
+  float distanceToExit = fadeRayExit ? tFar - sampleT : edgeFadeOnRay;
+  float distanceToRayBounds = max(min(distanceToEntry, distanceToExit), 0.0f);
   float edgeErosion = edgeFadeOnRay * 0.85f * saturate(noiseAmount) * (1.0f - clamp(noiseValue, 0.0f, 1.0f));
   float noisyDistance = max(distanceToRayBounds - edgeErosion, 0.0f);
   return smoothstep(0.0f, edgeFadeOnRay, noisyDistance);
@@ -333,7 +338,8 @@ float EvaluateVolumeDensityTerms(int index, vec3 samplePosWS, out float edgeMask
   {
     vec3 noiseSamplePos = localPos * noiseParams.x
       + VolumetricFogNoiseOffsetAmount[index].xyz
-      + VolumetricFogNoiseVelocity[index].xyz * RenderTime;
+      + VolumetricFogNoiseVelocity[index].xyz * RenderTime
+      + VolumetricFogNoiseDomainOffset;
     noiseValue = clamp(fbm3(noiseSamplePos), 0.0f, 1.0f);
     float thresholdMask = smoothstep(noiseParams.y - 0.15f, noiseParams.y + 0.15f, noiseValue);
     noiseMask = mix(1.0f, thresholdMask, noiseAmount);
@@ -541,10 +547,14 @@ vec4 ComputeVolumetricFog(vec2 uv)
   float unionTFar = 0.0f;
   float volumeTNear[MaxVolumetricFogVolumes];
   float volumeTFar[MaxVolumetricFogVolumes];
+  bool volumeFadeEntry[MaxVolumetricFogVolumes];
+  bool volumeFadeExit[MaxVolumetricFogVolumes];
   for (int volumeIndex = 0; volumeIndex < MaxVolumetricFogVolumes; ++volumeIndex)
   {
     volumeTNear[volumeIndex] = 0.0f;
     volumeTFar[volumeIndex] = -1.0f;
+    volumeFadeEntry[volumeIndex] = false;
+    volumeFadeExit[volumeIndex] = false;
   }
 
   bool anyHit = false;
@@ -553,12 +563,16 @@ vec4 ComputeVolumetricFog(vec2 uv)
     float tNear, tFar;
     if (!IntersectVolumeOBB(volumeIndex, CameraPosition, rayDir, tNear, tFar))
       continue;
+    bool fadeRayEntry = tNear > 0.0f;
+    bool fadeRayExit = tFar <= rayLength + 1e-4f;
     tNear = max(tNear, 0.0f);
     tFar  = min(tFar, rayLength);
     if (tFar <= tNear)
       continue;
     volumeTNear[volumeIndex] = tNear;
     volumeTFar[volumeIndex] = tFar;
+    volumeFadeEntry[volumeIndex] = fadeRayEntry;
+    volumeFadeExit[volumeIndex] = fadeRayExit;
     unionTNear = min(unionTNear, tNear);
     unionTFar  = max(unionTFar, tFar);
     anyHit = true;
@@ -577,6 +591,14 @@ vec4 ComputeVolumetricFog(vec2 uv)
   float stepSize = max(VolumetricFog.StepSize, 0.25f);
   float marchLength = unionTFar - unionTNear;
   int stepCount = max(1, int(ceil(marchLength / stepSize)));
+
+  if (VolumetricFogDebugMode == 16)
+  {
+    float normalizedMarchLength = VolumetricFog.MaxDistance > 0.0f
+      ? marchLength / VolumetricFog.MaxDistance
+      : 0.0f;
+    return vec4(saturate(normalizedMarchLength), 0.0f, 0.0f, 0.0f);
+  }
 
   // Per-pixel blue-noise offset on the march start position. ALWAYS apply this
   // spatial dither regardless of JitterStrength: if every pixel started at the
@@ -629,7 +651,7 @@ vec4 ComputeVolumetricFog(vec2 uv)
       float noiseValue;
       float noiseAmount;
       float densityTerms = EvaluateVolumeDensityTerms(volumeIndex, samplePosWS, edgeMask, noiseMask, noiseValue, noiseAmount);
-      float rayEdgeMask = ComputeRayIntervalFade(volumeIndex, rayDir, sampleT, volumeTNear[volumeIndex], volumeTFar[volumeIndex], noiseValue, noiseAmount);
+      float rayEdgeMask = ComputeRayIntervalFade(volumeIndex, rayDir, sampleT, volumeTNear[volumeIndex], volumeTFar[volumeIndex], volumeFadeEntry[volumeIndex], volumeFadeExit[volumeIndex], noiseValue, noiseAmount);
       float density = densityTerms * rayEdgeMask * VolumetricFog.Intensity;
       debugDensitySum += density;
       debugNoiseMaskSum += noiseMask;

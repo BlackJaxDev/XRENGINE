@@ -16,6 +16,7 @@ public static class ShaderHelper
 {
     private const string DepthNormalPrePassDefine = "XRENGINE_DEPTH_NORMAL_PREPASS";
     private const string ShadowCasterPassDefine = "XRENGINE_SHADOW_CASTER_PASS";
+    private const string PointShadowCasterPassDefine = "XRENGINE_POINT_SHADOW_CASTER_PASS";
     private const string WeightedBlendedOitDefine = "XRENGINE_FORWARD_WEIGHTED_OIT";
     private const string PerPixelLinkedListDefine = "XRENGINE_FORWARD_PPLL";
     private const string DepthPeelingDefine = "XRENGINE_FORWARD_DEPTH_PEEL";
@@ -764,6 +765,27 @@ public static class ShaderHelper
             "LitTexturedNormalSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
             "UnlitAlphaTexturedForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
             "UberShader.frag" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
+            _ => null,
+        };
+    }
+
+    public static XRShader? GetPointShadowCasterForwardVariant(XRShader? shader)
+    {
+        XRShader? sourceShader = GetStandardForwardVariant(shader) ?? shader;
+
+        string? path = sourceShader?.Source?.FilePath ?? sourceShader?.FilePath;
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        string fileName = Path.GetFileName(path);
+        return fileName switch
+        {
+            "LitTexturedAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
+            "LitTexturedSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
+            "LitTexturedNormalAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
+            "LitTexturedNormalSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
+            "UnlitAlphaTexturedForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
+            "UberShader.frag" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
             _ => null,
         };
     }

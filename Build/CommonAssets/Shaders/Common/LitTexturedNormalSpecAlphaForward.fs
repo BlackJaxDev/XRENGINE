@@ -2,7 +2,7 @@
 
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
 layout (location = 0) out vec2 Normal;
-#elif defined(XRENGINE_SHADOW_CASTER_PASS)
+#elif defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
 layout (location = 0) out float Depth;
 #elif defined(XRENGINE_FORWARD_WEIGHTED_OIT)
 layout (location = 0) out vec4 OutAccum;
@@ -51,7 +51,7 @@ void XRENGINE_WriteForwardFragment(vec4 shadedColor)
     XRE_WriteWeightedBlendedOit(shadedColor);
 #elif defined(XRENGINE_FORWARD_PPLL)
     XRE_StorePerPixelLinkedListFragment(shadedColor);
-#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS) || defined(XRENGINE_SHADOW_CASTER_PASS)
+#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS) || defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     return;
 #else
     OutColor = shadedColor;
@@ -63,6 +63,10 @@ uniform float MatShininess;
 uniform float AlphaCutoff;
 
 uniform vec3 CameraPosition;
+#if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+uniform vec3 LightPos;
+uniform float FarPlaneDist;
+#endif
 
 uniform sampler2D Texture0; // Albedo (diffuse)
 uniform sampler2D Texture1; // Normal map (tangent space)
@@ -87,7 +91,7 @@ vec3 getNormalFromMap()
 
 void main()
 {
-#if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS)
+#if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     XRENGINE_BeginForwardFragmentOutput();
 #endif
     // Sample alpha mask first for early discard
@@ -95,7 +99,9 @@ void main()
     if (alphaMask < AlphaCutoff)
         discard;
 
-#if defined(XRENGINE_SHADOW_CASTER_PASS)
+#if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+    Depth = length(FragPos - LightPos) / FarPlaneDist;
+#elif defined(XRENGINE_SHADOW_CASTER_PASS)
     Depth = gl_FragCoord.z;
 #else
     vec3 normal = getNormalFromMap();

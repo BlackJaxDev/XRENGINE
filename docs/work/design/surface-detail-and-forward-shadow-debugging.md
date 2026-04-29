@@ -219,3 +219,16 @@ The directional light inspector now exposes:
 - per-cascade split near/far distances in the debug table.
 
 This is primarily intended to make the "everything stays in cascade 0" failure mode obvious when debugging scenes such as Sponza.
+
+## Follow-up: Per-Cascade Bias Resolution
+
+Directional cascades now publish effective per-cascade bias values instead of reusing the same global receiver offset and compare range for every split.
+
+Automatic cascade bias starts from the light's base `ShadowBiasMin` / `ShadowBiasMax` settings, then adjusts for:
+
+- the cascade's world-space texel size,
+- the cascade split distance,
+- the depth span of that cascade's light-space bounds,
+- and the shadow-map resolution.
+
+Each cascade also has an optional manual override in the directional light inspector. Enabling an override replaces the automatic `BiasMin`, `BiasMax`, and receiver normal offset for that cascade while leaving the other cascades automatic.

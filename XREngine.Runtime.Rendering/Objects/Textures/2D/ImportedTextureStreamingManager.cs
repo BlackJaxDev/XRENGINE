@@ -219,6 +219,7 @@ internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITex
 internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
 {
     private const int MaxConcurrentStreamingDecodes = 2;
+    private const int MaxRenderThreadApplyResidentDataPerFrame = 1;
 
     private static readonly uint[] ResidentCandidates =
     [
@@ -238,6 +239,8 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
     private static int s_queuedDecodeCount;
     private static long s_uploadBytesFrameTicks = -1;
     private static long s_uploadBytesScheduledThisFrame;
+    private static long s_applyResidentDataFrameTicks = -1;
+    private static int s_applyResidentDataCountThisFrame;
 
     public string Name => nameof(GLTieredTextureResidencyBackend);
     public uint PreviewMaxDimension => XRTexture2D.ImportedPreviewMaxDimensionInternal;
@@ -375,7 +378,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     }
                 }
 
-                void ApplyResidentDataOnRenderThread()
+                void ApplyResidentDataOnRenderThreadCore()
                 {
                     if (cancellationToken.IsCancellationRequested
                         || (shouldAcceptResult is not null && !shouldAcceptResult()))
@@ -418,11 +421,20 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     });
                 }
 
-                if (RuntimeRenderingHostServices.Current.IsRenderThread)
-                    ApplyResidentDataOnRenderThread();
+                bool ApplyResidentDataOnRenderThreadBudgeted()
+                {
+                    if (!TryEnterRenderThreadApplyBudget())
+                        return false;
+
+                    ApplyResidentDataOnRenderThreadCore();
+                    return true;
+                }
+
+                if (RuntimeRenderingHostServices.Current.IsRenderThread && TryEnterRenderThreadApplyBudget())
+                    ApplyResidentDataOnRenderThreadCore();
                 else
-                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
-                        ApplyResidentDataOnRenderThread,
+                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+                        ApplyResidentDataOnRenderThreadBudgeted,
                         $"TextureStreaming.ApplyResidentData[{target.Name}]");
             }
             catch (OperationCanceledException)
@@ -455,6 +467,24 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
             cancellationToken: CancellationToken.None);
     }
 
+    private static bool TryEnterRenderThreadApplyBudget()
+    {
+        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long previousFrame = Interlocked.Exchange(ref s_applyResidentDataFrameTicks, currentFrame);
+        if (previousFrame != currentFrame)
+            Interlocked.Exchange(ref s_applyResidentDataCountThisFrame, 0);
+
+        while (true)
+        {
+            int currentCount = Volatile.Read(ref s_applyResidentDataCountThisFrame);
+            if (currentCount >= MaxRenderThreadApplyResidentDataPerFrame)
+                return false;
+
+            if (Interlocked.CompareExchange(ref s_applyResidentDataCountThisFrame, currentCount + 1, currentCount) == currentCount)
+                return true;
+        }
+    }
+
     private static void RecordUploadBytes(long bytes)
     {
         if (bytes <= 0)
@@ -483,7 +513,8 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
 {
     private const int MaxConcurrentStreamingDecodes = 2;
     private const int MaxQueuedDecodeBacklog = 8;
-    private const int MaxSharedUploadsInFlight = 4;
+    private const int MaxSharedUploadsInFlight = 2;
+    private const int MaxSparseTransitionSchedulesPerFrame = 1;
     private static readonly uint[] ResidentCandidates =
     [
         64u,
@@ -503,6 +534,8 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
     private static int s_inFlightUploadCount;
     private static long s_uploadBytesFrameTicks = -1;
     private static long s_uploadBytesScheduledThisFrame;
+    private static long s_sparseTransitionScheduleFrameTicks = -1;
+    private static int s_sparseTransitionScheduleCountThisFrame;
 
     public string Name => nameof(GLSparseTextureResidencyBackend);
     public uint PreviewMaxDimension => XRTexture2D.ImportedPreviewMaxDimensionInternal;
@@ -665,7 +698,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     }
                 }
 
-                void ContinueOnRenderThread()
+                void ContinueOnRenderThreadCore()
                 {
                     if (cancellationToken.IsCancellationRequested
                         || (shouldAcceptResult is not null && !shouldAcceptResult()))
@@ -775,11 +808,20 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     }
                 }
 
-                if (RuntimeRenderingHostServices.Current.IsRenderThread)
-                    ContinueOnRenderThread();
+                bool ContinueOnRenderThreadBudgeted()
+                {
+                    if (!TryEnterSparseTransitionScheduleBudget())
+                        return false;
+
+                    ContinueOnRenderThreadCore();
+                    return true;
+                }
+
+                if (RuntimeRenderingHostServices.Current.IsRenderThread && TryEnterSparseTransitionScheduleBudget())
+                    ContinueOnRenderThreadCore();
                 else
-                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
-                        ContinueOnRenderThread,
+                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+                        ContinueOnRenderThreadBudgeted,
                         $"TextureStreaming.ScheduleSparseTransition[{target.Name}]");
             }
             catch (OperationCanceledException)
@@ -843,6 +885,24 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         }
     }
 
+    private static bool TryEnterSparseTransitionScheduleBudget()
+    {
+        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long previousFrame = Interlocked.Exchange(ref s_sparseTransitionScheduleFrameTicks, currentFrame);
+        if (previousFrame != currentFrame)
+            Interlocked.Exchange(ref s_sparseTransitionScheduleCountThisFrame, 0);
+
+        while (true)
+        {
+            int currentCount = Volatile.Read(ref s_sparseTransitionScheduleCountThisFrame);
+            if (currentCount >= MaxSparseTransitionSchedulesPerFrame)
+                return false;
+
+            if (Interlocked.CompareExchange(ref s_sparseTransitionScheduleCountThisFrame, currentCount + 1, currentCount) == currentCount)
+                return true;
+        }
+    }
+
     private static void ExitSharedUpload()
     {
         int remaining = Interlocked.Decrement(ref s_inFlightUploadCount);
@@ -876,11 +936,12 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
 
 internal sealed class ImportedTextureStreamingManager
 {
-    private const int MaxResidentTransitionsPerFrame = 4;
-    private const int MaxPromotionTransitionsPerFrame = 2;
+    private const int MaxResidentTransitionsPerFrame = 2;
+    private const int MaxPromotionTransitionsPerFrame = 1;
+    private const int MaxSparseFinalizationsPerFrame = 2;
     private const int MinTransitionCooldownFrames = 2;
     private const int PromotionFadeFrames = 90;
-    private const long MaxPromotionBytesPerFrame = 24L * 1024L * 1024L;
+    private const long MaxPromotionBytesPerFrame = 12L * 1024L * 1024L;
     private const int RecordRefCompactionIntervalFrames = 600;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
     private static readonly bool EnablePartialSparsePageResidency = false;
@@ -1500,9 +1561,13 @@ internal sealed class ImportedTextureStreamingManager
             return;
         }
 
+        int completedFinalizations = 0;
         WeakReference<ImportedTextureStreamingRecord>[] refs = s_recordRefs.ToArray();
         for (int i = 0; i < refs.Length; i++)
         {
+            if (completedFinalizations >= MaxSparseFinalizationsPerFrame)
+                break;
+
             if (!refs[i].TryGetTarget(out ImportedTextureStreamingRecord? record)
                 || !record.Texture.TryGetTarget(out XRTexture2D? texture))
             {
@@ -1540,11 +1605,12 @@ internal sealed class ImportedTextureStreamingManager
             if (!hasDeferredTransition || cts is null)
                 continue;
 
-            FinalizePendingSparseTransitionOnRenderThread(record, texture, cts, request, transitionResult, pendingResidentSize, frameId);
+            if (FinalizePendingSparseTransitionOnRenderThread(record, texture, cts, request, transitionResult, pendingResidentSize, frameId))
+                completedFinalizations++;
         }
     }
 
-    private void FinalizePendingSparseTransitionOnRenderThread(
+    private bool FinalizePendingSparseTransitionOnRenderThread(
         ImportedTextureStreamingRecord record,
         XRTexture2D texture,
         CancellationTokenSource cts,
@@ -1554,12 +1620,12 @@ internal sealed class ImportedTextureStreamingManager
         long frameId)
     {
         if (!Monitor.TryEnter(record.Sync))
-            return;
+            return false;
 
         try
         {
             if (!IsCurrentDeferredSparseTransition(record, cts, transitionResult))
-                return;
+                return false;
         }
         finally
         {
@@ -1571,7 +1637,7 @@ internal sealed class ImportedTextureStreamingManager
             request,
             transitionResult);
         if (!finalizeResult.Completed)
-            return;
+            return false;
 
         if (!finalizeResult.Succeeded)
         {
@@ -1579,10 +1645,11 @@ internal sealed class ImportedTextureStreamingManager
             RuntimeRenderingHostServices.Current.LogWarning(
                 $"Deferred sparse texture transition failed for '{textureLabel}': {finalizeResult.FailureReason ?? "unknown reason"}.");
             ClearPendingTransition(record, cts, texture: null, completedResidentSize: 0, frameId);
-            return;
+            return true;
         }
 
         ClearPendingTransition(record, cts, texture, pendingResidentSize, frameId);
+        return true;
     }
 
     private static bool IsCurrentDeferredSparseTransition(

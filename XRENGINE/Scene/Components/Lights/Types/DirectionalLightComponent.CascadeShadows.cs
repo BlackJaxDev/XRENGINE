@@ -63,6 +63,11 @@ namespace XREngine.Components.Lights
             public required int CascadeIndex { get; init; }
             public required float SplitFarDistance { get; init; }
             public required float BlendWidth { get; init; }
+            public required bool HasManualBiasOverride { get; init; }
+            public required float BiasMin { get; init; }
+            public required float BiasMax { get; init; }
+            public required float ReceiverOffset { get; init; }
+            public required float TexelWorldSize { get; init; }
             public required Vector3 Center { get; init; }
             public required Vector3 HalfExtents { get; init; }
             public required Quaternion Orientation { get; init; }
@@ -76,11 +81,29 @@ namespace XREngine.Components.Lights
             Vector3 HalfExtents,
             Quaternion Orientation);
 
+        public readonly record struct CascadeShadowBiasSettings(
+            bool HasManualOverride,
+            float BiasMin,
+            float BiasMax,
+            float ReceiverOffset,
+            float TexelWorldSize);
+
+        public readonly record struct CascadeShadowBiasOverride(
+            bool Enabled,
+            float BiasMin,
+            float BiasMax,
+            float ReceiverOffset);
+
         private const int MaxCascadeRenderCount = 8;
         private const float CascadeBoundsPadding = 0.05f;
+        private const float CascadeAutoBiasReferenceResolution = 4096.0f;
+        private const float CascadeAutoBiasCompareTexels = 2.0f;
+        private const float CascadeAutoBiasMinTexels = 0.25f;
+        private const float CascadeAutoReceiverOffsetTexels = 1.5f;
 
         private int _cascadeCount = 4;
         private float[] _cascadePercentages = [0.1f, 0.2f, 0.3f, 0.4f];
+        private CascadeShadowBiasOverride[] _cascadeBiasOverrides = CreateDefaultCascadeBiasOverrides(4);
         private float _cascadeOverlapPercent = 0.1f;
         private bool _debugCascadeColors;
         private readonly object _cascadeDataLock = new();
@@ -107,7 +130,10 @@ namespace XREngine.Components.Lights
             {
                 int clamped = Math.Clamp(value, 1, 8);
                 if (SetField(ref _cascadeCount, clamped))
+                {
                     NormalizeCascadePercentages();
+                    NormalizeCascadeBiasOverrides();
+                }
             }
         }
 
@@ -144,6 +170,18 @@ namespace XREngine.Components.Lights
         {
             get => [.. _cascadePercentages];
             set => SetCascadePercentages(value);
+        }
+
+        /// <summary>
+        /// Optional per-cascade receiver bias overrides. Disabled entries use automatic values
+        /// derived from the base light bias, cascade texel size, split distance, and resolution.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Cascade Bias Overrides")]
+        public CascadeShadowBiasOverride[] CascadeBiasOverrides
+        {
+            get => [.. _cascadeBiasOverrides];
+            set => SetCascadeBiasOverrides(value);
         }
 
         /// <summary>
@@ -220,6 +258,47 @@ namespace XREngine.Components.Lights
                     : Vector3.Zero;
         }
 
+        public CascadeShadowBiasSettings GetCascadeBiasSettings(int index)
+        {
+            lock (_cascadeDataLock)
+            {
+                if (index >= 0 && index < _cascadeShadowSlices.Count)
+                {
+                    CascadeShadowSlice slice = _cascadeShadowSlices[index];
+                    return new CascadeShadowBiasSettings(
+                        slice.HasManualBiasOverride,
+                        slice.BiasMin,
+                        slice.BiasMax,
+                        slice.ReceiverOffset,
+                        slice.TexelWorldSize);
+                }
+            }
+
+            CascadeShadowBiasOverride manual = GetCascadeBiasOverride(index);
+            if (manual.Enabled)
+                return new CascadeShadowBiasSettings(true, manual.BiasMin, manual.BiasMax, manual.ReceiverOffset, 0.0f);
+
+            return new CascadeShadowBiasSettings(false, ShadowMinBias, ShadowMaxBias, ShadowMaxBias, 0.0f);
+        }
+
+        public CascadeShadowBiasOverride GetCascadeBiasOverride(int index)
+            => index >= 0 && index < _cascadeBiasOverrides.Length
+                ? _cascadeBiasOverrides[index]
+                : new CascadeShadowBiasOverride(false, 0.0f, 0.0f, 0.0f);
+
+        public void SetCascadeBiasOverride(int index, CascadeShadowBiasOverride value)
+        {
+            if (index < 0 || index >= _cascadeCount)
+                return;
+
+            CascadeShadowBiasOverride[] next = CascadeBiasOverrides;
+            if (next.Length != _cascadeCount)
+                Array.Resize(ref next, _cascadeCount);
+
+            next[index] = NormalizeCascadeBiasOverride(value);
+            SetCascadeBiasOverrides(next);
+        }
+
         public XRCamera? GetCascadeCamera(int index)
             => index >= 0 && index < _cascadeShadowCameras.Length
                 ? _cascadeShadowCameras[index]
@@ -275,6 +354,42 @@ namespace XREngine.Components.Lights
             }
 
             SetField(ref _cascadePercentages, next, nameof(CascadePercentages));
+        }
+
+        private static CascadeShadowBiasOverride[] CreateDefaultCascadeBiasOverrides(int count)
+            => count <= 0 ? [] : new CascadeShadowBiasOverride[count];
+
+        private static CascadeShadowBiasOverride NormalizeCascadeBiasOverride(CascadeShadowBiasOverride value)
+        {
+            float minBias = MathF.Max(0.0f, value.BiasMin);
+            float maxBias = MathF.Max(minBias, value.BiasMax);
+            float receiverOffset = MathF.Max(0.0f, value.ReceiverOffset);
+            return new CascadeShadowBiasOverride(value.Enabled, minBias, maxBias, receiverOffset);
+        }
+
+        private void SetCascadeBiasOverrides(CascadeShadowBiasOverride[]? value)
+        {
+            CascadeShadowBiasOverride[] next = value is { Length: > 0 }
+                ? [.. value]
+                : CreateDefaultCascadeBiasOverrides(_cascadeCount);
+
+            if (next.Length != _cascadeCount)
+                Array.Resize(ref next, _cascadeCount);
+
+            for (int i = 0; i < next.Length; i++)
+                next[i] = NormalizeCascadeBiasOverride(next[i]);
+
+            SetField(ref _cascadeBiasOverrides, next, nameof(CascadeBiasOverrides));
+        }
+
+        private void NormalizeCascadeBiasOverrides()
+        {
+            CascadeShadowBiasOverride[] next = CreateDefaultCascadeBiasOverrides(_cascadeCount);
+            int copyCount = Math.Min(_cascadeBiasOverrides.Length, next.Length);
+            for (int i = 0; i < copyCount; i++)
+                next[i] = NormalizeCascadeBiasOverride(_cascadeBiasOverrides[i]);
+
+            SetField(ref _cascadeBiasOverrides, next, nameof(CascadeBiasOverrides));
         }
 
         private void NormalizeCascadePercentages()
@@ -349,7 +464,14 @@ namespace XREngine.Components.Lights
             }
         }
 
-        private void CopyPublishedCascadeUniformData(Span<float> splits, Span<float> blendWidths, Span<Matrix4x4> matrices, out int cascadeCount)
+        private void CopyPublishedCascadeUniformData(
+            Span<float> splits,
+            Span<float> blendWidths,
+            Span<float> biasMins,
+            Span<float> biasMaxes,
+            Span<float> receiverOffsets,
+            Span<Matrix4x4> matrices,
+            out int cascadeCount)
         {
             int copyCount = Math.Min(MaxCascadeRenderCount, Math.Min(splits.Length, matrices.Length));
 
@@ -362,12 +484,18 @@ namespace XREngine.Components.Lights
                     {
                         splits[i] = _cascadeShadowSlices[i].SplitFarDistance;
                         blendWidths[i] = _cascadeShadowSlices[i].BlendWidth;
+                        biasMins[i] = _cascadeShadowSlices[i].BiasMin;
+                        biasMaxes[i] = _cascadeShadowSlices[i].BiasMax;
+                        receiverOffsets[i] = _cascadeShadowSlices[i].ReceiverOffset;
                         matrices[i] = _cascadeShadowSlices[i].WorldToLightSpaceMatrix;
                     }
                     else
                     {
                         splits[i] = float.MaxValue;
                         blendWidths[i] = 0.0f;
+                        biasMins[i] = ShadowMinBias;
+                        biasMaxes[i] = ShadowMaxBias;
+                        receiverOffsets[i] = ShadowMaxBias;
                         matrices[i] = Matrix4x4.Identity;
                     }
                 }
@@ -546,6 +674,45 @@ namespace XREngine.Components.Lights
             }
         }
 
+        private CascadeShadowBiasSettings ResolveCascadeBiasSettings(
+            int cascadeIndex,
+            float splitStartDistance,
+            float splitEndDistance,
+            Vector3 halfExtents,
+            float cascadeRangeFar,
+            uint shadowMapWidth,
+            uint shadowMapHeight,
+            CascadeShadowBiasOverride[] biasOverrides)
+        {
+            float mapWidth = MathF.Max(1.0f, shadowMapWidth);
+            float mapHeight = MathF.Max(1.0f, shadowMapHeight);
+            float cascadeWidth = MathF.Max(1e-4f, halfExtents.X * 2.0f);
+            float cascadeHeight = MathF.Max(1e-4f, halfExtents.Y * 2.0f);
+            float texelWorldSize = MathF.Max(cascadeWidth / mapWidth, cascadeHeight / mapHeight);
+
+            if (cascadeIndex >= 0 && cascadeIndex < biasOverrides.Length && biasOverrides[cascadeIndex].Enabled)
+            {
+                CascadeShadowBiasOverride manual = NormalizeCascadeBiasOverride(biasOverrides[cascadeIndex]);
+                return new CascadeShadowBiasSettings(true, manual.BiasMin, manual.BiasMax, manual.ReceiverOffset, texelWorldSize);
+            }
+
+            float depthRange = MathF.Max(1e-4f, halfExtents.Z * 2.0f);
+            float normalizedTexelDepth = texelWorldSize / depthRange;
+            float rangeFar = MathF.Max(1e-4f, cascadeRangeFar);
+            float distanceMidpoint = (splitStartDistance + splitEndDistance) * 0.5f;
+            float distanceT = Math.Clamp(distanceMidpoint / rangeFar, 0.0f, 1.0f);
+            float distanceScale = 0.75f + MathF.Sqrt(distanceT) * 1.25f;
+            float resolutionScale = Math.Clamp(CascadeAutoBiasReferenceResolution / MathF.Max(mapWidth, mapHeight), 0.5f, 4.0f);
+            float biasScale = Math.Clamp(distanceScale * resolutionScale, 0.35f, 8.0f);
+
+            float minBias = MathF.Max(ShadowMinBias * biasScale, normalizedTexelDepth * CascadeAutoBiasMinTexels);
+            float maxBias = MathF.Max(ShadowMaxBias * biasScale, normalizedTexelDepth * CascadeAutoBiasCompareTexels);
+            maxBias = MathF.Max(minBias, maxBias);
+
+            float receiverOffset = MathF.Max(ShadowMaxBias * biasScale, texelWorldSize * CascadeAutoReceiverOffsetTexels);
+            return new CascadeShadowBiasSettings(false, minBias, maxBias, receiverOffset, texelWorldSize);
+        }
+
         internal void ClearCascadeShadows()
         {
             lock (_cascadeDataLock)
@@ -571,7 +738,8 @@ namespace XREngine.Components.Lights
             // concurrent Ensure/Release calls from property changes on other threads.
             Transform[] transformsSnapshot = _cascadeShadowTransforms;
             XRCamera[] camerasSnapshot = _cascadeShadowCameras;
-            if (_cascadeShadowMapTexture is null || camerasSnapshot.Length == 0 || transformsSnapshot.Length != camerasSnapshot.Length)
+            XRTexture2DArray? cascadeTexture = _cascadeShadowMapTexture;
+            if (cascadeTexture is null || camerasSnapshot.Length == 0 || transformsSnapshot.Length != camerasSnapshot.Length)
             {
                 ClearCascadeShadows();
                 return;
@@ -583,6 +751,7 @@ namespace XREngine.Components.Lights
             int maxCascadeCount = Math.Min(camerasSnapshot.Length, MaxCascadeRenderCount);
             Span<float> percentages = stackalloc float[MaxCascadeRenderCount];
             CopyEffectiveCascadePercentages(percentages, out int percentageCount);
+            CascadeShadowBiasOverride[] biasOverrideSnapshot = _cascadeBiasOverrides;
             CascadeShadowSlice[] nextShadowSlices = ArrayPool<CascadeShadowSlice>.Shared.Rent(maxCascadeCount);
             CascadedShadowAabb[] nextCascadeAabbs = ArrayPool<CascadedShadowAabb>.Shared.Rent(maxCascadeCount);
 
@@ -644,12 +813,26 @@ namespace XREngine.Components.Lights
                     Matrix4x4 cascadeView = camerasSnapshot[resourceSlot].Transform.InverseRenderMatrix;
                     Matrix4x4 cascadeProj = camerasSnapshot[resourceSlot].ProjectionMatrix;
                     Matrix4x4 viewProj = cascadeView * cascadeProj;
+                    CascadeShadowBiasSettings biasSettings = ResolveCascadeBiasSettings(
+                        cascadeIndex,
+                        splitStart,
+                        splitEnd,
+                        halfExtents,
+                        effectiveCascadeFar,
+                        cascadeTexture.Width,
+                        cascadeTexture.Height,
+                        biasOverrideSnapshot);
 
                     nextShadowSlices[resourceSlot] = new CascadeShadowSlice
                     {
                         CascadeIndex = cascadeIndex,
                         SplitFarDistance = splitEnd,
                         BlendWidth = expand,
+                        HasManualBiasOverride = biasSettings.HasManualOverride,
+                        BiasMin = biasSettings.BiasMin,
+                        BiasMax = biasSettings.BiasMax,
+                        ReceiverOffset = biasSettings.ReceiverOffset,
+                        TexelWorldSize = biasSettings.TexelWorldSize,
                         Center = centerWS,
                         HalfExtents = halfExtents,
                         Orientation = lightRotation,

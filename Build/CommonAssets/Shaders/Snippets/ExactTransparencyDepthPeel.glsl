@@ -1,6 +1,9 @@
 uniform sampler2D PrevPeelDepth;
+#ifndef XRENGINE_SCREEN_SIZE_UNIFORMS
+#define XRENGINE_SCREEN_SIZE_UNIFORMS
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+#endif
 uniform int DepthPeelLayerIndex;
 uniform float DepthPeelEpsilon;
 

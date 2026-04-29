@@ -26,6 +26,8 @@ internal static class LightComponentEditorShared
     private static readonly ConditionalWeakTable<XRTexture2D, XRTexture2DView> Texture2DPreviewViews = new();
     private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> Texture2DArrayPreviewViews = new();
     private static readonly ConditionalWeakTable<XRTextureCube, CubemapPreviewCache> CubemapPreviewCaches = new();
+    private static readonly ConditionalWeakTable<LightComponent, ShadowResolutionEditState> ShadowResolutionEditStates = new();
+    private static readonly ConditionalWeakTable<GLTextureView, PreviewSwizzleState> TextureViewPreviewSwizzles = new();
 
     private static readonly (ECubemapFace Face, string Label)[] CubemapFaces =
     [
@@ -112,34 +114,19 @@ internal static class LightComponentEditorShared
 
         if (light is PointLightComponent)
         {
-            int resolution = unchecked((int)Math.Max(light.ShadowMapResolutionWidth, light.ShadowMapResolutionHeight));
-            if (ImGui.InputInt("Cubemap Face Resolution", ref resolution))
-            {
-                resolution = Math.Max(1, resolution);
-                light.SetShadowMapResolution(unchecked((uint)resolution), unchecked((uint)resolution));
-            }
+            ShadowResolutionEditState editState = GetShadowResolutionEditState(light);
+            if (DrawCommittedIntInput("Cubemap Face Resolution", ref editState.CubemapResolution))
+                CommitShadowMapResolution(light, editState, editState.CubemapResolution, editState.CubemapResolution);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Point-light shadows render one square cubemap face per direction.");
         }
         else
         {
-            int w = unchecked((int)light.ShadowMapResolutionWidth);
-            int h = unchecked((int)light.ShadowMapResolutionHeight);
-
-            bool changed = false;
-            if (ImGui.InputInt("Map Width", ref w))
-            {
-                w = Math.Max(1, w);
-                changed = true;
-            }
-            if (ImGui.InputInt("Map Height", ref h))
-            {
-                h = Math.Max(1, h);
-                changed = true;
-            }
-
-            if (changed)
-                light.SetShadowMapResolution(unchecked((uint)w), unchecked((uint)h));
+            ShadowResolutionEditState editState = GetShadowResolutionEditState(light);
+            if (DrawCommittedIntInput("Map Width", ref editState.Width))
+                CommitShadowMapResolution(light, editState, editState.Width, editState.Height);
+            if (DrawCommittedIntInput("Map Height", ref editState.Height))
+                CommitShadowMapResolution(light, editState, editState.Width, editState.Height);
         }
 
         if (showCascadedOptions)
@@ -272,9 +259,24 @@ internal static class LightComponentEditorShared
 
     private static void DrawLightSourceRadiusControl(LightComponent light)
     {
-        float lightRadius = light.LightSourceRadius;
-        if (ImGui.DragFloat("Light Source Radius", ref lightRadius, 0.001f, 0.0f, 10.0f, "%.4f"))
+        bool useLightRadius = light.UseLightRadiusForContactHardening;
+        if (light.SupportsLightRadiusContactHardening)
+        {
+            if (ImGui.Checkbox("Auto From Light Radius", ref useLightRadius))
+                light.UseLightRadiusForContactHardening = useLightRadius;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Use a capped source radius derived from the point-light radius or spotlight outer cone radius. The automatic value is clamped to {LightComponent.MaxAutomaticContactHardeningLightRadius:0.##} to preserve hard contact detail.");
+        }
+
+        float lightRadius = light.EffectiveLightSourceRadius;
+        if (useLightRadius)
+            ImGui.BeginDisabled();
+
+        if (ImGui.DragFloat("Light Source Radius", ref lightRadius, 0.001f, 0.0f, 1000000.0f, "%.4f") && !useLightRadius)
             light.LightSourceRadius = MathF.Max(0.0f, lightRadius);
+
+        if (useLightRadius)
+            ImGui.EndDisabled();
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Source size used by PCSS/contact-hardening to widen penumbrae with blocker distance.");
@@ -354,7 +356,7 @@ internal static class LightComponentEditorShared
 
     public static void DrawShadowMapPreview(LightComponent light)
     {
-        if (!ImGui.CollapsingHeader("Shadow Map Preview", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Shadow Map Preview", ImGuiTreeNodeFlags.None))
             return;
 
         if (!light.CastsShadows)
@@ -665,6 +667,10 @@ internal static class LightComponentEditorShared
         if (binding == 0 || binding == OpenGLRenderer.GLObjectBase.InvalidBindingId)
             return;
 
+        PreviewSwizzleState state = TextureViewPreviewSwizzles.GetValue(glTextureView, _ => new PreviewSwizzleState());
+        if (state.BindingId == binding && state.Format == format)
+            return;
+
         var gl = renderer.RawGL;
         int red = (int)GLEnum.Red;
         int one = (int)GLEnum.One;
@@ -672,6 +678,38 @@ internal static class LightComponentEditorShared
         gl.TextureParameterI(binding, GLEnum.TextureSwizzleG, in red);
         gl.TextureParameterI(binding, GLEnum.TextureSwizzleB, in red);
         gl.TextureParameterI(binding, GLEnum.TextureSwizzleA, in one);
+
+        state.BindingId = binding;
+        state.Format = format;
+    }
+
+    private static ShadowResolutionEditState GetShadowResolutionEditState(LightComponent light)
+    {
+        ShadowResolutionEditState state = ShadowResolutionEditStates.GetValue(light, _ => new ShadowResolutionEditState());
+        state.SyncFrom(light);
+        return state;
+    }
+
+    private static bool DrawCommittedIntInput(string label, ref int value)
+    {
+        bool enterPressed = ImGui.InputInt(label, ref value, 1, 100, ImGuiInputTextFlags.EnterReturnsTrue);
+        return enterPressed || ImGui.IsItemDeactivatedAfterEdit();
+    }
+
+    private static void CommitShadowMapResolution(LightComponent light, ShadowResolutionEditState state, int width, int height)
+    {
+        int clampedWidth = Math.Max(1, width);
+        int clampedHeight = Math.Max(1, height);
+
+        if (clampedWidth == (int)light.ShadowMapResolutionWidth &&
+            clampedHeight == (int)light.ShadowMapResolutionHeight)
+        {
+            state.SetCommitted(clampedWidth, clampedHeight);
+            return;
+        }
+
+        light.SetShadowMapResolution(unchecked((uint)clampedWidth), unchecked((uint)clampedHeight));
+        state.SetCommitted(clampedWidth, clampedHeight);
     }
 
     private static XRTexture2DView CreateTexture2DPreviewView(XRTexture2D source)
@@ -813,6 +851,45 @@ internal static class LightComponentEditorShared
         };
 
         return format is null ? resolution : $"{resolution} | {format}";
+    }
+
+    private sealed class ShadowResolutionEditState
+    {
+        private uint _sourceWidth = uint.MaxValue;
+        private uint _sourceHeight = uint.MaxValue;
+
+        public int Width;
+        public int Height;
+        public int CubemapResolution;
+
+        public void SyncFrom(LightComponent light)
+        {
+            uint sourceWidth = light.ShadowMapResolutionWidth;
+            uint sourceHeight = light.ShadowMapResolutionHeight;
+            if (_sourceWidth == sourceWidth && _sourceHeight == sourceHeight)
+                return;
+
+            Width = unchecked((int)Math.Max(1u, sourceWidth));
+            Height = unchecked((int)Math.Max(1u, sourceHeight));
+            CubemapResolution = Math.Max(Width, Height);
+            _sourceWidth = sourceWidth;
+            _sourceHeight = sourceHeight;
+        }
+
+        public void SetCommitted(int width, int height)
+        {
+            Width = Math.Max(1, width);
+            Height = Math.Max(1, height);
+            CubemapResolution = Math.Max(Width, Height);
+            _sourceWidth = unchecked((uint)Width);
+            _sourceHeight = unchecked((uint)Height);
+        }
+    }
+
+    private sealed class PreviewSwizzleState
+    {
+        public uint BindingId;
+        public ESizedInternalFormat Format;
     }
 
     private sealed class CubemapPreviewCache

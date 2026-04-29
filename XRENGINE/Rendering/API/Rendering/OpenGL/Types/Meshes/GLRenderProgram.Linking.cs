@@ -357,7 +357,7 @@ namespace XREngine.Rendering.OpenGL
                 using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup"))
                 {
                     using (Engine.Profiler.Start("GLRenderProgram.Link.CalcHash"))
-                        hash = CalcHash(_shaderCache.Values.Select(ResolveSourceForHash));
+                        hash = CalcShaderSourceHash();
 
                     if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
                     {
@@ -901,7 +901,7 @@ namespace XREngine.Rendering.OpenGL
                         using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup"))
                         {
                             using (Engine.Profiler.Start("GLRenderProgram.Link.CalcHash"))
-                                Hash = CalcHash(_shaderCache.Values.Select(ResolveSourceForHash));
+                                Hash = CalcShaderSourceHash();
                         }
                         _hashComputed = true;
                     }
@@ -927,8 +927,14 @@ namespace XREngine.Rendering.OpenGL
                         {
                             // Async path: offload glProgramBinary to the shared context thread.
                             var uploadQueue = Renderer.ProgramBinaryUploadQueue;
-                            if (Engine.Rendering.Settings.AsyncProgramBinaryUpload && uploadQueue is not null && uploadQueue.IsAvailable && uploadQueue.CanEnqueue)
+                            if (Engine.Rendering.Settings.AsyncProgramBinaryUpload && uploadQueue is not null && uploadQueue.IsAvailable)
                             {
+                                if (!uploadQueue.CanEnqueue)
+                                {
+                                    RegisterPendingAsyncProgram();
+                                    return false;
+                                }
+
                                 uploadQueue.EnqueueUpload(bindingId, binProg.Binary, format, binProg.Length, Hash);
                                 _asyncBinaryUploadPending = true;
                                 RegisterPendingAsyncProgram();

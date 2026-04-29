@@ -1,6 +1,10 @@
 # Ambient Occlusion
 
+Last updated: 2026-04-28
+
 Ambient Occlusion (AO) simulates the soft shadows that occur in crevices, corners, and areas where surfaces are close together. XREngine provides multiple AO techniques with varying quality and performance characteristics.
+
+The HBAO+ and non-HBAO implementation trackers are complete. Remaining quality, performance, editor-visibility, and product-positioning checks are tracked in [Ambient Occlusion Testing](../../work/testing/ambient-occlusion.md).
 
 ## AO Types
 

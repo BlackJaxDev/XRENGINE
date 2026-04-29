@@ -23,6 +23,22 @@ namespace XREngine.Rendering.OpenGL
 
                 if (renderState?.ShadowPass ?? false)
                 {
+                    XRMaterial? shadowSourceMaterial = localMaterialOverride ?? MeshRenderer.Material;
+                    bool pointLightShadowOverride = globalMaterialOverride is not null
+                        && UsesPointLightShadowCubemap(globalMaterialOverride);
+
+                    if (pointLightShadowOverride
+                        && shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == false)
+                    {
+                        XRMaterial? pointShadowVariant = shadowSourceMaterial.GetPointShadowCasterVariant(
+                            globalMaterialOverride!.GeometryShaders.Count > 0);
+                        if (pointShadowVariant is not null)
+                        {
+                            pointShadowVariant.ShadowUniformSourceMaterial = globalMaterialOverride;
+                            return (Renderer.GetOrCreateAPIRenderObject(pointShadowVariant) as GLMaterial)!;
+                        }
+                    }
+
                     // When the global override includes a geometry shader (e.g. point light
                     // cubemap shadow map), the GS must participate in rendering every mesh.
                     // Per-mesh shadow variants wouldn't include the required GS, so the
@@ -33,7 +49,6 @@ namespace XREngine.Rendering.OpenGL
                         return (Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial)!;
                     }
 
-                    XRMaterial? shadowSourceMaterial = localMaterialOverride ?? MeshRenderer.Material;
                     if (globalMaterialOverride is not null && shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == true)
                         return (Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial)!;
 

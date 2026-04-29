@@ -234,8 +234,9 @@ namespace XREngine.Rendering.OpenGL
 
                 try
                 {
-                    string resolved = ResolveSourceForCompilation(shader.Data);
-                    if (resolved.Contains("#include"))
+                    shader.PrepareCompileVariant(Data.Separable);
+                    string resolved = shader.ResolveFullSource() ?? string.Empty;
+                    if (resolved.Contains("#include", StringComparison.Ordinal))
                         Debug.OpenGLWarning($"[ShaderCache] Include resolution left unresolved #include in source (filePath={shader.Data.Source?.FilePath ?? "null"})");
                     return resolved;
                 }
@@ -247,13 +248,22 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            private static ulong CalcHash(IEnumerable<string> enumerable)
+            private ulong CalcShaderSourceHash()
             {
                 ulong hash = 17ul;
-                foreach (string? item in enumerable)
-                    hash = hash * 31ul + GetDeterministicHashCode(item ?? string.Empty);
+                foreach (XRShader shaderData in Data.Shaders)
+                {
+                    string resolved = _shaderCache.TryGetValue(shaderData, out GLShader? shader) && shader is not null
+                        ? ResolveSourceForHash(shader)
+                        : ResolveSourceForCompilation(shaderData);
+                    hash = AccumulateHash(hash, resolved);
+                }
+
                 return hash;
             }
+
+            private static ulong AccumulateHash(ulong hash, string? item)
+                => hash * 31ul + GetDeterministicHashCode(item ?? string.Empty);
 
             static ulong GetDeterministicHashCode(string str)
             {

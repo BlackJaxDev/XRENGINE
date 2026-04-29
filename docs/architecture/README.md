@@ -44,6 +44,7 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 ## Further Reading
 - [Audio Architecture](audio-architecture.md)
 - [Cooked Asset Serialization — AOT & I/O Design](cooked-asset-aot-and-io.md)
+- [GPU-Driven Animation Architecture](../work/design/gpu-driven-animation.md)
 - [Modeling XRMesh Editing Architecture](modeling-xrmesh-editing.md)
 - [Job System](../api/job-system.md)
 - [Networking Overview](networking-overview.md)

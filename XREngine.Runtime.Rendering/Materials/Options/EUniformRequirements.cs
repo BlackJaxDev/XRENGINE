@@ -20,7 +20,7 @@ namespace XREngine.Rendering.Models.Materials
         /// <summary>
         /// Time-related uniforms will be provided:
         /// <list type="bullet">
-        /// <item><c>RenderTime</c> — seconds since this material's shader program was first used (per-material).</item>
+        /// <item><c>RenderTime</c> — seconds since the engine started running (global render time).</item>
         /// <item><c>EngineTime</c> — seconds since the engine started running (global).</item>
         /// <item><c>DeltaTime</c> — render-frame delta in seconds.</item>
         /// </list>
@@ -114,6 +114,8 @@ namespace XREngine.Rendering.Models.Materials
                 [EngineShaderBindingNames.Uniforms.ForwardPlusTileCountY] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ForwardPlusMaxLightsPerTile] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ForwardPlusEyeCount] = EUniformRequirements.Lights,
+                [EngineShaderBindingNames.Uniforms.ForwardContactShadowsEnabled] = EUniformRequirements.Lights,
+                [EngineShaderBindingNames.Uniforms.ForwardContactShadowsArrayEnabled] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.AmbientOcclusionEnabled] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.AmbientOcclusionArrayEnabled] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.AmbientOcclusionPower] = EUniformRequirements.Lights,
@@ -130,6 +132,10 @@ namespace XREngine.Rendering.Models.Materials
                 [EngineShaderBindingNames.Samplers.ShadowMapArray] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Samplers.PointLightShadowMaps] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Samplers.SpotLightShadowMaps] = EUniformRequirements.Lights,
+                [EngineShaderBindingNames.Samplers.ForwardContactDepthView] = EUniformRequirements.Lights,
+                [EngineShaderBindingNames.Samplers.ForwardContactNormalView] = EUniformRequirements.Lights,
+                [EngineShaderBindingNames.Samplers.ForwardContactDepthViewArray] = EUniformRequirements.Lights,
+                [EngineShaderBindingNames.Samplers.ForwardContactNormalViewArray] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Samplers.EnvironmentMap] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Samplers.PbrReflectionCube] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ProbeCount] = EUniformRequirements.Lights,

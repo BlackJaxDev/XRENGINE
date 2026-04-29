@@ -28,14 +28,14 @@ uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
 
 // Enhanced shadow quality settings
-uniform int ShadowSamples = 16;
+uniform int ShadowSamples = 8;
 uniform float ShadowFilterRadius = 0.01f;
 uniform int SoftShadowMode = 2;
 uniform float LightSourceRadius = 1.2f;
 uniform bool EnableCascadedShadows = true;
 uniform bool EnableContactShadows = true;
-uniform float ContactShadowDistance = 0.1f;
-uniform int ContactShadowSamples = 4;
+uniform float ContactShadowDistance = 1.0f;
+uniform int ContactShadowSamples = 16;
 
 struct DirLight
 {
@@ -390,4 +390,4 @@ void main()
     vec3 fragPosWS = WorldPosFromDepth(depth, uv);
     
     OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms);
-} 
+}

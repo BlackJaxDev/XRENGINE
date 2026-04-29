@@ -2,7 +2,7 @@
 
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
 layout (location = 0) out vec2 Normal;
-#elif defined(XRENGINE_SHADOW_CASTER_PASS)
+#elif defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
 layout (location = 0) out float Depth;
 #elif defined(XRENGINE_FORWARD_WEIGHTED_OIT)
 layout (location = 0) out vec4 OutAccum;
@@ -51,30 +51,37 @@ void XRENGINE_WriteForwardFragment(vec4 shadedColor)
     XRE_WriteWeightedBlendedOit(shadedColor);
 #elif defined(XRENGINE_FORWARD_PPLL)
     XRE_StorePerPixelLinkedListFragment(shadedColor);
-#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS) || defined(XRENGINE_SHADOW_CASTER_PASS)
+#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS) || defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     return;
 #else
     OutColor = shadedColor;
 #endif
 }
+layout (location = 0) in vec3 FragPos;
 layout (location = 1) in vec3 FragNorm;
 layout (location = 4) in vec2 FragUV0;
 
 uniform sampler2D Texture0;
 uniform float AlphaCutoff = 0.1f;
+#if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+uniform vec3 LightPos;
+uniform float FarPlaneDist;
+#endif
 
 #pragma snippet "NormalEncoding"
 
 void main()
 {
-#if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS)
+#if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     XRENGINE_BeginForwardFragmentOutput();
 #endif
     vec4 color = texture(Texture0, FragUV0);
     if (color.a < AlphaCutoff)
       discard;
 
-#if defined(XRENGINE_SHADOW_CASTER_PASS)
+#if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+    Depth = length(FragPos - LightPos) / FarPlaneDist;
+#elif defined(XRENGINE_SHADOW_CASTER_PASS)
     // Future tinted transmission: add a separate transmittance target and accumulate color-filtered light attenuation here instead of a depth-only write.
     Depth = gl_FragCoord.z;
 #elif defined(XRENGINE_DEPTH_NORMAL_PREPASS)

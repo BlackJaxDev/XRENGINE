@@ -1,4 +1,5 @@
 using Silk.NET.OpenGL;
+using System.Collections.Generic;
 using System.Text;
 using XREngine;
 using XREngine.Data.Rendering;
@@ -16,6 +17,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 _uniformMetadata.Clear();
+                _activeSamplerUniforms = [];
 
                 Api.GetProgram(BindingId, GLEnum.ActiveUniforms, out int uniformCount);
                 if (uniformCount <= 0)
@@ -48,12 +50,17 @@ namespace XREngine.Rendering.OpenGL
                         }
                     }
                 }
+
+                RebuildActiveSamplerUniforms();
             }
 
             private bool TryRestoreCachedUniformMetadata(UniformMetadataEntry[]? metadata)
             {
                 if (metadata is not { Length: > 0 })
+                {
+                    _activeSamplerUniforms = [];
                     return false;
+                }
 
                 _uniformMetadata.Clear();
                 foreach (var entry in metadata)
@@ -64,7 +71,26 @@ namespace XREngine.Rendering.OpenGL
                     _uniformMetadata[entry.Name] = new UniformInfo(entry.Type, entry.Size);
                 }
 
+                RebuildActiveSamplerUniforms();
                 return _uniformMetadata.Count > 0;
+            }
+
+            private void RebuildActiveSamplerUniforms()
+            {
+                if (_uniformMetadata.Count == 0)
+                {
+                    _activeSamplerUniforms = [];
+                    return;
+                }
+
+                List<SamplerUniformInfo> samplerUniforms = [];
+                foreach (var pair in _uniformMetadata)
+                {
+                    if (IsSamplerType(pair.Value.Type))
+                        samplerUniforms.Add(new SamplerUniformInfo(pair.Key, pair.Value.Type));
+                }
+
+                _activeSamplerUniforms = [.. samplerUniforms];
             }
 
             private UniformMetadataEntry[] SnapshotUniformMetadata()
@@ -213,15 +239,12 @@ namespace XREngine.Rendering.OpenGL
 
             public void BindFallbackSamplers()
             {
-                if (!IsLinked || _uniformMetadata.Count == 0)
+                if (!IsLinked || _activeSamplerUniforms.Length == 0)
                     return;
 
-                foreach (var pair in _uniformMetadata)
+                foreach (SamplerUniformInfo samplerUniform in _activeSamplerUniforms)
                 {
-                    string name = pair.Key;
-                    UniformInfo meta = pair.Value;
-                    if (!IsSamplerType(meta.Type))
-                        continue;
+                    string name = samplerUniform.Name;
 
                     if (IsSamplerNameBound(name))
                         continue;
@@ -233,11 +256,14 @@ namespace XREngine.Rendering.OpenGL
                     // layout(binding = N) samplers can already point at a unit that has a real
                     // texture bound even when no explicit glUniform1i call happened in this batch.
                     // Do not override those assignments with fallback textures.
-                    Api.GetUniform(BindingId, location, out int assignedUnit);
-                    if (assignedUnit >= 0 && _boundSamplerUnits.Contains(assignedUnit))
-                        continue;
+                    if (_boundSamplerUnits.Count > 0)
+                    {
+                        Api.GetUniform(BindingId, location, out int assignedUnit);
+                        if (assignedUnit >= 0 && _boundSamplerUnits.Contains(assignedUnit))
+                            continue;
+                    }
 
-                    var fallbackTexture = GetFallbackSamplerTexture(meta.Type);
+                    var fallbackTexture = GetFallbackSamplerTexture(samplerUniform.Type);
                     if (fallbackTexture is null)
                         continue;
 
@@ -258,30 +284,19 @@ namespace XREngine.Rendering.OpenGL
                     if (!suppressWarning)
                     {
                         string programName = Data.Name ?? BindingId.ToString();
-                        string errorKey = $"GLFallbackSampler:{programName}:{name}:{meta.Type}";
+                        string errorKey = $"GLFallbackSampler:{programName}:{name}:{samplerUniform.Type}";
                         Debug.OpenGLErrorEvery(
                             errorKey,
                             TimeSpan.FromSeconds(30),
                             $"[Shader Texture Binding] Sampler '{name}' in program '{programName}' was not bound by any material texture. " +
-                            $"A fallback texture was substituted (SamplerType={meta.Type}, TextureUnit={fallbackUnit}). " +
+                            $"A fallback texture was substituted (SamplerType={samplerUniform.Type}, TextureUnit={fallbackUnit}). " +
                             "This likely means a texture failed to load or the material is missing a required texture slot.");
                     }
                 }
             }
 
             public bool HasActiveSamplerUniforms()
-            {
-                if (!IsLinked || _uniformMetadata.Count == 0)
-                    return false;
-
-                foreach (var pair in _uniformMetadata)
-                {
-                    if (IsSamplerType(pair.Value.Type))
-                        return true;
-                }
-
-                return false;
-            }
+                => IsLinked && _activeSamplerUniforms.Length > 0;
 
             private bool MarkUniformBinding(int location)
             {

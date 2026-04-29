@@ -48,6 +48,8 @@ namespace XREngine.Rendering
             CascadeMatrixOriginProjection = 14,
             /// <summary>Diagnostic: CascadeSplits[0]/100 (red) and CascadeCount/4 (green). Black = cascade scalar uniforms not uploaded.</summary>
             CascadeSplitsAndCount = 15,
+            /// <summary>Diagnostic: marched fog distance normalized by MaxDistance. Dark = short depth/volume interval, bright = long interval.</summary>
+            MarchDistance = 16,
         }
 
         private readonly VolumetricFogVolumeComponent?[] _activeVolumes = new VolumetricFogVolumeComponent?[MaxVolumeCount];
@@ -103,7 +105,7 @@ namespace XREngine.Rendering
         public EDebugMode DebugMode
         {
             get => (EDebugMode)_debugMode;
-            set => SetField(ref _debugMode, Math.Clamp((int)value, 0, 15));
+            set => SetField(ref _debugMode, Math.Clamp((int)value, 0, 16));
         }
 
         public override void SetUniforms(XRRenderProgram program)

@@ -267,7 +267,16 @@ public static class BootstrapWorldFactory
         volume.LightContribution = fogSettings.LightContribution;
         volume.Priority = fogSettings.Priority;
 
-        Debug.Out($"[VolumetricFog] BootstrapWorldFactory created volume node: Translation=({fogSettings.Translation.X}, {fogSettings.Translation.Y}, {fogSettings.Translation.Z}), HalfExtents=({fogSettings.HalfExtents.X}, {fogSettings.HalfExtents.Y}, {fogSettings.HalfExtents.Z}), Density={fogSettings.Density}");
+        float boundsMinY = fogSettings.Translation.Y - fogSettings.HalfExtents.Y;
+        float boundsMaxY = fogSettings.Translation.Y + fogSettings.HalfExtents.Y;
+
+        Debug.Out(
+            $"[VolumetricFog] BootstrapWorldFactory created volume node: " +
+            $"Translation=({fogSettings.Translation.X}, {fogSettings.Translation.Y}, {fogSettings.Translation.Z}), " +
+            $"HalfExtents=({fogSettings.HalfExtents.X}, {fogSettings.HalfExtents.Y}, {fogSettings.HalfExtents.Z}), " +
+            $"BoundsY=({boundsMinY}, {boundsMaxY}), " +
+            $"Density={fogSettings.Density}, EdgeFade={fogSettings.EdgeFade}, " +
+            $"NoiseScale={fogSettings.NoiseScale}, NoiseThreshold={fogSettings.NoiseThreshold}, NoiseAmount={fogSettings.NoiseAmount}");
     }
 
     private static void AddDeferredDecal(SceneNode rootNode)

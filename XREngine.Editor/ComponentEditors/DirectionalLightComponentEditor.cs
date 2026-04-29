@@ -52,7 +52,7 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
 
     private static void DrawDirectionalShadowSection(DirectionalLightComponent light)
     {
-        if (!ImGui.CollapsingHeader("Directional Shadow Projection", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Directional Shadow Projection", ImGuiTreeNodeFlags.None))
             return;
 
         ImGui.SeparatorText("Orthographic Volume");
@@ -111,6 +111,94 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
 
         if (anyChanged)
             light.CascadePercentages = percentages;
+
+        DrawCascadeBiasOverrideControls(light);
+    }
+
+    private static void DrawCascadeBiasOverrideControls(DirectionalLightComponent light)
+    {
+        ImGui.SeparatorText("Cascade Bias Overrides");
+
+        if (ImGui.BeginTable("CascadeBiasOverrides", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        {
+            ImGui.TableSetupColumn("Idx", ImGuiTableColumnFlags.WidthFixed, 30.0f);
+            ImGui.TableSetupColumn("Manual", ImGuiTableColumnFlags.WidthFixed, 58.0f);
+            ImGui.TableSetupColumn("Min", ImGuiTableColumnFlags.WidthFixed, 90.0f);
+            ImGui.TableSetupColumn("Max", ImGuiTableColumnFlags.WidthFixed, 90.0f);
+            ImGui.TableSetupColumn("Offset", ImGuiTableColumnFlags.WidthFixed, 90.0f);
+            ImGui.TableHeadersRow();
+
+            for (int i = 0; i < light.CascadeCount; i++)
+            {
+                DirectionalLightComponent.CascadeShadowBiasOverride biasOverride = light.GetCascadeBiasOverride(i);
+                DirectionalLightComponent.CascadeShadowBiasSettings effective = light.GetCascadeBiasSettings(i);
+                bool enabled = biasOverride.Enabled;
+                float minBias = enabled ? biasOverride.BiasMin : effective.BiasMin;
+                float maxBias = enabled ? biasOverride.BiasMax : effective.BiasMax;
+                float receiverOffset = enabled ? biasOverride.ReceiverOffset : effective.ReceiverOffset;
+
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                uint color = CascadeImGuiColors[i % CascadeImGuiColors.Length];
+                ImGui.PushStyleColor(ImGuiCol.Text, color);
+                ImGui.Text($"{i}");
+                ImGui.PopStyleColor();
+
+                ImGui.TableNextColumn();
+                ImGui.PushID(i);
+                if (ImGui.Checkbox("##ManualBias", ref enabled))
+                {
+                    if (enabled && !biasOverride.Enabled)
+                    {
+                        minBias = effective.BiasMin;
+                        maxBias = effective.BiasMax;
+                        receiverOffset = effective.ReceiverOffset;
+                    }
+
+                    light.SetCascadeBiasOverride(i, new DirectionalLightComponent.CascadeShadowBiasOverride(enabled, minBias, maxBias, receiverOffset));
+                }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(80.0f);
+                if (enabled)
+                {
+                    if (ImGui.DragFloat("##MinBias", ref minBias, 0.00001f, 0.0f, 1.0f, "%.6f"))
+                        light.SetCascadeBiasOverride(i, new DirectionalLightComponent.CascadeShadowBiasOverride(true, minBias, maxBias, receiverOffset));
+                }
+                else
+                {
+                    ImGui.TextDisabled($"{minBias:0.######}");
+                }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(80.0f);
+                if (enabled)
+                {
+                    if (ImGui.DragFloat("##MaxBias", ref maxBias, 0.00001f, 0.0f, 1.0f, "%.6f"))
+                        light.SetCascadeBiasOverride(i, new DirectionalLightComponent.CascadeShadowBiasOverride(true, minBias, maxBias, receiverOffset));
+                }
+                else
+                {
+                    ImGui.TextDisabled($"{maxBias:0.######}");
+                }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(80.0f);
+                if (enabled)
+                {
+                    if (ImGui.DragFloat("##ReceiverOffset", ref receiverOffset, 0.001f, 0.0f, 1000.0f, "%.5f"))
+                        light.SetCascadeBiasOverride(i, new DirectionalLightComponent.CascadeShadowBiasOverride(true, minBias, maxBias, receiverOffset));
+                }
+                else
+                {
+                    ImGui.TextDisabled($"{receiverOffset:0.#####}");
+                }
+
+                ImGui.PopID();
+            }
+
+            ImGui.EndTable();
+        }
     }
 
     private static void DrawCascadeDebugSection(DirectionalLightComponent light)
@@ -163,13 +251,17 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
         ImGui.Separator();
 
         // Per-cascade detail table
-        if (ImGui.BeginTable("CascadeSlices", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        if (ImGui.BeginTable("CascadeSlices", 9, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
         {
             ImGui.TableSetupColumn("Idx", ImGuiTableColumnFlags.WidthFixed, 30.0f);
             ImGui.TableSetupColumn("Split Near", ImGuiTableColumnFlags.WidthFixed, 80.0f);
             ImGui.TableSetupColumn("Split Far", ImGuiTableColumnFlags.WidthFixed, 80.0f);
+            ImGui.TableSetupColumn("Bias", ImGuiTableColumnFlags.WidthFixed, 100.0f);
+            ImGui.TableSetupColumn("Offset", ImGuiTableColumnFlags.WidthFixed, 70.0f);
+            ImGui.TableSetupColumn("Texel", ImGuiTableColumnFlags.WidthFixed, 70.0f);
             ImGui.TableSetupColumn("Center", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableSetupColumn("Half Extents", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Mode", ImGuiTableColumnFlags.WidthFixed, 55.0f);
             ImGui.TableHeadersRow();
 
             for (int i = 0; i < activeCascades; i++)
@@ -190,6 +282,17 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
                 ImGui.TableNextColumn();
                 ImGui.Text($"{light.GetCascadeSplit(i):F1}");
 
+                DirectionalLightComponent.CascadeShadowBiasSettings bias = light.GetCascadeBiasSettings(i);
+
+                ImGui.TableNextColumn();
+                ImGui.Text($"{bias.BiasMin:0.######}/{bias.BiasMax:0.######}");
+
+                ImGui.TableNextColumn();
+                ImGui.Text($"{bias.ReceiverOffset:0.#####}");
+
+                ImGui.TableNextColumn();
+                ImGui.Text($"{bias.TexelWorldSize:0.#####}");
+
                 ImGui.TableNextColumn();
                 Vector3 center = light.GetCascadeCenter(i);
                 ImGui.Text($"({center.X:F1}, {center.Y:F1}, {center.Z:F1})");
@@ -197,6 +300,9 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
                 ImGui.TableNextColumn();
                 Vector3 he = light.GetCascadeHalfExtents(i);
                 ImGui.Text($"({he.X:F1}, {he.Y:F1}, {he.Z:F1})");
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(bias.HasManualOverride ? "Manual" : "Auto");
             }
 
             ImGui.EndTable();

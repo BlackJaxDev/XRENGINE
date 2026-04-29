@@ -315,7 +315,7 @@ public static partial class EditorUnitTests
             public TranslationXYZ NoiseVelocity { get; set; } = new() { X = 0.0f, Y = 0.03f, Z = 0.01f };
             public float NoiseThreshold { get; set; } = 0.35f;
             public float NoiseAmount { get; set; } = 0.5f;
-            public float EdgeFade { get; set; } = 4.0f;
+            public float EdgeFade { get; set; } = 0.0f;
             public float Anisotropy { get; set; } = 0.2f;
             public float LightContribution { get; set; } = 1.0f;
             public int Priority { get; set; } = 0;

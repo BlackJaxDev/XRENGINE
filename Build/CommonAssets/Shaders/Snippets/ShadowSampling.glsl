@@ -39,6 +39,445 @@ int XRENGINE_ResolveContactShadowSampleCount(int requestedSamples, float viewDep
     return max(1, int(ceil(float(clampedSamples) * depthScale)));
 }
 
+float XRENGINE_ResolveContactShadowDepth(float depth, int depthMode)
+{
+    return depthMode == 1 ? (1.0 - depth) : depth;
+}
+
+vec3 XRENGINE_ContactShadowWorldPosFromDepth(
+    float depth,
+    vec2 uv,
+    mat4 inverseProjMatrix,
+    mat4 inverseViewMatrix,
+    int depthMode)
+{
+    float resolvedDepth = XRENGINE_ResolveContactShadowDepth(depth, depthMode);
+    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, resolvedDepth * 2.0 - 1.0, 1.0);
+    vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
+    viewSpacePosition /= viewSpacePosition.w;
+    return (inverseViewMatrix * viewSpacePosition).xyz;
+}
+
+float XRENGINE_ContactShadowScreenEdgeFade(vec2 uv)
+{
+    vec2 edge = min(uv, 1.0 - uv);
+    return smoothstep(0.0, 0.025, min(edge.x, edge.y));
+}
+
+vec3 XRENGINE_DecodeContactShadowNormal(vec2 encoded)
+{
+    vec2 f = encoded * 2.0 - 1.0;
+    vec3 n = vec3(f, 1.0 - abs(f.x) - abs(f.y));
+    float t = clamp(-n.z, 0.0, 1.0);
+    n.xy -= vec2(n.x >= 0.0 ? t : -t, n.y >= 0.0 ? t : -t);
+    return normalize(n);
+}
+
+float XRENGINE_EvaluateContactShadowScreenSpaceHit(
+    float sceneDepth,
+    vec2 sampleUv,
+    vec3 rayOriginWS,
+    vec3 lightDirWS,
+    vec3 receiverNormalWS,
+    vec3 sceneNormalWS,
+    bool useSceneNormal,
+    vec3 samplePosWS,
+    float travel,
+    float stepSize,
+    float contactDistance,
+    float contactThickness,
+    float compareBias,
+    mat4 viewMatrix,
+    mat4 inverseProjMatrix,
+    mat4 inverseViewMatrix,
+    int depthMode)
+{
+    float resolvedSceneDepth = XRENGINE_ResolveContactShadowDepth(sceneDepth, depthMode);
+    if (resolvedSceneDepth >= 0.999999)
+        return 0.0;
+
+    vec3 scenePosWS = XRENGINE_ContactShadowWorldPosFromDepth(
+        sceneDepth,
+        sampleUv,
+        inverseProjMatrix,
+        inverseViewMatrix,
+        depthMode);
+
+    float sampleViewDepth = abs((viewMatrix * vec4(samplePosWS, 1.0)).z);
+    float sceneViewDepth = abs((viewMatrix * vec4(scenePosWS, 1.0)).z);
+    float depthDelta = sampleViewDepth - sceneViewDepth;
+
+    float contactBias = max(min(compareBias, contactDistance * 0.05), contactDistance * 0.001);
+    if (depthDelta <= contactBias)
+        return 0.0;
+
+    vec3 toScene = scenePosWS - rayOriginWS;
+    float alongRay = dot(toScene, lightDirWS);
+    if (alongRay <= contactBias || alongRay > contactDistance || alongRay > travel + stepSize)
+        return 0.0;
+
+    vec3 closestPointWS = rayOriginWS + lightDirWS * alongRay;
+    float rayDistance = length(scenePosWS - closestPointWS);
+    float thickness = max(max(alongRay * contactThickness, contactDistance * 0.01), contactBias * 2.0);
+    if (rayDistance > thickness)
+        return 0.0;
+
+    float rayWeight = 1.0 - smoothstep(thickness * 0.35, thickness, rayDistance);
+    float distanceWeight = 1.0 - clamp(alongRay / contactDistance, 0.0, 1.0);
+    float normalWeight = 1.0;
+    if (useSceneNormal)
+    {
+        float sameSurfaceNormal = smoothstep(0.92, 0.995, dot(normalize(receiverNormalWS), normalize(sceneNormalWS)));
+        float shallowHit = 1.0 - smoothstep(contactBias * 2.0, max(thickness, contactBias * 3.0), depthDelta);
+        normalWeight = mix(1.0, 0.35, sameSurfaceNormal * shallowHit);
+    }
+
+    return rayWeight * distanceWeight * normalWeight * XRENGINE_ContactShadowScreenEdgeFade(sampleUv);
+}
+
+float XRENGINE_SampleContactShadowScreenSpace(
+    sampler2D sceneDepth,
+    vec2 screenSize,
+    mat4 viewMatrix,
+    mat4 inverseProjMatrix,
+    mat4 inverseViewMatrix,
+    mat4 viewProjectionMatrix,
+    int depthMode,
+    vec3 fragPosWS,
+    vec3 normalWS,
+    vec3 lightDirWS,
+    float receiverOffset,
+    float compareBias,
+    float contactDistance,
+    int contactSamples,
+    float contactThickness,
+    float contactFadeStart,
+    float contactFadeEnd,
+    float contactNormalOffset,
+    float jitterStrength,
+    float viewDepth)
+{
+    if (contactDistance <= 0.0 || contactSamples <= 0)
+        return 1.0;
+
+    vec3 normal = normalize(normalWS);
+    vec3 lightDir = normalize(lightDirWS);
+    float fade = contactFadeEnd > contactFadeStart
+        ? 1.0 - smoothstep(contactFadeStart, contactFadeEnd, viewDepth)
+        : 1.0;
+    fade *= smoothstep(0.05, 0.35, max(dot(normal, lightDir), 0.0));
+    if (fade <= 0.0)
+        return 1.0;
+
+    int clampedSamples = clamp(contactSamples, 1, 32);
+    float stepSize = contactDistance / float(clampedSamples);
+    float normalOffset = max(contactNormalOffset, min(max(receiverOffset, compareBias * 2.0), contactDistance * 0.25));
+    vec3 rayOriginWS = fragPosWS + normal * normalOffset;
+    float noise = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy);
+    vec2 texelSize = 1.0 / max(screenSize, vec2(1.0));
+
+    float occlusion = 0.0;
+    for (int i = 0; i < 32; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        float travel = (float(i) + 0.5 + (noise - 0.5) * jitterStrength) * stepSize;
+        travel = clamp(travel, stepSize * 0.25, contactDistance);
+        vec3 samplePosWS = rayOriginWS + lightDir * travel;
+        vec4 sampleClip = viewProjectionMatrix * vec4(samplePosWS, 1.0);
+        if (sampleClip.w <= 0.0001)
+            continue;
+
+        vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
+        vec2 sampleUv = sampleNdc.xy * 0.5 + 0.5;
+        if (sampleUv.x <= 0.0 || sampleUv.x >= 1.0 || sampleUv.y <= 0.0 || sampleUv.y >= 1.0)
+            continue;
+
+        float sceneDepthValue = texture(sceneDepth, clamp(sampleUv, texelSize * 0.5, 1.0 - texelSize * 0.5)).r;
+        occlusion = max(occlusion, XRENGINE_EvaluateContactShadowScreenSpaceHit(
+            sceneDepthValue,
+            sampleUv,
+            rayOriginWS,
+            lightDir,
+            normal,
+            vec3(0.0),
+            false,
+            samplePosWS,
+            travel,
+            stepSize,
+            contactDistance,
+            contactThickness,
+            compareBias,
+            viewMatrix,
+            inverseProjMatrix,
+            inverseViewMatrix,
+            depthMode));
+    }
+
+    return 1.0 - occlusion * fade;
+}
+
+float XRENGINE_SampleContactShadowScreenSpace(
+    sampler2D sceneDepth,
+    sampler2D sceneNormal,
+    vec2 screenSize,
+    mat4 viewMatrix,
+    mat4 inverseProjMatrix,
+    mat4 inverseViewMatrix,
+    mat4 viewProjectionMatrix,
+    int depthMode,
+    vec3 fragPosWS,
+    vec3 normalWS,
+    vec3 lightDirWS,
+    float receiverOffset,
+    float compareBias,
+    float contactDistance,
+    int contactSamples,
+    float contactThickness,
+    float contactFadeStart,
+    float contactFadeEnd,
+    float contactNormalOffset,
+    float jitterStrength,
+    float viewDepth)
+{
+    if (contactDistance <= 0.0 || contactSamples <= 0)
+        return 1.0;
+
+    vec3 normal = normalize(normalWS);
+    vec3 lightDir = normalize(lightDirWS);
+    float fade = contactFadeEnd > contactFadeStart
+        ? 1.0 - smoothstep(contactFadeStart, contactFadeEnd, viewDepth)
+        : 1.0;
+    fade *= smoothstep(0.05, 0.35, max(dot(normal, lightDir), 0.0));
+    if (fade <= 0.0)
+        return 1.0;
+
+    int clampedSamples = clamp(contactSamples, 1, 32);
+    float stepSize = contactDistance / float(clampedSamples);
+    float normalOffset = max(contactNormalOffset, min(max(receiverOffset, compareBias * 2.0), contactDistance * 0.25));
+    vec3 rayOriginWS = fragPosWS + normal * normalOffset;
+    float noise = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy);
+    vec2 texelSize = 1.0 / max(screenSize, vec2(1.0));
+
+    float occlusion = 0.0;
+    for (int i = 0; i < 32; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        float travel = (float(i) + 0.5 + (noise - 0.5) * jitterStrength) * stepSize;
+        travel = clamp(travel, stepSize * 0.25, contactDistance);
+        vec3 samplePosWS = rayOriginWS + lightDir * travel;
+        vec4 sampleClip = viewProjectionMatrix * vec4(samplePosWS, 1.0);
+        if (sampleClip.w <= 0.0001)
+            continue;
+
+        vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
+        vec2 sampleUv = sampleNdc.xy * 0.5 + 0.5;
+        if (sampleUv.x <= 0.0 || sampleUv.x >= 1.0 || sampleUv.y <= 0.0 || sampleUv.y >= 1.0)
+            continue;
+
+        vec2 sampleUvClamped = clamp(sampleUv, texelSize * 0.5, 1.0 - texelSize * 0.5);
+        float sceneDepthValue = texture(sceneDepth, sampleUvClamped).r;
+        vec3 sceneNormalWS = XRENGINE_DecodeContactShadowNormal(texture(sceneNormal, sampleUvClamped).rg);
+        occlusion = max(occlusion, XRENGINE_EvaluateContactShadowScreenSpaceHit(
+            sceneDepthValue,
+            sampleUv,
+            rayOriginWS,
+            lightDir,
+            normal,
+            sceneNormalWS,
+            true,
+            samplePosWS,
+            travel,
+            stepSize,
+            contactDistance,
+            contactThickness,
+            compareBias,
+            viewMatrix,
+            inverseProjMatrix,
+            inverseViewMatrix,
+            depthMode));
+    }
+
+    return 1.0 - occlusion * fade;
+}
+
+float XRENGINE_SampleContactShadowScreenSpace(
+    sampler2DArray sceneDepth,
+    sampler2DArray sceneNormal,
+    float layer,
+    vec2 screenSize,
+    mat4 viewMatrix,
+    mat4 inverseProjMatrix,
+    mat4 inverseViewMatrix,
+    mat4 viewProjectionMatrix,
+    int depthMode,
+    vec3 fragPosWS,
+    vec3 normalWS,
+    vec3 lightDirWS,
+    float receiverOffset,
+    float compareBias,
+    float contactDistance,
+    int contactSamples,
+    float contactThickness,
+    float contactFadeStart,
+    float contactFadeEnd,
+    float contactNormalOffset,
+    float jitterStrength,
+    float viewDepth)
+{
+    if (contactDistance <= 0.0 || contactSamples <= 0)
+        return 1.0;
+
+    vec3 normal = normalize(normalWS);
+    vec3 lightDir = normalize(lightDirWS);
+    float fade = contactFadeEnd > contactFadeStart
+        ? 1.0 - smoothstep(contactFadeStart, contactFadeEnd, viewDepth)
+        : 1.0;
+    fade *= smoothstep(0.05, 0.35, max(dot(normal, lightDir), 0.0));
+    if (fade <= 0.0)
+        return 1.0;
+
+    int clampedSamples = clamp(contactSamples, 1, 32);
+    float stepSize = contactDistance / float(clampedSamples);
+    float normalOffset = max(contactNormalOffset, min(max(receiverOffset, compareBias * 2.0), contactDistance * 0.25));
+    vec3 rayOriginWS = fragPosWS + normal * normalOffset;
+    float noise = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy);
+    vec2 texelSize = 1.0 / max(screenSize, vec2(1.0));
+
+    float occlusion = 0.0;
+    for (int i = 0; i < 32; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        float travel = (float(i) + 0.5 + (noise - 0.5) * jitterStrength) * stepSize;
+        travel = clamp(travel, stepSize * 0.25, contactDistance);
+        vec3 samplePosWS = rayOriginWS + lightDir * travel;
+        vec4 sampleClip = viewProjectionMatrix * vec4(samplePosWS, 1.0);
+        if (sampleClip.w <= 0.0001)
+            continue;
+
+        vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
+        vec2 sampleUv = sampleNdc.xy * 0.5 + 0.5;
+        if (sampleUv.x <= 0.0 || sampleUv.x >= 1.0 || sampleUv.y <= 0.0 || sampleUv.y >= 1.0)
+            continue;
+
+        vec2 sampleUvClamped = clamp(sampleUv, texelSize * 0.5, 1.0 - texelSize * 0.5);
+        vec3 sampleCoord = vec3(sampleUvClamped, layer);
+        float sceneDepthValue = texture(sceneDepth, sampleCoord).r;
+        vec3 sceneNormalWS = XRENGINE_DecodeContactShadowNormal(texture(sceneNormal, sampleCoord).rg);
+        occlusion = max(occlusion, XRENGINE_EvaluateContactShadowScreenSpaceHit(
+            sceneDepthValue,
+            sampleUv,
+            rayOriginWS,
+            lightDir,
+            normal,
+            sceneNormalWS,
+            true,
+            samplePosWS,
+            travel,
+            stepSize,
+            contactDistance,
+            contactThickness,
+            compareBias,
+            viewMatrix,
+            inverseProjMatrix,
+            inverseViewMatrix,
+            depthMode));
+    }
+
+    return 1.0 - occlusion * fade;
+}
+
+float XRENGINE_SampleContactShadowScreenSpace(
+    sampler2DMS sceneDepth,
+    int sampleId,
+    vec2 screenSize,
+    mat4 viewMatrix,
+    mat4 inverseProjMatrix,
+    mat4 inverseViewMatrix,
+    mat4 viewProjectionMatrix,
+    int depthMode,
+    vec3 fragPosWS,
+    vec3 normalWS,
+    vec3 lightDirWS,
+    float receiverOffset,
+    float compareBias,
+    float contactDistance,
+    int contactSamples,
+    float contactThickness,
+    float contactFadeStart,
+    float contactFadeEnd,
+    float contactNormalOffset,
+    float jitterStrength,
+    float viewDepth)
+{
+    if (contactDistance <= 0.0 || contactSamples <= 0)
+        return 1.0;
+
+    vec3 normal = normalize(normalWS);
+    vec3 lightDir = normalize(lightDirWS);
+    float fade = contactFadeEnd > contactFadeStart
+        ? 1.0 - smoothstep(contactFadeStart, contactFadeEnd, viewDepth)
+        : 1.0;
+    fade *= smoothstep(0.05, 0.35, max(dot(normal, lightDir), 0.0));
+    if (fade <= 0.0)
+        return 1.0;
+
+    int clampedSamples = clamp(contactSamples, 1, 32);
+    float stepSize = contactDistance / float(clampedSamples);
+    float normalOffset = max(contactNormalOffset, min(max(receiverOffset, compareBias * 2.0), contactDistance * 0.25));
+    vec3 rayOriginWS = fragPosWS + normal * normalOffset;
+    float noise = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy);
+    ivec2 depthSize = textureSize(sceneDepth);
+    vec2 safeScreenSize = max(screenSize, vec2(1.0));
+
+    float occlusion = 0.0;
+    for (int i = 0; i < 32; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        float travel = (float(i) + 0.5 + (noise - 0.5) * jitterStrength) * stepSize;
+        travel = clamp(travel, stepSize * 0.25, contactDistance);
+        vec3 samplePosWS = rayOriginWS + lightDir * travel;
+        vec4 sampleClip = viewProjectionMatrix * vec4(samplePosWS, 1.0);
+        if (sampleClip.w <= 0.0001)
+            continue;
+
+        vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
+        vec2 sampleUv = sampleNdc.xy * 0.5 + 0.5;
+        if (sampleUv.x <= 0.0 || sampleUv.x >= 1.0 || sampleUv.y <= 0.0 || sampleUv.y >= 1.0)
+            continue;
+
+        ivec2 sampleCoord = ivec2(clamp(floor(sampleUv * safeScreenSize), vec2(0.0), vec2(depthSize - ivec2(1))));
+        float sceneDepthValue = texelFetch(sceneDepth, sampleCoord, sampleId).r;
+        occlusion = max(occlusion, XRENGINE_EvaluateContactShadowScreenSpaceHit(
+            sceneDepthValue,
+            sampleUv,
+            rayOriginWS,
+            lightDir,
+            normal,
+            vec3(0.0),
+            false,
+            samplePosWS,
+            travel,
+            stepSize,
+            contactDistance,
+            contactThickness,
+            compareBias,
+            viewMatrix,
+            inverseProjMatrix,
+            inverseViewMatrix,
+            depthMode));
+    }
+
+    return 1.0 - occlusion * fade;
+}
+
 float XRENGINE_SampleShadowMapPCF(sampler2D shadowMap, vec3 shadowCoord, float bias, int kernelSize)
 {
     float shadow = 0.0;

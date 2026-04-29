@@ -293,6 +293,10 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private Sphere _influenceVolume;
 
+        public override bool SupportsLightRadiusContactHardening => true;
+
+        protected override float ContactHardeningLightRadius => Radius;
+
         public PointLightComponent()
             : this(100.0f, 1.0f) { }
         public PointLightComponent(float radius, float brightness)

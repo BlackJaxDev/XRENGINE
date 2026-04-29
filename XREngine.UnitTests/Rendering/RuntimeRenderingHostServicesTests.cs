@@ -311,6 +311,9 @@ public sealed class RuntimeRenderingHostServicesTests
         public void EnqueueRenderThreadCoroutine(Func<bool> task)
             => task();
 
+        public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason)
+            => task();
+
         public IDisposable? PushTransformId(uint transformId)
             => null;
 

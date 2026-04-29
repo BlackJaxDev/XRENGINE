@@ -25,6 +25,8 @@ public static partial class EditorImGuiUI
     /// </summary>
     private static void DrawToolbar()
     {
+        BeginToolbarIconFrame();
+
         var viewport = ImGui.GetMainViewport();
         float menuBarHeight = ImGui.GetFrameHeight();
         

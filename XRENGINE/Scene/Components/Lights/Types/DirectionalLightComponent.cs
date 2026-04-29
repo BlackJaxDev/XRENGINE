@@ -29,18 +29,27 @@ namespace XREngine.Components.Lights
             _cascadeAabbView = new(this);
 
             // Match the tuned runtime defaults used for live shadow-map rendering.
+            SetShadowMapResolution(2048u, 2048u);
             ShadowExponentBase = 0.035f;
             ShadowExponent = 1.221f;
             ShadowMinBias = 0.00001f;
             ShadowMaxBias = 0.004f;
-            BlockerSamples = 16;
-            FilterSamples = 16;
+            BlockerSamples = 8;
+            FilterSamples = 8;
             FilterRadius = 0.0012f;
             BlockerSearchRadius = 0.01f;
             MinPenumbra = 0.001f;
             MaxPenumbra = 0.015f;
             SoftShadowMode = ESoftShadowMode.ContactHardeningPcss;
             LightSourceRadius = 1.2f;
+            EnableContactShadows = true;
+            ContactShadowDistance = 1.0f;
+            ContactShadowSamples = 16;
+            ContactShadowThickness = 2.0f;
+            ContactShadowFadeStart = 10.0f;
+            ContactShadowFadeEnd = 40.0f;
+            ContactShadowNormalOffset = 0.0f;
+            ContactShadowJitterStrength = 1.0f;
         }
 
         /// <summary>
@@ -177,14 +186,27 @@ namespace XREngine.Components.Lights
 
             Span<float> cascadeSplits = stackalloc float[MaxCascadeRenderCount];
             Span<float> cascadeBlendWidths = stackalloc float[MaxCascadeRenderCount];
+            Span<float> cascadeBiasMins = stackalloc float[MaxCascadeRenderCount];
+            Span<float> cascadeBiasMaxes = stackalloc float[MaxCascadeRenderCount];
+            Span<float> cascadeReceiverOffsets = stackalloc float[MaxCascadeRenderCount];
             Span<Matrix4x4> cascadeMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
-            CopyPublishedCascadeUniformData(cascadeSplits, cascadeBlendWidths, cascadeMatrices, out int cascadeCount);
+            CopyPublishedCascadeUniformData(
+                cascadeSplits,
+                cascadeBlendWidths,
+                cascadeBiasMins,
+                cascadeBiasMaxes,
+                cascadeReceiverOffsets,
+                cascadeMatrices,
+                out int cascadeCount);
 
             program.Uniform($"{flatPrefix}CascadeCount", cascadeCount);
             for (int i = 0; i < MaxCascadeRenderCount; i++)
             {
                 program.Uniform($"{flatPrefix}CascadeSplits[{i}]", cascadeSplits[i]);
                 program.Uniform($"{flatPrefix}CascadeBlendWidths[{i}]", cascadeBlendWidths[i]);
+                program.Uniform($"{flatPrefix}CascadeBiasMin[{i}]", cascadeBiasMins[i]);
+                program.Uniform($"{flatPrefix}CascadeBiasMax[{i}]", cascadeBiasMaxes[i]);
+                program.Uniform($"{flatPrefix}CascadeReceiverOffsets[{i}]", cascadeReceiverOffsets[i]);
                 program.Uniform($"{flatPrefix}CascadeMatrices[{i}]", cascadeMatrices[i]);
             }
 

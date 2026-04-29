@@ -20,6 +20,9 @@ struct DirLight
     mat4 WorldToLightSpaceMatrix;
     float CascadeSplits[XRENGINE_MAX_CASCADES];
     float CascadeBlendWidths[XRENGINE_MAX_CASCADES];
+    float CascadeBiasMin[XRENGINE_MAX_CASCADES];
+    float CascadeBiasMax[XRENGINE_MAX_CASCADES];
+    float CascadeReceiverOffsets[XRENGINE_MAX_CASCADES];
     mat4 CascadeMatrices[XRENGINE_MAX_CASCADES];
     int CascadeCount;
 };

@@ -39,6 +39,40 @@ public static class ShadowCasterVariantFactory
         return variant;
     }
 
+    public static XRMaterial? CreatePointLightMaterialVariant(XRMaterial sourceMaterial, bool useGeometryShader)
+    {
+        ArgumentNullException.ThrowIfNull(sourceMaterial);
+
+        XRShader? fragmentShader = sourceMaterial.FragmentShaders.FirstOrDefault();
+        if (fragmentShader is null)
+            return null;
+
+        XRShader? fragmentVariantShader = ShaderHelper.GetPointShadowCasterForwardVariant(fragmentShader);
+        if (fragmentVariantShader is null)
+            return null;
+
+        List<XRShader> shaders = [];
+        if (useGeometryShader)
+            shaders.Add(XRShader.EngineShader("PointLightShadowDepth.gs", EShaderType.Geometry));
+
+        shaders.Add(fragmentVariantShader);
+
+        XRMaterial variant = new(shaders)
+        {
+            Parameters = [],
+            Textures = [],
+            RenderPass = sourceMaterial.RenderPass,
+            BillboardMode = sourceMaterial.BillboardMode,
+            AlphaCutoff = sourceMaterial.AlphaCutoff,
+            TransparencyMode = sourceMaterial.TransparencyMode,
+            TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
+            TransparentSortPriority = sourceMaterial.TransparentSortPriority,
+            ShadowBindingSourceMaterial = sourceMaterial,
+            RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
+        };
+        return variant;
+    }
+
     private static RenderingParameters CreateRenderOptions(RenderingParameters? source)
         => new()
         {

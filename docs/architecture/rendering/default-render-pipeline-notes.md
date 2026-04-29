@@ -194,33 +194,36 @@ The shared `VolumetricFogSettings` constructor defaults and both pipeline schema
 
 ## 12. Forward Lighting: Shadow Uniform Binding
 
-**Rule:** Primary directional shadow tuning uniforms in `ForwardLighting.glsl` (`ShadowBase`, `ShadowMult`, `ShadowBias*`, `ShadowBlockerSamples`, `ShadowFilterSamples`, `ShadowFilterRadius`, `ShadowBlockerSearchRadius`, penumbra clamps, plus contact-shadow controls) are **global**, not per-light array fields.
+**Rule:** Primary directional shadow tuning uniforms in `ForwardLighting.glsl` (`ShadowBase`, `ShadowMult`, `ShadowBias*`, `ShadowBlockerSamples`, `ShadowFilterSamples`, `ShadowFilterRadius`, `ShadowBlockerSearchRadius`, penumbra clamps, plus contact-shadow controls) are **global base settings**, not per-light array fields.
 
 `Lights3DCollection.SetForwardLightingUniforms` must bind these globals from `DynamicDirectionalLights[0]`. Without this, the forward path silently uses shader-literal defaults even when per-light values differ.
+
+Cascaded directional shadows publish per-cascade effective bias values on the directional light struct (`CascadeBiasMin`, `CascadeBiasMax`, `CascadeReceiverOffsets`). Automatic values are derived from the light's base bias settings plus cascade texel size, split distance, light-space depth span, and shadow-map resolution; manual cascade overrides replace those resolved values for that cascade only.
 
 Local point and spot lights use per-light uniform arrays for the same tuning values. Keep those arrays in sync with `LightComponent.SetUniforms(...)` whenever a new shadow control is added.
 
 ---
 
-## 13. Contact-Shadow Helper Parity
+## 13. Screen-Space Contact Shadows
 
-**Rule:** Deferred directional and spot lighting must use the shared contact-shadow helpers in `ShadowSampling.glsl`, the same as `ForwardLighting.glsl`. Do not keep separate screen-space contact-shadow marchers in the deferred shaders.
+**Rule:** Deferred and forward directional, spot, and point lighting use the shared screen-space contact-shadow helper in `ShadowSampling.glsl` when a full-resolution scene depth source is available. The normal shadow-map sample still provides the large-scale shadow term, but the short-range contact multiplier is resolved from screen-space depth instead of the directional cascade, spot map, or point cubemap.
 
 ### What went wrong
 
-`DeferredLightingDir.fs` and `DeferredLightingSpot.fs` had their own contact-shadow ray march against the current frame depth buffer. That path did not use the shared receiver normal offset, compare bias, or proportional thickness rejection already used by the forward path, so fully opaque deferred receivers could self-occlude into stable black speckle while the forward path stayed clean.
+The old deferred screen-space contact-shadow march did not use a shared receiver normal offset, compare-bias clamp, ray-distance thickness test, or screen-edge fade, so fully opaque deferred receivers could self-occlude into stable black speckle. The later light-space helper fixed those artifacts, but its quality was capped by the shadow map or cascade texel density and could look lower resolution than the regular filtered shadow.
 
 ### Fix
 
-- Route deferred directional and spot contact shadows through `XRENGINE_SampleContactShadow2D` / `XRENGINE_SampleContactShadowArray`, and point-light contact shadows through `XRENGINE_SampleContactShadowCube`.
+- Route deferred directional, spot, and point contact shadows through `XRENGINE_SampleContactShadowScreenSpace` using G-buffer depth.
+- Route forward directional, spot, and point contact shadows through `XRENGINE_SampleForwardContactShadowScreenSpace` when `ForwardDepthPrePassEnabled` has produced shared `DepthView` and `Normal` targets. Mono uses 2D samplers; stereo uses layered array samplers selected by the forward view index. Forward falls back to the older light-space contact helpers when those pre-pass textures are unavailable.
+- Keep the screen-space march in the shared snippet, not per-light local shader code, so all light types use the same bias clamp, normal offset, ray-thickness rejection, MSAA depth sampling, screen-edge fade, and optional pre-pass normal rejection.
 - Reuse `XRENGINE_ResolveContactShadowSampleCount` so forward and deferred scale contact-shadow step counts identically.
-- Pass the same receiver offset and compare bias inputs used by the forward path (`ShadowBiasMax` plus the angle-scaled shadow bias).
 
 ---
 
 ## 14. Fallback Sampler Unit Collisions
 
-**Rule:** Forward-lighting mesh draws reserve many fixed sampler units (env/refl 12–13, AO 14 & 25, directional shadow 15–16, point shadows 17–20, spot shadows 21–24). Fallback sampler binding must allocate from genuinely unused units, not hard-coded offsets.
+**Rule:** Forward-lighting mesh draws reserve many fixed sampler units (env/refl 12–13, AO 14 & 25, directional shadow 15–16, point shadows 17–20, spot shadows 21–24, forward contact depth/normal 26–27, forward contact depth/normal arrays 28–29). Fallback sampler binding must allocate from genuinely unused units, not hard-coded offsets.
 
 ---
 
@@ -314,3 +317,21 @@ The temporal resolve already used motion vectors, depth rejection, neighborhood 
 - `Short-Range Contact Shadows` are separate from contact-hardening soft shadows. They are multiplied with the normal shadow-map result for directional, spot, and point lights.
 
 Contact shadows expose distance, sample count, thickness, fade range, normal offset, and jitter strength. Use the fade range to limit near-field detail work to the camera distances where the extra ray march is visible.
+
+Directional lights default to short-range contact shadows enabled with distance `1.0`, `16` samples, thickness `2.0`, fade range `10` to `40`, zero normal offset, and full jitter.
+
+Spot lights default to `512x512` shadow maps, PCSS/contact-hardening filtering, `8` blocker samples, `8` filter samples, blocker-search radius `0.1`, penumbra clamp `0.0002` to `0.05`, source radius `0.1`, and short-range contact shadows with distance `0.1`, `16` samples, thickness `1.0`, fade range `10` to `40`, normal offset `0.036`, and full jitter.
+
+Point and spot lights enable `Auto From Light Radius` by default in the PCSS/contact-hardening inspector. Point lights derive from their attenuation radius, while spot lights derive from the outer cone radius at their configured distance. The automatic source radius is capped at `0.25` to preserve hard contact detail, and the manual source-radius value is preserved and used again if the toggle is disabled.
+
+---
+
+## 21. Forward Depth-Normal Transform IDs
+
+**Rule:** The shared forward depth-normal prepass must update depth, normal, and `TransformId` for the same forward surface.
+
+The prepass uses a compact local color layout: `Normal` writes to color attachment 0 and `TransformId` writes to color attachment 1. This intentionally differs from the deferred GBuffer shader convention where `TransformId` is color attachment 3; the merge FBO still attaches the main `TransformId` texture, just at the prepass-local slot.
+
+Keep `ForwardDepthPrePassMergeFBO` bound with color/depth/stencil clears disabled so deferred IDs survive where forward geometry does not draw. The dedicated `ForwardDepthPrePassFBO` must use its own `ForwardPrePassTransformId` texture when debug-only ID output is needed, because that FBO is allowed to clear before rendering.
+
+Generated vertex shaders are allowed to trim `FragTransformId` for ordinary passes, but the forward depth-normal prepass must push `RequireGeneratedVertexTransformId`. Without that render-state requirement, a generated vertex program cached for a normal forward material can be reused with a depth-normal fragment variant that consumes `FragTransformId`, causing pipeline interface mismatches.

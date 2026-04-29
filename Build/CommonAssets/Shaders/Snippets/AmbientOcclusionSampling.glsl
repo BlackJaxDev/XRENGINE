@@ -5,8 +5,11 @@ layout(binding = 25) uniform sampler2DArray AmbientOcclusionTextureArray;
 uniform bool AmbientOcclusionEnabled;
 uniform bool AmbientOcclusionArrayEnabled;
 uniform float AmbientOcclusionPower;
+#ifndef XRENGINE_SCREEN_SIZE_UNIFORMS
+#define XRENGINE_SCREEN_SIZE_UNIFORMS
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+#endif
 #ifndef XRENGINE_SCREEN_ORIGIN_UNIFORM
 #define XRENGINE_SCREEN_ORIGIN_UNIFORM
 uniform vec2 ScreenOrigin;

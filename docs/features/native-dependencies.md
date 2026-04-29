@@ -156,7 +156,24 @@ This includes local enablement for features such as:
 - Streamline
 - ReSTIR GI bridge binaries
 
-Place the required files under the appropriate `ThirdParty/NVIDIA/` folders. See the README files under that tree for exact expectations.
+For DLSS through Streamline, download the official NVIDIA Streamline/DLSS SDK
+from NVIDIA, then copy the production x64 runtime files into
+`ThirdParty/NVIDIA/SDK/win-x64/`:
+
+- `sl.interposer.dll`
+- `sl.common.dll`
+- `sl.dlss.dll`
+- `nvngx_dlss.dll`
+- any accompanying `*.license.txt` files
+
+Rebuild the editor/app afterward so the build copies those files next to the
+executable. Use NVIDIA-provided SDK packages rather than third-party DLL
+download sites, and do not commit proprietary NVIDIA binaries. See the README
+files under `ThirdParty/NVIDIA/` for folder-specific expectations.
+
+When these runtime DLLs are missing, the ImGui settings inspector shows a red
+`!` beside DLSS settings. Hover it for the exact reason those settings currently
+have no effect.
 
 ### OVRLipSync
 

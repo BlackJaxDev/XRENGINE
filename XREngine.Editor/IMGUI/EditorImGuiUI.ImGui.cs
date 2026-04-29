@@ -43,6 +43,8 @@ public static partial class EditorImGuiUI
         private static readonly Dictionary<Type, IXRAssetInspector?> _assetInspectorCache = new();
         private static readonly Dictionary<string, MethodInfo?> _assetContextMenuHandlerCache = new(StringComparer.Ordinal);
         private static readonly Dictionary<Type, IXRTransformEditor?> _transformEditorCache = new();
+        private const string PreciseInspectorFloatFormat = "%.9f";
+        private const ImGuiSliderFlags PreciseInspectorDragFlags = ImGuiSliderFlags.NoRoundToFormat;
         private static readonly SceneNode.ETransformSetFlags TransformTypeChangeFlags =
             SceneNode.ETransformSetFlags.RetainCurrentParent |
             SceneNode.ETransformSetFlags.RetainWorldTransform |
@@ -639,9 +641,9 @@ public static partial class EditorImGuiUI
 
             // Tool windows
             using (Engine.Profiler.Start("UI.Tools.ShaderEditorWindow.Render"))
-                UI.Tools.ShaderEditorWindow.Instance.Render();
+                UI.Tools.ShaderEditorWindow.RenderIfOpen();
             using (Engine.Profiler.Start("UI.Tools.ShaderEditorWindow.RenderDialogs"))
-                UI.Tools.ShaderEditorWindow.Instance.RenderDialogs();
+                UI.Tools.ShaderEditorWindow.RenderDialogsIfOpen();
             using (Engine.Profiler.Start("UI.Tools.McpAssistantWindow.Render"))
                 UI.Tools.McpAssistantWindow.Instance.Render();
 

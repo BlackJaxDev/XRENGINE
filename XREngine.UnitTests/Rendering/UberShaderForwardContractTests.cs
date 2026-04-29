@@ -60,16 +60,35 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("#pragma snippet \"ForwardLighting\"");
         source.ShouldContain("#pragma snippet \"AmbientOcclusionSampling\"");
         source.ShouldContain("XRENGINE_CalculateAmbientPbr");
-        source.ShouldContain("XRENGINE_CalcForwardPlusPointLight");
-        source.ShouldContain("XRENGINE_CalcPointLight(i, PointLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0)");
-        source.ShouldContain("XRENGINE_CalcSpotLight(i, SpotLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0)");
+        source.ShouldContain("calculateForwardPlusPointLightPbr");
+        source.ShouldContain("calculatePointLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, PointLights[i])");
+        source.ShouldContain("calculateSpotLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, SpotLights[i])");
         source.ShouldContain("XRENGINE_ReadShadowMapDir");
+        source.ShouldContain("int getForwardPlusVisibleLightBaseIndex()");
+        source.ShouldContain("ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;");
+        source.ShouldContain("tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));");
+        source.ShouldContain("XRENGINE_GetForwardViewIndex() * (tileCountX * tileCountY)");
+        source.ShouldNotContain("ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;");
 
         uniforms.ShouldContain("uniform float RenderTime;");
         uniforms.ShouldContain("#define u_Time RenderTime");
         uniforms.ShouldNotContain("uniform float Time;");
         uniforms.ShouldNotContain("uniform float ScreenWidth;");
         uniforms.ShouldNotContain("uniform float ScreenHeight;");
+    }
+
+    [Test]
+    public void UberShaderFragment_LocalShadowVisibilityUsesGeometricReceiverNormal()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+
+        source.ShouldContain("vec3 shadowNormal = mesh.vertexNormal;");
+        source.ShouldContain("XRENGINE_ReadShadowMapPoint(lightIndex, light, shadowNormal, mesh.worldPos)");
+        source.ShouldContain("XRENGINE_ReadShadowMapSpot(lightIndex, light, shadowNormal, mesh.worldPos, lightDir)");
+        source.ShouldContain("XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], mesh.vertexNormal, mesh.worldPos)");
+        source.ShouldContain("XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], mesh.vertexNormal, mesh.worldPos, lightToPosN)");
+        source.ShouldNotContain("XRENGINE_ReadShadowMapPoint(lightIndex, light, normal, mesh.worldPos)");
+        source.ShouldNotContain("XRENGINE_ReadShadowMapSpot(lightIndex, light, normal, mesh.worldPos, lightDir)");
     }
 
     [Test]

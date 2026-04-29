@@ -1,5 +1,10 @@
 #version 450
 
+#ifndef XRENGINE_DEPTH_MODE_UNIFORM
+#define XRENGINE_DEPTH_MODE_UNIFORM
+uniform int DepthMode;
+#endif
+
 #pragma snippet "NormalEncoding"
 #pragma snippet "LightAttenuation"
 #pragma snippet "ShadowSampling"
@@ -25,9 +30,11 @@ uniform samplerCube ShadowMap; //Point Shadow Map
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
+uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
+uniform mat4 ViewProjectionMatrix;
 uniform float ShadowNearPlaneDist = 0.1f;
 uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
@@ -64,6 +71,54 @@ struct PointLight
     float Brightness;
 };
 uniform PointLight LightData;
+
+int XRENGINE_ResolveContactShadowSampleCount(int requestedSamples, float viewDepth, float contactDistance);
+#ifdef XRENGINE_MSAA_DEFERRED
+float XRENGINE_SampleContactShadowScreenSpace(
+	sampler2DMS sceneDepth,
+	int sampleId,
+	vec2 screenSize,
+	mat4 viewMatrix,
+	mat4 inverseProjMatrix,
+	mat4 inverseViewMatrix,
+	mat4 viewProjectionMatrix,
+	int depthMode,
+	vec3 fragPosWS,
+	vec3 normalWS,
+	vec3 lightDirWS,
+	float receiverOffset,
+	float compareBias,
+	float contactDistance,
+	int contactSamples,
+	float contactThickness,
+	float contactFadeStart,
+	float contactFadeEnd,
+	float contactNormalOffset,
+	float jitterStrength,
+	float viewDepth);
+#else
+float XRENGINE_SampleContactShadowScreenSpace(
+	sampler2D sceneDepth,
+	vec2 screenSize,
+	mat4 viewMatrix,
+	mat4 inverseProjMatrix,
+	mat4 inverseViewMatrix,
+	mat4 viewProjectionMatrix,
+	int depthMode,
+	vec3 fragPosWS,
+	vec3 normalWS,
+	vec3 lightDirWS,
+	float receiverOffset,
+	float compareBias,
+	float contactDistance,
+	int contactSamples,
+	float contactThickness,
+	float contactFadeStart,
+	float contactFadeEnd,
+	float contactNormalOffset,
+	float jitterStrength,
+	float viewDepth);
+#endif
 
 const vec3 LocalShadowCubeKernel[20] = vec3[](
 	vec3( 1.0,  1.0,  1.0), vec3( 1.0, -1.0,  1.0),
@@ -117,6 +172,60 @@ float GetShadowCubeSampleRadius(in samplerCube shadowMap, in float filterRadius)
 	float texelDirectionSpan = 2.0f / faceSize;
 	float requestedScale = clamp(filterRadius * 256.0f, 0.0f, 4.0f);
 	return texelDirectionSpan * max(1.0f, requestedScale);
+}
+
+float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDirWS, in float receiverOffset, in float compareBias, in float viewDepth)
+{
+	int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
+		ContactShadowSamples,
+		viewDepth,
+		ContactShadowDistance);
+#ifdef XRENGINE_MSAA_DEFERRED
+	return XRENGINE_SampleContactShadowScreenSpace(
+		DepthView,
+		gl_SampleID,
+		vec2(ScreenWidth, ScreenHeight),
+		ViewMatrix,
+		InverseProjMatrix,
+		InverseViewMatrix,
+		ViewProjectionMatrix,
+		DepthMode,
+		fragPosWS,
+		N,
+		lightDirWS,
+		receiverOffset,
+		compareBias,
+		ContactShadowDistance,
+		contactSampleCount,
+		ContactShadowThickness,
+		ContactShadowFadeStart,
+		ContactShadowFadeEnd,
+		ContactShadowNormalOffset,
+		ContactShadowJitterStrength,
+		viewDepth);
+#else
+	return XRENGINE_SampleContactShadowScreenSpace(
+		DepthView,
+		vec2(ScreenWidth, ScreenHeight),
+		ViewMatrix,
+		InverseProjMatrix,
+		InverseViewMatrix,
+		ViewProjectionMatrix,
+		DepthMode,
+		fragPosWS,
+		N,
+		lightDirWS,
+		receiverOffset,
+		compareBias,
+		ContactShadowDistance,
+		contactSampleCount,
+		ContactShadowThickness,
+		ContactShadowFadeStart,
+		ContactShadowFadeEnd,
+		ContactShadowNormalOffset,
+		ContactShadowJitterStrength,
+		viewDepth);
+#endif
 }
 
 float BlockerSearchCubeLocal(in samplerCube shadowMap, in vec3 shadowDir, in float receiverDepth, in float farPlaneDist, in float sampleRadius, in int sampleCount)
@@ -195,8 +304,15 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 	float faceSize = max(float(textureSize(ShadowMap, 0).x), 1.0f);
 
 	// ---- Cubemap texel bias (relative) ----
-	float slopeFactor = 1.0f - NoL;
-	float texelRel = (2.0f / faceSize) * (1.0f + 3.0f * slopeFactor * slopeFactor);
+	// Per cube-map texel, the stored radial depth varies by lightDist*tan(theta)*texelAngularSize,
+	// where theta is the angle between the surface normal and the direction-to-light. The previous
+	// (1 + 3*slope^2) factor undershoots at grazing angles, letting the cubemap texel grid show
+	// through as radial herringbone bristles around the lit spot. tan(theta) is the geometrically
+	// correct multiplier; +1 keeps a base texel-width margin at normal incidence and the 2x on
+	// tan(theta) absorbs sub-texel sampling phase + R16f quantisation.
+	float NoLSafe = max(NoL, 0.05f);
+	float tanTheta = sqrt(max(1.0f - NoLSafe * NoLSafe, 0.0f)) / NoLSafe;
+	float texelRel = (2.0f / faceSize) * (1.0f + 2.0f * tanTheta);
 
 	// ---- GBuffer depth-precision bias ----
 	// The deferred receiver position is reconstructed from a 24-bit depth buffer
@@ -232,27 +348,8 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 	float maxPenumbra = GetShadowCubeSampleRadius(ShadowMap, ShadowMaxPenumbra);
 	float contactBias = max(userBias, lightDist * relThreshold);
 	float viewDepth = length(fragPosWS - vec3(InverseViewMatrix[3]));
-	int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
-		ContactShadowSamples,
-		viewDepth,
-		ContactShadowDistance);
 	float contact = EnableContactShadows
-		? XRENGINE_SampleContactShadowCube(
-			ShadowMap,
-			fragPosWS,
-			N,
-			LightData.Position,
-			ShadowBiasMax,
-			contactBias,
-			farPlaneDist,
-			ContactShadowDistance,
-			contactSampleCount,
-			ContactShadowThickness,
-			ContactShadowFadeStart,
-			ContactShadowFadeEnd,
-			ContactShadowNormalOffset,
-			ContactShadowJitterStrength,
-			viewDepth)
+		? SampleDeferredContactShadow(fragPosWS, N, normalize(LightData.Position - fragPosWS), ShadowBiasMax, contactBias, viewDepth)
 		: 1.0f;
 
 	float lit = SampleShadowCubeFilteredLocal(
