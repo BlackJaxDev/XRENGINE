@@ -151,7 +151,10 @@ namespace XREngine.Rendering.OpenGL
                     }
                     else
                     {
-                        Data.OnSettingUniforms(materialProgram.Data);
+                        if (Engine.Rendering.State.IsShadowPass && Data.HasSettingShadowUniformHandlers)
+                            Data.OnSettingShadowUniforms(materialProgram.Data);
+                        else
+                            Data.OnSettingUniforms(materialProgram.Data);
                     }
                 }
 

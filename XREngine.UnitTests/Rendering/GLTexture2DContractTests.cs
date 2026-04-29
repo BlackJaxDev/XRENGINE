@@ -129,6 +129,30 @@ public sealed class GLTexture2DContractTests
     }
 
     [Test]
+    public void GLTextureCube_AppliesSamplerParametersAndConfiguredMipRange()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTextureCube.cs");
+
+        source.ShouldContain("protected override void SetParameters()");
+        source.ShouldContain("Api.TextureParameter(BindingId, GLEnum.TextureLodBias, Data.LodBias);");
+        source.ShouldContain("GLEnum.TextureMagFilter");
+        source.ShouldContain("GLEnum.TextureMinFilter");
+        source.ShouldContain("GLEnum.TextureWrapS");
+        source.ShouldContain("GLEnum.TextureWrapT");
+        source.ShouldContain("GLEnum.TextureWrapR");
+        source.ShouldContain("int maxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);");
+        source.ShouldNotContain("int maxLevel = 1000;");
+    }
+
+    [Test]
+    public void PointLightShadowCubemaps_ExposeOnlyBaseMipLevel()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Lights/Types/PointLightComponent.cs");
+
+        CountOccurrences(source, "SmallestAllowedMipmapLevel = 0,").ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
     public void GLDataBuffer_DoesNotSubDataImmutableStorageWithoutDynamicStorageBit()
     {
         string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs");

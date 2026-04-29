@@ -530,7 +530,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
         return _state;
     }
 
-    private void TransitionState(EVulkanUpscaleBridgeState newState, string? reason, bool log = true)
+    private void TransitionState(EVulkanUpscaleBridgeState newState, string? reason, bool log = false)
     {
         if (_state == newState && string.Equals(_lastStateReason, reason, StringComparison.Ordinal))
             return;
