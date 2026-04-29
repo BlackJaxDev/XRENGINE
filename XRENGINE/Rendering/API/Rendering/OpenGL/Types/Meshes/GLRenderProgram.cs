@@ -38,6 +38,7 @@ namespace XREngine.Rendering.OpenGL
 
             private readonly ConcurrentDictionary<int, string> _locationNameCache = new();
             private readonly ConcurrentDictionary<string, UniformInfo> _uniformMetadata = new();
+            private SamplerUniformInfo[] _activeSamplerUniforms = [];
             private readonly ConcurrentDictionary<string, byte> _loggedUniformMismatches = new();
 
             // Binding-batch sampler tracking is scoped to the active draw on the render thread.
@@ -69,6 +70,7 @@ namespace XREngine.Rendering.OpenGL
             private bool _explicitAttributeLocationsResolved;
 
             private readonly record struct UniformInfo(GLEnum Type, int Size);
+            private readonly record struct SamplerUniformInfo(string Name, GLEnum Type);
             internal readonly record struct UniformMetadataEntry(string Name, GLEnum Type, int Size);
 
             private static XRTexture2D? _fallbackTexture2D;
@@ -235,6 +237,7 @@ namespace XREngine.Rendering.OpenGL
                 _failedUniforms.Clear();
                 _locationNameCache.Clear();
                 _uniformMetadata.Clear();
+                _activeSamplerUniforms = [];
                 _loggedUniformMismatches.Clear();
                 _loggedEmptyBindingBatches.Clear();
                 _boundSamplerLocations.Clear();

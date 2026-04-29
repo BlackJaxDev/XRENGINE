@@ -2,7 +2,8 @@
 
 Reference work docs:
 - [Default render pipeline V2 TODO](../todo/default-render-pipeline-v2-todo.md)
-- [Non-HBAO ambient occlusion remediation TODO](../todo/non-hbao-ambient-occlusion-remediation.md)
+- [Ambient Occlusion](../../features/gi/ambient-occlusion.md)
+- [Ambient Occlusion Testing](../testing/ambient-occlusion.md)
 
 ## Scope
 

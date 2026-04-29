@@ -3,6 +3,9 @@ using Shouldly;
 using System.IO;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Capture.Lights;
+using XREngine.Components.Capture.Lights.Types;
+using XREngine.Components.Lights;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
@@ -26,28 +29,38 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform sampler2DArray ShadowMapArray;");
         source.ShouldContain("layout(binding = 17) uniform samplerCube PointLightShadowMaps");
         source.ShouldContain("layout(binding = 21) uniform sampler2D SpotLightShadowMaps");
+        source.ShouldContain("layout(binding = 26) uniform sampler2D ForwardContactDepthView;");
+        source.ShouldContain("layout(binding = 27) uniform sampler2D ForwardContactNormalView;");
+        source.ShouldContain("layout(binding = 28) uniform sampler2DArray ForwardContactDepthViewArray;");
+        source.ShouldContain("layout(binding = 29) uniform sampler2DArray ForwardContactNormalViewArray;");
+        source.ShouldContain("uniform bool ForwardContactShadowsEnabled = false;");
+        source.ShouldContain("uniform bool ForwardContactShadowsArrayEnabled = false;");
         source.ShouldContain("uniform int ForwardPlusEyeCount;");
-        source.ShouldContain("uniform float PointLightShadowNearPlanes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
-        source.ShouldContain("uniform int PointLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
-        source.ShouldContain("uniform int SpotLightShadowDebugModes[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
+        source.ShouldContain("uniform ivec4 PointLightShadowPacked0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
+        source.ShouldContain("uniform ivec4 PointLightShadowPacked1[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
+        source.ShouldContain("uniform ivec4 SpotLightShadowPacked0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
+        source.ShouldContain("uniform ivec4 SpotLightShadowPacked1[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
         source.ShouldContain("int XRENGINE_GetForwardViewIndex()");
         source.ShouldContain("vec3 XRENGINE_GetForwardCameraPosition()");
         source.ShouldContain("void XRENGINE_TrySetForwardShadowDebug(int debugMode, float lit, float margin)");
         source.ShouldContain("float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal, vec3 fragPos)");
         source.ShouldContain("float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, vec3 fragPos, vec3 lightDir)");
+        source.ShouldContain("float XRENGINE_SampleForwardContactShadowScreenSpace(");
         source.ShouldContain("uniform bool UseCascadedDirectionalShadows;");
         source.ShouldContain("#define EnableContactShadows (ShadowPackedI1.y != 0)");
         source.ShouldContain("#define ContactShadowDistance ShadowParams2.y");
-        source.ShouldContain("uniform ivec4 ShadowPackedI0 = ivec4(16, 16, 5, 2);");
-        source.ShouldContain("uniform ivec4 ShadowPackedI1 = ivec4(1, 1, 4, 0);");
+        source.ShouldContain("uniform ivec4 ShadowPackedI0 = ivec4(8, 8, 5, 2);");
+        source.ShouldContain("uniform ivec4 ShadowPackedI1 = ivec4(1, 1, 16, 0);");
         source.ShouldContain("uniform vec4 ShadowParams1 = vec4(0.0012, 0.01, 0.001, 0.015);");
-        source.ShouldContain("uniform vec4 ShadowParams2 = vec4(1.2, 0.1, 0.25, 10.0);");
+        source.ShouldContain("uniform vec4 ShadowParams2 = vec4(1.2, 1.0, 2.0, 10.0);");
         source.ShouldContain("#define ShadowVogelTapCount ShadowPackedI0.z");
         source.ShouldContain("#define ContactShadowSamples ShadowPackedI1.z");
         source.ShouldContain("uniform ivec4 PointLightShadowPacked0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
         source.ShouldContain("uniform ivec4 SpotLightShadowPacked0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];");
         source.ShouldContain("int XRENGINE_GetPrimaryDirLightCascadeIndex(vec3 fragPosWS)");
         source.ShouldContain("DirectionalLights[0].CascadeMatrices[cascadeIndex]");
+        source.ShouldContain("XRENGINE_SampleForwardContactShadowScreenSpace(");
+        source.ShouldContain("ForwardContactShadowsEnabled");
         source.ShouldContain("XRENGINE_SampleContactShadowArray(");
         source.ShouldContain("XRENGINE_SampleContactShadow2D(");
         source.ShouldContain("XRENGINE_SampleShadowMapFiltered(");
@@ -56,10 +69,10 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("XRENGINE_ResolveContactShadowSampleCount(");
         source.ShouldContain("vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;");
         source.ShouldContain("ShadowVogelTapCount");
-        source.ShouldContain("shadowI0.w) * contact;");
+        source.ShouldContain("shadowI0.w);");
         source.ShouldContain("SpotLightShadowMaps[shadowSlot],");
         source.ShouldContain("light.Base.Base.WorldToLightSpaceProjMatrix,");
-        source.ShouldContain("SpotLightShadowBiasMax[lightIndex],");
+        source.ShouldContain("shadowF0.w,");
     }
 
     [Test]
@@ -73,31 +86,71 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("float XRENGINE_SampleShadowMapArrayVogel(");
         source.ShouldContain("float XRENGINE_SampleShadowCubeVogel(");
         source.ShouldContain("if (softShadowMode == 3) // VogelDisk");
+        source.ShouldContain("float XRENGINE_SampleContactShadowScreenSpace(");
+        source.ShouldContain("sampler2D sceneNormal");
+        source.ShouldContain("sampler2DArray sceneDepth");
+        source.ShouldContain("float layer,");
+        source.ShouldContain("sampler2DMS sceneDepth");
+        source.ShouldContain("float XRENGINE_EvaluateContactShadowScreenSpaceHit(");
+        source.ShouldContain("vec3 scenePosWS = XRENGINE_ContactShadowWorldPosFromDepth(");
+        source.ShouldContain("vec3 sceneNormalWS = XRENGINE_DecodeContactShadowNormal(texture(sceneNormal, sampleUvClamped).rg);");
+        source.ShouldContain("normalWeight = mix(1.0, 0.35, sameSurfaceNormal * shallowHit);");
+        source.ShouldContain("float normalOffset = max(contactNormalOffset, min(max(receiverOffset, compareBias * 2.0), contactDistance * 0.25));");
     }
 
     [Test]
-    public void PointLightShadow_HasR16fQuantizationBiasGuard()
+    public void PointLightShadow_UsesTexelRelativeCompareBias()
     {
         string source = LoadShaderSource("Snippets/ForwardLighting.glsl");
 
-        // Point-light cubemap shadows store in R16f (10-bit mantissa). Without a minimum
-        // bias proportional to lightDist, half-float quantization causes universal shadow
-        // acne (the debug heatmap shows red everywhere).
-        source.ShouldContain("bias = max(bias, lightDist * (1.0 / 512.0));");
+        source.ShouldContain("float XRENGINE_GetPointShadowTexelRelativeBiasForSlot(int shadowSlot, float NoL)");
+        // Bias must scale with tan(theta) (not (1+3*slope^2)) to fully cover per-texel
+        // stored-depth variance at grazing angles, otherwise the cubemap texel grid shows
+        // through as radial herringbone bristles around the lit spot.
+        source.ShouldContain("float NoLSafe = max(NoL, 0.05);");
+        source.ShouldContain("float tanTheta = sqrt(max(1.0 - NoLSafe * NoLSafe, 0.0)) / NoLSafe;");
+        source.ShouldContain("return (2.0 / faceSize) * (1.0 + 2.0 * tanTheta);");
+        source.ShouldContain("float texelRel = XRENGINE_GetPointShadowTexelRelativeBiasForSlot(shadowSlot, NoL);");
+        source.ShouldContain("float userRel = userBias / max(lightDist, 0.001);");
+        source.ShouldContain("float r16fRel = 1.0 / 512.0;");
+        source.ShouldContain("float relThreshold = max(texelRel, max(userRel, r16fRel));");
+        source.ShouldContain("float compareBias = lightDist * relThreshold;");
+        source.ShouldContain("float biasedLightDist = lightDist - compareBias;");
+        source.ShouldContain("float margin = (centerDepth - biasedLightDist) / max(farPlaneDist, 0.001);");
     }
 
     [Test]
     public void PointLightShadow_OffsetsReceiverBeforeSampling()
     {
         string forwardSource = LoadShaderSource("Snippets/ForwardLighting.glsl");
-        forwardSource.ShouldContain("vec3 offsetPosWS = fragPos + normal * PointLightShadowBiasMax[lightIndex];");
+        forwardSource.ShouldContain("vec3 offsetPosWS = fragPos + normal * shadowF1.y;");
         forwardSource.ShouldContain("vec3 fragToLight = offsetPosWS - light.Position;");
-        forwardSource.ShouldContain("if (lightDist <= nearPlaneDist + PointLightShadowBiasMax[lightIndex])");
+        forwardSource.ShouldContain("if (lightDist <= nearPlaneDist + shadowF1.y)");
 
         string deferredSource = LoadShaderSource("Scene3D/DeferredLightingPoint.fs");
         deferredSource.ShouldContain("vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;");
         deferredSource.ShouldContain("vec3 fragToLight = offsetPosWS - LightData.Position;");
         deferredSource.ShouldContain("if (lightDist <= nearPlaneDist + ShadowBiasMax)");
+    }
+
+    [Test]
+    public void ForwardLighting_BindsForwardPrePassContactShadowTextures()
+    {
+        string source = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "Lights3DCollection.ForwardLighting.cs"));
+
+        source.ShouldContain("const int forwardContactDepthUnit = 26;");
+        source.ShouldContain("const int forwardContactNormalUnit = 27;");
+        source.ShouldContain("const int forwardContactDepthArrayUnit = 28;");
+        source.ShouldContain("const int forwardContactNormalArrayUnit = 29;");
+        source.ShouldContain("Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled");
+        source.ShouldContain("DefaultRenderPipeline.DepthViewTextureName");
+        source.ShouldContain("DefaultRenderPipeline.NormalTextureName");
+        source.ShouldContain("program.Uniform(\"ForwardContactShadowsEnabled\", forwardContactPrePassAvailable);");
+        source.ShouldContain("program.Uniform(\"ForwardContactShadowsArrayEnabled\", forwardContactPrePassArrayAvailable);");
+        source.ShouldContain("program.Sampler(\"ForwardContactDepthView\", forwardContactPrePass2DAvailable ? forwardContactDepthTexture! : DummyShadowMap, forwardContactDepthUnit);");
+        source.ShouldContain("program.Sampler(\"ForwardContactNormalView\", forwardContactPrePass2DAvailable ? forwardContactNormalTexture! : DummyShadowMap, forwardContactNormalUnit);");
+        source.ShouldContain("program.Sampler(\"ForwardContactDepthViewArray\", forwardContactPrePassArrayAvailable ? forwardContactDepthTexture! : DummyShadowMapArray, forwardContactDepthArrayUnit);");
+        source.ShouldContain("program.Sampler(\"ForwardContactNormalViewArray\", forwardContactPrePassArrayAvailable ? forwardContactNormalTexture! : DummyShadowMapArray, forwardContactNormalArrayUnit);");
     }
 
     [Test]
@@ -115,11 +168,37 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
+    public void ForwardPointShadowSampling_DoesNotMixContactShadowsIntoCubemapVisibility()
+    {
+        string source = LoadShaderSource("Snippets/ForwardLighting.glsl");
+        int pointStart = source.IndexOf("float XRENGINE_ReadShadowMapPoint", System.StringComparison.Ordinal);
+        pointStart.ShouldBeGreaterThanOrEqualTo(0);
+
+        int spotStart = source.IndexOf("float XRENGINE_ReadShadowMapSpot", pointStart, System.StringComparison.Ordinal);
+        spotStart.ShouldBeGreaterThan(pointStart);
+
+        string pointBody = source[pointStart..spotStart];
+        pointBody.ShouldContain("Point shadow-map visibility should come only from the cubemap.");
+        pointBody.ShouldContain("float shadow = XRENGINE_SamplePointShadowCubeSlot(");
+        pointBody.ShouldContain("shadowI0.w);");
+        pointBody.ShouldNotContain("XRENGINE_SampleForwardContactShadowScreenSpace(");
+        pointBody.ShouldNotContain("XRENGINE_SamplePointContactShadowCubeSlot(");
+        pointBody.ShouldNotContain("* contact");
+    }
+
+    [Test]
     public void DeferredPointShadow_HasR16fQuantizationBiasGuard()
     {
         string source = LoadShaderSource("Scene3D/DeferredLightingPoint.fs");
 
         source.ShouldContain("uniform float ShadowNearPlaneDist = 0.1f;");
+        // Bias must scale with tan(theta) (not (1+3*slope^2)) to fully cover per-texel
+        // stored-depth variance at grazing angles, otherwise the cubemap texel grid shows
+        // through as radial herringbone bristles around the lit spot. Kept in lockstep
+        // with the forward path so both receivers behave identically.
+        source.ShouldContain("float NoLSafe = max(NoL, 0.05f);");
+        source.ShouldContain("float tanTheta = sqrt(max(1.0f - NoLSafe * NoLSafe, 0.0f)) / NoLSafe;");
+        source.ShouldContain("float texelRel = (2.0f / faceSize) * (1.0f + 2.0f * tanTheta);");
         source.ShouldContain("float r16fRel  = 1.0f / 512.0f;");
         source.ShouldContain("float relThreshold = max(texelRel, max(userRel, max(depthRel, r16fRel)));");
     }
@@ -169,7 +248,50 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("mat4 WorldToLightSpaceMatrix;");
         source.ShouldContain("float CascadeSplits[XRENGINE_MAX_CASCADES];");
         source.ShouldContain("mat4 CascadeMatrices[XRENGINE_MAX_CASCADES];");
+        source.ShouldContain("float CascadeBiasMin[XRENGINE_MAX_CASCADES];");
+        source.ShouldContain("float CascadeBiasMax[XRENGINE_MAX_CASCADES];");
+        source.ShouldContain("float CascadeReceiverOffsets[XRENGINE_MAX_CASCADES];");
         source.ShouldContain("int CascadeCount;");
+    }
+
+    [Test]
+    public void DirectionalLightComponent_PublishesPerCascadeBiasUniforms()
+    {
+        var light = new DirectionalLightComponent();
+
+        light.CascadeBiasOverrides.Length.ShouldBe(light.CascadeCount);
+        light.SetCascadeBiasOverride(1, new DirectionalLightComponent.CascadeShadowBiasOverride(true, -1.0f, 0.002f, -3.0f));
+
+        DirectionalLightComponent.CascadeShadowBiasOverride overrideSettings = light.GetCascadeBiasOverride(1);
+        overrideSettings.Enabled.ShouldBeTrue();
+        overrideSettings.BiasMin.ShouldBe(0.0f);
+        overrideSettings.BiasMax.ShouldBe(0.002f);
+        overrideSettings.ReceiverOffset.ShouldBe(0.0f);
+
+        light.CascadeCount = 6;
+        light.CascadeBiasOverrides.Length.ShouldBe(6);
+
+        string source = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
+        source.ShouldContain("CascadeBiasMin[{i}]");
+        source.ShouldContain("CascadeBiasMax[{i}]");
+        source.ShouldContain("CascadeReceiverOffsets[{i}]");
+    }
+
+    [Test]
+    public void DirectionalCascadeShaders_UsePerCascadeBiasAndReceiverOffset()
+    {
+        string forwardSource = LoadShaderSource("Snippets/ForwardLighting.glsl");
+        forwardSource.ShouldContain("float receiverOffset = DirectionalLights[0].CascadeReceiverOffsets[cascadeIndex];");
+        forwardSource.ShouldContain("DirectionalLights[0].CascadeBiasMin[cascadeIndex]");
+        forwardSource.ShouldContain("DirectionalLights[0].CascadeBiasMax[cascadeIndex]");
+        forwardSource.ShouldContain("XRENGINE_GetShadowBiasRange(");
+
+        string deferredSource = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
+        deferredSource.ShouldContain("float CascadeBiasMin[MAX_CASCADES];");
+        deferredSource.ShouldContain("float receiverOffset = LightData.CascadeReceiverOffsets[cascadeIndex];");
+        deferredSource.ShouldContain("LightData.CascadeBiasMin[cascadeIndex]");
+        deferredSource.ShouldContain("LightData.CascadeBiasMax[cascadeIndex]");
+        deferredSource.ShouldContain("SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)");
     }
 
     [Test]
@@ -179,24 +301,31 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
 
         source.ShouldContain("vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;");
         source.ShouldContain("uniform bool EnableContactShadows = true;");
-        source.ShouldContain("uniform float ContactShadowDistance = 0.1f;");
-        source.ShouldContain("uniform int ShadowSamples = 16;");
-        source.ShouldContain("uniform int ShadowBlockerSamples = 16;");
-        source.ShouldContain("uniform int ShadowFilterSamples = 16;");
+        source.ShouldContain("uniform float ContactShadowDistance = 1.0f;");
+        source.ShouldContain("uniform int ShadowSamples = 8;");
+        source.ShouldContain("uniform int ShadowBlockerSamples = 8;");
+        source.ShouldContain("uniform int ShadowFilterSamples = 8;");
         source.ShouldContain("uniform int ShadowVogelTapCount = 5;");
         source.ShouldContain("uniform float ShadowBlockerSearchRadius = 0.01f;");
         source.ShouldContain("uniform float ShadowMinPenumbra = 0.001f;");
         source.ShouldContain("uniform float ShadowMaxPenumbra = 0.015f;");
         source.ShouldContain("uniform int SoftShadowMode = 2;");
         source.ShouldContain("uniform float LightSourceRadius = 1.2f;");
-        source.ShouldContain("uniform int ContactShadowSamples = 4;");
-        source.ShouldContain("XRENGINE_SampleContactShadow2D(");
-        source.ShouldContain("XRENGINE_SampleContactShadowArray(");
+        source.ShouldContain("uniform int ContactShadowSamples = 16;");
+        source.ShouldContain("uniform float ContactShadowThickness = 2.0f;");
+        source.ShouldContain("uniform vec2 ScreenOrigin;");
+        source.ShouldContain("vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;");
+        source.ShouldContain("SampleDeferredContactShadow(");
+        source.ShouldContain("XRENGINE_SampleContactShadowScreenSpace(");
         source.ShouldContain("SampleShadowMapFilteredLocal(");
         source.ShouldContain("SampleShadowMapArrayFilteredLocal(");
         source.ShouldContain("XRENGINE_ResolveContactShadowSampleCount(");
         source.ShouldContain("ShadowBiasMax,");
         source.ShouldContain("bias,");
+        source.ShouldContain("ViewProjectionMatrix,");
+        source.ShouldContain("DepthMode,");
+        source.ShouldNotContain("XRENGINE_SampleContactShadow2D(");
+        source.ShouldNotContain("XRENGINE_SampleContactShadowArray(");
         source.ShouldNotContain("SampleContactShadowScreenSpaceLocal(");
         source.ShouldNotContain("ResolveContactShadowSampleCountLocal(");
         source.ShouldNotContain("MinFade");
@@ -212,7 +341,13 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldNotContain("MaxFade");
         source.ShouldContain("uniform int ShadowVogelTapCount = 5;");
         source.ShouldContain("uniform vec2 ScreenOrigin;");
+        source.ShouldContain("uniform mat4 ViewMatrix;");
+        source.ShouldContain("uniform mat4 ViewProjectionMatrix;");
         source.ShouldContain("vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;");
+        source.ShouldContain("SampleDeferredContactShadow(");
+        source.ShouldContain("XRENGINE_SampleContactShadowScreenSpace(");
+        source.ShouldContain("DepthMode,");
+        source.ShouldNotContain("XRENGINE_SampleContactShadowCube(");
     }
 
     [Test]
@@ -239,6 +374,19 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("program.Uniform($\"{prefix}.Position\", lightPosition);");
         source.ShouldContain("program.Uniform(\"LightPos\", Transform.RenderTranslation);");
         source.ShouldContain("program.Uniform(\"ShadowNearPlaneDist\", ShadowNearPlaneDistance);");
+    }
+
+    [Test]
+    public void ForwardPointShadowSampling_DispatchesThroughFixedSamplerSlots()
+    {
+        string source = LoadShaderSource("Snippets/ForwardLighting.glsl");
+
+        source.ShouldContain("float XRENGINE_SamplePointShadowCubeSlot(");
+        source.ShouldContain("float XRENGINE_SamplePointContactShadowCubeSlot(");
+        source.ShouldContain("float XRENGINE_GetPointShadowSampleRadiusForSlot(");
+        source.ShouldContain("PointLightShadowMaps[0]");
+        source.ShouldContain("PointLightShadowMaps[3]");
+        source.ShouldNotContain("PointLightShadowMaps[shadowSlot]");
     }
 
     [Test]
@@ -280,14 +428,20 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
 
         source.ShouldContain("uniform bool EnableContactShadows = true;");
         source.ShouldContain("uniform float ContactShadowDistance = 0.1f;");
-        source.ShouldContain("uniform int ContactShadowSamples = 4;");
+        source.ShouldContain("uniform int ContactShadowSamples = 16;");
+        source.ShouldContain("uniform float ContactShadowThickness = 1.0f;");
+        source.ShouldContain("uniform float ContactShadowNormalOffset = 0.036f;");
         source.ShouldContain("uniform int ShadowVogelTapCount = 5;");
         source.ShouldContain("uniform vec2 ScreenOrigin;");
         source.ShouldContain("vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;");
-        source.ShouldContain("XRENGINE_SampleContactShadow2D(");
+        source.ShouldContain("SampleDeferredContactShadow(");
+        source.ShouldContain("XRENGINE_SampleContactShadowScreenSpace(");
         source.ShouldContain("XRENGINE_ResolveContactShadowSampleCount(");
         source.ShouldContain("ShadowBiasMax,");
         source.ShouldContain("bias,");
+        source.ShouldContain("ViewProjectionMatrix,");
+        source.ShouldContain("DepthMode,");
+        source.ShouldNotContain("XRENGINE_SampleContactShadow2D(");
         source.ShouldNotContain("SampleContactShadowScreenSpaceLocal(");
         source.ShouldNotContain("ResolveContactShadowSampleCountLocal(");
         source.ShouldNotContain("MinFade");
@@ -300,14 +454,64 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Materials", "Options", "EUniformRequirements.cs"));
 
         source.ShouldContain("[EngineShaderBindingNames.Uniforms.ForwardPlusEnabled] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.ForwardContactShadowsEnabled] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Uniforms.ForwardContactShadowsArrayEnabled] = EUniformRequirements.Lights,");
         source.ShouldContain("[EngineShaderBindingNames.Uniforms.ProbeGridDims] = EUniformRequirements.Lights,");
         source.ShouldContain("[EngineShaderBindingNames.Uniforms.ShadowMapEnabled] = EUniformRequirements.Lights,");
         source.ShouldContain("[EngineShaderBindingNames.Uniforms.ShadowVogelTapCount] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Samplers.ForwardContactDepthView] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Samplers.ForwardContactNormalView] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Samplers.ForwardContactDepthViewArray] = EUniformRequirements.Lights,");
+        source.ShouldContain("[EngineShaderBindingNames.Samplers.ForwardContactNormalViewArray] = EUniformRequirements.Lights,");
         source.ShouldContain("[EngineShaderBindingNames.Uniforms.PointLightShadowNearPlanes] = EUniformRequirements.Lights,");
         source.ShouldContain("[EngineShaderBindingNames.Uniforms.PointLightShadowVogelTapCount] = EUniformRequirements.Lights,");
         source.ShouldContain("[EngineShaderBindingNames.Uniforms.PointLightShadowDebugModes] = EUniformRequirements.Lights,");
         source.ShouldContain("[EngineShaderBindingNames.Uniforms.SpotLightShadowVogelTapCount] = EUniformRequirements.Lights,");
         source.ShouldContain("[EngineShaderBindingNames.Uniforms.SpotLightShadowDebugModes] = EUniformRequirements.Lights,");
+    }
+
+    [Test]
+    public void GLMaterial_RebindsLightSamplerUniformsEveryBindingBatch()
+    {
+        string source = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
+
+        source.ShouldContain("Light bindings include shadow-map samplers.");
+        source.ShouldContain("if (requiredRequirements.HasFlag(EUniformRequirements.Lights))");
+        source.ShouldContain("return true;");
+        source.ShouldContain("if (reqs.HasFlag(EUniformRequirements.Lights))");
+        source.ShouldContain("missingProgramRequirements |= EUniformRequirements.Lights;");
+    }
+
+    [Test]
+    public void PointShadowCasterVariants_PreserveAlphaDiscardsAndWriteRadialDepth()
+    {
+        string shaderHelperSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Resources", "Shaders", "ShaderHelper.cs"));
+        shaderHelperSource.ShouldContain("XRENGINE_POINT_SHADOW_CASTER_PASS");
+        shaderHelperSource.ShouldContain("GetPointShadowCasterForwardVariant");
+        shaderHelperSource.ShouldContain("\"UberShader.frag\" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine)");
+
+        string factorySource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Shaders", "ShadowCasterVariantFactory.cs"));
+        factorySource.ShouldContain("CreatePointLightMaterialVariant");
+        factorySource.ShouldContain("PointLightShadowDepth.gs");
+        factorySource.ShouldContain("ShadowBindingSourceMaterial = sourceMaterial");
+
+        string meshRendererSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
+        meshRendererSource.ShouldContain("GetPointShadowCasterVariant(");
+        meshRendererSource.ShouldContain("pointShadowVariant.ShadowUniformSourceMaterial = globalMaterialOverride;");
+
+        string glMaterialSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
+        glMaterialSource.ShouldContain("Data.ShadowUniformSourceMaterial");
+        glMaterialSource.ShouldContain("shadowUniformSource.OnSettingShadowUniforms(materialProgram.Data);");
+
+        string uberSource = LoadShaderSource("Uber/UberShader.frag");
+        uberSource.ShouldContain("defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)");
+        uberSource.ShouldContain("uniform vec3 LightPos;");
+        uberSource.ShouldContain("uniform float FarPlaneDist;");
+        uberSource.ShouldContain("Depth = length(FragPos - LightPos) / FarPlaneDist;");
+
+        string alphaSource = LoadShaderSource("Common/LitTexturedAlphaForward.fs");
+        alphaSource.ShouldContain("if (alphaMask < AlphaCutoff)");
+        alphaSource.ShouldContain("Depth = length(FragPos - LightPos) / FarPlaneDist;");
     }
 
     [Test]
@@ -322,35 +526,125 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         lightComponentSource.ShouldContain("private int _blockerSamples = 4;");
         lightComponentSource.ShouldContain("private int _vogelTapCount = 5;");
         lightComponentSource.ShouldContain("private float _filterRadius = 0.0012f;");
+        lightComponentSource.ShouldContain("public const float MaxAutomaticContactHardeningLightRadius = 0.25f;");
+        lightComponentSource.ShouldContain("private bool _useLightRadiusForContactHardening = true;");
         lightComponentSource.ShouldContain("private bool _enableContactShadows = true;");
         lightComponentSource.ShouldContain("private float _contactShadowDistance = 0.1f;");
         lightComponentSource.ShouldContain("private int _contactShadowSamples = 4;");
 
         string directionalSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
+        directionalSource.ShouldContain("SetShadowMapResolution(2048u, 2048u);");
         directionalSource.ShouldContain("ShadowExponentBase = 0.035f;");
         directionalSource.ShouldContain("ShadowExponent = 1.221f;");
         directionalSource.ShouldContain("ShadowMinBias = 0.00001f;");
         directionalSource.ShouldContain("ShadowMaxBias = 0.004f;");
-        directionalSource.ShouldContain("BlockerSamples = 16;");
-        directionalSource.ShouldContain("FilterSamples = 16;");
+        directionalSource.ShouldContain("BlockerSamples = 8;");
+        directionalSource.ShouldContain("FilterSamples = 8;");
         directionalSource.ShouldContain("FilterRadius = 0.0012f;");
         directionalSource.ShouldContain("BlockerSearchRadius = 0.01f;");
         directionalSource.ShouldContain("MinPenumbra = 0.001f;");
         directionalSource.ShouldContain("MaxPenumbra = 0.015f;");
         directionalSource.ShouldContain("SoftShadowMode = ESoftShadowMode.ContactHardeningPcss;");
         directionalSource.ShouldContain("LightSourceRadius = 1.2f;");
+        directionalSource.ShouldContain("ContactShadowDistance = 1.0f;");
+        directionalSource.ShouldContain("ContactShadowSamples = 16;");
+        directionalSource.ShouldContain("ContactShadowThickness = 2.0f;");
+
+        var directionalLight = new DirectionalLightComponent();
+        directionalLight.ShadowMapResolutionWidth.ShouldBe(2048u);
+        directionalLight.ShadowMapResolutionHeight.ShouldBe(2048u);
+        directionalLight.CastsShadows.ShouldBeTrue();
+        directionalLight.EnableCascadedShadows.ShouldBeTrue();
+        directionalLight.UseLightRadiusForContactHardening.ShouldBeFalse();
+        directionalLight.BlockerSamples.ShouldBe(8);
+        directionalLight.FilterSamples.ShouldBe(8);
+        directionalLight.BlockerSearchRadius.ShouldBe(0.01f);
+        directionalLight.MinPenumbra.ShouldBe(0.001f);
+        directionalLight.MaxPenumbra.ShouldBe(0.015f);
+        directionalLight.LightSourceRadius.ShouldBe(1.2f);
+        directionalLight.EnableContactShadows.ShouldBeTrue();
+        directionalLight.ContactShadowDistance.ShouldBe(1.0f);
+        directionalLight.ContactShadowSamples.ShouldBe(16);
+        directionalLight.ContactShadowThickness.ShouldBe(2.0f);
+        directionalLight.ContactShadowFadeStart.ShouldBe(10.0f);
+        directionalLight.ContactShadowFadeEnd.ShouldBe(40.0f);
+        directionalLight.ContactShadowNormalOffset.ShouldBe(0.0f);
+        directionalLight.ContactShadowJitterStrength.ShouldBe(1.0f);
 
         string spotSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "SpotLightComponent.cs"));
-        spotSource.ShouldContain("SetShadowMapResolution(2048u, 2048u);");
+        spotSource.ShouldContain("SetShadowMapResolution(512u, 512u);");
         spotSource.ShouldContain("ShadowMinBias = 0.0001f;");
         spotSource.ShouldContain("ShadowMaxBias = 0.07f;");
         spotSource.ShouldContain("ShadowExponentBase = 0.2f;");
         spotSource.ShouldContain("ShadowExponent = 1.0f;");
-        spotSource.ShouldContain("Samples = 8;");
+        spotSource.ShouldContain("BlockerSamples = 8;");
+        spotSource.ShouldContain("FilterSamples = 8;");
         spotSource.ShouldContain("FilterRadius = 0.0012f;");
+        spotSource.ShouldContain("BlockerSearchRadius = 0.1f;");
+        spotSource.ShouldContain("MinPenumbra = 0.0002f;");
+        spotSource.ShouldContain("MaxPenumbra = 0.05f;");
+        spotSource.ShouldContain("SoftShadowMode = ESoftShadowMode.ContactHardeningPcss;");
+        spotSource.ShouldContain("LightSourceRadius = 0.1f;");
         spotSource.ShouldContain("EnableContactShadows = true;");
         spotSource.ShouldContain("ContactShadowDistance = 0.1f;");
-        spotSource.ShouldContain("ContactShadowSamples = 4;");
+        spotSource.ShouldContain("ContactShadowSamples = 16;");
+        spotSource.ShouldContain("ContactShadowThickness = 1.0f;");
+        spotSource.ShouldContain("ContactShadowNormalOffset = 0.036f;");
+
+        var spotLight = new SpotLightComponent();
+        spotLight.ShadowMapResolutionWidth.ShouldBe(512u);
+        spotLight.ShadowMapResolutionHeight.ShouldBe(512u);
+        spotLight.UseLightRadiusForContactHardening.ShouldBeTrue();
+        spotLight.EffectiveLightSourceRadius.ShouldBe(LightComponent.MaxAutomaticContactHardeningLightRadius);
+        spotLight.BlockerSamples.ShouldBe(8);
+        spotLight.FilterSamples.ShouldBe(8);
+        spotLight.BlockerSearchRadius.ShouldBe(0.1f);
+        spotLight.MinPenumbra.ShouldBe(0.0002f);
+        spotLight.MaxPenumbra.ShouldBe(0.05f);
+        spotLight.SoftShadowMode.ShouldBe(ESoftShadowMode.ContactHardeningPcss);
+        spotLight.LightSourceRadius.ShouldBe(0.1f);
+        spotLight.EnableContactShadows.ShouldBeTrue();
+        spotLight.ContactShadowDistance.ShouldBe(0.1f);
+        spotLight.ContactShadowSamples.ShouldBe(16);
+        spotLight.ContactShadowThickness.ShouldBe(1.0f);
+        spotLight.ContactShadowFadeStart.ShouldBe(10.0f);
+        spotLight.ContactShadowFadeEnd.ShouldBe(40.0f);
+        spotLight.ContactShadowNormalOffset.ShouldBe(0.036f);
+        spotLight.ContactShadowJitterStrength.ShouldBe(1.0f);
+    }
+
+    [Test]
+    public void LocalLights_CanResolveContactHardeningSourceRadiusFromLightRadius()
+    {
+        PointLightComponent pointLight = new(12.5f, 1.0f)
+        {
+            LightSourceRadius = 0.25f,
+        };
+
+        pointLight.UseLightRadiusForContactHardening.ShouldBeTrue();
+        pointLight.EffectiveLightSourceRadius.ShouldBe(LightComponent.MaxAutomaticContactHardeningLightRadius);
+        pointLight.Radius = 0.125f;
+        pointLight.EffectiveLightSourceRadius.ShouldBe(0.125f);
+        pointLight.UseLightRadiusForContactHardening = false;
+        pointLight.EffectiveLightSourceRadius.ShouldBe(0.25f);
+        pointLight.LightSourceRadius.ShouldBe(0.25f);
+
+        SpotLightComponent spotLight = new(10.0f, 45.0f, 20.0f, 1.0f, 1.0f)
+        {
+            LightSourceRadius = 0.25f,
+        };
+
+        spotLight.UseLightRadiusForContactHardening.ShouldBeTrue();
+        spotLight.EffectiveLightSourceRadius.ShouldBe(LightComponent.MaxAutomaticContactHardeningLightRadius);
+        spotLight.Distance = 0.1f;
+        spotLight.EffectiveLightSourceRadius.ShouldBe(0.1f, 0.0001f);
+        spotLight.SetCutoffs(20.0f, 60.0f);
+        spotLight.EffectiveLightSourceRadius.ShouldBe(MathF.Tan(XREngine.Data.Core.XRMath.DegToRad(60.0f)) * 0.1f, 0.0001f);
+        spotLight.Distance = 5.0f;
+        spotLight.EffectiveLightSourceRadius.ShouldBe(LightComponent.MaxAutomaticContactHardeningLightRadius);
+        spotLight.UseLightRadiusForContactHardening = false;
+        spotLight.EffectiveLightSourceRadius.ShouldBe(0.25f);
+        spotLight.LightSourceRadius.ShouldBe(0.25f);
     }
 
     [Test]

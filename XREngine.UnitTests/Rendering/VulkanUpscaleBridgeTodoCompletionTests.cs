@@ -353,6 +353,28 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     }
 
     [Test]
+    public void MissingNvidiaRuntimeDiagnostic_TellsUsersHowToRetrieveDlls()
+    {
+        string dlssManagerSource = ReadWorkspaceFile("XRENGINE/Rendering/DLSS/NvidiaDlssManager.cs").Replace("\r\n", "\n");
+        string readmeSource = ReadWorkspaceFile("ThirdParty/NVIDIA/SDK/README.md").Replace("\r\n", "\n");
+        string imguiPropertyEditorSource = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.PropertyEditor.cs").Replace("\r\n", "\n");
+
+        dlssManagerSource.ShouldContain("Download the official NVIDIA Streamline/DLSS SDK");
+        dlssManagerSource.ShouldContain("ThirdParty/NVIDIA/SDK/win-x64/");
+        dlssManagerSource.ShouldContain("Do not download NVIDIA runtime DLLs from third-party DLL sites");
+        dlssManagerSource.ShouldContain("public static bool RequiredRuntimeDllsAvailable");
+
+        readmeSource.ShouldContain("https://github.com/NVIDIA-RTX/Streamline/releases");
+        readmeSource.ShouldContain("sl.interposer.dll");
+        readmeSource.ShouldContain("nvngx_dlss.dll");
+
+        imguiPropertyEditorSource.ShouldContain("DrawInspectorMemberLabel(property, displayName, description);");
+        imguiPropertyEditorSource.ShouldContain("NvidiaDlssManager.RequiredRuntimeDllsAvailable");
+        imguiPropertyEditorSource.ShouldContain("This DLSS setting will not do anything");
+        imguiPropertyEditorSource.ShouldContain("ImGui.TextColored(DlssRuntimeWarningColor, \"!\")");
+    }
+
+    [Test]
     public void StreamlineDlssBridge_QueriesVulkanRequirementsBeforeCreatingTheSidecarDevice()
     {
         string dlssSource = ReadWorkspaceFile("XRENGINE/Rendering/DLSS/StreamlineNative.cs").Replace("\r\n", "\n");

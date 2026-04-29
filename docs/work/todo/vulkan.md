@@ -193,7 +193,7 @@ Optional high-end features:
 - [ ] Vulkan memory decompression if available.
 - [ ] Vulkan indirect copy if available.
 - [ ] DLSS/XeSS native Vulkan path.
-- [ ] OpenGL-to-Vulkan upscale bridge fallback behavior.
+- [x] OpenGL-to-Vulkan upscale bridge fallback behavior. Shipped as [Vulkan Upscale Bridge](../../features/vulkan-upscale-bridge.md); remaining work is hardware validation and future expansion.
 
 ## P2 Hitch And Queue Validation
 

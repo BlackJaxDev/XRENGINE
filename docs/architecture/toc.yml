@@ -4,6 +4,8 @@
   href: CoACD.md
 - name: Load Balancer
   href: load-balancer.md
+- name: GPU-Driven Animation
+  href: ../work/design/gpu-driven-animation.md
 - name: Networking Overview
   href: networking-overview.md
 - name: Modeling XRMesh Editing

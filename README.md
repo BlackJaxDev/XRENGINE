@@ -8,14 +8,14 @@ If you want the fastest way in: build the editor, launch the Unit Testing World,
 
 ## Main subsystems
 
-- **Rendering:** OpenGL 4.6 via Silk.NET is the primary path. Vulkan and DX12 backends exist but are still in progress.
-- **Physics:** PhysX (via MagicPhysX) is the current default with character controller support. Jolt is planned as the future default but isn't fully wired up yet. Jitter 2 is on the roadmap for lightweight use cases.
+- **Rendering:** OpenGL 4.6 via Silk.NET is the primary path. WIP Vulkan and DX12 backends exist but only Vulkan development is ongoing.
+- **Physics:** PhysX (via MagicPhysX) is the current default with character controller support. Jolt is planned as the future default but isn't fully integrated currently. Jitter 2 is on the roadmap for lightweight use cases, such as VTubing.
 - **Audio:** OpenAL (Soft) via Silk.NET, with NAudio and LAME for codec support. Video audio goes through FFmpeg.
 - **Scene graph:** Traditional scene node tree with an attached component model. Nodes form a parent-child transform hierarchy, and components derive from `XRBase` for change tracking.
 - **Animation:** Skeletal animation with blend support, humanoid IK (VRIK for VR), and Assimp-based clip import.
 - **Asset import:** FBX uses the native `XREngine.Fbx` importer and glTF/GLB uses the native `XREngine.Gltf` importer by default. Other model formats still load through Assimp (via AssimpNetter).
 - **Networking:** Client/server realtime transport with entity replication and pose sync for multiplayer testing.
-- **XR:** OpenXR and SteamVR/OpenVR paths. OpenVR is the one that's actually tested today.
+- **XR:** OpenXR and SteamVR/OpenVR paths. OpenVR works, and OpenXR is still in the debugging phase.
 - **Editor UI:** ImGui is the day-to-day interface. A native UI pipeline is under development as the intended production UI.
 - **Input:** Silk.NET.Input for keyboard, mouse, and gamepad. GLFW for windowing.
 - **Video/media:** FFmpeg (via FFmpeg.AutoGen) for video textures, streaming, and audio extraction.

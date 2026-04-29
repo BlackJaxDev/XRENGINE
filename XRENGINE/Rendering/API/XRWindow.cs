@@ -901,13 +901,19 @@ namespace XREngine.Rendering
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick");
 
-            RuntimeRenderingHostServices.Current.UnsubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
-            Renderer.WaitForGpu();
-            Renderer.DestroyCachedAPIRenderObjects();
-            RuntimeRenderingHostServices.Current.DestroyObjectsForRenderer(Renderer);
-            Renderer.CleanUp();
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.Unsubscribe"))
+                RuntimeRenderingHostServices.Current.UnsubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.WaitForGpu"))
+                Renderer.WaitForGpu();
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.DestroyCachedAPIRenderObjects"))
+                Renderer.DestroyCachedAPIRenderObjects();
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.DestroyObjectsForRenderer"))
+                RuntimeRenderingHostServices.Current.DestroyObjectsForRenderer(Renderer);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.RendererCleanUp"))
+                Renderer.CleanUp();
             _rendererInitialized = false;
-            Window.DoEvents();
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.DoEvents"))
+                Window.DoEvents();
         }
 
         private void SwapBuffers()

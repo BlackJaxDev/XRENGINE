@@ -20,8 +20,11 @@ layout(std430, binding = 25) buffer PpllCounterBuffer
     uint PpllOverflowCount;
 };
 
+#ifndef XRENGINE_SCREEN_SIZE_UNIFORMS
+#define XRENGINE_SCREEN_SIZE_UNIFORMS
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+#endif
 uniform int PpllMaxNodes;
 
 void XRE_StorePerPixelLinkedListFragment(vec4 shadedColor)

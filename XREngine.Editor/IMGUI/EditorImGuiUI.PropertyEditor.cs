@@ -15,6 +15,7 @@ using XREngine.Data.Core;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
+using XREngine.Rendering.DLSS;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Components;
@@ -188,6 +189,8 @@ public static partial class EditorImGuiUI
 
         [ThreadStatic]
         private static int _inspectorDepth;
+
+        private static readonly Vector4 DlssRuntimeWarningColor = new(1.0f, 0.16f, 0.16f, 1.0f);
 
         // Property Editor Logic will be moved here
         private static void DrawSettingsObject(InspectorTargetSet targets, string label, string? description, HashSet<object> visited, bool defaultOpen, string? idOverride = null)
@@ -3568,14 +3571,54 @@ public static partial class EditorImGuiUI
                 NotifyInspectorValueEdited(target);
         }
 
+        private static void DrawInspectorMemberLabel(MemberInfo member, string displayName, string? description)
+        {
+            ImGui.TextUnformatted(displayName);
+            bool labelHovered = ImGui.IsItemHovered();
+
+            if (TryGetDlssRuntimeWarning(member, out string? warning) && warning is not null)
+            {
+                ImGui.SameLine(0.0f, 5.0f);
+                ImGui.TextColored(DlssRuntimeWarningColor, "!");
+                if (ImGui.IsItemHovered())
+                    DrawDlssRuntimeWarningTooltip(warning);
+            }
+
+            if (!string.IsNullOrEmpty(description) && labelHovered)
+                ImGui.SetTooltip(description);
+        }
+
+        private static bool TryGetDlssRuntimeWarning(MemberInfo member, out string? warning)
+        {
+            warning = null;
+            if (!member.Name.Contains("Dlss", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (NvidiaDlssManager.RequiredRuntimeDllsAvailable)
+                return false;
+
+            warning = "This DLSS setting will not do anything because the NVIDIA Streamline/DLSS runtime DLLs are not deployed. "
+                + NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
+            return true;
+        }
+
+        private static void DrawDlssRuntimeWarningTooltip(string warning)
+        {
+            if (!ImGui.BeginTooltip())
+                return;
+
+            ImGui.PushTextWrapPos(ImGui.GetFontSize() * 42.0f);
+            ImGui.TextWrapped(warning);
+            ImGui.PopTextWrapPos();
+            ImGui.EndTooltip();
+        }
+
         private static void DrawSimplePropertyRow(InspectorTargetSet targets, PropertyInfo property, IReadOnlyList<object?> values, string displayName, string? description, bool valueRetrievalFailed)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimplePropertyRow");
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted(displayName);
-            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
-                ImGui.SetTooltip(description);
+            DrawInspectorMemberLabel(property, displayName, description);
             ImGui.TableSetColumnIndex(1);
             ImGui.PushID(property.Name);
 
@@ -3881,7 +3924,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canWrite))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat2("##Value", ref vector, 0.05f) && canWrite)
+                    if (ImGui.DragFloat2("##Value", ref vector, 0.05f, 0.0f, 0.0f, PreciseInspectorFloatFormat, PreciseInspectorDragFlags) && canWrite)
                     {
                         if (TryApplyInspectorValue(targets, property, values, vector))
                         {
@@ -3901,7 +3944,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canWrite))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat3("##Value", ref vector, 0.05f) && canWrite)
+                    if (ImGui.DragFloat3("##Value", ref vector, 0.05f, 0.0f, 0.0f, PreciseInspectorFloatFormat, PreciseInspectorDragFlags) && canWrite)
                     {
                         if (TryApplyInspectorValue(targets, property, values, vector))
                         {
@@ -3921,7 +3964,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canWrite))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat4("##Value", ref vector, 0.05f) && canWrite)
+                    if (ImGui.DragFloat4("##Value", ref vector, 0.05f, 0.0f, 0.0f, PreciseInspectorFloatFormat, PreciseInspectorDragFlags) && canWrite)
                     {
                         if (TryApplyInspectorValue(targets, property, values, vector))
                         {
@@ -3965,7 +4008,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canWrite))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat3("##Value", ref euler, 0.5f) && canWrite)
+                    if (ImGui.DragFloat3("##Value", ref euler, 0.5f, 0.0f, 0.0f, PreciseInspectorFloatFormat, PreciseInspectorDragFlags) && canWrite)
                     {
                         var newQuat = EulerDegToQuaternion(euler);
                         if (TryApplyInspectorValue(targets, property, values, newQuat))
@@ -4100,9 +4143,7 @@ public static partial class EditorImGuiUI
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimpleFieldRow");
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted(displayName);
-            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
-                ImGui.SetTooltip(description);
+            DrawInspectorMemberLabel(field, displayName, description);
             ImGui.TableSetColumnIndex(1);
 
             ImGui.PushID(field.Name);
@@ -5208,7 +5249,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canWrite))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat2(label, ref vector, 0.05f) && canWrite)
+                    if (ImGui.DragFloat2(label, ref vector, 0.05f, 0.0f, 0.0f, PreciseInspectorFloatFormat, PreciseInspectorDragFlags) && canWrite)
                     {
                         if (applyValue(vector))
                         {
@@ -5226,7 +5267,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canWrite))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat3(label, ref vector, 0.05f) && canWrite)
+                    if (ImGui.DragFloat3(label, ref vector, 0.05f, 0.0f, 0.0f, PreciseInspectorFloatFormat, PreciseInspectorDragFlags) && canWrite)
                     {
                         if (applyValue(vector))
                         {
@@ -5244,7 +5285,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canWrite))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat4(label, ref vector, 0.05f) && canWrite)
+                    if (ImGui.DragFloat4(label, ref vector, 0.05f, 0.0f, 0.0f, PreciseInspectorFloatFormat, PreciseInspectorDragFlags) && canWrite)
                     {
                         if (applyValue(vector))
                         {
@@ -5324,7 +5365,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canWrite))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.DragFloat3(label, ref euler, 0.5f) && canWrite)
+                    if (ImGui.DragFloat3(label, ref euler, 0.5f, 0.0f, 0.0f, PreciseInspectorFloatFormat, PreciseInspectorDragFlags) && canWrite)
                     {
                         var newQuat = EulerDegToQuaternion(euler);
                         if (applyValue(newQuat))

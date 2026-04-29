@@ -20,6 +20,8 @@ public static class EngineShaderBindingNames
         public const string ForwardPlusTileCountY = "ForwardPlusTileCountY";
         public const string ForwardPlusMaxLightsPerTile = "ForwardPlusMaxLightsPerTile";
         public const string ForwardPlusEyeCount = "ForwardPlusEyeCount";
+        public const string ForwardContactShadowsEnabled = "ForwardContactShadowsEnabled";
+        public const string ForwardContactShadowsArrayEnabled = "ForwardContactShadowsArrayEnabled";
         public const string AmbientOcclusionEnabled = "AmbientOcclusionEnabled";
         public const string AmbientOcclusionArrayEnabled = "AmbientOcclusionArrayEnabled";
         public const string AmbientOcclusionPower = "AmbientOcclusionPower";
@@ -103,6 +105,10 @@ public static class EngineShaderBindingNames
         public const string ShadowMapArray = "ShadowMapArray";
         public const string PointLightShadowMaps = "PointLightShadowMaps";
         public const string SpotLightShadowMaps = "SpotLightShadowMaps";
+        public const string ForwardContactDepthView = "ForwardContactDepthView";
+        public const string ForwardContactNormalView = "ForwardContactNormalView";
+        public const string ForwardContactDepthViewArray = "ForwardContactDepthViewArray";
+        public const string ForwardContactNormalViewArray = "ForwardContactNormalViewArray";
         public const string EnvironmentMap = "u_EnvironmentMap";
         public const string PbrReflectionCube = "_PBRReflCube";
         public const string PrevPeelDepth = "PrevPeelDepth";

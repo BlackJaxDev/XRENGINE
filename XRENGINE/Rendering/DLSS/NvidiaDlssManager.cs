@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using XREngine;
 using XREngine.Rendering;
@@ -18,8 +19,14 @@ namespace XREngine.Rendering.DLSS
     {
         private const float MinScale = 0.25f;
         private const float MaxScale = 1.0f;
+        private const string MissingRuntimeRecoveryMessage =
+            "Download the official NVIDIA Streamline/DLSS SDK, copy the production x64 sl.*.dll and nvngx_*.dll files " +
+            "plus any *.license.txt files into ThirdParty/NVIDIA/SDK/win-x64/, then rebuild so they are copied next to the editor executable. " +
+            "Do not download NVIDIA runtime DLLs from third-party DLL sites or commit NVIDIA SDK binaries.";
+        private const string MissingRuntimeMessage = "DLSS runtime is incomplete: required NVIDIA Streamline/DLSS DLLs are missing. " + MissingRuntimeRecoveryMessage;
 
         private static readonly ConcurrentDictionary<XRViewport, float> _lastViewportScale = new();
+        private static readonly string[] RequiredRuntimeLibraryNames = ["sl.interposer.dll", "nvngx_dlss.dll"];
 
         private static bool _probed;
         private static bool _cachedIsSupported;
@@ -28,6 +35,9 @@ namespace XREngine.Rendering.DLSS
         private static int _lastNativeFailureGeneration;
         private static string? _lastBridgeFingerprint;
         private static string? _lastError;
+        private static bool _runtimeDllsProbed;
+        private static bool _cachedRuntimeDllsAvailable;
+        private static string? _runtimeDllsUnavailableReason;
 
         public static bool IsSupported
         {
@@ -46,6 +56,57 @@ namespace XREngine.Rendering.DLSS
                 return _lastError;
             }
         }
+
+        public static bool RequiredRuntimeDllsAvailable
+        {
+            get
+            {
+                EnsureRuntimeDllsProbed();
+                return _cachedRuntimeDllsAvailable;
+            }
+        }
+
+        public static string RequiredRuntimeDllsUnavailableReason
+        {
+            get
+            {
+                EnsureRuntimeDllsProbed();
+                return _runtimeDllsUnavailableReason ?? MissingRuntimeMessage;
+            }
+        }
+
+        private static void EnsureRuntimeDllsProbed()
+        {
+            if (_runtimeDllsProbed)
+                return;
+
+            List<string>? missingLibraries = null;
+            for (int i = 0; i < RequiredRuntimeLibraryNames.Length; i++)
+            {
+                string libraryName = RequiredRuntimeLibraryNames[i];
+                if (TryProbeRuntimeLibrary(libraryName))
+                    continue;
+
+                missingLibraries ??= [];
+                missingLibraries.Add(libraryName);
+            }
+
+            if (missingLibraries is null)
+            {
+                _cachedRuntimeDllsAvailable = true;
+                _runtimeDllsUnavailableReason = null;
+            }
+            else
+            {
+                _cachedRuntimeDllsAvailable = false;
+                _runtimeDllsUnavailableReason = BuildRuntimeDllsUnavailableReason(missingLibraries);
+            }
+
+            _runtimeDllsProbed = true;
+        }
+
+        private static string BuildRuntimeDllsUnavailableReason(IReadOnlyList<string> missingLibraries)
+            => $"DLSS runtime is incomplete: missing {string.Join(", ", missingLibraries)}. {MissingRuntimeRecoveryMessage}";
 
         private static void EnsureDetected()
         {
@@ -103,9 +164,9 @@ namespace XREngine.Rendering.DLSS
             }
 
             // Probe for the Streamline/DLSS runtime without taking a hard dependency on it.
-            _cachedIsSupported = TryProbeLibrary("sl.interposer.dll") || TryProbeLibrary("nvngx_dlss.dll");
+            _cachedIsSupported = RequiredRuntimeDllsAvailable;
             if (!_cachedIsSupported && _lastError is null)
-                _lastError = "Neither sl.interposer.dll nor nvngx_dlss.dll was found on the probing path.";
+                _lastError = RequiredRuntimeDllsUnavailableReason;
         }
 
         private static bool TryIsBridgeCapable(out string? failureReason)
@@ -146,7 +207,7 @@ namespace XREngine.Rendering.DLSS
             return true;
         }
 
-        private static bool TryProbeLibrary(string libraryName)
+        private static bool TryProbeRuntimeLibrary(string libraryName)
         {
             try
             {
@@ -156,9 +217,8 @@ namespace XREngine.Rendering.DLSS
                     return true;
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                _lastError = ex.Message;
             }
 
             return false;

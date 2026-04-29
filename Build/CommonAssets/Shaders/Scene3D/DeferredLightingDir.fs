@@ -1,5 +1,10 @@
 #version 450
 
+#ifndef XRENGINE_DEPTH_MODE_UNIFORM
+#define XRENGINE_DEPTH_MODE_UNIFORM
+uniform int DepthMode;
+#endif
+
 #pragma snippet "NormalEncoding"
 #pragma snippet "LightAttenuation"
 #pragma snippet "ShadowSampling"
@@ -42,6 +47,7 @@ const vec3 CascadeDebugColorTable[MAX_CASCADES] = vec3[](
 
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
@@ -51,9 +57,9 @@ uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
-uniform int ShadowSamples = 16;
-uniform int ShadowBlockerSamples = 16;
-uniform int ShadowFilterSamples = 16;
+uniform int ShadowSamples = 8;
+uniform int ShadowBlockerSamples = 8;
+uniform int ShadowFilterSamples = 8;
 uniform int ShadowVogelTapCount = 5;
 uniform float ShadowFilterRadius = 0.0012f;
 uniform float ShadowBlockerSearchRadius = 0.01f;
@@ -62,9 +68,9 @@ uniform float ShadowMaxPenumbra = 0.015f;
 uniform int SoftShadowMode = 2;
 uniform float LightSourceRadius = 1.2f;
 uniform bool EnableContactShadows = true;
-uniform float ContactShadowDistance = 0.1f;
-uniform int ContactShadowSamples = 4;
-uniform float ContactShadowThickness = 0.25f;
+uniform float ContactShadowDistance = 1.0f;
+uniform int ContactShadowSamples = 16;
+uniform float ContactShadowThickness = 2.0f;
 uniform float ContactShadowFadeStart = 10.0f;
 uniform float ContactShadowFadeEnd = 40.0f;
 uniform float ContactShadowNormalOffset = 0.0f;
@@ -80,33 +86,61 @@ struct DirLight
 	vec3 Direction;
 	float CascadeSplits[MAX_CASCADES];
 	float CascadeBlendWidths[MAX_CASCADES];
+	float CascadeBiasMin[MAX_CASCADES];
+	float CascadeBiasMax[MAX_CASCADES];
+	float CascadeReceiverOffsets[MAX_CASCADES];
 	mat4 CascadeMatrices[MAX_CASCADES];
 	int CascadeCount;
 };
 uniform DirLight LightData;
 
 int XRENGINE_ResolveContactShadowSampleCount(int requestedSamples, float viewDepth, float contactDistance);
-float XRENGINE_SampleContactShadow2D(
-	sampler2D shadowMap,
-	mat4 lightMatrix,
+#ifdef XRENGINE_MSAA_DEFERRED
+float XRENGINE_SampleContactShadowScreenSpace(
+	sampler2DMS sceneDepth,
+	int sampleId,
+	vec2 screenSize,
+	mat4 viewMatrix,
+	mat4 inverseProjMatrix,
+	mat4 inverseViewMatrix,
+	mat4 viewProjectionMatrix,
+	int depthMode,
 	vec3 fragPosWS,
 	vec3 normalWS,
 	vec3 lightDirWS,
 	float receiverOffset,
 	float compareBias,
 	float contactDistance,
-	int contactSamples);
-float XRENGINE_SampleContactShadowArray(
-	sampler2DArray shadowMap,
-	mat4 lightMatrix,
-	float layer,
+	int contactSamples,
+	float contactThickness,
+	float contactFadeStart,
+	float contactFadeEnd,
+	float contactNormalOffset,
+	float jitterStrength,
+	float viewDepth);
+#else
+float XRENGINE_SampleContactShadowScreenSpace(
+	sampler2D sceneDepth,
+	vec2 screenSize,
+	mat4 viewMatrix,
+	mat4 inverseProjMatrix,
+	mat4 inverseViewMatrix,
+	mat4 viewProjectionMatrix,
+	int depthMode,
 	vec3 fragPosWS,
 	vec3 normalWS,
 	vec3 lightDirWS,
 	float receiverOffset,
 	float compareBias,
 	float contactDistance,
-	int contactSamples);
+	int contactSamples,
+	float contactThickness,
+	float contactFadeStart,
+	float contactFadeEnd,
+	float contactNormalOffset,
+	float jitterStrength,
+	float viewDepth);
+#endif
 
 const vec2 LocalShadowPoissonDisk[16] = vec2[](
 	vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
@@ -349,16 +383,75 @@ float SampleShadowMapArrayFilteredLocal(
 		vogelTapCount);
 }
 
+float GetShadowBiasRange(in float NoL, in float biasMin, in float biasMax)
+{
+	float mapped = pow(max(ShadowBase, 0.0f) * (1.0f - max(NoL, 0.0f)), max(ShadowMult, 0.0001f));
+	return mix(biasMin, biasMax, clamp(mapped, 0.0f, 1.0f));
+}
+
 float GetShadowBias(in float NoL)
 {
-	float mapped = pow(ShadowBase * (1.0f - NoL), ShadowMult);
-	return mix(ShadowBiasMin, ShadowBiasMax, mapped);
+	return GetShadowBiasRange(NoL, ShadowBiasMin, ShadowBiasMax);
 }
 
 float ViewDepthFromWorldPos(in vec3 fragPosWS)
 {
 	vec4 viewPos = ViewMatrix * vec4(fragPosWS, 1.0f);
 	return abs(viewPos.z);
+}
+
+float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDirWS, in float receiverOffset, in float compareBias, in float viewDepth)
+{
+	int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
+		ContactShadowSamples,
+		viewDepth,
+		ContactShadowDistance);
+#ifdef XRENGINE_MSAA_DEFERRED
+	return XRENGINE_SampleContactShadowScreenSpace(
+		DepthView,
+		gl_SampleID,
+		vec2(ScreenWidth, ScreenHeight),
+		ViewMatrix,
+		InverseProjMatrix,
+		InverseViewMatrix,
+		ViewProjectionMatrix,
+		DepthMode,
+		fragPosWS,
+		N,
+		lightDirWS,
+		receiverOffset,
+		compareBias,
+		ContactShadowDistance,
+		contactSampleCount,
+		ContactShadowThickness,
+		ContactShadowFadeStart,
+		ContactShadowFadeEnd,
+		ContactShadowNormalOffset,
+		ContactShadowJitterStrength,
+		viewDepth);
+#else
+	return XRENGINE_SampleContactShadowScreenSpace(
+		DepthView,
+		vec2(ScreenWidth, ScreenHeight),
+		ViewMatrix,
+		InverseProjMatrix,
+		InverseViewMatrix,
+		ViewProjectionMatrix,
+		DepthMode,
+		fragPosWS,
+		N,
+		lightDirWS,
+		receiverOffset,
+		compareBias,
+		ContactShadowDistance,
+		contactSampleCount,
+		ContactShadowThickness,
+		ContactShadowFadeStart,
+		ContactShadowFadeEnd,
+		ContactShadowNormalOffset,
+		ContactShadowJitterStrength,
+		viewDepth);
+#endif
 }
 
 
@@ -381,27 +474,8 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 		//Create bias depending on angle of normal to the light
 		float bias = GetShadowBias(NoL);
 		float viewDepth = ViewDepthFromWorldPos(fragPosWS);
-		int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
-			ContactShadowSamples,
-			viewDepth,
-			ContactShadowDistance);
 		float contact = EnableContactShadows
-			? XRENGINE_SampleContactShadow2D(
-				ShadowMap,
-				lightMatrix,
-				fragPosWS,
-				N,
-				normalize(-LightData.Direction),
-				ShadowBiasMax,
-				bias,
-				ContactShadowDistance,
-				contactSampleCount,
-				ContactShadowThickness,
-				ContactShadowFadeStart,
-				ContactShadowFadeEnd,
-				ContactShadowNormalOffset,
-				ContactShadowJitterStrength,
-				viewDepth)
+			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), ShadowBiasMax, bias, viewDepth)
 			: 1.0f;
 
 		return SampleShadowMapFilteredLocal(
@@ -425,7 +499,8 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int ca
 			return 1.0f;
 
 		mat4 lightMatrix = LightData.CascadeMatrices[cascadeIndex];
-		vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
+		float receiverOffset = LightData.CascadeReceiverOffsets[cascadeIndex];
+		vec3 offsetPosWS = fragPosWS + N * receiverOffset;
 		vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
 		vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
 		fragCoord = fragCoord * 0.5f + 0.5f;
@@ -437,30 +512,10 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int ca
 			fragCoord.z < 0.0f || fragCoord.z > 1.0f)
 			return -1.0f;
 
-		float bias = GetShadowBias(NoL);
+		float bias = GetShadowBiasRange(NoL, LightData.CascadeBiasMin[cascadeIndex], LightData.CascadeBiasMax[cascadeIndex]);
 		float viewDepth = ViewDepthFromWorldPos(fragPosWS);
-		int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
-			ContactShadowSamples,
-			viewDepth,
-			ContactShadowDistance);
 		float contact = EnableContactShadows
-			? XRENGINE_SampleContactShadowArray(
-				ShadowMapArray,
-				lightMatrix,
-				float(cascadeIndex),
-				fragPosWS,
-				N,
-				normalize(-LightData.Direction),
-				ShadowBiasMax,
-				bias,
-				ContactShadowDistance,
-				contactSampleCount,
-				ContactShadowThickness,
-				ContactShadowFadeStart,
-				ContactShadowFadeEnd,
-				ContactShadowNormalOffset,
-				ContactShadowJitterStrength,
-				viewDepth)
+			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)
 			: 1.0f;
 		float cascadeScale = 1.0f + float(cascadeIndex) * 0.35f;
 		float filterRadius = ShadowFilterRadius * cascadeScale;
@@ -590,9 +645,10 @@ in vec3 cameraPosition)
 }
 void main()
 {
-		vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+		vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;
+		vec2 uv = clamp(fragCoordLocal / vec2(ScreenWidth, ScreenHeight), vec2(0.0f), vec2(1.0f));
 #ifdef XRENGINE_MSAA_DEFERRED
-		ivec2 coord = ivec2(gl_FragCoord.xy);
+		ivec2 coord = ivec2(floor(fragCoordLocal));
 		vec3 albedo = texelFetch(AlbedoOpacity, coord, gl_SampleID).rgb;
 		vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
 		vec3 rms = texelFetch(RMSE, coord, gl_SampleID).rgb;
@@ -604,14 +660,14 @@ void main()
 		vec3 rms = texture(RMSE, uv).rgb;
 		float depth = texture(DepthView, uv).r;
 #endif
-		if (depth >= 1.0f)
+		if (XRENGINE_ResolveDepth(depth) >= 1.0f)
 		{
 			OutColor = vec3(0.0f);
 			return;
 		}
 
 		//Resolve world fragment position using depth and screen UV
-		vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
+		vec3 fragPosWS = XRENGINE_WorldPosFromDepth(depth, uv, InverseProjMatrix, InverseViewMatrix);
 		vec3 cameraPosition = InverseViewMatrix[3].xyz;
 
 		OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms, cameraPosition);

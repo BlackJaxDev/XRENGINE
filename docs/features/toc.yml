@@ -27,8 +27,17 @@
 - name: Audio2Face-3D Engine Setup
   href: audio2face-3d-engine-setup.md
 
+- name: Physics Chain Performance
+  href: physics-chain-performance.md
+
 - name: Steam Audio Integration
   href: steam-audio.md
+
+- name: Uber Shader Materials
+  href: uber-shader-materials.md
+
+- name: Vulkan Upscale Bridge
+  href: vulkan-upscale-bridge.md
 
 - name: Tick-Based Animation Timing
   href: tick-based-animation-timing.md

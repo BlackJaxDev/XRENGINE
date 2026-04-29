@@ -22,32 +22,42 @@ namespace XREngine.Components.Capture.Lights.Types
             _exponent = exponent;
             _brightness = brightness;
 
+            float outerConeRadius = CalculateOuterConeRadius(distance, outerCutoffDeg);
+            float innerConeRadius = CalculateOuterConeRadius(distance, innerCutoffDeg);
+
             _outerCone = new(
                 Vector3.Zero,
                 Globals.Backward,
-                MathF.Tan(DegToRad(outerCutoffDeg)) * distance,
-                distance);
+                distance,
+                outerConeRadius);
 
             _innerCone = new(
                 Vector3.Zero,
                 Globals.Backward,
-                MathF.Tan(DegToRad(innerCutoffDeg)) * distance,
-                distance);
+                distance,
+                innerConeRadius);
 
-            SetShadowMapResolution(2048u, 2048u);
+            SetShadowMapResolution(512u, 512u);
             ShadowMinBias = 0.0001f;
             ShadowMaxBias = 0.07f;
             ShadowExponentBase = 0.2f;
             ShadowExponent = 1.0f;
-            Samples = 8;
             BlockerSamples = 8;
+            FilterSamples = 8;
             FilterRadius = 0.0012f;
-            BlockerSearchRadius = 0.0012f;
-            MaxPenumbra = 0.0048f;
-            SoftShadowMode = ESoftShadowMode.FixedPoisson;
+            BlockerSearchRadius = 0.1f;
+            MinPenumbra = 0.0002f;
+            MaxPenumbra = 0.05f;
+            SoftShadowMode = ESoftShadowMode.ContactHardeningPcss;
+            LightSourceRadius = 0.1f;
             EnableContactShadows = true;
             ContactShadowDistance = 0.1f;
-            ContactShadowSamples = 4;
+            ContactShadowSamples = 16;
+            ContactShadowThickness = 1.0f;
+            ContactShadowFadeStart = 10.0f;
+            ContactShadowFadeEnd = 40.0f;
+            ContactShadowNormalOffset = 0.036f;
+            ContactShadowJitterStrength = 1.0f;
         }
 
         protected override XRPerspectiveCameraParameters GetCameraParameters() => new(
@@ -110,6 +120,11 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public Cone OuterCone => _outerCone;
         public Cone InnerCone => _innerCone;
+
+        public override bool SupportsLightRadiusContactHardening => true;
+
+        protected override float ContactHardeningLightRadius
+            => CalculateOuterConeRadius(Distance, OuterCutoffAngleDegrees);
 
         public SpotLightComponent()
             : this(100.0f, 60.0f, 30.0f, 1.0f, 1.0f) { }
@@ -305,12 +320,21 @@ namespace XREngine.Components.Capture.Lights.Types
             Vector3 dir = Vector3.TransformNormal(Globals.Forward, renderMatrix);
             Vector3 coneOrigin = renderMatrix.Translation + dir * (d * 0.5f);
 
-            SetField(ref _outerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(OuterCutoffAngleDegrees)) * d));
-            SetField(ref _innerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(InnerCutoffAngleDegrees)) * d));
+            SetField(ref _outerCone, new(coneOrigin, -dir, d, CalculateOuterConeRadius(d, OuterCutoffAngleDegrees)));
+            SetField(ref _innerCone, new(coneOrigin, -dir, d, CalculateOuterConeRadius(d, InnerCutoffAngleDegrees)));
 
             UpdateShadowCameraClipPlanes();
 
             MeshCenterAdjustMatrix = Matrix4x4.CreateScale(OuterCone.Radius, OuterCone.Radius, OuterCone.Height) * Matrix4x4.CreateTranslation(Globals.Forward * (Distance * 0.5f));
+        }
+
+        private static float CalculateOuterConeRadius(float distance, float cutoffAngleDegrees)
+        {
+            if (!float.IsFinite(distance) || distance <= 0.0f)
+                return 0.0f;
+
+            float clampedDegrees = Math.Clamp(cutoffAngleDegrees, 0.0f, 89.9f);
+            return MathF.Tan(DegToRad(clampedDegrees)) * distance;
         }
     }
 }

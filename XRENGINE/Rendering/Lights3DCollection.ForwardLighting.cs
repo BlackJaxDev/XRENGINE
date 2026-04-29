@@ -5,7 +5,6 @@ using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Colors;
-using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 
@@ -53,6 +52,24 @@ namespace XREngine.Scene
             return names;
         }
 
+        private static bool IsTexture2D(XRTexture texture)
+            => texture switch
+            {
+                XRTexture2D tex2D => !tex2D.MultiSample && !tex2D.Rectangle,
+                XRTexture2DView { Array: false, Multisample: false } => true,
+                XRTexture2DArrayView { NumLayers: 1, Multisample: false } => true,
+                _ => false,
+            };
+
+        private static bool IsTexture2DArray(XRTexture texture)
+            => texture switch
+            {
+                XRTexture2DArray tex2DArray => !tex2DArray.MultiSample,
+                XRTexture2DView { Array: true, Multisample: false } => true,
+                XRTexture2DArrayView { NumLayers: > 1, Multisample: false } => true,
+                _ => false,
+            };
+
         internal void SetForwardLightingUniforms(XRRenderProgram program)
         {
             const int maxForwardShadowedPointLights = 4;
@@ -60,6 +77,10 @@ namespace XREngine.Scene
             const int pointShadowStartUnit = 17;
             const int spotShadowStartUnit = 21;
             const int forwardAmbientOcclusionArrayUnit = 25;
+            const int forwardContactDepthUnit = 26;
+            const int forwardContactNormalUnit = 27;
+            const int forwardContactDepthArrayUnit = 28;
+            const int forwardContactNormalArrayUnit = 29;
 
             // Debug: log that we're being called
             if (!_loggedForwardLightingOnce)
@@ -138,6 +159,34 @@ namespace XREngine.Scene
             else
                 program.Sampler(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, DummyShadowMap, forwardAmbientOcclusionUnit);
             program.Sampler("AmbientOcclusionTextureArray", ambientOcclusionTexture as XRTexture2DArray ?? DummyAmbientOcclusionArray, forwardAmbientOcclusionArrayUnit);
+
+            XRTexture? forwardContactDepthTexture = null;
+            XRTexture? forwardContactNormalTexture = null;
+            bool forwardContactPrePass2DAvailable = false;
+            bool forwardContactPrePassArrayAvailable = false;
+            bool forwardContactPrePassAvailable = false;
+            if (Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled && currentPipeline is not null)
+            {
+                currentPipeline.TryGetTexture(DefaultRenderPipeline.DepthViewTextureName, out forwardContactDepthTexture);
+                currentPipeline.TryGetTexture(DefaultRenderPipeline.NormalTextureName, out forwardContactNormalTexture);
+                if (forwardContactDepthTexture is not null && forwardContactNormalTexture is not null)
+                {
+                    forwardContactPrePass2DAvailable =
+                        IsTexture2D(forwardContactDepthTexture) &&
+                        IsTexture2D(forwardContactNormalTexture);
+                    forwardContactPrePassArrayAvailable =
+                        IsTexture2DArray(forwardContactDepthTexture) &&
+                        IsTexture2DArray(forwardContactNormalTexture);
+                    forwardContactPrePassAvailable = forwardContactPrePass2DAvailable || forwardContactPrePassArrayAvailable;
+                }
+            }
+
+            program.Uniform("ForwardContactShadowsEnabled", forwardContactPrePassAvailable);
+            program.Uniform("ForwardContactShadowsArrayEnabled", forwardContactPrePassArrayAvailable);
+            program.Sampler("ForwardContactDepthView", forwardContactPrePass2DAvailable ? forwardContactDepthTexture! : DummyShadowMap, forwardContactDepthUnit);
+            program.Sampler("ForwardContactNormalView", forwardContactPrePass2DAvailable ? forwardContactNormalTexture! : DummyShadowMap, forwardContactNormalUnit);
+            program.Sampler("ForwardContactDepthViewArray", forwardContactPrePassArrayAvailable ? forwardContactDepthTexture! : DummyShadowMapArray, forwardContactDepthArrayUnit);
+            program.Sampler("ForwardContactNormalViewArray", forwardContactPrePassArrayAvailable ? forwardContactNormalTexture! : DummyShadowMapArray, forwardContactNormalArrayUnit);
 
             switch (currentPipeline?.Pipeline)
             {
@@ -399,7 +448,7 @@ namespace XREngine.Scene
                 _pointShadowPacked1[i] = new IVector4((int)light.SoftShadowMode, light.ShadowDebugMode, light.EnableContactShadows ? 1 : 0, light.ContactShadowSamples);
                 _pointShadowParams0[i] = new Vector4(light.ShadowNearPlaneDistance, light.Radius, light.ShadowExponentBase, light.ShadowExponent);
                 _pointShadowParams1[i] = new Vector4(light.ShadowMinBias, light.ShadowMaxBias, light.FilterRadius, light.BlockerSearchRadius);
-                _pointShadowParams2[i] = new Vector4(light.MinPenumbra, light.MaxPenumbra, light.LightSourceRadius, light.ContactShadowDistance);
+                _pointShadowParams2[i] = new Vector4(light.MinPenumbra, light.MaxPenumbra, light.EffectiveLightSourceRadius, light.ContactShadowDistance);
                 _pointShadowParams3[i] = new Vector4(light.ContactShadowThickness, light.ContactShadowFadeStart, light.ContactShadowFadeEnd, light.ContactShadowNormalOffset);
                 _pointShadowParams4[i] = new Vector4(light.ContactShadowJitterStrength, 0.0f, 0.0f, 0.0f);
             }
@@ -430,7 +479,7 @@ namespace XREngine.Scene
                 _spotShadowPacked1[i] = new IVector4((int)light.SoftShadowMode, light.ShadowDebugMode, light.EnableContactShadows ? 1 : 0, light.ContactShadowSamples);
                 _spotShadowParams0[i] = new Vector4(light.ShadowExponentBase, light.ShadowExponent, light.ShadowMinBias, light.ShadowMaxBias);
                 _spotShadowParams1[i] = new Vector4(light.FilterRadius, light.BlockerSearchRadius, light.MinPenumbra, light.MaxPenumbra);
-                _spotShadowParams2[i] = new Vector4(light.LightSourceRadius, light.ContactShadowDistance, light.ContactShadowThickness, light.ContactShadowFadeStart);
+                _spotShadowParams2[i] = new Vector4(light.EffectiveLightSourceRadius, light.ContactShadowDistance, light.ContactShadowThickness, light.ContactShadowFadeStart);
                 _spotShadowParams3[i] = new Vector4(light.ContactShadowFadeEnd, light.ContactShadowNormalOffset, light.ContactShadowJitterStrength, 0.0f);
             }
             for (; spotShadowSlot < maxForwardShadowedSpotLights; ++spotShadowSlot)

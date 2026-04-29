@@ -13,6 +13,8 @@ public sealed class StandardTransformEditor : IXRTransformEditor
 {
     private static readonly string[] OrderNames = Enum.GetNames<ETransformOrder>();
     private static readonly ETransformOrder[] OrderValues = Enum.GetValues<ETransformOrder>();
+    private const string PreciseFloatFormat = "%.9f";
+    private const ImGuiSliderFlags PreciseDragFlags = ImGuiSliderFlags.NoRoundToFormat;
 
     public void DrawInspector(TransformBase transform, HashSet<object> visited)
     {
@@ -33,7 +35,7 @@ public sealed class StandardTransformEditor : IXRTransformEditor
     {
         Vector3 translation = standard.Translation;
         ImGui.SetNextItemWidth(-1f);
-        bool edited = ImGui.DragFloat3("Translation##TransformTranslation", ref translation, 0.05f);
+        bool edited = ImGui.DragFloat3("Translation##TransformTranslation", ref translation, 0.05f, 0.0f, 0.0f, PreciseFloatFormat, PreciseDragFlags);
         ImGuiUndoHelper.TrackDragUndo($"Move {transformLabel}", standard);
         if (!edited)
             return;
@@ -48,7 +50,7 @@ public sealed class StandardTransformEditor : IXRTransformEditor
         var rotator = standard.Rotator;
         Vector3 rotation = rotator.PitchYawRoll;
         ImGui.SetNextItemWidth(-1f);
-        bool edited = ImGui.DragFloat3("Rotation (Pitch/Yaw/Roll)##TransformRotation", ref rotation, 0.5f);
+        bool edited = ImGui.DragFloat3("Rotation (Pitch/Yaw/Roll)##TransformRotation", ref rotation, 0.5f, 0.0f, 0.0f, PreciseFloatFormat, PreciseDragFlags);
         ImGuiUndoHelper.TrackDragUndo($"Rotate {transformLabel}", standard);
         if (!edited)
             return;
@@ -65,7 +67,7 @@ public sealed class StandardTransformEditor : IXRTransformEditor
     {
         Vector3 scale = standard.Scale;
         ImGui.SetNextItemWidth(-1f);
-        bool edited = ImGui.DragFloat3("Scale##TransformScale", ref scale, 0.05f);
+        bool edited = ImGui.DragFloat3("Scale##TransformScale", ref scale, 0.05f, 0.0f, 0.0f, PreciseFloatFormat, PreciseDragFlags);
         ImGuiUndoHelper.TrackDragUndo($"Scale {transformLabel}", standard);
         if (!edited)
             return;

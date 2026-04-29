@@ -62,6 +62,8 @@ uniform vec4 VolumetricFogNoiseScaleThreshold[MaxVolumetricFogVolumes];
 uniform vec4 VolumetricFogNoiseOffsetAmount[MaxVolumetricFogVolumes];
 uniform vec4 VolumetricFogNoiseVelocity[MaxVolumetricFogVolumes];
 
+const vec3 VolumetricFogNoiseDomainOffset = vec3(17.37f, 41.13f, 29.91f);
+
 float saturate(float value)
 {
     return clamp(value, 0.0f, 1.0f);
@@ -121,7 +123,8 @@ float SampleVolumeNoise01(int index, vec3 localPos, out float noiseAmount)
 
     vec3 noiseSamplePos = localPos * noiseParams.x
         + VolumetricFogNoiseOffsetAmount[index].xyz
-        + VolumetricFogNoiseVelocity[index].xyz * RenderTime;
+        + VolumetricFogNoiseVelocity[index].xyz * RenderTime
+        + VolumetricFogNoiseDomainOffset;
     return clamp(fbm3(noiseSamplePos), 0.0f, 1.0f);
 }
 
@@ -167,7 +170,7 @@ bool IntersectVolumeOBB(int index, vec3 rayOriginWS, vec3 rayDirWS, out float tN
     return tFar >= max(tNear, 0.0f);
 }
 
-float ComputeRayIntervalFade(int index, vec3 rayDirWS, float tNear, float tFar, float noiseValue, float noiseAmount)
+float ComputeRayIntervalFade(int index, vec3 rayDirWS, float sampleT, float tNear, float tFar, bool fadeRayEntry, bool fadeRayExit, float noiseValue, float noiseAmount)
 {
     if (tFar <= tNear)
         return 0.0f;
@@ -175,12 +178,17 @@ float ComputeRayIntervalFade(int index, vec3 rayDirWS, float tNear, float tFar, 
     float edgeFade = max(VolumetricFogHalfExtentsEdgeFade[index].w, 0.0f);
     if (edgeFade <= 0.0001f)
         return 1.0f;
+    if (!fadeRayEntry && !fadeRayExit)
+        return 1.0f;
 
     vec3 localRayDir = (VolumetricFogWorldToLocal[index] * vec4(rayDirWS, 0.0f)).xyz;
     float edgeFadeOnRay = edgeFade / max(length(localRayDir), 1e-5f);
+    float distanceToEntry = fadeRayEntry ? sampleT - tNear : edgeFadeOnRay;
+    float distanceToExit = fadeRayExit ? tFar - sampleT : edgeFadeOnRay;
+    float distanceToRayBounds = max(min(distanceToEntry, distanceToExit), 0.0f);
     float edgeErosion = edgeFadeOnRay * 0.85f * saturate(noiseAmount) * (1.0f - clamp(noiseValue, 0.0f, 1.0f));
-    float noisyThickness = max((tFar - tNear) - edgeErosion, 0.0f);
-    return smoothstep(0.0f, edgeFadeOnRay, noisyThickness);
+    float noisyDistance = max(distanceToRayBounds - edgeErosion, 0.0f);
+    return smoothstep(0.0f, edgeFadeOnRay, noisyDistance);
 }
 
 float ViewRayFogFade(float rawDepth, float resolvedDepth, vec2 uv)
@@ -211,6 +219,8 @@ float ViewRayFogFade(float rawDepth, float resolvedDepth, vec2 uv)
         if (!IntersectVolumeOBB(volumeIndex, CameraPosition, rayDir, tNear, tFar))
             continue;
 
+        bool fadeRayEntry = tNear > 0.0f;
+        bool fadeRayExit = tFar <= rayLength + 1e-4f;
         tNear = max(tNear, 0.0f);
         tFar = min(tFar, rayLength);
         if (tFar > tNear)
@@ -220,7 +230,7 @@ float ViewRayFogFade(float rawDepth, float resolvedDepth, vec2 uv)
             vec3 localPos = (VolumetricFogWorldToLocal[volumeIndex] * vec4(samplePosWS, 1.0f)).xyz;
             float noiseAmount;
             float noiseValue = SampleVolumeNoise01(volumeIndex, localPos, noiseAmount);
-            bestFade = max(bestFade, ComputeRayIntervalFade(volumeIndex, rayDir, tNear, tFar, noiseValue, noiseAmount));
+            bestFade = max(bestFade, ComputeRayIntervalFade(volumeIndex, rayDir, sampleT, tNear, tFar, fadeRayEntry, fadeRayExit, noiseValue, noiseAmount));
         }
     }
 

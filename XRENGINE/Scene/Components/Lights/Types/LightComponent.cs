@@ -14,6 +14,7 @@ namespace XREngine.Components.Capture.Lights.Types
     public abstract class LightComponent : XRComponent, IRenderable
     {
         public const int MaxVogelTapCount = 32;
+        public const float MaxAutomaticContactHardeningLightRadius = 0.25f;
 
         public readonly record struct FrustumIntersectionAabb(int FrustumIndex, Vector3 Min, Vector3 Max);
 
@@ -41,6 +42,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private float _maxPenumbra = 0.0048f;
         private ESoftShadowMode _softShadowMode = ESoftShadowMode.FixedPoisson;
         private float _lightSourceRadius = 0.01f;
+        private bool _useLightRadiusForContactHardening = true;
         private bool _enableCascadedShadows = true;
         private bool _enableContactShadows = true;
         private float _contactShadowDistance = 0.1f;
@@ -400,6 +402,36 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _softShadowMode, value);
         }
 
+        [Browsable(false)]
+        public virtual bool SupportsLightRadiusContactHardening => false;
+
+        [Browsable(false)]
+        protected virtual float ContactHardeningLightRadius => LightSourceRadius;
+
+        [Browsable(false)]
+        public float EffectiveLightSourceRadius
+            => UseLightRadiusForContactHardening
+                ? ClampedAutomaticContactHardeningLightRadius()
+                : LightSourceRadius;
+
+        private float ClampedAutomaticContactHardeningLightRadius()
+        {
+            float radius = ContactHardeningLightRadius;
+            if (!float.IsFinite(radius))
+                return 0.0f;
+
+            return Math.Clamp(radius, 0.0f, MaxAutomaticContactHardeningLightRadius);
+        }
+
+        [Category("Shadows")]
+        [DisplayName("Use Light Radius For Contact Hardening")]
+        [Description("Uses a capped light-derived source radius instead of the manual source radius for PCSS/contact-hardening shadows.")]
+        public bool UseLightRadiusForContactHardening
+        {
+            get => _useLightRadiusForContactHardening && SupportsLightRadiusContactHardening;
+            set => SetField(ref _useLightRadiusForContactHardening, value && SupportsLightRadiusContactHardening);
+        }
+
         /// <summary>
         /// Physical radius of the light source in world units. Used by <see cref="ESoftShadowMode.ContactHardeningPcss"/>
         /// to compute the penumbra width. Larger values produce wider, softer penumbrae.
@@ -493,7 +525,7 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform(Engine.Rendering.Constants.ShadowMinPenumbra, MinPenumbra);
             program.Uniform(Engine.Rendering.Constants.ShadowMaxPenumbra, MaxPenumbra);
             program.Uniform(Engine.Rendering.Constants.SoftShadowMode, (int)SoftShadowMode);
-            program.Uniform(Engine.Rendering.Constants.LightSourceRadius, LightSourceRadius);
+            program.Uniform(Engine.Rendering.Constants.LightSourceRadius, EffectiveLightSourceRadius);
 
             program.Uniform(Engine.Rendering.Constants.EnableCascadedShadows, EnableCascadedShadows);
             program.Uniform(Engine.Rendering.Constants.EnableContactShadows, EnableContactShadows);

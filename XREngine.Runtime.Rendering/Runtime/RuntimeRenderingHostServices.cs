@@ -197,6 +197,7 @@ public interface IRuntimeRenderingHostServices
     void EnqueueRenderThreadTask(Action task);
     void EnqueueRenderThreadTask(Action task, string reason);
     void EnqueueRenderThreadCoroutine(Func<bool> task);
+    void EnqueueRenderThreadCoroutine(Func<bool> task, string reason);
     IDisposable? PushTransformId(uint transformId);
     void RecordOctreeSkippedMove();
     void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color);
@@ -406,6 +407,9 @@ public static class RuntimeRenderingHostServices
             => task();
 
         public void EnqueueRenderThreadCoroutine(Func<bool> task)
+            => task();
+
+        public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason)
             => task();
 
         public IDisposable? PushTransformId(uint transformId)

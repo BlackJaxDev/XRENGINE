@@ -245,6 +245,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void EnqueueRenderThreadCoroutine(Func<bool> task)
         => Engine.AddRenderThreadCoroutine(task);
 
+    public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason)
+        => Engine.AddRenderThreadCoroutine(task, reason);
+
     public IDisposable? PushTransformId(uint transformId)
         => Engine.Rendering.State.PushTransformId(transformId);
 

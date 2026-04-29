@@ -17,11 +17,13 @@ namespace XREngine.Scene.Transforms
 
         private Matrix4x4 _worldMatrix;
 
-        public void SetWorldMatrix(Matrix4x4 matrix)
+        public void SetWorldMatrix(Matrix4x4 matrix, bool setRenderMatrixNow = false, ELoopType childRecalcType = ELoopType.Asynchronous)
         {
             _worldMatrix = matrix;
             //MarkWorldModified();
-            RecalculateMatrixHierarchy(true, false, ELoopType.Asynchronous);
+            Task recalculateTask = RecalculateMatrixHierarchy(true, setRenderMatrixNow, childRecalcType);
+            if (setRenderMatrixNow)
+                recalculateTask.GetAwaiter().GetResult();
         }
 
         protected override Matrix4x4 CreateWorldMatrix()

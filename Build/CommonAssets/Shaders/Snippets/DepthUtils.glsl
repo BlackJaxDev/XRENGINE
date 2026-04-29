@@ -1,7 +1,10 @@
 // Depth Utilities Snippet
 // Requires: ProjMatrix (mat4), CameraNearZ (float), CameraFarZ (float), DepthMode (int)
 
+#ifndef XRENGINE_DEPTH_MODE_UNIFORM
+#define XRENGINE_DEPTH_MODE_UNIFORM
 uniform int DepthMode;
+#endif
 
 float XRENGINE_ResolveDepth(float depth)
 {

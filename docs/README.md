@@ -5,6 +5,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 ## Architecture
 - [Architecture Overview](architecture/README.md)
 - [Getting Started In The Codebase](architecture/getting-started-in-codebase.md)
+- [GPU-Driven Animation Architecture](work/design/gpu-driven-animation.md)
 - [Modeling XRMesh Editing Architecture](architecture/modeling-xrmesh-editing.md)
 - [Play Mode Architecture](architecture/play-mode-architecture.md)
 - [Load Balancer](architecture/load-balancer.md)
@@ -36,7 +37,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Secondary GPU Context](architecture/secondary-gpu-context.md)
 
 ## Physics and Simulation
-- [Physics Chain Speed Update TODO](work/todo/physics-chain-speed-update-todo.md)
+- [Physics Chain Performance](features/physics-chain-performance.md)
 - [GPU Physics Chain Zero-Readback Skinned Mesh Plan](work/design/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
 - [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md)
 
@@ -45,19 +46,24 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Audio2Face-3D Engine Setup](features/audio2face-3d-engine-setup.md)
 - [Bootstrap And First-Time Setup](features/bootstrap.md)
 - [Default Render Pipeline Script Export](features/default-render-pipeline.xrs)
+- [Ambient Occlusion](features/gi/ambient-occlusion.md)
 - [Model Import](features/model-import.md)
 - [Native Dependencies](features/native-dependencies.md)
 - [Networking](features/networking.md)
 - [ImGui Shader Editor](features/shader-editor.md)
 - [Steam Audio Integration](features/steam-audio.md)
 - [Unity Conversion Integrations](features/unity-conversion-integrations.md)
+- [Uber Shader Materials](features/uber-shader-materials.md)
+- [Vulkan Upscale Bridge](features/vulkan-upscale-bridge.md)
+- [Physics Chain Performance](features/physics-chain-performance.md)
 - [Tick-Based Animation Timing](features/tick-based-animation-timing.md)
 - [Unit Testing World](features/unit-testing-world.md)
 
 ## Work Docs (WIP / TODO / Design)
 - [Work Docs Index](work/README.md)
 - Active TODOs and design docs are tracked from [Work Docs Index](work/README.md).
-- Representative design docs: [Affine Matrix Integration Plan](work/design/affine-matrix-integration-plan.md), [Bindless Deferred Texturing Plan](work/design/bindless-deferred-texturing-plan.md), [Transparency And OIT Implementation Plan](work/design/transparency-and-oit-implementation-plan.md), [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md), [Runtime Modularization And Bootstrap Extraction Plan](work/design/runtime-modularization-plan.md)
+- Representative design docs: [GPU-Driven Animation Architecture](work/design/gpu-driven-animation.md), [Affine Matrix Integration Plan](work/design/affine-matrix-integration-plan.md), [Bindless Deferred Texturing Plan](work/design/bindless-deferred-texturing-plan.md), [Transparency And OIT Implementation Plan](work/design/transparency-and-oit-implementation-plan.md), [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md), [Runtime Modularization And Bootstrap Extraction Plan](work/design/runtime-modularization-plan.md)
+- Representative TODOs: [GPU-Driven Animation TODO](work/todo/gpu-driven-animation-todo.md)
 
 ## Tips
 - Most API docs cross-link to related systems. Use "Related Documentation" sections at the bottom of each page for deeper dives.

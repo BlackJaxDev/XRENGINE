@@ -101,6 +101,14 @@ layout(location = 1)  in vec3 FragNorm;       // world-space geometric normal
 layout(location = 4)  in vec2 FragUV0;        // primary texture coordinates
 layout(location = 12) in vec4 FragColor0;     // per-vertex RGBA color
 layout(location = 20) in vec3 FragPosLocal;   // object-space position
+#if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
+layout(location = 21) in float FragTransformId;
+#endif
+
+#if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+uniform vec3 LightPos;
+uniform float FarPlaneDist;
+#endif
 
 // ============================================
 // Fragment Output
@@ -111,7 +119,8 @@ layout(location = 20) in vec3 FragPosLocal;   // object-space position
 // know which one is live.
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
 layout(location = 0) out vec2 Normal;         // octahedral-encoded world normal
-#elif defined(XRENGINE_SHADOW_CASTER_PASS)
+layout(location = 1) out uint TransformId;    // compact pre-pass attachment, main GBuffer ID texture
+#elif defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
 layout(location = 0) out float Depth;         // depth written into the shadow map
 #elif defined(XRENGINE_FORWARD_WEIGHTED_OIT)
 layout(location = 0) out vec4 OutAccum;       // sum of premultiplied color*weight
@@ -174,7 +183,7 @@ void XRENGINE_WriteForwardFragment(vec4 shadedColor)
     XRE_WriteWeightedBlendedOit(shadedColor);
 #elif defined(XRENGINE_FORWARD_PPLL)
     XRE_StorePerPixelLinkedListFragment(shadedColor);
-#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS) || defined(XRENGINE_SHADOW_CASTER_PASS)
+#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS) || defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     // Prepass/shadow outputs were written earlier in main(); nothing to do.
     return;
 #else
@@ -523,20 +532,86 @@ vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseCo
     return totalLight;
 }
 
+int getForwardPlusVisibleLightBaseIndex() {
+    int tileCountX = ForwardPlusTileCountX;
+    int tileCountY = ForwardPlusTileCountY;
+    ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;
+    tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));
+    int tileIndex = XRENGINE_GetForwardViewIndex() * (tileCountX * tileCountY) + tileCoord.y * tileCountX + tileCoord.x;
+    return tileIndex * ForwardPlusMaxLightsPerTile;
+}
+
+vec3 calculatePointLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNormal, vec3 baseColor, vec3 rms, vec3 F0, int lightIndex, PointLight light) {
+    vec3 lightVector = light.Position - mesh.worldPos;
+    float lightDistance = length(lightVector);
+    if (lightDistance <= EPSILON)
+        return vec3(0.0);
+
+    float attenuation = XRENGINE_Attenuate(lightDistance, light.Radius) * light.Brightness;
+    float shadow = XRENGINE_ReadShadowMapPoint(lightIndex, light, shadowNormal, mesh.worldPos);
+    return XRENGINE_CalculateDirectPbrLight(light.Base.Color, light.Base.DiffuseIntensity, lightVector / lightDistance, normal, mesh.worldPos, baseColor, rms, F0, attenuation) * shadow;
+}
+
+vec3 calculateSpotLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNormal, vec3 baseColor, vec3 rms, vec3 F0, int lightIndex, SpotLight light) {
+    vec3 lightVector = light.Base.Position - mesh.worldPos;
+    float lightDistance = length(lightVector);
+    if (lightDistance <= EPSILON)
+        return vec3(0.0);
+
+    vec3 lightDir = lightVector / lightDistance;
+    float clampedCosine = max(0.0, dot(-lightDir, normalize(light.Direction)));
+    float spotEffect = smoothstep(light.OuterCutoff, light.InnerCutoff, clampedCosine);
+    float spotAttn = pow(clampedCosine, light.Exponent);
+    float distAttn = XRENGINE_Attenuate(lightDistance, light.Base.Radius) * light.Base.Brightness;
+    float shadow = XRENGINE_ReadShadowMapSpot(lightIndex, light, shadowNormal, mesh.worldPos, lightDir);
+    return spotEffect * spotAttn * XRENGINE_CalculateDirectPbrLight(light.Base.Base.Color, light.Base.Base.DiffuseIntensity, lightDir, normal, mesh.worldPos, baseColor, rms, F0, distAttn) * shadow;
+}
+
+vec3 calculateForwardPlusPointLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNormal, vec3 baseColor, vec3 rms, vec3 F0, ForwardPlusLocalLight light) {
+    vec3 lightVector = light.PositionWS.xyz - mesh.worldPos;
+    float lightDistance = length(lightVector);
+    if (lightDistance <= EPSILON)
+        return vec3(0.0);
+
+    float attenuation = XRENGINE_Attenuate(lightDistance, light.Params.x) * max(light.Params.y, 0.0001);
+    int sourceIndex = int(light.Params.w + 0.5);
+    float shadow = (sourceIndex >= 0 && sourceIndex < PointLightCount)
+        ? XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], shadowNormal, mesh.worldPos)
+        : 1.0;
+    return XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, lightVector / lightDistance, normal, mesh.worldPos, baseColor, rms, F0, attenuation) * shadow;
+}
+
+vec3 calculateForwardPlusSpotLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNormal, vec3 baseColor, vec3 rms, vec3 F0, ForwardPlusLocalLight light) {
+    vec3 lightDir = normalize(light.DirectionWS_Exponent.xyz);
+    vec3 lightVector = light.PositionWS.xyz - mesh.worldPos;
+    float lightDistance = length(lightVector);
+    if (lightDistance <= EPSILON)
+        return vec3(0.0);
+
+    vec3 lightToPosN = lightVector / lightDistance;
+    float clampedCosine = max(0.0, dot(-lightToPosN, lightDir));
+    float spotEffect = smoothstep(light.SpotAngles.y, light.SpotAngles.x, clampedCosine);
+    float spotAttn = pow(clampedCosine, light.DirectionWS_Exponent.w);
+    float distAttn = XRENGINE_Attenuate(lightDistance, light.Params.x) * max(light.Params.y, 0.0001);
+    int sourceIndex = int(light.Params.w + 0.5);
+    float shadow = (sourceIndex >= 0 && sourceIndex < SpotLightCount)
+        ? XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], shadowNormal, mesh.worldPos, lightToPosN)
+        : 1.0;
+
+    return spotEffect * spotAttn * XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, lightToPosN, normal, mesh.worldPos, baseColor, rms, F0, distAttn) * shadow;
+}
+
 // Point + spot lights. Two dispatch paths:
 //   * Forward+ : reads a precomputed per-tile list of visible lights from
 //                SSBOs. Scales cleanly to hundreds of onscreen lights.
 //   * Classic  : iterates every light in the scene. Fine for small counts.
 vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, PBRData pbr) {
     vec3 totalLight = vec3(0.0);
+    vec3 shadowNormal = mesh.vertexNormal;
     vec3 rms = resolveSurfaceRms(pbr);
 
     if (ForwardPlusEnabled) {
-        // Find which screen-space tile we're in, then index into the tile's
-        // visible-light list. tileCountX is precomputed engine-side.
-        ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;
-        int tileIndex = tileCoord.y * ForwardPlusTileCountX + tileCoord.x;
-        int baseIndex = tileIndex * ForwardPlusMaxLightsPerTile;
+        int baseIndex = getForwardPlusVisibleLightBaseIndex();
 
         for (int o = 0; o < ForwardPlusMaxLightsPerTile; ++o) {
             int lightIndex = ForwardPlusVisibleIndices[baseIndex + o];
@@ -547,8 +622,8 @@ vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, P
             ForwardPlusLocalLight l = ForwardPlusLocalLights[lightIndex];
             // Color_Type.w encodes the light kind: 0 = point, 1 = spot.
             totalLight += (l.Color_Type.w < 0.5)
-                ? XRENGINE_CalcForwardPlusPointLight(l, normal, mesh.worldPos, baseColor, rms, pbr.F0)
-                : XRENGINE_CalcForwardPlusSpotLight(l, normal, mesh.worldPos, baseColor, rms, pbr.F0);
+                ? calculateForwardPlusPointLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, l)
+                : calculateForwardPlusSpotLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, l);
         }
 
         return totalLight;
@@ -556,11 +631,11 @@ vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, P
 
     // Classic forward fallback: iterate every scene light.
     for (int i = 0; i < PointLightCount; ++i) {
-        totalLight += XRENGINE_CalcPointLight(i, PointLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0);
+        totalLight += calculatePointLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, PointLights[i]);
     }
 
     for (int i = 0; i < SpotLightCount; ++i) {
-        totalLight += XRENGINE_CalcSpotLight(i, SpotLights[i], normal, mesh.worldPos, baseColor, rms, pbr.F0);
+        totalLight += calculateSpotLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, SpotLights[i]);
     }
 
     return totalLight;
@@ -800,7 +875,7 @@ vec3 calculateStylizedPointLight(ToonMesh mesh, vec3 baseColor, vec3 normal, int
         light.Base.Color * light.Base.DiffuseIntensity,
         attenuation,
         vec3(0.0));
-    float shadow = XRENGINE_ReadShadowMapPoint(lightIndex, light, normal, mesh.worldPos);
+    float shadow = XRENGINE_ReadShadowMapPoint(lightIndex, light, mesh.vertexNormal, mesh.worldPos);
     return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
 }
 
@@ -823,7 +898,7 @@ vec3 calculateStylizedSpotLight(ToonMesh mesh, vec3 baseColor, vec3 normal, int 
         light.Base.Base.Color * light.Base.Base.DiffuseIntensity,
         attenuation,
         vec3(0.0));
-    float shadow = XRENGINE_ReadShadowMapSpot(lightIndex, light, normal, mesh.worldPos, lightToPosN);
+    float shadow = XRENGINE_ReadShadowMapSpot(lightIndex, light, mesh.vertexNormal, mesh.worldPos, lightToPosN);
     return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
 }
 
@@ -843,7 +918,7 @@ vec3 calculateStylizedForwardPlusPointLight(ToonMesh mesh, vec3 baseColor, vec3 
         vec3(0.0));
     int sourceIndex = int(light.Params.w + 0.5);
     float shadow = (sourceIndex >= 0 && sourceIndex < PointLightCount)
-        ? XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], normal, mesh.worldPos)
+        ? XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], mesh.vertexNormal, mesh.worldPos)
         : 1.0;
     return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
 }
@@ -870,7 +945,7 @@ vec3 calculateStylizedForwardPlusSpotLight(ToonMesh mesh, vec3 baseColor, vec3 n
         vec3(0.0));
     int sourceIndex = int(light.Params.w + 0.5);
     float shadow = (sourceIndex >= 0 && sourceIndex < SpotLightCount)
-        ? XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], normal, mesh.worldPos, lightToPosN)
+        ? XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], mesh.vertexNormal, mesh.worldPos, lightToPosN)
         : 1.0;
 
     return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
@@ -880,9 +955,7 @@ vec3 calculateStylizedLocalLighting(ToonMesh mesh, vec3 baseColor, vec3 normal) 
     vec3 totalLight = vec3(0.0);
 
     if (ForwardPlusEnabled) {
-        ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;
-        int tileIndex = tileCoord.y * ForwardPlusTileCountX + tileCoord.x;
-        int baseIndex = tileIndex * ForwardPlusMaxLightsPerTile;
+        int baseIndex = getForwardPlusVisibleLightBaseIndex();
 
         for (int o = 0; o < ForwardPlusMaxLightsPerTile; ++o) {
             int lightIndex = ForwardPlusVisibleIndices[baseIndex + o];
@@ -1100,7 +1173,7 @@ void main() {
     }
 
     // ---- 2. Depth-peel gate -------------------------------------------------
-#if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS)
+#if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     XRENGINE_BeginForwardFragmentOutput();
 #endif
 
@@ -1155,11 +1228,15 @@ void main() {
 
     // Cheap outputs for non-color passes. Done *after* cutout/dissolve so
     // shadow maps and the depth/normal prepass respect those discards.
-#if defined(XRENGINE_SHADOW_CASTER_PASS)
+#if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+    Depth = length(FragPos - LightPos) / FarPlaneDist;
+    return;
+#elif defined(XRENGINE_SHADOW_CASTER_PASS)
     Depth = gl_FragCoord.z;
     return;
 #elif defined(XRENGINE_DEPTH_NORMAL_PREPASS)
     Normal = XRENGINE_EncodeNormal(mesh.worldNormal);
+    TransformId = floatBitsToUint(FragTransformId);
     return;
 #endif
 

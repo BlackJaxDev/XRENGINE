@@ -667,7 +667,15 @@ public sealed class AlphaToCoveragePhase2Tests
         shaderSource.ShouldContain("return ambientLighting + directLighting;");
         shaderSource.ShouldContain("float ComputeNoisyEdgeFade(float distanceToBounds, float edgeFade, float noiseValue, float noiseAmount)");
         shaderSource.ShouldContain("float edgeErosion = fadeDistance * 0.85f * saturate(noiseAmount) * (1.0f - clamp(noiseValue, 0.0f, 1.0f));");
-        shaderSource.ShouldContain("float ComputeRayIntervalFade(int index, vec3 rayDirWS, float sampleT, float tNear, float tFar, float noiseValue, float noiseAmount)");
+        shaderSource.ShouldContain("const vec3 VolumetricFogNoiseDomainOffset = vec3(17.37f, 41.13f, 29.91f);");
+        shaderSource.ShouldContain("+ VolumetricFogNoiseDomainOffset;");
+        shaderSource.ShouldContain("float ComputeRayIntervalFade(int index, vec3 rayDirWS, float sampleT, float tNear, float tFar, bool fadeRayEntry, bool fadeRayExit, float noiseValue, float noiseAmount)");
+        shaderSource.ShouldContain("float distanceToEntry = fadeRayEntry ? sampleT - tNear : edgeFadeOnRay;");
+        shaderSource.ShouldContain("float distanceToExit = fadeRayExit ? tFar - sampleT : edgeFadeOnRay;");
+        shaderSource.ShouldContain("bool volumeFadeEntry[MaxVolumetricFogVolumes];");
+        shaderSource.ShouldContain("bool volumeFadeExit[MaxVolumetricFogVolumes];");
+        shaderSource.ShouldContain("if (VolumetricFogDebugMode == 16)");
+        shaderSource.ShouldContain("float normalizedMarchLength = VolumetricFog.MaxDistance > 0.0f");
         shaderSource.ShouldContain("float densityTerms = EvaluateVolumeDensityTerms(volumeIndex, samplePosWS, edgeMask, noiseMask, noiseValue, noiseAmount);");
         shaderSource.ShouldContain("* rayEdgeMask * VolumetricFog.Intensity;");
         shaderSource.ShouldContain("float temporalSeedOffset = fract(RenderTime * 7.0f) * 64.0f * VolumetricFog.JitterStrength;");
@@ -687,7 +695,11 @@ public sealed class AlphaToCoveragePhase2Tests
         string upscaleSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/VolumetricFog/VolumetricFogUpscale.fs").Replace("\r\n", "\n");
         upscaleSource.ShouldContain("uniform mat4 VolumetricFogWorldToLocal[MaxVolumetricFogVolumes];");
         upscaleSource.ShouldContain("uniform vec4 VolumetricFogNoiseScaleThreshold[MaxVolumetricFogVolumes];");
+        upscaleSource.ShouldContain("const vec3 VolumetricFogNoiseDomainOffset = vec3(17.37f, 41.13f, 29.91f);");
         upscaleSource.ShouldContain("float SampleVolumeNoise01(int index, vec3 localPos, out float noiseAmount)");
+        upscaleSource.ShouldContain("float ComputeRayIntervalFade(int index, vec3 rayDirWS, float sampleT, float tNear, float tFar, bool fadeRayEntry, bool fadeRayExit, float noiseValue, float noiseAmount)");
+        upscaleSource.ShouldContain("if (!fadeRayEntry && !fadeRayExit)\n        return 1.0f;");
+        upscaleSource.ShouldContain("float distanceToExit = fadeRayExit ? tFar - sampleT : edgeFadeOnRay;");
         upscaleSource.ShouldContain("float ViewRayFogFade(float rawDepth, float resolvedDepth, vec2 uv)");
         upscaleSource.ShouldContain("vec4 ApplyFogOutputFade(vec4 fog, float fade)");
         upscaleSource.ShouldContain("if (volumeFade <= 0.0f)");

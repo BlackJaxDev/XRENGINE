@@ -1435,7 +1435,11 @@ namespace XREngine.Scene.Components.Editing
         }
 
         private void SetRootTransform(Matrix4x4 transform)
-            => RootTransform.SetWorldMatrix(transform);
+        {
+            RootTransform.SetWorldMatrix(transform, setRenderMatrixNow: true, childRecalcType: ELoopType.Sequential);
+            if (Transform.GetChild(0) is BillboardTransform billboard)
+                billboard.RefreshCameraDependentMatrix(setRenderMatrixNow: true, childRecalcType: ELoopType.Sequential);
+        }
 
         private void OnReleased()
         {

@@ -39,6 +39,12 @@ public sealed class ShaderEditorWindow
     private static ShaderEditorWindow? _instance;
 
     public static ShaderEditorWindow Instance => _instance ??= new ShaderEditorWindow();
+    public static void RenderIfOpen() => _instance?.Render();
+    public static void RenderDialogsIfOpen()
+    {
+        if (_instance?._isOpen == true)
+            _instance.RenderDialogs();
+    }
 
     private readonly object _compileLock = new();
     private readonly object _aiLock = new();
@@ -134,8 +140,6 @@ public sealed class ShaderEditorWindow
     private ShaderEditorWindow()
     {
         BindSource(null, new TextFile { Text = _shaderSource });
-        RefreshIncludeCatalogs(force: true);
-        RefreshIncludePreview();
     }
 
     public bool IsOpen
@@ -1005,7 +1009,8 @@ public sealed class ShaderEditorWindow
 
     private void DrawIncludesTab()
     {
-        RefreshIncludeCatalogs(force: false);
+        if (RefreshIncludeCatalogs(force: false))
+            RefreshIncludePreview();
 
         ShaderEditorIncludeSourceKind sourceKind = (ShaderEditorIncludeSourceKind)Math.Clamp(
             _includeSourceKindIndex,
@@ -1593,8 +1598,7 @@ public sealed class ShaderEditorWindow
         _previewInstrumented = false;
         ResetGeneratedOutputs("Source changed.");
         _lockingToolRevision = -1;
-        RefreshIncludeCatalogs(force: true);
-        RefreshIncludePreview();
+        InvalidateIncludeCatalogs();
         EnsureCompletionItemsCurrent();
         SyncLockingToolFromCurrentSource();
         ScheduleCompile();
@@ -2019,7 +2023,7 @@ public sealed class ShaderEditorWindow
             _lockingToolRevision = -1;
             EnsureCompletionItemsCurrent();
             SyncLockingToolFromCurrentSource();
-            RefreshIncludeCatalogs(force: true);
+            InvalidateIncludeCatalogs();
             ScheduleCompile();
         }
 
@@ -2048,16 +2052,26 @@ public sealed class ShaderEditorWindow
             _lockingTool.SetUniformAnimated(uniform.Name, animatedUniforms.Contains(uniform.Name));
     }
 
-    private void RefreshIncludeCatalogs(bool force)
+    private bool RefreshIncludeCatalogs(bool force)
     {
         if (!force && _includeListRevision == _sourceRevision)
-            return;
+            return false;
 
         _engineSnippetNames = ShaderEditorServices.GetEngineSnippetNames();
         _relativeIncludeCandidates = ShaderEditorServices.GetRelativeIncludeCandidates(_shaderSourcePath);
         _selectedSnippetIndex = ClampIndex(_selectedSnippetIndex, _engineSnippetNames.Count);
         _selectedRelativeIncludeIndex = ClampIndex(_selectedRelativeIncludeIndex, _relativeIncludeCandidates.Count);
         _includeListRevision = _sourceRevision;
+        return true;
+    }
+
+    private void InvalidateIncludeCatalogs()
+    {
+        _includeListRevision = -1;
+        _includePreviewText = string.Empty;
+        _includePreviewStatus = "Select a snippet or include file.";
+        _includePreviewDirective = string.Empty;
+        _includePreviewResolvedPath = string.Empty;
     }
 
     private void RefreshIncludePreview()

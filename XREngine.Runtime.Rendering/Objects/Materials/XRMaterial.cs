@@ -23,7 +23,17 @@ namespace XREngine.Rendering
         [YamlIgnore]
         private bool _shadowCasterVariantResolved;
         [YamlIgnore]
+        private XRMaterial? _pointShadowCasterVariant;
+        [YamlIgnore]
+        private bool _pointShadowCasterVariantResolved;
+        [YamlIgnore]
+        private XRMaterial? _pointShadowCasterGeometryVariant;
+        [YamlIgnore]
+        private bool _pointShadowCasterGeometryVariantResolved;
+        [YamlIgnore]
         private XRMaterial? _shadowBindingSourceMaterial;
+        [YamlIgnore]
+        private XRMaterial? _shadowUniformSourceMaterial;
 
         private UberMaterialAuthoredState _uberAuthoredState = UberMaterialAuthoredState.Empty;
         [YamlIgnore]
@@ -509,6 +519,36 @@ namespace XREngine.Rendering
             internal set => SetField(ref _shadowBindingSourceMaterial, value);
         }
 
+        [Browsable(false)]
+        [YamlIgnore]
+        public XRMaterial? ShadowUniformSourceMaterial
+        {
+            get => _shadowUniformSourceMaterial;
+            set => SetField(ref _shadowUniformSourceMaterial, value);
+        }
+
+        public XRMaterial? GetPointShadowCasterVariant(bool useGeometryShader)
+        {
+            if (useGeometryShader)
+            {
+                if (!_pointShadowCasterGeometryVariantResolved)
+                {
+                    _pointShadowCasterGeometryVariant = ShadowCasterVariantFactory.CreatePointLightMaterialVariant(this, useGeometryShader: true);
+                    _pointShadowCasterGeometryVariantResolved = true;
+                }
+
+                return _pointShadowCasterGeometryVariant;
+            }
+
+            if (!_pointShadowCasterVariantResolved)
+            {
+                _pointShadowCasterVariant = ShadowCasterVariantFactory.CreatePointLightMaterialVariant(this, useGeometryShader: false);
+                _pointShadowCasterVariantResolved = true;
+            }
+
+            return _pointShadowCasterVariant;
+        }
+
         public void InvalidateDepthNormalPrePassVariant()
         {
             _depthNormalPrePassVariant?.Destroy();
@@ -521,6 +561,12 @@ namespace XREngine.Rendering
             _shadowCasterVariant?.Destroy();
             _shadowCasterVariant = null;
             _shadowCasterVariantResolved = false;
+            _pointShadowCasterVariant?.Destroy();
+            _pointShadowCasterVariant = null;
+            _pointShadowCasterVariantResolved = false;
+            _pointShadowCasterGeometryVariant?.Destroy();
+            _pointShadowCasterGeometryVariant = null;
+            _pointShadowCasterGeometryVariantResolved = false;
         }
 
         private static bool IsManagedTransparencyRenderPass(int renderPass)

@@ -13,13 +13,8 @@ namespace XREngine.Rendering.OpenGL
         {
             public override EGLObjectType Type => EGLObjectType.Material;
 
-            private float _secondsLive = 0.0f;
             private uint _lastUniformProgramBindingId = uint.MaxValue;
             private XRRenderProgram? _lastUniformProgram;
-            private ulong _lastSecondsLiveFrameId = ulong.MaxValue;
-            private ulong _lastRenderTimeProgramFrameId = ulong.MaxValue;
-            private uint _lastRenderTimeProgramBindingId = uint.MaxValue;
-            private XRRenderProgram? _lastRenderTimeProgram;
             private XRMaterial? _shadowBindingSourceMaterial;
             private XRRenderProgram? _shadowBindingProgram;
             private uint _shadowBindingProgramBindingId = uint.MaxValue;
@@ -30,12 +25,6 @@ namespace XREngine.Rendering.OpenGL
             {
                 public ShaderVar[] Parameters { get; } = parameters;
                 public int[] TextureIndices { get; } = textureIndices;
-            }
-
-            public float SecondsLive
-            {
-                get => _secondsLive;
-                set => SetField(ref _secondsLive, value);
             }
 
             private GLRenderProgram? _separableProgram;
@@ -147,6 +136,12 @@ namespace XREngine.Rendering.OpenGL
 
                 using (Engine.Profiler.Start("GLMaterial.SetUniforms.MaterialHook"))
                 {
+                    XRMaterial? shadowUniformSource = Engine.Rendering.State.IsShadowPass
+                        ? Data.ShadowUniformSourceMaterial
+                        : null;
+                    if (shadowUniformSource?.HasSettingShadowUniformHandlers == true)
+                        shadowUniformSource.OnSettingShadowUniforms(materialProgram.Data);
+
                     if (shadowBindingSource is not null)
                     {
                         if (shadowBindingSource.HasSettingShadowUniformHandlers)
@@ -239,11 +234,13 @@ namespace XREngine.Rendering.OpenGL
                 if (requiredRequirements == EUniformRequirements.None)
                     return false;
 
-                EUniformRequirements cachedProgramRequirements = requiredRequirements & ~EUniformRequirements.RenderTime;
-                if (program.GetMissingEngineUniformRequirements(cachedProgramRequirements) != EUniformRequirements.None)
+                // Light bindings include shadow-map samplers. Each material draw starts a new
+                // binding batch, so they must be rebound even when scalar light uniforms were
+                // already cached for the current frame/context.
+                if (requiredRequirements.HasFlag(EUniformRequirements.Lights))
                     return true;
 
-                return requiredRequirements.HasFlag(EUniformRequirements.RenderTime) && ShouldApplyRenderTimeUniforms(program);
+                return program.GetMissingEngineUniformRequirements(requiredRequirements) != EUniformRequirements.None;
             }
 
             private void SetEngineUniforms(GLRenderProgram program, EUniformRequirements reqs)
@@ -251,10 +248,9 @@ namespace XREngine.Rendering.OpenGL
                 if (reqs == EUniformRequirements.None)
                     return;
 
-                UpdateSecondsLive();
-
-                EUniformRequirements cachedProgramRequirements = reqs & ~EUniformRequirements.RenderTime;
-                EUniformRequirements missingProgramRequirements = program.GetMissingEngineUniformRequirements(cachedProgramRequirements);
+                EUniformRequirements missingProgramRequirements = program.GetMissingEngineUniformRequirements(reqs);
+                if (reqs.HasFlag(EUniformRequirements.Lights))
+                    missingProgramRequirements |= EUniformRequirements.Lights;
 
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.Camera))
                 {
@@ -272,12 +268,11 @@ namespace XREngine.Rendering.OpenGL
                         Debug.OpenGL($"[ForwardLighting] Skipped: RenderingWorld={world != null}, Lights={lights != null}");
                 }
 
-                if (reqs.HasFlag(EUniformRequirements.RenderTime) && ShouldApplyRenderTimeUniforms(program))
+                if (missingProgramRequirements.HasFlag(EUniformRequirements.RenderTime))
                 {
-                    program.Uniform(EEngineUniform.RenderTime.ToStringFast(), SecondsLive);
+                    program.Uniform(EEngineUniform.RenderTime.ToStringFast(), Engine.ElapsedTime);
                     program.Uniform(EEngineUniform.EngineTime.ToStringFast(), Engine.ElapsedTime);
                     program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), Engine.Time.Timer.Render.Delta);
-                    MarkRenderTimeUniformsApplied(program);
                 }
                 
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.ViewportDimensions))
@@ -294,31 +289,6 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 program.MarkEngineUniformsApplied(missingProgramRequirements);
-            }
-
-            private void UpdateSecondsLive()
-            {
-                ulong frameId = Engine.Rendering.State.RenderFrameId;
-                if (_lastSecondsLiveFrameId == frameId)
-                    return;
-
-                SecondsLive += Engine.Time.Timer.Update.Delta;
-                _lastSecondsLiveFrameId = frameId;
-            }
-
-            private bool ShouldApplyRenderTimeUniforms(GLRenderProgram program)
-            {
-                ulong frameId = Engine.Rendering.State.RenderFrameId;
-                return _lastRenderTimeProgramFrameId != frameId
-                    || _lastRenderTimeProgramBindingId != program.BindingId
-                    || !ReferenceEquals(_lastRenderTimeProgram, program.Data);
-            }
-
-            private void MarkRenderTimeUniformsApplied(GLRenderProgram program)
-            {
-                _lastRenderTimeProgramFrameId = Engine.Rendering.State.RenderFrameId;
-                _lastRenderTimeProgramBindingId = program.BindingId;
-                _lastRenderTimeProgram = program.Data;
             }
 
             public EDrawBuffersAttachment[] CollectFBOAttachments()

@@ -15,23 +15,42 @@ namespace XREngine.Editor;
 public static partial class EditorImGuiUI
 {
     private const int DefaultIconSize = 24;
+    private const int ToolbarIconWarmupFrames = 180;
+    private const int ToolbarIconCpuRasterizationsPerFrame = 1;
+    private const int ToolbarIconGpuUploadsPerFrame = 1;
+
     private static readonly Dictionary<string, XRTexture2D> _iconCache = new();
+    private static readonly HashSet<string> _uploadedOpenGLIconCache = [];
     private static readonly object _iconCacheLock = new();
 
+    private static int _toolbarIconFrameIndex;
+    private static int _toolbarIconCpuRasterizationsThisFrame;
+    private static int _toolbarIconGpuUploadsThisFrame;
     private static bool _loggedIconPath = false;
+
+    private static void BeginToolbarIconFrame()
+    {
+        _toolbarIconFrameIndex++;
+        _toolbarIconCpuRasterizationsThisFrame = 0;
+        _toolbarIconGpuUploadsThisFrame = 0;
+    }
     
     /// <summary>
     /// Gets or creates an icon texture from an SVG file.
     /// </summary>
     private static XRTexture2D? GetIcon(string iconName, int size = DefaultIconSize)
     {
-        string cacheKey = $"{iconName}_{size}";
+        string cacheKey = BuildIconCacheKey(iconName, size);
         
         lock (_iconCacheLock)
         {
             if (_iconCache.TryGetValue(cacheKey, out var cachedTexture))
                 return cachedTexture;
         }
+
+        if (_toolbarIconCpuRasterizationsThisFrame >= ToolbarIconCpuRasterizationsPerFrame)
+            return null;
+        _toolbarIconCpuRasterizationsThisFrame++;
 
         string relativePath = SvgEditorIcons.GetIconPath(iconName);
         string? fullPath = null;
@@ -134,9 +153,6 @@ public static partial class EditorImGuiUI
                 VWrap = ETexWrapMode.ClampToEdge
             };
 
-            texture.Generate();
-            texture.PushData();
-
             return texture;
         }
         catch (Exception ex)
@@ -149,16 +165,44 @@ public static partial class EditorImGuiUI
     private static bool TryGetIconHandle(string iconName, out nint handle)
     {
         handle = nint.Zero;
+        if (_toolbarIconFrameIndex < ToolbarIconWarmupFrames)
+            return false;
+
+        string cacheKey = BuildIconCacheKey(iconName, DefaultIconSize);
         var texture = GetIcon(iconName);
         if (texture is null) return false;
 
         if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
         {
             var apiTexture = glRenderer.GenericToAPI<GLTexture2D>(texture);
-            if (apiTexture is null || apiTexture.BindingId == 0 || apiTexture.BindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
+            if (apiTexture is null)
                 return false;
 
-            handle = (nint)apiTexture.BindingId;
+            bool uploadNow = false;
+            lock (_iconCacheLock)
+            {
+                if (!_uploadedOpenGLIconCache.Contains(cacheKey))
+                {
+                    if (_toolbarIconGpuUploadsThisFrame >= ToolbarIconGpuUploadsPerFrame)
+                        return false;
+
+                    _toolbarIconGpuUploadsThisFrame++;
+                    uploadNow = true;
+                }
+            }
+
+            if (uploadNow)
+            {
+                apiTexture.Generate();
+                apiTexture.PushData();
+                lock (_iconCacheLock)
+                    _uploadedOpenGLIconCache.Add(cacheKey);
+            }
+
+            if (!apiTexture.TryGetBindingId(out uint bindingId) || bindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
+                return false;
+
+            handle = (nint)bindingId;
             return true;
         }
 
@@ -174,4 +218,7 @@ public static partial class EditorImGuiUI
 
         return false;
     }
+
+    private static string BuildIconCacheKey(string iconName, int size)
+        => $"{iconName}_{size}";
 }

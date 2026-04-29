@@ -2,7 +2,7 @@
 
 Status: **Implemented (core refactor landed; follow-up tests pending)**
 Owner: Asset Pipeline
-Related: [fbx-import-export-todo.md](fbx-import-export-todo.md), [fastgltf-gltf-import-todo.md](fastgltf-gltf-import-todo.md)
+Related: [fbx-import-export-todo.md](fbx-import-export-todo.md), [glTF import testing](../testing/gltf-import.md)
 
 > **Update:** The two-pass Discover / PreAssign / Write refactor is implemented in [`AssetManager.ThirdPartyImport.cs`](../../../XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs). `KindOrder` is now leaves-first, `AnimationClip` is an externalizable kind (written to `Animations/`), and [`AnimationClipYamlTypeConverter`](../../../XRENGINE/Core/Engine/AnimationClipSerialization.cs) now emits compact `{ID}` references when `SourceAsset == self && File.Exists(FilePath)`, mirroring `XRAssetYamlConverter`. On-disk layout is documented in [`docs/features/model-import.md`](../../features/model-import.md#on-disk-externalization-layout). Placeholder files are created during Phase B and rolled back on exception. Remaining: regression tests (FBX re-import, shared-asset dedup, failure-rollback) and an audit sweep of other `XRAsset`-derived types (font glyph sets, shaders) for the same reference-emission pattern.
 

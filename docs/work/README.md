@@ -20,14 +20,15 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Default render pipeline V2 | Active | [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
 | Forward depth-normal TransformId | Active | [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md) | Shared forward prepass follow-up so depth, normal, and transform ID describe the same surface. |
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
-| Physics-chain performance | Active | [todo/physics-chain-speed-update-todo.md](todo/physics-chain-speed-update-todo.md) | Prior compatibility notes were merged into the active TODO. |
+| Physics-chain performance | Stable doc + testing | [../features/physics-chain-performance.md](../features/physics-chain-performance.md) | Remaining validation lives in [testing/physics-chain-performance.md](testing/physics-chain-performance.md). |
 | Native FBX import/export | Active | [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md) | Assimp replacement roadmap for a low-allocation native FBX path. |
-| fastgltf glTF import | Stable doc | [../features/model-import.md](../features/model-import.md) | Native glTF import shipped; the completed checklist remains in [todo/fastgltf-gltf-import-todo.md](todo/fastgltf-gltf-import-todo.md). |
+| fastgltf glTF import | Stable doc + testing | [../features/model-import.md](../features/model-import.md) | Native glTF import shipped; validation record lives in [testing/gltf-import.md](testing/gltf-import.md). |
 | USD import/export | Active | [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md) | Managed-fast-path plus OpenUSD-fallback roadmap for USD scene/model support. |
-| Non-HBAO AO | Active | [todo/non-hbao-ambient-occlusion-remediation.md](todo/non-hbao-ambient-occlusion-remediation.md) | Prior audit and remediation notes are consolidated here. |
-| HBAO / HBAO+ | Active | [todo/hbao-hbao-plus-implementation-todo.md](todo/hbao-hbao-plus-implementation-todo.md) | Active implementation tracker. |
+| Ambient occlusion | Stable doc + testing | [../features/gi/ambient-occlusion.md](../features/gi/ambient-occlusion.md) | HBAO+ and non-HBAO implementation trackers are complete; remaining validation lives in [testing/ambient-occlusion.md](testing/ambient-occlusion.md). |
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
 | GPU rendering roadmap | Active | [todo/gpu-rendering.md](todo/gpu-rendering.md) | Broad GPU-driven rendering work remains active. |
+| OpenVR VRClient GPU handoff | Active | [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md) | Zero-readback cross-process eye-texture handoff from the engine app to the legacy OpenVR companion process. |
+| GPU-driven animation | Active | [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md) | Phased execution tracker for the [GPU-driven animation architecture](design/gpu-driven-animation.md). |
 | GPU skinning buffer compression | Active | [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md) | XRMesh and XRMeshRenderer influence/palette compression plan for direct and compute skinning. |
 | Dedicated render-thread window ownership | Active | [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md) | Refactor plan to move engine window ownership, graphics contexts, and present off the startup/editor thread. |
 | Animated Gaussian capture and streaming | Active | [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md) | Offline bake plus one-draw animated Gaussian clip playback roadmap. |
@@ -51,11 +52,10 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md)
 - [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md)
 - [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md)
+- [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md)
 - [todo/gpu-rendering.md](todo/gpu-rendering.md)
 - [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md)
-- [todo/hbao-hbao-plus-implementation-todo.md](todo/hbao-hbao-plus-implementation-todo.md)
-- [todo/non-hbao-ambient-occlusion-remediation.md](todo/non-hbao-ambient-occlusion-remediation.md)
-- [todo/physics-chain-speed-update-todo.md](todo/physics-chain-speed-update-todo.md)
+- [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md)
 - [todo/physics-finalization.md](todo/physics-finalization.md)
 - [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md)
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
@@ -73,6 +73,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md)
 - [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)
 - [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md)
+- [design/gpu-driven-animation.md](design/gpu-driven-animation.md)
 - [design/gpu-render-pass-pipeline.md](design/gpu-render-pass-pipeline.md)
 - [design/gpu-softbody-mesh-rigging-plan.md](design/gpu-softbody-mesh-rigging-plan.md)
 - [design/hbao-hbao-plus-implementation-plan.md](design/hbao-hbao-plus-implementation-plan.md)
@@ -91,6 +92,12 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 ## Generated Reports
 
 Generated audit outputs should be treated as disposable report artifacts rather than durable work docs. Regenerate them from the corresponding VS Code tasks or report scripts when needed.
+
+## Testing Docs
+
+- [testing/ambient-occlusion.md](testing/ambient-occlusion.md)
+- [testing/gltf-import.md](testing/gltf-import.md)
+- [testing/physics-chain-performance.md](testing/physics-chain-performance.md)
 
 ## Notes
 
