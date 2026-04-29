@@ -1095,8 +1095,50 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
     float blockerSearchRadius = XRENGINE_GetPointShadowSampleRadiusForSlot(shadowSlot, shadowF1.w);
     float minPenumbra = XRENGINE_GetPointShadowSampleRadiusForSlot(shadowSlot, shadowF2.x);
     float maxPenumbra = XRENGINE_GetPointShadowSampleRadiusForSlot(shadowSlot, shadowF2.y);
-    // Point shadow-map visibility should come only from the cubemap. Contact
-    // shadows are screen/depth dependent and can make a valid cubemap look wrong.
+    float viewDepth = XRENGINE_ViewDepthFromWorldPos(fragPos);
+    int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
+        shadowI1.w,
+        viewDepth,
+        shadowF2.w);
+    float contact = 1.0;
+    if (shadowI1.z != 0)
+    {
+        contact = ForwardContactShadowsEnabled
+            ? XRENGINE_SampleForwardContactShadowScreenSpace(
+                fragPos,
+                normal,
+                normalize(light.Position - fragPos),
+                shadowF1.y,
+                compareBias,
+                shadowF2.w,
+                contactSampleCount,
+                shadowF3.x,
+                shadowF3.y,
+                shadowF3.z,
+                shadowF3.w,
+                shadowF4.x,
+                viewDepth)
+            : XRENGINE_SamplePointContactShadowCubeSlot(
+                shadowSlot,
+                fragPos,
+                normal,
+                light.Position,
+                shadowF1.y,
+                compareBias,
+                farPlaneDist,
+                shadowF2.w,
+                contactSampleCount,
+                shadowF3.x,
+                shadowF3.y,
+                shadowF3.z,
+                shadowF3.w,
+                shadowF4.x,
+                viewDepth);
+    }
+
+    // The cubemap supplies large-scale visibility; contact shadows add only the
+    // short-range receiver/detail term so cubemap debugging can still isolate
+    // the filtered shadow value before this multiplier.
     float shadow = XRENGINE_SamplePointShadowCubeSlot(
         shadowSlot,
         fragToLight,
@@ -1111,7 +1153,7 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
         shadowF2.z,
         minPenumbra,
         maxPenumbra,
-        shadowI0.w);
+        shadowI0.w) * contact;
 
     if (debugMode != 0)
     {

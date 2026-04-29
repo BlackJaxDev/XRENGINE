@@ -335,3 +335,26 @@ The prepass uses a compact local color layout: `Normal` writes to color attachme
 Keep `ForwardDepthPrePassMergeFBO` bound with color/depth/stencil clears disabled so deferred IDs survive where forward geometry does not draw. The dedicated `ForwardDepthPrePassFBO` must use its own `ForwardPrePassTransformId` texture when debug-only ID output is needed, because that FBO is allowed to clear before rendering.
 
 Generated vertex shaders are allowed to trim `FragTransformId` for ordinary passes, but the forward depth-normal prepass must push `RequireGeneratedVertexTransformId`. Without that render-state requirement, a generated vertex program cached for a normal forward material can be reused with a depth-normal fragment variant that consumes `FragTransformId`, causing pipeline interface mismatches.
+
+---
+
+## 22. Point-Light Cubemap Shadow Regression
+
+**Rule:** Point-light shadow cubemaps are base-mip shadow targets. The OpenGL cube texture object must apply the engine sampler state and must clamp the exposed mip range to the rendered mip.
+
+### What went wrong
+
+`GLTextureCube` was leaving OpenGL cube textures on default sampler/mip behavior: the texture upload path hard-coded `GL_TEXTURE_MAX_LEVEL = 1000`, and cube textures did not apply `MinFilter`, `MagFilter`, or cube wrap modes in `SetParameters()`. Point-light shadow maps render only mip 0, but the R16f radial-depth cubemap could still be sampled as though lower mips existed. That produced scene-independent false shadows, including shadows when the visible base-level shadow map was empty or correct.
+
+### Fix
+
+- `GLTextureCube` now uses `LargestMipmapLevel`, `SmallestAllowedMipmapLevel`, `MinLOD`, and `MaxLOD` instead of hard-coded LOD bounds.
+- `GLTextureCube.SetParameters()` applies LOD bias, min/mag filters, and S/T/R wrap modes.
+- Point-light depth and R16f radial-depth cubemaps set `SmallestAllowedMipmapLevel = 0` because the shadow renderer clears and renders only mip 0.
+
+### Point-Light Shadow Capture Invariants
+
+- Do not disable point-light contact shadows to hide cubemap errors. Deferred and forward point lights should keep short-range contact shadows available; the contact term is separate from the large-scale cubemap visibility.
+- The geometry-shader path renders all six cubemap faces from one viewport and culls against the point light influence sphere. Keep that sphere and the shadow camera parent render transform synchronized to `Transform.RenderTranslation` before collection and rendering.
+- Shared opaque casters usually render with the point shadow material itself as the global override. `GLMaterial` must call `OnSettingShadowUniforms` for that material during shadow passes so `LightPos`, `FarPlaneDist`, and geometry-shader `ViewProjectionMatrices[]` are populated. Alpha/transparent point-shadow variants route through `ShadowUniformSourceMaterial`; if the global override path skips shadow uniforms, transparent casters can appear while shared opaque casters write invalid or no point-shadow data.
+- The six-pass fallback renders each cubemap face with its own shadow camera and the same point-shadow material. If it captures only transparent forward meshes, inspect opaque-pass command collection and point-shadow material override/variant selection; filtering mode and contact shadows are not the root cause.

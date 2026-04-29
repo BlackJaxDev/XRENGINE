@@ -168,7 +168,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
-    public void ForwardPointShadowSampling_DoesNotMixContactShadowsIntoCubemapVisibility()
+    public void ForwardPointShadowSampling_AppliesContactShadowsAsSeparateMultiplier()
     {
         string source = LoadShaderSource("Snippets/ForwardLighting.glsl");
         int pointStart = source.IndexOf("float XRENGINE_ReadShadowMapPoint", System.StringComparison.Ordinal);
@@ -178,12 +178,12 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         spotStart.ShouldBeGreaterThan(pointStart);
 
         string pointBody = source[pointStart..spotStart];
-        pointBody.ShouldContain("Point shadow-map visibility should come only from the cubemap.");
+        pointBody.ShouldContain("float contact = 1.0;");
+        pointBody.ShouldContain("XRENGINE_SampleForwardContactShadowScreenSpace(");
+        pointBody.ShouldContain("XRENGINE_SamplePointContactShadowCubeSlot(");
+        pointBody.ShouldContain("The cubemap supplies large-scale visibility");
         pointBody.ShouldContain("float shadow = XRENGINE_SamplePointShadowCubeSlot(");
-        pointBody.ShouldContain("shadowI0.w);");
-        pointBody.ShouldNotContain("XRENGINE_SampleForwardContactShadowScreenSpace(");
-        pointBody.ShouldNotContain("XRENGINE_SamplePointContactShadowCubeSlot(");
-        pointBody.ShouldNotContain("* contact");
+        pointBody.ShouldContain("shadowI0.w) * contact;");
     }
 
     [Test]
@@ -374,6 +374,10 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("program.Uniform($\"{prefix}.Position\", lightPosition);");
         source.ShouldContain("program.Uniform(\"LightPos\", Transform.RenderTranslation);");
         source.ShouldContain("program.Uniform(\"ShadowNearPlaneDist\", ShadowNearPlaneDistance);");
+        source.ShouldContain("private void SyncShadowCaptureTransforms()");
+        source.ShouldContain("SetField(ref _influenceVolume, new Sphere(lightPosition, _influenceVolume.Radius));");
+        source.ShouldContain("SetRenderMatrix(Matrix4x4.CreateTranslation(lightPosition), recalcAllChildRenderMatrices: true)");
+        source.ShouldContain("SyncShadowCaptureTransforms();");
     }
 
     [Test]
@@ -502,6 +506,8 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string glMaterialSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
         glMaterialSource.ShouldContain("Data.ShadowUniformSourceMaterial");
         glMaterialSource.ShouldContain("shadowUniformSource.OnSettingShadowUniforms(materialProgram.Data);");
+        glMaterialSource.ShouldContain("Engine.Rendering.State.IsShadowPass && Data.HasSettingShadowUniformHandlers");
+        glMaterialSource.ShouldContain("Data.OnSettingShadowUniforms(materialProgram.Data);");
 
         string uberSource = LoadShaderSource("Uber/UberShader.frag");
         uberSource.ShouldContain("defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)");

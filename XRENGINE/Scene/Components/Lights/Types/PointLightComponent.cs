@@ -118,6 +118,25 @@ namespace XREngine.Components.Capture.Lights.Types
             }
         }
 
+        private void SyncShadowCaptureTransforms()
+        {
+            Vector3 lightPosition = Transform.RenderTranslation;
+            if (_influenceVolume.Center != lightPosition)
+                SetField(ref _influenceVolume, new Sphere(lightPosition, _influenceVolume.Radius));
+
+            if (SceneNode is not null && !SceneNode.IsTransformNull && _shadowCameraParentTransform.Parent != Transform)
+                _shadowCameraParentTransform.Parent = Transform;
+
+            bool shadowCamerasSynced = _shadowCameras.Length == 0
+                || _shadowCameras[0].Transform.RenderTranslation == lightPosition;
+            if (_shadowCameraParentTransform.RenderTranslation == lightPosition && shadowCamerasSynced)
+                return;
+
+            _shadowCameraParentTransform
+                .SetRenderMatrix(Matrix4x4.CreateTranslation(lightPosition), recalcAllChildRenderMatrices: true)
+                .Wait();
+        }
+
         private void RecreateShadowMapMaterial()
         {
             if (ShadowMap is null)
@@ -135,6 +154,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 return;
 
             EnsureShadowResources();
+            SyncShadowCaptureTransforms();
 
             if (_useGeometryShader)
             {
@@ -175,6 +195,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 return;
 
             EnsureShadowResources();
+            SyncShadowCaptureTransforms();
 
             if (collectVisibleNow)
             {
@@ -415,6 +436,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     UWrap = ETexWrapMode.ClampToEdge,
                     VWrap = ETexWrapMode.ClampToEdge,
                     WWrap = ETexWrapMode.ClampToEdge,
+                    SmallestAllowedMipmapLevel = 0,
                     FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
                     Resizable = false,
                 },
@@ -425,6 +447,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     UWrap = ETexWrapMode.ClampToEdge,
                     VWrap = ETexWrapMode.ClampToEdge,
                     WWrap = ETexWrapMode.ClampToEdge,
+                    SmallestAllowedMipmapLevel = 0,
                     FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
                     SamplerName = "ShadowMap",
                     Resizable = false,

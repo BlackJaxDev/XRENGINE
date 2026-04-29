@@ -181,10 +181,10 @@ namespace XREngine.Rendering.Models.Materials.Textures
                         PushMipmap(i, Mipmaps[i], internalFormatForce);
                 }
 
-                int baseLevel = 0;
-                int maxLevel = 1000;
-                int minLOD = -1000;
-                int maxLOD = 1000;
+                int baseLevel = Data.LargestMipmapLevel;
+                int maxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
+                int minLOD = Data.MinLOD;
+                int maxLOD = Data.MaxLOD;
 
                 Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevel);
                 Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
@@ -278,6 +278,28 @@ namespace XREngine.Rendering.Models.Materials.Textures
                 Api.TexSubImage2D(glTarget, i, 0, 0, w, h, pixelFormat, pixelType, ptr);
             else
                 Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, ptr);
+        }
+
+        protected override void SetParameters()
+        {
+            base.SetParameters();
+
+            Api.TextureParameter(BindingId, GLEnum.TextureLodBias, Data.LodBias);
+
+            int magFilter = (int)ToGLEnum(Data.MagFilter);
+            Api.TextureParameterI(BindingId, GLEnum.TextureMagFilter, in magFilter);
+
+            int minFilter = (int)ToGLEnum(Data.MinFilter);
+            Api.TextureParameterI(BindingId, GLEnum.TextureMinFilter, in minFilter);
+
+            int uWrap = (int)ToGLEnum(Data.UWrap);
+            Api.TextureParameterI(BindingId, GLEnum.TextureWrapS, in uWrap);
+
+            int vWrap = (int)ToGLEnum(Data.VWrap);
+            Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrap);
+
+            int wWrap = (int)ToGLEnum(Data.WWrap);
+            Api.TextureParameterI(BindingId, GLEnum.TextureWrapR, in wWrap);
         }
     }
 }
