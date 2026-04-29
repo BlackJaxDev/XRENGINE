@@ -121,13 +121,13 @@ The repo root has `ExecTool.bat`, an interactive menu for all the scripts under 
 
 ## Unit Testing World
 
-The editor's test world is configured through `Assets/UnitTestingWorldSettings.jsonc`. Launch with `--unit-testing` (or set `XRE_WORLD_MODE=UnitTesting`) to boot into it. The file has a JSON schema wired up in VS Code for autocompletion and hover docs.
+The editor's test world is configured through the generated local file `Assets/UnitTestingWorldSettings.jsonc`. Launch with `--unit-testing` (or set `XRE_WORLD_MODE=UnitTesting`) to boot into it. The file is intentionally ignored by Git for per-workstation tuning, and has a JSON schema wired up in VS Code for autocompletion and hover docs.
 
 For startup model imports that reference textures outside the authored folder layout, set `TextureLoadDirSearchPaths` in that file to provide recursive texture search roots.
 
 For the full workflow, including pose/network test setups and how the JSONC file is used, see `docs/features/unit-testing-world.md`.
 
-To regenerate the schema after changing the settings type:
+`ExecTool --bootstrap` creates the file on first setup. To create it manually or regenerate the schema after changing the settings type:
 
 ```powershell
 pwsh Tools/Generate-UnitTestingWorldSettings.ps1

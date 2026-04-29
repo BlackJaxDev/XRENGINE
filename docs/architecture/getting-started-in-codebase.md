@@ -24,9 +24,10 @@ That bootstrap flow:
 1. initializes git submodules
 2. downloads the repo's standard dependency set
 3. builds submodules
-4. builds the DocFX site
-5. launches the docs server
-6. launches the editor
+4. generates the local Unit Testing World JSONC settings files and schema
+5. builds the DocFX site
+6. launches the docs server
+7. launches the editor
 
 It is the closest thing the repo currently has to a one-command setup.
 
@@ -135,7 +136,7 @@ Good default validation order:
 
 ### 4. Keep the working directory in mind
 
-Some startup paths depend on the process working directory being the repo root, especially flows that load `Assets/UnitTestingWorldSettings.jsonc`.
+Some startup paths depend on the process working directory being the repo root, especially flows that load the generated local `Assets/UnitTestingWorldSettings.jsonc`.
 
 ## Useful docs to bookmark
 
