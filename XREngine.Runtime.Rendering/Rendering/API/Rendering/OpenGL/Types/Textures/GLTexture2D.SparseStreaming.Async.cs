@@ -151,6 +151,8 @@ public partial class GLTexture2D
 
         int previousCommittedBaseMipLevel = Data.SparseTextureStreamingCommittedBaseMipLevel;
         bool hasPreviousCommit = previousCommittedBaseMipLevel != int.MaxValue;
+        if (!hasPreviousCommit)
+            return false;
 
         Generate();
 
@@ -176,9 +178,7 @@ public partial class GLTexture2D
             if (isDemotion)
                 return false;
 
-            int currentVisibleBaseMipLevel = hasPreviousCommit
-                ? Math.Clamp(Data.SparseTextureStreamingResidentBaseMipLevel, 0, Math.Max(0, request.LogicalMipCount - 1))
-                : Math.Max(0, request.LogicalMipCount - 1);
+            int currentVisibleBaseMipLevel = Math.Clamp(Data.SparseTextureStreamingResidentBaseMipLevel, 0, Math.Max(0, request.LogicalMipCount - 1));
             if (requestedBaseMipLevel >= currentVisibleBaseMipLevel)
                 return false;
 

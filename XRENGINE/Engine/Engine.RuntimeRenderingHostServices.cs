@@ -57,6 +57,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public string? TextureFallbackPath => Path.Combine(Engine.GameSettings.TexturesFolder, "Filler.png");
     public XRMaterial? InvalidMaterial => Engine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial;
     public Vector3 DefaultLuminance => Engine.Rendering.Settings.DefaultLuminance;
+    public long ElapsedTicks => Engine.ElapsedTicks;
+    public float ElapsedTime => Engine.ElapsedTime;
     public double RenderDeltaSeconds => Engine.Time.Timer.Render.Delta;
     public long LastRenderTimestampTicks => Engine.Time.Timer.Render.LastTimestampTicks;
     public long TrackedVramBytes => Engine.Rendering.Stats.AllocatedVRAMBytes;
@@ -88,6 +90,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public uint DefaultMsaaSampleCount => Engine.EffectiveSettings.MsaaSampleCount;
     public bool DefaultOutputHDR => Engine.Rendering.Settings.OutputHDR;
     public float DefaultTsrRenderScale => Engine.Rendering.Settings.TsrRenderScale;
+    public bool ForwardDepthPrePassEnabled => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+    public bool ForwardPrePassSharesGBufferTargets => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
 
     public void LogOutput(string message)
         => Debug.Out(message);
@@ -253,6 +257,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason)
         => Engine.AddRenderThreadCoroutine(task, reason);
 
+    public void ProcessRenderThreadTasks()
+        => Engine.ProcessMainThreadTasks();
+
     public IDisposable? PushTransformId(uint transformId)
         => Engine.Rendering.State.PushTransformId(transformId);
 
@@ -291,6 +298,11 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public IRuntimeWindowScenePanelAdapter CreateWindowScenePanelAdapter()
         => new XRWindowScenePanelAdapter();
 
+    public BoundingRectangle? GetScenePanelRenderRegion(IRuntimeRenderWindowHost window)
+        => window is XRWindow xrWindow
+            ? Engine.Rendering.ScenePanelRenderRegionProvider?.Invoke(xrWindow)
+            : null;
+
     public bool AllowWindowClose(IRuntimeRenderWindowHost window)
     {
         if (Engine.WindowCloseRequested is null)
@@ -326,6 +338,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool IsWindowScenePanelPresentationEnabled
         => Engine.IsEditor &&
            Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel;
+
+    public int ScenePanelResizeDebounceMs
+        => Engine.EditorPreferences.ScenePanelResizeDebounceMs;
 
     public bool ForceFullViewport
         => string.Equals(

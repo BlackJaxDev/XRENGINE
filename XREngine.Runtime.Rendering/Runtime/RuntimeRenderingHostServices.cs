@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using System.IO;
 using System.Numerics;
 using System.Threading;
@@ -159,6 +160,8 @@ public interface IRuntimeRenderingHostServices
     string? TextureFallbackPath { get; }
     XRMaterial? InvalidMaterial { get; }
     Vector3 DefaultLuminance { get; }
+    long ElapsedTicks { get; }
+    float ElapsedTime { get; }
     double RenderDeltaSeconds { get; }
     long LastRenderTimestampTicks { get; }
     long TrackedVramBytes { get; }
@@ -175,6 +178,8 @@ public interface IRuntimeRenderingHostServices
     uint DefaultMsaaSampleCount { get; }
     bool DefaultOutputHDR { get; }
     float DefaultTsrRenderScale { get; }
+    bool ForwardDepthPrePassEnabled { get; }
+    bool ForwardPrePassSharesGBufferTargets { get; }
     RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window);
     IEnumerable<IRuntimeViewportHost> EnumerateActiveViewports();
     IEnumerable<IPawnController> EnumerateLocalPlayers();
@@ -225,6 +230,7 @@ public interface IRuntimeRenderingHostServices
     void EnqueueRenderThreadTask(Action task, string reason);
     void EnqueueRenderThreadCoroutine(Func<bool> task);
     void EnqueueRenderThreadCoroutine(Func<bool> task, string reason);
+    void ProcessRenderThreadTasks();
     IDisposable? PushTransformId(uint transformId);
     void RecordOctreeSkippedMove();
     void ProcessGpuPhysicsChainDispatches();
@@ -235,11 +241,13 @@ public interface IRuntimeRenderingHostServices
     IRuntimeRenderPipelineHost? CreateDefaultRenderPipeline();
     IRuntimeRendererHost CreateRenderer(IRuntimeRenderWindowHost window, RuntimeGraphicsApiKind apiKind);
     IRuntimeWindowScenePanelAdapter CreateWindowScenePanelAdapter();
+    BoundingRectangle? GetScenePanelRenderRegion(IRuntimeRenderWindowHost window);
     bool AllowWindowClose(IRuntimeRenderWindowHost window);
     void RemoveWindow(IRuntimeRenderWindowHost window);
     void ReplicateWindowTargetWorldChange(IRuntimeRenderWindowHost window);
     void BeginRenderStatsFrame();
     bool IsWindowScenePanelPresentationEnabled { get; }
+    int ScenePanelResizeDebounceMs { get; }
     bool ForceFullViewport { get; }
     bool RenderWindowsWhileInVR { get; }
     bool EnableVrFoveatedViewSet { get; }
@@ -302,6 +310,8 @@ public static class RuntimeRenderingHostServices
 
     private sealed class DefaultRuntimeRenderingHostServices : IRuntimeRenderingHostServices
     {
+        private readonly Stopwatch _elapsedStopwatch = Stopwatch.StartNew();
+
         public IDisposable? StartProfileScope(string? scopeName)
             => null;
 
@@ -327,6 +337,8 @@ public static class RuntimeRenderingHostServices
         public string? TextureFallbackPath => null;
         public XRMaterial? InvalidMaterial => null;
         public Vector3 DefaultLuminance => new(0.2126f, 0.7152f, 0.0722f);
+        public long ElapsedTicks => _elapsedStopwatch.ElapsedTicks;
+        public float ElapsedTime => (float)_elapsedStopwatch.Elapsed.TotalSeconds;
         public double RenderDeltaSeconds => 0.0;
         public long LastRenderTimestampTicks => 0L;
         public long TrackedVramBytes => 0L;
@@ -343,6 +355,8 @@ public static class RuntimeRenderingHostServices
         public uint DefaultMsaaSampleCount => 1u;
         public bool DefaultOutputHDR => false;
         public float DefaultTsrRenderScale => 1.0f;
+        public bool ForwardDepthPrePassEnabled => true;
+        public bool ForwardPrePassSharesGBufferTargets => true;
 
         public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)
             => RuntimeGraphicsApiKind.Unknown;
@@ -466,6 +480,10 @@ public static class RuntimeRenderingHostServices
         public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason)
             => task();
 
+        public void ProcessRenderThreadTasks()
+        {
+        }
+
         public IDisposable? PushTransformId(uint transformId)
             => null;
 
@@ -501,6 +519,9 @@ public static class RuntimeRenderingHostServices
         public IRuntimeWindowScenePanelAdapter CreateWindowScenePanelAdapter()
             => NullRuntimeWindowScenePanelAdapter.Instance;
 
+        public BoundingRectangle? GetScenePanelRenderRegion(IRuntimeRenderWindowHost window)
+            => null;
+
         public bool AllowWindowClose(IRuntimeRenderWindowHost window)
             => true;
 
@@ -517,6 +538,7 @@ public static class RuntimeRenderingHostServices
         }
 
         public bool IsWindowScenePanelPresentationEnabled => false;
+        public int ScenePanelResizeDebounceMs => 100;
         public bool ForceFullViewport => false;
         public bool RenderWindowsWhileInVR => false;
         public bool EnableVrFoveatedViewSet => false;

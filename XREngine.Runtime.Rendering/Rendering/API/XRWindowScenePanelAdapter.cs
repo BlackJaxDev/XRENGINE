@@ -27,8 +27,7 @@ namespace XREngine.Rendering
         public XRFrameBuffer? FrameBuffer => _scenePanelFBO;
 
         public bool IsActiveForWindow(XRWindow window)
-            => Engine.IsEditor &&
-               Engine.EditorPreferences.ViewportPresentationMode == RuntimeEditorPreferences.EViewportPresentationMode.UseViewportPanel &&
+            => RuntimeRenderingHostServices.Current.IsWindowScenePanelPresentationEnabled &&
                !window.IsDisposed;
 
         public void InvalidateResources()
@@ -78,7 +77,7 @@ namespace XREngine.Rendering
 
         public bool TryRenderScenePanelMode(XRWindow window)
         {
-            BoundingRectangle? region = Engine.Rendering.ScenePanelRenderRegionProvider?.Invoke(window);
+            BoundingRectangle? region = RuntimeRenderingHostServices.Current.GetScenePanelRenderRegion(window);
             if (!region.HasValue || region.Value.Width <= 0 || region.Value.Height <= 0)
             {
                 Debug.RenderingEvery(
@@ -98,7 +97,7 @@ namespace XREngine.Rendering
             int desiredWidth = region.Value.Width;
             int desiredHeight = region.Value.Height;
 
-            int debounceMs = Engine.EditorPreferences.ScenePanelResizeDebounceMs;
+            int debounceMs = RuntimeRenderingHostServices.Current.ScenePanelResizeDebounceMs;
             if (debounceMs < 0)
                 debounceMs = 0;
 
