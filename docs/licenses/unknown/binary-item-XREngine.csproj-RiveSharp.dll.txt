@@ -1,0 +1,5 @@
+﻿License file not detected for referenced binary item.
+
+Project: XREngine.csproj
+Path: ..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll
+

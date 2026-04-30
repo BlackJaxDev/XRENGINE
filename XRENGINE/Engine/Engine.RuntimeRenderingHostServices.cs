@@ -8,9 +8,14 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
+using XREngine.Components;
+using XREngine.Input;
 using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
+using XREngine.Scene;
+using XREngine.Scene.Physics;
 
 namespace XREngine;
 
@@ -254,6 +259,12 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordOctreeSkippedMove()
         => Engine.Rendering.Stats.RecordOctreeSkippedMove();
 
+    public void ProcessGpuPhysicsChainDispatches()
+        => GPUPhysicsChainDispatcher.Instance.ProcessDispatches();
+
+    public void ProcessGpuPhysicsChainCompletions()
+        => GPUPhysicsChainDispatcher.Instance.ProcessCompletions();
+
     public void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color)
         => Engine.Rendering.Debug.RenderRect2D(rectangle, solid, color);
 
@@ -443,6 +454,69 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)
         => window is XRWindow xrWindow ? GetRendererBackend(xrWindow.Renderer) : RuntimeGraphicsApiKind.Unknown;
+
+    public IEnumerable<IRuntimeViewportHost> EnumerateActiveViewports()
+        => Engine.EnumerateActiveViewports();
+
+    public IEnumerable<IPawnController> EnumerateLocalPlayers()
+        => Engine.State.LocalPlayers.OfType<IPawnController>();
+
+    public XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
+        => Engine.Rendering.ResolveSceneCameraDepthModePreference();
+
+    public IRuntimeInputControllablePawn? EnsurePawnForCamera(SceneNode sceneNode, CameraComponent camera, ELocalPlayerIndex playerIndex, Type? pawnType = null)
+    {
+        PawnComponent? pawn = null;
+
+        if (pawnType is null)
+        {
+            sceneNode.TryGetComponent<PawnComponent>(out pawn);
+            pawn ??= sceneNode.AddComponent<PawnComponent>();
+        }
+        else if (typeof(PawnComponent).IsAssignableFrom(pawnType))
+        {
+            foreach (var component in sceneNode.Components)
+            {
+                if (pawnType.IsInstanceOfType(component) && component is PawnComponent existing)
+                {
+                    pawn = existing;
+                    break;
+                }
+            }
+
+            pawn ??= sceneNode.AddComponent(pawnType) as PawnComponent;
+        }
+
+        if (pawn is null)
+            return null;
+
+        pawn.CameraComponent = camera;
+        pawn.EnqueuePossessionByLocalPlayer(playerIndex);
+        return pawn;
+    }
+
+    public void PickViewportPhysicsAsync(
+        XRViewport viewport,
+        CameraComponent camera,
+        Vector2 normalizedViewportPosition,
+        LayerMask layerMask,
+        object? filter,
+        SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedPhysicsResults,
+        Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
+        bool useUnjitteredProjection)
+    {
+        if (viewport.World is XRWorldInstance world)
+        {
+            world.RaycastPhysicsAsync(
+                camera,
+                normalizedViewportPosition,
+                layerMask,
+                filter as AbstractPhysicsScene.IAbstractQueryFilter,
+                orderedPhysicsResults,
+                physicsFinishedCallback,
+                useUnjitteredProjection);
+        }
+    }
 
     private static RuntimeGraphicsApiKind GetRendererBackend(object? renderer)
         => renderer switch

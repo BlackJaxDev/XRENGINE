@@ -5,7 +5,7 @@ Previous phase: Phase 2 is complete and folded into the current modularization p
 
 Created: 2026-03-16
 
-Status update (2026-04-20): the controller-lowering slice is complete, the moved controller types are standardized under `XREngine.Runtime.InputIntegration`, the animation and audio component trees compile from `Runtime.AnimationIntegration` and `Runtime.AudioIntegration`, and the full VR P1 slice now compiles from `Runtime.InputIntegration`. The remaining VR files were moved by adding `RuntimeVrRenderingServices` plus lower movement/height contracts (`IRuntimeCharacterMovementComponent`, `IRuntimeVrHeightScaleComponent`) instead of dragging `XRCamera` and `ModelComponent` directly across the project boundary. P2a has now started with a support-only rendering pass: the light enums, particle enums/interfaces/GPU structs/shader assembler, and terrain helper/interfaces/shader assembler compile from `Runtime.Rendering`; the direct `Engine.Rendering.*` state/debug/stat hooks in `IRenderable`, `RenderInfo*`, and `RenderCommandMesh3D` now route through `RuntimeRenderingHostServices`; and `RenderInfo` world/canvas registration now targets lower runtime interfaces (`IRuntimeRenderInfo3DRegistrationTarget`, `IRuntimeRenderInfo2DRegistrationTarget`) instead of storing `XRWorldInstance` / `UICanvasComponent` directly. The heavier renderable scene-component bodies remain blocked on higher rendering ownership that still physically lives in `XRENGINE`, with the remaining blocker surface now centered more on camera, render-command-collection, visual-scene, and pipeline ownership than on world/UI registration. Validation builds are green for Editor, Server, and VRClient, and targeted NetworkingPose smoke launches for the sender and receiver roles both stayed alive for 15 seconds without crashing.
+Status update (2026-04-20): the controller-lowering slice is complete, the moved controller types are standardized under `XREngine.Runtime.InputIntegration`, the animation and audio component trees compile from `Runtime.AnimationIntegration` and `Runtime.AudioIntegration`, and the full VR P1 slice now compiles from `Runtime.InputIntegration`. P2a is closed: the renderable scene-component families, their supporting rendering kernel, and the adjacent window/viewport/camera/pipeline ownership needed by those components now compile from `Runtime.Rendering`. Cross-assembly world ownership is lowered behind `IRuntimeRenderWorld`, `IRuntimeAmbientSettings`, and `IRuntimeAudioListenerWorld`; `Runtime.Rendering` no longer exports duplicate public `XRWorldInstance` / `WorldSettings` identities; and the dependency graph remains one-way with no `Runtime.Rendering -> XRENGINE` project reference. Validation is green for `Runtime.Rendering`, `XRENGINE`, Editor, Server, and VRClient, and `docs/DEPENDENCIES.md` has been regenerated after the final package-pin and project-graph updates.
 
 ## Goal
 
@@ -22,20 +22,15 @@ What Phase 2 delivered:
 - `IBootstrapEditorBridge` narrowed to editor-only UI.
 - Project graph is clean: no forbidden dependency violations.
 
-What still lives in `XRENGINE` (~1000+ .cs files across these categories):
+What still lives in `XRENGINE` across the remaining categories:
 
 | Category | Location | File Count | Target Assembly |
 |----------|----------|------------|-----------------|
 | Engine lifecycle & threading | `Engine/` | ~69 | Runtime.Core (host-independent partials) |
 | Player controllers | `Input/` | 5 | Runtime.InputIntegration |
-| Rendering backends & pipelines | `Rendering/` | ~500+ | Runtime.Rendering |
+| Rendering host/world compatibility and compute tail | `Rendering/` | ~11 | Runtime.Rendering / Runtime.Core split after host world cleanup |
 | Physics scene + components | `Scene/Physics/` + `Scene/Components/Physics/` | ~81 | Runtime.Core (defer dedicated assembly) |
 | UI components | `Scene/Components/UI/` | ~82 | Runtime.Rendering (UI renders) |
-| Mesh/model components | `Scene/Components/Mesh/` | ~10 | Runtime.Rendering |
-| Light components | `Scene/Components/Lights/` | ~9 | Runtime.Rendering |
-| Camera components | `Scene/Components/Camera/` | ~3 | Runtime.Rendering |
-| Particle components | `Scene/Components/Particles/` | ~21 | Runtime.Rendering |
-| Capture components | `Scene/Components/Capture/` | ~6 | Runtime.Rendering |
 | Movement components | `Scene/Components/Movement/` | ~10 | Runtime.Core |
 | Networking components | `Scene/Components/Networking/` | ~9 | Runtime.Core |
 | VR render/model components | `Scene/Components/VR/` | ~5 | Split: render-owned VR files follow Runtime.Rendering prerequisites; remaining gameplay tail lands in Runtime.InputIntegration |
@@ -45,15 +40,15 @@ What still lives in `XRENGINE` (~1000+ .cs files across these categories):
 | Volume components | `Scene/Components/Volumes/` | ~5 | Runtime.Core |
 | Debug components | `Scene/Components/Debug/` | ~15 | Runtime.Core or Editor |
 | Editing components | `Scene/Components/Editing/` | ~5 | Editor |
-| Landscape components | `Scene/Components/Landscape/` | ~15 | Runtime.Rendering |
 | Spline components | `Scene/Components/Splines/` | ~2 | Runtime.Core |
-| Misc components | `Scene/Components/Misc/` | ~3 | Runtime.Rendering |
 | Scene transforms | `Scene/Transforms/` | ~28 | Non-VR transforms → Core (VR transforms already moved to Runtime.InputIntegration) |
 | Functions/shader graph | `Functions/` | ~82 | Runtime.Rendering |
 | Game modes | `Game Modes/` | ~5 | Runtime.Core |
 | Models | `Models/` | ~38 | Runtime.Rendering |
 | Settings | `Settings/` | ~5 | Split: editor prefs → Editor, runtime → Core |
 | Core utilities | `Core/` | ~100 | Split: editor attrs → Editor, runtime → Core/Data |
+
+Moved out of `XRENGINE` during the P2a closure: `Scene/Components/Mesh/`, `Scene/Components/Lights/`, `Scene/Components/Camera/`, `Scene/Components/Particles/`, `Scene/Components/Capture/`, `Scene/Components/Landscape/`, and `Scene/Components/Misc/` now compile from `Runtime.Rendering`.
 
 ## Execution Strategy
 
@@ -152,9 +147,9 @@ What P0b already delivered: `PawnComponent` and `Engine.State` were refactored *
 
 This is the largest body of work. Move in sub-phases.
 
-#### P2a — Rendering Scene Components
+#### P2a — Rendering Scene Components (closed)
 
-This sub-phase is now past the support-only pass. The dependency-light rendering support files listed below compile from `Runtime.Rendering`, and the key boundary-lowering work that kept those component bodies tied to concrete render-state/culling types is largely complete:
+This sub-phase is closed. The dependency-light support files, renderable scene-component families, and the shared rendering kernel needed by those components now compile from `Runtime.Rendering` without adding a reverse project reference back to `XRENGINE`.
 
 - [x] Move the support-only light/particle/terrain files first: `Scene/Components/Lights/{ELightType,ESoftShadowMode}`, particle enums/interfaces/GPU structs/shader assembler, and terrain helper/interfaces/shader assembler → `Runtime.Rendering`.
 - [x] Lower the direct `Engine.Rendering.*` state/debug/stat hooks used by `IRenderable`, `RenderInfo*`, and `RenderCommandMesh3D` behind `RuntimeRenderingHostServices` so those files no longer hard-code engine rendering statics.
@@ -164,24 +159,19 @@ This sub-phase is now past the support-only pass. The dependency-light rendering
 - [x] Lower `RenderInfo*` / `RenderCommand*` callback-facing camera signatures behind `IRuntimeRenderCamera`, extending that seam only with per-layer visibility and render-near-plane distance queries so collection callbacks no longer require `XRCamera` in their public/delegate surface.
 - [x] Lower the VisualScene culling/debug camera boundary behind `IRuntimeCullingCamera`, including `VisualScene*` collection/debug entrypoints, `RenderInfo2D/3D.AllowRender(...)`, `CameraComponent.CullingCameraOverride`, and the editor-side culling override storage.
 - [x] Lower the active-pipeline/frame-context and screen-space UI seams behind `IRuntimeRenderPipelineFrameContext` / `IRuntimeScreenSpaceUserInterface`, plus host-service play-mode/default-setting/upscale hooks, so `XRRenderPipeline*`, `RenderingState`, `XRCamera`, and `UICanvasComponent` no longer hard-code `Engine.Rendering.State` or concrete screen-space UI ownership on those paths.
-
-What is left to actually close P2a now splits into two buckets:
-
-1. Relocate the shared rendering kernel that still physically compiles from `XRENGINE`: `IRenderable`, `RenderInfo*`, `RenderCommand*`, `RenderCommandCollection`, `VisualScene*`, `XRCamera`, `XRViewport`, `XRWorldInstance` registration/ownership helpers, and the adjacent pipeline/state ownership types that still anchor those files (`RenderingState`, `XRRenderPipelineInstance`, `RenderPipeline`, and nearby viewport/pipeline glue).
-2. Once that kernel lives in `Runtime.Rendering`, move the remaining scene-component families below into `Runtime.Rendering` and validate the full downstream build set.
-
-After the latest seam pass, the biggest remaining blockers inside bucket 1 are no longer the active-pipeline/frame-default/UI edges. They are the heavier concrete ownership paths still centered on `VisualScene*` / `GPUScene`, `XRViewport`, and `XRWorldInstance`, which continue to pull mesh/light/world/physics/backend state that still physically compiles from `XRENGINE`.
-
-Do not try to finish the remaining folder moves by forcing a reverse project reference; move or lower the rendering kernel first, then land the component-folder moves on that cleaner boundary.
-
-- [ ] Move `Scene/Components/Mesh/` (~10: ModelComponent, RenderableComponent, GaussianSplatComponent) → `Runtime.Rendering`.
-- [ ] Move `Scene/Components/Lights/` (~9: LightComponent, DirectionalLight, PointLight, SpotLight) → `Runtime.Rendering`.
-- [ ] Move `Scene/Components/Camera/` (~3: CameraComponent, StereoCameraComponent, DesktopPlayerCameraComponent) → `Runtime.Rendering`.
-- [ ] Move `Scene/Components/Particles/` (~21: ParticleEmitterComponent, particle modules) → `Runtime.Rendering`.
-- [ ] Move `Scene/Components/Capture/` (~6: SceneCaptureComponent, LightProbeComponent) → `Runtime.Rendering`.
-- [ ] Move `Scene/Components/Landscape/` (~15: LandscapeComponent, terrain layers/modules) → `Runtime.Rendering`.
-- [ ] Move `Scene/Components/Misc/` (~3: SkyboxComponent, DeferredDecalComponent) → `Runtime.Rendering`.
-- [ ] Validate: Runtime.Rendering, XRENGINE, Editor, Server, VRClient build.
+- [x] Relocate the shared rendering kernel needed by those components: `IRenderable`, `RenderInfo*`, `RenderCommand*`, `RenderCommandCollection`, `GPURenderPassCollection`, `VisualScene*`, `XRCamera`, `XRViewport`, `XRWindow`, `XRRenderPipelineInstance`, `XRRenderPipeline`, `ViewportRenderCommandContainer`, `AbstractRenderer`, and adjacent pipeline/frame/context state.
+- [x] Lower public render-world ownership behind `IRuntimeRenderWorld` and `IRuntimeAmbientSettings`, with `XRENGINE` providing its compatibility implementation on the legacy host `XRWorldInstance`.
+- [x] Add `IRuntimeAudioListenerWorld` so moved audio listener integration can remain decoupled from concrete host world identity while Editor/Server/VRClient reference both assemblies.
+- [x] Remove the duplicate public `XREngine.Rendering.XRWorldInstance` / `XREngine.Scene.WorldSettings` identities from `Runtime.Rendering`; the runtime-local stand-ins are now `RuntimeRenderWorldInstance` and `RuntimeWorldSettings`.
+- [x] Move `Scene/Components/Mesh/` (~10: ModelComponent, RenderableComponent, GaussianSplatComponent) → `Runtime.Rendering`.
+- [x] Move `Scene/Components/Lights/` (~9: LightComponent, DirectionalLight, PointLight, SpotLight) → `Runtime.Rendering`.
+- [x] Move `Scene/Components/Camera/` (~3: CameraComponent, StereoCameraComponent, DesktopPlayerCameraComponent) → `Runtime.Rendering`.
+- [x] Move `Scene/Components/Particles/` (~21: ParticleEmitterComponent, particle modules) → `Runtime.Rendering`.
+- [x] Move `Scene/Components/Capture/` (~6: SceneCaptureComponent, LightProbeComponent) → `Runtime.Rendering`.
+- [x] Move `Scene/Components/Landscape/` (~15: LandscapeComponent, terrain layers/modules) → `Runtime.Rendering`.
+- [x] Move `Scene/Components/Misc/` (~3: SkyboxComponent, DeferredDecalComponent) → `Runtime.Rendering`.
+- [x] Validate: Runtime.Rendering, XRENGINE, Editor, Server, VRClient build.
+- [x] Regenerate dependency inventory: `Report-Dependencies` updated `docs/DEPENDENCIES.md`.
 
 #### P2b — UI Components
 
@@ -189,19 +179,20 @@ Do not try to finish the remaining folder moves by forcing a reverse project ref
 - [ ] Resolve any editor-specific UI types — leave those in Editor or create a narrow seam.
 - [ ] Validate: Runtime.Rendering, Editor build.
 
-#### P2c — Higher Rendering Types (file relocation)
+#### P2c — Higher Rendering Types (absorbed by P2a closure)
 
-These types are already service-seam-decoupled from Phase 2 but still physically compile from `XRENGINE`:
+The originally planned P2c file-relocation work was pulled forward to unblock the P2a component moves.
 
-- [ ] Relocate `XRViewport`, `XRCamera`, `XRRenderPipelineInstance`, `RenderPipeline`, `ViewportRenderCommandContainer`, `RenderCommand`, `AbstractRenderer`, `XRWindow` source files → `Runtime.Rendering`.
-- [ ] Validate: Runtime.Rendering, XRENGINE, Editor build.
+- [x] Relocate `XRViewport`, `XRCamera`, `XRRenderPipelineInstance`, `XRRenderPipeline`, `ViewportRenderCommandContainer`, `RenderCommand`, `AbstractRenderer`, `XRWindow` source files → `Runtime.Rendering`.
+- [x] Validate: Runtime.Rendering, XRENGINE, Editor build.
 
 #### P2d — Rendering Backends & Pipelines
 
-- [ ] Move `Rendering/API/` (~166: OpenGL/Vulkan/D3D12 backends, RenderContext, render objects) → `Runtime.Rendering`.
-- [ ] Move `Rendering/Pipelines/` (~81: default render pipeline, VPRC_* commands) → `Runtime.Rendering`.
-- [ ] Move remaining `Rendering/` subfolders (Camera, Commands, Compute, Generator, GI, Lightmapping, Materials, Meshlets, Occlusion, Picking, PostProcessing, Resources, Tools, UI) → `Runtime.Rendering`.
-- [ ] Validate: Runtime.Rendering, XRENGINE (reduced), Editor, Server, VRClient build.
+- [x] Move `Rendering/API/` (~166: OpenGL/Vulkan/D3D12 backends, RenderContext, render objects) → `Runtime.Rendering`.
+- [x] Move `Rendering/Pipelines/` (~81: default render pipeline, VPRC_* commands) → `Runtime.Rendering`.
+- [x] Move rendering subfolders already needed by the P2a closure (Camera, Commands, Generator, GI, Lightmapping, Materials, Meshlets, Occlusion, Picking, PostProcessing, Resources, Tools, UI) → `Runtime.Rendering`.
+- [ ] Move the remaining `Rendering/Compute/` softbody/physics-chain tail and decide whether the legacy host world files stay as compatibility shims or move behind lower runtime world/physics contracts.
+- [x] Validate current state: Runtime.Rendering, XRENGINE (reduced), Editor, Server, VRClient build.
 
 #### P2e — Functions & Models
 
@@ -306,7 +297,7 @@ After XRENGINE is removed, the integration projects no longer reference it:
 - `RuntimeVrStateServices` is now the lower seam for moved VR runtime code. New moves should consume that facade instead of touching `Engine.VRState` directly.
 - `RuntimeVrRenderingServices` is the narrow rendering-host seam for moved VR runtime code. Use it for eye-camera registration and render-model hosting instead of pulling `XRCamera`/`ModelComponent` directly into `Runtime.InputIntegration`.
 - The original five-file controller move and seam tail are already landed. Do not re-open them as a separate migration slice.
-- P2a has started with the dependency-light support files. The remaining renderable scene-component bodies are still blocked on higher rendering ownership (`IRenderable`, `RenderInfo*`, `RenderCommand*`, `XRCamera`, `XRWorldInstance`, `RenderPipeline`, pipeline types).
+- P2a is closed. Renderable scene components and the shared rendering kernel now compile from `Runtime.Rendering`; keep future work on the lower `IRuntimeRenderWorld` / `IRuntimeAmbientSettings` / `IRuntimeAudioListenerWorld` contracts instead of reintroducing concrete host world identity.
 - Physics stays in `Runtime.Core` per the design doc. A dedicated physics assembly is deferred.
 - `XRBase` and `XRObjectBase` already live in `XREngine.Data` — do not re-move.
 - UI components go to `Runtime.Rendering` because they require the rendering pipeline, not because they are "rendering" in the traditional sense.
@@ -342,9 +333,9 @@ Phase 3 validation per sub-task:
 
 ## Suggested Next Slice
 
-`P0`, `P1a`, `P1b`, and `P1c` are closed. `P2a` is started but only the dependency-light support files are landed.
+`P0`, `P1a`, `P1b`, `P1c`, and `P2a` are closed. The P2c higher-rendering relocation work was absorbed by the P2a closure, and most P2d rendering backends/pipelines are already physically in `Runtime.Rendering`.
 
-1. Continue lowering or relocating the higher rendering prerequisites that still block the remaining P2a component bodies: `IRenderable`, `RenderInfo*`, `RenderCommand*`, `XRCamera`, `RenderCommandCollection`, `VisualScene*`, `RenderPipeline`, and adjacent pipeline ownership, with priority on camera, command-collection, visual-scene, and pipeline ownership.
-2. Resume the remaining `P2a` scene-component families only after those prerequisites are below the `Runtime.Rendering` cut, then continue into `P2c`/`P2d` from that cleaner base.
+1. Move `P2b` UI components next, using the existing screen-space UI/runtime pipeline seams and leaving editor-specific UI tools in Editor.
+2. Then close the remaining `P2d` tail: `Rendering/Compute/` plus the legacy host world/physics compatibility files that still live under `XRENGINE/Rendering/`.
 
-The controller and VR P1 slices should now be treated as closed.
+The controller, VR P1, and P2a rendering scene-component slices should now be treated as closed.

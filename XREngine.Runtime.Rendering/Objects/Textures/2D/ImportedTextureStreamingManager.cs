@@ -513,7 +513,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
 {
     private const int MaxConcurrentStreamingDecodes = 2;
     private const int MaxQueuedDecodeBacklog = 8;
-    private const int MaxSharedUploadsInFlight = 2;
+    private const int MaxSharedUploadsInFlight = 1;
     private const int MaxSparseTransitionSchedulesPerFrame = 1;
     private static readonly uint[] ResidentCandidates =
     [

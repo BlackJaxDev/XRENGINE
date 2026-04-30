@@ -118,8 +118,8 @@ namespace XREngine.Networking
         {
             foreach (var window in Engine.Windows)
             {
-                if (window?.TargetWorldInstance is not null)
-                    return window.TargetWorldInstance;
+                if (window?.TargetWorldInstance is XRWorldInstance worldInstance)
+                    return worldInstance;
             }
 
             return XRWorldInstance.WorldInstances.Values.FirstOrDefault();

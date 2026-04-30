@@ -349,7 +349,7 @@ public static class EditorPlayModeController
         // Get the world currently being viewed in the editor
         // First try the first window's target world
         var window = Engine.Windows.FirstOrDefault();
-        return window?.TargetWorldInstance?.TargetWorld;
+        return window?.TargetWorldInstance?.TargetWorldObject as XRWorld;
     }
 
     private static void LogPlayerBindings(string phase)
@@ -371,7 +371,7 @@ public static class EditorPlayModeController
             Debug.Out(
                 $"[EditorPlayModeController] {phase}: P{playerIndex + 1} Pawn={pawn?.Name ?? "<null>"} " +
                 $"PawnId={pawn?.ID.ToString() ?? "null"} Viewport={viewport?.GetHashCode().ToString() ?? "NULL"} " +
-                $"ViewportWorld={viewport?.World?.TargetWorld?.Name ?? "<null>"} " +
+                $"ViewportWorld={viewport?.World?.TargetWorldName ?? "<null>"} " +
                 $"ViewportCamera={viewport?.CameraComponent?.Name ?? "<null>"} ActiveCamera={viewport?.ActiveCamera?.GetHashCode().ToString() ?? "NULL"} " +
                 $"PawnCamera={pawnCamera?.Name ?? "<null>"}");
         }

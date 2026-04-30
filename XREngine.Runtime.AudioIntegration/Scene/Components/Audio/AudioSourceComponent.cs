@@ -730,7 +730,7 @@ namespace XREngine.Components
                 _lastExistenceCheckTime = DateTime.Now;
                 //There will usually only be one listener, but we support multiple for future-proofing
                 //Check if listener is within range, add and remove sources as needed
-                foreach (var listener in WorldAs<XREngine.Rendering.XRWorldInstance>()?.Listeners ?? [])
+                foreach (var listener in (World as IRuntimeAudioListenerWorld)?.Listeners ?? [])
                 {
                     if (RelativeToListener)
                         AddSourceToListener(listener);

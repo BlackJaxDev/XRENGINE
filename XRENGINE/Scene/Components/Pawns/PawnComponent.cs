@@ -148,6 +148,8 @@ namespace XREngine.Components
             set => SetField(ref _camera, value);
         }
 
+        object? IRuntimeInputControllablePawn.RuntimeCameraComponent => GetCamera();
+
         private UICanvasInputComponent? _userInterfaceInput = null;
         /// <summary>
         /// The UI canvas input component that is used to route input to user interface canvases.

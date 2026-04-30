@@ -1,5 +1,7 @@
 // Shadow Sampling Utilities Snippet
 
+#pragma snippet "ShadowMomentEncoding"
+
 vec3 XRENGINE_ProjectShadowCoord(mat4 lightMatrix, vec3 fragPosWS)
 {
     vec4 fragPosLightSpace = lightMatrix * vec4(fragPosWS, 1.0);
@@ -1308,6 +1310,299 @@ float XRENGINE_SampleShadowMapSimpleAddBias(sampler2D shadowMap, vec3 shadowCoor
 {
     float depth = texture(shadowMap, shadowCoord.xy).r;
     return (shadowCoord.z + bias) <= depth ? 1.0 : 0.0;
+}
+
+float XRENGINE_LinearDepth01ToPerspectiveDepth(float linearDepth01, float nearZ, float farZ)
+{
+    float n = max(nearZ, 0.0001);
+    float f = max(farZ, n + 0.0001);
+    float linearZ = mix(n, f, clamp(linearDepth01, 0.0, 1.0));
+    float ndcZ = (f + n - (2.0 * n * f) / max(linearZ, n)) / (f - n);
+    return clamp(ndcZ * 0.5 + 0.5, 0.0, 1.0);
+}
+
+float XRENGINE_ReadLinearDepthShadowAsPerspective(sampler2D shadowMap, vec2 uv, float nearZ, float farZ)
+{
+    return XRENGINE_LinearDepth01ToPerspectiveDepth(texture(shadowMap, uv).r, nearZ, farZ);
+}
+
+float XRENGINE_SampleLinearDepthShadowMapSimpleAsPerspective(
+    sampler2D shadowMap,
+    vec3 shadowCoordLinear,
+    float receiverPerspectiveDepth,
+    float bias,
+    float nearZ,
+    float farZ)
+{
+    float depth = XRENGINE_ReadLinearDepthShadowAsPerspective(shadowMap, shadowCoordLinear.xy, nearZ, farZ);
+    return (receiverPerspectiveDepth - bias) > depth ? 0.0 : 1.0;
+}
+
+float XRENGINE_SampleLinearDepthShadowMapPCFAsPerspective(
+    sampler2D shadowMap,
+    vec3 shadowCoordLinear,
+    float receiverPerspectiveDepth,
+    float bias,
+    int kernelSize,
+    float nearZ,
+    float farZ)
+{
+    float lit = 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    int halfKernel = kernelSize / 2;
+    float sampleCount = float(kernelSize * kernelSize);
+
+    for (int x = -halfKernel; x <= halfKernel; ++x)
+    {
+        for (int y = -halfKernel; y <= halfKernel; ++y)
+        {
+            float sampleDepth = XRENGINE_ReadLinearDepthShadowAsPerspective(
+                shadowMap,
+                shadowCoordLinear.xy + vec2(x, y) * texelSize,
+                nearZ,
+                farZ);
+            lit += (receiverPerspectiveDepth - bias) <= sampleDepth ? 1.0 : 0.0;
+        }
+    }
+
+    return lit / sampleCount;
+}
+
+float XRENGINE_SampleLinearDepthShadowMapSoftAsPerspective(
+    sampler2D shadowMap,
+    vec3 shadowCoordLinear,
+    float receiverPerspectiveDepth,
+    float bias,
+    int sampleCount,
+    float filterRadius,
+    float nearZ,
+    float farZ)
+{
+    int clampedSamples = clamp(sampleCount, 1, 16);
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    float radius = max(filterRadius, max(texelSize.x, texelSize.y));
+    float lit = 0.0;
+
+    for (int i = 0; i < 16; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        vec2 sampleUv = shadowCoordLinear.xy + XRENGINE_ShadowPoissonDisk[i] * radius;
+        float sampleDepth = XRENGINE_ReadLinearDepthShadowAsPerspective(shadowMap, sampleUv, nearZ, farZ);
+        lit += (receiverPerspectiveDepth - bias) <= sampleDepth ? 1.0 : 0.0;
+    }
+
+    return lit / float(clampedSamples);
+}
+
+float XRENGINE_SampleLinearDepthShadowMapVogelAsPerspective(
+    sampler2D shadowMap,
+    vec3 shadowCoordLinear,
+    float receiverPerspectiveDepth,
+    float bias,
+    int tapCount,
+    float filterRadius,
+    float nearZ,
+    float farZ)
+{
+    int clampedTaps = clamp(tapCount, 1, XRENGINE_MaxVogelShadowTaps);
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    float radius = max(filterRadius, max(texelSize.x, texelSize.y));
+    float rotation = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy) * XRENGINE_ShadowPi * 2.0;
+    float lit = 0.0;
+
+    for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
+    {
+        if (i >= clampedTaps)
+            break;
+
+        vec2 sampleUv = shadowCoordLinear.xy + XRENGINE_GetVogelDiskTapRotated(i, clampedTaps, rotation) * radius;
+        float sampleDepth = XRENGINE_ReadLinearDepthShadowAsPerspective(shadowMap, sampleUv, nearZ, farZ);
+        lit += (receiverPerspectiveDepth - bias) <= sampleDepth ? 1.0 : 0.0;
+    }
+
+    return lit / float(clampedTaps);
+}
+
+float XRENGINE_SampleLinearDepthShadowMapTent4AsPerspective(
+    sampler2D shadowMap,
+    vec3 shadowCoordLinear,
+    float receiverPerspectiveDepth,
+    float bias,
+    float filterRadius,
+    float nearZ,
+    float farZ)
+{
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    vec2 radius = max(vec2(max(filterRadius, 0.0)), texelSize);
+    float lit = 0.0;
+
+    lit += (receiverPerspectiveDepth - bias) <= XRENGINE_ReadLinearDepthShadowAsPerspective(shadowMap, shadowCoordLinear.xy + vec2(-0.5, -0.5) * radius, nearZ, farZ) ? 1.0 : 0.0;
+    lit += (receiverPerspectiveDepth - bias) <= XRENGINE_ReadLinearDepthShadowAsPerspective(shadowMap, shadowCoordLinear.xy + vec2(0.5, -0.5) * radius, nearZ, farZ) ? 1.0 : 0.0;
+    lit += (receiverPerspectiveDepth - bias) <= XRENGINE_ReadLinearDepthShadowAsPerspective(shadowMap, shadowCoordLinear.xy + vec2(-0.5, 0.5) * radius, nearZ, farZ) ? 1.0 : 0.0;
+    lit += (receiverPerspectiveDepth - bias) <= XRENGINE_ReadLinearDepthShadowAsPerspective(shadowMap, shadowCoordLinear.xy + vec2(0.5, 0.5) * radius, nearZ, farZ) ? 1.0 : 0.0;
+
+    return lit * 0.25;
+}
+
+float XRENGINE_BlockerSearchLinearDepth2DAsPerspective(
+    sampler2D shadowMap,
+    vec2 uv,
+    float receiverPerspectiveDepth,
+    float searchRadius,
+    int sampleCount,
+    float nearZ,
+    float farZ)
+{
+    float blockerSum = 0.0;
+    int blockerCount = 0;
+    int clampedSamples = clamp(sampleCount, 1, XRENGINE_MaxVogelShadowTaps);
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    float radius = max(searchRadius, max(texelSize.x, texelSize.y));
+    float rotation = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy) * XRENGINE_ShadowPi * 2.0;
+
+    for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        vec2 sampleUv = uv + XRENGINE_GetVogelDiskTapRotated(i, clampedSamples, rotation) * radius;
+        float sampleDepth = XRENGINE_ReadLinearDepthShadowAsPerspective(shadowMap, sampleUv, nearZ, farZ);
+        if (sampleDepth < receiverPerspectiveDepth)
+        {
+            blockerSum += sampleDepth;
+            blockerCount++;
+        }
+    }
+
+    return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0;
+}
+
+float XRENGINE_SampleLinearDepthShadowMapCHSSAsPerspective(
+    sampler2D shadowMap,
+    vec3 shadowCoordLinear,
+    float receiverPerspectiveDepth,
+    float bias,
+    int blockerSamples,
+    int filterSamples,
+    float searchRadius,
+    float lightSourceRadius,
+    float minPenumbra,
+    float maxPenumbra,
+    float nearZ,
+    float farZ)
+{
+    float receiverDepth = receiverPerspectiveDepth - bias;
+    float avgBlockerDepth = XRENGINE_BlockerSearchLinearDepth2DAsPerspective(
+        shadowMap,
+        shadowCoordLinear.xy,
+        receiverDepth,
+        searchRadius,
+        blockerSamples,
+        nearZ,
+        farZ);
+
+    if (avgBlockerDepth < 0.0)
+        return 1.0;
+
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    float minRadius = max(minPenumbra, max(texelSize.x, texelSize.y));
+    float penumbra = XRENGINE_EstimatePenumbra(receiverDepth, avgBlockerDepth, lightSourceRadius, minRadius, max(maxPenumbra, minRadius));
+
+    return XRENGINE_SampleLinearDepthShadowMapVogelAsPerspective(
+        shadowMap,
+        shadowCoordLinear,
+        receiverPerspectiveDepth,
+        bias,
+        filterSamples,
+        penumbra,
+        nearZ,
+        farZ);
+}
+
+float XRENGINE_SampleLinearDepthShadowMapFilteredAsPerspective(
+    sampler2D shadowMap,
+    vec3 shadowCoordLinear,
+    float receiverPerspectiveDepth,
+    float bias,
+    int blockerSamples,
+    int filterSamples,
+    float filterRadius,
+    float blockerSearchRadius,
+    int softShadowMode,
+    float lightSourceRadius,
+    float minPenumbra,
+    float maxPenumbra,
+    int vogelTapCount,
+    float nearZ,
+    float farZ)
+{
+    if (softShadowMode == 3) // VogelDisk
+        return XRENGINE_SampleLinearDepthShadowMapVogelAsPerspective(
+            shadowMap,
+            shadowCoordLinear,
+            receiverPerspectiveDepth,
+            bias,
+            vogelTapCount,
+            filterRadius,
+            nearZ,
+            farZ);
+
+    int clampedFilterSamples = clamp(filterSamples, 1, XRENGINE_MaxVogelShadowTaps);
+    if (clampedFilterSamples <= 1)
+        return XRENGINE_SampleLinearDepthShadowMapSimpleAsPerspective(
+            shadowMap,
+            shadowCoordLinear,
+            receiverPerspectiveDepth,
+            bias,
+            nearZ,
+            farZ);
+
+    if (softShadowMode == 2) // ContactHardeningPcss
+        return XRENGINE_SampleLinearDepthShadowMapCHSSAsPerspective(
+            shadowMap,
+            shadowCoordLinear,
+            receiverPerspectiveDepth,
+            bias,
+            blockerSamples,
+            clampedFilterSamples,
+            blockerSearchRadius,
+            lightSourceRadius,
+            minPenumbra,
+            maxPenumbra,
+            nearZ,
+            farZ);
+
+    if (softShadowMode == 1) // FixedPoisson
+        return XRENGINE_SampleLinearDepthShadowMapSoftAsPerspective(
+            shadowMap,
+            shadowCoordLinear,
+            receiverPerspectiveDepth,
+            bias,
+            clampedFilterSamples,
+            filterRadius,
+            nearZ,
+            farZ);
+
+    if (clampedFilterSamples <= 4)
+        return XRENGINE_SampleLinearDepthShadowMapTent4AsPerspective(
+            shadowMap,
+            shadowCoordLinear,
+            receiverPerspectiveDepth,
+            bias,
+            filterRadius,
+            nearZ,
+            farZ);
+
+    return XRENGINE_SampleLinearDepthShadowMapPCFAsPerspective(
+        shadowMap,
+        shadowCoordLinear,
+        receiverPerspectiveDepth,
+        bias,
+        3,
+        nearZ,
+        farZ);
 }
 
 float XRENGINE_SampleShadowMapFiltered(

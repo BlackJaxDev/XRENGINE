@@ -103,6 +103,8 @@ Start with:
 
 The day-to-day editor UI is the ImGui path. There is also a native UI pipeline under active development, but it is not the default path for most tasks.
 
+The ImGui editor enables Dear ImGui multi-viewports on the OpenGL backend, so dockable editor panels can be dragged outside the main window as native OS windows. The platform-window bridge lives beside `OpenGLRenderer`; Vulkan still renders ImGui inside the main swapchain until it gets its own per-viewport swapchain path.
+
 ### Networking work
 
 Start with:

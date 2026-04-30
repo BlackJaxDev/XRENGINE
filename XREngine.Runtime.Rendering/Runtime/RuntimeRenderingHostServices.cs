@@ -3,10 +3,13 @@ using System.IO;
 using System.Numerics;
 using System.Threading;
 using XREngine.Core.Files;
+using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Input;
 using XREngine.Rendering.Commands;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering;
@@ -106,6 +109,17 @@ public interface IRuntimeScreenSpaceUserInterface
 {
     bool IsActive { get; }
     bool IsScreenSpace { get; }
+    void ResizeScreenSpace(Vector2 size);
+    void ResizeCameraSpace(XRCamera camera, XRCameraParameters parameters);
+    void ClearCameraSpaceCamera(XRCamera camera);
+    bool TryGetImGuiDisplayMetrics(
+        IRuntimeViewportHost? viewport,
+        XRCamera? camera,
+        out Vector2 displaySize,
+        out Vector2 displayPosition,
+        out Vector2 framebufferScale);
+    void CollectVisibleItemsScreenSpace(IRuntimeViewportHost? viewport);
+    void SwapBuffersScreenSpace();
     void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO);
 }
 
@@ -162,6 +176,19 @@ public interface IRuntimeRenderingHostServices
     bool DefaultOutputHDR { get; }
     float DefaultTsrRenderScale { get; }
     RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window);
+    IEnumerable<IRuntimeViewportHost> EnumerateActiveViewports();
+    IEnumerable<IPawnController> EnumerateLocalPlayers();
+    XRCamera.EDepthMode ResolveSceneCameraDepthModePreference();
+    IRuntimeInputControllablePawn? EnsurePawnForCamera(SceneNode sceneNode, CameraComponent camera, ELocalPlayerIndex playerIndex, Type? pawnType = null);
+    void PickViewportPhysicsAsync(
+        XRViewport viewport,
+        CameraComponent camera,
+        Vector2 normalizedViewportPosition,
+        LayerMask layerMask,
+        object? filter,
+        SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedPhysicsResults,
+        Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
+        bool useUnjitteredProjection);
     IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline);
     void LogOutput(string message);
     void LogWarning(string message);
@@ -200,6 +227,8 @@ public interface IRuntimeRenderingHostServices
     void EnqueueRenderThreadCoroutine(Func<bool> task, string reason);
     IDisposable? PushTransformId(uint transformId);
     void RecordOctreeSkippedMove();
+    void ProcessGpuPhysicsChainDispatches();
+    void ProcessGpuPhysicsChainCompletions();
     void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color);
     void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color);
     TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new();
@@ -318,6 +347,31 @@ public static class RuntimeRenderingHostServices
         public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)
             => RuntimeGraphicsApiKind.Unknown;
 
+        public IEnumerable<IRuntimeViewportHost> EnumerateActiveViewports()
+            => [];
+
+        public IEnumerable<IPawnController> EnumerateLocalPlayers()
+            => [];
+
+        public XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
+            => XRCamera.EDepthMode.Normal;
+
+        public IRuntimeInputControllablePawn? EnsurePawnForCamera(SceneNode sceneNode, CameraComponent camera, ELocalPlayerIndex playerIndex, Type? pawnType = null)
+            => null;
+
+        public void PickViewportPhysicsAsync(
+            XRViewport viewport,
+            CameraComponent camera,
+            Vector2 normalizedViewportPosition,
+            LayerMask layerMask,
+            object? filter,
+            SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedPhysicsResults,
+            Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
+            bool useUnjitteredProjection)
+        {
+            physicsFinishedCallback(null);
+        }
+
         public IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline)
             => null;
 
@@ -416,6 +470,14 @@ public static class RuntimeRenderingHostServices
             => null;
 
         public void RecordOctreeSkippedMove()
+        {
+        }
+
+        public void ProcessGpuPhysicsChainDispatches()
+        {
+        }
+
+        public void ProcessGpuPhysicsChainCompletions()
         {
         }
 

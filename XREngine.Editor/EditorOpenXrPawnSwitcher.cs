@@ -43,7 +43,7 @@ internal static class EditorOpenXrPawnSwitcher
             desktopPawn.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
     }
 
-    private static PawnComponent? FindVrPawn(XRWorldInstance world)
+    private static PawnComponent? FindVrPawn(IRuntimeRenderWorld world)
     {
         foreach (var root in world.RootNodes)
         {
@@ -60,7 +60,7 @@ internal static class EditorOpenXrPawnSwitcher
         return null;
     }
 
-    private static EditorFlyingCameraPawnComponent? FindDesktopPawn(XRWorldInstance world)
+    private static EditorFlyingCameraPawnComponent? FindDesktopPawn(IRuntimeRenderWorld world)
     {
         foreach (var root in world.RootNodes)
         {

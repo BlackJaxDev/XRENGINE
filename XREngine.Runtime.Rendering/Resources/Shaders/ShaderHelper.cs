@@ -933,6 +933,100 @@ void main()
     Depth = gl_FragCoord.z;
 }";
 
+    /// <summary>
+    /// Fragment shader source that outputs normalized linear camera depth.
+    /// Use with shadow atlas color targets so receiver shaders can do manual compares.
+    /// </summary>
+    public static readonly string Frag_LinearDepthOutput = @"#version 450
+layout(location = 0) out float Depth;
+uniform float CameraNearZ;
+uniform float CameraFarZ;
+
+float LinearizeDepth(float depth, float nearZ, float farZ)
+{
+    float z = depth * 2.0 - 1.0;
+    return (2.0 * nearZ * farZ) / (farZ + nearZ - z * (farZ - nearZ));
+}
+
+void main()
+{
+    float nearZ = max(CameraNearZ, 0.0001);
+    float farZ = max(CameraFarZ, nearZ + 0.0001);
+    float linearZ = LinearizeDepth(gl_FragCoord.z, nearZ, farZ);
+    Depth = clamp((linearZ - nearZ) / (farZ - nearZ), 0.0, 1.0);
+}";
+
+    /// <summary>
+    /// Fragment shader source that writes VSM/EVSM moments for spot shadow maps.
+    /// </summary>
+    public static readonly string Frag_ShadowMomentOutput = @"#version 450
+layout(location = 0) out vec4 ShadowMoments;
+
+uniform int ShadowMapEncoding = 1;
+uniform float ShadowMomentPositiveExponent = 5.0;
+uniform float ShadowMomentNegativeExponent = 5.0;
+uniform float CameraNearZ = 0.1;
+uniform float CameraFarZ = 1000.0;
+
+#define XRENGINE_SHADOW_ENCODING_DEPTH 0
+#define XRENGINE_SHADOW_ENCODING_VARIANCE2 1
+#define XRENGINE_SHADOW_ENCODING_EVSM2 2
+#define XRENGINE_SHADOW_ENCODING_EVSM4 3
+
+float LinearizeShadowDepth01(float depth, float nearZ, float farZ)
+{
+    float n = max(nearZ, 0.0001);
+    float f = max(farZ, n + 0.0001);
+    float z = depth * 2.0 - 1.0;
+    float linearZ = (2.0 * n * f) / (f + n - z * (f - n));
+    return clamp((linearZ - n) / (f - n), 0.0, 1.0);
+}
+
+vec2 EncodeVsmMoments(float depth)
+{
+    float clampedDepth = clamp(depth, 0.0, 1.0);
+    float dx = dFdx(clampedDepth);
+    float dy = dFdy(clampedDepth);
+    return vec2(clampedDepth, clampedDepth * clampedDepth + 0.25 * (dx * dx + dy * dy));
+}
+
+vec2 EncodeEvsm2Moments(float depth, float positiveExponent)
+{
+    float warpedDepth = exp(max(positiveExponent, 0.0) * clamp(depth, 0.0, 1.0));
+    float dx = dFdx(warpedDepth);
+    float dy = dFdy(warpedDepth);
+    return vec2(warpedDepth, warpedDepth * warpedDepth + 0.25 * (dx * dx + dy * dy));
+}
+
+vec4 EncodeEvsm4Moments(float depth, float positiveExponent, float negativeExponent)
+{
+    float clampedDepth = clamp(depth, 0.0, 1.0);
+    float positive = exp(max(positiveExponent, 0.0) * clampedDepth);
+    float negative = -exp(-max(negativeExponent, 0.0) * clampedDepth);
+    float positiveDx = dFdx(positive);
+    float positiveDy = dFdy(positive);
+    float negativeDx = dFdx(negative);
+    float negativeDy = dFdy(negative);
+    return vec4(
+        positive,
+        positive * positive + 0.25 * (positiveDx * positiveDx + positiveDy * positiveDy),
+        negative,
+        negative * negative + 0.25 * (negativeDx * negativeDx + negativeDy * negativeDy));
+}
+
+void main()
+{
+    float depth = LinearizeShadowDepth01(gl_FragCoord.z, CameraNearZ, CameraFarZ);
+    if (ShadowMapEncoding == XRENGINE_SHADOW_ENCODING_EVSM4)
+        ShadowMoments = EncodeEvsm4Moments(depth, ShadowMomentPositiveExponent, ShadowMomentNegativeExponent);
+    else if (ShadowMapEncoding == XRENGINE_SHADOW_ENCODING_EVSM2)
+        ShadowMoments = vec4(EncodeEvsm2Moments(depth, ShadowMomentPositiveExponent), 0.0, 0.0);
+    else if (ShadowMapEncoding == XRENGINE_SHADOW_ENCODING_VARIANCE2)
+        ShadowMoments = vec4(EncodeVsmMoments(depth), 0.0, 0.0);
+    else
+        ShadowMoments = vec4(gl_FragCoord.z, 0.0, 0.0, 0.0);
+}";
+
     #endregion
 
     #region Gaussian Splatting Shaders

@@ -307,8 +307,6 @@ namespace XREngine
                 private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;
                 private float _dlssCustomScale = 0.77f;
                 private float _dlssSharpness = 0.2f;
-                private bool _dlssEnableFrameSmoothing = true;
-                private float _dlssFrameSmoothingStrength = 0.15f;
                 private bool _enableIntelXess = false;
                 private EXessQualityMode _xessQuality = EXessQualityMode.Quality;
                 private float _xessCustomScale = 0.77f;
@@ -419,6 +417,15 @@ namespace XREngine
                 private int _vramBudgetMB = 20 * 1024;
 
                 private bool _cullShadowCollectionByCameraFrusta = true;
+                private bool _useSpotShadowAtlas = true;
+                private bool _useDirectionalShadowAtlas = true;
+                private uint _shadowAtlasPageSize = 4096u;
+                private int _maxShadowAtlasPages = 2;
+                private long _maxShadowAtlasMemoryBytes = 0L;
+                private int _maxShadowTilesRenderedPerFrame = 16;
+                private float _maxShadowRenderMilliseconds = 2.0f;
+                private uint _minShadowAtlasTileResolution = 128u;
+                private uint _maxShadowAtlasTileResolution = 4096u;
 
                 /// <summary>
                 /// If true, logs a warning when a texture sampler uniform is not found during binding.
@@ -480,6 +487,91 @@ namespace XREngine
                 {
                     get => _cullShadowCollectionByCameraFrusta;
                     set => SetField(ref _cullShadowCollectionByCameraFrusta, value);
+                }
+
+                [Category("Shadows")]
+                [Description("If true, dynamic spot lights render and sample through the dynamic shadow atlas. Disable to use legacy per-light spot shadow maps for debugging.")]
+                public bool UseSpotShadowAtlas
+                {
+                    get => _useSpotShadowAtlas;
+                    set => SetField(ref _useSpotShadowAtlas, value);
+                }
+
+                [Category("Shadows")]
+                [Description("If true, directional cascades render and sample through the dynamic shadow atlas. Disable to use the legacy cascade texture array for debugging.")]
+                public bool UseDirectionalShadowAtlas
+                {
+                    get => _useDirectionalShadowAtlas;
+                    set => SetField(ref _useDirectionalShadowAtlas, value);
+                }
+
+                [Category("Shadows")]
+                [Description("Width and height of each dynamic shadow atlas page in texels.")]
+                public uint ShadowAtlasPageSize
+                {
+                    get => _shadowAtlasPageSize;
+                    set => SetField(ref _shadowAtlasPageSize, ClampShadowAtlasPowerOfTwo(value, 128u, 16384u));
+                }
+
+                [Category("Shadows")]
+                [Description("Maximum number of dynamic shadow atlas pages per encoding group.")]
+                public int MaxShadowAtlasPages
+                {
+                    get => _maxShadowAtlasPages;
+                    set => SetField(ref _maxShadowAtlasPages, Math.Clamp(value, 1, 64));
+                }
+
+                [Category("Shadows")]
+                [Description("Hard memory cap for dynamic shadow atlas pages. Zero derives the cap from page settings.")]
+                public long MaxShadowAtlasMemoryBytes
+                {
+                    get => _maxShadowAtlasMemoryBytes;
+                    set => SetField(ref _maxShadowAtlasMemoryBytes, Math.Max(0L, value));
+                }
+
+                [Category("Shadows")]
+                [Description("Soft cap for dynamic shadow atlas tile renders per frame.")]
+                public int MaxShadowTilesRenderedPerFrame
+                {
+                    get => _maxShadowTilesRenderedPerFrame;
+                    set => SetField(ref _maxShadowTilesRenderedPerFrame, Math.Max(0, value));
+                }
+
+                [Category("Shadows")]
+                [Description("Soft frame-time budget for dynamic shadow atlas tile rendering in milliseconds.")]
+                public float MaxShadowRenderMilliseconds
+                {
+                    get => _maxShadowRenderMilliseconds;
+                    set => SetField(ref _maxShadowRenderMilliseconds, MathF.Max(0.0f, value));
+                }
+
+                [Category("Shadows")]
+                [Description("Minimum dynamic shadow atlas tile resolution in texels.")]
+                public uint MinShadowAtlasTileResolution
+                {
+                    get => _minShadowAtlasTileResolution;
+                    set => SetField(ref _minShadowAtlasTileResolution, ClampShadowAtlasPowerOfTwo(value, 16u, ShadowAtlasPageSize));
+                }
+
+                [Category("Shadows")]
+                [Description("Maximum dynamic shadow atlas tile resolution in texels.")]
+                public uint MaxShadowAtlasTileResolution
+                {
+                    get => _maxShadowAtlasTileResolution;
+                    set => SetField(ref _maxShadowAtlasTileResolution, ClampShadowAtlasPowerOfTwo(value, MinShadowAtlasTileResolution, ShadowAtlasPageSize));
+                }
+
+                private static uint ClampShadowAtlasPowerOfTwo(uint value, uint min, uint max)
+                {
+                    min = Math.Max(1u, min);
+                    max = Math.Max(min, max);
+                    value = Math.Clamp(value, min, max);
+
+                    uint result = 1u;
+                    while (result < value && result < max)
+                        result <<= 1;
+
+                    return Math.Clamp(result, min, max);
                 }
 
                 /// <summary>
@@ -583,28 +675,6 @@ namespace XREngine
                 {
                     get => _dlssSharpness;
                     set => SetField(ref _dlssSharpness, Math.Clamp(value, 0.0f, 1.0f));
-                }
-
-                /// <summary>
-                /// Smooths resolution transitions to avoid visible oscillation when DLSS settings change.
-                /// </summary>
-                [Category("Upscaling")]
-                [Description("Smooths resolution transitions to avoid visible oscillation when DLSS settings change.")]
-                public bool DlssEnableFrameSmoothing
-                {
-                    get => _dlssEnableFrameSmoothing;
-                    set => SetField(ref _dlssEnableFrameSmoothing, value);
-                }
-
-                /// <summary>
-                /// Lerp factor used when smoothing DLSS resolution changes. Higher values converge faster.
-                /// </summary>
-                [Category("Upscaling")]
-                [Description("Lerp factor used when smoothing DLSS resolution changes. Higher values converge faster.")]
-                public float DlssFrameSmoothingStrength
-                {
-                    get => _dlssFrameSmoothingStrength;
-                    set => SetField(ref _dlssFrameSmoothingStrength, Math.Clamp(value, 0.0f, 1.0f));
                 }
 
                 /// <summary>
@@ -1511,9 +1581,7 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
                     || propertyName == nameof(EngineSettings.DlssQuality)
                     || propertyName == nameof(EngineSettings.DlssCustomScale)
-                    || propertyName == nameof(EngineSettings.DlssSharpness)
-                    || propertyName == nameof(EngineSettings.DlssEnableFrameSmoothing)
-                    || propertyName == nameof(EngineSettings.DlssFrameSmoothingStrength))
+                    || propertyName == nameof(EngineSettings.DlssSharpness))
                 {
                     Engine.Rendering.ApplyNvidiaDlssPreference();
                 }

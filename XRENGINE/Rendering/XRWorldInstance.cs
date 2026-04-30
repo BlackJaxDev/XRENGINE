@@ -24,6 +24,7 @@ using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 using static XREngine.Engine;
+using XRWorld = XREngine.Scene.XRWorld;
 
 namespace XREngine.Rendering
 {
@@ -325,7 +326,7 @@ namespace XREngine.Rendering
         {
             _visualScene = visualScene;
             _physicsScene = physicsScene;
-            _rootNodes = new RootNodeCollection(this);
+            _rootNodes = new RootNodeCollection(this, node => OnRootNodeDestroying(node));
             Lights = new Lights3DCollection(this);
 
             TickLists = [];

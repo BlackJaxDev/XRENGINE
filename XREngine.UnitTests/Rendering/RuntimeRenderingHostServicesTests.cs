@@ -7,9 +7,12 @@ using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Components;
+using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -224,6 +227,31 @@ public sealed class RuntimeRenderingHostServicesTests
         public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)
             => RuntimeGraphicsApiKind.Unknown;
 
+        public IEnumerable<IRuntimeViewportHost> EnumerateActiveViewports()
+            => [];
+
+        public IEnumerable<IPawnController> EnumerateLocalPlayers()
+            => [];
+
+        public XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
+            => XRCamera.EDepthMode.Normal;
+
+        public IRuntimeInputControllablePawn? EnsurePawnForCamera(SceneNode sceneNode, CameraComponent camera, ELocalPlayerIndex playerIndex, Type? pawnType = null)
+            => null;
+
+        public void PickViewportPhysicsAsync(
+            XRViewport viewport,
+            CameraComponent camera,
+            Vector2 normalizedViewportPosition,
+            LayerMask layerMask,
+            object? filter,
+            SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedPhysicsResults,
+            Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
+            bool useUnjitteredProjection)
+        {
+            physicsFinishedCallback(null);
+        }
+
         public IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline)
             => null;
 
@@ -318,6 +346,14 @@ public sealed class RuntimeRenderingHostServicesTests
             => null;
 
         public void RecordOctreeSkippedMove()
+        {
+        }
+
+        public void ProcessGpuPhysicsChainDispatches()
+        {
+        }
+
+        public void ProcessGpuPhysicsChainCompletions()
         {
         }
 

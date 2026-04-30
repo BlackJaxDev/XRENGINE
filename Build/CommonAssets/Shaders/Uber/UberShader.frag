@@ -121,7 +121,7 @@ uniform float FarPlaneDist;
 layout(location = 0) out vec2 Normal;         // octahedral-encoded world normal
 layout(location = 1) out uint TransformId;    // compact pre-pass attachment, main GBuffer ID texture
 #elif defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-layout(location = 0) out float Depth;         // depth written into the shadow map
+layout(location = 0) out vec4 Depth;          // depth or moments written into the shadow map
 #elif defined(XRENGINE_FORWARD_WEIGHTED_OIT)
 layout(location = 0) out vec4 OutAccum;       // sum of premultiplied color*weight
 layout(location = 1) out vec4 OutRevealage;   // running 1-alpha product (mul blend)
@@ -1229,10 +1229,10 @@ void main() {
     // Cheap outputs for non-color passes. Done *after* cutout/dissolve so
     // shadow maps and the depth/normal prepass respect those discards.
 #if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-    Depth = length(FragPos - LightPos) / FarPlaneDist;
+    Depth = vec4(length(FragPos - LightPos) / FarPlaneDist, 0.0, 0.0, 0.0);
     return;
 #elif defined(XRENGINE_SHADOW_CASTER_PASS)
-    Depth = gl_FragCoord.z;
+    XRENGINE_WriteShadowCasterDepth(Depth, gl_FragCoord.z);
     return;
 #elif defined(XRENGINE_DEPTH_NORMAL_PREPASS)
     Normal = XRENGINE_EncodeNormal(mesh.worldNormal);

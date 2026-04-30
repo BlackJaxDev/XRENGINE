@@ -214,6 +214,20 @@ namespace XREngine.Scene
             return [.. components];
         }
 
+        public T[] FindAllDescendantComponentsAssignableTo<T>() where T : class
+        {
+            List<T> components = [];
+            foreach (var component in ComponentsInternal)
+                if (component is T t)
+                    components.Add(t);
+
+            foreach (var child in Transform.Children)
+                if (child?.SceneNode is SceneNode node)
+                    components.AddRange(node.FindAllDescendantComponentsAssignableTo<T>());
+
+            return [.. components];
+        }
+
         /// <summary>
         /// Gets the child scene node at the specified index.
         /// </summary>

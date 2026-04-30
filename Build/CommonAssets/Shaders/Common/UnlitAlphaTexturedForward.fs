@@ -3,7 +3,7 @@
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
 layout (location = 0) out vec2 Normal;
 #elif defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-layout (location = 0) out float Depth;
+layout (location = 0) out vec4 Depth;
 #elif defined(XRENGINE_FORWARD_WEIGHTED_OIT)
 layout (location = 0) out vec4 OutAccum;
 layout (location = 1) out vec4 OutRevealage;
@@ -69,6 +69,7 @@ uniform float FarPlaneDist;
 #endif
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "ShadowMomentEncoding"
 
 void main()
 {
@@ -80,10 +81,10 @@ void main()
       discard;
 
 #if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-    Depth = length(FragPos - LightPos) / FarPlaneDist;
+    Depth = vec4(length(FragPos - LightPos) / FarPlaneDist, 0.0, 0.0, 0.0);
 #elif defined(XRENGINE_SHADOW_CASTER_PASS)
     // Future tinted transmission: add a separate transmittance target and accumulate color-filtered light attenuation here instead of a depth-only write.
-    Depth = gl_FragCoord.z;
+    XRENGINE_WriteShadowCasterDepth(Depth, gl_FragCoord.z);
 #elif defined(XRENGINE_DEPTH_NORMAL_PREPASS)
     Normal = XRENGINE_EncodeNormal(FragNorm);
 #else

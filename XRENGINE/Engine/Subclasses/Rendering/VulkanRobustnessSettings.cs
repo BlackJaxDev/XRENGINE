@@ -3,24 +3,6 @@ using XREngine.Data.Core;
 
 namespace XREngine;
 
-public enum EVulkanAllocatorBackend
-{
-    Legacy,
-    Suballocator,
-}
-
-public enum EVulkanSynchronizationBackend
-{
-    Legacy,
-    Sync2,
-}
-
-public enum EVulkanDescriptorUpdateBackend
-{
-    Legacy,
-    Template,
-}
-
 public class VulkanRobustnessSettings : XRBase
 {
     private EVulkanAllocatorBackend _allocatorBackend = EVulkanAllocatorBackend.Legacy;

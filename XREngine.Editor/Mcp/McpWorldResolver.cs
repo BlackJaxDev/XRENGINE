@@ -8,7 +8,7 @@ namespace XREngine.Editor.Mcp
         {
             foreach (var window in Engine.Windows)
             {
-                var instance = window?.TargetWorldInstance;
+                var instance = window?.TargetWorldInstance as XRWorldInstance;
                 if (instance is not null)
                     return instance;
             }

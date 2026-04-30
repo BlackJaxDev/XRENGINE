@@ -16,6 +16,9 @@
     <Compile Include="$(GeneratedAotFactoryRegistrations)" />
   </ItemGroup>
 
+  <ItemGroup>
+  </ItemGroup>
+
   <Target Name="GenerateAotFactoryRegistrations" BeforeTargets="CoreCompile" Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(AotFactoryRegistrationGenerator)')">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedAotFactoryRegistrations)'))" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(AotFactoryRegistrationGenerator)&quot; -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(GeneratedAotFactoryRegistrations)&quot;" />
@@ -64,10 +67,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.vert" />
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.frag" />
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.vert" />
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.frag" />
   </ItemGroup>
 
   <ItemGroup>

@@ -28,10 +28,15 @@ layout(binding = 3) uniform sampler2D DepthView; //Depth
 #endif
 uniform sampler2D ShadowMap; //Directional Shadow Map
 uniform sampler2DArray ShadowMapArray; //Directional Cascaded Shadow Map
+layout(binding = 30) uniform sampler2D DirectionalShadowAtlasPages[2];
 uniform bool UseCascadedDirectionalShadows = false;
 uniform bool LightHasShadowMap = true;
 uniform bool EnableCascadedShadows = true;
 uniform bool DebugCascadeColors = false;
+uniform bool DirectionalShadowAtlasEnabled = false;
+uniform ivec4 DirectionalShadowAtlasPacked0[MAX_CASCADES]; // enabled, page, fallback, record index
+uniform vec4 DirectionalShadowAtlasUvScaleBias[MAX_CASCADES];
+uniform vec4 DirectionalShadowAtlasDepthParams[MAX_CASCADES]; // near, far, local texel size, reserved
 
 // Distinct debug colors per cascade index
 const vec3 CascadeDebugColorTable[MAX_CASCADES] = vec3[](
@@ -493,6 +498,66 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 			ShadowVogelTapCount) * contact;
 }
 
+float SampleDirectionalAtlasPage(
+	in int pageIndex,
+	in vec3 atlasCoord,
+	in float bias,
+	in int blockerSamples,
+	in int filterSamples,
+	in float filterRadius,
+	in float blockerSearchRadius,
+	in int softMode,
+	in float lightSourceRadius,
+	in float minPenumbra,
+	in float maxPenumbra,
+	in int vogelTapCount)
+{
+	if (pageIndex == 0)
+	{
+		return XRENGINE_SampleShadowMapFiltered(
+			DirectionalShadowAtlasPages[0],
+			atlasCoord,
+			bias,
+			blockerSamples,
+			filterSamples,
+			filterRadius,
+			blockerSearchRadius,
+			softMode,
+			lightSourceRadius,
+			minPenumbra,
+			maxPenumbra,
+			vogelTapCount);
+	}
+
+	if (pageIndex == 1)
+	{
+		return XRENGINE_SampleShadowMapFiltered(
+			DirectionalShadowAtlasPages[1],
+			atlasCoord,
+			bias,
+			blockerSamples,
+			filterSamples,
+			filterRadius,
+			blockerSearchRadius,
+			softMode,
+			lightSourceRadius,
+			minPenumbra,
+			maxPenumbra,
+			vogelTapCount);
+	}
+
+	return 1.0f;
+}
+
+float ReadDirectionalAtlasCenterDepth(in int pageIndex, in vec2 uv)
+{
+	if (pageIndex == 0)
+		return texture(DirectionalShadowAtlasPages[0], uv).r;
+	if (pageIndex == 1)
+		return texture(DirectionalShadowAtlasPages[1], uv).r;
+	return 1.0f;
+}
+
 float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int cascadeIndex, in bool clampToEdge)
 {
 		if (!LightHasShadowMap)
@@ -519,6 +584,50 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int ca
 			: 1.0f;
 		float cascadeScale = 1.0f + float(cascadeIndex) * 0.35f;
 		float filterRadius = ShadowFilterRadius * cascadeScale;
+
+		if (DirectionalShadowAtlasEnabled)
+		{
+			ivec4 atlasI0 = DirectionalShadowAtlasPacked0[cascadeIndex];
+			bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < 2;
+			int fallbackMode = atlasI0.z;
+			if (atlasEnabled)
+			{
+				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[cascadeIndex];
+				vec2 atlasUv = fragCoord.xy * atlasUvScaleBias.xy + atlasUvScaleBias.zw;
+				float atlasRadiusScale = max(atlasUvScaleBias.x, atlasUvScaleBias.y);
+				return SampleDirectionalAtlasPage(
+					atlasI0.y,
+					vec3(atlasUv, fragCoord.z),
+					bias,
+					ShadowBlockerSamples,
+					ShadowFilterSamples,
+					filterRadius * atlasRadiusScale,
+					ShadowBlockerSearchRadius * cascadeScale * atlasRadiusScale,
+					SoftShadowMode,
+					LightSourceRadius * atlasRadiusScale,
+					ShadowMinPenumbra * cascadeScale * atlasRadiusScale,
+					ShadowMaxPenumbra * cascadeScale * atlasRadiusScale,
+					ShadowVogelTapCount) * contact;
+			}
+
+			if (fallbackMode == 2)
+				return contact;
+			return SampleShadowMapArrayFilteredLocal(
+				ShadowMapArray,
+				fragCoord,
+				float(cascadeIndex),
+				bias,
+				ShadowBlockerSamples,
+				ShadowFilterSamples,
+				filterRadius,
+				ShadowBlockerSearchRadius * cascadeScale,
+				SoftShadowMode,
+				LightSourceRadius,
+				ShadowMinPenumbra * cascadeScale,
+				ShadowMaxPenumbra * cascadeScale,
+				ShadowVogelTapCount) * contact;
+		}
+
 		return SampleShadowMapArrayFilteredLocal(
 			ShadowMapArray,
 			fragCoord,

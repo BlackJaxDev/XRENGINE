@@ -264,7 +264,7 @@ public abstract class RuntimeWorldObjectBase : XRObjectBase
         _tickCache.Clear();
     }
 
-    internal protected void SetWorldContext(IRuntimeWorldContext? worldContext)
+    public void SetWorldContext(IRuntimeWorldContext? worldContext)
         => World = worldContext;
 
     private static void InitializeReplicationMetadata()

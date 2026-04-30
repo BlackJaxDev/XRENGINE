@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 
 namespace XREngine.Editor.ComponentEditors;
 
@@ -241,6 +242,8 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
             ImGui.Text($"Cascade Texture: {tex.Width}x{tex.Height} x {tex.Depth} layers");
         else
             ImGui.TextDisabled("Cascade texture not allocated.");
+        bool atlasActive = Engine.Rendering.Settings.UseDirectionalShadowAtlas;
+        ImGui.Text($"Cascade Atlas: {(atlasActive ? "Active" : "Disabled")}");
 
         if (activeCascades == 0)
         {
@@ -251,7 +254,8 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
         ImGui.Separator();
 
         // Per-cascade detail table
-        if (ImGui.BeginTable("CascadeSlices", 9, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        int tableColumns = atlasActive ? 11 : 9;
+        if (ImGui.BeginTable("CascadeSlices", tableColumns, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
         {
             ImGui.TableSetupColumn("Idx", ImGuiTableColumnFlags.WidthFixed, 30.0f);
             ImGui.TableSetupColumn("Split Near", ImGuiTableColumnFlags.WidthFixed, 80.0f);
@@ -262,6 +266,11 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
             ImGui.TableSetupColumn("Center", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableSetupColumn("Half Extents", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableSetupColumn("Mode", ImGuiTableColumnFlags.WidthFixed, 55.0f);
+            if (atlasActive)
+            {
+                ImGui.TableSetupColumn("Atlas", ImGuiTableColumnFlags.WidthFixed, 75.0f);
+                ImGui.TableSetupColumn("Tile", ImGuiTableColumnFlags.WidthFixed, 110.0f);
+            }
             ImGui.TableHeadersRow();
 
             for (int i = 0; i < activeCascades; i++)
@@ -303,6 +312,26 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
 
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(bias.HasManualOverride ? "Manual" : "Auto");
+
+                if (atlasActive)
+                {
+                    ImGui.TableNextColumn();
+                    if (light.TryGetCascadeAtlasSlot(i, out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot) && slot.HasAllocation)
+                    {
+                        ImGui.Text(slot.IsResident ? $"P{slot.PageIndex} R{slot.RecordIndex}" : $"{slot.Fallback}");
+
+                        ImGui.TableNextColumn();
+                        ImGui.Text(slot.IsResident
+                            ? $"{slot.InnerPixelRect.Width}x{slot.InnerPixelRect.Height}"
+                            : "Not resident");
+                    }
+                    else
+                    {
+                        ImGui.TextDisabled("Pending");
+                        ImGui.TableNextColumn();
+                        ImGui.TextDisabled("-");
+                    }
+                }
             }
 
             ImGui.EndTable();
