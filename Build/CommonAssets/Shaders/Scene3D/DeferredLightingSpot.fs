@@ -26,6 +26,7 @@ layout(binding = 2) uniform sampler2D RMSE; //PBR: Roughness, Metallic, Specular
 layout(binding = 3) uniform sampler2D DepthView; //Depth
 #endif
 uniform sampler2D ShadowMap; //Spot Shadow Map
+uniform sampler2D SpotShadowAtlas;
 
 uniform float ScreenWidth;
 uniform float ScreenHeight;
@@ -40,6 +41,11 @@ uniform float ShadowMult = 1.0f;
 uniform float ShadowBiasMin = 0.0001f;
 uniform float ShadowBiasMax = 0.07f;
 uniform bool LightHasShadowMap = true; // Added
+uniform bool SpotShadowAtlasEnabled = false;
+uniform int SpotShadowAtlasRecordIndex = -1;
+uniform int SpotShadowAtlasFallbackMode = 1;
+uniform vec4 SpotShadowAtlasUvScaleBias = vec4(1.0f, 1.0f, 0.0f, 0.0f);
+uniform vec4 SpotShadowAtlasDepthParams = vec4(0.1f, 1.0f, 0.0f, 1.0f); // near, far, local texel size, fallback
 uniform int ShadowSamples = 8;
 uniform int ShadowBlockerSamples = 8;
 uniform int ShadowFilterSamples = 8;
@@ -58,6 +64,8 @@ uniform float ContactShadowFadeStart = 10.0f;
 uniform float ContactShadowFadeEnd = 40.0f;
 uniform float ContactShadowNormalOffset = 0.036f;
 uniform float ContactShadowJitterStrength = 1.0f;
+uniform vec4 ShadowMomentParams0 = vec4(0.00002f, 0.2f, 5.0f, 5.0f); // min variance, light bleed reduction, positive exponent, negative exponent
+uniform vec4 ShadowMomentDepthParams = vec4(0.1f, 1.0f, 0.0f, 0.0f); // near, far, mip bias, use mipmaps
 // Debug: 0=normal, 1=shadow-only (white=lit), 2=margin heatmap (green=lit, red=shadow)
 uniform int ShadowDebugMode = 0;
 
@@ -259,6 +267,15 @@ float GetShadowBias(in float NoL)
     return mix(ShadowBiasMin, ShadowBiasMax, mapped);
 }
 
+float LinearizeSpotShadowDepth01(float depth, float nearZ, float farZ)
+{
+	float n = max(nearZ, 0.0001f);
+	float f = max(farZ, n + 0.0001f);
+	float z = depth * 2.0f - 1.0f;
+	float linearZ = (2.0f * n * f) / (f + n - z * (f - n));
+	return clamp((linearZ - n) / (f - n), 0.0f, 1.0f);
+}
+
 float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDirWS, in float receiverOffset, in float compareBias, in float viewDepth)
 {
 	int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
@@ -320,8 +337,22 @@ float _dbgShadowMargin = 1.0f;
 // returns1 lit,0 shadow
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
 {
-  if (!LightHasShadowMap) return 1.0f;
   if (NoL <= 0.0f) return 0.0f;
+	//Create bias depending on angle of normal to the light
+	float bias = GetShadowBias(NoL);
+	float viewDepth = abs((ViewMatrix * vec4(fragPosWS, 1.0f)).z);
+	float contact = EnableContactShadows
+		? SampleDeferredContactShadow(fragPosWS, N, normalize(LightData.Position - fragPosWS), ShadowBiasMax, bias, viewDepth)
+		: 1.0f;
+
+	if (!LightHasShadowMap)
+	{
+		float fallbackLit = SpotShadowAtlasFallbackMode == 2 ? contact : 1.0f;
+		_dbgShadowLit = fallbackLit;
+		_dbgShadowMargin = 1.0f;
+		return fallbackLit;
+	}
+
 	vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
 	vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
 	vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
@@ -330,33 +361,98 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 		fragCoord.y < 0.0f || fragCoord.y > 1.0f ||
 		fragCoord.z < 0.0f || fragCoord.z > 1.0f)
  return 1.0f;
-	//Create bias depending on angle of normal to the light
-	float bias = GetShadowBias(NoL);
-	float viewDepth = abs((ViewMatrix * vec4(fragPosWS, 1.0f)).z);
-	float contact = EnableContactShadows
-		? SampleDeferredContactShadow(fragPosWS, N, normalize(LightData.Position - fragPosWS), ShadowBiasMax, bias, viewDepth)
-		: 1.0f;
 
-	float lit = SampleShadowMapFilteredLocal(
-		ShadowMap,
-		fragCoord,
-		bias,
-		ShadowBlockerSamples,
-		ShadowFilterSamples,
-		ShadowFilterRadius,
-		ShadowBlockerSearchRadius,
-		SoftShadowMode,
-		LightSourceRadius,
-		ShadowMinPenumbra,
-		ShadowMaxPenumbra,
-		ShadowVogelTapCount) * contact;
-
-	// Write debug state for visualisation (single center sample)
-	if (ShadowDebugMode != 0)
+	float lit = 1.0f;
+	if (SpotShadowAtlasEnabled)
 	{
-		float centerDepth = texture(ShadowMap, fragCoord.xy).r;
-		_dbgShadowMargin = (centerDepth - (fragCoord.z - bias)) / max(1.0f, 0.001f);
+		vec2 atlasUv = fragCoord.xy * SpotShadowAtlasUvScaleBias.xy + SpotShadowAtlasUvScaleBias.zw;
+		float atlasRadiusScale = max(SpotShadowAtlasUvScaleBias.x, SpotShadowAtlasUvScaleBias.y);
+		float atlasNearZ = SpotShadowAtlasDepthParams.x;
+		float atlasFarZ = SpotShadowAtlasDepthParams.y;
+		float atlasDepth = LinearizeSpotShadowDepth01(
+			fragCoord.z,
+			atlasNearZ,
+			atlasFarZ);
+		float atlasFilterRadius = ShadowFilterRadius * atlasRadiusScale;
+		float atlasBlockerRadius = ShadowBlockerSearchRadius * atlasRadiusScale;
+		lit = XRENGINE_SampleLinearDepthShadowMapFilteredAsPerspective(
+			SpotShadowAtlas,
+			vec3(atlasUv, atlasDepth),
+			fragCoord.z,
+			bias,
+			ShadowBlockerSamples,
+			ShadowFilterSamples,
+			atlasFilterRadius,
+			atlasBlockerRadius,
+			SoftShadowMode,
+			LightSourceRadius * atlasRadiusScale,
+			ShadowMinPenumbra * atlasRadiusScale,
+			ShadowMaxPenumbra * atlasRadiusScale,
+			ShadowVogelTapCount,
+			atlasNearZ,
+			atlasFarZ) * contact;
+
+		if (ShadowDebugMode != 0)
+		{
+			float centerDepth = XRENGINE_LinearDepth01ToPerspectiveDepth(texture(SpotShadowAtlas, atlasUv).r, atlasNearZ, atlasFarZ);
+			_dbgShadowMargin = centerDepth - (fragCoord.z - bias);
+		}
 	}
+	else
+	{
+		if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+		{
+			float receiverDepth = XRENGINE_LinearizeShadowDepth01(
+				fragCoord.z,
+				ShadowMomentDepthParams.x,
+				ShadowMomentDepthParams.y);
+			float momentReceiverDepth = clamp(receiverDepth - min(bias, 0.01f), 0.0f, 1.0f);
+			lit = XRENGINE_SampleShadowMoment2D(
+				ShadowMap,
+				fragCoord.xy,
+				momentReceiverDepth,
+				ShadowMapEncoding,
+				ShadowMomentParams0.x,
+				ShadowMomentParams0.y,
+				ShadowMomentParams0.z,
+				ShadowMomentParams0.w,
+				ShadowMomentDepthParams.z) * contact;
+
+			if (ShadowDebugMode != 0)
+			{
+				_dbgShadowMargin = XRENGINE_EstimateShadowMomentMargin(
+					ShadowMap,
+					fragCoord.xy,
+					momentReceiverDepth,
+					ShadowMapEncoding,
+					ShadowMomentParams0.z,
+					ShadowMomentParams0.w);
+			}
+		}
+		else
+		{
+			lit = SampleShadowMapFilteredLocal(
+				ShadowMap,
+				fragCoord,
+				bias,
+				ShadowBlockerSamples,
+				ShadowFilterSamples,
+				ShadowFilterRadius,
+				ShadowBlockerSearchRadius,
+				SoftShadowMode,
+				LightSourceRadius,
+				ShadowMinPenumbra,
+				ShadowMaxPenumbra,
+				ShadowVogelTapCount) * contact;
+
+			if (ShadowDebugMode != 0)
+			{
+				float centerDepth = texture(ShadowMap, fragCoord.xy).r;
+				_dbgShadowMargin = (centerDepth - (fragCoord.z - bias)) / max(1.0f, 0.001f);
+			}
+		}
+	}
+
 	_dbgShadowLit = lit;
 
 	return lit;

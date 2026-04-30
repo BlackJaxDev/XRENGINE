@@ -2,6 +2,7 @@ using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XRWorld = XREngine.Scene.XRWorld;
 
 namespace XREngine
 {
@@ -158,14 +159,14 @@ namespace XREngine
                     XRWindow window = Windows[windowIndex];
                     Debug.Out(
                         $"[PlayTransition] {transition}.{phase}: Window[{windowIndex}] Hash={window.GetHashCode()} " +
-                        $"TargetWorld={window.TargetWorldInstance?.TargetWorld?.Name ?? "<null>"} Viewports={window.Viewports.Count}");
+                        $"TargetWorld={window.TargetWorldInstance?.TargetWorldName ?? "<null>"} Viewports={window.Viewports.Count}");
 
                     for (int viewportIndex = 0; viewportIndex < window.Viewports.Count; viewportIndex++)
                     {
                         XRViewport viewport = window.Viewports[viewportIndex];
                         Debug.Out(
                             $"[PlayTransition] {transition}.{phase}: Window[{windowIndex}] VP[{viewport.Index}] AssocPlayer={viewport.AssociatedPlayer?.LocalPlayerIndex?.ToString() ?? "<none>"} " +
-                            $"World={viewport.World?.TargetWorld?.Name ?? "<null>"} CameraComponent={viewport.CameraComponent?.Name ?? "<null>"} " +
+                            $"World={viewport.World?.TargetWorldName ?? "<null>"} CameraComponent={viewport.CameraComponent?.Name ?? "<null>"} " +
                             $"ActiveCamera={viewport.ActiveCamera?.GetHashCode().ToString() ?? "NULL"} Pipeline={viewport.RenderPipelineInstance.Pipeline?.DebugName ?? "<null>"} " +
                             $"Generation={viewport.RenderPipelineInstance.ResourceGeneration}");
                     }
@@ -542,8 +543,8 @@ namespace XREngine
 
                 // Priority 2: First window's target world
                 var firstWindow = Windows.FirstOrDefault();
-                if (firstWindow?.TargetWorldInstance?.TargetWorld is not null)
-                    return firstWindow.TargetWorldInstance.TargetWorld;
+                if (firstWindow?.TargetWorldInstance?.TargetWorldObject is XRWorld firstWindowWorld)
+                    return firstWindowWorld;
 
                 // Priority 3: First available world instance
                 var firstInstance = XRWorldInstance.WorldInstances.Values.FirstOrDefault();

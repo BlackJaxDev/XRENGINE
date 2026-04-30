@@ -27,6 +27,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Ambient occlusion | Stable doc + testing | [../features/gi/ambient-occlusion.md](../features/gi/ambient-occlusion.md) | HBAO+ and non-HBAO implementation trackers are complete; remaining validation lives in [testing/ambient-occlusion.md](testing/ambient-occlusion.md). |
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
 | GPU rendering roadmap | Active | [todo/gpu-rendering.md](todo/gpu-rendering.md) | Broad GPU-driven rendering work remains active. |
+| Shadow filtering and atlas allocation | Active | [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md), [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md), [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md), [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md) | VSM/EVSM filtering, dynamic atlas LOD allocation, and post-v1 advanced shadow follow-ups for directional, spot, and point lights. |
 | OpenVR VRClient GPU handoff | Active | [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md) | Zero-readback cross-process eye-texture handoff from the engine app to the legacy OpenVR companion process. |
 | GPU-driven animation | Active | [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md) | Phased execution tracker for the [GPU-driven animation architecture](design/gpu-driven-animation.md). |
 | GPU skinning buffer compression | Active | [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md) | XRMesh and XRMeshRenderer influence/palette compression plan for direct and compute skinning. |
@@ -39,6 +40,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Multiplayer networking / dedicated server orchestration | Stable doc | [../features/networking.md](../features/networking.md) | The completed realtime cleanup tracker was folded into the stable feature guide. Peer-to-peer host switching is tracked in [design/peer-to-peer-host-switching.md](design/peer-to-peer-host-switching.md). |
 | Vulkan backlog | Active | [todo/vulkan.md](todo/vulkan.md) | Canonical Vulkan backlog, status, audit, and preserved diagnostics. |
 | Startup FPS drops (2026-03-28) | Active | [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md) | Remaining startup stalls after the earlier GL warmup fixes; includes engine and editor attack order. |
+| Source-backed C# script components | Active | [design/source-backed-csharp-script-components.md](design/source-backed-csharp-script-components.md) | Stable proxy/materialization design for `.cs` assets that can be attached before they compile. |
 | Default pipeline regressions (2026-03-28) | Active | [audit/default-render-pipeline-regression-diagnosis-2026-03-28.md](audit/default-render-pipeline-regression-diagnosis-2026-03-28.md) | AO, AA, deferred grayscale, and sampler-binding diagnosis. |
 | Affine matrix rollout | Closed | [audit/affine-matrix-phase4-closeout-2026-03-19.md](audit/affine-matrix-phase4-closeout-2026-03-19.md) | Final consolidated closeout record. |
 | Steam Audio | Stable doc | [../features/steam-audio.md](../features/steam-audio.md) | Remaining validation now lives in the stable feature doc. |
@@ -72,6 +74,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)
 - [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md)
 - [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)
+- [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md)
 - [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md)
 - [design/gpu-driven-animation.md](design/gpu-driven-animation.md)
 - [design/gpu-render-pass-pipeline.md](design/gpu-render-pass-pipeline.md)
@@ -81,9 +84,13 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/peer-to-peer-host-switching.md](design/peer-to-peer-host-switching.md)
 - [design/native-hierarchy-porting-plan.md](design/native-hierarchy-porting-plan.md)
 - [design/openxr-implementation-comparison.md](design/openxr-implementation-comparison.md)
+- [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md)
 - [design/runtime-modularization-plan.md](design/runtime-modularization-plan.md)
 - [design/shadow-pass-material-binding-optimization-plan.md](design/shadow-pass-material-binding-optimization-plan.md)
+- [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md)
+- [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md)
 - [design/slang-shader-cross-compile-plan.md](design/slang-shader-cross-compile-plan.md)
+- [design/source-backed-csharp-script-components.md](design/source-backed-csharp-script-components.md)
 - [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md)
 - [design/transparency-and-oit-implementation-plan.md](design/transparency-and-oit-implementation-plan.md)
 - [design/vxao-implementation-plan.md](design/vxao-implementation-plan.md)

@@ -1,0 +1,869 @@
+using XREngine.Extensions;
+using Silk.NET.OpenGL;
+using XREngine;
+using XREngine.Data;
+using XREngine.Data.Rendering;
+using System.Linq;
+using System.Collections.Concurrent;
+using System.Threading.Tasks;
+
+namespace XREngine.Rendering.OpenGL
+{
+    public unsafe partial class OpenGLRenderer
+    {
+        public class GLDataBuffer(OpenGLRenderer renderer, XRDataBuffer buffer) : GLObject<XRDataBuffer>(renderer, buffer), IApiDataBuffer
+        {
+            private static readonly ConcurrentDictionary<string, byte> _missingInterleavedLogs = new();
+
+            /// <summary>
+            /// Tracks the currently allocated GPU memory size for this buffer in bytes.
+            /// </summary>
+            private long _allocatedVRAMBytes = 0;
+            internal long AllocatedVRAMBytes => _allocatedVRAMBytes;
+
+            /// <summary>
+            /// Cache of program binding ID -> SSBO resource index to avoid expensive glGetProgramResourceIndex calls every frame.
+            /// </summary>
+            private readonly Dictionary<uint, uint> _ssboResourceIndexCache = [];
+
+            protected override void UnlinkData()
+            {
+                Data.PushDataRequested -= PushData;
+                Data.PushSubDataRequested -= PushSubData;
+                Data.FlushRequested -= Flush;
+                Data.FlushRangeRequested -= FlushRange;
+                Data.SetBlockNameRequested -= SetUniformBlockName;
+                Data.SetBlockIndexRequested -= SetBlockIndex;
+                Data.BindRequested -= Bind;
+                Data.UnbindRequested -= Unbind;
+                Data.MapBufferDataRequested -= MapBufferData;
+                Data.UnmapBufferDataRequested -= UnmapBufferData;
+                Data.BindSSBORequested -= BindSSBO;
+            }
+            private static bool IsGpuBufferLoggingEnabled()
+                => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+
+            protected override void LinkData()
+            {
+                Data.PushDataRequested += PushData;
+                Data.PushSubDataRequested += PushSubData;
+                Data.FlushRequested += Flush;
+                Data.FlushRangeRequested += FlushRange;
+                Data.SetBlockNameRequested += SetUniformBlockName;
+                Data.SetBlockIndexRequested += SetBlockIndex;
+                Data.BindRequested += Bind;
+                Data.UnbindRequested += Unbind;
+                Data.MapBufferDataRequested += MapBufferData;
+                Data.UnmapBufferDataRequested += UnmapBufferData;
+                Data.BindSSBORequested += BindSSBO;
+            }
+
+            public override EGLObjectType Type => EGLObjectType.Buffer;
+
+            protected internal override void PostGenerated()
+            {
+                var rend = Renderer.ActiveMeshRenderer;
+                // Attribute binding must be driven by GLMeshRenderer.BindBuffers(), which knows the
+                // owning VAO/program pair. Async mesh generation can happen while an unrelated renderer
+                // is active, and eagerly binding here pollutes that VAO and emits bogus missing-attribute logs.
+                if (rend is null && Data.Target == EBufferTarget.ArrayBuffer && IsGpuBufferLoggingEnabled())
+                {
+                    // Suppress noisy warning; atlas / generic buffers can legitimately be created before a renderer binds them.
+                    Debug.OpenGL($"{GetDescribingName()} generated (no active mesh renderer yet) – delaying attribute binding.");
+                }
+
+                if (Data.Resizable && !ShouldUseImmutableStorage())
+                {
+                    // Use dynamic mutable allocation path.
+                    PushData();
+                }
+                else if (_hasPendingUpload)
+                {
+                    // GLUploadQueue generated the object and will allocate/upload it in budgeted chunks.
+                }
+                else if (Data.Length > AsyncUploadThreshold
+                    && Renderer.UploadQueue.Enabled
+                    && Data.TryGetAddress(out var sourceAddress)
+                    && sourceAddress != VoidPtr.Zero)
+                {
+                    PushDataQueued();
+                }
+                else
+                {
+                    AllocateImmutable();
+                    _lastPushedLength = Data.Length;
+                }
+            }
+
+            private string RangeFlagsString() => Data.RangeFlags.ToString();
+            private string StorageFlagsString() => Data.StorageFlags.ToString();
+            private string BufferNameOrTarget() => string.IsNullOrWhiteSpace(Data.AttributeName) ? Data.Target.ToString() : Data.AttributeName;
+
+            public void BindToRenderer(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink, bool pushDataNow = true)
+            {
+                // Profiler instrumentation removed from this hot path - called per buffer per mesh
+                try
+                {
+                    BindV2(vertexProgram, arrayBufferLink);
+                }
+                catch (Exception e)
+                {
+                    Debug.OpenGLException(e, "Error binding buffer.");
+                }
+            }
+
+            public bool TryGetAttributeLocation(GLRenderProgram vertexProgram, out uint layoutLocation)
+            {
+                layoutLocation = GetAttributeLocation(vertexProgram, Data.AttributeName ?? string.Empty);
+                return layoutLocation != uint.MaxValue;
+            }
+
+            private void BindV2(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink)
+            {
+                // Profiler instrumentation removed from this hot path
+                if (vertexProgram is null)
+                {
+                    Debug.OpenGLWarning("[GLDataBuffer] Cannot bind buffer without an active GLRenderProgram.");
+                    return;
+                }
+
+                switch (Data.Target)
+                {
+                    case EBufferTarget.ArrayBuffer:
+                        {
+                            // Profiler instrumentation removed from this hot path
+                            uint vaoId = arrayBufferLink?.BindingId ?? 0;
+                            if (vaoId == 0)
+                            {
+                                Debug.OpenGLWarning($"Failed to bind buffer {GetDescribingName()} to mesh renderer.");
+                                return;
+                            }
+
+                            uint bindingIndex = uint.MaxValue;
+                            if (Data.BindingIndexOverride.HasValue)
+                                bindingIndex = Data.BindingIndexOverride.Value;
+                            else if (!TryGetAttributeLocation(vertexProgram, out bindingIndex))
+                            {
+                                string programName = vertexProgram.Data?.Name ?? "<unnamed>";
+                                Debug.OpenGL($"[GLDataBuffer] Attribute '{Data.AttributeName}' missing in program '{programName}' while binding buffer '{GetDescribingName()}'.");
+                                return;
+                            }
+
+                            if (Data.InterleavedAttributes.Length > 0)
+                            {
+                                // Handle interleaved vertex attributes
+                                foreach (var (attribIndexOverride, name, offset, componentType, componentCount, integral) in Data.InterleavedAttributes)
+                                {
+                                    uint attribIndex = attribIndexOverride ?? GetAttributeLocation(vertexProgram, name);
+                                    if (attribIndex != uint.MaxValue)
+                                    {
+                                        Api.EnableVertexArrayAttrib(vaoId, attribIndex);
+                                        Api.VertexArrayBindingDivisor(vaoId, attribIndex, Data.InstanceDivisor);
+                                        Api.VertexArrayAttribBinding(vaoId, attribIndex, bindingIndex); // Use same binding point
+                                        if (integral)
+                                            Api.VertexArrayAttribIFormat(vaoId, attribIndex, (int)componentCount, GLEnum.Byte + (int)componentType, offset);
+                                        else
+                                            Api.VertexArrayAttribFormat(vaoId, attribIndex, (int)componentCount, GLEnum.Byte + (int)componentType, Data.Normalize, offset);
+                                    }
+                                    else
+                                    {
+                                        string programName = vertexProgram.Data?.Name ?? "<unnamed>";
+                                        string shaderNames = vertexProgram.Data?.Shaders is { Count: > 0 }
+                                            ? string.Join(", ", vertexProgram.Data.Shaders.Select(s => s?.Name ?? s?.FilePath ?? "<unnamed>"))
+                                            : "<no shaders>";
+                                        string key = $"{vertexProgram.BindingId}:{programName}:{name}:{GetDescribingName()}";
+                                        if (_missingInterleavedLogs.TryAdd(key, 0))
+                                            Debug.OpenGL($"[GLDataBuffer] Interleaved attribute '{name}' missing in program '{programName}' (id {vertexProgram.BindingId}) for buffer '{GetDescribingName()}'. Shaders: [{shaderNames}]");
+                                    }
+                                }
+                                // Bind the interleaved buffer once
+                                Api.VertexArrayVertexBuffer(vaoId, bindingIndex, BindingId, 0, Data.ElementSize);
+                            }
+                            else
+                            {
+                                int componentType = (int)Data.ComponentType;
+                                uint componentCount = Data.ComponentCount;
+                                bool integral = Data.Integral;
+
+                                // Original non-interleaved path
+                                Api.EnableVertexArrayAttrib(vaoId, bindingIndex);
+                                Api.VertexArrayBindingDivisor(vaoId, bindingIndex, Data.InstanceDivisor);
+                                Api.VertexArrayAttribBinding(vaoId, bindingIndex, bindingIndex);
+                                if (integral)
+                                    Api.VertexArrayAttribIFormat(vaoId, bindingIndex, (int)componentCount, GLEnum.Byte + componentType, 0);
+                                else
+                                    Api.VertexArrayAttribFormat(vaoId, bindingIndex, (int)componentCount, GLEnum.Byte + componentType, Data.Normalize, 0);
+                                Api.VertexArrayVertexBuffer(vaoId, bindingIndex, BindingId, 0, Data.ElementSize);
+                            }
+                        }
+                        break;
+                    case EBufferTarget.ShaderStorageBuffer:
+                    case EBufferTarget.UniformBuffer:
+                        {
+                            // Profiler instrumentation removed from this hot path
+                            uint bindingIndex = uint.MaxValue;
+                            if (Data.BindingIndexOverride.HasValue)
+                                bindingIndex = Data.BindingIndexOverride.Value;
+                            else if (!TryGetAttributeLocation(vertexProgram, out bindingIndex))
+                            {
+                                return;
+                            }
+
+                            Bind();
+                            Api.BindBufferBase(ToGLEnum(Data.Target), bindingIndex, BindingId);
+                            Unbind();
+                            break;
+                        }
+                }
+            }
+
+            private uint GetAttributeLocation(GLRenderProgram vertexProgram, string attributeName)
+            {
+                uint index = 0u;
+
+                if (string.IsNullOrWhiteSpace(attributeName))
+                {
+                    Debug.OpenGLWarning($"{GetDescribingName()} has no attribute name.");
+                    return uint.MaxValue;
+                }
+
+                switch (Data.Target)
+                {
+                    case EBufferTarget.ArrayBuffer:
+                        int location = vertexProgram.GetAttributeLocation(attributeName);
+                        if (location >= 0)
+                            index = (uint)location;
+                        else
+                            return uint.MaxValue;
+                        break;
+                    case EBufferTarget.ShaderStorageBuffer:
+                        index = Data.BindingIndexOverride ?? Api.GetProgramResourceIndex(vertexProgram.BindingId, GLEnum.ShaderStorageBlock, attributeName);
+                        break;
+                    case EBufferTarget.UniformBuffer:
+                        index = Data.BindingIndexOverride ?? Api.GetProgramResourceIndex(vertexProgram.BindingId, GLEnum.UniformBlock, attributeName);
+                        break;
+                    default:
+                        return uint.MaxValue;
+                }
+
+                return index;
+            }
+
+            private uint _lastPushedLength = 0u;
+
+            private bool ShouldUseImmutableStorage()
+                => Data.StorageFlags != 0 ||
+                   Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Persistent) ||
+                   Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Coherent);
+
+            private bool AllowsUpdatesWhileMapped()
+                => Data.StorageFlags.HasFlag(EBufferMapStorageFlags.Persistent) ||
+                   Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Persistent);
+
+            private bool HasBlockingActiveMapping()
+                => Data.ActivelyMapping.Contains(this) && !AllowsUpdatesWhileMapped();
+
+            /// <summary>
+            /// Threshold above which frame-budgeted uploads are used (64 KB).
+            /// Smaller buffers use synchronous upload as the overhead isn't worth it.
+            /// </summary>
+            private const uint AsyncUploadThreshold = 64 * 1024;
+
+            /// <summary>
+            /// Allocates and pushes the buffer to the GPU.
+            /// Uses frame-budgeted uploads for large buffers to prevent FPS stalls.
+            /// </summary>
+            public void PushData()
+            {
+                if (HasBlockingActiveMapping())
+                    return;
+
+                uint dataLength = Data.Length;
+
+                // Use frame-budgeted path for large buffers (even when on render thread)
+                // This spreads upload work across multiple frames to prevent stalls
+                if (dataLength > AsyncUploadThreshold && Renderer.UploadQueue.Enabled)
+                {
+                    PushDataQueued();
+                    return;
+                }
+
+                // Synchronous path for small buffers or when upload queue is disabled
+                if (Engine.InvokeOnMainThread(PushData, "GLDataBuffer.PushData"))
+                    return;
+
+                PushDataImmediate();
+            }
+
+            /// <summary>
+            /// Queues the buffer data for frame-budgeted upload.
+            /// Can be called from any thread.
+            /// </summary>
+            private void PushDataQueued()
+            {
+                uint dataLength = Data.Length;
+                if (dataLength == 0)
+                    return;
+
+                // Get source data address
+                if (!Data.TryGetAddress(out var sourceAddress) || sourceAddress == VoidPtr.Zero)
+                {
+                    // Fallback to sync path if no data
+                    if (Engine.IsRenderThread)
+                        PushDataImmediate();
+                    else
+                        Engine.EnqueueMainThreadTask(PushDataImmediate, "GLDataBuffer.PushData.Fallback");
+                    return;
+                }
+
+                void* srcPtr = sourceAddress.Pointer;
+                bool disposeOnPush = Data.DisposeOnPush;
+                var dataRef = Data;
+
+                void EnqueueCopy()
+                {
+                    // Copy data to managed array - no GL calls needed
+                    byte[] dataCopy = new byte[dataLength];
+                    fixed (byte* dest = dataCopy)
+                    {
+                        System.Buffer.MemoryCopy(srcPtr, dest, dataLength, dataLength);
+                    }
+
+                    // Enqueue for frame-budgeted upload
+                    Renderer.UploadQueue.EnqueueUpload(this, dataCopy, dataLength);
+
+                    // Handle disposal separately if needed
+                    if (disposeOnPush)
+                    {
+                        Engine.EnqueueMainThreadTask(() =>
+                        {
+                            // Only dispose after upload completes
+                            if (_lastPushedLength >= dataLength)
+                                dataRef.Dispose();
+                        }, "GLDataBuffer.PushDataQueued.Dispose");
+                    }
+                }
+
+                if (Engine.IsRenderThread)
+                {
+                    Task.Run(EnqueueCopy);
+                }
+                else
+                {
+                    EnqueueCopy();
+                }
+            }
+
+            /// <summary>
+            /// Performs the actual synchronous GPU upload. Must be called on the render thread.
+            /// </summary>
+            private void PushDataImmediate()
+            {
+                bool shouldUseImmutableStorage = ShouldUseImmutableStorage();
+                bool remapAfterUpload = Data.ActivelyMapping.Contains(this);
+
+                if (!Engine.Rendering.Stats.CanAllocateVram(Data.Length, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+                {
+                    Debug.OpenGLWarning($"[VRAM Budget] Skipping buffer allocation for '{GetDescribingName()}' ({Data.Length} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
+                    return;
+                }
+
+                void* addr = (Data.TryGetAddress(out var address) ? address : VoidPtr.Zero).Pointer;
+
+                if (shouldUseImmutableStorage)
+                {
+                    if (_immutableStorageSet && Data.Length == _lastPushedLength)
+                    {
+                        if (!Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage))
+                        {
+                            if (remapAfterUpload)
+                                UnmapBufferData();
+
+                            RecreateBuffer();
+                            AllocateImmutable();
+
+                            if (remapAfterUpload)
+                                MapBufferData();
+                        }
+                        else
+                        {
+                            Api.NamedBufferSubData(BindingId, 0, Data.Length, addr);
+                        }
+
+                        _lastPushedLength = Data.Length;
+
+                        if (Data.DisposeOnPush)
+                            Data.Dispose();
+
+                        return;
+                    }
+
+                    if (remapAfterUpload)
+                        UnmapBufferData();
+
+                    if (_immutableStorageSet || _lastPushedLength > 0)
+                        RecreateBuffer();
+
+                    AllocateImmutable();
+                    _lastPushedLength = Data.Length;
+
+                    if (remapAfterUpload)
+                        MapBufferData();
+
+                    if (Data.DisposeOnPush)
+                        Data.Dispose();
+
+                    return;
+                }
+
+                // Track VRAM deallocation of previous buffer if any
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
+                // If the GL buffer was allocated with glNamedBufferStorage (immutable),
+                // glNamedBufferData is illegal. Delete and recreate as a mutable buffer.
+                if (_immutableStorageSet)
+                    RecreateBufferAsMutable();
+
+                Api.NamedBufferData(BindingId, Data.Length, addr, ToGLEnum(Data.Usage));
+                _lastPushedLength = Data.Length;
+
+                // Track VRAM allocation
+                _allocatedVRAMBytes = Data.Length;
+                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+
+                if (Data.DisposeOnPush)
+                    Data.Dispose();
+            }
+
+            /// <summary>
+            /// Sets the last pushed length. Used by the upload queue.
+            /// </summary>
+            internal void SetLastPushedLength(uint length)
+            {
+                _lastPushedLength = length;
+            }
+
+            /// <summary>
+            /// Tracks the allocation in stats. Used by the upload queue.
+            /// </summary>
+            internal void TrackAllocation(long bytes)
+            {
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                }
+                _allocatedVRAMBytes = bytes;
+                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+            }
+
+            /// <summary>
+            /// Tracks whether this buffer has a pending upload in the queue.
+            /// Set by GLUploadQueue when enqueued/completed.
+            /// </summary>
+            internal volatile bool _hasPendingUpload;
+
+            /// <summary>
+            /// Returns true if this buffer has data uploaded and is ready for rendering.
+            /// Returns false if there's a pending upload in the queue.
+            /// </summary>
+            public bool IsReadyForRendering
+                => _lastPushedLength > 0 && !_hasPendingUpload;
+
+            internal void EnsureStorageAllocatedForGpuCopy()
+            {
+                if (HasBlockingActiveMapping())
+                    return;
+
+                if (Engine.InvokeOnMainThread(EnsureStorageAllocatedForGpuCopy, "GLDataBuffer.EnsureStorageAllocatedForGpuCopy"))
+                    return;
+
+                if (!IsGenerated)
+                    Generate();
+
+                if (_hasPendingUpload)
+                    Renderer.UploadQueue.FlushAll();
+
+                if (_lastPushedLength < Data.Length)
+                    PushDataImmediate();
+            }
+
+            public static GLEnum ToGLEnum(EBufferUsage usage) => usage switch
+            {
+                EBufferUsage.StaticDraw => GLEnum.StaticDraw,
+                EBufferUsage.DynamicDraw => GLEnum.DynamicDraw,
+                EBufferUsage.StreamDraw => GLEnum.StreamDraw,
+                EBufferUsage.StaticRead => GLEnum.StaticRead,
+                EBufferUsage.DynamicRead => GLEnum.DynamicRead,
+                EBufferUsage.StreamRead => GLEnum.StreamRead,
+                EBufferUsage.StaticCopy => GLEnum.StaticCopy,
+                EBufferUsage.DynamicCopy => GLEnum.DynamicCopy,
+                EBufferUsage.StreamCopy => GLEnum.StreamCopy,
+                _ => throw new ArgumentOutOfRangeException(nameof(usage), usage, null),
+            };
+
+            /// <summary>
+            /// Pushes the entire buffer to the GPU. Assumes the buffer has already been allocated using PushData.
+            /// </summary>
+            public void PushSubData()
+                => PushSubData(0, Data.Length);
+
+            /// <summary>
+            /// Pushes the a portion of the buffer to the GPU. Assumes the buffer has already been allocated using PushData.
+            /// </summary>
+            public void PushSubData(int offset, uint length)
+            {
+                if (HasBlockingActiveMapping())
+                    return;
+
+                if (Engine.InvokeOnMainThread(() => PushSubData(offset, length), "GLDataBuffer.PushSubData"))
+                    return;
+                
+                if (!IsGenerated)
+                    Generate();
+                else
+                {
+                    uint lastPushed = _lastPushedLength;
+                    uint dataLength = Data.Length;
+
+                    // If the client-side buffer has grown beyond what we've allocated on the GPU,
+                    // we need to reallocate the GPU buffer first.
+                    if (dataLength > lastPushed)
+                    {
+                        // Reallocate GPU buffer to match client-side size, then do the sub-data update.
+                        PushData();
+                        lastPushed = _lastPushedLength;
+                        
+                        // After PushData, all data is already on the GPU, so we can return.
+                        // But only if the requested range is within the new buffer.
+                        if (offset + length <= lastPushed)
+                            return;
+                    }
+
+                    // If resizable buffer was grown and we never (re)allocated on the GPU, fall back to full PushData.
+                    // Also do this if caller is pushing the whole buffer starting at 0.
+                    if (offset == 0 && (lastPushed == 0 || length > lastPushed))
+                    {
+                        PushData();
+                        return;
+                    }
+
+                    if (offset + length > lastPushed)
+                    {
+                        int clamped = (int)lastPushed - offset;
+                        if (clamped <= 0)
+                        {
+                            Debug.OpenGLWarning($"PushSubData called with offset {offset} and length {length}, with an offset that exceeds the last fully-pushed length of {lastPushed}. Ignoring call.");
+                            return;
+                        }
+
+                        length = (uint)clamped;
+                    }
+
+                    void* addr = (Data.Address + (uint)offset).Pointer;
+                    if (_immutableStorageSet && !Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage))
+                    {
+                        PushData();
+                        return;
+                    }
+
+                    Api.NamedBufferSubData(BindingId, offset, length, addr);
+                }
+            }
+
+            public void Flush()
+            {
+                if (HasBlockingActiveMapping())
+                    return;
+                if (Engine.InvokeOnMainThread(Flush, "GLDataBuffer.Flush"))
+                    return;
+                Api.FlushMappedNamedBufferRange(BindingId, 0, Data.Length);
+            }
+
+            public void FlushRange(int offset, uint length)
+            {
+                if (HasBlockingActiveMapping())
+                    return;
+                if (Engine.InvokeOnMainThread(() => FlushRange(offset, length), "GLDataBuffer.FlushRange"))
+                    return;
+                Api.FlushMappedNamedBufferRange(BindingId, offset, length);
+            }
+
+            private DataSource? _gpuSideSource = null;
+            /// <summary>
+            /// The data buffer stored on the GPU side.
+            /// </summary>
+            public DataSource? GPUSideSource
+            {
+                get => _gpuSideSource;
+                set => SetField(ref _gpuSideSource, value);
+            }
+
+            private bool _immutableStorageSet = false;
+            public bool ImmutableStorageSet
+            {
+                get => _immutableStorageSet;
+                set => SetField(ref _immutableStorageSet, value);
+            }
+
+            public void MapBufferData()
+            {
+                // If any API wrapper has already mapped this XRDataBuffer, skip remapping
+                if (Data.ActivelyMapping.Count > 0)
+                {
+                    return;
+                }
+
+                if (Engine.InvokeOnMainThread(MapBufferData, "GLDataBuffer.MapBufferData"))
+                    return;
+
+                // Insert a client-mapped buffer barrier before mapping to ensure visibility of GPU writes to persistently mapped buffers
+                Renderer.Api.MemoryBarrier((uint)MemoryBarrierMask.ClientMappedBufferBarrierBit);
+                MapToClientSide();
+            }
+
+            public void MapToClientSide()
+            {
+                uint id = BindingId;
+                uint length = GetLength();
+                GPUSideSource?.Dispose();
+
+                var glRange = (uint)ToGLEnum(Data.RangeFlags);
+                var glStorage = (uint)ToGLEnum(Data.StorageFlags);
+                if (IsGpuBufferLoggingEnabled())
+                    Debug.OpenGL($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={length} target={Data.Target} storage={StorageFlagsString()} (0x{glStorage:X}) range={RangeFlagsString()} (0x{glRange:X})");
+
+                var addr = Api.MapNamedBufferRange(id, IntPtr.Zero, length, glRange);
+                if (addr is null)
+                {
+                    Debug.OpenGLWarning($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} returned null pointer.");
+                    return;
+                }
+                GPUSideSource = new DataSource(addr, length);
+                Data.ActivelyMapping.Add(this);
+            }
+
+            // ----- Added helpers for mapping/immutable storage -----
+            private uint GetLength()
+            {
+                var existingSource = Data.ClientSideSource;
+                return existingSource is not null ? existingSource.Length : Data.Length;
+            }
+
+            private void AllocateImmutable()
+            {
+                // Track VRAM deallocation of previous buffer if any
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
+                uint id = BindingId;
+                uint length;
+                var existingSource = Data.ClientSideSource;
+                var glStorage = (uint)ToGLEnum(Data.StorageFlags);
+                if (IsGpuBufferLoggingEnabled())
+                    Debug.OpenGL($"[GLBuffer/Storage] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
+                if (existingSource is not null)
+                    Api.NamedBufferStorage(id, length = existingSource.Length, existingSource.Address.Pointer, glStorage);
+                else
+                    Api.NamedBufferStorage(id, length = Data.Length, null, glStorage);
+
+                _immutableStorageSet = true;
+
+                // Track VRAM allocation
+                _allocatedVRAMBytes = length;
+                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+            }
+            // ------------------------------------------------------
+
+            public void UnmapBufferData()
+            {
+                if (!Data.ActivelyMapping.Contains(this))
+                    return;
+
+                if (Engine.InvokeOnMainThread(UnmapBufferData, "GLDataBuffer.UnmapBufferData"))
+                    return;
+
+                if (IsGpuBufferLoggingEnabled())
+                    Debug.OpenGL($"[GLBuffer/Unmap] {GetDescribingName()} name={BufferNameOrTarget()} id={BindingId}");
+                Api.UnmapNamedBuffer(BindingId);
+                Data.ActivelyMapping.Remove(this);
+
+                GPUSideSource?.Dispose();
+                GPUSideSource = null;
+            }
+
+            public static GLEnum ToGLEnum(EBufferMapStorageFlags storageFlags)
+            {
+                GLEnum flags = 0;
+                if (storageFlags.HasFlag(EBufferMapStorageFlags.Read))
+                    flags |= GLEnum.MapReadBit;
+                if (storageFlags.HasFlag(EBufferMapStorageFlags.Write))
+                    flags |= GLEnum.MapWriteBit;
+                if (storageFlags.HasFlag(EBufferMapStorageFlags.Persistent))
+                    flags |= GLEnum.MapPersistentBit;
+                if (storageFlags.HasFlag(EBufferMapStorageFlags.Coherent))
+                    flags |= GLEnum.MapCoherentBit;
+                if (storageFlags.HasFlag(EBufferMapStorageFlags.ClientStorage))
+                    flags |= GLEnum.ClientStorageBit;
+                if (storageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage))
+                    flags |= GLEnum.DynamicStorageBit;
+                return flags;
+            }
+
+            public static GLEnum ToGLEnum(EBufferMapRangeFlags rangeFlags)
+            {
+                GLEnum flags = 0;
+                if (rangeFlags.HasFlag(EBufferMapRangeFlags.Read))
+                    flags |= GLEnum.MapReadBit;
+                if (rangeFlags.HasFlag(EBufferMapRangeFlags.Write))
+                    flags |= GLEnum.MapWriteBit;
+                if (rangeFlags.HasFlag(EBufferMapRangeFlags.Persistent))
+                    flags |= GLEnum.MapPersistentBit;
+                if (rangeFlags.HasFlag(EBufferMapRangeFlags.Coherent))
+                    flags |= GLEnum.MapCoherentBit;
+                if (rangeFlags.HasFlag(EBufferMapRangeFlags.InvalidateRange))
+                    flags |= GLEnum.MapInvalidateRangeBit;
+                if (rangeFlags.HasFlag(EBufferMapRangeFlags.InvalidateBuffer))
+                    flags |= GLEnum.MapInvalidateBufferBit;
+                if (rangeFlags.HasFlag(EBufferMapRangeFlags.FlushExplicit))
+                    flags |= GLEnum.MapFlushExplicitBit;
+                if (rangeFlags.HasFlag(EBufferMapRangeFlags.Unsynchronized))
+                    flags |= GLEnum.MapUnsynchronizedBit;
+                return flags;
+            }
+
+            public void SetUniformBlockName(XRRenderProgram program, string blockName)
+            {
+                var apiProgram = Renderer.GenericToAPI<GLRenderProgram>(program);
+                if (apiProgram is null)
+                    return;
+
+                var bindingID = apiProgram.BindingId;
+                if (bindingID == InvalidBindingId)
+                    return;
+
+                if (Engine.InvokeOnMainThread(() => SetUniformBlockName(program, blockName), "GLDataBuffer.SetUniformBlockName"))
+                    return;
+
+                Bind();
+                SetBlockIndex(Api.GetUniformBlockIndex(bindingID, blockName));
+                Unbind();
+            }
+
+            public void SetBlockIndex(uint blockIndex)
+            {
+                if (blockIndex == uint.MaxValue)
+                    return;
+
+                if (Engine.InvokeOnMainThread(() => SetBlockIndex(blockIndex), "GLDataBuffer.SetBlockIndex"))
+                    return;
+
+                Bind();
+                // When using vertex buffers as SSBOs (compute skinning), bind with SSBO target even if the buffer was created as an array buffer.
+                GLEnum bindTarget = ToGLEnum(Data.Target);
+                if (bindTarget == GLEnum.ArrayBuffer)
+                    bindTarget = GLEnum.ShaderStorageBuffer;
+
+                Api.BindBufferBase(bindTarget, blockIndex, BindingId);
+                Unbind();
+            }
+
+            /// <summary>
+            /// Deletes the current GL buffer and creates a fresh mutable one,
+            /// allowing subsequent glNamedBufferData calls to succeed.
+            /// </summary>
+            internal void RecreateBuffer()
+            {
+                uint oldId = _bindingId!.Value;
+                Api.DeleteBuffer(oldId);
+                Api.CreateBuffers(1, out uint newId);
+                _bindingId = newId;
+                _immutableStorageSet = false;
+            }
+
+            internal void RecreateBufferAsMutable()
+                => RecreateBuffer();
+
+            protected internal override void PreDeleted()
+            {
+                UnmapBufferData();
+                _immutableStorageSet = false;
+                _lastPushedLength = 0;
+                _hasPendingUpload = false;
+
+                // Track VRAM deallocation
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+            }
+
+            public void Bind()
+            {
+                if (Engine.InvokeOnMainThread(Bind, "GLDataBuffer.Bind"))
+                    return;
+
+                Api.BindBuffer(ToGLEnum(Data.Target), BindingId);
+            }
+            public void Unbind()
+            {
+                if (Engine.InvokeOnMainThread(Unbind, "GLDataBuffer.Unbind"))
+                    return;
+
+                Api.BindBuffer(ToGLEnum(Data.Target), 0);
+            }
+
+            public bool IsMapped => Data.ActivelyMapping.Contains(this);
+
+            public VoidPtr? GetMappedAddress()
+                => GPUSideSource?.Address;
+
+            public void BindSSBO(XRRenderProgram program, uint? bindindIndexOverride = null)
+            {
+                BindSSBO(Renderer.GenericToAPI<GLRenderProgram>(program), bindindIndexOverride);
+            }
+
+            public void BindSSBO(GLRenderProgram? program, uint? bindindIndexOverride = null)
+            {
+                if (program is null)
+                {
+                    Debug.OpenGLWarning($"Failed to bind SSBO {GetDescribingName()} to program {program?.GetDescribingName() ?? "null"}.");
+                    return;
+                }
+
+                uint resourceIndex;
+                if (bindindIndexOverride.HasValue)
+                {
+                    resourceIndex = bindindIndexOverride.Value;
+                }
+                else if (Data.BindingIndexOverride.HasValue)
+                {
+                    resourceIndex = Data.BindingIndexOverride.Value;
+                }
+                else
+                {
+                    // Cache the resource index lookup per program to avoid expensive GL query every frame
+                    uint programId = program.BindingId;
+                    if (!_ssboResourceIndexCache.TryGetValue(programId, out resourceIndex))
+                    {
+                        resourceIndex = Api.GetProgramResourceIndex(programId, GLEnum.ShaderStorageBlock, Data.AttributeName);
+                        _ssboResourceIndexCache[programId] = resourceIndex;
+                    }
+                }
+
+                if (resourceIndex == uint.MaxValue)
+                    return;
+
+                // BindBufferBase binds directly by ID - no need for Bind()/Unbind() calls
+                Api.BindBufferBase(ToGLEnum(EBufferTarget.ShaderStorageBuffer), resourceIndex, BindingId);
+            }
+        }
+    }
+}

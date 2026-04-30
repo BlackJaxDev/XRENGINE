@@ -210,13 +210,20 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
         if (Engine.VRState.IsInVR && Engine.VRState.OpenVRApi.CVR is { } cvr)
         {
             EVREye eye = leftEye ? EVREye.Eye_Left : EVREye.Eye_Right;
-            pose = cvr.GetEyeToHeadTransform(eye).ToNumerics().Transposed().Inverted();
+            pose = ToNumerics(cvr.GetEyeToHeadTransform(eye)).Transposed().Inverted();
             return true;
         }
 
         pose = Matrix4x4.Identity;
         return false;
     }
+
+    private static Matrix4x4 ToNumerics(HmdMatrix34_t matrix)
+        => new(
+            matrix.m0, matrix.m1, matrix.m2, matrix.m3,
+            matrix.m4, matrix.m5, matrix.m6, matrix.m7,
+            matrix.m8, matrix.m9, matrix.m10, matrix.m11,
+            0, 0, 0, 1);
 
     private static bool TryGetOpenXr([NotNullWhen(true)] out OpenXRAPI? openXrApi)
     {

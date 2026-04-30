@@ -25,6 +25,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />

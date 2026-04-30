@@ -76,7 +76,7 @@ namespace XREngine
             Debug.Out(
                 "[StartupWindow] Window world assigned hash={0} targetWorld={1} tickLinked={2}",
                 window.GetHashCode(),
-                window.TargetWorldInstance?.TargetWorld?.Name ?? "<null>",
+                window.TargetWorldInstance?.TargetWorldName ?? "<null>",
                 window.IsTickLinked);
 
             return window;

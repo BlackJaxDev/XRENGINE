@@ -219,7 +219,7 @@ public static class BootstrapPawnFactory
         persp.FarZ = 100000.0f;
         firstPersonCam.CullWithFrustum = true;
         if (pawn is null)
-            pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One);
+            pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One) as PawnComponent;
         else
             pawn.CameraComponent = firstPersonCam;
     }

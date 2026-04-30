@@ -95,13 +95,13 @@ namespace XREngine.Components
                 return;
 
             Listener = Engine.Audio.NewListener(Name);
-            WorldAs<XREngine.Rendering.XRWorldInstance>()?.Listeners?.Add(Listener);
+            (World as IRuntimeAudioListenerWorld)?.Listeners.Add(Listener);
         }
 
         private void DestroyListener()
         {
             if (Listener is not null)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Listeners?.Remove(Listener);
+                (World as IRuntimeAudioListenerWorld)?.Listeners.Remove(Listener);
 
             Listener?.Dispose();
             Listener = null;

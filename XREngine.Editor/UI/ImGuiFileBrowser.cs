@@ -282,7 +282,7 @@ public static class ImGuiFileBrowser
 
     private static void EnsureWorldInstanceIsRunning(XRWindow window)
     {
-        var instance = window.TargetWorldInstance;
+        var instance = window.TargetWorldInstance as XRWorldInstance;
         if (instance is null || instance.PlayState == XRWorldInstance.EPlayState.Playing)
             return;
 

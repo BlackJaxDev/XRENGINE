@@ -42,11 +42,20 @@ public static partial class EditorImGuiUI
 
         private static InspectorTargetSet CreateInspectorTargetSet(IEnumerable<object> targets)
         {
-            var targetList = targets.Where(t => t is not null).ToList();
+            var targetList = new List<object>();
+            foreach (object target in targets)
+            {
+                if (target is not null)
+                    targetList.Add(target);
+            }
+
             if (targetList.Count == 0)
                 throw new ArgumentException("Inspector target list must contain at least one object.", nameof(targets));
 
-            var commonType = FindCommonBaseType(targetList.Select(t => t.GetType())) ?? typeof(object);
+            Type commonType = targetList[0].GetType();
+            for (int i = 1; i < targetList.Count; i++)
+                commonType = FindCommonBaseType(commonType, targetList[i].GetType());
+
             return new InspectorTargetSet(targetList, commonType);
         }
 

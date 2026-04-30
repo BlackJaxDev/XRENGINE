@@ -101,6 +101,10 @@ uniform vec4 ShadowParams0 = vec4(0.035, 1.221, 0.00001, 0.004); // base, expone
 uniform vec4 ShadowParams1 = vec4(0.0012, 0.01, 0.001, 0.015); // filter radius, blocker radius, min penumbra, max penumbra
 uniform vec4 ShadowParams2 = vec4(1.2, 1.0, 2.0, 10.0); // source radius, contact distance, contact thickness, contact fade start
 uniform vec4 ShadowParams3 = vec4(40.0, 0.0, 1.0, 0.0); // contact fade end, normal offset, jitter, reserved
+uniform bool DirectionalShadowAtlasEnabled = false;
+uniform ivec4 DirectionalShadowAtlasPacked0[XRENGINE_MAX_CASCADES]; // enabled, page, fallback, record index
+uniform vec4 DirectionalShadowAtlasParams0[XRENGINE_MAX_CASCADES];  // uv scale/bias
+uniform vec4 DirectionalShadowAtlasParams1[XRENGINE_MAX_CASCADES];  // near, far, local texel size, reserved
 
 #define ShadowBlockerSamples ShadowPackedI0.x
 #define ShadowFilterSamples ShadowPackedI0.y
@@ -137,6 +141,7 @@ uniform PointLight PointLights[16];
 const int XRENGINE_MAX_FORWARD_LOCAL_LIGHTS = 16;
 const int XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS = 4;
 const int XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS = 4;
+const int XRENGINE_MAX_FORWARD_SPOT_ATLAS_PAGES = 2;
 
 #ifdef XRENGINE_UBER_IMPORT_MATERIAL
 #define XRENGINE_FORWARD_DISABLE_LOCAL_LIGHT_SHADOWS 1
@@ -148,6 +153,8 @@ layout(binding = 26) uniform sampler2D ForwardContactDepthView;
 layout(binding = 27) uniform sampler2D ForwardContactNormalView;
 layout(binding = 28) uniform sampler2DArray ForwardContactDepthViewArray;
 layout(binding = 29) uniform sampler2DArray ForwardContactNormalViewArray;
+layout(binding = 9) uniform sampler2D DirectionalShadowAtlasPages[XRENGINE_MAX_FORWARD_SPOT_ATLAS_PAGES];
+layout(binding = 30) uniform sampler2D SpotLightShadowAtlasPages[XRENGINE_MAX_FORWARD_SPOT_ATLAS_PAGES];
 uniform bool ForwardContactShadowsEnabled = false;
 uniform bool ForwardContactShadowsArrayEnabled = false;
 
@@ -168,6 +175,12 @@ uniform vec4 SpotLightShadowParams0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // shad
 uniform vec4 SpotLightShadowParams1[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // filter radius, blocker radius, min penumbra, max penumbra
 uniform vec4 SpotLightShadowParams2[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // source radius, contact distance, contact thickness, fade start
 uniform vec4 SpotLightShadowParams3[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // fade end, normal offset, jitter, reserved
+uniform ivec4 SpotLightShadowPacked2[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS]; // encoding, use moment mipmaps, reserved, reserved
+uniform vec4 SpotLightShadowParams4[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // moment min variance, bleed reduction, positive exponent, negative exponent
+uniform vec4 SpotLightShadowParams5[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // shadow near, shadow far, moment mip bias, reserved
+uniform ivec4 SpotLightShadowAtlasPacked0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS]; // enabled, page, fallback, record index
+uniform vec4 SpotLightShadowAtlasParams0[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // uv scale/bias
+uniform vec4 SpotLightShadowAtlasParams1[XRENGINE_MAX_FORWARD_LOCAL_LIGHTS];  // near, far, local texel size, reserved
 #endif
 
 // Forward+ tiled light culling uniforms
@@ -678,6 +691,57 @@ float XRENGINE_SampleForwardContactShadowScreenSpace(
         viewDepth);
 }
 
+float XRENGINE_SampleDirectionalAtlasPage(
+    int pageIndex,
+    vec3 atlasCoord,
+    float bias,
+    int blockerSamples,
+    int filterSamples,
+    float filterRadius,
+    float blockerSearchRadius,
+    int softMode,
+    float lightSourceRadius,
+    float minPenumbra,
+    float maxPenumbra,
+    int vogelTapCount)
+{
+    if (pageIndex == 0)
+    {
+        return XRENGINE_SampleShadowMapFiltered(
+            DirectionalShadowAtlasPages[0],
+            atlasCoord,
+            bias,
+            blockerSamples,
+            filterSamples,
+            filterRadius,
+            blockerSearchRadius,
+            softMode,
+            lightSourceRadius,
+            minPenumbra,
+            maxPenumbra,
+            vogelTapCount);
+    }
+
+    if (pageIndex == 1)
+    {
+        return XRENGINE_SampleShadowMapFiltered(
+            DirectionalShadowAtlasPages[1],
+            atlasCoord,
+            bias,
+            blockerSamples,
+            filterSamples,
+            filterRadius,
+            blockerSearchRadius,
+            softMode,
+            lightSourceRadius,
+            minPenumbra,
+            maxPenumbra,
+            vogelTapCount);
+    }
+
+    return 1.0;
+}
+
 // Returns the cascade shadow value for a specific cascade index.
 // clampToEdge: when true, UV coords are clamped to [0,1] so the last cascade's
 // shadow persists beyond its far split instead of dropping to fully-lit.
@@ -742,6 +806,50 @@ float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseF
 
     float cascadeScale = 1.0 + float(cascadeIndex) * 0.35;
     float filterRadius = ShadowFilterRadius * cascadeScale;
+
+    if (DirectionalShadowAtlasEnabled)
+    {
+        ivec4 atlasI0 = DirectionalShadowAtlasPacked0[cascadeIndex];
+        bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < XRENGINE_MAX_FORWARD_SPOT_ATLAS_PAGES;
+        int fallbackMode = atlasI0.z;
+        if (atlasEnabled)
+        {
+            vec4 atlasUvScaleBias = DirectionalShadowAtlasParams0[cascadeIndex];
+            vec2 atlasUv = fragCoord.xy * atlasUvScaleBias.xy + atlasUvScaleBias.zw;
+            float atlasRadiusScale = max(atlasUvScaleBias.x, atlasUvScaleBias.y);
+            return XRENGINE_SampleDirectionalAtlasPage(
+                atlasI0.y,
+                vec3(atlasUv, fragCoord.z),
+                bias,
+                ShadowBlockerSamples,
+                ShadowFilterSamples,
+                filterRadius * atlasRadiusScale,
+                ShadowBlockerSearchRadius * cascadeScale * atlasRadiusScale,
+                SoftShadowMode,
+                LightSourceRadius * atlasRadiusScale,
+                ShadowMinPenumbra * cascadeScale * atlasRadiusScale,
+                ShadowMaxPenumbra * cascadeScale * atlasRadiusScale,
+                ShadowVogelTapCount) * contact;
+        }
+
+        if (fallbackMode == 2)
+            return contact;
+        return XRENGINE_SampleShadowMapArrayFiltered(
+            ShadowMapArray,
+            fragCoord,
+            float(cascadeIndex),
+            bias,
+            ShadowBlockerSamples,
+            ShadowFilterSamples,
+            filterRadius,
+            ShadowBlockerSearchRadius * cascadeScale,
+            SoftShadowMode,
+            LightSourceRadius,
+            ShadowMinPenumbra * cascadeScale,
+            ShadowMaxPenumbra * cascadeScale,
+            ShadowVogelTapCount) * contact;
+    }
+
     return XRENGINE_SampleShadowMapArrayFiltered(
         ShadowMapArray,
         fragCoord,
@@ -1166,6 +1274,84 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
 #endif
 }
 
+float XRENGINE_LinearizeSpotShadowDepth01(float depth, float nearZ, float farZ)
+{
+    float n = max(nearZ, 0.0001);
+    float f = max(farZ, n + 0.0001);
+    float z = depth * 2.0 - 1.0;
+    float linearZ = (2.0 * n * f) / (f + n - z * (f - n));
+    return clamp((linearZ - n) / (f - n), 0.0, 1.0);
+}
+
+float XRENGINE_SampleSpotAtlasPage(
+    int pageIndex,
+    vec3 atlasCoord,
+    float receiverPerspectiveDepth,
+    float bias,
+    int blockerSamples,
+    int filterSamples,
+    float filterRadius,
+    float blockerSearchRadius,
+    int softMode,
+    float lightSourceRadius,
+    float minPenumbra,
+    float maxPenumbra,
+    int vogelTapCount,
+    float nearZ,
+    float farZ)
+{
+    if (pageIndex == 0)
+    {
+        return XRENGINE_SampleLinearDepthShadowMapFilteredAsPerspective(
+            SpotLightShadowAtlasPages[0],
+            atlasCoord,
+            receiverPerspectiveDepth,
+            bias,
+            blockerSamples,
+            filterSamples,
+            filterRadius,
+            blockerSearchRadius,
+            softMode,
+            lightSourceRadius,
+            minPenumbra,
+            maxPenumbra,
+            vogelTapCount,
+            nearZ,
+            farZ);
+    }
+
+    if (pageIndex == 1)
+    {
+        return XRENGINE_SampleLinearDepthShadowMapFilteredAsPerspective(
+            SpotLightShadowAtlasPages[1],
+            atlasCoord,
+            receiverPerspectiveDepth,
+            bias,
+            blockerSamples,
+            filterSamples,
+            filterRadius,
+            blockerSearchRadius,
+            softMode,
+            lightSourceRadius,
+            minPenumbra,
+            maxPenumbra,
+            vogelTapCount,
+            nearZ,
+            farZ);
+    }
+
+    return 1.0;
+}
+
+float XRENGINE_ReadSpotAtlasCenterDepth(int pageIndex, vec2 uv)
+{
+    if (pageIndex == 0)
+        return texture(SpotLightShadowAtlasPages[0], uv).r;
+    if (pageIndex == 1)
+        return texture(SpotLightShadowAtlasPages[1], uv).r;
+    return 1.0;
+}
+
 float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, vec3 fragPos, vec3 lightDir)
 {
 #if defined(XRENGINE_FORWARD_DISABLE_LOCAL_LIGHT_SHADOWS)
@@ -1180,14 +1366,18 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
     vec4 shadowF1 = SpotLightShadowParams1[lightIndex];
     vec4 shadowF2 = SpotLightShadowParams2[lightIndex];
     vec4 shadowF3 = SpotLightShadowParams3[lightIndex];
+    ivec4 shadowI2 = SpotLightShadowPacked2[lightIndex];
+    vec4 shadowF4 = SpotLightShadowParams4[lightIndex];
+    vec4 shadowF5 = SpotLightShadowParams5[lightIndex];
+    ivec4 atlasI0 = SpotLightShadowAtlasPacked0[lightIndex];
+    vec4 atlasUvScaleBias = SpotLightShadowAtlasParams0[lightIndex];
+    vec4 atlasDepthParams = SpotLightShadowAtlasParams1[lightIndex];
 
     int shadowSlot = shadowI0.x;
     int debugMode = shadowI1.y;
-    if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS)
-    {
-        XRENGINE_TrySetForwardShadowDebug(debugMode, 1.0, 1.0);
-        return 1.0;
-    }
+    bool legacyShadowSlotValid = shadowSlot >= 0 && shadowSlot < XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS;
+    bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < XRENGINE_MAX_FORWARD_SPOT_ATLAS_PAGES;
+    int fallbackMode = atlasI0.z;
 
     float NoL = max(dot(normal, lightDir), 0.0);
     float bias = XRENGINE_GetLocalShadowBias(
@@ -1209,8 +1399,9 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
     float contact = 1.0;
     if (shadowI1.z != 0)
     {
-        contact = ForwardContactShadowsEnabled
-            ? XRENGINE_SampleForwardContactShadowScreenSpace(
+        if (ForwardContactShadowsEnabled)
+        {
+            contact = XRENGINE_SampleForwardContactShadowScreenSpace(
                 fragPos,
                 normal,
                 lightDir,
@@ -1223,8 +1414,11 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
                 shadowF3.x,
                 shadowF3.y,
                 shadowF3.z,
-                viewDepth)
-            : XRENGINE_SampleContactShadow2D(
+                viewDepth);
+        }
+        else if (!atlasEnabled && legacyShadowSlotValid)
+        {
+            contact = XRENGINE_SampleContactShadow2D(
                 SpotLightShadowMaps[shadowSlot],
                 light.Base.Base.WorldToLightSpaceProjMatrix,
                 fragPos,
@@ -1240,26 +1434,102 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
                 shadowF3.y,
                 shadowF3.z,
                 viewDepth);
+        }
     }
 
-    float shadow = XRENGINE_SampleShadowMapFiltered(
-        SpotLightShadowMaps[shadowSlot],
-        fragCoord,
-        bias,
-        shadowI0.z,
-        shadowI0.y,
-        shadowF1.x,
-        shadowF1.y,
-        shadowI1.x,
-        shadowF2.x,
-        shadowF1.z,
-        shadowF1.w,
-        shadowI0.w) * contact;
+    if (atlasEnabled)
+    {
+        vec2 atlasUv = fragCoord.xy * atlasUvScaleBias.xy + atlasUvScaleBias.zw;
+        float atlasRadiusScale = max(atlasUvScaleBias.x, atlasUvScaleBias.y);
+        float atlasDepth = XRENGINE_LinearizeSpotShadowDepth01(
+            fragCoord.z,
+            atlasDepthParams.x,
+            atlasDepthParams.y);
+        float atlasFilterRadius = shadowF1.x * atlasRadiusScale;
+        float atlasBlockerRadius = shadowF1.y * atlasRadiusScale;
+
+        float shadow = XRENGINE_SampleSpotAtlasPage(
+            atlasI0.y,
+            vec3(atlasUv, atlasDepth),
+            fragCoord.z,
+            bias,
+            shadowI0.z,
+            shadowI0.y,
+            atlasFilterRadius,
+            atlasBlockerRadius,
+            shadowI1.x,
+            shadowF2.x * atlasRadiusScale,
+            shadowF1.z * atlasRadiusScale,
+            shadowF1.w * atlasRadiusScale,
+            shadowI0.w,
+            atlasDepthParams.x,
+            atlasDepthParams.y) * contact;
+
+        if (debugMode != 0)
+        {
+            float centerDepth = XRENGINE_LinearDepth01ToPerspectiveDepth(
+                XRENGINE_ReadSpotAtlasCenterDepth(atlasI0.y, atlasUv),
+                atlasDepthParams.x,
+                atlasDepthParams.y);
+            float margin = centerDepth - (fragCoord.z - bias);
+            XRENGINE_TrySetForwardShadowDebug(debugMode, shadow, margin);
+        }
+
+        return shadow;
+    }
+
+    if (!legacyShadowSlotValid)
+    {
+        float fallback = fallbackMode == 2 ? contact : 1.0;
+        XRENGINE_TrySetForwardShadowDebug(debugMode, fallback, 1.0);
+        return fallback;
+    }
+
+    int encoding = shadowI2.x;
+    float shadow = 1.0;
+    if (encoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+    {
+        float receiverDepth = XRENGINE_LinearizeShadowDepth01(fragCoord.z, shadowF5.x, shadowF5.y);
+        float momentReceiverDepth = clamp(receiverDepth - min(bias, 0.01), 0.0, 1.0);
+        shadow = XRENGINE_SampleShadowMoment2D(
+            SpotLightShadowMaps[shadowSlot],
+            fragCoord.xy,
+            momentReceiverDepth,
+            encoding,
+            shadowF4.x,
+            shadowF4.y,
+            shadowF4.z,
+            shadowF4.w,
+            shadowF5.z) * contact;
+    }
+    else
+    {
+        shadow = XRENGINE_SampleShadowMapFiltered(
+            SpotLightShadowMaps[shadowSlot],
+            fragCoord,
+            bias,
+            shadowI0.z,
+            shadowI0.y,
+            shadowF1.x,
+            shadowF1.y,
+            shadowI1.x,
+            shadowF2.x,
+            shadowF1.z,
+            shadowF1.w,
+            shadowI0.w) * contact;
+    }
 
     if (debugMode != 0)
     {
-        float centerDepth = texture(SpotLightShadowMaps[shadowSlot], fragCoord.xy).r;
-        float margin = centerDepth - (fragCoord.z - bias);
+        float margin = encoding != XRENGINE_SHADOW_ENCODING_DEPTH
+            ? XRENGINE_EstimateShadowMomentMargin(
+                SpotLightShadowMaps[shadowSlot],
+                fragCoord.xy,
+                clamp(XRENGINE_LinearizeShadowDepth01(fragCoord.z, shadowF5.x, shadowF5.y) - min(bias, 0.01), 0.0, 1.0),
+                encoding,
+                shadowF4.z,
+                shadowF4.w)
+            : texture(SpotLightShadowMaps[shadowSlot], fragCoord.xy).r - (fragCoord.z - bias);
         XRENGINE_TrySetForwardShadowDebug(debugMode, shadow, margin);
     }
 

@@ -14,7 +14,7 @@ namespace XREngine.Scene
     /// </summary>
     [Serializable]
     [MemoryPackable]
-    public partial class WorldSettings : XRAsset
+    public partial class WorldSettings : XRAsset, IRuntimeAmbientSettings
     {
         [MemoryPackConstructor]
         public WorldSettings() { }

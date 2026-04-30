@@ -7,6 +7,7 @@ using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using static XREngine.Rendering.XRWorldInstance;
+using XRWorld = XREngine.Scene.XRWorld;
 
 namespace XREngine
 {
@@ -75,7 +76,7 @@ namespace XREngine
             if (PlayMode.Configuration.StartupWorld is not null)
                 return PlayMode.Configuration.StartupWorld;
 
-            var firstWindowWorld = Windows.FirstOrDefault()?.TargetWorldInstance?.TargetWorld;
+            var firstWindowWorld = Windows.FirstOrDefault()?.TargetWorldInstance?.TargetWorldObject as XRWorld;
             if (firstWindowWorld is not null)
                 return firstWindowWorld;
 

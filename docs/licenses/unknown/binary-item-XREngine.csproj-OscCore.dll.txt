@@ -1,0 +1,5 @@
+﻿License file not detected for referenced binary item.
+
+Project: XREngine.csproj
+Path: ..\Build\Submodules\OscCore-NET9\bin\$(Configuration)\net9.0\OscCore.dll
+

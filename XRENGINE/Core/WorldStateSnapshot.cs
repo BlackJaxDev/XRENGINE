@@ -4,6 +4,7 @@ using System.Text;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
+using XRWorld = XREngine.Scene.XRWorld;
 
 namespace XREngine
 {

@@ -3,7 +3,7 @@
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
 layout (location = 0) out vec2 Normal;
 #elif defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-layout (location = 0) out float Depth;
+layout (location = 0) out vec4 Depth;
 #elif defined(XRENGINE_FORWARD_WEIGHTED_OIT)
 layout (location = 0) out vec4 OutAccum;
 layout (location = 1) out vec4 OutRevealage;
@@ -100,9 +100,9 @@ void main()
         discard;
 
 #if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-    Depth = length(FragPos - LightPos) / FarPlaneDist;
+    Depth = vec4(length(FragPos - LightPos) / FarPlaneDist, 0.0, 0.0, 0.0);
 #elif defined(XRENGINE_SHADOW_CASTER_PASS)
-    Depth = gl_FragCoord.z;
+    XRENGINE_WriteShadowCasterDepth(Depth, gl_FragCoord.z);
 #else
     vec3 normal = getNormalFromMap();
 

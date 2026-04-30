@@ -223,6 +223,56 @@ namespace XREngine.Components
 
         bool IRuntimeScreenSpaceUserInterface.IsScreenSpace => CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen;
 
+        public void ResizeScreenSpace(Vector2 size)
+        {
+            if (CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
+                CanvasTransform.SetSize(size);
+        }
+
+        public void ResizeCameraSpace(XRCamera camera, XRCameraParameters parameters)
+        {
+            if (CanvasTransform.DrawSpace != ECanvasDrawSpace.Camera)
+                return;
+
+            CanvasTransform.SetSize(parameters.GetFrustumSizeAtDistance(CanvasTransform.CameraDrawSpaceDistance));
+            CanvasTransform.CameraSpaceCamera = camera;
+        }
+
+        public void ClearCameraSpaceCamera(XRCamera camera)
+        {
+            if (ReferenceEquals(CanvasTransform.CameraSpaceCamera, camera))
+                CanvasTransform.CameraSpaceCamera = null;
+        }
+
+        public bool TryGetImGuiDisplayMetrics(
+            IRuntimeViewportHost? viewport,
+            XRCamera? camera,
+            out Vector2 displaySize,
+            out Vector2 displayPosition,
+            out Vector2 framebufferScale)
+        {
+            var canvasTransform = CanvasTransform;
+            displaySize = canvasTransform.ActualSize;
+            displayPosition = canvasTransform.DrawSpace == ECanvasDrawSpace.Screen
+                ? Vector2.Zero
+                : canvasTransform.ActualLocalBottomLeftTranslation;
+            framebufferScale = Vector2.One;
+
+            if (viewport is XRViewport concreteViewport && displaySize.X > 0.0f && displaySize.Y > 0.0f)
+            {
+                var region = concreteViewport.Region;
+                framebufferScale = new Vector2(region.Width / displaySize.X, region.Height / displaySize.Y);
+            }
+
+            return displaySize.X > 0.0f && displaySize.Y > 0.0f;
+        }
+
+        void IRuntimeScreenSpaceUserInterface.CollectVisibleItemsScreenSpace(IRuntimeViewportHost? viewport)
+            => CollectVisibleItemsScreenSpace(viewport as XRViewport);
+
+        void IRuntimeScreenSpaceUserInterface.SwapBuffersScreenSpace()
+            => SwapBuffersScreenSpace();
+
         //private int _screenRenderDiagCount = 0;
         public void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO)
         {

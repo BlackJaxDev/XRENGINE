@@ -299,7 +299,7 @@ public static partial class EditorUnitTests
             firstPersonCam.Camera.RenderPipeline.OverrideProtected = true;
             firstPersonCam.CullWithFrustum = true;
             if (pawn is null)
-                pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One);
+                pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One) as PawnComponent;
             else
                 pawn.CameraComponent = firstPersonCam;
 

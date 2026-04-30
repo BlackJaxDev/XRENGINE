@@ -335,10 +335,6 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            _visitedScratch.Clear();
-            foreach (var node in nodes)
-                _visitedScratch.Add(node);
-
             ImGui.PushID("SceneNodeMultiInspector");
 
             ImGui.TextUnformatted($"{nodes.Count} Scene Nodes Selected");
@@ -349,10 +345,27 @@ public static partial class EditorImGuiUI
 
             ImGui.Separator();
 
+            if (nodes.Count > MaxDetailedMultiSelectionInspectorCount)
+            {
+                ImGui.TextDisabled($"Detailed transform and component inspectors are skipped for selections larger than {MaxDetailedMultiSelectionInspectorCount} nodes.");
+                ImGui.TextDisabled("Use the hierarchy filter or select fewer nodes for per-property editing.");
+
+                ImGui.Spacing();
+                if (ImGui.Button("Add Component to Selected..."))
+                    BeginAddComponentForHierarchyNodes(nodes);
+
+                ImGui.PopID();
+                return;
+            }
+
+            _visitedScratch.Clear();
+            foreach (var node in nodes)
+                _visitedScratch.Add(node);
+
             if (ImGui.CollapsingHeader("Transform", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 ImGui.PushID("TransformSection");
-                DrawTransformInspector(nodes.Select(n => n.Transform).ToList(), _visitedScratch);
+                DrawTransformInspector(nodes, _visitedScratch);
                 ImGui.PopID();
             }
 
@@ -367,6 +380,10 @@ public static partial class EditorImGuiUI
 
             ImGui.PopID();
         }
+
+        private const int MaxDetailedMultiSelectionInspectorCount = 64;
+        private static readonly List<TransformBase> _multiTransformScratch = [];
+        private static readonly List<object> _multiTransformTargetsScratch = [];
 
         private static partial void DrawSceneNodeInspector(SceneNode node)
         {
@@ -408,11 +425,19 @@ public static partial class EditorImGuiUI
 
             DrawInspectorRow("Name", () =>
             {
-                string? commonName = nodes.Select(n => n.Name ?? string.Empty).Distinct().Count() == 1
-                    ? nodes[0].Name ?? string.Empty
-                    : null;
+                string firstName = nodes[0].Name ?? string.Empty;
+                bool sameName = true;
+                for (int i = 1; i < nodes.Count; i++)
+                {
+                    if (!string.Equals(nodes[i].Name ?? string.Empty, firstName, StringComparison.Ordinal))
+                    {
+                        sameName = false;
+                        break;
+                    }
+                }
 
-                string name = commonName ?? string.Empty;
+                string? commonName = sameName ? firstName : null;
+                string name = sameName ? firstName : string.Empty;
                 ImGui.SetNextItemWidth(-1f);
                 string hint = commonName is null ? "<multiple>" : string.Empty;
                 if (ImGui.InputTextWithHint("##SceneNodeNameMulti", hint, ref name, 256))
@@ -439,8 +464,15 @@ public static partial class EditorImGuiUI
 
             DrawInspectorRow("Active Self", () =>
             {
-                bool allActive = nodes.All(n => n.IsActiveSelf);
-                bool allInactive = nodes.All(n => !n.IsActiveSelf);
+                bool allActive = true;
+                bool allInactive = true;
+                for (int i = 0; i < nodes.Count; i++)
+                {
+                    if (nodes[i].IsActiveSelf)
+                        allInactive = false;
+                    else
+                        allActive = false;
+                }
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
                 if (mixed)
@@ -462,8 +494,15 @@ public static partial class EditorImGuiUI
 
             DrawInspectorRow("Active In Hierarchy", () =>
             {
-                bool allActive = nodes.All(n => n.IsActiveInHierarchy);
-                bool allInactive = nodes.All(n => !n.IsActiveInHierarchy);
+                bool allActive = true;
+                bool allInactive = true;
+                for (int i = 0; i < nodes.Count; i++)
+                {
+                    if (nodes[i].IsActiveInHierarchy)
+                        allInactive = false;
+                    else
+                        allActive = false;
+                }
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
                 if (mixed)
@@ -485,14 +524,31 @@ public static partial class EditorImGuiUI
 
             DrawInspectorRow("ID", () =>
             {
-                bool same = nodes.Select(n => n.ID).Distinct().Count() == 1;
+                var firstId = nodes[0].ID;
+                bool same = true;
+                for (int i = 1; i < nodes.Count; i++)
+                {
+                    if (!Equals(nodes[i].ID, firstId))
+                    {
+                        same = false;
+                        break;
+                    }
+                }
                 ImGui.TextUnformatted(same ? nodes[0].ID.ToString() : "<multiple>");
             });
 
             DrawInspectorRow("Path", () =>
             {
                 string firstPath = nodes[0].GetPath();
-                bool same = nodes.All(n => string.Equals(n.GetPath(), firstPath, StringComparison.Ordinal));
+                bool same = true;
+                for (int i = 1; i < nodes.Count; i++)
+                {
+                    if (!string.Equals(nodes[i].GetPath(), firstPath, StringComparison.Ordinal))
+                    {
+                        same = false;
+                        break;
+                    }
+                }
                 ImGui.PushTextWrapPos();
                 ImGui.TextUnformatted(same ? firstPath : "<multiple>");
                 ImGui.PopTextWrapPos();
@@ -1112,6 +1168,15 @@ public static partial class EditorImGuiUI
             ImGui.PopID();
         }
 
+        private static void DrawTransformInspector(IReadOnlyList<SceneNode> nodes, HashSet<object> visited)
+        {
+            _multiTransformScratch.Clear();
+            for (int i = 0; i < nodes.Count; i++)
+                _multiTransformScratch.Add(nodes[i].Transform);
+
+            DrawTransformInspector(_multiTransformScratch, visited);
+        }
+
         private static void DrawTransformInspector(IReadOnlyList<TransformBase> transforms, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawTransformInspector.Multi");
@@ -1121,10 +1186,30 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            var targetSet = CreateInspectorTargetSet(transforms.Cast<object>());
-            if (targetSet.CommonType != typeof(TransformBase))
-                ImGui.TextDisabled($"Transform Type: {targetSet.CommonType.Name}");
-            else if (transforms.Select(t => t.GetType()).Distinct().Count() > 1)
+            _multiTransformTargetsScratch.Clear();
+            Type? commonType = null;
+            bool hasMultipleConcreteTypes = false;
+            Type? firstConcreteType = null;
+            for (int i = 0; i < transforms.Count; i++)
+            {
+                TransformBase transform = transforms[i];
+                _multiTransformTargetsScratch.Add(transform);
+
+                Type concreteType = transform.GetType();
+                firstConcreteType ??= concreteType;
+                if (firstConcreteType != concreteType)
+                    hasMultipleConcreteTypes = true;
+
+                commonType = commonType is null
+                    ? concreteType
+                    : FindCommonBaseType(commonType, concreteType);
+            }
+
+            commonType ??= typeof(TransformBase);
+            var targetSet = new InspectorTargetSet(_multiTransformTargetsScratch, commonType);
+            if (commonType != typeof(TransformBase))
+                ImGui.TextDisabled($"Transform Type: {commonType.Name}");
+            else if (hasMultipleConcreteTypes)
                 ImGui.TextDisabled("Transform Type: <multiple>");
 
             DrawInspectableObject(targetSet, "TransformPropertiesMulti", visited);

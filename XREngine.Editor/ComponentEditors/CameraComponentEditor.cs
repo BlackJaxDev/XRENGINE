@@ -409,8 +409,9 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         if (cullingChanged)
             component.Camera.CullingMask = new LayerMask(cullingMask);
 
-        string uiOverlay = component.GetUserInterfaceOverlay()?.SceneNode?.Name
-            ?? component.GetUserInterfaceOverlay()?.GetType().Name
+        var overlay = component.GetUserInterfaceOverlay();
+        string uiOverlay = (overlay as XRComponent)?.SceneNode?.Name
+            ?? overlay?.GetType().Name
             ?? "<none>";
         ImGui.TextDisabled($"UI Overlay: {uiOverlay}");
 

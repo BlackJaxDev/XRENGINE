@@ -1,0 +1,4952 @@
+using XREngine.Extensions;
+using ImageMagick;
+using ImGuiNET;
+using Silk.NET.OpenGL;
+using Silk.NET.OpenGL.Extensions.ARB;
+using Silk.NET.OpenGL.Extensions.ImGui;
+using Silk.NET.OpenGL.Extensions.NV;
+using Silk.NET.OpenGL.Extensions.OVR;
+using Silk.NET.OpenGLES.Extensions.EXT;
+using Silk.NET.OpenGLES.Extensions.NV;
+using System;
+using System.Numerics;
+using XREngine.Data;
+using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Models.Materials.Textures;
+using XREngine.Rendering.UI;
+using XREngine.Rendering.Shaders.Generator;
+using PixelFormat = Silk.NET.OpenGL.PixelFormat;
+using XREngine.Components;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace XREngine.Rendering.OpenGL
+{
+    public partial class OpenGLRenderer : AbstractRenderer<GL>
+    {
+        private sealed record BoundTextureDebugState(IGLTexture Texture, string Name, uint BindingId);
+
+        public GL RawGL => Api; // public accessor for underlying GL instance
+
+        private enum FrontLuminanceReadbackMode
+        {
+            Mipmap,
+            Compute
+        }
+
+        private sealed class PendingFrontLuminanceReadback
+        {
+            public required Action<bool, float> Callback { get; init; }
+            public required FrontLuminanceReadbackMode Mode { get; init; }
+            public required Vector3 LuminanceWeights { get; init; }
+            public required IntPtr Sync { get; init; }
+            public required long StartedTicks { get; init; }
+            public required long LastPollTicks { get; set; }
+        }
+
+        private const double FrontLuminanceReadbackMinIntervalMs = 66.0;
+        private const double FrontLuminanceReadbackPollIntervalMs = 33.0;
+        private const double FrontLuminanceReadbackTimeoutMs = 250.0;
+        public OvrMultiview? OVRMultiView { get; }
+        public Silk.NET.OpenGL.Extensions.NV.NVMeshShader? NVMeshShader { get; }
+        public Silk.NET.OpenGL.Extensions.NV.NVGpuShader5? NVGpuShader5 { get; }
+        public Silk.NET.OpenGL.Extensions.NV.NVPathRendering? NVPathRendering { get; }
+        public Silk.NET.OpenGLES.GL ESApi { get; }
+        public NVViewportArray? NVViewportArray { get; }
+        public ExtMemoryObject? EXTMemoryObject { get; }
+        public ExtSemaphore? EXTSemaphore { get; }
+        public ExtMemoryObjectWin32? EXTMemoryObjectWin32 { get; }
+        private PendingFrontLuminanceReadback? _pendingFrontLuminanceReadback;
+        private long _lastFrontLuminanceRequestTicks;
+        private bool _hasFrontLuminanceSample;
+        private float _lastFrontLuminanceSample;
+
+        private static long FrontLuminanceMillisecondsToTicks(double milliseconds)
+            => (long)(System.Diagnostics.Stopwatch.Frequency * (milliseconds / 1000.0));
+
+        private void QueueFrontLuminanceCallback(Action<bool, float> callback, bool success, float dot)
+            => Engine.EnqueueAppThreadTask(() => callback(success, dot), "GLRenderer.FrontLuminance.Callback");
+
+        private void QueueCachedFrontLuminanceCallback(Action<bool, float> callback)
+            => QueueFrontLuminanceCallback(callback, _hasFrontLuminanceSample, _hasFrontLuminanceSample ? _lastFrontLuminanceSample : 0.0f);
+
+        private void CompletePendingFrontLuminanceReadback(PendingFrontLuminanceReadback pending, bool success, float dot)
+        {
+            _pendingFrontLuminanceReadback = null;
+            QueueFrontLuminanceCallback(pending.Callback, success, dot);
+        }
+
+        private void CancelPendingFrontLuminanceReadback()
+        {
+            if (_pendingFrontLuminanceReadback is not { } pending)
+                return;
+
+            Api.DeleteSync(pending.Sync);
+            _pendingFrontLuminanceReadback = null;
+        }
+
+        private unsafe bool TryServicePendingFrontLuminanceReadback(long nowTicks)
+        {
+            if (_pendingFrontLuminanceReadback is not { } pending)
+                return false;
+
+            long timeoutTicks = FrontLuminanceMillisecondsToTicks(FrontLuminanceReadbackTimeoutMs);
+            if (nowTicks - pending.StartedTicks >= timeoutTicks)
+            {
+                Api.DeleteSync(pending.Sync);
+                CompletePendingFrontLuminanceReadback(pending, _hasFrontLuminanceSample, _hasFrontLuminanceSample ? _lastFrontLuminanceSample : 0.0f);
+                return false;
+            }
+
+            long pollIntervalTicks = FrontLuminanceMillisecondsToTicks(FrontLuminanceReadbackPollIntervalMs);
+            if (nowTicks - pending.LastPollTicks < pollIntervalTicks)
+                return true;
+
+            pending.LastPollTicks = nowTicks;
+
+            switch (pending.Mode)
+            {
+                case FrontLuminanceReadbackMode.Mipmap:
+                {
+                    if (!GetData(_luminanceFrontPboSize, _rgbDataForAsync(ref _asyncBuffer), pending.Sync, _luminanceFrontPbo))
+                        return true;
+
+                    Api.DeleteSync(pending.Sync);
+
+                    float r = _asyncBuffer[0] / 255.0f;
+                    float g = _asyncBuffer[1] / 255.0f;
+                    float b = _asyncBuffer[2] / 255.0f;
+                    if (float.IsNaN(r) || float.IsNaN(g) || float.IsNaN(b))
+                    {
+                        CompletePendingFrontLuminanceReadback(pending, _hasFrontLuminanceSample, _hasFrontLuminanceSample ? _lastFrontLuminanceSample : 0.0f);
+                        return false;
+                    }
+
+                    _lastFrontLuminanceSample = new Vector3(r, g, b).Dot(pending.LuminanceWeights);
+                    _hasFrontLuminanceSample = true;
+                    CompletePendingFrontLuminanceReadback(pending, true, _lastFrontLuminanceSample);
+                    return false;
+                }
+
+                case FrontLuminanceReadbackMode.Compute:
+                {
+                    var waitResult = Api.ClientWaitSync(pending.Sync, 0u, 0u);
+                    if (!(waitResult == GLEnum.AlreadySignaled || waitResult == GLEnum.ConditionSatisfied))
+                        return true;
+
+                    Api.DeleteSync(pending.Sync);
+
+                    Vector4 average;
+                    Api.BindBuffer(GLEnum.ShaderStorageBuffer, _luminanceResultBuffer);
+                    Api.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, 16, &average);
+                    Api.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+
+                    if (float.IsNaN(average.X) || float.IsNaN(average.Y) || float.IsNaN(average.Z))
+                    {
+                        CompletePendingFrontLuminanceReadback(pending, _hasFrontLuminanceSample, _hasFrontLuminanceSample ? _lastFrontLuminanceSample : 0.0f);
+                        return false;
+                    }
+
+                    _lastFrontLuminanceSample = new Vector3(average.X, average.Y, average.Z).Dot(pending.LuminanceWeights);
+                    _hasFrontLuminanceSample = true;
+                    CompletePendingFrontLuminanceReadback(pending, true, _lastFrontLuminanceSample);
+                    return false;
+                }
+
+                default:
+                    return false;
+            }
+        }
+
+        private bool PollPendingFrontLuminanceReadback()
+        {
+            if (_pendingFrontLuminanceReadback is null)
+                return true;
+
+            long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            return !TryServicePendingFrontLuminanceReadback(nowTicks);
+        }
+        public ExtSemaphoreWin32? EXTSemaphoreWin32 { get; }
+        public ExtSemaphoreFd? EXTSemaphoreFd { get; }
+        public ExtMemoryObjectFd? EXTMemoryObjectFd { get; }
+        public NVBindlessMultiDrawIndirectCount? NVBindlessMultiDrawIndirectCount { get; }
+        public ArbMultiDrawIndirect? ArbMultiDrawIndirect { get; }
+        public ArbParallelShaderCompile? ARBParallelShaderCompile { get; }
+
+        private static string? _version = null;
+        public string? Version
+        {
+            get
+            {
+                if (_version is not null)
+                    return _version;
+
+                // GL calls require the correct context + thread. During import/externalization we may
+                // be traversing object graphs from job threads; never query GL there.
+                if (!Engine.IsRenderThread)
+                    return null;
+
+                unsafe
+                {
+                    _version ??= new((sbyte*)Api.GetString(StringName.Version));
+                }
+                return _version;
+            }
+        }
+        public OpenGLRenderer(XRWindow window, bool shouldLinkWindow = true) : base(window, shouldLinkWindow)
+        {
+            ESApi = Silk.NET.OpenGLES.GL.GetApi(Window.GLContext);
+
+            EXTMemoryObject = ESApi.TryGetExtension<ExtMemoryObject>(out var ext) ? ext : null;
+            EXTSemaphore = ESApi.TryGetExtension<ExtSemaphore>(out var ext2) ? ext2 : null;
+            EXTMemoryObjectWin32 = ESApi.TryGetExtension<ExtMemoryObjectWin32>(out var ext3) ? ext3 : null;
+            EXTSemaphoreWin32 = ESApi.TryGetExtension<ExtSemaphoreWin32>(out var ext4) ? ext4 : null;
+            EXTMemoryObjectFd = ESApi.TryGetExtension<ExtMemoryObjectFd>(out var ext5) ? ext5 : null;
+            EXTSemaphoreFd = ESApi.TryGetExtension<ExtSemaphoreFd>(out var ext6) ? ext6 : null;
+
+            var api = Api;
+
+            OVRMultiView = api.TryGetExtension(out OvrMultiview ext7) ? ext7 : null;
+            Engine.Rendering.State.HasOvrMultiViewExtension = OVRMultiView is not null;
+            Engine.Rendering.State.HasVulkanMultiView = false;
+            NVMeshShader = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVMeshShader ext8) ? ext8 : null;
+            NVGpuShader5 = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVGpuShader5 ext9) ? ext9 : null;
+            NVViewportArray = ESApi.TryGetExtension(out NVViewportArray ext10) ? ext10 : null;
+
+            NVBindlessMultiDrawIndirectCount = api.TryGetExtension<NVBindlessMultiDrawIndirectCount>(out var ext11) ? ext11 : null;
+            ArbMultiDrawIndirect = api.TryGetExtension<ArbMultiDrawIndirect>(out var ext12) ? ext12 : null;
+            NVPathRendering = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVPathRendering ext13) ? ext13 : null;
+            ARBParallelShaderCompile = api.TryGetExtension<ArbParallelShaderCompile>(out var ext14) ? ext14 : null;
+        }
+
+        private ImGuiController? _imguiController;
+        private OpenGLImGuiBackend? _imguiBackend;
+        private OpenGLImGuiMultiViewportController? _imguiMultiViewportController;
+        private int _imguiFontValidationCountdown;
+
+        private const int ImGuiFontValidationIntervalFrames = 120;
+
+        protected override bool SupportsImGui => true;
+
+        private sealed class OpenGLImGuiBackend(OpenGLRenderer renderer, ImGuiController controller) : IImGuiRendererBackend
+        {
+            private readonly OpenGLRenderer _renderer = renderer;
+            private readonly ImGuiController _controller = controller;
+
+            public void MakeCurrent()
+                => _controller.MakeCurrent();
+
+            public void Update(float deltaSeconds)
+            {
+                _renderer._imguiMultiViewportController?.QueueMainViewportInput();
+                _controller.Update(deltaSeconds);
+                _renderer._imguiMultiViewportController?.UpdateMainViewportInput();
+            }
+
+            public void Render()
+                => _controller.Render();
+
+            public void RenderPlatformWindows()
+                => _renderer._imguiMultiViewportController?.RenderPlatformWindows();
+        }
+
+        private ImGuiController? GetImGuiController()
+        {
+            var controller = _imguiController;
+            if (controller is not null)
+                return controller;
+
+            var input = XRWindow.Input;
+            if (input is null)
+                return null;
+
+            controller = new ImGuiController(Api, XRWindow.Window, input);
+            ImGuiContextTracker.Register(controller.Context);
+
+            // Enable docking immediately so DockContextInitialize runs on the next
+            // NewFrame() call.  The controller's constructor already called NewFrame()
+            // once (before we could set this flag), so the initial INI load missed the
+            // [Docking][Data] section.  The editor's first render frame will trigger a
+            // one-time INI reload to pick up the saved dock layout.
+            ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.DockingEnable;
+
+            _imguiMultiViewportController = OpenGLImGuiMultiViewportController.TryCreate(this, controller);
+            _imguiMultiViewportController?.Install();
+
+            ImGuiControllerUtilities.TryUseDefaultEditorFont(controller);
+
+            _imguiController = controller;
+            _imguiBackend = null;
+            return controller;
+        }
+
+        private OpenGLImGuiBackend? GetOrCreateImGuiBackend()
+        {
+            var controller = GetImGuiController();
+            if (controller is null)
+                return null;
+
+            EnsureImGuiFontAtlasValid(controller);
+
+            return _imguiBackend ??= new OpenGLImGuiBackend(this, controller);
+        }
+
+        public void ForceRebuildImGuiFontAtlas()
+        {
+            var controller = GetImGuiController();
+            if (controller is null)
+                return;
+
+            _imguiFontValidationCountdown = 0;
+            ImGuiControllerUtilities.TryUseDefaultEditorFont(controller, 18.0f, forceReload: true);
+        }
+
+        private void EnsureImGuiFontAtlasValid(ImGuiController controller)
+        {
+            if (_imguiFontValidationCountdown > 0)
+            {
+                _imguiFontValidationCountdown--;
+                return;
+            }
+
+            _imguiFontValidationCountdown = ImGuiFontValidationIntervalFrames;
+
+            try
+            {
+                controller.MakeCurrent();
+                var io = ImGui.GetIO();
+                nint texIdPtr = io.Fonts.TexID;
+                uint texId = (uint)(nuint)texIdPtr;
+
+                if (texId != 0 && Api.IsTexture(texId))
+                    return;
+
+                Debug.LogWarning($"ImGui font atlas texture became invalid (texId={texId}); rebuilding font device texture.");
+                ImGuiControllerUtilities.TryUseDefaultEditorFont(controller, 18.0f, forceReload: true);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed validating/rebuilding ImGui font atlas texture: {ex.Message}");
+            }
+        }
+
+        protected override IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport)
+            => GetOrCreateImGuiBackend();
+
+        private void InitGL(GL api)
+        {
+            string version;
+            unsafe
+            {
+                version = new((sbyte*)api.GetString(StringName.Version));
+                string vendor = new((sbyte*)api.GetString(StringName.Vendor));
+                string renderer = new((sbyte*)api.GetString(StringName.Renderer));
+                string shadingLanguageVersion = new((sbyte*)api.GetString(StringName.ShadingLanguageVersion));
+                Debug.OpenGL($"OpenGL Version: {version}");
+                Debug.OpenGL($"OpenGL Vendor: {vendor}");
+                Debug.OpenGL($"OpenGL Renderer: {renderer}");
+                Debug.OpenGL($"OpenGL Shading Language Version: {shadingLanguageVersion}");
+
+                Engine.Rendering.State.IsNVIDIA = vendor.Contains("NVIDIA");
+                Engine.Rendering.State.IsIntel = vendor.Contains("Intel");
+                Engine.Rendering.State.IsVulkan = false;
+                Engine.Rendering.State.OpenGLVendor = vendor;
+                Engine.Rendering.State.OpenGLRendererName = renderer;
+                Engine.Rendering.State.VulkanDeviceName = null;
+                Engine.Rendering.State.VulkanVendorId = 0;
+                Engine.Rendering.State.VulkanDeviceId = 0;
+
+                // Cache full extension list once so ImGui/debug panels can display it without re-enumerating each frame.
+                // Also probe for GL_NV_ray_tracing support early so features can decide whether to attempt the RT path.
+                string[] extensions = [];
+                try
+                {
+                    int extCount = api.GetInteger(GLEnum.NumExtensions);
+                    if (extCount > 0)
+                    {
+                        var list = new string[extCount];
+                        for (uint i = 0; i < extCount; i++)
+                            list[i] = new((sbyte*)api.GetString(StringName.Extensions, i));
+                        extensions = list;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.OpenGLWarning($"Failed to query GL extensions for NV ray tracing: {ex.Message}");
+                }
+
+                Engine.Rendering.State.OpenGLExtensions = extensions;
+                bool hasExtMultiview = false;
+                for (int i = 0; i < extensions.Length; i++)
+                {
+                    if (string.Equals(extensions[i], "GL_EXT_multiview", StringComparison.Ordinal))
+                    {
+                        hasExtMultiview = true;
+                        break;
+                    }
+                }
+                Engine.Rendering.State.HasOvrMultiViewExtension |= hasExtMultiview;
+
+                // Probe for GL_ARB_parallel_shader_compile � enables non-blocking CompileShader/LinkProgram.
+                bool hasParallelShaderCompile = extensions.Any(
+                    e => string.Equals(e, "GL_ARB_parallel_shader_compile", StringComparison.Ordinal));
+                Engine.Rendering.State.HasParallelShaderCompile = hasParallelShaderCompile;
+                if (hasParallelShaderCompile && api.TryGetExtension<ArbParallelShaderCompile>(out var parallelExt))
+                {
+                    // Request unlimited driver shader-compiler threads.
+                    parallelExt.MaxShaderCompilerThreads(0xFFFF_FFFF);
+                    Debug.OpenGL("GL_ARB_parallel_shader_compile enabled � shader compilation is non-blocking.");
+                }
+
+                InitializeSparseTextureSupport(extensions);
+
+                // Ray tracing / DLSS / XeSS are Vulkan-focused; do not probe GL_NV_ray_tracing on OpenGL startup.
+                Engine.Rendering.State.HasNvRayTracing = false;
+                Engine.Rendering.State.HasVulkanRayTracing = false;
+                Engine.Rendering.State.HasVulkanMemoryDecompression = false;
+                Engine.Rendering.State.HasVulkanCopyMemoryIndirect = false;
+                Engine.Rendering.State.HasVulkanRtxIo = false;
+                Engine.Rendering.State.HasVulkanMultiView = false;
+            }
+
+            Engine.Rendering.RefreshVulkanUpscaleBridgeCapabilitySnapshot(this);
+
+            GLRenderProgram.ReadBinaryShaderCache(version);
+
+            // Initialize async program binary upload via a shared GL context.
+            InitAsyncProgramBinaryUpload();
+
+            api.Enable(EnableCap.Multisample);
+            api.Enable(EnableCap.TextureCubeMapSeamless);
+            api.FrontFace(FrontFaceDirection.Ccw);
+
+            // Avoid debug-layer warnings when clearing integer framebuffers.
+            // Dithering is enabled by default in OpenGL but isn't meaningful for integer attachments.
+            api.Disable(EnableCap.Dither);
+
+            api.ClipControl(GLEnum.LowerLeft, GLEnum.NegativeOneToOne);
+
+            //Fix gamma manually inside of the post process shader
+            //api.Enable(EnableCap.FramebufferSrgb);
+
+            api.PixelStore(PixelStoreParameter.PackAlignment, 1);
+            api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+            api.PointSize(1.0f);
+            api.LineWidth(1.0f);
+
+            api.UseProgram(0);
+
+            SetupDebug(api);
+        }
+
+        public override void MemoryBarrier(EMemoryBarrierMask mask)
+        {
+            Api.MemoryBarrier(ToGLMask(mask));
+        }
+
+        public override void WaitForGpu()
+        {
+            Api.Finish();
+        }
+
+        public override void ColorMask(bool red, bool green, bool blue, bool alpha)
+        {
+            Api.ColorMask(red, green, blue, alpha);
+        }
+
+        private uint ToGLMask(EMemoryBarrierMask mask)
+        {
+            if (mask.HasFlag(EMemoryBarrierMask.All))
+                return uint.MaxValue;
+
+            uint glMask = 0;
+            if (mask.HasFlag(EMemoryBarrierMask.VertexAttribArray))
+                glMask |= (uint)MemoryBarrierMask.VertexAttribArrayBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.ElementArray))
+                glMask |= (uint)MemoryBarrierMask.ElementArrayBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.Uniform))
+                glMask |= (uint)MemoryBarrierMask.UniformBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.TextureFetch))
+                glMask |= (uint)MemoryBarrierMask.TextureFetchBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.ShaderGlobalAccess))
+                glMask |= (uint)MemoryBarrierMask.ShaderGlobalAccessBarrierBitNV;
+            if (mask.HasFlag(EMemoryBarrierMask.ShaderImageAccess))
+                glMask |= (uint)MemoryBarrierMask.ShaderImageAccessBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.Command))
+                glMask |= (uint)MemoryBarrierMask.CommandBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.PixelBuffer))
+                glMask |= (uint)MemoryBarrierMask.PixelBufferBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.TextureUpdate))
+                glMask |= (uint)MemoryBarrierMask.TextureUpdateBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.BufferUpdate))
+                glMask |= (uint)MemoryBarrierMask.BufferUpdateBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.Framebuffer))
+                glMask |= (uint)MemoryBarrierMask.FramebufferBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.TransformFeedback))
+                glMask |= (uint)MemoryBarrierMask.TransformFeedbackBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.AtomicCounter))
+                glMask |= (uint)MemoryBarrierMask.AtomicCounterBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.ShaderStorage))
+                glMask |= (uint)MemoryBarrierMask.ShaderStorageBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.ClientMappedBuffer))
+                glMask |= (uint)MemoryBarrierMask.ClientMappedBufferBarrierBit;
+            if (mask.HasFlag(EMemoryBarrierMask.QueryBuffer))
+                glMask |= (uint)MemoryBarrierMask.QueryBufferBarrierBit;
+            return glMask;
+        }
+
+        private unsafe static void SetupDebug(GL api)
+        {
+            // Be defensive here: some drivers (or non-debug contexts) can report GL_INVALID_OPERATION
+            // for DebugMessageControl even though the process otherwise supports OpenGL.
+            // We still try to enable the callback; we just skip driver-level filtering when unsupported.
+
+            bool supportsDebugOutput = true;
+            string[]? extensions = Engine.Rendering.State.OpenGLExtensions;
+            if (extensions is { Length: > 0 })
+            {
+                supportsDebugOutput = extensions.Any(static e =>
+                    string.Equals(e, "GL_KHR_debug", StringComparison.Ordinal)
+                    || string.Equals(e, "GL_ARB_debug_output", StringComparison.Ordinal));
+            }
+
+            if (!supportsDebugOutput)
+                return;
+
+            try
+            {
+                api.Enable(EnableCap.DebugOutput);
+                api.Enable(EnableCap.DebugOutputSynchronous);
+                api.DebugMessageCallback(DebugCallback, null);
+            }
+            catch
+            {
+                return;
+            }
+
+            bool isDebugContext = false;
+            try
+            {
+                int flags = api.GetInteger(GLEnum.ContextFlags);
+                isDebugContext = ((ContextFlagMask)flags).HasFlag(ContextFlagMask.DebugBit);
+            }
+            catch
+            {
+                // If we can't query flags, assume non-debug context.
+            }
+
+            if (!isDebugContext)
+                return;
+
+            // Disable known-noisy messages at the driver level to avoid spamming logs.
+            if (_ignoredMessageIds.Length == 0)
+                return;
+
+            try
+            {
+                uint[] ids = Array.ConvertAll(_ignoredMessageIds, static x => unchecked((uint)x));
+                fixed (uint* ptr = ids)
+                    api.DebugMessageControl(GLEnum.DontCare, GLEnum.DontCare, GLEnum.DontCare, (uint)ids.Length, ptr, false);
+            }
+            catch
+            {
+                // Ignore: callback will still work, we just won't filter spammy IDs.
+            }
+        }
+
+        private static int[] _ignoredMessageIds =
+        [
+            131185, //buffer will use video memory
+            131204, //no base level, no mipmaps, etc
+            131169, //allocated memory for render buffer
+            131154, //pixel transfer is synchronized with 3d rendering
+            //131216,
+            131218,
+            131076,
+            131139, //Rasterization quality warning: A non-fullscreen clear caused a fallback from CSAA to MSAA.
+            131186, //Buffer performance warning: buffer is being copied/moved from video memory to host memory.
+            131188, //Buffer usage warning: Analysis of buffer object usage indicates that CPU is consuming buffer object data.  The usage hint supplied with this buffer object, GL_DYNAMIC_COPY, is inconsistent with this usage pattern.  Try using GL_STREAM_READ_ARB, GL_STATIC_READ_ARB, or GL_DYNAMIC_READ_ARB instead.
+            131220, //Program/shader state usage warning (integer framebuffer): fragment shader required (often spammy during Clear on some drivers)
+            //1282,
+            //0,
+            //9,
+        ];
+        private static int[] _printMessageIds =
+        [
+            //1280, //Invalid texture format and type combination
+            //1281, //Invalid texture format
+            //1282,
+        ];
+
+        public unsafe static void DebugCallback(GLEnum source, GLEnum type, int id, GLEnum severity, int length, nint message, nint userParam)
+        {
+            // Never suppress actual GL error messages.
+            if (type != GLEnum.DebugTypeError && _ignoredMessageIds.IndexOf(id) >= 0)
+                return;
+
+            string messageStr = new((sbyte*)message);
+            string formattedMessage = $"OPENGL {FormatSeverity(severity)} #{id} | {FormatSource(source)} {FormatType(type)} | {messageStr}";
+            if (type == GLEnum.DebugTypeError)
+            {
+                if (Current is OpenGLRenderer renderer)
+                {
+                    string context = renderer.BuildOpenGLErrorContext();
+                    if (!string.IsNullOrWhiteSpace(context))
+                        formattedMessage = $"{formattedMessage}{Environment.NewLine}{context}";
+                }
+
+                // Keep driver-reported GL errors deeper than ordinary warnings so the log reaches the calling render pass.
+                Debug.LogWarning(ELogCategory.OpenGL, 0, 10, formattedMessage);
+            }
+            else
+            {
+                Debug.OpenGLWarning(formattedMessage);
+            }
+            bool shouldTrack = type == GLEnum.DebugTypeError;
+            RecordOpenGLError(id, FormatSource(source), FormatType(type), FormatSeverity(severity), messageStr, shouldTrack);
+
+            // OOM errors leave the driver in a corrupted state � flag it so draw calls are skipped for the rest of this frame.
+            if (id == 1285 || messageStr.Contains("out of memory", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Current is OpenGLRenderer renderer)
+                    renderer._oomDetectedThisFrame = true;
+            }
+        }
+
+        private static string FormatSeverity(GLEnum severity)
+            => severity switch
+            {
+                GLEnum.DebugSeverityHigh => "High",
+                GLEnum.DebugSeverityMedium => "Medium",
+                GLEnum.DebugSeverityLow => "Low",
+                GLEnum.DebugSeverityNotification => "Notification",
+                _ => severity.ToString(),
+            };
+
+        private static string FormatType(GLEnum type)
+            => type switch
+            {
+                GLEnum.DebugTypeError => "Error",
+                GLEnum.DebugTypeDeprecatedBehavior => "Deprecated Behavior",
+                GLEnum.DebugTypeUndefinedBehavior => "Undefined Behavior",
+                GLEnum.DebugTypePortability => "Portability",
+                GLEnum.DebugTypePerformance => "Performance",
+                GLEnum.DebugTypeOther => "Other",
+                GLEnum.DebugTypeMarker => "Marker",
+                GLEnum.DebugTypePushGroup => "Push Group",
+                GLEnum.DebugTypePopGroup => "Pop Group",
+                _ => type.ToString(),
+            };
+
+        private static string FormatSource(GLEnum source)
+            => source switch
+            {
+                GLEnum.DebugSourceApi => "API",
+                GLEnum.DebugSourceWindowSystem => "Window System",
+                GLEnum.DebugSourceShaderCompiler => "Shader Compiler",
+                GLEnum.DebugSourceThirdParty => "Third Party",
+                GLEnum.DebugSourceApplication => "Application",
+                GLEnum.DebugSourceOther => "Other",
+                _ => source.ToString(),
+            };
+
+        public static void CheckError(string? name)
+        {
+            //if (Current is not OpenGLRenderer renderer)
+            //    return;
+
+            //var error = renderer.Api.GetError();
+            //if (error != GLEnum.NoError)
+            //    Debug.LogWarning(name is null ? error.ToString() : $"{name}: {error}", 1);
+        }
+
+        public bool LogGLErrors(string context)
+        {
+            bool hadError = false;
+            GLEnum error;
+            while ((error = Api.GetError()) != GLEnum.NoError)
+            {
+                hadError = true;
+                Debug.OpenGLWarning($"OpenGL error after {context}: {error}");
+            }
+
+            return hadError;
+        }
+
+        protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)
+            => renderObject switch
+            {
+                //Materials
+                XRMaterial data => new GLMaterial(this, data),
+                XRShader s => new GLShader(this, s),
+
+                //Meshes
+                //"BaseVersion" here is the base class for different mesh renderers necessary for different render paths (like VR or not).
+                XRMeshRenderer.BaseVersion data => new GLMeshRenderer(this, data),
+
+                //Programs
+                XRRenderProgramPipeline data => new GLRenderProgramPipeline(this, data),
+                XRRenderProgram data => new GLRenderProgram(this, data),
+
+                //Buffers
+                XRDataBuffer data => new GLDataBuffer(this, data),
+                XRDataBufferView data => new GLDataBufferView(this, data),
+
+                //Render Targets
+                XRRenderBuffer data => new GLRenderBuffer(this, data),
+                XRFrameBuffer data => new GLFrameBuffer(this, data),
+
+                //Texture 1D
+                XRTexture1D data => new GLTexture1D(this, data),
+                XRTexture1DArray data => new GLTexture1DArray(this, data),
+                XRTextureViewBase data => new GLTextureView(this, data),
+
+                //Texture 2D
+                XRTexture2D data => new GLTexture2D(this, data),
+                XRTexture2DArray data => new GLTexture2DArray(this, data),
+                XRTextureRectangle data => new GLTextureRectangle(this, data),
+
+                //Texture 3D
+                XRTexture3D data => new GLTexture3D(this, data),
+
+                //Texture Cube
+                XRTextureCube data => new GLTextureCube(this, data),
+                XRTextureCubeArray data => new GLTextureCubeArray(this, data),
+
+                //Texture Buffer
+                XRTextureBuffer data => new GLTextureBuffer(this, data),
+
+                //Samplers
+                XRSampler s => new GLSampler(this, s),
+
+                //Feedback
+                XRRenderQuery data => new GLRenderQuery(this, data),
+                XRTransformFeedback data => new GLTransformFeedback(this, data),
+
+                _ => throw new InvalidOperationException($"Render object type {renderObject.GetType()} is not supported.")
+            };
+
+        protected override GL GetAPI()
+        {
+            var api = GL.GetApi(Window.GLContext);
+            InitGL(api);
+            return api;
+        }
+
+        public override void Initialize()
+        {
+
+        }
+
+        public override void CleanUp()
+        {
+            _imguiMultiViewportController?.Dispose();
+            _imguiMultiViewportController = null;
+
+            if (_imguiController is { } controller)
+            {
+                ImGuiControllerUtilities.DetachInputHandlers(controller);
+                ImGuiControllerUtilities.MarkContextDestroyed(controller.Context);
+                ImGuiContextTracker.Unregister(controller.Context);
+                controller.Dispose();
+            }
+            _imguiController = null;
+            _imguiBackend = null;
+            _imguiFontValidationCountdown = 0;
+            ResetImGuiFrameMarker();
+
+            // Clean up shared context and async queues
+            _programBinaryUploadQueue = null;
+            _programCompileLinkQueue = null;
+            _sharedContext?.Dispose();
+            _sharedContext = null;
+
+            CancelPendingFrontLuminanceReadback();
+
+            // Clean up cached luminance front resources
+            if (_luminanceFrontTex != 0)
+            {
+                Api.DeleteTexture(_luminanceFrontTex);
+                _luminanceFrontTex = 0;
+            }
+            if (_luminanceFrontFbo != 0)
+            {
+                Api.DeleteFramebuffer(_luminanceFrontFbo);
+                _luminanceFrontFbo = 0;
+            }
+            if (_luminanceFrontPbo != 0)
+            {
+                Api.DeleteBuffer(_luminanceFrontPbo);
+                _luminanceFrontPbo = 0;
+            }
+            _luminanceFrontPboSize = 0;
+            _luminanceFrontTexWidth = 0;
+            _luminanceFrontTexHeight = 0;
+            _luminanceFrontMipLevels = 0;
+
+            // Clean up compute shader resources
+            if (_luminanceResultBuffer != 0)
+            {
+                Api.DeleteBuffer(_luminanceResultBuffer);
+                _luminanceResultBuffer = 0;
+            }
+            _luminanceResultBufferSize = 0;
+            _luminanceComputeProgram?.Destroy();
+            _luminanceComputeProgram = null;
+            _luminanceComputeInitialized = false;
+        }
+
+        /// <summary>
+        /// Per-renderer frame counter for caching purposes.
+        /// Incremented each frame during ProcessPendingUploads.
+        /// </summary>
+        internal long _frameCounter;
+
+        /// <summary>
+        /// Set by the debug callback when the NVIDIA driver reports GL_OUT_OF_MEMORY.
+        /// Consumed (cleared) at the start of each frame by <see cref="ProcessPendingUploads"/>.
+        /// Do NOT use this to suppress draw calls � use <see cref="SuppressDrawsForOomRecovery"/> instead.
+        /// </summary>
+        internal volatile bool _oomDetectedThisFrame;
+
+        /// <summary>
+        /// True while the renderer is inside an OOM cooldown period.
+        /// Suppresses draw calls and GPU allocations until the cooldown expires.
+        /// Kept separate from <see cref="_oomDetectedThisFrame"/> to avoid the cooldown
+        /// self-restarting by reading back its own suppression flag.
+        /// </summary>
+        internal bool SuppressDrawsForOomRecovery;
+
+        /// <summary>
+        /// Remaining frames of OOM cooldown. While positive, all GPU allocations (buffer uploads,
+        /// mesh generation, draw calls) are suppressed to let the driver recover memory.
+        /// </summary>
+        private int _oomCooldownFrames;
+
+        /// <summary>
+        /// Number of frames to suppress GPU allocations after an OOM event.
+        /// Gives the driver time to reclaim memory from destroyed objects.
+        /// </summary>
+        private const int OomCooldownDuration = 10;
+
+        private GLSharedContext? _sharedContext;
+        private GLProgramBinaryUploadQueue? _programBinaryUploadQueue;
+        private GLProgramCompileLinkQueue? _programCompileLinkQueue;
+
+        internal bool HasSharedContext => _sharedContext is { IsRunning: true };
+
+        /// <summary>
+        /// Gets the async program binary upload queue, or <c>null</c> if the shared context
+        /// could not be created or async uploads are disabled.
+        /// </summary>
+        public GLProgramBinaryUploadQueue? ProgramBinaryUploadQueue => _programBinaryUploadQueue;
+
+        /// <summary>
+        /// Gets the async compile+link queue, or <c>null</c> if the shared context
+        /// could not be created or async compilation is disabled.
+        /// </summary>
+        public GLProgramCompileLinkQueue? ProgramCompileLinkQueue => _programCompileLinkQueue;
+
+        internal bool TryEnqueueSharedContextJob(Action<GL> job)
+        {
+            if (_sharedContext is not { IsRunning: true } sharedContext)
+                return false;
+
+            sharedContext.Enqueue(job);
+            return true;
+        }
+
+        /// <summary>
+        /// Creates a shared GL context and the async queues for program binary upload
+        /// and compile+link. Must be called from the main render thread after the
+        /// primary context is fully initialized.
+        /// </summary>
+        private void InitAsyncProgramBinaryUpload()
+        {
+            bool wantBinaryUpload = Engine.Rendering.Settings.AsyncProgramBinaryUpload
+                                 && Engine.Rendering.Settings.AllowBinaryProgramCaching;
+            bool wantCompileLink = Engine.Rendering.Settings.AsyncProgramCompilation;
+            bool wantSparseTextureUploads = GetSparseTextureStreamingSupport(ESizedInternalFormat.Rgba8).IsAvailable;
+
+            if (!wantBinaryUpload && !wantCompileLink && !wantSparseTextureUploads)
+                return;
+
+            var sharedCtx = new GLSharedContext();
+            if (sharedCtx.Initialize(XRWindow))
+            {
+                _sharedContext = sharedCtx;
+
+                if (wantBinaryUpload)
+                {
+                    _programBinaryUploadQueue = new GLProgramBinaryUploadQueue(sharedCtx);
+                    Debug.OpenGL("[ShaderCache] Async program binary upload enabled via shared GL context.");
+                }
+
+                if (wantCompileLink)
+                {
+                    _programCompileLinkQueue = new GLProgramCompileLinkQueue(sharedCtx);
+                    Debug.OpenGL("[ShaderCache] Async program compile+link enabled via shared GL context.");
+                }
+
+                if (wantSparseTextureUploads)
+                    Debug.OpenGL("Sparse texture streaming shared GL context enabled for async texture uploads.");
+            }
+            else
+            {
+                Debug.OpenGLWarning("[ShaderCache] Failed to create shared context. Shader operations will be synchronous.");
+                sharedCtx.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Processes pending async buffer uploads and mesh generations within the frame time budget.
+        /// Skips all GPU allocations during OOM cooldown to let the driver recover.
+        /// </summary>
+        public override void ProcessPendingUploads()
+        {
+            _frameCounter++;
+
+            GLRenderProgram.PollPendingAsyncPrograms(Engine.Rendering.Settings.MaxAsyncShaderProgramsPerFrame);
+
+            // Snapshot and clear the volatile flag set by the debug callback.
+            // This must happen before the cooldown check so the cooldown's own
+            // draw-suppression flag cannot self-restart the timer.
+            bool driverReportedOom = _oomDetectedThisFrame;
+            _oomDetectedThisFrame = false;
+
+            // A fresh OOM from the driver starts (or extends) the cooldown.
+            if (driverReportedOom)
+            {
+                if (_oomCooldownFrames == 0)
+                    Debug.OpenGLWarning($"[OOM Recovery] Entering {OomCooldownDuration}-frame cooldown � suspending GPU allocations.");
+                _oomCooldownFrames = OomCooldownDuration;
+            }
+
+            if (_oomCooldownFrames > 0)
+            {
+                _oomCooldownFrames--;
+                SuppressDrawsForOomRecovery = true;
+                return;
+            }
+
+            SuppressDrawsForOomRecovery = false;
+            UploadQueue.ProcessUploads();
+            MeshGenerationQueue.ProcessGeneration();
+        }
+
+        protected override void WindowRenderCallback(double delta)
+        {
+
+        }
+
+        public override void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ)
+        {
+            GLRenderProgram? glProgram = GenericToAPI<GLRenderProgram>(program);
+            if (glProgram is null)
+                return;
+
+            Api.UseProgram(glProgram.BindingId);
+            Api.DispatchCompute((uint)numGroupsX, (uint)numGroupsY, (uint)numGroupsZ);
+        }
+
+        public override void AllowDepthWrite(bool allow)
+        {
+            Api.DepthMask(allow);
+        }
+        public override void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo)
+        {
+            Api.BindFramebuffer(GLObjectBase.ToGLEnum(fboTarget), GenericToAPI<GLFrameBuffer>(fbo)?.BindingId ?? 0u);
+        }
+        public override void Clear(bool color, bool depth, bool stencil)
+        {
+            uint mask = 0;
+            if (color)
+                mask |= (uint)GLEnum.ColorBufferBit;
+            if (depth)
+                mask |= (uint)GLEnum.DepthBufferBit;
+            if (stencil)
+                mask |= (uint)GLEnum.StencilBufferBit;
+            if (mask == 0)
+                return;
+
+            // Some drivers emit KHR_debug spam when GL_BLEND is enabled and the currently bound
+            // framebuffer has integer color attachments. Blending does not affect glClear, so
+            // we temporarily disable it for the clear and restore the previous enable state.
+            bool blendWasEnabled = color && Api.IsEnabled(EnableCap.Blend);
+            if (blendWasEnabled)
+                Api.Disable(EnableCap.Blend);
+
+            Api.Clear(mask);
+
+            if (blendWasEnabled)
+                Api.Enable(EnableCap.Blend);
+        }
+
+        public override void ClearColor(ColorF4 color)
+        {
+            Api.ClearColor(color.R, color.G, color.B, color.A);
+        }
+        public override void ClearDepth(float depth)
+        {
+            Api.ClearDepth(depth);
+        }
+        public override void ClearStencil(int stencil)
+        {
+            Api.ClearStencil(stencil);
+        }
+        public override void StencilMask(uint v)
+        {
+            Api.StencilMask(v);
+        }
+
+        public override void EnableStencilTest(bool enable)
+        {
+            if (enable)
+                Api.Enable(EnableCap.StencilTest);
+            else
+                Api.Disable(EnableCap.StencilTest);
+        }
+
+        public override void StencilFunc(EComparison function, int reference, uint mask)
+        {
+            Api.StencilFunc(StencilFunction.Never + (int)function, reference, mask);
+        }
+
+        public override void StencilOp(EStencilOp sfail, EStencilOp dpfail, EStencilOp dppass)
+        {
+            Api.StencilOp(
+                (Silk.NET.OpenGL.StencilOp)(int)sfail,
+                (Silk.NET.OpenGL.StencilOp)(int)dpfail,
+                (Silk.NET.OpenGL.StencilOp)(int)dppass);
+        }
+
+        public override void EnableBlend(bool enable)
+        {
+            if (enable)
+                Api.Enable(EnableCap.Blend);
+            else
+                Api.Disable(EnableCap.Blend);
+        }
+
+        public override void BlendFunc(EBlendingFactor src, EBlendingFactor dst)
+        {
+            Api.BlendFunc(ToGLEnum(src), ToGLEnum(dst));
+        }
+
+        public override void BlendFuncSeparate(EBlendingFactor srcRGB, EBlendingFactor dstRGB, EBlendingFactor srcAlpha, EBlendingFactor dstAlpha)
+        {
+            Api.BlendFuncSeparate(ToGLEnum(srcRGB), ToGLEnum(dstRGB), ToGLEnum(srcAlpha), ToGLEnum(dstAlpha));
+        }
+
+        public override void BlendEquation(EBlendEquationMode mode)
+        {
+            Api.BlendEquation(ToGLEnum(mode));
+        }
+
+        public override void BlendEquationSeparate(EBlendEquationMode modeRGB, EBlendEquationMode modeAlpha)
+        {
+            Api.BlendEquationSeparate(ToGLEnum(modeRGB), ToGLEnum(modeAlpha));
+        }
+
+        public override void EnableSampleShading(float minValue)
+        {
+            Api.Enable(EnableCap.SampleShading);
+            Api.MinSampleShading(minValue);
+        }
+        public override void DisableSampleShading()
+        {
+            Api.Disable(EnableCap.SampleShading);
+        }
+        public override void DepthFunc(EComparison comparison)
+        {
+            var comp = comparison switch
+            {
+                EComparison.Never => GLEnum.Never,
+                EComparison.Less => GLEnum.Less,
+                EComparison.Equal => GLEnum.Equal,
+                EComparison.Lequal => GLEnum.Lequal,
+                EComparison.Greater => GLEnum.Greater,
+                EComparison.Nequal => GLEnum.Notequal,
+                EComparison.Gequal => GLEnum.Gequal,
+                EComparison.Always => GLEnum.Always,
+                _ => throw new ArgumentOutOfRangeException(nameof(comparison), comparison, null),
+            };
+            Api.DepthFunc(comp);
+        }
+        public override void EnableDepthTest(bool enable)
+        {
+            if (enable)
+                Api.Enable(EnableCap.DepthTest);
+            else
+                Api.Disable(EnableCap.DepthTest);
+        }
+        public override unsafe byte GetStencilIndex(float x, float y)
+        {
+            byte stencil = 0;
+            Api.ReadPixels((int)x, (int)y, 1, 1, PixelFormat.StencilIndex, PixelType.UnsignedByte, &stencil);
+            return stencil;
+        }
+        public override void SetReadBuffer(EReadBufferMode mode)
+        {
+            Api.ReadBuffer(ToGLEnum(mode));
+        }
+        public override void SetReadBuffer(XRFrameBuffer? fbo, EReadBufferMode mode)
+        {
+            Api.NamedFramebufferReadBuffer(GenericToAPI<GLFrameBuffer>(fbo)?.BindingId ?? 0, ToGLEnum(mode));
+        }
+
+        private static GLEnum ToGLEnum(EReadBufferMode mode)
+        {
+            return mode switch
+            {
+                EReadBufferMode.None => GLEnum.None,
+                EReadBufferMode.Front => GLEnum.Front,
+                EReadBufferMode.Back => GLEnum.Back,
+                EReadBufferMode.Left => GLEnum.Left,
+                EReadBufferMode.Right => GLEnum.Right,
+                EReadBufferMode.FrontLeft => GLEnum.FrontLeft,
+                EReadBufferMode.FrontRight => GLEnum.FrontRight,
+                EReadBufferMode.BackLeft => GLEnum.BackLeft,
+                EReadBufferMode.BackRight => GLEnum.BackRight,
+                EReadBufferMode.ColorAttachment0 => GLEnum.ColorAttachment0,
+                EReadBufferMode.ColorAttachment1 => GLEnum.ColorAttachment1,
+                EReadBufferMode.ColorAttachment2 => GLEnum.ColorAttachment2,
+                EReadBufferMode.ColorAttachment3 => GLEnum.ColorAttachment3,
+                EReadBufferMode.ColorAttachment4 => GLEnum.ColorAttachment4,
+                EReadBufferMode.ColorAttachment5 => GLEnum.ColorAttachment5,
+                EReadBufferMode.ColorAttachment6 => GLEnum.ColorAttachment6,
+                EReadBufferMode.ColorAttachment7 => GLEnum.ColorAttachment7,
+                EReadBufferMode.ColorAttachment8 => GLEnum.ColorAttachment8,
+                EReadBufferMode.ColorAttachment9 => GLEnum.ColorAttachment9,
+                EReadBufferMode.ColorAttachment10 => GLEnum.ColorAttachment10,
+                EReadBufferMode.ColorAttachment11 => GLEnum.ColorAttachment11,
+                EReadBufferMode.ColorAttachment12 => GLEnum.ColorAttachment12,
+                EReadBufferMode.ColorAttachment13 => GLEnum.ColorAttachment13,
+                EReadBufferMode.ColorAttachment14 => GLEnum.ColorAttachment14,
+                EReadBufferMode.ColorAttachment15 => GLEnum.ColorAttachment15,
+                EReadBufferMode.ColorAttachment16 => GLEnum.ColorAttachment16,
+                EReadBufferMode.ColorAttachment17 => GLEnum.ColorAttachment17,
+                EReadBufferMode.ColorAttachment18 => GLEnum.ColorAttachment18,
+                EReadBufferMode.ColorAttachment19 => GLEnum.ColorAttachment19,
+                EReadBufferMode.ColorAttachment20 => GLEnum.ColorAttachment20,
+                EReadBufferMode.ColorAttachment21 => GLEnum.ColorAttachment21,
+                EReadBufferMode.ColorAttachment22 => GLEnum.ColorAttachment22,
+                EReadBufferMode.ColorAttachment23 => GLEnum.ColorAttachment23,
+                EReadBufferMode.ColorAttachment24 => GLEnum.ColorAttachment24,
+                EReadBufferMode.ColorAttachment25 => GLEnum.ColorAttachment25,
+                EReadBufferMode.ColorAttachment26 => GLEnum.ColorAttachment26,
+                EReadBufferMode.ColorAttachment27 => GLEnum.ColorAttachment27,
+                EReadBufferMode.ColorAttachment28 => GLEnum.ColorAttachment28,
+                EReadBufferMode.ColorAttachment29 => GLEnum.ColorAttachment29,
+                EReadBufferMode.ColorAttachment30 => GLEnum.ColorAttachment30,
+                EReadBufferMode.ColorAttachment31 => GLEnum.ColorAttachment31,
+                _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null),
+            };
+        }
+
+        public override void SetRenderArea(BoundingRectangle region)
+            => Api.Viewport(region.X, region.Y, (uint)region.Width, (uint)region.Height);
+
+        public override void CropRenderArea(BoundingRectangle region)
+            => Api.Scissor(region.X, region.Y, (uint)region.Width, (uint)region.Height);
+
+        public override void SetCroppingEnabled(bool enabled)
+        {
+            if (enabled)
+                Api.Enable(EnableCap.ScissorTest);
+            else
+                Api.Disable(EnableCap.ScissorTest);
+        }
+
+        public void CheckFrameBufferErrors(GLFrameBuffer fbo)
+        {
+            var result = Api.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+            bool complete = result == GLEnum.FramebufferComplete;
+            fbo.Data.IsLastCheckComplete = complete;
+            if (!complete)
+            {
+                string debug = GetFBODebugInfo(fbo, Environment.NewLine);
+                string name = fbo.GetDescribingName();
+                string details = string.Empty;
+                if (TryGetOneTimeFBODetailDump(fbo, out var dump))
+                    details = dump;
+
+                Debug.OpenGLWarning($"FBO {name} is not complete. Status: {result}{debug}{details}");
+            }
+        }
+
+        private readonly HashSet<uint> _fboDetailedDumped = new();
+        private bool TryGetOneTimeFBODetailDump(GLFrameBuffer fbo, out string dump)
+        {
+            dump = string.Empty;
+            if (!fbo.TryGetBindingId(out uint fboId) || fboId == 0)
+                return false;
+
+            // Avoid log spam: only dump details once per FBO binding id.
+            if (_fboDetailedDumped.Contains(fboId))
+                return false;
+            _fboDetailedDumped.Add(fboId);
+
+            dump = GetFBODetailDump(fbo, Environment.NewLine);
+            return !string.IsNullOrWhiteSpace(dump);
+        }
+
+        private string GetFBODetailDump(GLFrameBuffer fbo, string splitter)
+        {
+            try
+            {
+                if (!fbo.TryGetBindingId(out uint fboId) || fboId == 0)
+                    return string.Empty;
+
+                if (fbo.Data.Targets is null || fbo.Data.Targets.Length == 0)
+                    return $"{splitter}[FBO Detail] No targets.";
+
+                string s = $"{splitter}[FBO Detail] NamedFramebuffer={fboId}";
+
+                foreach (var (Target, Attachment, MipLevel, LayerIndex) in fbo.Data.Targets)
+                {
+                    var glAttachment = (GLEnum)ToGLEnum(Attachment);
+
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentObjectType, out int objType);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentObjectName, out int objName);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentTextureLevel, out int attachedLevel);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentTextureLayer, out int attachedLayer);
+
+                    s += $"{splitter}[FBO Detail] {Attachment}: GL objType={(GLEnum)objType} objName={objName} texLevel={attachedLevel} texLayer={attachedLayer}";
+
+                    // If we can resolve the GL texture wrapper, also dump texture params/level info.
+                    if (Target is XRTexture xrTex)
+                    {
+                        IGLTexture? glTex = xrTex switch
+                        {
+                            XRTexture1D t => GenericToAPI<GLTexture1D>(t),
+                            XRTexture1DArray t => GenericToAPI<GLTexture1DArray>(t),
+                            XRTexture2D t => GenericToAPI<GLTexture2D>(t),
+                            XRTexture2DArray t => GenericToAPI<GLTexture2DArray>(t),
+                            XRTextureRectangle t => GenericToAPI<GLTextureRectangle>(t),
+                            XRTexture3D t => GenericToAPI<GLTexture3D>(t),
+                            XRTextureCube t => GenericToAPI<GLTextureCube>(t),
+                            XRTextureCubeArray t => GenericToAPI<GLTextureCubeArray>(t),
+                            XRTextureBuffer t => GenericToAPI<GLTextureBuffer>(t),
+                            XRTextureViewBase t => GenericToAPI<GLTextureView>(t),
+                            _ => null
+                        };
+
+                        uint texId = 0;
+                        if (glTex is GLObjectBase glObj && glObj.TryGetBindingId(out texId) && texId != 0)
+                        {
+                            bool isTex = Api.IsTexture(texId);
+                            s += $"{splitter}[FBO Detail]   XR={xrTex.GetDescribingName()} -> GL texId={texId} glIsTexture={isTex} xrResizable={xrTex.IsResizeable} xrWHD={xrTex.WidthHeightDepth}";
+
+                            if (!isTex)
+                            {
+                                s += $"{splitter}[FBO Detail]   GL texture object is invalid; skipping parameter queries.";
+                            }
+                            else
+                            {
+                                // DSA queries (works regardless of current binding).
+                                Api.GetTextureParameter(texId, GLEnum.TextureBaseLevel, out int baseLevel);
+                                Api.GetTextureParameter(texId, GLEnum.TextureMaxLevel, out int maxLevel);
+                                Api.GetTextureParameter(texId, GLEnum.TextureImmutableFormat, out int immutable);
+                                Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureWidth, out int levelW);
+                                Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureHeight, out int levelH);
+                                Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureInternalFormat, out int levelInternal);
+
+                                s += $"{splitter}[FBO Detail]   GL baseLevel={baseLevel} maxLevel={maxLevel} immutable={(immutable != 0)} levelW={levelW} levelH={levelH} levelInternal=0x{levelInternal:X}";
+                            }
+                        }
+                        else
+                        {
+                            s += $"{splitter}[FBO Detail]   XR={xrTex.GetDescribingName()} -> (no GL texture wrapper id)";
+                        }
+                    }
+                }
+
+                // Also scan actual GL attachment points in case something is still attached but not represented
+                // in `Data.Targets` (stale color attachments are a common cause of INCOMPLETE_ATTACHMENT).
+                static bool IsInterestingAttachment(GLEnum att)
+                    => att == GLEnum.DepthAttachment || att == GLEnum.StencilAttachment ||
+                       att == GLEnum.ColorAttachment0 || att == GLEnum.ColorAttachment1 || att == GLEnum.ColorAttachment2 || att == GLEnum.ColorAttachment3 ||
+                       att == GLEnum.ColorAttachment4 || att == GLEnum.ColorAttachment5 || att == GLEnum.ColorAttachment6 || att == GLEnum.ColorAttachment7;
+
+                s += $"{splitter}[FBO Detail] Attached objects (GL query):";
+                foreach (var att in new[]
+                {
+                    GLEnum.DepthAttachment,
+                    GLEnum.StencilAttachment,
+                    GLEnum.ColorAttachment0,
+                    GLEnum.ColorAttachment1,
+                    GLEnum.ColorAttachment2,
+                    GLEnum.ColorAttachment3,
+                    GLEnum.ColorAttachment4,
+                    GLEnum.ColorAttachment5,
+                    GLEnum.ColorAttachment6,
+                    GLEnum.ColorAttachment7,
+                })
+                {
+                    if (!IsInterestingAttachment(att))
+                        continue;
+
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentObjectType, out int objType);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentObjectName, out int objName);
+                    if ((GLEnum)objType == GLEnum.None || objName == 0)
+                        continue;
+
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentTextureLevel, out int level);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentTextureLayer, out int layer);
+                    s += $"{splitter}[FBO Detail]   {att}: objType={(GLEnum)objType} objName={objName} texLevel={level} texLayer={layer}";
+                }
+
+                return s;
+            }
+            catch (Exception ex)
+            {
+                return $"{splitter}[FBO Detail] Failed to query details: {ex.GetType().Name}: {ex.Message}";
+            }
+        }
+
+        private GLEnum ToGLEnum(EFrameBufferAttachment attachment)
+        {
+            return attachment switch
+            {
+                EFrameBufferAttachment.ColorAttachment0 => GLEnum.ColorAttachment0,
+                EFrameBufferAttachment.ColorAttachment1 => GLEnum.ColorAttachment1,
+                EFrameBufferAttachment.ColorAttachment2 => GLEnum.ColorAttachment2,
+                EFrameBufferAttachment.ColorAttachment3 => GLEnum.ColorAttachment3,
+                EFrameBufferAttachment.ColorAttachment4 => GLEnum.ColorAttachment4,
+                EFrameBufferAttachment.ColorAttachment5 => GLEnum.ColorAttachment5,
+                EFrameBufferAttachment.ColorAttachment6 => GLEnum.ColorAttachment6,
+                EFrameBufferAttachment.ColorAttachment7 => GLEnum.ColorAttachment7,
+                EFrameBufferAttachment.ColorAttachment8 => GLEnum.ColorAttachment8,
+                EFrameBufferAttachment.ColorAttachment9 => GLEnum.ColorAttachment9,
+                EFrameBufferAttachment.ColorAttachment10 => GLEnum.ColorAttachment10,
+                EFrameBufferAttachment.ColorAttachment11 => GLEnum.ColorAttachment11,
+                EFrameBufferAttachment.ColorAttachment12 => GLEnum.ColorAttachment12,
+                EFrameBufferAttachment.ColorAttachment13 => GLEnum.ColorAttachment13,
+                EFrameBufferAttachment.ColorAttachment14 => GLEnum.ColorAttachment14,
+                EFrameBufferAttachment.ColorAttachment15 => GLEnum.ColorAttachment15,
+                EFrameBufferAttachment.DepthAttachment => GLEnum.DepthAttachment,
+                EFrameBufferAttachment.StencilAttachment => GLEnum.StencilAttachment,
+                EFrameBufferAttachment.DepthStencilAttachment => GLEnum.DepthStencilAttachment,
+                _ => throw new ArgumentOutOfRangeException(nameof(attachment), attachment, null),
+            };
+        }
+
+        private static string GetFBODebugInfo(GLFrameBuffer fbo, string splitter)
+        {
+            string debug = string.Empty;
+            if (fbo.Data.Targets is null || fbo.Data.Targets.Length == 0)
+            {
+                debug += $"{splitter}This FBO has no targets.";
+                return debug;
+            }
+
+            foreach (var (Target, Attachment, MipLevel, LayerIndex) in fbo.Data.Targets)
+            {
+                GenericRenderObject? gro = Target as GenericRenderObject;
+                bool targetExists = gro is not null;
+                string texName = targetExists ? gro!.GetDescribingName() : "<null>";
+                debug += $"{splitter}{Attachment}: {texName} Mip{MipLevel}";
+                if (LayerIndex >= 0)
+                    debug += $" Layer{LayerIndex}";
+                if (targetExists)
+                    debug += $" / {GetTargetDebugInfo(gro!)}";
+            }
+            return debug;
+        }
+
+        private static string GetTargetDebugInfo(GenericRenderObject gro)
+        {
+            string debug = string.Empty;
+            switch (gro)
+            {
+                case XRTexture2DView t2dv:
+                    debug += $"{t2dv.ViewedTexture.Width}x{t2dv.ViewedTexture.Height} | Viewing {t2dv.ViewedTexture.Name} | internal:{t2dv.InternalFormat}{FormatMipLevels(t2dv.ViewedTexture)}";
+                    break;
+                case XRTexture2D t2d:
+                    debug += $"{t2d.Width}x{t2d.Height}{FormatMipLevels(t2d)}";
+                    break;
+                case XRRenderBuffer rb:
+                    debug += $"{rb.Width}x{rb.Height} | {rb.Type}";
+                    break;
+                case XRTextureCube tc:
+                    debug += $"{tc.MaxDimension}x{tc.MaxDimension}x{tc.MaxDimension}{FormatMipLevels(tc)}";
+                    break;
+            }
+            return debug;
+        }
+
+        private static string FormatMipLevels(XRTextureCube tc)
+        {
+            switch (tc.Mipmaps.Length)
+            {
+                case 0:
+                    return " | No mipmaps";
+                case 1:
+                    return $" | {FormatMipmap(0, tc.Mipmaps)}";
+                default:
+                    string mipmaps = $" | {tc.Mipmaps.Length} mipmaps";
+                    for (int i = 0; i < tc.Mipmaps.Length; i++)
+                        mipmaps += $"{Environment.NewLine}{FormatMipmap(i, tc.Mipmaps)}";
+                    return mipmaps;
+            }
+        }
+
+        private static string FormatMipLevels(XRTexture2D t2d)
+        {
+            switch (t2d.Mipmaps.Length)
+            {
+                case 0:
+                    return " | No mipmaps";
+                case 1:
+                    return $" | {FormatMipmap(0, t2d.Mipmaps)}";
+                default:
+                    string mipmaps = $" | {t2d.Mipmaps.Length} mipmaps";
+                    for (int i = 0; i < t2d.Mipmaps.Length; i++)
+                        mipmaps += $"{Environment.NewLine}{FormatMipmap(i, t2d.Mipmaps)}";
+                    return mipmaps;
+            }
+        }
+
+        private static string FormatMipmap(int i, CubeMipmap[] mipmaps)
+        {
+            if (i >= mipmaps.Length)
+                return string.Empty;
+
+            CubeMipmap m = mipmaps[i];
+            //Format all sides
+            string sides = string.Empty;
+            for (int j = 0; j < m.Sides.Length; j++)
+            {
+                Mipmap2D side = m.Sides[j];
+                sides += $"{side.Width}x{side.Height} | internal:{side.InternalFormat} | {side.PixelFormat}/{side.PixelType}";
+                if (j < m.Sides.Length - 1)
+                    sides += Environment.NewLine;
+            }
+            return $"Mip{i} | {sides}";
+        }
+
+        private static string FormatMipmap(int i, XREngine.Rendering.Mipmap2D[] mipmaps)
+        {
+            if (i >= mipmaps.Length)
+                return string.Empty;
+
+            var m = mipmaps[i];
+            return $"Mip{i} | {m.Width}x{m.Height} | internal:{m.InternalFormat} | {m.PixelFormat}/{m.PixelType}";
+        }
+
+        //public void SetMipmapParameters(uint bindingId, int minLOD, int maxLOD, int largestMipmapLevel, int smallestAllowedMipmapLevel)
+        //{
+        //    Api.TextureParameterI(bindingId, TextureParameterName.TextureBaseLevel, ref largestMipmapLevel);
+        //    Api.TextureParameterI(bindingId, TextureParameterName.TextureMaxLevel, ref smallestAllowedMipmapLevel);
+        //    Api.TextureParameterI(bindingId, TextureParameterName.TextureMinLod, ref minLOD);
+        //    Api.TextureParameterI(bindingId, TextureParameterName.TextureMaxLod, ref maxLOD);
+        //}
+
+        //public void SetMipmapParameters(ETextureTarget target, int minLOD, int maxLOD, int largestMipmapLevel, int smallestAllowedMipmapLevel)
+        //{
+        //    TextureTarget t = ToTextureTarget(target);
+        //    Api.TexParameterI(t, TextureParameterName.TextureBaseLevel, ref largestMipmapLevel);
+        //    Api.TexParameterI(t, TextureParameterName.TextureMaxLevel, ref smallestAllowedMipmapLevel);
+        //    Api.TexParameterI(t, TextureParameterName.TextureMinLod, ref minLOD);
+        //    Api.TexParameterI(t, TextureParameterName.TextureMaxLod, ref maxLOD);
+        //}
+
+        public unsafe void ClearTexImage(uint bindingId, int level, ColorF4 color)
+        {
+            void* addr = color.Address;
+            Api.ClearTexImage(bindingId, level, GLEnum.Rgba, GLEnum.Float, addr);
+        }
+
+        public unsafe void ClearTexImage(uint bindingId, int level, ColorF3 color)
+        {
+            void* addr = color.Address;
+            Api.ClearTexImage(bindingId, level, GLEnum.Rgb, GLEnum.Float, addr);
+        }
+
+        public unsafe void ClearTexImage(uint bindingId, int level, RGBAPixel color)
+        {
+            void* addr = color.Address;
+            Api.ClearTexImage(bindingId, level, GLEnum.Rgba, GLEnum.Byte, addr);
+        }
+
+        public static TextureTarget ToTextureTarget(ETextureTarget target)
+            => target switch
+            {
+                ETextureTarget.Texture2D => TextureTarget.Texture2D,
+                ETextureTarget.Texture3D => TextureTarget.Texture3D,
+                ETextureTarget.TextureCubeMap => TextureTarget.TextureCubeMap,
+                _ => TextureTarget.Texture2D
+            };
+
+        public override unsafe void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
+
+            var glTex = GenericToAPI<GLTexture2DArray>(texture);
+            if (glTex is null)
+            {
+                callback(false, 0.0f);
+                return;
+            }
+
+            if (genMipmapsNow)
+                glTex.GenerateMipmaps();
+
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
+            int layerCount = (int)texture.Depth;
+            if (layerCount <= 0)
+            {
+                callback(false, 0.0f);
+                return;
+            }
+
+            uint byteSize = (uint)(sizeof(Vector4) * layerCount);
+            uint pbo = Api.GenBuffer();
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.BufferData(GLEnum.PixelPackBuffer, byteSize, null, GLEnum.StreamRead);
+
+            Api.GetTextureSubImage(
+                glTex.BindingId,
+                mipLevel,
+                0, 0, 0,
+                1, 1, (uint)layerCount,
+                GLObjectBase.ToGLEnum(EPixelFormat.Rgba),
+                GLObjectBase.ToGLEnum(EPixelType.Float),
+                byteSize,
+                (void*)IntPtr.Zero);
+
+            IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+
+            bool FenceCheck()
+            {
+                if (!GetData(byteSize, _rgbDataForAsync(ref _asyncBuffer), sync, pbo))
+                    return false;
+
+                Api.DeleteSync(sync);
+                Api.DeleteBuffer(pbo);
+
+                Span<Vector4> samples = MemoryMarshal.Cast<byte, Vector4>(_asyncBuffer.AsSpan(0, (int)byteSize));
+                Vector3 accum = Vector3.Zero;
+                for (int i = 0; i < layerCount; i++)
+                {
+                    Vector4 s = samples[i];
+                    if (float.IsNaN(s.X) || float.IsNaN(s.Y) || float.IsNaN(s.Z))
+                    {
+                        callback(false, 0.0f);
+                        return true;
+                    }
+                    accum += s.XYZ();
+                }
+
+                Vector3 average = accum / layerCount;
+                callback(true, average.Dot(luminance));
+                return true;
+            }
+
+            Engine.AddMainThreadCoroutine(FenceCheck);
+        }
+
+        private byte[] _asyncBuffer = XRTexture.AllocateBytes(16, 1, EPixelFormat.Rgba, EPixelType.Float);
+        private static byte[] _rgbDataForAsync(ref byte[] buffer)
+        {
+            if (buffer.Length < 16)
+                buffer = XRTexture.AllocateBytes(16, 1, EPixelFormat.Rgba, EPixelType.Float);
+            return buffer;
+        }
+
+        // Cached resources for CalcDotLuminanceFrontAsync to avoid per-frame allocations
+        private uint _luminanceFrontTex;
+        private uint _luminanceFrontFbo;
+        private uint _luminanceFrontTexWidth;
+        private uint _luminanceFrontTexHeight;
+        private int _luminanceFrontMipLevels;
+        private uint _luminanceFrontPbo;
+        private uint _luminanceFrontPboSize;
+
+        // Extension / capability support flags (cached after first check)
+        private bool? _hasTextureFilterMinmax;
+        private bool HasTextureFilterMinmax => _hasTextureFilterMinmax ??= IsExtensionSupported("GL_ARB_texture_filter_minmax");
+
+        // Auto exposure compute support is dependent on the active GL context version/extensions.
+        // Cache the result so we don't repeatedly probe/attempt compilation after a failure.
+        private bool? _supportsGpuAutoExposure;
+
+        // Compute shader for parallel luminance reduction
+        private XRRenderProgram? _luminanceComputeProgram;
+        private uint _luminanceResultBuffer;
+        private uint _luminanceResultBufferSize;
+        private bool _luminanceComputeInitialized;
+
+        // Compute shaders for GPU auto exposure (writes exposure into a 1x1 R32F texture)
+        private XRRenderProgram? _autoExposureComputeProgram2D;
+        private XRRenderProgram? _autoExposureComputeProgram2DArray;
+        private bool _autoExposureComputeInitialized;
+
+        private const string LuminanceComputeShaderSource = @"
+    #version 430
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D inputTexture;
+layout(std430, binding = 0) buffer ResultBuffer {
+    vec4 result;
+};
+
+uniform ivec2 textureSize;
+uniform vec3 luminanceWeights;
+
+shared vec4 sharedAccum[256];
+
+void main() {
+    uint localIdx = gl_LocalInvocationID.x + gl_LocalInvocationID.y * 16u;
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    
+    vec4 accum = vec4(0.0);
+    if (gid.x < textureSize.x && gid.y < textureSize.y) {
+        vec2 uv = (vec2(gid) + 0.5) / vec2(textureSize);
+        accum = textureLod(inputTexture, uv, 0.0);
+    }
+    sharedAccum[localIdx] = accum;
+    
+    barrier();
+    
+    // Parallel reduction within workgroup
+    for (uint stride = 128u; stride > 0u; stride >>= 1u) {
+        if (localIdx < stride) {
+            sharedAccum[localIdx] += sharedAccum[localIdx + stride];
+        }
+        barrier();
+    }
+    
+    // First thread in workgroup atomically adds to result
+    if (localIdx == 0u) {
+        uint pixelCount = uint(textureSize.x * textureSize.y);
+        vec4 avg = sharedAccum[0] / float(pixelCount);
+        result = avg;
+    }
+}
+";
+
+        private const string AutoExposureComputeShaderSource2D = @"
+    #version 430
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D SourceTex;
+layout(r32f, binding = 0) uniform image2D ExposureOut;
+
+uniform int SmallestMip;
+uniform vec3 LuminanceWeights;
+uniform float AutoExposureBias;
+uniform float AutoExposureScale;
+uniform float ExposureDividend;
+uniform float MinExposure;
+uniform float MaxExposure;
+uniform float ExposureBase;
+uniform float FallbackExposure;
+uniform float ExposureTransitionSpeed;
+
+uniform int MeteringMode;
+uniform int MeteringMip;
+uniform float IgnoreTopPercent;
+uniform float CenterWeightStrength;
+uniform float CenterWeightPower;
+
+const int MAX_METERING_SAMPLES = 256;
+
+vec3 SafeRgb(vec3 rgb)
+{
+    rgb = max(rgb, vec3(0.0));
+    if (any(isnan(rgb)) || any(isinf(rgb)))
+        rgb = vec3(0.0);
+    return rgb;
+}
+
+float SafeLum(vec3 rgb)
+{
+    rgb = SafeRgb(rgb);
+    return dot(rgb, LuminanceWeights);
+}
+
+vec3 FetchRgbAt(ivec2 coord, int mip)
+{
+    return SafeRgb(texelFetch(SourceTex, coord, mip).rgb);
+}
+
+float ComputeMeteredLuminance()
+{
+    if (MeteringMode == 0)
+    {
+        // Current behavior: 1x1 smallest mip.
+        return SafeLum(FetchRgbAt(ivec2(0, 0), SmallestMip));
+    }
+
+    int mip = clamp(MeteringMip, 0, SmallestMip);
+    ivec2 ts = textureSize(SourceTex, mip);
+    int w = max(1, ts.x);
+    int h = max(1, ts.y);
+    int total = w * h;
+    int sampleCount = min(MAX_METERING_SAMPLES, total);
+    int stride = max(1, total / sampleCount);
+
+    if (MeteringMode == 1)
+    {
+        // Log-average (geometric mean) luminance.
+        float sumLog = 0.0;
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+            sumLog += log(max(lum, 1e-6));
+        }
+        return exp(sumLog / float(max(sampleCount, 1)));
+    }
+
+    if (MeteringMode == 2)
+    {
+        // Center-weighted luminance.
+        float sum = 0.0;
+        float weightSum = 0.0;
+        float invW = 1.0 / float(w);
+        float invH = 1.0 / float(h);
+        float strength = clamp(CenterWeightStrength, 0.0, 1.0);
+        float power = max(CenterWeightPower, 0.1);
+
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+
+            float u = (float(x) + 0.5) * invW;
+            float v = (float(y) + 0.5) * invH;
+            float dx = u - 0.5;
+            float dy = v - 0.5;
+            float r = sqrt(dx * dx + dy * dy) / 0.70710678;
+            float center = pow(clamp(1.0 - r, 0.0, 1.0), power);
+            float wgt = mix(1.0, center, strength);
+
+            sum += lum * wgt;
+            weightSum += wgt;
+        }
+
+        return sum / max(weightSum, 1e-6);
+    }
+
+    // Ignore-top-percent luminance (approx, sorted samples).
+    float lums[MAX_METERING_SAMPLES];
+    for (int i = 0; i < sampleCount; ++i)
+    {
+        int idx = i * stride;
+        int x = idx % w;
+        int y = idx / w;
+        lums[i] = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+    }
+
+    for (int i = 1; i < sampleCount; ++i)
+    {
+        float key = lums[i];
+        int j = i - 1;
+        while (j >= 0 && lums[j] > key)
+        {
+            lums[j + 1] = lums[j];
+            j--;
+        }
+        lums[j + 1] = key;
+    }
+
+    float drop = clamp(IgnoreTopPercent, 0.0, 0.5);
+    int keep = int(floor((1.0 - drop) * float(sampleCount)));
+    keep = clamp(keep, 1, sampleCount);
+
+    float sum = 0.0;
+    for (int i = 0; i < keep; ++i)
+        sum += lums[i];
+    return sum / float(keep);
+}
+
+void main()
+{
+    float lumDot = ComputeMeteredLuminance();
+
+    // Clamp extremely bright outliers so they can't force exposure to MinExposure.
+    // Solve for lumDot such that target == MinExposure:
+    // MinExposure = (Bias + Scale * (Dividend / lumDot)) * ExposureBase
+    // => Bias + Scale*(Dividend/lumDot) = MinExposure/ExposureBase
+    // => lumDot = (Dividend * Scale) / max(MinExposure/ExposureBase - Bias, eps)
+    float denom = max((MinExposure / max(ExposureBase, 1e-6)) - AutoExposureBias, 1e-6);
+    float maxLumForMinExposure = (ExposureDividend * max(AutoExposureScale, 0.0)) / denom;
+    lumDot = min(lumDot, maxLumForMinExposure);
+
+    float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
+    bool currentValid = !(isnan(current) || isinf(current)) && current >= MinExposure && current <= MaxExposure;
+    float stableCurrent = currentValid ? current : clamp(FallbackExposure, MinExposure, MaxExposure);
+
+    if (!(lumDot > 0.0) || isnan(lumDot) || isinf(lumDot))
+    {
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
+        return;
+    }
+
+    float target = ExposureDividend / lumDot;
+    target = AutoExposureBias + AutoExposureScale * target;
+    target *= ExposureBase;
+    target = clamp(target, MinExposure, MaxExposure);
+
+    if (isnan(target) || isinf(target))
+    {
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
+        return;
+    }
+
+    float outExposure = !currentValid
+        ? target
+        : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
+
+    imageStore(ExposureOut, ivec2(0, 0), vec4(outExposure, 0.0, 0.0, 0.0));
+}
+";
+
+        private const string AutoExposureComputeShaderSource2DArray = @"
+    #version 430
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2DArray SourceTex;
+layout(r32f, binding = 0) uniform image2D ExposureOut;
+
+uniform int SmallestMip;
+uniform int LayerCount;
+uniform vec3 LuminanceWeights;
+uniform float AutoExposureBias;
+uniform float AutoExposureScale;
+uniform float ExposureDividend;
+uniform float MinExposure;
+uniform float MaxExposure;
+uniform float ExposureBase;
+uniform float FallbackExposure;
+uniform float ExposureTransitionSpeed;
+
+uniform int MeteringMode;
+uniform int MeteringMip;
+uniform float IgnoreTopPercent;
+uniform float CenterWeightStrength;
+uniform float CenterWeightPower;
+
+const int MAX_METERING_SAMPLES = 256;
+
+vec3 SafeRgb(vec3 rgb)
+{
+    rgb = max(rgb, vec3(0.0));
+    if (any(isnan(rgb)) || any(isinf(rgb)))
+        rgb = vec3(0.0);
+    return rgb;
+}
+
+float SafeLum(vec3 rgb)
+{
+    rgb = SafeRgb(rgb);
+    return dot(rgb, LuminanceWeights);
+}
+
+vec3 FetchRgbAt(ivec2 coord, int mip)
+{
+    vec3 rgb = SafeRgb(texelFetch(SourceTex, ivec3(coord, 0), mip).rgb);
+    if (LayerCount > 1)
+    {
+        vec3 rgb1 = SafeRgb(texelFetch(SourceTex, ivec3(coord, 1), mip).rgb);
+        rgb = 0.5 * (rgb + rgb1);
+    }
+    return rgb;
+}
+
+float ComputeMeteredLuminance()
+{
+    if (MeteringMode == 0)
+    {
+        return SafeLum(FetchRgbAt(ivec2(0, 0), SmallestMip));
+    }
+
+    int mip = clamp(MeteringMip, 0, SmallestMip);
+    ivec3 ts3 = textureSize(SourceTex, mip);
+    int w = max(1, ts3.x);
+    int h = max(1, ts3.y);
+    int total = w * h;
+    int sampleCount = min(MAX_METERING_SAMPLES, total);
+    int stride = max(1, total / sampleCount);
+
+    if (MeteringMode == 1)
+    {
+        float sumLog = 0.0;
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+            sumLog += log(max(lum, 1e-6));
+        }
+        return exp(sumLog / float(max(sampleCount, 1)));
+    }
+
+    if (MeteringMode == 2)
+    {
+        float sum = 0.0;
+        float weightSum = 0.0;
+        float invW = 1.0 / float(w);
+        float invH = 1.0 / float(h);
+        float strength = clamp(CenterWeightStrength, 0.0, 1.0);
+        float power = max(CenterWeightPower, 0.1);
+
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+
+            float u = (float(x) + 0.5) * invW;
+            float v = (float(y) + 0.5) * invH;
+            float dx = u - 0.5;
+            float dy = v - 0.5;
+            float r = sqrt(dx * dx + dy * dy) / 0.70710678;
+            float center = pow(clamp(1.0 - r, 0.0, 1.0), power);
+            float wgt = mix(1.0, center, strength);
+
+            sum += lum * wgt;
+            weightSum += wgt;
+        }
+
+        return sum / max(weightSum, 1e-6);
+    }
+
+    float lums[MAX_METERING_SAMPLES];
+    for (int i = 0; i < sampleCount; ++i)
+    {
+        int idx = i * stride;
+        int x = idx % w;
+        int y = idx / w;
+        lums[i] = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+    }
+
+    for (int i = 1; i < sampleCount; ++i)
+    {
+        float key = lums[i];
+        int j = i - 1;
+        while (j >= 0 && lums[j] > key)
+        {
+            lums[j + 1] = lums[j];
+            j--;
+        }
+        lums[j + 1] = key;
+    }
+
+    float drop = clamp(IgnoreTopPercent, 0.0, 0.5);
+    int keep = int(floor((1.0 - drop) * float(sampleCount)));
+    keep = clamp(keep, 1, sampleCount);
+
+    float sum = 0.0;
+    for (int i = 0; i < keep; ++i)
+        sum += lums[i];
+    return sum / float(keep);
+}
+
+void main()
+{
+    float lumDot = ComputeMeteredLuminance();
+
+    // Clamp extremely bright outliers so they can't force exposure to MinExposure.
+    float denom = max((MinExposure / max(ExposureBase, 1e-6)) - AutoExposureBias, 1e-6);
+    float maxLumForMinExposure = (ExposureDividend * max(AutoExposureScale, 0.0)) / denom;
+    lumDot = min(lumDot, maxLumForMinExposure);
+
+    float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
+    bool currentValid = !(isnan(current) || isinf(current)) && current >= MinExposure && current <= MaxExposure;
+    float stableCurrent = currentValid ? current : clamp(FallbackExposure, MinExposure, MaxExposure);
+
+    if (!(lumDot > 0.0) || isnan(lumDot) || isinf(lumDot))
+    {
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
+        return;
+    }
+
+    float target = ExposureDividend / lumDot;
+    target = AutoExposureBias + AutoExposureScale * target;
+    target *= ExposureBase;
+    target = clamp(target, MinExposure, MaxExposure);
+
+    if (isnan(target) || isinf(target))
+    {
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
+        return;
+    }
+
+    float outExposure = !currentValid
+        ? target
+        : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
+
+    imageStore(ExposureOut, ivec2(0, 0), vec4(outExposure, 0.0, 0.0, 0.0));
+}
+";
+
+        private void EnsureLuminanceComputeResources()
+        {
+            if (_luminanceComputeInitialized)
+                return;
+
+            try
+            {
+                var shader = new XRShader(EShaderType.Compute, LuminanceComputeShaderSource);
+                _luminanceComputeProgram = new XRRenderProgram(true, false, shader);
+                
+                // Create result buffer (single vec4)
+                _luminanceResultBuffer = Api.GenBuffer();
+                _luminanceResultBufferSize = 16; // sizeof(vec4)
+                Api.BindBuffer(GLEnum.ShaderStorageBuffer, _luminanceResultBuffer);
+                var nullPtr = IntPtr.Zero;
+                Api.BufferData(GLEnum.ShaderStorageBuffer, _luminanceResultBufferSize, in nullPtr, GLEnum.DynamicRead);
+                Api.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+                
+                _luminanceComputeInitialized = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.OpenGLWarning($"Failed to initialize luminance compute shader: {ex.Message}");
+                _luminanceComputeInitialized = false;
+            }
+        }
+
+        private void EnsureAutoExposureComputeResources()
+        {
+            if (_autoExposureComputeInitialized)
+                return;
+
+            try
+            {
+                var shader2D = new XRShader(EShaderType.Compute, AutoExposureComputeShaderSource2D);
+                _autoExposureComputeProgram2D = new XRRenderProgram(true, false, shader2D);
+
+                var shader2DArray = new XRShader(EShaderType.Compute, AutoExposureComputeShaderSource2DArray);
+                _autoExposureComputeProgram2DArray = new XRRenderProgram(true, false, shader2DArray);
+
+                _autoExposureComputeInitialized = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.OpenGLWarning($"Failed to initialize auto exposure compute shaders: {ex.Message}");
+                _autoExposureComputeInitialized = false;
+            }
+        }
+
+        public override bool SupportsGpuAutoExposure
+        {
+            get
+            {
+                if (_supportsGpuAutoExposure == false)
+                    return false;
+
+                _supportsGpuAutoExposure ??= ComputeSupportsGpuAutoExposure();
+                if (_supportsGpuAutoExposure != true)
+                    return false;
+
+                // Lazily compile/initialize once we know the context should support it.
+                EnsureAutoExposureComputeResources();
+
+                if (!_autoExposureComputeInitialized)
+                    _supportsGpuAutoExposure = false;
+
+                return _autoExposureComputeInitialized;
+            }
+        }
+
+        private bool ComputeSupportsGpuAutoExposure()
+        {
+            try
+            {
+                // Compute shaders are core in GL 4.3+. Image load/store is core in GL 4.2+.
+                int major = Api.GetInteger(GLEnum.MajorVersion);
+                int minor = Api.GetInteger(GLEnum.MinorVersion);
+
+                bool hasCompute = (major > 4) || (major == 4 && minor >= 3) || IsExtensionSupported("GL_ARB_compute_shader");
+                bool hasImageLoadStore = (major > 4) || (major == 4 && minor >= 2) || IsExtensionSupported("GL_ARB_shader_image_load_store");
+
+                return hasCompute && hasImageLoadStore;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public override bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.UpdateAutoExposureGpu");
+
+            EnsureAutoExposureComputeResources();
+            if (!_autoExposureComputeInitialized)
+            {
+                // Prevent repeated attempts if compilation failed (ensures CPU fallback is used).
+                _supportsGpuAutoExposure = false;
+                return false;
+            }
+
+            var glExposure = GetOrCreateAPIRenderObject(exposureTex, generateNow: true) as GLTexture2D;
+            if (glExposure is null)
+            {
+                string exposureTextureName = exposureTex.Name ?? "<unnamed>";
+
+                // An invalid image binding causes expensive GL debug-driver error handling
+                // and repeated stalls. Drop back to the CPU exposure path for this session.
+                Debug.OpenGLWarningEvery(
+                    $"AutoExposure.InvalidExposure.{exposureTextureName}",
+                    TimeSpan.FromSeconds(1),
+                    "[AutoExposure] Exposure texture is not ready for image load/store. Texture='{0}', BindingId={1}.",
+                    exposureTextureName,
+                    glExposure?.BindingId ?? 0);
+                return false;
+            }
+
+            // Framebuffer-only textures may still only be a generated GL name here.
+            // Bind once to force the driver to materialize the texture object and allocate
+            // immutable storage before we use it as an image.
+            IGLTexture? previousBoundTexture = BoundTexture;
+            glExposure.Bind();
+            if (previousBoundTexture is null || ReferenceEquals(previousBoundTexture, glExposure))
+                glExposure.Unbind();
+            else
+                previousBoundTexture.Bind();
+
+            uint exposureBindingId = glExposure.BindingId;
+            if (exposureBindingId == GLObjectBase.InvalidBindingId || !Api.IsTexture(exposureBindingId))
+            {
+                string exposureTextureName = exposureTex.Name ?? "<unnamed>";
+
+                Debug.OpenGLWarningEvery(
+                    $"AutoExposure.InvalidExposure.{exposureTextureName}",
+                    TimeSpan.FromSeconds(1),
+                    "[AutoExposure] Exposure texture is not ready for image load/store. Texture='{0}', BindingId={1}.",
+                    exposureTextureName,
+                    exposureBindingId);
+                return false;
+            }
+
+            int smallestMip;
+            GLRenderProgram? glProgram;
+
+            uint bindTarget;
+            uint sourceBindingId;
+            int layerCount = 1;
+
+            if (sourceTex is XRTexture2D source2D)
+            {
+                var glSource = GetOrCreateAPIRenderObject(source2D, generateNow: true) as GLTexture2D;
+                if (glSource is null || !glSource.TryGetBindingId(out sourceBindingId) || !Api.IsTexture(sourceBindingId))
+                {
+                    _supportsGpuAutoExposure = false;
+                    Debug.OpenGLWarning($"[AutoExposure] Disabling GPU auto exposure because the source texture is invalid. Texture='{sourceTex.Name}', BindingId={glSource?.BindingId ?? 0}.");
+                    return false;
+                }
+
+                if (generateMipmapsNow)
+                    glSource.GenerateMipmaps();
+
+                smallestMip = XRTexture.GetSmallestMipmapLevel(source2D.Width, source2D.Height, source2D.SmallestAllowedMipmapLevel);
+                glProgram = GenericToAPI<GLRenderProgram>(_autoExposureComputeProgram2D);
+                bindTarget = (uint)TextureTarget.Texture2D;
+            }
+            else if (sourceTex is XRTexture2DArray source2DArray)
+            {
+                var glSource = GetOrCreateAPIRenderObject(source2DArray, generateNow: true) as GLTexture2DArray;
+                if (glSource is null || !glSource.TryGetBindingId(out sourceBindingId) || !Api.IsTexture(sourceBindingId))
+                {
+                    _supportsGpuAutoExposure = false;
+                    Debug.OpenGLWarning($"[AutoExposure] Disabling GPU auto exposure because the array source texture is invalid. Texture='{sourceTex.Name}', BindingId={glSource?.BindingId ?? 0}.");
+                    return false;
+                }
+
+                if (generateMipmapsNow)
+                    glSource.GenerateMipmaps();
+
+                smallestMip = XRTexture.GetSmallestMipmapLevel(source2DArray.Width, source2DArray.Height, source2DArray.SmallestAllowedMipmapLevel);
+                layerCount = (int)source2DArray.Depth;
+                glProgram = GenericToAPI<GLRenderProgram>(_autoExposureComputeProgram2DArray);
+                bindTarget = (uint)TextureTarget.Texture2DArray;
+            }
+            else
+            {
+                return false;
+            }
+
+            if (glProgram is null)
+            {
+                Debug.OpenGLWarningEvery(
+                    $"AutoExposure.NullProgram.{sourceTex.GetType().Name}",
+                    TimeSpan.FromSeconds(1),
+                    "[AutoExposure] Failed to resolve GL compute program for source texture type '{0}'.",
+                    sourceTex.GetType().Name);
+                return false;
+            }
+
+            // The compute program may not be linked yet because linkNow fires before
+            // the GL wrapper exists (the event has no subscribers during the constructor).
+            // Attempt a deferred link here, mirroring what UseRequested does.
+            if (!glProgram.IsLinked && !glProgram.Link())
+            {
+                Debug.OpenGLWarningEvery(
+                    $"AutoExposure.ProgramNotReady.{glProgram.Hash}",
+                    TimeSpan.FromSeconds(1),
+                    "[AutoExposure] Compute program hash {0} is not ready yet. LinkReady={1}, IsLinked={2}.",
+                    glProgram.Hash,
+                    glProgram.LinkReady,
+                    glProgram.IsLinked);
+                return false;
+            }
+
+            Api.UseProgram(glProgram.BindingId);
+
+            int meteringMip = smallestMip;
+            if (settings.AutoExposureMetering != ColorGradingSettings.AutoExposureMeteringMode.Average)
+            {
+                int targetSize = Math.Clamp(settings.AutoExposureMeteringTargetSize, 1, 64);
+                uint pow2 = 1u << BitOperations.Log2((uint)targetSize);
+                int offset = BitOperations.Log2(pow2);
+                meteringMip = Math.Clamp(smallestMip - offset, 0, smallestMip);
+            }
+
+            glProgram.Uniform("SmallestMip", smallestMip);
+            glProgram.Uniform("LuminanceWeights", settings.AutoExposureLuminanceWeights);
+            glProgram.Uniform("AutoExposureBias", settings.AutoExposureBias);
+            glProgram.Uniform("AutoExposureScale", settings.AutoExposureScale);
+            glProgram.Uniform("ExposureDividend", settings.ExposureDividend);
+            settings.GetResolvedExposureBounds(out float minExposure, out float maxExposure);
+
+            glProgram.Uniform("MinExposure", minExposure);
+            glProgram.Uniform("MaxExposure", maxExposure);
+            glProgram.Uniform("ExposureBase", settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
+                ? settings.ComputePhysicalExposureMultiplier()
+                : 1.0f);
+            float fallbackExposure = settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
+                ? settings.ComputePhysicalExposureMultiplier()
+                : settings.Exposure;
+            glProgram.Uniform("FallbackExposure", Math.Clamp(fallbackExposure, minExposure, maxExposure));
+
+            glProgram.Uniform("MeteringMode", (int)settings.AutoExposureMetering);
+            glProgram.Uniform("MeteringMip", meteringMip);
+            glProgram.Uniform("IgnoreTopPercent", settings.AutoExposureIgnoreTopPercent);
+            glProgram.Uniform("CenterWeightStrength", settings.AutoExposureCenterWeightStrength);
+            glProgram.Uniform("CenterWeightPower", settings.AutoExposureCenterWeightPower);
+
+            // Calculate time-based lerp factor
+            // alpha = 1 - exp(-speed * dt)
+            float alpha = 1.0f - MathF.Exp(-settings.ExposureTransitionSpeed * deltaTime);
+            glProgram.Uniform("ExposureTransitionSpeed", alpha);
+
+            if (sourceTex is XRTexture2DArray)
+                glProgram.Uniform("LayerCount", layerCount);
+
+            SetActiveTextureUnit(0);
+            Api.BindTexture((TextureTarget)bindTarget, sourceBindingId);
+            glProgram.Uniform("SourceTex", 0);
+
+            // Bind exposure texture as an image for read/write
+            Api.BindImageTexture(0, exposureBindingId, 0, false, 0, BufferAccessARB.ReadWrite, InternalFormat.R32f);
+
+            Api.DispatchCompute(1, 1, 1);
+            Api.MemoryBarrier((uint)(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit));
+
+            // Ensure that the compute shader write is visible to subsequent reads (by the fragment shader or the next compute dispatch)
+            Api.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit);
+            return true;
+        }
+
+        public override unsafe void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
+
+            var glTex = GenericToAPI<GLTexture2D>(texture);
+            if (glTex is null)
+            {
+                callback(false, 0.0f);
+                return;
+            }
+
+            if (genMipmapsNow)
+                glTex.GenerateMipmaps();
+
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
+
+            uint byteSize = (uint)sizeof(Vector4);
+            uint pbo = Api.GenBuffer();
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.BufferData(GLEnum.PixelPackBuffer, byteSize, null, GLEnum.StreamRead);
+
+            Api.GetTextureImage(
+                glTex.BindingId,
+                mipLevel,
+                GLObjectBase.ToGLEnum(EPixelFormat.Rgba),
+                GLObjectBase.ToGLEnum(EPixelType.Float),
+                byteSize,
+                (void*)IntPtr.Zero);
+
+            IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+
+            bool FenceCheck()
+            {
+                if (!GetData(byteSize, _rgbDataForAsync(ref _asyncBuffer), sync, pbo))
+                    return false;
+
+                Api.DeleteSync(sync);
+                Api.DeleteBuffer(pbo);
+
+                Vector3 rgb;
+                unsafe
+                {
+                    fixed (byte* ptr = _asyncBuffer)
+                    {
+                        float* fptr = (float*)ptr;
+                        rgb = new(fptr[0], fptr[1], fptr[2]);
+                    }
+                }
+
+                if (float.IsNaN(rgb.X) || float.IsNaN(rgb.Y) || float.IsNaN(rgb.Z))
+                {
+                    callback(false, 0.0f);
+                    return true;
+                }
+
+                callback(true, rgb.Dot(luminance));
+                return true;
+            }
+
+            Engine.AddMainThreadCoroutine(FenceCheck);
+        }
+
+        public override unsafe bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow = true)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminance");
+
+            dotLuminance = 1.0f;
+            var glTex = GenericToAPI<GLTexture2DArray>(texture);
+            if (glTex is null)
+                return false;
+
+            if (genMipmapsNow)
+                glTex.GenerateMipmaps();
+
+            int layerCount = (int)texture.Depth;
+            if (layerCount <= 0)
+                return false;
+
+            Span<Vector4> samples = layerCount <= 8
+                ? stackalloc Vector4[layerCount]
+                : new Vector4[layerCount];
+
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
+
+            fixed (Vector4* ptr = samples)
+            {
+                uint byteSize = (uint)(sizeof(Vector4) * layerCount);
+                Api.GetTextureImage(
+                    glTex.BindingId,
+                    mipLevel,
+                    GLObjectBase.ToGLEnum(EPixelFormat.Rgba),
+                    GLObjectBase.ToGLEnum(EPixelType.Float),
+                    byteSize,
+                    ptr);
+            }
+
+            Vector3 accum = Vector3.Zero;
+            for (int i = 0; i < samples.Length; i++)
+            {
+                Vector4 sample = samples[i];
+                if (float.IsNaN(sample.X) || float.IsNaN(sample.Y) || float.IsNaN(sample.Z))
+                    return false;
+
+                accum += sample.XYZ();
+            }
+
+            Vector3 average = accum / layerCount;
+            dotLuminance = average.Dot(luminance);
+            return true;
+        }
+        public override unsafe bool CalcDotLuminance(XRTexture2D texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow = true)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminance");
+
+            dotLuminance = 1.0f;
+            var glTex = GenericToAPI<GLTexture2D>(texture);
+            if (glTex is null)
+                return false;
+
+            //Calculate average color value using 1x1 mipmap of scene
+            if (genMipmapsNow)
+                glTex.GenerateMipmaps();
+            
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
+
+            //Get the average color from the scene texture
+            Vector4 rgb = Vector4.Zero;
+            void* addr = &rgb;
+            Api.GetTextureImage(glTex.BindingId, mipLevel, GLObjectBase.ToGLEnum(EPixelFormat.Rgba), GLObjectBase.ToGLEnum(EPixelType.Float), (uint)sizeof(Vector4), addr);
+
+            if (float.IsNaN(rgb.X) ||
+                float.IsNaN(rgb.Y) ||
+                float.IsNaN(rgb.Z))
+                return false;
+
+            //Calculate luminance factor off of the average color
+            dotLuminance = rgb.XYZ().Dot(luminance);
+            return true;
+        }
+
+        /// <inheritdoc/>
+        public override unsafe float ReadTextureCenterRedMip0(XRTexture2D texture)
+        {
+            var glTex = GenericToAPI<GLTexture2D>(texture);
+            if (glTex is null || !glTex.IsGenerated)
+                return 0.0f;
+
+            uint w = texture.Width;
+            uint h = texture.Height;
+            if (w == 0 || h == 0)
+                return 0.0f;
+
+            // Read a single center pixel at mip 0 via glGetTextureSubImage (DSA, no binding changes).
+            int cx = (int)(w / 2);
+            int cy = (int)(h / 2);
+            float pixel = 0.0f;
+            Api.GetTextureSubImage(
+                glTex.BindingId,
+                0,              // mip level 0
+                cx, cy, 0,      // offset
+                1u, 1u, 1u,     // size: 1x1x1
+                GLObjectBase.ToGLEnum(EPixelFormat.Red),
+                GLObjectBase.ToGLEnum(EPixelType.Float),
+                (uint)sizeof(float),
+                &pixel);
+
+            return float.IsNaN(pixel) ? 0.0f : pixel;
+        }
+
+        public override unsafe void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsync");
+
+            long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            TryServicePendingFrontLuminanceReadback(nowTicks);
+            if (_pendingFrontLuminanceReadback is not null)
+            {
+                QueueCachedFrontLuminanceCallback(callback);
+                return;
+            }
+
+            long minIntervalTicks = FrontLuminanceMillisecondsToTicks(FrontLuminanceReadbackMinIntervalMs);
+            if (_hasFrontLuminanceSample && nowTicks - _lastFrontLuminanceRequestTicks < minIntervalTicks)
+            {
+                QueueCachedFrontLuminanceCallback(callback);
+                return;
+            }
+
+            uint w = (uint)region.Width;
+            uint h = (uint)region.Height;
+            if (w == 0 || h == 0)
+            {
+                QueueFrontLuminanceCallback(callback, false, 0.0f);
+                return;
+            }
+
+            // Copy the requested front buffer region into a cached FBO-backed texture, generate mipmaps, then read the 1x1 mip via ReadPixels.
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
+            Api.ReadBuffer(ReadBufferMode.Front);
+
+            // Check if we need to reallocate the cached texture/FBO (dimensions changed or not yet allocated)
+            int mipLevels = 1 + (int)MathF.Floor(MathF.Log2(MathF.Max(w, h)));
+            if (mipLevels < 1)
+                mipLevels = 1;
+
+            if (_luminanceFrontTex == 0 || _luminanceFrontTexWidth != w || _luminanceFrontTexHeight != h)
+            {
+                // Clean up old resources if they exist
+                if (_luminanceFrontTex != 0)
+                    Api.DeleteTexture(_luminanceFrontTex);
+                if (_luminanceFrontFbo != 0)
+                    Api.DeleteFramebuffer(_luminanceFrontFbo);
+                if (_luminanceFrontPbo != 0)
+                    Api.DeleteBuffer(_luminanceFrontPbo);
+
+                // Create new texture with immutable storage
+                _luminanceFrontTex = Api.GenTexture();
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                Api.TexStorage2D(TextureTarget.Texture2D, (uint)mipLevels, GLEnum.Rgba8, w, h);
+
+                // Create FBO and attach texture
+                _luminanceFrontFbo = Api.GenFramebuffer();
+                Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+                Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
+
+                // Create cached PBO for readback (4 bytes for RGBA8)
+                _luminanceFrontPbo = Api.GenBuffer();
+                _luminanceFrontPboSize = 4;
+                Api.BindBuffer(GLEnum.PixelPackBuffer, _luminanceFrontPbo);
+                var nullPtr = IntPtr.Zero;
+                Api.BufferData(GLEnum.PixelPackBuffer, _luminanceFrontPboSize, in nullPtr, GLEnum.StreamRead);
+                Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+
+                _luminanceFrontTexWidth = w;
+                _luminanceFrontTexHeight = h;
+                _luminanceFrontMipLevels = mipLevels;
+            }
+            else
+            {
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+                // Re-attach mip 0 for the blit target
+                Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
+            }
+
+            Api.BlitFramebuffer(
+                region.X, region.Y, region.X + (int)w, region.Y + (int)h,
+                0, 0, (int)w, (int)h,
+                ClearBufferMask.ColorBufferBit,
+                GLEnum.Linear);
+
+            Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+            Api.GenerateMipmap(TextureTarget.Texture2D);
+
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(w, h);
+
+            // Re-attach the smallest mip for readback.
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _luminanceFrontFbo);
+            Api.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, mipLevel);
+            Api.ReadBuffer(ReadBufferMode.ColorAttachment0);
+
+            // Use cached PBO for async readback
+            uint pbo = _luminanceFrontPbo;
+            uint byteSize = _luminanceFrontPboSize;
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+
+            Api.ReadPixels(0, 0, 1, 1, GLObjectBase.ToGLEnum(EPixelFormat.Rgba), GLObjectBase.ToGLEnum(EPixelType.UnsignedByte), (void*)IntPtr.Zero);
+
+            IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+
+            _lastFrontLuminanceRequestTicks = nowTicks;
+            _pendingFrontLuminanceReadback = new PendingFrontLuminanceReadback
+            {
+                Callback = callback,
+                Mode = FrontLuminanceReadbackMode.Mipmap,
+                LuminanceWeights = luminance,
+                Sync = sync,
+                StartedTicks = nowTicks,
+                LastPollTicks = nowTicks
+            };
+            Engine.AddMainThreadCoroutine(PollPendingFrontLuminanceReadback, "GLRenderer.FrontLuminanceReadback");
+        }
+
+        /// <summary>
+        /// Calculates average luminance using a compute shader for parallel reduction.
+        /// This is an alternative to the mipmap-based approach that can be more efficient for large textures.
+        /// </summary>
+        public unsafe override void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsyncCompute");
+
+            long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            TryServicePendingFrontLuminanceReadback(nowTicks);
+            if (_pendingFrontLuminanceReadback is not null)
+            {
+                QueueCachedFrontLuminanceCallback(callback);
+                return;
+            }
+
+            long minIntervalTicks = FrontLuminanceMillisecondsToTicks(FrontLuminanceReadbackMinIntervalMs);
+            if (_hasFrontLuminanceSample && nowTicks - _lastFrontLuminanceRequestTicks < minIntervalTicks)
+            {
+                QueueCachedFrontLuminanceCallback(callback);
+                return;
+            }
+
+            uint w = (uint)region.Width;
+            uint h = (uint)region.Height;
+            if (w == 0 || h == 0)
+            {
+                QueueFrontLuminanceCallback(callback, false, 0.0f);
+                return;
+            }
+
+            EnsureLuminanceComputeResources();
+            if (!_luminanceComputeInitialized || _luminanceComputeProgram is null)
+            {
+                // Fall back to mipmap method
+                CalcDotLuminanceFrontAsync(region, withTransparency, luminance, callback);
+                return;
+            }
+
+            // First, blit front buffer to texture (reuse existing cached texture)
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
+            Api.ReadBuffer(ReadBufferMode.Front);
+
+            int mipLevels = 1; // No mipmaps needed for compute path
+            if (_luminanceFrontTex == 0 || _luminanceFrontTexWidth != w || _luminanceFrontTexHeight != h)
+            {
+                if (_luminanceFrontTex != 0)
+                    Api.DeleteTexture(_luminanceFrontTex);
+                if (_luminanceFrontFbo != 0)
+                    Api.DeleteFramebuffer(_luminanceFrontFbo);
+
+                _luminanceFrontTex = Api.GenTexture();
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                Api.TexStorage2D(TextureTarget.Texture2D, (uint)mipLevels, GLEnum.Rgba8, w, h);
+
+                _luminanceFrontFbo = Api.GenFramebuffer();
+                Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+                Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
+
+                _luminanceFrontTexWidth = w;
+                _luminanceFrontTexHeight = h;
+                _luminanceFrontMipLevels = mipLevels;
+            }
+            else
+            {
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+                Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
+            }
+
+            Api.BlitFramebuffer(
+                region.X, region.Y, region.X + (int)w, region.Y + (int)h,
+                0, 0, (int)w, (int)h,
+                ClearBufferMask.ColorBufferBit,
+                GLEnum.Linear);
+
+            // Clear result buffer
+            Vector4 zero = Vector4.Zero;
+            Api.BindBuffer(GLEnum.ShaderStorageBuffer, _luminanceResultBuffer);
+            Api.BufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, 16, &zero);
+
+            // Bind resources and dispatch compute
+            var glProgram = GenericToAPI<GLRenderProgram>(_luminanceComputeProgram);
+            if (glProgram is null || !glProgram.IsLinked)
+            {
+                callback(false, 0.0f);
+                return;
+            }
+
+            try
+            {
+                Api.UseProgram(glProgram.BindingId);
+                glProgram.Uniform("textureSize", new Data.Vectors.IVector2((int)w, (int)h));
+                glProgram.Uniform("luminanceWeights", luminance);
+
+                SetActiveTextureUnit(0);
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                glProgram.Uniform("inputTexture", 0);
+
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, 0, _luminanceResultBuffer);
+
+                uint groupsX = (w + 15) / 16;
+                uint groupsY = (h + 15) / 16;
+                Api.DispatchCompute(groupsX, groupsY, 1);
+
+                Api.MemoryBarrier((uint)MemoryBarrierMask.ShaderStorageBarrierBit);
+            }
+            finally
+            {
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, 0, 0);
+                Api.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+            }
+
+            // Async readback from result buffer
+            IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+
+            _lastFrontLuminanceRequestTicks = nowTicks;
+            _pendingFrontLuminanceReadback = new PendingFrontLuminanceReadback
+            {
+                Callback = callback,
+                Mode = FrontLuminanceReadbackMode.Compute,
+                LuminanceWeights = luminance,
+                Sync = sync,
+                StartedTicks = nowTicks,
+                LastPollTicks = nowTicks
+            };
+            Engine.AddMainThreadCoroutine(PollPendingFrontLuminanceReadback, "GLRenderer.FrontLuminanceReadback");
+        }
+
+        /// <summary>
+        /// Checks if GL_ARB_texture_filter_minmax extension is available.
+        /// This extension provides hardware-accelerated min/max/average filtering.
+        /// </summary>
+        public bool SupportsTextureFilterMinmax => HasTextureFilterMinmax;
+
+        public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
+        {
+            //TODO: render to an FBO with the desired render size and capture from that, instead of using the window size.
+
+            //TODO: multi-glcontext readback.
+            //This method is async on the CPU, but still executes synchronously on the GPU.
+            //https://developer.download.nvidia.com/GTC/PDF/GTC2012/PresentationPDF/S0356-GTC2012-Texture-Transfers.pdf
+
+            CaptureFBOColorAttachment(region, withTransparency, imageCallback, 0u, ReadBufferMode.Front, -1, true);
+        }
+
+        public void CaptureFBOAttachment(
+            BoundingRectangle region,
+            bool withTransparency,
+            Action<MagickImage, int> imageCallback,
+            uint readFBOBindingId,
+            EFrameBufferAttachment attachment,
+            int layer = -1,
+            bool async = true)
+        {
+            switch (attachment)
+            {
+                case EFrameBufferAttachment.DepthAttachment:
+                    CaptureFBOAttachment(
+                        region,
+                        imageCallback,
+                        readFBOBindingId,
+                        ReadBufferMode.None,
+                        EPixelFormat.DepthComponent,
+                        EPixelType.Float,
+                        layer,
+                        async);
+                    break;
+                case EFrameBufferAttachment.StencilAttachment:
+                    CaptureFBOAttachment(
+                        region,
+                        imageCallback,
+                        readFBOBindingId,
+                        ReadBufferMode.None,
+                        EPixelFormat.StencilIndex,
+                        EPixelType.UnsignedByte,
+                        layer,
+                        async);
+
+                    break;
+                case EFrameBufferAttachment.DepthStencilAttachment:
+                    CaptureFBOAttachment(
+                        region,
+                        imageCallback,
+                        readFBOBindingId,
+                        ReadBufferMode.None,
+                        EPixelFormat.DepthStencil,
+                        EPixelType.UnsignedInt248,
+                        layer,
+                        async);
+                    break;
+                default:
+                    CaptureFBOColorAttachment(
+                        region,
+                        withTransparency,
+                        imageCallback,
+                        readFBOBindingId,
+                        GLObjectBase.ToReadBufferMode(attachment),
+                        layer,
+                        async);
+                    break;
+            }
+        }
+
+        public void CaptureFBOColorAttachment(
+            BoundingRectangle region,
+            bool withTransparency,
+            Action<MagickImage, int> imageCallback,
+            uint readFBOBindingId,
+            ReadBufferMode readBuffer,
+            int layer = -1,
+            bool async = true)
+        {
+            EPixelFormat format = withTransparency ? EPixelFormat.Bgra : EPixelFormat.Bgr;
+            EPixelType pixelType = EPixelType.UnsignedByte;
+            CaptureFBOAttachment(
+                region,
+                imageCallback,
+                readFBOBindingId,
+                readBuffer,
+                format,
+                pixelType,
+                layer,
+                async);
+        }
+
+        public void CaptureFBOAttachment(
+            BoundingRectangle region,
+            Action<MagickImage, int> imageCallback,
+            uint readFBOBindingId,
+            ReadBufferMode readBuffer,
+            EPixelFormat format,
+            EPixelType pixelType,
+            int layer = -1,
+            bool async = true)
+        {
+            //Specify which FBO to read from
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, readFBOBindingId);
+
+            //Specify which attachment buffer to read from
+            Api.ReadBuffer(readBuffer);
+
+            CaptureCurrentlyBoundFBOAttachment(region, imageCallback, format, pixelType, async);
+        }
+
+        public delegate void DelImageCallback(MagickImage image, int layer, int channelIndex);
+
+        public unsafe void CaptureTexture(
+            BoundingRectangle region,
+            DelImageCallback imageCallback,
+            uint textureBindingId,
+            int mipLevel,
+            int layer,
+            bool async = true)
+        {
+            uint w = (uint)region.Width;
+            uint h = (uint)region.Height;
+
+            Api.GetTextureLevelParameter(textureBindingId, mipLevel, GLEnum.TextureInternalFormat, out int format);
+            InternalFormat internalFormat = (InternalFormat)format;
+            //int bpp = GetBytesPerPixel(internalFormat);
+
+            Api.GetTextureParameterI(textureBindingId, GLEnum.DepthStencilTextureMode, out int depthStencilMode);
+            GLEnum mode = (GLEnum)depthStencilMode;
+            
+            EPixelFormat pixelFormat = EPixelFormat.Rgba;
+            EPixelType pixelType = EPixelType.UnsignedByte;
+            switch (internalFormat)
+            {
+                case InternalFormat.Depth24Stencil8:
+                    pixelFormat = EPixelFormat.DepthStencil;
+                    pixelType = EPixelType.UnsignedInt248;
+                    break;
+                case InternalFormat.Depth32fStencil8:
+                    pixelFormat = EPixelFormat.DepthStencil;
+                    pixelType = EPixelType.Float32UnsignedInt248Rev;
+                    break;
+            }
+
+            var data = XRTexture.AllocateBytes(w, h, pixelFormat, pixelType);
+
+            if (async)
+            {
+                uint size = (uint)data.Length;
+                uint pbo = ReadTextureToPBO(textureBindingId, region, layer, 1, pixelFormat, pixelType, size, out IntPtr sync);
+                bool FenceCheck()
+                {
+                    if (!GetData(size, data, sync, pbo))
+                        return false;
+                    else
+                    {
+                        Api.DeleteSync(sync);
+                        Api.DeleteBuffer(pbo);
+
+                        void MakeImage()
+                        {
+                            if (IsDepthStencilFormat(internalFormat))
+                            {
+                                switch (mode)
+                                {
+                                    case GLEnum.StencilIndex:
+                                        imageCallback(MakeStencilImage(pixelType, w, h, data), layer, 0);
+                                        break;
+                                    case GLEnum.DepthComponent:
+                                        imageCallback(MakeDepthImage(pixelType, w, h, data), layer, 0);
+                                        break;
+                                    default:
+                                        imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), layer, 0);
+                                        break;
+                                }
+                            }
+                            else
+                                imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), layer, 0);
+                        }
+                        Task.Run(MakeImage);
+
+                        return true;
+                    }
+                }
+                Engine.AddMainThreadCoroutine(FenceCheck);
+            }
+            else
+            {
+                fixed (byte* ptr = data)
+                {
+                    Api.GetTextureSubImage(textureBindingId, mipLevel, region.X, region.Y, layer, w, h, 1, GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType), (uint)data.Length, ptr);
+                }
+                Task.Run(() => imageCallback(XRTexture.NewImage(w, h, pixelFormat, pixelType, data), layer, 0));
+            }
+        }
+
+        public unsafe bool TryCaptureTextureBytes(
+            uint textureBindingId,
+            int mipLevel,
+            int layer,
+            out byte[] data,
+            out EPixelFormat pixelFormat,
+            out EPixelType pixelType,
+            out uint width,
+            out uint height)
+        {
+            data = [];
+            pixelFormat = EPixelFormat.Rgba;
+            pixelType = EPixelType.UnsignedByte;
+            width = 0;
+            height = 0;
+
+            Api.GetTextureLevelParameter(textureBindingId, mipLevel, GLEnum.TextureWidth, out int levelWidth);
+            Api.GetTextureLevelParameter(textureBindingId, mipLevel, GLEnum.TextureHeight, out int levelHeight);
+            if (levelWidth <= 0 || levelHeight <= 0)
+                return false;
+
+            width = (uint)levelWidth;
+            height = (uint)levelHeight;
+
+            Api.GetTextureLevelParameter(textureBindingId, mipLevel, GLEnum.TextureInternalFormat, out int format);
+            InternalFormat internalFormat = (InternalFormat)format;
+            Api.GetTextureParameterI(textureBindingId, GLEnum.DepthStencilTextureMode, out int depthStencilMode);
+            GLEnum mode = (GLEnum)depthStencilMode;
+
+            switch (internalFormat)
+            {
+                case InternalFormat.Depth24Stencil8:
+                    pixelFormat = EPixelFormat.DepthStencil;
+                    pixelType = EPixelType.UnsignedInt248;
+                    break;
+                case InternalFormat.Depth32fStencil8:
+                case InternalFormat.Depth32fStencil8NV:
+                    pixelFormat = EPixelFormat.DepthStencil;
+                    pixelType = EPixelType.Float32UnsignedInt248Rev;
+                    break;
+            }
+
+            if (pixelFormat == EPixelFormat.DepthStencil && mode == GLEnum.StencilIndex)
+            {
+                pixelFormat = EPixelFormat.StencilIndex;
+                pixelType = EPixelType.UnsignedByte;
+            }
+
+            data = XRTexture.AllocateBytes(width, height, pixelFormat, pixelType);
+            fixed (byte* ptr = data)
+            {
+                Api.GetTextureSubImage(
+                    textureBindingId,
+                    mipLevel,
+                    0,
+                    0,
+                    layer,
+                    width,
+                    height,
+                    1,
+                    GLObjectBase.ToGLEnum(pixelFormat),
+                    GLObjectBase.ToGLEnum(pixelType),
+                    (uint)data.Length,
+                    ptr);
+            }
+
+            return true;
+        }
+
+        private bool IsDepthStencilFormat(InternalFormat internalFormat) => internalFormat switch
+        {
+            InternalFormat.Depth24Stencil8 or
+            InternalFormat.Depth32fStencil8 or
+            InternalFormat.Depth32fStencil8NV => true,
+            _ => false,
+        };
+
+        public unsafe void CaptureCurrentlyBoundFBOAttachment(
+            BoundingRectangle region,
+            Action<MagickImage, int> imageCallback,
+            EPixelFormat pixelFormat,
+            EPixelType pixelType,
+            bool async = true)
+        {
+            uint w = (uint)region.Width;
+            uint h = (uint)region.Height;
+            var data = XRTexture.AllocateBytes(w, h, pixelFormat, pixelType);
+
+            if (async)
+            {
+                nuint size = (uint)data.Length;
+                uint pbo = ReadFBOToPBO(region, pixelFormat, pixelType, size, out IntPtr sync);
+                bool FenceCheck()
+                {
+                    if (!GetData(size, data, sync, pbo))
+                        return false;
+                    else
+                    {
+                        Api.DeleteSync(sync);
+                        Api.DeleteBuffer(pbo);
+
+                        void MakeImage()
+                        {
+                            if (pixelType == EPixelType.Float32UnsignedInt248Rev || pixelType == EPixelType.UnsignedInt248)
+                            {
+                                MakeDepthStencilImages(pixelType, w, h, data, out MagickImage depth, out MagickImage stencil);
+                                imageCallback(depth, 0);
+                                imageCallback(stencil, 1);
+                            }
+                            else
+                                imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), 0);
+                        }
+                        Task.Run(MakeImage);
+
+                        return true;
+                    }
+                }
+                Engine.AddMainThreadCoroutine(FenceCheck);
+            }
+            else
+            {
+                fixed (byte* ptr = data)
+                {
+                    Api.ReadPixels(region.X, region.Y, w, h, GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType), ptr);
+                }
+                Task.Run(() => imageCallback(XRTexture.NewImage(w, h, pixelFormat, pixelType, data), 0));
+            }
+        }
+
+        private static unsafe MagickImage MakeImage(EPixelFormat format, EPixelType pixelType, uint w, uint h, byte[] data)
+            => XRTexture.NewImage(w, h, format, pixelType, data);
+
+        private unsafe void MakeDepthStencilImages(EPixelType pixelType, uint w, uint h, byte[] data, out MagickImage depth, out MagickImage stencil)
+        {
+            bool floatType = pixelType == EPixelType.Float32UnsignedInt248Rev;
+            depth = XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractDepthData(floatType, data));
+            stencil = XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractStencilData(floatType, data));
+        }
+        private unsafe MagickImage MakeDepthImage(EPixelType pixelType, uint w, uint h, byte[] data)
+        {
+            bool floatType = pixelType == EPixelType.Float32UnsignedInt248Rev;
+            return XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractDepthData(floatType, data));
+        }
+        private unsafe MagickImage MakeStencilImage(EPixelType pixelType, uint w, uint h, byte[] data)
+        {
+            bool floatType = pixelType == EPixelType.Float32UnsignedInt248Rev;
+            return XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractStencilData(floatType, data));
+        }
+
+        private byte[] ExtractStencilData(bool floatingPoint, byte[] data)
+        {
+            //every 3 bytes is the depth, and the last byte is the stencil
+            //we're converting that last byte into grayscale rgb -> 3 bytes with same value
+            int bytesPerPixel = floatingPoint ? 8 : 4;
+            int stencilOffset = floatingPoint ? 4 : 3;
+            int pixelCount = data.Length / bytesPerPixel;
+            byte[] newData = new byte[pixelCount * 3];
+            Parallel.For(0, pixelCount, i =>
+            {
+                int index = i * bytesPerPixel;
+                int newIndex = i * 3;
+                byte stencil = data[index + stencilOffset];
+                newData[newIndex] = stencil;
+                newData[newIndex + 1] = stencil;
+                newData[newIndex + 2] = stencil;
+            });
+            return newData;
+        }
+
+        private byte[] ExtractDepthData(bool floatingPoint, byte[] data)
+        {
+            //every 3 bytes is the depth, and the last byte is the stencil
+            //if float, 4 bytes are used for the depth, a byte for stencil, and 3 bytes to align
+            //we're converting that depth value down into a byte and then into grayscale rgb -> 3 bytes with same value
+            int bytesPerPixel = floatingPoint ? 8 : 4;
+            int pixelCount = data.Length / bytesPerPixel;
+            byte[] newData = new byte[pixelCount * 3];
+            Parallel.For(0, pixelCount, i =>
+            {
+                int index = i * bytesPerPixel;
+                int newIndex = i * 3;
+
+                float depth = floatingPoint
+                    ? BitConverter.Int32BitsToSingle((data[index] << 24) | (data[index + 1] << 16) | data[index + 2] << 8 | data[index + 3])
+                    : ((data[index] << 16) | (data[index + 1] << 8) | data[index + 2]) / (float)0xFFFFFF;
+
+                byte compressedDepth = (byte)(depth * 255.0f);
+
+                newData[newIndex] = compressedDepth;
+                newData[newIndex + 1] = compressedDepth;
+                newData[newIndex + 2] = compressedDepth;
+            });
+            return newData;
+        }
+
+        public override void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> pixelCallback)
+        {
+            //TODO: render to an FBO with the desired render size and capture from that, instead of using the window size.
+
+            //TODO: multi-glcontext readback.
+            //This method is async on the CPU, but still executes synchronously on the GPU.
+            //https://developer.download.nvidia.com/GTC/PDF/GTC2012/PresentationPDF/S0356-GTC2012-Texture-Transfers.pdf
+
+            EPixelFormat format = withTransparency ? EPixelFormat.Bgra : EPixelFormat.Bgr;
+            EPixelType pixelType = EPixelType.UnsignedByte;
+            var data = XRTexture.AllocateBytes(1, 1, format, pixelType);
+
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
+            Api.ReadBuffer(ReadBufferMode.Front);
+
+            nuint size = (uint)data.Length;
+            uint pbo = ReadFBOToPBO(new BoundingRectangle(x, y, 1, 1), format, pixelType, size, out IntPtr sync);
+            void FenceCheck()
+            {
+                if (GetData(size, data, sync, pbo))
+                {
+                    Api.DeleteSync(sync);
+                    Api.DeleteBuffer(pbo);
+                    ColorF4 color = new(data[0] / 255.0f, data[1] / 255.0f, data[2] / 255.0f, data[3] / 255.0f);
+                    Task.Run(() => pixelCallback(color));
+                }
+                else
+                {
+                    Engine.EnqueueMainThreadTask(FenceCheck);
+                }
+            }
+            Engine.EnqueueMainThreadTask(FenceCheck);
+        }
+        public override unsafe void GetDepthAsync(XRFrameBuffer fbo, int x, int y, Action<float> depthCallback)
+        {
+            //TODO: render to an FBO with the desired render size and capture from that, instead of using the window size.
+
+            //TODO: multi-glcontext readback.
+            //This method is async on the CPU, but still executes synchronously on the GPU.
+            //https://developer.download.nvidia.com/GTC/PDF/GTC2012/PresentationPDF/S0356-GTC2012-Texture-Transfers.pdf
+
+            EPixelFormat format = EPixelFormat.DepthComponent;
+            EPixelType pixelType = EPixelType.Float;
+            var data = XRTexture.AllocateBytes(1, 1, format, pixelType);
+
+            using var t = fbo.BindForReadingState();
+            Api.ReadBuffer(ReadBufferMode.None);
+
+            nuint size = (uint)data.Length;
+            uint pbo = ReadFBOToPBO(new BoundingRectangle(x, y, 1, 1), format, pixelType, size, out IntPtr sync);
+            void FenceCheck()
+            {
+                if (GetData(size, data, sync, pbo))
+                {
+                    Api.DeleteSync(sync);
+                    Api.DeleteBuffer(pbo);
+                    fixed (byte* ptr = data)
+                    {
+                        float depth = *(float*)ptr;
+                        Task.Run(() => depthCallback(depth));
+                    }
+                }
+                else
+                {
+                    Engine.EnqueueMainThreadTask(FenceCheck);
+                }
+            }
+            Engine.EnqueueMainThreadTask(FenceCheck);
+        }
+
+        public override unsafe bool TryReadTextureMipRgbaFloat(
+            XRTexture texture,
+            int mipLevel,
+            int layerIndex,
+            out float[]? rgbaFloats,
+            out int width,
+            out int height,
+            out string failure)
+        {
+            rgbaFloats = null;
+            width = 0;
+            height = 0;
+            failure = string.Empty;
+
+            if (!Engine.IsRenderThread)
+            {
+                failure = "Readback unavailable off render thread";
+                return false;
+            }
+
+            if (texture is XRTexture2D tex2D && tex2D.MultiSample)
+            {
+                failure = "Multisample textures do not support mip readback";
+                return false;
+            }
+
+            if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
+            {
+                failure = "Multisample textures do not support mip readback";
+                return false;
+            }
+
+            AbstractRenderAPIObject? apiRenderObject = GetOrCreateAPIRenderObject(texture);
+            if (apiRenderObject is not GLObjectBase apiObject)
+            {
+                failure = "Texture not uploaded";
+                return false;
+            }
+
+            uint binding = apiObject.BindingId;
+            if (binding == GLObjectBase.InvalidBindingId || binding == 0)
+            {
+                failure = "Texture not ready";
+                return false;
+            }
+
+            int baseWidth;
+            int baseHeight;
+            switch (texture)
+            {
+                case XRTexture2D t2d:
+                    baseWidth = (int)t2d.Width;
+                    baseHeight = (int)t2d.Height;
+                    break;
+                case XRTexture2DArray t2da:
+                    baseWidth = (int)t2da.Width;
+                    baseHeight = (int)t2da.Height;
+                    break;
+                default:
+                    failure = "Unsupported texture type";
+                    return false;
+            }
+
+            width = Math.Max(1, baseWidth >> Math.Max(0, mipLevel));
+            height = Math.Max(1, baseHeight >> Math.Max(0, mipLevel));
+
+            GL gl = RawGL;
+            if (texture is XRTexture2DArray array)
+            {
+                int layers = Math.Max(1, (int)array.Depth);
+                int clampedLayer = Math.Clamp(layerIndex, 0, layers - 1);
+                int floatCountAll = width * height * 4 * layers;
+                float[] allLayers = new float[floatCountAll];
+
+                fixed (float* ptr = allLayers)
+                {
+                    gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCountAll), ptr);
+                }
+
+                int floatCountLayer = width * height * 4;
+                rgbaFloats = new float[floatCountLayer];
+                Array.Copy(allLayers, clampedLayer * floatCountLayer, rgbaFloats, 0, floatCountLayer);
+                return true;
+            }
+
+            int floatCount = width * height * 4;
+            rgbaFloats = new float[floatCount];
+            fixed (float* ptr = rgbaFloats)
+            {
+                gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCount), ptr);
+            }
+
+            return true;
+        }
+
+        public override bool TryReadTexturePixelRgbaFloat(
+            XRTexture texture,
+            int mipLevel,
+            int layerIndex,
+            out Vector4 rgba,
+            out string failure)
+        {
+            rgba = Vector4.Zero;
+            if (!TryReadTextureMipRgbaFloat(texture, mipLevel, layerIndex, out float[]? rgbaFloats, out _, out _, out failure)
+                || rgbaFloats is null
+                || rgbaFloats.Length < 4)
+            {
+                failure = string.IsNullOrWhiteSpace(failure) ? "Texture readback failed" : failure;
+                return false;
+            }
+
+            rgba = new Vector4(rgbaFloats[0], rgbaFloats[1], rgbaFloats[2], rgbaFloats[3]);
+            return true;
+        }
+
+        private unsafe uint ReadFBOToPBO(BoundingRectangle region, EPixelFormat format, EPixelType type, nuint size, out IntPtr sync)
+        {
+            uint pbo = Api.GenBuffer();
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.BufferData(GLEnum.PixelPackBuffer, size, null, GLEnum.StreamRead);
+            Api.ReadPixels(region.X, region.Y, (uint)region.Width, (uint)region.Height, GLObjectBase.ToGLEnum(format), GLObjectBase.ToGLEnum(type), null);
+            sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+            return pbo;
+        }
+
+        private unsafe uint ReadTextureToPBO(uint textureId, BoundingRectangle region, int layerOffset, uint layerCount, EPixelFormat format, EPixelType type, uint size, out IntPtr sync)
+        {
+            uint pbo = Api.GenBuffer();
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.BufferData(GLEnum.PixelPackBuffer, size, null, GLEnum.StreamRead);
+            Api.GetTextureSubImage(textureId, 0, region.X, region.Y, layerOffset, (uint)region.Width, (uint)region.Height, layerCount, GLObjectBase.ToGLEnum(format), GLObjectBase.ToGLEnum(type), size, null);
+            sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+            return pbo;
+        }
+
+        private unsafe bool GetData(nuint size, byte[] data, IntPtr sync, uint pbo)
+        {
+            var result = Api.ClientWaitSync(sync, 0u, 0u);
+            if (!(result == GLEnum.AlreadySignaled || result == GLEnum.ConditionSatisfied))
+                return false;
+
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            fixed (byte* ptr = data)
+            {
+                Api.GetBufferSubData(GLEnum.PixelPackBuffer, IntPtr.Zero, size, ptr);
+            }
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+
+            return true;
+        }
+
+        public override unsafe float GetDepth(int x, int y)
+        {
+            float depth = 0.0f;
+            Api.ReadPixels(x, y, 1, 1, PixelFormat.DepthComponent, PixelType.Float, &depth);
+            return depth;
+        }
+
+        public void DeleteObjects<T>(params T[] objs) where T : GLObjectBase
+        {
+            if (objs.Length == 0)
+                return;
+
+            uint[] bindingIds = new uint[objs.Length];
+            bindingIds.Fill(GLObjectBase.InvalidBindingId);
+
+            for (int i = 0; i < objs.Length; ++i)
+            {
+                var o = objs[i];
+                if (!o.IsGenerated)
+                    continue;
+
+                o.PreDeleted();
+                bindingIds[i] = o.BindingId;
+            }
+
+            bindingIds = bindingIds.Where(i => i != GLObjectBase.InvalidBindingId).ToArray();
+            EGLObjectType type = objs[0].Type;
+            uint len = (uint)bindingIds.Length;
+            switch (type)
+            {
+                case EGLObjectType.Buffer:
+                    Api.DeleteBuffers(len, bindingIds);
+                    break;
+                case EGLObjectType.Framebuffer:
+                    Api.DeleteFramebuffers(len, bindingIds);
+                    break;
+                case EGLObjectType.Program:
+                    foreach (var i in objs)
+                        Api.DeleteProgram(i.BindingId);
+                    break;
+                case EGLObjectType.ProgramPipeline:
+                    Api.DeleteProgramPipelines(len, bindingIds);
+                    break;
+                case EGLObjectType.Query:
+                    Api.DeleteQueries(len, bindingIds);
+                    break;
+                case EGLObjectType.Renderbuffer:
+                    Api.DeleteRenderbuffers(len, bindingIds);
+                    break;
+                case EGLObjectType.Sampler:
+                    Api.DeleteSamplers(len, bindingIds);
+                    break;
+                case EGLObjectType.Texture:
+                    Api.DeleteTextures(len, bindingIds);
+                    break;
+                case EGLObjectType.TransformFeedback:
+                    Api.DeleteTransformFeedbacks(len, bindingIds);
+                    break;
+                case EGLObjectType.VertexArray:
+                    Api.DeleteVertexArrays(len, bindingIds);
+                    break;
+                case EGLObjectType.Shader:
+                    foreach (uint i in bindingIds)
+                        Api.DeleteShader(i);
+                    break;
+            }
+
+            foreach (var o in objs)
+            {
+                if (Array.IndexOf(bindingIds, o._bindingId) < 0)
+                    continue;
+
+                o._bindingId = null;
+                o.PostDeleted();
+            }
+        }
+
+        public uint[] CreateObjects(EGLObjectType type, uint count)
+        {
+            uint[] ids = new uint[count];
+            switch (type)
+            {
+                case EGLObjectType.Buffer:
+                    Api.CreateBuffers(count, ids);
+                    break;
+                case EGLObjectType.Framebuffer:
+                    Api.CreateFramebuffers(count, ids);
+                    break;
+                case EGLObjectType.Program:
+                    for (int i = 0; i < count; ++i)
+                        ids[i] = Api.CreateProgram();
+                    break;
+                case EGLObjectType.ProgramPipeline:
+                    Api.CreateProgramPipelines(count, ids);
+                    break;
+                case EGLObjectType.Query:
+                    //throw new InvalidOperationException("Call CreateQueries instead.");
+                    Api.GenQueries(count, ids);
+                    break;
+                case EGLObjectType.Renderbuffer:
+                    Api.CreateRenderbuffers(count, ids);
+                    break;
+                case EGLObjectType.Sampler:
+                    Api.CreateSamplers(count, ids);
+                    break;
+                case EGLObjectType.Texture:
+                    //throw new InvalidOperationException("Call CreateTextures instead.");
+                    Api.GenTextures(count, ids);
+                    break;
+                case EGLObjectType.TransformFeedback:
+                    Api.CreateTransformFeedbacks(count, ids);
+                    break;
+                case EGLObjectType.VertexArray:
+                    Api.CreateVertexArrays(count, ids);
+                    break;
+                case EGLObjectType.Shader:
+                    //for (int i = 0; i < count; ++i)
+                    //    ids[i] = Api.CreateShader(CurrentShaderMode);
+                    break;
+            }
+            return ids;
+        }
+
+        //public T[] CreateObjects<T>(uint count) where T : GLObjectBase, new()
+        //    => CreateObjects(TypeFor<T>(), count).Select(i => (T)Activator.CreateInstance(typeof(T), this, i)!).ToArray();
+
+        private static EGLObjectType TypeFor<T>() where T : GLObjectBase, new()
+            => typeof(T) switch
+            {
+                Type t when typeof(GLDataBuffer).IsAssignableFrom(t)
+                    => EGLObjectType.Buffer,
+
+                Type t when typeof(GLShader).IsAssignableFrom(t)
+                    => EGLObjectType.Shader,
+
+                Type t when typeof(GLRenderProgram).IsAssignableFrom(t)
+                    => EGLObjectType.Program,
+
+                Type t when typeof(GLMeshRenderer).IsAssignableFrom(t)
+                    => EGLObjectType.VertexArray,
+
+                Type t when typeof(GLRenderQuery).IsAssignableFrom(t)
+                    => EGLObjectType.Query,
+
+                Type t when typeof(GLRenderProgramPipeline).IsAssignableFrom(t)
+                    => EGLObjectType.ProgramPipeline,
+
+                Type t when typeof(GLTransformFeedback).IsAssignableFrom(t)
+                    => EGLObjectType.TransformFeedback,
+
+                Type t when typeof(GLSampler).IsAssignableFrom(t)
+                    => EGLObjectType.Sampler,
+
+                Type t when typeof(IGLTexture).IsAssignableFrom(t)
+                    => EGLObjectType.Texture,
+
+                Type t when typeof(GLRenderBuffer).IsAssignableFrom(t)
+                    => EGLObjectType.Renderbuffer,
+
+                Type t when typeof(GLFrameBuffer).IsAssignableFrom(t)
+                    => EGLObjectType.Framebuffer,
+
+                Type t when typeof(GLMaterial).IsAssignableFrom(t)
+                    => EGLObjectType.Material,
+                _ => throw new InvalidOperationException($"Type {typeof(T)} is not a valid GLObjectBase type."),
+            };
+
+        public uint CreateMemoryObject()
+            => EXTMemoryObject?.CreateMemoryObject() ?? 0;
+
+        public uint CreateSemaphore()
+            => EXTSemaphore?.GenSemaphore() ?? 0;
+
+        public unsafe uint CreateImportedMemoryObject(ulong size, void* memoryObjectHandle)
+        {
+            uint memoryObject = CreateMemoryObject();
+            if (memoryObject == 0 || EXTMemoryObjectWin32 is null)
+                return 0;
+
+            EXTMemoryObjectWin32.ImportMemoryWin32Handle(memoryObject, size, EXT.HandleTypeOpaqueWin32Ext, memoryObjectHandle);
+            return memoryObject;
+        }
+
+        public unsafe uint CreateImportedSemaphore(void* semaphoreHandle)
+        {
+            uint semaphore = CreateSemaphore();
+            if (semaphore == 0 || EXTSemaphoreWin32 is null)
+                return 0;
+
+            EXTSemaphoreWin32.ImportSemaphoreWin32Handle(semaphore, EXT.HandleTypeOpaqueWin32Ext, semaphoreHandle);
+            return semaphore;
+        }
+
+        public unsafe void DeleteMemoryObject(uint memoryObject)
+        {
+            if (memoryObject == 0 || EXTMemoryObject is null)
+                return;
+
+            EXTMemoryObject.DeleteMemoryObjects(1, &memoryObject);
+        }
+
+        public void DeleteSemaphore(uint semaphore)
+        {
+            if (semaphore == 0)
+                return;
+
+            EXTSemaphore?.DeleteSemaphore(semaphore);
+        }
+
+        public unsafe void SignalExternalTextureSemaphore(uint semaphore, ReadOnlySpan<uint> textureIds, ReadOnlySpan<Silk.NET.OpenGLES.TextureLayout> layouts)
+        {
+            if (semaphore == 0 || EXTSemaphore is null || textureIds.Length == 0 || textureIds.Length != layouts.Length)
+                return;
+
+            fixed (uint* texturePtr = textureIds)
+            fixed (Silk.NET.OpenGLES.TextureLayout* layoutPtr = layouts)
+            {
+                EXTSemaphore.SignalSemaphore(semaphore, 0, (uint*)null, (uint)textureIds.Length, texturePtr, layoutPtr);
+            }
+        }
+
+        public unsafe void WaitExternalTextureSemaphore(uint semaphore, ReadOnlySpan<uint> textureIds, ReadOnlySpan<Silk.NET.OpenGLES.TextureLayout> layouts)
+        {
+            if (semaphore == 0 || EXTSemaphore is null || textureIds.Length == 0 || textureIds.Length != layouts.Length)
+                return;
+
+            fixed (uint* texturePtr = textureIds)
+            fixed (Silk.NET.OpenGLES.TextureLayout* layoutPtr = layouts)
+            {
+                EXTSemaphore.WaitSemaphore(semaphore, 0, (uint*)null, (uint)textureIds.Length, texturePtr, layoutPtr);
+            }
+        }
+
+        public unsafe void SignalExternalTextureSemaphore(uint semaphore, uint textureId, Silk.NET.OpenGLES.TextureLayout layout)
+        {
+            if (textureId == 0)
+                return;
+
+            Span<uint> textureIds = stackalloc uint[1] { textureId };
+            Span<Silk.NET.OpenGLES.TextureLayout> layouts = stackalloc Silk.NET.OpenGLES.TextureLayout[1] { layout };
+            SignalExternalTextureSemaphore(semaphore, textureIds, layouts);
+        }
+
+        public unsafe void WaitExternalTextureSemaphore(uint semaphore, uint textureId, Silk.NET.OpenGLES.TextureLayout layout)
+        {
+            if (textureId == 0)
+                return;
+
+            Span<uint> textureIds = stackalloc uint[1] { textureId };
+            Span<Silk.NET.OpenGLES.TextureLayout> layouts = stackalloc Silk.NET.OpenGLES.TextureLayout[1] { layout };
+            WaitExternalTextureSemaphore(semaphore, textureIds, layouts);
+        }
+
+        public IntPtr GetMemoryObjectHandle(uint memoryObject)
+        {
+            if (EXTMemoryObject is null)
+                return IntPtr.Zero;
+            EXTMemoryObject.GetMemoryObjectParameter(memoryObject, EXT.HandleTypeOpaqueWin32Ext, out int handle);
+            return (IntPtr)handle;
+        }
+
+        public IntPtr GetSemaphoreHandle(uint semaphore)
+        {
+            if (EXTSemaphore is null)
+                return IntPtr.Zero;
+            EXTSemaphore.GetSemaphoreParameter(semaphore, EXT.HandleTypeOpaqueWin32Ext, out ulong handle);
+            return (IntPtr)handle;
+        }
+
+        public unsafe void SetMemoryObjectHandle(uint memoryObject, void* memoryObjectHandle)
+            => EXTMemoryObjectWin32?.ImportMemoryWin32Handle(memoryObject, 0, EXT.HandleTypeOpaqueWin32Ext, memoryObjectHandle);
+
+        public unsafe void SetSemaphoreHandle(uint semaphore, void* semaphoreHandle)
+            => EXTSemaphoreWin32?.ImportSemaphoreWin32Handle(semaphore, EXT.HandleTypeOpaqueWin32Ext, semaphoreHandle);
+
+        public override void Blit(
+            XRFrameBuffer? inFBO,
+            XRFrameBuffer? outFBO,
+            int inX, int inY, uint inW, uint inH,
+            int outX, int outY, uint outW, uint outH,
+            EReadBufferMode readBufferMode,
+            bool colorBit, bool depthBit, bool stencilBit,
+            bool linearFilter)
+        {
+            ClearBufferMask mask = 0;
+            if (colorBit)
+                mask |= ClearBufferMask.ColorBufferBit;
+            if (depthBit)
+                mask |= ClearBufferMask.DepthBufferBit;
+            if (stencilBit)
+                mask |= ClearBufferMask.StencilBufferBit;
+
+            var glIn = GenericToAPI<GLFrameBuffer>(inFBO);
+            var glOut = GenericToAPI<GLFrameBuffer>(outFBO);
+            var inID = glIn?.BindingId ?? 0u;
+            var outID = glOut?.BindingId ?? 0u;
+
+            // Guard: verify both FBOs are complete before blitting.
+            // Incomplete FBOs can fail color resolves just as silently as depth/stencil blits,
+            // so keep the same once-per-pair warning for all blit paths.
+            {
+                var srcStatus = Api.CheckNamedFramebufferStatus(inID, FramebufferTarget.ReadFramebuffer);
+                var dstStatus = Api.CheckNamedFramebufferStatus(outID, FramebufferTarget.DrawFramebuffer);
+                if (srcStatus != GLEnum.FramebufferComplete || dstStatus != GLEnum.FramebufferComplete)
+                {
+                    LogBlitSkipOnce(inID, outID, srcStatus, dstStatus);
+                    return;
+                }
+            }
+
+            Api.NamedFramebufferReadBuffer(inID, ToGLEnum(readBufferMode));
+
+            // Drain any pre-existing GL errors so they don't falsely trigger the
+            // post-blit check.
+            while (Api.GetError() != GLEnum.NoError) { }
+
+            Api.BlitNamedFramebuffer(
+                inID,
+                outID,
+                inX,
+                inY,
+                inX + (int)inW,
+                inY + (int)inH,
+                outX,
+                outY,
+                outX + (int)outW,
+                outY + (int)outH,
+                mask,
+                linearFilter ? BlitFramebufferFilter.Linear : BlitFramebufferFilter.Nearest);
+
+            // Check for GL errors from the blit and log once per FBO pair to avoid
+            // per-frame spam (e.g. NVIDIA "Depth formats do not match").
+            var blitErr = Api.GetError();
+            if (blitErr != GLEnum.NoError)
+                LogBlitErrorOnce(inID, outID, blitErr);
+        }
+
+        private readonly HashSet<(uint, uint)> _blitErrorWarned = [];
+        private void LogBlitErrorOnce(uint srcId, uint dstId, GLEnum error)
+        {
+            if (!_blitErrorWarned.Add((srcId, dstId)))
+                return;
+            Debug.OpenGLWarning(
+                $"BlitNamedFramebuffer FBO {srcId}?{dstId} raised {error}. " +
+                $"Subsequent errors for this pair will be suppressed.");
+        }
+
+        private readonly HashSet<(uint, uint)> _blitSkipWarned = [];
+        private void LogBlitSkipOnce(uint srcId, uint dstId, GLEnum srcStatus, GLEnum dstStatus)
+        {
+            if (!_blitSkipWarned.Add((srcId, dstId)))
+                return;
+            Debug.OpenGLWarning(
+                $"Skipping blit: FBO {srcId}?{dstId} incomplete " +
+                $"(src={srcStatus}, dst={dstStatus}).");
+        }
+
+        public override void BlitWithDrawBuffer(
+            XRFrameBuffer? inFBO,
+            XRFrameBuffer? outFBO,
+            uint inW, uint inH,
+            uint outW, uint outH,
+            EReadBufferMode readBufferMode,
+            EReadBufferMode drawBufferMode,
+            bool colorBit, bool depthBit, bool stencilBit,
+            bool linearFilter)
+        {
+            ClearBufferMask mask = 0;
+            if (colorBit)
+                mask |= ClearBufferMask.ColorBufferBit;
+            if (depthBit)
+                mask |= ClearBufferMask.DepthBufferBit;
+            if (stencilBit)
+                mask |= ClearBufferMask.StencilBufferBit;
+
+            var glIn = GenericToAPI<GLFrameBuffer>(inFBO);
+            var glOut = GenericToAPI<GLFrameBuffer>(outFBO);
+            var inID = glIn?.BindingId ?? 0u;
+            var outID = glOut?.BindingId ?? 0u;
+
+            var srcStatus = Api.CheckNamedFramebufferStatus(inID, FramebufferTarget.ReadFramebuffer);
+            var dstStatus = Api.CheckNamedFramebufferStatus(outID, FramebufferTarget.DrawFramebuffer);
+            if (srcStatus != GLEnum.FramebufferComplete || dstStatus != GLEnum.FramebufferComplete)
+            {
+                LogBlitSkipOnce(inID, outID, srcStatus, dstStatus);
+                return;
+            }
+
+            Api.NamedFramebufferReadBuffer(inID, ToGLEnum(readBufferMode));
+            Api.NamedFramebufferDrawBuffer(outID, ToGLEnum(drawBufferMode));
+
+            while (Api.GetError() != GLEnum.NoError) { }
+
+            Api.BlitNamedFramebuffer(
+                inID,
+                outID,
+                0, 0, (int)inW, (int)inH,
+                0, 0, (int)outW, (int)outH,
+                mask,
+                linearFilter ? BlitFramebufferFilter.Linear : BlitFramebufferFilter.Nearest);
+
+            var blitErr = Api.GetError();
+            if (blitErr != GLEnum.NoError)
+                LogBlitErrorOnce(inID, outID, blitErr);
+        }
+
+        public static int GetBytesPerPixel(InternalFormat internalFormat) => internalFormat switch
+        {
+            // Standard formats
+            InternalFormat.Rgba8 => 4,
+            InternalFormat.Rgb8 => 3,
+            InternalFormat.R8 => 1,
+            InternalFormat.RG8 => 2,
+
+            // Depth/Stencil formats
+            InternalFormat.DepthComponent32f => 4,
+            InternalFormat.DepthComponent24 => 3,
+            InternalFormat.DepthComponent16 => 2,
+            InternalFormat.DepthComponent32 => 4,
+            InternalFormat.DepthComponent => 4, // Default to 4 bytes (32-bit float)
+            InternalFormat.StencilIndex8 => 1,
+            InternalFormat.StencilIndex1 => 1,
+            InternalFormat.StencilIndex4 => 1,
+            InternalFormat.StencilIndex16 => 2,
+            InternalFormat.StencilIndex => 1, // Default to 1 byte (8-bit)
+            InternalFormat.Depth24Stencil8 => 4,
+            InternalFormat.Depth32fStencil8 => 5, // 4 bytes depth + 1 byte stencil
+            InternalFormat.DepthStencil => 4,
+            InternalFormat.DepthStencilMesa => 4,
+
+            // Base formats
+            InternalFormat.Red => 1,
+            InternalFormat.RG => 2,
+            InternalFormat.Rgb => 3,
+            InternalFormat.Rgba => 4,
+
+            // Higher bit depth formats
+            InternalFormat.Rgba16 => 8,
+            InternalFormat.Rgb16 => 6,
+            InternalFormat.RG16 => 4,
+            InternalFormat.R16 => 2,
+            InternalFormat.Rgba16f => 8,
+            InternalFormat.Rgb16f => 6,
+            InternalFormat.RG16f => 4,
+            InternalFormat.R16f => 2,
+            InternalFormat.Rgba32f => 16,
+            InternalFormat.Rgb32f => 12,
+            InternalFormat.RG32f => 8,
+            InternalFormat.R32f => 4,
+
+            // Integer formats
+            InternalFormat.Rgba8i => 4,
+            InternalFormat.Rgb8i => 3,
+            InternalFormat.RG8i => 2,
+            InternalFormat.R8i => 1,
+            InternalFormat.Rgba16i => 8,
+            InternalFormat.Rgb16i => 6,
+            InternalFormat.RG16i => 4,
+            InternalFormat.R16i => 2,
+            InternalFormat.Rgba32i => 16,
+            InternalFormat.Rgb32i => 12,
+            InternalFormat.RG32i => 8,
+            InternalFormat.R32i => 4,
+            InternalFormat.Rgba8ui => 4,
+            InternalFormat.Rgb8ui => 3,
+            InternalFormat.RG8ui => 2,
+            InternalFormat.R8ui => 1,
+            InternalFormat.Rgba16ui => 8,
+            InternalFormat.Rgb16ui => 6,
+            InternalFormat.RG16ui => 4,
+            InternalFormat.R16ui => 2,
+            InternalFormat.Rgba32ui => 16,
+            InternalFormat.Rgb32ui => 12,
+            InternalFormat.RG32ui => 8,
+            InternalFormat.R32ui => 4,
+
+            // Special formats
+            InternalFormat.R3G3B2 => 1,
+            InternalFormat.Rgb565Oes => 2,
+            InternalFormat.Rgba4 => 2,
+            InternalFormat.Rgb5A1 => 2,
+            InternalFormat.Rgb10A2 => 4,
+            InternalFormat.Rgb10A2ui => 4,
+            InternalFormat.R11fG11fB10f => 4,
+            InternalFormat.Rgb9E5 => 4,
+
+            // sRGB formats
+            InternalFormat.Srgb8 => 3,
+            InternalFormat.Srgb8Alpha8 => 4,
+            InternalFormat.Srgb => 3,
+            InternalFormat.SrgbAlpha => 4,
+
+            // Signed normalized formats
+            InternalFormat.R8SNorm => 1,
+            InternalFormat.RG8SNorm => 2,
+            InternalFormat.Rgb8SNorm => 3,
+            InternalFormat.Rgba8SNorm => 4,
+            InternalFormat.R16SNorm => 2,
+            InternalFormat.RG16SNorm => 4,
+            InternalFormat.Rgb16SNorm => 6,
+            InternalFormat.Rgba16SNorm => 8,
+
+            // Compressed formats - return estimated bytes per block
+            InternalFormat.CompressedRgbS3TCDxt1Ext => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRgbaS3TCDxt1Ext => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRgbaS3TCDxt3Angle => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRgbaS3TCDxt5Angle => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRed => 1, // Depends on actual compression
+            InternalFormat.CompressedRG => 1, // Depends on actual compression
+            InternalFormat.CompressedRgb => 1, // Depends on actual compression
+            InternalFormat.CompressedRgba => 1, // Depends on actual compression
+            InternalFormat.CompressedSrgb => 1, // Depends on actual compression
+            InternalFormat.CompressedSrgbAlpha => 1, // Depends on actual compression
+            InternalFormat.CompressedSrgbS3TCDxt1Ext => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSrgbAlphaS3TCDxt1Ext => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSrgbAlphaS3TCDxt3Ext => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSrgbAlphaS3TCDxt5Ext => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRedRgtc1 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSignedRedRgtc1 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRedGreenRgtc2Ext => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSignedRedGreenRgtc2Ext => 1, // ~1 byte per pixel
+            InternalFormat.Etc1Rgb8Oes => 1, // ~0.5 bytes per pixel
+
+            // ASTC and other modern compressed formats
+            InternalFormat.CompressedRgbaBptcUnorm => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSrgbAlphaBptcUnorm => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRgbBptcSignedFloat => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRgbBptcUnsignedFloat => 1, // ~1 byte per pixel
+            InternalFormat.CompressedR11Eac => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSignedR11Eac => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRG11Eac => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSignedRG11Eac => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRgb8Etc2 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSrgb8Etc2 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRgb8PunchthroughAlpha1Etc2 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSrgb8PunchthroughAlpha1Etc2 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRgba8Etc2Eac => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSrgb8Alpha8Etc2Eac => 1, // ~1 byte per pixel
+
+            // ASTC formats (all approximately 1 byte per pixel or less)
+            InternalFormat.CompressedRgbaAstc4x4 => 1,
+            InternalFormat.CompressedRgbaAstc5x4 => 1,
+            InternalFormat.CompressedRgbaAstc5x5 => 1,
+            InternalFormat.CompressedRgbaAstc6x5 => 1,
+            InternalFormat.CompressedRgbaAstc6x6 => 1,
+            InternalFormat.CompressedRgbaAstc8x5 => 1,
+            InternalFormat.CompressedRgbaAstc8x6 => 1,
+            InternalFormat.CompressedRgbaAstc8x8 => 1,
+            InternalFormat.CompressedRgbaAstc10x5 => 1,
+            InternalFormat.CompressedRgbaAstc10x6 => 1,
+            InternalFormat.CompressedRgbaAstc10x8 => 1,
+            InternalFormat.CompressedRgbaAstc10x10 => 1,
+            InternalFormat.CompressedRgbaAstc12x10 => 1,
+            InternalFormat.CompressedRgbaAstc12x12 => 1,
+
+            // 3D ASTC formats
+            InternalFormat.CompressedRgbaAstc3x3x3Oes => 1,
+            InternalFormat.CompressedRgbaAstc4x3x3Oes => 1,
+            InternalFormat.CompressedRgbaAstc4x4x3Oes => 1,
+            InternalFormat.CompressedRgbaAstc4x4x4Oes => 1,
+            InternalFormat.CompressedRgbaAstc5x4x4Oes => 1,
+            InternalFormat.CompressedRgbaAstc5x5x4Oes => 1,
+            InternalFormat.CompressedRgbaAstc5x5x5Oes => 1,
+            InternalFormat.CompressedRgbaAstc6x5x5Oes => 1,
+            InternalFormat.CompressedRgbaAstc6x6x5Oes => 1,
+            InternalFormat.CompressedRgbaAstc6x6x6Oes => 1,
+
+            // sRGB ASTC formats
+            InternalFormat.CompressedSrgb8Alpha8Astc4x4 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x4 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x5 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x5 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x6 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc8x5 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc8x6 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc8x8 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc10x5 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc10x6 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc10x8 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc10x10 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc12x10 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc12x12 => 1,
+
+            // 3D sRGB ASTC formats
+            InternalFormat.CompressedSrgb8Alpha8Astc3x3x3Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc4x3x3Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc4x4x3Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc4x4x4Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x4x4Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x5x4Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x5x5Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x5x5Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x6x5Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x6x6Oes => 1,
+
+            // Extension formats
+            InternalFormat.Alpha4Ext => 1,
+            InternalFormat.Alpha8Ext => 1,
+            InternalFormat.Alpha12Ext => 2,
+            InternalFormat.Alpha16Ext => 2,
+            InternalFormat.Luminance4Ext => 1,
+            InternalFormat.Luminance8Ext => 1,
+            InternalFormat.Luminance12Ext => 2,
+            InternalFormat.Luminance16Ext => 2,
+            InternalFormat.Luminance4Alpha4Ext => 1,
+            InternalFormat.Luminance6Alpha2Ext => 1,
+            InternalFormat.Luminance8Alpha8Ext => 2,
+            InternalFormat.Luminance12Alpha4Ext => 2,
+            InternalFormat.Luminance12Alpha12Ext => 3,
+            InternalFormat.Luminance16Alpha16Ext => 4,
+            InternalFormat.Intensity4Ext => 1,
+            InternalFormat.Intensity8Ext => 1,
+            InternalFormat.Intensity12Ext => 2,
+            InternalFormat.Intensity16Ext => 2,
+            InternalFormat.Rgb2Ext => 1,
+            InternalFormat.Rgb4 => 2,
+            InternalFormat.Rgb5 => 2,
+            InternalFormat.Rgb10 => 4,
+            InternalFormat.Rgb12 => 5, // 36-bit, packed as 5 bytes
+            InternalFormat.Rgba2 => 1,
+            InternalFormat.Rgba12 => 6, // 48-bit, packed as 6 bytes
+
+            // Dual formats
+            InternalFormat.DualAlpha4Sgis =>  1,
+            InternalFormat.DualAlpha8Sgis => 1,
+            InternalFormat.DualAlpha12Sgis => 2,
+            InternalFormat.DualAlpha16Sgis => 2,
+            InternalFormat.DualLuminance4Sgis => 1,
+            InternalFormat.DualLuminance8Sgis => 1,
+            InternalFormat.DualLuminance12Sgis => 2,
+            InternalFormat.DualLuminance16Sgis => 2,
+            InternalFormat.DualIntensity4Sgis => 1,
+            InternalFormat.DualIntensity8Sgis => 1,
+            InternalFormat.DualIntensity12Sgis => 2,
+            InternalFormat.DualIntensity16Sgis => 2,
+            InternalFormat.DualLuminanceAlpha4Sgis => 1,
+            InternalFormat.DualLuminanceAlpha8Sgis => 2,
+            InternalFormat.QuadAlpha4Sgis => 2,
+            InternalFormat.QuadAlpha8Sgis => 4,
+            InternalFormat.QuadLuminance4Sgis => 2,
+            InternalFormat.QuadLuminance8Sgis => 4,
+            InternalFormat.QuadIntensity4Sgis => 2,
+            InternalFormat.QuadIntensity8Sgis => 4,
+
+            // Ext formats
+            InternalFormat.Alpha32uiExt => 4,
+            InternalFormat.Intensity32uiExt => 4,
+            InternalFormat.Luminance32uiExt => 4,
+            InternalFormat.LuminanceAlpha32uiExt => 8,
+            InternalFormat.Alpha16uiExt => 2,
+            InternalFormat.Intensity16uiExt => 2,
+            InternalFormat.Luminance16uiExt => 2,
+            InternalFormat.LuminanceAlpha16uiExt => 4,
+            InternalFormat.Alpha8uiExt => 1,
+            InternalFormat.Intensity8uiExt => 1,
+            InternalFormat.Luminance8uiExt => 1,
+            InternalFormat.LuminanceAlpha8uiExt => 2,
+            InternalFormat.Alpha32iExt => 4,
+            InternalFormat.Intensity32iExt => 4,
+            InternalFormat.Luminance32iExt => 4,
+            InternalFormat.LuminanceAlpha32iExt => 8,
+            InternalFormat.Alpha16iExt => 2,
+            InternalFormat.Intensity16iExt => 2,
+            InternalFormat.Luminance16iExt => 2,
+            InternalFormat.LuminanceAlpha16iExt => 4,
+            InternalFormat.Alpha8iExt => 1,
+            InternalFormat.Intensity8iExt => 1,
+            InternalFormat.Luminance8iExt => 1,
+            InternalFormat.LuminanceAlpha8iExt => 2,
+            InternalFormat.DepthComponent32fNV => 4,
+            InternalFormat.Depth32fStencil8NV => 5,
+
+            // SR formats
+            InternalFormat.SR8Ext => 1,
+            InternalFormat.Srg8Ext => 2,
+
+            // Default for unknown formats - conservative 4 bytes
+            _ => 4
+        };
+
+        // ===================== Indirect + Pipeline Abstraction (OpenGL) =====================
+        public override void BindVAOForRenderer(XRMeshRenderer.BaseVersion? version)
+        {
+            if (version is null)
+            {
+                UnbindMeshRenderer();
+                return;
+            }
+            var glMesh = GenericToAPI<GLMeshRenderer>(version);
+            BindMeshRenderer(glMesh);
+        }
+
+        public override bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version)
+        {
+            var glMesh = version != null ? GenericToAPI<GLMeshRenderer>(version) : ActiveMeshRenderer;
+            if (glMesh is null)
+                return false;
+            return (glMesh.TriangleIndicesBuffer?.Data?.ElementCount > 0) ||
+                   (glMesh.LineIndicesBuffer?.Data?.ElementCount > 0) ||
+                   (glMesh.PointIndicesBuffer?.Data?.ElementCount > 0);
+        }
+
+        public override bool TryGetIndexBufferInfo(XRMeshRenderer.BaseVersion? version, out IndexSize indexElementSize, out uint indexCount)
+        {
+            indexElementSize = IndexSize.FourBytes;
+            indexCount = 0;
+
+            var glMesh = version != null ? GenericToAPI<GLMeshRenderer>(version) : ActiveMeshRenderer;
+            if (glMesh is null)
+                return false;
+
+            // Check buffers in priority order: triangles, lines, points
+            if (glMesh.TriangleIndicesBuffer?.Data?.ElementCount > 0)
+            {
+                indexElementSize = glMesh.TrianglesElementType;
+                indexCount = glMesh.TriangleIndicesBuffer.Data.ElementCount;
+                return true;
+            }
+
+            if (glMesh.LineIndicesBuffer?.Data?.ElementCount > 0)
+            {
+                indexElementSize = glMesh.LineIndicesElementType;
+                indexCount = glMesh.LineIndicesBuffer.Data.ElementCount;
+                return true;
+            }
+
+            if (glMesh.PointIndicesBuffer?.Data?.ElementCount > 0)
+            {
+                indexElementSize = glMesh.PointIndicesElementType;
+                indexCount = glMesh.PointIndicesBuffer.Data.ElementCount;
+                return true;
+            }
+
+            return false;
+        }
+
+        public override bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize)
+        {
+            var version = meshRenderer.GetDefaultVersion();
+            var glMesh = GenericToAPI<GLMeshRenderer>(version);
+            if (glMesh is null)
+                return false;
+
+            var glIndexBuffer = GenericToAPI<GLDataBuffer>(indexBuffer);
+            if (glIndexBuffer is null)
+                return false;
+
+            glMesh.SetTriangleIndexBuffer(glIndexBuffer, elementSize);
+            return true;
+        }
+
+        public override void BindDrawIndirectBuffer(XRDataBuffer buffer)
+        {
+            var glBuf = GenericToAPI<GLDataBuffer>(buffer);
+            if (glBuf is null)
+                return;
+            Api.BindBuffer(GLEnum.DrawIndirectBuffer, glBuf.BindingId);
+        }
+
+        public override void UnbindDrawIndirectBuffer()
+        {
+            Api.BindBuffer(GLEnum.DrawIndirectBuffer, 0);
+        }
+
+        public override void BindParameterBuffer(XRDataBuffer buffer)
+        {
+            var glBuf = GenericToAPI<GLDataBuffer>(buffer);
+            if (glBuf is null)
+                return;
+            const GLEnum GL_PARAMETER_BUFFER = (GLEnum)0x80EE;
+            Api.BindBuffer(GL_PARAMETER_BUFFER, glBuf.BindingId);
+        }
+
+        public override void UnbindParameterBuffer()
+        {
+            const GLEnum GL_PARAMETER_BUFFER = (GLEnum)0x80EE;
+            Api.BindBuffer(GL_PARAMETER_BUFFER, 0);
+        }
+
+        private (PrimitiveType prim, DrawElementsType elem) GetActivePrimitiveAndElementType()
+        {
+            PrimitiveType primitiveType = PrimitiveType.Triangles;
+            DrawElementsType elementType = DrawElementsType.UnsignedInt;
+            var renderer = ActiveMeshRenderer;
+            if (renderer is not null)
+            {
+                if (renderer.UsesPatchTopology && renderer.TriangleIndicesBuffer is not null)
+                {
+                    primitiveType = PrimitiveType.Patches;
+                    elementType = renderer.TrianglesElementType switch
+                    {
+                        IndexSize.Byte => DrawElementsType.UnsignedByte,
+                        IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+                        _ => DrawElementsType.UnsignedInt,
+                    };
+                }
+                else if (renderer.TriangleIndicesBuffer is not null)
+                {
+                    primitiveType = PrimitiveType.Triangles;
+                    elementType = renderer.TrianglesElementType switch
+                    {
+                        IndexSize.Byte => DrawElementsType.UnsignedByte,
+                        IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+                        _ => DrawElementsType.UnsignedInt,
+                    };
+                }
+                else if (renderer.LineIndicesBuffer is not null)
+                {
+                    primitiveType = PrimitiveType.Lines;
+                    elementType = renderer.LineIndicesElementType switch
+                    {
+                        IndexSize.Byte => DrawElementsType.UnsignedByte,
+                        IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+                        _ => DrawElementsType.UnsignedInt,
+                    };
+                }
+                else if (renderer.PointIndicesBuffer is not null)
+                {
+                    primitiveType = PrimitiveType.Points;
+                    elementType = renderer.PointIndicesElementType switch
+                    {
+                        IndexSize.Byte => DrawElementsType.UnsignedByte,
+                        IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+                        _ => DrawElementsType.UnsignedInt,
+                    };
+                }
+            }
+            return (primitiveType, elementType);
+        }
+
+        private void ApplyPatchParameters(GLMeshRenderer? renderer)
+        {
+            if (!(renderer?.UsesPatchTopology ?? false))
+                return;
+
+            Api.PatchParameter(GLEnum.PatchVertices, renderer.PatchVertexCount);
+        }
+
+        public override unsafe void MultiDrawElementsIndirect(uint drawCount, uint stride)
+        {
+            var (prim, elem) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
+            Api.MultiDrawElementsIndirect(prim, elem, null, drawCount, stride);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
+        }
+
+        public override unsafe void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset)
+        {
+            var (prim, elem) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
+            Api.MultiDrawElementsIndirect(prim, elem, (void*)byteOffset, drawCount, stride);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
+        }
+
+        public override unsafe void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
+        {
+            var (prim, elem) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
+            Api.MultiDrawElementsIndirectCount(prim, elem, (void*)byteOffset, (IntPtr)countByteOffset, maxDrawCount, stride);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            // Note: actual draw count is determined by GPU, we track max as approximation
+            Engine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
+        }
+
+        public unsafe void MultiDrawElementsIndirectCountNVBindless(uint drawCountOffset, uint maxDrawCount, uint stride)
+        {
+            var (prim, elem) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
+            NVBindlessMultiDrawIndirectCount?.MultiDrawElementsIndirectBindlessCount(
+                prim,
+                elem,
+                null,
+                drawCountOffset,
+                maxDrawCount,
+                stride,
+                1);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            Engine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
+        }
+
+        public unsafe void MultiDrawElementsIndirectCount(uint drawCountOffset, uint maxDrawCount, uint stride)
+        {
+            var (primitiveType, elementType) = GetActivePrimitiveAndElementType();
+            ApplyPatchParameters(ActiveMeshRenderer);
+            // Requires GL 4.6 or ARB_indirect_parameters
+            Api.MultiDrawElementsIndirectCount(
+                primitiveType,
+                elementType,
+                null,
+                (nint)drawCountOffset,
+                maxDrawCount,
+                stride);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            Engine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
+        }
+
+        //public unsafe void MultiDrawElementsIndirectCount(uint maxCommands, uint stride)
+        //{
+        //    //Get primitive type and element type from currently bound renderer
+        //    PrimitiveType primitiveType = PrimitiveType.Triangles;
+        //    DrawElementsType elementType = DrawElementsType.UnsignedInt;
+        //    var renderer = ActiveMeshRenderer;
+        //    if (renderer is not null)
+        //    {
+        //        if (renderer.TriangleIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Triangles;
+        //            elementType = ToDrawElementsType(renderer.TrianglesElementType);
+        //        }
+        //        else if (renderer.LineIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Lines;
+        //            elementType = ToDrawElementsType(renderer.LineIndicesElementType);
+        //        }
+        //        else if (renderer.PointIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Points;
+        //            elementType = ToDrawElementsType(renderer.PointIndicesElementType);
+        //        }
+        //    }
+
+        //    // Requires GL 4.6 or ARB_indirect_parameters
+        //    Api.MultiDrawElementsIndirectCount(
+        //        primitiveType,
+        //        elementType,
+        //        null,
+        //        IntPtr.Zero,
+        //        maxCommands,
+        //        stride);
+        //}
+
+        //public unsafe void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset)
+        //{
+        //    // Determine primitive and element types from currently bound renderer (ActiveMeshRenderer)
+        //    PrimitiveType primitiveType = PrimitiveType.Triangles;
+        //    DrawElementsType elementType = DrawElementsType.UnsignedInt;
+        //    var renderer = ActiveMeshRenderer;
+        //    if (renderer is not null)
+        //    {
+        //        if (renderer.TriangleIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Triangles;
+        //            elementType = ToDrawElementsType(renderer.TrianglesElementType);
+        //        }
+        //        else if (renderer.LineIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Lines;
+        //            elementType = ToDrawElementsType(renderer.LineIndicesElementType);
+        //        }
+        //        else if (renderer.PointIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Points;
+        //            elementType = ToDrawElementsType(renderer.PointIndicesElementType);
+        //        }
+        //    }
+
+        //    Api.MultiDrawElementsIndirect(
+        //        primitiveType,
+        //        elementType,
+        //        (void*)byteOffset,
+        //        drawCount,
+        //        stride);
+        //}
+
+        public override bool SupportsIndirectCountDraw()
+        {
+            try
+            {
+                string? verStr = Version;
+                if (!string.IsNullOrWhiteSpace(verStr))
+                {
+                    var parts = verStr.Split(' ');
+                    var num = parts[0].Split('.');
+                    if (num.Length >= 2 && int.TryParse(num[0], out int maj) && int.TryParse(num[1], out int min))
+                    {
+                        if (maj > 4 || (maj == 4 && min >= 6))
+                            return true;
+                    }
+                }
+            }
+            catch { }
+            return Api.IsExtensionPresent("GL_ARB_indirect_parameters");
+        }
+
+        /// <summary>
+        /// Tracks the currently active texture unit for accurate per-unit binding optimization.
+        /// </summary>
+        public int ActiveTextureUnit { get; private set; } = 0;
+
+        private int _maxFragmentTextureImageUnits;
+        public int MaxFragmentTextureImageUnits
+        {
+            get
+            {
+                if (_maxFragmentTextureImageUnits > 0)
+                    return _maxFragmentTextureImageUnits;
+
+                int units = Api.GetInteger(GLEnum.MaxTextureImageUnits);
+                _maxFragmentTextureImageUnits = units > 0 ? units : 16;
+                return _maxFragmentTextureImageUnits;
+            }
+        }
+
+        /// <summary>
+        /// Tracks which texture is bound to each texture unit, keyed by unit index.
+        /// This allows proper optimization when the same texture is bound to different units.
+        /// </summary>
+        private readonly Dictionary<int, IGLTexture?> _boundTexturesPerUnit = new();
+        private readonly Dictionary<int, Dictionary<ETextureTarget, BoundTextureDebugState>> _boundTexturesPerUnitTarget = new();
+        private string? _currentDrawProgramName;
+        private string? _currentDrawMaterialName;
+        private string? _currentDrawMeshName;
+        private IReadOnlyCollection<int>? _currentDrawTextureUnits;
+
+        /// <summary>
+        /// Gets or sets the texture bound to the currently active texture unit.
+        /// This property maintains backward compatibility while enabling per-unit tracking.
+        /// </summary>
+        public IGLTexture? BoundTexture
+        {
+            get => _boundTexturesPerUnit.TryGetValue(ActiveTextureUnit, out var tex) ? tex : null;
+            set => _boundTexturesPerUnit[ActiveTextureUnit] = value;
+        }
+
+        public IGLTexture? GetBoundTexture(ETextureTarget target)
+        {
+            if (_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var unitBindings)
+                && unitBindings.TryGetValue(target, out var binding))
+            {
+                return binding.Texture;
+            }
+
+            return null;
+        }
+
+        public void SetBoundTexture(ETextureTarget target, IGLTexture? texture, string? name = null)
+        {
+            BoundTexture = texture;
+
+            if (texture is null)
+            {
+                if (_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var unitBindings))
+                {
+                    unitBindings.Remove(target);
+                    if (unitBindings.Count == 0)
+                        _boundTexturesPerUnitTarget.Remove(ActiveTextureUnit);
+                }
+
+                return;
+            }
+
+            if (!_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var trackedBindings))
+            {
+                trackedBindings = new Dictionary<ETextureTarget, BoundTextureDebugState>();
+                _boundTexturesPerUnitTarget[ActiveTextureUnit] = trackedBindings;
+            }
+
+            trackedBindings[target] = new BoundTextureDebugState(
+                texture,
+                string.IsNullOrWhiteSpace(name) ? texture.GetType().Name : name!,
+                texture.BindingId);
+        }
+
+        /// <summary>
+        /// Unbinds any texture targets on the currently active unit that differ from <paramref name="keepTarget"/>.
+        /// Prevents NVIDIA "program texture usage" errors caused by stale bindings on the same unit
+        /// (e.g. a cubemap left over from a previous pass when the shader expects sampler2D).
+        /// </summary>
+        public void ClearConflictingTextureTargets(ETextureTarget keepTarget)
+        {
+            if (!_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var unitBindings))
+                return;
+
+            // Collect targets to remove (can't modify dictionary while iterating).
+            List<ETextureTarget>? toRemove = null;
+            foreach (var kvp in unitBindings)
+            {
+                if (kvp.Key == keepTarget)
+                    continue;
+
+                toRemove ??= [];
+                toRemove.Add(kvp.Key);
+            }
+
+            if (toRemove is null)
+                return;
+
+            foreach (var staleTarget in toRemove)
+            {
+                Api.BindTexture(GLObjectBase.ToGLEnum(staleTarget), 0);
+                unitBindings.Remove(staleTarget);
+            }
+
+            if (unitBindings.Count == 0)
+                _boundTexturesPerUnitTarget.Remove(ActiveTextureUnit);
+        }
+
+        public void SetDrawDebugContext(string? programName, string? materialName, string? meshName, IReadOnlyCollection<int>? textureUnits)
+        {
+            _currentDrawProgramName = string.IsNullOrWhiteSpace(programName) ? null : programName;
+            _currentDrawMaterialName = string.IsNullOrWhiteSpace(materialName) ? null : materialName;
+            _currentDrawMeshName = string.IsNullOrWhiteSpace(meshName) ? null : meshName;
+            _currentDrawTextureUnits = textureUnits is { Count: > 0 } ? textureUnits : null;
+        }
+
+        public void ClearDrawDebugContext()
+        {
+            _currentDrawProgramName = null;
+            _currentDrawMaterialName = null;
+            _currentDrawMeshName = null;
+            _currentDrawTextureUnits = null;
+        }
+
+        private string BuildOpenGLErrorContext()
+        {
+            StringBuilder sb = new();
+
+            if (!string.IsNullOrWhiteSpace(_currentDrawProgramName)
+                || !string.IsNullOrWhiteSpace(_currentDrawMaterialName)
+                || !string.IsNullOrWhiteSpace(_currentDrawMeshName))
+            {
+                sb.Append("[GL Error Context] DrawProgram='")
+                    .Append(_currentDrawProgramName ?? "<unknown>")
+                    .Append("', Material='")
+                    .Append(_currentDrawMaterialName ?? "<unknown>")
+                    .Append("', Mesh='")
+                    .Append(_currentDrawMeshName ?? "<unknown>")
+                    .AppendLine("'");
+            }
+
+            int currentProgramId = Api.GetInteger(GetPName.CurrentProgram);
+            sb.Append("[GL Error Context] CurrentProgramId=")
+                .Append(currentProgramId)
+                .Append(", ActiveTextureUnit=")
+                .Append(ActiveTextureUnit)
+                .Append(", MaxFragmentTextureUnits=")
+                .Append(MaxFragmentTextureImageUnits)
+                .AppendLine();
+
+            sb.Append("[GL Error Context] TextureUnits=");
+            AppendTrackedTextureUnits(sb);
+            return sb.ToString().TrimEnd();
+        }
+
+        private void AppendTrackedTextureUnits(StringBuilder sb)
+        {
+            int[] units;
+            if (_currentDrawTextureUnits is ICollection<int> currentTextureUnits && currentTextureUnits.Count > 0)
+            {
+                units = new int[currentTextureUnits.Count];
+                currentTextureUnits.CopyTo(units, 0);
+            }
+            else if (_currentDrawTextureUnits is { Count: > 0 } fallbackTextureUnits)
+            {
+                units = new int[fallbackTextureUnits.Count];
+                int index = 0;
+                foreach (int unit in fallbackTextureUnits)
+                    units[index++] = unit;
+            }
+            else
+            {
+                units = [.. _boundTexturesPerUnitTarget.Keys];
+            }
+
+            if (units.Length == 0)
+            {
+                sb.Append("<none>");
+                return;
+            }
+
+            Array.Sort(units);
+            bool wroteAnyUnit = false;
+            foreach (int unit in units)
+            {
+                if (!_boundTexturesPerUnitTarget.TryGetValue(unit, out var bindings) || bindings.Count == 0)
+                    continue;
+
+                if (wroteAnyUnit)
+                    sb.Append("; ");
+
+                sb.Append("unit ").Append(unit).Append("=[");
+                bool wroteBinding = false;
+                foreach (var pair in bindings)
+                {
+                    if (wroteBinding)
+                        sb.Append(", ");
+
+                    sb.Append(pair.Key)
+                        .Append(':')
+                        .Append(pair.Value.Name)
+                        .Append('#')
+                        .Append(pair.Value.BindingId);
+                    wroteBinding = true;
+                }
+                sb.Append(']');
+                wroteAnyUnit = true;
+            }
+
+            if (!wroteAnyUnit)
+                sb.Append("<none>");
+        }
+
+        /// <summary>
+        /// Sets the active texture unit and updates internal tracking.
+        /// Should be called instead of directly calling Api.ActiveTexture.
+        /// </summary>
+        /// <param name="unit">The texture unit to activate (0-based index).</param>
+        public void SetActiveTextureUnit(int unit)
+        {
+            ActiveTextureUnit = unit;
+            Api.ActiveTexture(GLEnum.Texture0 + unit);
+        }
+
+        /// <summary>
+        /// Modifies the rendering API's state to adhere to the given material's settings.
+        /// </summary>
+        /// <param name="parameters"></param>
+        public override void ApplyRenderParameters(RenderingParameters parameters)
+        {
+            if (parameters is null)
+                return;
+
+            //Api.PointSize(r.PointSize);
+            //Api.LineWidth(r.LineWidth.Clamp(0.0f, 1.0f));
+            Api.ColorMask(parameters.WriteRed, parameters.WriteGreen, parameters.WriteBlue, parameters.WriteAlpha);
+
+            var winding = parameters.Winding;
+            if (Engine.Rendering.State.ReverseWinding)
+                winding = winding == EWinding.Clockwise ? EWinding.CounterClockwise : EWinding.Clockwise;
+            Api.FrontFace(ToGLEnum(winding));
+
+            ApplyCulling(parameters);
+            ApplyDepth(parameters);
+            ApplyBlending(parameters);
+            ApplyAlphaToCoverage(parameters);
+            ApplyStencil(parameters);
+            //Alpha testing is done in-shader
+        }
+
+        private GLEnum ToGLEnum(EWinding winding)
+            => winding switch
+            {
+                EWinding.Clockwise => GLEnum.CW,
+                EWinding.CounterClockwise => GLEnum.Ccw,
+                _ => GLEnum.Ccw
+            };
+
+        private void ApplyStencil(RenderingParameters r)
+        {
+            switch (r.StencilTest.Enabled)
+            {
+                case ERenderParamUsage.Enabled:
+                    {
+                        Api.Enable(EnableCap.StencilTest);
+
+                        StencilTest st = r.StencilTest;
+                        StencilTestFace b = st.BackFace;
+                        StencilTestFace f = st.FrontFace;
+
+                        Api.StencilOpSeparate(GLEnum.Back,
+                            (StencilOp)(int)b.BothFailOp,
+                            (StencilOp)(int)b.StencilPassDepthFailOp,
+                            (StencilOp)(int)b.BothPassOp);
+
+                        Api.StencilOpSeparate(GLEnum.Front,
+                            (StencilOp)(int)f.BothFailOp,
+                            (StencilOp)(int)f.StencilPassDepthFailOp,
+                            (StencilOp)(int)f.BothPassOp);
+
+                        Api.StencilMaskSeparate(GLEnum.Back, b.WriteMask);
+                        Api.StencilMaskSeparate(GLEnum.Front, f.WriteMask);
+
+                        Api.StencilFuncSeparate(GLEnum.Back,
+                            StencilFunction.Never + (int)b.Function, b.Reference, b.ReadMask);
+                        Api.StencilFuncSeparate(GLEnum.Front,
+                            StencilFunction.Never + (int)f.Function, f.Reference, f.ReadMask);
+
+                        break;
+                    }
+
+                case ERenderParamUsage.Disabled:
+                    Api.Disable(EnableCap.StencilTest);
+                    Api.StencilMask(0);
+                    Api.StencilOp(GLEnum.Keep, GLEnum.Keep, GLEnum.Keep);
+                    Api.StencilFunc(StencilFunction.Always, 0, 0);
+                    break;
+            }
+        }
+
+        private void ApplyBlending(RenderingParameters r)
+        {
+            if (r.BlendModeAllDrawBuffers is not null)
+            {
+                var x = r.BlendModeAllDrawBuffers;
+                if (x.Enabled == ERenderParamUsage.Enabled)
+                {
+                    Api.Enable(EnableCap.Blend);
+
+                    Api.BlendEquationSeparate(
+                        ToGLEnum(x.RgbEquation),
+                        ToGLEnum(x.AlphaEquation));
+
+                    Api.BlendFuncSeparate(
+                        ToGLEnum(x.RgbSrcFactor),
+                        ToGLEnum(x.RgbDstFactor),
+                        ToGLEnum(x.AlphaSrcFactor),
+                        ToGLEnum(x.AlphaDstFactor));
+                }
+                else if (x.Enabled == ERenderParamUsage.Disabled)
+                    Api.Disable(EnableCap.Blend);
+            }
+            else if (r.BlendModesPerDrawBuffer is not null)
+            {
+                if (r.BlendModesPerDrawBuffer.Any(r => r.Value.Enabled == ERenderParamUsage.Enabled))
+                {
+                    Api.Enable(EnableCap.Blend);
+                    foreach (KeyValuePair<uint, BlendMode> pair in r.BlendModesPerDrawBuffer)
+                    {
+                        uint drawBuffer = pair.Key;
+                        BlendMode x = pair.Value;
+                        if (x.Enabled == ERenderParamUsage.Enabled)
+                        {
+                            Api.BlendEquationSeparate(
+                                drawBuffer,
+                                ToGLEnum(x.RgbEquation),
+                                ToGLEnum(x.AlphaEquation));
+
+                            Api.BlendFuncSeparate(
+                                drawBuffer,
+                                ToGLEnum(x.RgbSrcFactor),
+                                ToGLEnum(x.RgbDstFactor),
+                                ToGLEnum(x.AlphaSrcFactor),
+                                ToGLEnum(x.AlphaDstFactor));
+                        }
+                        else
+                        {
+                            //Apply a blend mode that mimics non-blending for this draw buffer
+
+                            Api.BlendEquationSeparate(
+                                drawBuffer,
+                                GLEnum.FuncAdd,
+                                GLEnum.FuncAdd);
+
+                            Api.BlendFuncSeparate(
+                                drawBuffer,
+                                GLEnum.One,
+                                GLEnum.Zero,
+                                GLEnum.One,
+                                GLEnum.Zero);
+                        }
+                    }
+                }
+                else if (r.BlendModesPerDrawBuffer.Count == 0 || r.BlendModesPerDrawBuffer.Any(r => r.Value.Enabled == ERenderParamUsage.Disabled))
+                    Api.Disable(EnableCap.Blend);
+            }
+            else
+                Api.Disable(EnableCap.Blend);
+        }
+
+        private void ApplyAlphaToCoverage(RenderingParameters r)
+        {
+            bool enabled = r.AlphaToCoverage == ERenderParamUsage.Enabled && IsAlphaToCoverageSupportedForCurrentTarget();
+            if (enabled)
+                Api.Enable(EnableCap.SampleAlphaToCoverage);
+            else
+                Api.Disable(EnableCap.SampleAlphaToCoverage);
+        }
+
+        private static bool IsAlphaToCoverageSupportedForCurrentTarget()
+        {
+            XRFrameBuffer? currentDrawFbo = XRFrameBuffer.BoundForWriting;
+            if (currentDrawFbo is not null)
+                return currentDrawFbo.IsMultisampled;
+
+            XRFrameBuffer? outputFbo = Engine.Rendering.State.RenderingTargetOutputFBO;
+            if (outputFbo is not null)
+                return outputFbo.IsMultisampled;
+
+            // Resolve AA through the current pipeline's latched per-frame state when available.
+            var aaMode = XREngine.Rendering.RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame();
+            var msaaSamples = XREngine.Rendering.RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame();
+            return aaMode == XREngine.EAntiAliasingMode.Msaa
+                && msaaSamples > 1u;
+        }
+
+        private void ApplyCulling(RenderingParameters r)
+        {
+            if (r.CullMode == ECullMode.None)
+                Api.Disable(EnableCap.CullFace);
+            else
+            {
+                Api.Enable(EnableCap.CullFace);
+                var cullMode = r.CullMode;
+                if (Engine.Rendering.State.ReverseCulling)
+                    cullMode = cullMode switch
+                    {
+                        ECullMode.Front => ECullMode.Back,
+                        ECullMode.Back => ECullMode.Front,
+                        _ => cullMode
+                    };
+                Api.CullFace(ToGLEnum(cullMode));
+            }
+        }
+
+        private void ApplyDepth(RenderingParameters r)
+        {
+            switch (r.DepthTest.Enabled)
+            {
+                case ERenderParamUsage.Enabled:
+                    Api.Enable(EnableCap.DepthTest);
+                    Api.DepthFunc(ToGLEnum(Engine.Rendering.State.MapDepthComparison(r.DepthTest.Function)));
+                    Api.DepthMask(r.DepthTest.UpdateDepth);
+                    break;
+
+                case ERenderParamUsage.Disabled:
+                    Api.Disable(EnableCap.DepthTest);
+                    break;
+            }
+        }
+
+        private static GLEnum ToGLEnum(EBlendingFactor factor)
+            => factor switch
+            {
+                EBlendingFactor.Zero => GLEnum.Zero,
+                EBlendingFactor.One => GLEnum.One,
+                EBlendingFactor.SrcColor => GLEnum.SrcColor,
+                EBlendingFactor.OneMinusSrcColor => GLEnum.OneMinusSrcColor,
+                EBlendingFactor.DstColor => GLEnum.DstColor,
+                EBlendingFactor.OneMinusDstColor => GLEnum.OneMinusDstColor,
+                EBlendingFactor.SrcAlpha => GLEnum.SrcAlpha,
+                EBlendingFactor.OneMinusSrcAlpha => GLEnum.OneMinusSrcAlpha,
+                EBlendingFactor.DstAlpha => GLEnum.DstAlpha,
+                EBlendingFactor.OneMinusDstAlpha => GLEnum.OneMinusDstAlpha,
+                EBlendingFactor.ConstantColor => GLEnum.ConstantColor,
+                EBlendingFactor.OneMinusConstantColor => GLEnum.OneMinusConstantColor,
+                EBlendingFactor.ConstantAlpha => GLEnum.ConstantAlpha,
+                EBlendingFactor.OneMinusConstantAlpha => GLEnum.OneMinusConstantAlpha,
+                EBlendingFactor.SrcAlphaSaturate => GLEnum.SrcAlphaSaturate,
+                _ => GLEnum.Zero,
+            };
+
+        private static GLEnum ToGLEnum(EBlendEquationMode equation)
+            => equation switch
+            {
+                EBlendEquationMode.FuncAdd => GLEnum.FuncAdd,
+                EBlendEquationMode.FuncSubtract => GLEnum.FuncSubtract,
+                EBlendEquationMode.FuncReverseSubtract => GLEnum.FuncReverseSubtract,
+                EBlendEquationMode.Min => GLEnum.Min,
+                EBlendEquationMode.Max => GLEnum.Max,
+                _ => GLEnum.FuncAdd,
+            };
+
+        private static GLEnum ToGLEnum(EComparison function)
+            => function switch
+            {
+                EComparison.Never => GLEnum.Never,
+                EComparison.Less => GLEnum.Less,
+                EComparison.Equal => GLEnum.Equal,
+                EComparison.Lequal => GLEnum.Lequal,
+                EComparison.Greater => GLEnum.Greater,
+                EComparison.Nequal => GLEnum.Notequal,
+                EComparison.Gequal => GLEnum.Gequal,
+                EComparison.Always => GLEnum.Always,
+                _ => GLEnum.Never,
+            };
+
+        private static GLEnum ToGLEnum(ECullMode cullMode)
+            => cullMode switch
+            {
+                ECullMode.Front => GLEnum.Front,
+                ECullMode.Back => GLEnum.Back,
+                _ => GLEnum.FrontAndBack,
+            };
+
+        private static GLEnum ToGLEnum(IndexSize elementType)
+            => elementType switch
+            {
+                IndexSize.Byte => GLEnum.UnsignedByte,
+                IndexSize.TwoBytes => GLEnum.UnsignedShort,
+                IndexSize.FourBytes => GLEnum.UnsignedInt,
+                _ => GLEnum.UnsignedInt,
+            };
+
+        private static GLEnum ToGLEnum(EPrimitiveType type)
+            => type switch
+            {
+                EPrimitiveType.Points => GLEnum.Points,
+                EPrimitiveType.Lines => GLEnum.Lines,
+                EPrimitiveType.LineLoop => GLEnum.LineLoop,
+                EPrimitiveType.LineStrip => GLEnum.LineStrip,
+                EPrimitiveType.Triangles => GLEnum.Triangles,
+                EPrimitiveType.TriangleStrip => GLEnum.TriangleStrip,
+                EPrimitiveType.TriangleFan => GLEnum.TriangleFan,
+                EPrimitiveType.LinesAdjacency => GLEnum.LinesAdjacency,
+                EPrimitiveType.LineStripAdjacency => GLEnum.LineStripAdjacency,
+                EPrimitiveType.TrianglesAdjacency => GLEnum.TrianglesAdjacency,
+                EPrimitiveType.TriangleStripAdjacency => GLEnum.TriangleStripAdjacency,
+                EPrimitiveType.Patches => GLEnum.Patches,
+                _ => GLEnum.Triangles,
+            };
+
+        public int GetInteger(GLEnum value)
+            => Api.GetInteger(value);
+
+        public unsafe bool IsExtensionSupported(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return false;
+
+            //Check if the extension is already loaded
+            if (Api.IsExtensionPresent(name))
+                return true;
+
+            //Check if the extension is supported by the OpenGL context
+            byte* extensions = Api.GetString(GLEnum.Extensions);
+            if (extensions is null)
+                return false;
+
+            //Split the extensions string into individual extensions
+            string str = new((sbyte*)extensions);
+            string[] extList = str.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            //Check if the requested extension is in the list
+            foreach (string ext in extList)
+                if (ext.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+            //If we reach here, the extension is not supported
+            return false;
+        }
+
+        private static DrawElementsType ToDrawElementsType(IndexSize type) => type switch
+        {
+            IndexSize.Byte => DrawElementsType.UnsignedByte,
+            IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+            IndexSize.FourBytes => DrawElementsType.UnsignedInt,
+            _ => DrawElementsType.UnsignedInt,
+        };
+
+        public override void ConfigureVAOAttributesForProgram(XRRenderProgram program, XRMeshRenderer.BaseVersion? version)
+        {
+            var glProgram = GenericToAPI<GLRenderProgram>(program);
+            var glMesh = version is null ? ActiveMeshRenderer : GenericToAPI<GLMeshRenderer>(version);
+            if (glProgram is null || glMesh is null || !glProgram.IsLinked)
+                return;
+
+            // Bind VAO to ensure we write into the correct object
+            BindMeshRenderer(glMesh);
+
+            // Rebind mesh + renderer buffers against this program's attribute locations
+            // 1) Mesh vertex buffers
+            var mesh = glMesh.Mesh;
+            if (mesh?.Buffers is IEventDictionary<string, XRDataBuffer> meshBuffers)
+            {
+                foreach (var kv in meshBuffers)
+                {
+                    var glBuf = GenericToAPI<GLDataBuffer>(kv.Value);
+                    glBuf?.BindToRenderer(glProgram, glMesh);
+                }
+            }
+
+            // 2) Renderer extra buffers (SSBO/UBO/instance attributes)
+            var rendBuffers = glMesh.MeshRenderer.Buffers as IEventDictionary<string, XRDataBuffer>;
+            if (rendBuffers is not null)
+            {
+                foreach (var kv in rendBuffers)
+                {
+                    var glBuf = GenericToAPI<GLDataBuffer>(kv.Value);
+                    glBuf?.BindToRenderer(glProgram, glMesh);
+                }
+            }
+        }
+
+        public override void SetEngineUniforms(XRRenderProgram program, XRCamera camera)
+        {
+            var glProgram = GenericToAPI<GLRenderProgram>(program);
+            if (glProgram is null)
+                return;
+
+            // Mirror GLMaterial.SetEngineUniforms minimal camera bits
+            bool stereoPass = Engine.Rendering.State.IsStereoPass;
+            if (stereoPass)
+            {
+                var rightCam = Engine.Rendering.State.RenderingStereoRightEyeCamera;
+                PassCameraUniforms(glProgram, camera, EEngineUniform.LeftEyeViewMatrix, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeInverseProjMatrix, EEngineUniform.LeftEyeProjMatrix, EEngineUniform.LeftEyeViewProjectionMatrix);
+                PassCameraUniforms(glProgram, rightCam, EEngineUniform.RightEyeViewMatrix, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeInverseProjMatrix, EEngineUniform.RightEyeProjMatrix, EEngineUniform.RightEyeViewProjectionMatrix);
+            }
+            else
+            {
+                PassCameraUniforms(glProgram, camera, EEngineUniform.ViewMatrix, EEngineUniform.InverseViewMatrix, EEngineUniform.InverseProjMatrix, EEngineUniform.ProjMatrix, EEngineUniform.ViewProjectionMatrix);
+            }
+        }
+
+        private static void PassCameraUniforms(GLRenderProgram program, XRCamera? camera, EEngineUniform view, EEngineUniform invView, EEngineUniform invProj, EEngineUniform proj, EEngineUniform viewProj)
+        {
+            Matrix4x4 viewMatrix;        // The actual view matrix (inverse of camera world transform)
+            Matrix4x4 inverseViewMatrix; // The camera's world transform (inverse of view matrix)
+            Matrix4x4 inverseProjMatrix;
+            Matrix4x4 projMatrix;
+            Matrix4x4 viewProjectionMatrix;
+            if (camera != null)
+            {
+                // ViewMatrix is InverseRenderMatrix - the actual view transformation
+                // InverseViewMatrix is RenderMatrix - the camera's world position (kept for compatibility)
+                viewMatrix = camera.Transform.InverseRenderMatrix;
+                inverseViewMatrix = camera.Transform.RenderMatrix;
+                // Use unjittered projection when rendering motion vectors to match fragment shader expectations
+                bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+                projMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
+                inverseProjMatrix = useUnjittered ? camera.InverseProjectionMatrixUnjittered : camera.InverseProjectionMatrix;
+                viewProjectionMatrix = useUnjittered ? camera.ViewProjectionMatrixUnjittered : camera.ViewProjectionMatrix;
+            }
+            else
+            {
+                viewMatrix = Matrix4x4.Identity;
+                inverseViewMatrix = Matrix4x4.Identity;
+                inverseProjMatrix = Matrix4x4.Identity;
+                projMatrix = Matrix4x4.Identity;
+                viewProjectionMatrix = Matrix4x4.Identity;
+            }
+
+            program.Uniform(view.ToStringFast(), viewMatrix);
+            program.Uniform(invView.ToStringFast(), inverseViewMatrix);
+            program.Uniform(invProj.ToStringFast(), inverseProjMatrix);
+            program.Uniform(proj.ToStringFast(), projMatrix);
+            program.Uniform(viewProj.ToStringFast(), viewProjectionMatrix);
+
+            // Use cached uniform names to avoid string allocations per call.
+            program.Uniform(view.ToVertexUniformName(), viewMatrix);
+            program.Uniform(invView.ToVertexUniformName(), inverseViewMatrix);
+            program.Uniform(invProj.ToVertexUniformName(), inverseProjMatrix);
+            program.Uniform(proj.ToVertexUniformName(), projMatrix);
+            program.Uniform(viewProj.ToVertexUniformName(), viewProjectionMatrix);
+        }
+
+        public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)
+        {
+            var glProgram = GenericToAPI<GLRenderProgram>(program);
+            var glMaterial = GenericToAPI<GLMaterial>(material);
+            if (glProgram is null || glMaterial is null)
+                return;
+
+            glMaterial.SetUniforms(glProgram);
+            glMaterial.FinalizeUniformBindings(glProgram);
+        }
+    }
+}

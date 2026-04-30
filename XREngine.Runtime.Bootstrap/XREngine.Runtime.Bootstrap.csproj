@@ -27,6 +27,7 @@
   <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -355,7 +355,7 @@ public static partial class EditorImGuiUI
                                 ImGui.Text("World:");
                                 ImGui.SameLine();
                                 ImGui.TextColored(new Vector4(0.8f, 0.8f, 1.0f, 1.0f), 
-                                    worldInstance.TargetWorld?.Name ?? "<unnamed>");
+                                    worldInstance.TargetWorldName ?? "<unnamed>");
                             }
                             else
                             {

@@ -443,3 +443,4 @@ XREngine.Runtime.Rendering/Build/_AgentValidation/
 XREngine.Runtime.Core/Build/_AgentValidation/
 XREngine.Runtime.AudioIntegration/Build/_AgentValidation/
 XREngine.Runtime.AnimationIntegration/Build/_AgentValidation/
+XREngine.Runtime.Rendering/Rendering/GI/build/

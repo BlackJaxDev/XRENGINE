@@ -321,7 +321,7 @@ namespace XREngine.Editor.Mcp
                 isShadowPass = Engine.Rendering.State.IsShadowPass,
                 isStereoPass = Engine.Rendering.State.IsStereoPass,
                 isMirrorPass = Engine.Rendering.State.IsMirrorPass,
-                renderingWorldId = Engine.Rendering.State.RenderingWorld?.ID,
+                renderingWorldId = Engine.Rendering.State.RenderingWorld is XRObjectBase renderingWorld ? (Guid?)renderingWorld.ID : null,
                 renderingSceneType = Engine.Rendering.State.RenderingScene?.GetType().FullName,
                 renderingViewportIndex = viewport?.Index,
                 renderingViewportSize = viewport is null ? null : new { width = viewport.Width, height = viewport.Height },

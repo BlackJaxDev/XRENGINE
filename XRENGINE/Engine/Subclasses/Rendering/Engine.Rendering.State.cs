@@ -102,7 +102,7 @@ namespace XREngine
                 /// Retrieved from the current rendering viewport's World property.
                 /// Returns null if no viewport is currently rendering.
                 /// </summary>
-                public static XRWorldInstance? RenderingWorld => RenderingViewport?.World;
+                public static IRuntimeRenderWorld? RenderingWorld => RenderingViewport?.World;
 
                 /// <summary>
                 /// The viewport currently being rendered to.
