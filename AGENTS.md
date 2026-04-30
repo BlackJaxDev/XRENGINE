@@ -209,6 +209,12 @@ Likely doc touchpoints:
 - `docs/README.md` index links.
 - Relevant architecture/API/work docs under `docs/`.
 
+### Design-To-Todo Workflow
+
+When generating a todo document from a design document:
+- Start the todo document with a first task to create a dedicated branch for that todo list.
+- End the todo document with a final task to merge that branch back into `main` after the todo list is complete and validated.
+
 ## 11) Coding Conventions for Agents
 
 - Follow existing style and naming in touched files.

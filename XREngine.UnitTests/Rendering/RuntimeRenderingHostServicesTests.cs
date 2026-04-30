@@ -192,6 +192,8 @@ public sealed class RuntimeRenderingHostServicesTests
         public string? TextureFallbackPath => null;
         public XRMaterial? InvalidMaterial => null;
         public Vector3 DefaultLuminance => Vector3.One;
+        public long ElapsedTicks => 0L;
+        public float ElapsedTime => 0.0f;
         public double RenderDeltaSeconds => 0.0;
         public long LastRenderTimestampTicks => 0L;
         public long TrackedVramBytes => 0L;
@@ -208,7 +210,10 @@ public sealed class RuntimeRenderingHostServicesTests
         public uint DefaultMsaaSampleCount => 1u;
         public bool DefaultOutputHDR => false;
         public float DefaultTsrRenderScale => 1.0f;
+        public bool ForwardDepthPrePassEnabled => true;
+        public bool ForwardPrePassSharesGBufferTargets => true;
         public bool IsWindowScenePanelPresentationEnabled => false;
+        public int ScenePanelResizeDebounceMs => 100;
         public bool ForceFullViewport => false;
         public bool RenderWindowsWhileInVR => false;
         public bool EnableVrFoveatedViewSet => false;
@@ -342,6 +347,10 @@ public sealed class RuntimeRenderingHostServicesTests
         public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason)
             => task();
 
+        public void ProcessRenderThreadTasks()
+        {
+        }
+
         public IDisposable? PushTransformId(uint transformId)
             => null;
 
@@ -379,6 +388,9 @@ public sealed class RuntimeRenderingHostServicesTests
 
         public IRuntimeWindowScenePanelAdapter CreateWindowScenePanelAdapter()
             => new NullWindowScenePanelAdapter();
+
+        public BoundingRectangle? GetScenePanelRenderRegion(IRuntimeRenderWindowHost window)
+            => null;
 
         public bool AllowWindowClose(IRuntimeRenderWindowHost window)
             => true;

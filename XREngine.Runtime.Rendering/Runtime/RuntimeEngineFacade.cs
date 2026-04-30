@@ -29,8 +29,8 @@ namespace XREngine;
 internal static partial class Engine
 {
     public static float Delta => Time.Timer.Update.Delta;
-    public static long ElapsedTicks => DateTime.UtcNow.Ticks;
-    public static float ElapsedTime => (float)TimeSpan.FromTicks(ElapsedTicks).TotalSeconds;
+    public static long ElapsedTicks => RuntimeRenderingHostServices.Current.ElapsedTicks;
+    public static float ElapsedTime => RuntimeRenderingHostServices.Current.ElapsedTime;
     public static bool IsEditor => false;
     public static bool IsRenderThread => RuntimeRenderingHostServices.Current.IsRenderThread;
     public static bool IsDispatchingRenderFrame { get; set; }
@@ -58,8 +58,7 @@ internal static partial class Engine
     }
 
     public static void ProcessMainThreadTasks()
-    {
-    }
+        => RuntimeRenderingHostServices.Current.ProcessRenderThreadTasks();
 
     public static void EnqueueMainThreadTask(Action action, string? name = null)
         => RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(action, name ?? "main-thread facade task");
@@ -72,7 +71,14 @@ internal static partial class Engine
 
     public static bool InvokeOnMainThread(Action action, string? name = null, bool forceSynchronous = false, bool executeNowIfAlreadyMainThread = false)
     {
-        if (IsRenderThread || forceSynchronous || executeNowIfAlreadyMainThread)
+        if (IsRenderThread)
+        {
+            if (executeNowIfAlreadyMainThread)
+                action();
+            return false;
+        }
+
+        if (forceSynchronous)
         {
             action();
             return false;
@@ -454,7 +460,7 @@ internal static partial class Engine
                 => pipeline is null ? DisposableAction.Empty : Rendering.PushRenderingPipelineOverride(pipeline);
             public static void PushMirrorPass() => StateData.PushMirrorPass();
             public static void PopMirrorPass() => StateData.PopMirrorPass();
-            internal static void BeginRenderFrame() { }
+            internal static void BeginRenderFrame() => StateData.BeginRenderFrame();
 
             public static void ClearColor(ColorF4 color) => AbstractRenderer.Current?.ClearColor(color);
             public static void ClearStencil(int value) => AbstractRenderer.Current?.ClearStencil(value);
@@ -553,7 +559,7 @@ internal static partial class Engine
                 public XRRenderPipelineInstance.RenderingState? RenderingPipelineState => CurrentRenderingPipeline?.RenderState;
                 public XRViewport? RenderingViewport => CurrentRenderingPipeline?.RenderState.WindowViewport ?? CurrentRenderingPipeline?.LastWindowViewport;
                 public IRuntimeRenderWorld? RenderingWorld => RenderingViewport?.World;
-                public XRCamera? RenderingCamera => RenderingCameraOverride ?? CurrentRenderingPipeline?.RenderState.SceneCamera ?? CurrentRenderingPipeline?.LastRenderingCamera;
+                public XRCamera? RenderingCamera => RenderingCameraOverride ?? RenderingPipelineState?.RenderingCamera;
             public XRCamera? RenderingCameraOverride
             {
                 get => _cameraOverrides.Count == 0 ? null : _cameraOverrides.Peek();
@@ -570,7 +576,7 @@ internal static partial class Engine
                     }
                 }
             }
-            public BoundingRectangle RenderArea => BoundingRectangle.Empty;
+            public BoundingRectangle RenderArea => RenderingPipelineState?.CurrentRenderRegion ?? BoundingRectangle.Empty;
             public float DefaultDepthClearValue => 1.0f;
             public bool IsShadowPass => CurrentRenderingPipeline?.RenderState.ShadowPass ?? RuntimeRenderingHostServices.Current.IsShadowPass;
             public bool IsSceneCapturePass { get; set; }
@@ -594,6 +600,14 @@ internal static partial class Engine
             public int MirrorPassIndex => _mirrorPasses.Count == 0 ? 0 : _mirrorPasses.Peek();
             public int CurrentRenderGraphPassIndex => _renderGraphPasses.Count == 0 ? int.MinValue : _renderGraphPasses.Peek();
             public uint CurrentTransformId => _transformIds.Count == 0 ? 0u : _transformIds.Peek();
+
+            public void BeginRenderFrame()
+            {
+                unchecked
+                {
+                    RenderFrameId++;
+                }
+            }
 
             public IDisposable PushRenderGraphPassIndex(int passIndex)
             {
@@ -828,8 +842,21 @@ internal sealed class RuntimeEditorPreferences
 
 internal sealed class RuntimeDebugPreferences
 {
-    public bool ForwardDepthPrePassEnabled { get; set; }
-    public bool ForwardPrePassSharesGBufferTargets { get; set; }
+    private bool? _forwardDepthPrePassEnabled;
+    private bool? _forwardPrePassSharesGBufferTargets;
+
+    public bool ForwardDepthPrePassEnabled
+    {
+        get => _forwardDepthPrePassEnabled ?? RuntimeRenderingHostServices.Current.ForwardDepthPrePassEnabled;
+        set => _forwardDepthPrePassEnabled = value;
+    }
+
+    public bool ForwardPrePassSharesGBufferTargets
+    {
+        get => _forwardPrePassSharesGBufferTargets ?? RuntimeRenderingHostServices.Current.ForwardPrePassSharesGBufferTargets;
+        set => _forwardPrePassSharesGBufferTargets = value;
+    }
+
     public bool EnableGpuRenderPipelineProfiling { get; set; }
     public bool EnableExactTransparencyTechniques { get; set; }
     public int DepthPeelingMaxLayers { get; set; } = 4;

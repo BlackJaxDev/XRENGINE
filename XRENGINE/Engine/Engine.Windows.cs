@@ -71,7 +71,7 @@ namespace XREngine
                 window.Viewports.Count);
 
             Rendering.ApplyRenderPipelinePreference();
-            window.SetWorld(windowSettings.TargetWorld);
+            window.SetWorld(windowSettings.TargetWorld is null ? null : XRWorldInstance.GetOrInitWorld(windowSettings.TargetWorld));
 
             Debug.Out(
                 "[StartupWindow] Window world assigned hash={0} targetWorld={1} tickLinked={2}",

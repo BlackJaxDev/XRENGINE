@@ -52,7 +52,7 @@ namespace XREngine
 
         private sealed class DefaultRuntimeDebugHostServices : IRuntimeDebugHostServices
         {
-            public bool LogOutputToFile => false;
+            public bool LogOutputToFile => true;
             public EOutputVerbosity OutputVerbosity => EOutputVerbosity.Verbose;
             public double DebugOutputRecencySeconds => 0.0;
         }
