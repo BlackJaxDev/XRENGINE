@@ -33,6 +33,9 @@ namespace XREngine.Components.Capture.Lights.Types
         private float _shadowMinBias = 0.00001f;
         private float _shadowExponent = 1.221f;
         private float _shadowExponentBase = 0.035f;
+        private float _shadowDepthBiasTexels = 1.0f;
+        private float _shadowSlopeBiasTexels = 2.0f;
+        private float _shadowNormalBiasTexels = 1.0f;
         private Matrix4x4 _lightMatrix = Matrix4x4.Identity;
         private Matrix4x4 _meshCenterAdjustMatrix = Matrix4x4.Identity;
         private readonly RenderCommandMesh3D _shadowVolumeRC = new((int)EDefaultRenderPass.OpaqueForward);
@@ -381,6 +384,7 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         [Category("Shadows")]
+        [Browsable(false)]
         public float ShadowExponentBase 
         {
             get => _shadowExponentBase;
@@ -388,6 +392,7 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         [Category("Shadows")]
+        [Browsable(false)]
         public float ShadowExponent
         {
             get => _shadowExponent;
@@ -395,6 +400,7 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         [Category("Shadows")]
+        [Browsable(false)]
         public float ShadowMinBias
         {
             get => _shadowMinBias;
@@ -402,11 +408,46 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         [Category("Shadows")]
+        [Browsable(false)]
         public float ShadowMaxBias
         {
             get => _shadowMaxBias;
             set => SetField(ref _shadowMaxBias, value);
         }
+
+        [Category("Shadows")]
+        [DisplayName("Shadow Depth Bias Texels")]
+        [Description("Constant compare-bias floor expressed in shadow-map texels. Live forward/deferred shadow receivers convert this to the active map's depth scale.")]
+        public float ShadowDepthBiasTexels
+        {
+            get => _shadowDepthBiasTexels;
+            set => SetField(ref _shadowDepthBiasTexels, MathF.Max(0.0f, value));
+        }
+
+        [Category("Shadows")]
+        [DisplayName("Shadow Slope Bias Texels")]
+        [Description("Receiver-plane slope bias scale, in shadow-map texels. Higher values reduce grazing-angle acne at the cost of more separation.")]
+        public float ShadowSlopeBiasTexels
+        {
+            get => _shadowSlopeBiasTexels;
+            set => SetField(ref _shadowSlopeBiasTexels, MathF.Max(0.0f, value));
+        }
+
+        [Category("Shadows")]
+        [DisplayName("Shadow Normal Offset Texels")]
+        [Description("Normal-offset distance expressed in shadow-map texels. The live renderer scales this by the active map's world-space texel footprint.")]
+        public float ShadowNormalBiasTexels
+        {
+            get => _shadowNormalBiasTexels;
+            set => SetField(ref _shadowNormalBiasTexels, MathF.Max(0.0f, value));
+        }
+
+        [Browsable(false)]
+        public Vector4 ShadowBiasParameters
+            => new(ShadowDepthBiasTexels, ShadowSlopeBiasTexels, ShadowNormalBiasTexels, 0.0f);
+
+        [Browsable(false)]
+        public virtual Vector4 ShadowBiasProjectionParameters => Vector4.Zero;
 
         private uint _shadowMapResolutionWidth = 4096u;
         [Category("Shadows")]
@@ -683,6 +724,8 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform(Engine.Rendering.Constants.ShadowExponentUniform, ShadowExponent);
             program.Uniform(Engine.Rendering.Constants.ShadowBiasMinUniform, ShadowMinBias);
             program.Uniform(Engine.Rendering.Constants.ShadowBiasMaxUniform, ShadowMaxBias);
+            program.Uniform("ShadowBiasParams", ShadowBiasParameters);
+            program.Uniform("ShadowBiasProjectionParams", ShadowBiasProjectionParameters);
 
             program.Uniform(Engine.Rendering.Constants.ShadowSamples, FilterSamples);
             program.Uniform(Engine.Rendering.Constants.ShadowBlockerSamples, BlockerSamples);

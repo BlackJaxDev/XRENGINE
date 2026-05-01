@@ -45,11 +45,14 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform mat4 RightEyeInverseProjMatrix;");
         source.ShouldContain("uniform mat4 LeftEyeProjMatrix;");
         source.ShouldContain("uniform mat4 RightEyeProjMatrix;");
+        source.ShouldContain("uniform mat4 LeftEyeViewMatrix;");
+        source.ShouldContain("uniform mat4 RightEyeViewMatrix;");
         source.ShouldContain("uniform mat4 LeftEyeViewProjectionMatrix;");
         source.ShouldContain("uniform mat4 RightEyeViewProjectionMatrix;");
         source.ShouldContain("ForwardPointShadowData PointLightShadows[];");
         source.ShouldContain("ForwardSpotShadowData SpotLightShadows[];");
         source.ShouldContain("int XRENGINE_GetForwardViewIndex()");
+        source.ShouldContain("mat4 XRENGINE_GetForwardViewMatrix()");
         source.ShouldContain("mat4 XRENGINE_GetForwardInverseViewMatrix()");
         source.ShouldContain("mat4 XRENGINE_GetForwardInverseProjMatrix()");
         source.ShouldContain("mat4 XRENGINE_GetForwardProjMatrix()");
@@ -110,16 +113,19 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("float layer,");
         source.ShouldContain("sampler2DMS sceneDepth");
         source.ShouldContain("float XRENGINE_EvaluateContactShadowScreenSpaceHit(");
+        source.ShouldContain("bool XRENGINE_IsContactShadowFarDepth(float depth, int depthMode)");
+        source.ShouldContain("return depthMode == 1 ? depth <= eps : depth >= 1.0 - eps;");
         source.ShouldContain("vec3 XRENGINE_ContactShadowViewPosFromDepth(");
-        source.ShouldContain("vec3 XRENGINE_ContactShadowViewPosFromWorldPos(vec3 worldPos, mat4 inverseViewMatrix)");
+        source.ShouldContain("vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);");
+        source.ShouldContain("vec3 XRENGINE_ContactShadowViewPosFromWorldPos(vec3 worldPos, mat4 viewMatrix)");
         source.ShouldContain("bool XRENGINE_TryProjectContactShadowWorldPos(");
-        source.ShouldContain("float XRENGINE_ContactShadowViewDepthFromWorldPos(vec3 worldPos, mat4 inverseViewMatrix)");
+        source.ShouldContain("float XRENGINE_ContactShadowViewDepthFromWorldPos(vec3 worldPos, mat4 viewMatrix)");
+        source.ShouldContain("if (XRENGINE_IsContactShadowFarDepth(sceneDepth, depthMode))");
         source.ShouldContain("vec3 scenePosVS = XRENGINE_ContactShadowViewPosFromDepth(");
-        source.ShouldContain("float sampleViewDepth = XRENGINE_ContactShadowViewDepthFromWorldPos(samplePosWS, inverseViewMatrix);");
+        source.ShouldContain("float sampleViewDepth = XRENGINE_ContactShadowViewDepthFromWorldPos(samplePosWS, viewMatrix);");
         source.ShouldContain("float sceneViewDepth = abs(scenePosVS.z);");
-        source.ShouldContain("if (!XRENGINE_TryProjectContactShadowWorldPos(samplePosWS, inverseViewMatrix, projMatrix, sampleUv))");
-        source.ShouldNotContain("vec4 sampleClip = viewProjectionMatrix * vec4(samplePosWS, 1.0);");
-        source.ShouldNotContain("float sampleViewDepth = abs((viewMatrix * vec4(samplePosWS, 1.0)).z);");
+        source.ShouldContain("if (!XRENGINE_TryProjectContactShadowWorldPos(samplePosWS, viewProjectionMatrix, sampleUv))");
+        source.ShouldContain("vec4 sampleClip = viewProjectionMatrix * vec4(worldPos, 1.0);");
         source.ShouldContain("vec3 sceneNormalWS = XRENGINE_DecodeContactShadowNormal(texture(sceneNormal, sampleUvClamped).rg);");
         source.ShouldContain("normalWeight = mix(1.0, 0.35, sameSurfaceNormal * shallowHit);");
         source.ShouldContain("float normalOffset = max(contactNormalOffset, min(max(receiverOffset, compareBias * 2.0), contactDistance * 0.25));");
@@ -170,8 +176,8 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("const int forwardContactDepthArrayUnit = 28;");
         source.ShouldContain("const int forwardContactNormalArrayUnit = 29;");
         source.ShouldContain("Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled");
-        source.ShouldContain("DefaultRenderPipeline.DepthViewTextureName");
-        source.ShouldContain("DefaultRenderPipeline.NormalTextureName");
+        source.ShouldContain("DefaultRenderPipeline.ForwardContactDepthViewTextureName");
+        source.ShouldContain("DefaultRenderPipeline.ForwardContactNormalTextureName");
         source.ShouldContain("program.Uniform(\"ForwardContactShadowsEnabled\", forwardContactPrePassAvailable);");
         source.ShouldContain("program.Uniform(\"ForwardContactShadowsArrayEnabled\", forwardContactPrePassArrayAvailable);");
         source.ShouldContain("program.Sampler(\"ForwardContactDepthView\", forwardContactPrePass2DAvailable ? forwardContactDepthTexture! : DummyShadowMap, forwardContactDepthUnit);");
@@ -384,6 +390,80 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
+    public void DirectionalCascadeShaders_SelectLastCascadeWithoutClampingToItsEdge()
+    {
+        string forwardSource = LoadShaderSource("Snippets/ForwardLighting.glsl");
+        forwardSource.ShouldNotContain("clampToEdge");
+        forwardSource.ShouldContain("if (viewDepth <= splitFar || isLast)");
+        forwardSource.ShouldContain("return XRENGINE_ReadDirectionalContactShadowOnly(fragPos, normal, diffuseFactor);");
+
+        string deferredSource = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
+        deferredSource.ShouldNotContain("clampToEdge");
+        deferredSource.ShouldContain("if (viewDepth <= splitFar || isLast)");
+    }
+
+    [Test]
+    public void DeferredCascadeDebugColors_UseDepthDerivedBlendFactor()
+    {
+        string source = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
+
+        source.ShouldContain("float debugCascadeBlend = 0.0f;");
+        source.ShouldContain("debugCascadeBlend = t;");
+        source.ShouldContain("debugColor = mix(debugColor, nextDebugColor, debugCascadeBlend);");
+    }
+
+    [Test]
+    public void DeferredLightingShaders_ReconstructWorldPositionFromRawDepth()
+    {
+        foreach (string shaderPath in new[]
+        {
+            "Scene3D/DeferredLightingPoint.fs",
+            "Scene3D/DeferredLightingSpot.fs",
+        })
+        {
+            string source = LoadShaderSource(shaderPath);
+            source.ShouldContain("XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix)");
+            source.ShouldNotContain("XRENGINE_WorldPosFromDepth(depth, uv, InverseProjMatrix, InverseViewMatrix)");
+        }
+    }
+
+    [Test]
+    public void DeferredDirectionalCascades_SelectFromGBufferViewDepth()
+    {
+        string depthUtilsSource = LoadShaderSource("Snippets/DepthUtils.glsl");
+        depthUtilsSource.ShouldContain("vec3 XRENGINE_ViewPosFromDepthRaw(float depth, vec2 uv, mat4 invProj)");
+
+        string source = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
+        source.ShouldContain("vec3 fragPosVS = XRENGINE_ViewPosFromDepthRaw(depth, uv, InverseProjMatrix);");
+        source.ShouldContain("float viewDepth = abs(fragPosVS.z);");
+        source.ShouldContain("vec3 fragPosWS = (InverseViewMatrix * vec4(fragPosVS, 1.0f)).xyz;");
+        source.ShouldContain("float s0 = ReadCascadeShadowMap(fragPosWS, N, NoL, viewDepth, i);");
+        source.ShouldContain("float s1 = ReadCascadeShadowMap(fragPosWS, N, NoL, viewDepth, i + 1);");
+        source.ShouldNotContain("float viewDepth = ViewDepthFromWorldPos(fragPosWS);");
+    }
+
+    [Test]
+    public void DirectionalCascadeCameras_PublishCurrentRenderMatricesBeforeCollection()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
+
+        source.ShouldContain("setRenderMatrixNow: true");
+        source.ShouldContain("camerasSnapshot[resourceSlot].Transform.InverseRenderMatrix");
+    }
+
+    [Test]
+    public void DirectionalCascadeSourceCamera_PrefersPlayerAssociatedCascadedViewport()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.CameraLightIntersections.cs"));
+
+        source.ShouldContain("XRCamera? preferredCascaded = null;");
+        source.ShouldContain("if (viewport.AssociatedPlayer is not null)");
+        source.ShouldContain("preferredCascaded = camera;");
+        source.ShouldContain("return preferredCascaded ?? cascadedFallback ?? preferredFallback ?? fallback;");
+        source.ShouldNotContain("XRViewport?[] vrViewports");
+    }
+
+    [Test]
     public void DirectionalPrimaryShadowAtlas_IsSubmittedRenderedBoundAndPreviewed()
     {
         string lightSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
@@ -416,6 +496,18 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         editorSource.ShouldContain("Use Directional Shadow Atlas");
         editorSource.ShouldContain("Directional Shadow Atlas Tile");
         editorSource.ShouldContain("TryGetPrimaryAtlasSlot(");
+    }
+
+    [Test]
+    public void ShadowAtlasTileRendering_IsTimeBudgetedNotOnlyTileCountBudgeted()
+    {
+        string atlasManagerSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasManager.cs"));
+
+        atlasManagerSource.ShouldContain("MaxRenderMilliseconds");
+        atlasManagerSource.ShouldContain("scheduled > 0 && HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds)");
+        atlasManagerSource.ShouldContain("if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))");
+        atlasManagerSource.ShouldContain("ShadowAtlas.RenderBudget.Deferred");
+        atlasManagerSource.ShouldContain("ShadowAtlas.RenderScheduledTiles.Slow");
     }
 
     [Test]

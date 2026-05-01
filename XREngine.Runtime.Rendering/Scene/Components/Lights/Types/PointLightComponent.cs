@@ -326,6 +326,9 @@ namespace XREngine.Components.Capture.Lights.Types
             // Cooked reflection deserialization constructs the component before it is
             // attached to an owning SceneNode, so Transform is not available here.
             _influenceVolume = new Sphere(Vector3.Zero, radius);
+            ShadowDepthBiasTexels = 1.0f;
+            ShadowSlopeBiasTexels = 2.0f;
+            ShadowNormalBiasTexels = 1.0f;
             Brightness = brightness;
         }
 

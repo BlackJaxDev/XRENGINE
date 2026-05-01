@@ -127,12 +127,11 @@ The forward shadow sampling path now uses the same bias controls already owned b
 
 The snippet now consumes:
 
-- `ShadowBase`
-- `ShadowMult`
-- `ShadowBiasMin`
-- `ShadowBiasMax`
+- `ShadowBiasParams`
+- `ShadowBiasProjectionParams`
+- per-cascade `CascadeBiasMin`, `CascadeBiasMax`, and `CascadeReceiverOffsets`
 
-It also uses a 3x3 PCF read similar to the lightmapping path instead of a single hard-shadow sample.
+It also computes receiver-plane slope bias and normal offset from shadow texel size instead of relying on fixed absolute compare-bias values.
 
 This makes forward receive behavior consistent with the rest of the engine's directional shadow tuning instead of depending on a separate hardcoded bias regime.
 
@@ -191,8 +190,9 @@ This behavior is unified across forward and deferred shader variants through a s
 Directional shadows in the forward path now use:
 
 - uncullable shadow caster variants,
-- engine-configured bias uniforms,
-- and 3x3 PCF sampling.
+- engine-configured texel bias uniforms,
+- receiver-plane slope bias,
+- and the configured shadow filtering path.
 
 This materially improves visible shadow receive on scene surfaces that previously looked effectively unshadowed.
 
@@ -224,11 +224,10 @@ This is primarily intended to make the "everything stays in cascade 0" failure m
 
 Directional cascades now publish effective per-cascade bias values instead of reusing the same global receiver offset and compare range for every split.
 
-Automatic cascade bias starts from the light's base `ShadowBiasMin` / `ShadowBiasMax` settings, then adjusts for:
+Automatic cascade bias starts from the light's `ShadowDepthBiasTexels`, `ShadowSlopeBiasTexels`, and `ShadowNormalBiasTexels` settings, then adjusts for:
 
 - the cascade's world-space texel size,
-- the cascade split distance,
 - the depth span of that cascade's light-space bounds,
 - and the shadow-map resolution.
 
-Each cascade also has an optional manual override in the directional light inspector. Enabling an override replaces the automatic `BiasMin`, `BiasMax`, and receiver normal offset for that cascade while leaving the other cascades automatic.
+The directional light inspector now shows the effective per-cascade constant depth floor, slope scale, receiver normal offset, and world-space texel size in the cascade debug table.

@@ -44,15 +44,13 @@ layout(location = 7) in vec4 Color0;
 // ============================================
 // Vertex Outputs
 // ============================================
-layout(location = 0) out vec4 v_Uv01;
-layout(location = 1) out vec4 v_Uv23;
-layout(location = 2) out vec3 v_WorldPos;
-layout(location = 3) out vec3 v_WorldNormal;
-layout(location = 4) out vec3 v_WorldTangent;
-layout(location = 5) out float v_TangentSign;
-layout(location = 6) out vec4 v_VertexColor;
-layout(location = 7) out vec3 v_LocalPos;
-layout(location = 8) out vec3 v_ViewDir;
+layout(location = 0) out vec3 FragPos;
+layout(location = 1) out vec3 FragNorm;
+layout(location = 2) out vec3 FragTan;
+layout(location = 3) out vec3 FragBinorm;
+layout(location = 4) out vec2 FragUV0;
+layout(location = 12) out vec4 FragColor0;
+layout(location = 20) out vec3 FragPosLocal;
 layout(location = 22) out float FragViewIndex;
 
 // ============================================
@@ -94,8 +92,8 @@ void main() {
 	// only have to do this once per vertex-invocation even though each eye
 	// runs main() independently.
 	vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);
-	v_WorldPos = worldPosition.xyz;
-	v_LocalPos = pos;
+	FragPos = worldPosition.xyz;
+	FragPosLocal = pos;
 
 	// Select per-eye matrices based on which view we're in.
 	bool leftEye = gl_ViewID_OVR == 0;
@@ -110,17 +108,12 @@ void main() {
 	// vectors; normalize() below absorbs the determinant scalar. Avoids a full
 	// mat3/mat4 inverse — see uniforms.glsl for the math.
 	mat3 normalMatrix = u_NormalMatrix;
-	v_WorldNormal  = normalize(normalMatrix * norm);
-	v_WorldTangent = normalize(normalMatrix * tan);
-	v_TangentSign  = tanSign;
+	FragNorm = normalize(normalMatrix * norm);
+	FragTan = normalize(normalMatrix * tan);
+	FragBinorm = normalize(normalMatrix * (cross(norm, tan) * tanSign));
 
-	v_Uv01 = vec4(TexCoord0, TexCoord1);
-	v_Uv23 = vec4(TexCoord2, TexCoord3);
-	v_VertexColor = Color0;
-	// Camera world-position is the translation column of the inverse-view
-	// matrix, so we can compute the view direction without touching
-	// u_CameraPosition (which is mono-only).
-	v_ViewDir = normalize(inverseView[3].xyz - worldPosition.xyz);
+	FragUV0 = TexCoord0;
+	FragColor0 = Color0;
 	// Let the fragment stage know which eye is being shaded — useful for
 	// per-eye effects (e.g. mask textures, UI overlays, stereo debug).
 	FragViewIndex = float(gl_ViewID_OVR);

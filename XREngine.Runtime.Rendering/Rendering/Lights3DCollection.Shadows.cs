@@ -332,6 +332,7 @@ namespace XREngine.Scene
             ShadowAtlas.RenderScheduledTiles(collectVisibleNow);
             ShadowAtlas.PublishFrameData();
             PublishShadowAtlasDiagnostics();
+            LogShadowAtlasFrameSummary(collectVisibleNow);
         }
 
         private void PopulateShadowAtlasActiveCameras()
@@ -451,9 +452,10 @@ namespace XREngine.Scene
             float projFar = MathF.Max(camera.FarZ, camera.NearZ + 0.001f);
             uint desiredResolution = GetDesiredShadowAtlasResolution(light);
             uint minimumResolution = GetMinimumShadowAtlasResolution(desiredResolution);
-            ulong contentHash = BuildShadowContentHash(light, projectionType, faceOrCascadeIndex, encoding, view, projNear, projFar);
+            ulong contentHash = BuildShadowContentHash(light, projectionType, faceOrCascadeIndex, encoding, view, projection, projNear, projFar);
             bool canReusePreviousFrame = light.Type != ELightType.Dynamic;
-            bool isDirty = !ShadowAtlas.PublishedFrameData.TryGetAllocation(key, out ShadowAtlasAllocation previous) ||
+            bool hasPrevious = ShadowAtlas.PublishedFrameData.TryGetAllocation(key, out ShadowAtlasAllocation previous);
+            bool isDirty = !hasPrevious ||
                 previous.ContentVersion != contentHash ||
                 !canReusePreviousFrame ||
                 !previous.IsResident;
@@ -479,6 +481,7 @@ namespace XREngine.Scene
                 EditorPinned: false,
                 StereoVis: Engine.VRState.IsInVR ? StereoVisibility.BothEyes : StereoVisibility.Mono);
 
+            LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
             ShadowAtlas.Submit(request);
         }
 
@@ -502,7 +505,17 @@ namespace XREngine.Scene
         {
             renderCascades = true;
             if (!Engine.Rendering.Settings.UseDirectionalShadowAtlas)
+            {
+                LogDirectionalLegacyDecision(
+                    light,
+                    "AtlasDisabled",
+                    legacyRender: true,
+                    renderCascades: true,
+                    needsLegacyCascades: true,
+                    needsLegacyPrimary: light.ShadowMap is not null,
+                    activeCascadeCount: light.ActiveCascadeCount);
                 return true;
+            }
 
             int activeCascadeCount = light.ActiveCascadeCount;
             bool needsPrimaryShadowMap = !light.EnableCascadedShadows ||
@@ -515,7 +528,16 @@ namespace XREngine.Scene
                 !IsDirectionalPrimaryAtlasTileReady(light);
 
             renderCascades = needsLegacyCascades;
-            return (needsLegacyPrimary && light.ShadowMap is not null) || needsLegacyCascades;
+            bool legacyRender = (needsLegacyPrimary && light.ShadowMap is not null) || needsLegacyCascades;
+            LogDirectionalLegacyDecision(
+                light,
+                "AtlasEnabled",
+                legacyRender,
+                renderCascades,
+                needsLegacyCascades,
+                needsLegacyPrimary,
+                activeCascadeCount);
+            return legacyRender;
         }
 
         private bool AreDirectionalCascadeAtlasTilesReady(DirectionalLightComponent light, int activeCascadeCount)
@@ -684,6 +706,141 @@ namespace XREngine.Scene
                 frameId));
         }
 
+        private void LogShadowAtlasFrameSummary(bool collectVisibleNow)
+        {
+            if (!Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.AtlasFrame.{GetHashCode()}",
+                TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            ShadowAtlasFrameData frameData = ShadowAtlas.PublishedFrameData;
+            ShadowAtlasMetrics metrics = frameData.Metrics;
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][AtlasFrame] frame={0} generation={1} useDirAtlas={2} useSpotAtlas={3} collectVisibleNow={4} activeAtlasCameras={5} requests={6} allocations={7} resident={8} skipped={9} pages={10} renderedThisFrame={11} queueOverflow={12} budgetTiles={13} budgetMs={14:F2}",
+                frameData.FrameId,
+                frameData.Generation,
+                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                Engine.Rendering.Settings.UseSpotShadowAtlas,
+                collectVisibleNow,
+                _shadowAtlasCameraScratch.Count,
+                metrics.RequestCount,
+                frameData.AllocationCount,
+                metrics.ResidentTileCount,
+                metrics.SkippedRequestCount,
+                metrics.PageCount,
+                metrics.TilesScheduledThisFrame,
+                metrics.QueueOverflowCount,
+                ShadowAtlas.Settings.MaxTilesRenderedPerFrame,
+                ShadowAtlas.Settings.MaxRenderMilliseconds);
+        }
+
+        private static void LogDirectionalAtlasSubmit(
+            LightComponent light,
+            ShadowMapRequest request,
+            bool hasPrevious,
+            ShadowAtlasAllocation previous)
+        {
+            if (request.ProjectionType is not EShadowProjectionType.DirectionalCascade and not EShadowProjectionType.DirectionalPrimary ||
+                !Debug.ShouldLogEvery(
+                    $"DirectionalShadowAudit.AtlasSubmit.{request.Key}",
+                    TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            bool contentChanged = !hasPrevious || previous.ContentVersion != request.ContentHash;
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][AtlasSubmit] frame={0} light='{1}' projection={2} cascadeOrFace={3} dirty={4} contentChanged={5} canReuse={6} fallback={7} desired={8} min={9} near={10:F3} far={11:F3} priority={12:F1} previousResident={13} previousRenderedFrame={14} previousFallback={15} previousPage={16} previousRect={17}",
+                Engine.Rendering.State.RenderFrameId,
+                light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
+                request.ProjectionType,
+                request.FaceOrCascadeIndex,
+                request.IsDirty,
+                contentChanged,
+                request.CanReusePreviousFrame,
+                request.Fallback,
+                request.DesiredResolution,
+                request.MinimumResolution,
+                request.NearPlane,
+                request.FarPlane,
+                request.Priority,
+                hasPrevious && previous.IsResident,
+                hasPrevious ? previous.LastRenderedFrame : 0u,
+                hasPrevious ? previous.ActiveFallback : ShadowFallbackMode.None,
+                hasPrevious ? previous.PageIndex : -1,
+                hasPrevious ? FormatRect(previous.PixelRect) : "<none>");
+        }
+
+        private void LogDirectionalLegacyDecision(
+            DirectionalLightComponent light,
+            string reason,
+            bool legacyRender,
+            bool renderCascades,
+            bool needsLegacyCascades,
+            bool needsLegacyPrimary,
+            int activeCascadeCount)
+        {
+            if (!Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.LegacyDecision.{light.GetHashCode()}",
+                TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][LegacyDecision] frame={0} light='{1}' reason={2} useDirAtlas={3} legacyRender={4} renderCascades={5} needsLegacyCascades={6} needsLegacyPrimary={7} casts={8} cascadesEnabled={9} activeCascades={10} shadowMap={11} cascadeTex={12} slots={13}",
+                Engine.Rendering.State.RenderFrameId,
+                light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
+                reason,
+                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                legacyRender,
+                renderCascades,
+                needsLegacyCascades,
+                needsLegacyPrimary,
+                light.CastsShadows,
+                light.EnableCascadedShadows,
+                activeCascadeCount,
+                light.ShadowMap is not null,
+                light.CascadedShadowMapTexture is not null,
+                DescribeDirectionalCascadeSlots(light, activeCascadeCount));
+        }
+
+        private static string DescribeDirectionalCascadeSlots(DirectionalLightComponent light, int activeCascadeCount)
+        {
+            int count = Math.Clamp(activeCascadeCount, 0, 4);
+            if (count == 0)
+                return "<none>";
+
+            string result = string.Empty;
+            for (int i = 0; i < count; i++)
+            {
+                string entry;
+                if (light.TryGetCascadeAtlasSlot(i, out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot))
+                {
+                    entry = $"c{i}:alloc={slot.HasAllocation},resident={slot.IsResident},page={slot.PageIndex},rec={slot.RecordIndex},fb={slot.Fallback},last={slot.LastRenderedFrame},rect={FormatRect(slot.InnerPixelRect)}";
+                }
+                else
+                {
+                    entry = $"c{i}:<missing>";
+                }
+
+                result = string.IsNullOrEmpty(result) ? entry : $"{result}; {entry}";
+            }
+
+            return result;
+        }
+
+        private static string FormatRect(BoundingRectangle rect)
+            => $"{rect.X},{rect.Y},{rect.Width}x{rect.Height}";
+
         internal bool TryGetSpotShadowAtlasAllocation(
             SpotLightComponent light,
             out ShadowAtlasAllocation allocation,
@@ -754,6 +911,7 @@ namespace XREngine.Scene
             int faceOrCascadeIndex,
             EShadowMapEncoding encoding,
             in Matrix4x4 view,
+            in Matrix4x4 projection,
             float projectionNear,
             float projectionFar)
         {
@@ -769,6 +927,7 @@ namespace XREngine.Scene
             AddFloat(ref hash, light.ShadowMinBias);
             AddFloat(ref hash, light.ShadowMaxBias);
             AddMatrix(ref hash, view);
+            AddMatrix(ref hash, projection);
             AddFloat(ref hash, projectionNear);
             AddFloat(ref hash, projectionFar);
             return hash;

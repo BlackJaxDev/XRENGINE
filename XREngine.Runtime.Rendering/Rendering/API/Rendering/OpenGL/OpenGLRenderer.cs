@@ -235,15 +235,20 @@ namespace XREngine.Rendering.OpenGL
         {
             private readonly OpenGLRenderer _renderer = renderer;
             private readonly ImGuiController _controller = controller;
+            private readonly Action _queueMultiViewportInput = () => renderer._imguiMultiViewportController?.QueueMainViewportInput();
 
             public void MakeCurrent()
                 => _controller.MakeCurrent();
 
             public void Update(float deltaSeconds)
             {
-                _renderer._imguiMultiViewportController?.QueueMainViewportInput();
+                if (_renderer._imguiMultiViewportController is not null
+                    && ImGuiControllerUtilities.TryUpdateWithoutPollingInput(_controller, deltaSeconds, _queueMultiViewportInput))
+                {
+                    return;
+                }
+
                 _controller.Update(deltaSeconds);
-                _renderer._imguiMultiViewportController?.UpdateMainViewportInput();
             }
 
             public void Render()

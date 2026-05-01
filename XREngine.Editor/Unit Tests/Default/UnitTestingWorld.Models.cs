@@ -115,8 +115,6 @@ public static partial class EditorUnitTests
             if (!needsImportOptions)
                 return null;
 
-            bool streamStaticSubmeshPublishes = model.Kind is UnitTestModelImportKind.Static;
-
             return new ModelImportOptions
             {
                 LegacyPostProcessSteps = model.ImportFlags,
@@ -126,9 +124,9 @@ public static partial class EditorUnitTests
                 GltfBackend = ResolveGltfBackend(model),
                 GenerateMeshRenderersAsync = true,
                 SplitSubmeshesIntoSeparateModelComponents = splitSubmeshes,
-                // Stream static-model publication as worker batches finish so large imports do not
-                // collapse into one large app-thread completion burst.
-                BatchSubmeshAddsDuringAsyncImport = !streamStaticSubmeshPublishes,
+                // Keep static models hidden until every submesh has finished CPU-side processing.
+                // Dependent systems such as light-probe model bounds should only see complete geometry.
+                BatchSubmeshAddsDuringAsyncImport = true,
                 TextureLoadDirSearchPaths = textureLoadDirSearchPaths,
             };
         }

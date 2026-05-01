@@ -301,25 +301,23 @@ internal static class LightComponentEditorShared
     {
         ImGui.SeparatorText("Bias");
 
-        float minBias = light.ShadowMinBias;
-        if (ImGui.DragFloat("Min Bias", ref minBias, 0.0001f, 0.0f, 1000.0f, "%.6f"))
-            light.ShadowMinBias = MathF.Max(0.0f, minBias);
+        float depthBiasTexels = light.ShadowDepthBiasTexels;
+        if (ImGui.DragFloat("Depth Bias", ref depthBiasTexels, 0.05f, 0.0f, 64.0f, "%.3f texels"))
+            light.ShadowDepthBiasTexels = depthBiasTexels;
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Minimum compare bias. Raises the floor used on front-facing receivers.");
+            ImGui.SetTooltip("Constant compare-bias floor measured in shadow-map texels.");
 
-        float maxBias = light.ShadowMaxBias;
-        if (ImGui.DragFloat("Max / Slope Bias", ref maxBias, 0.0001f, 0.0f, 1000.0f, "%.6f"))
-            light.ShadowMaxBias = MathF.Max(0.0f, maxBias);
+        float slopeBiasTexels = light.ShadowSlopeBiasTexels;
+        if (ImGui.DragFloat("Slope Bias", ref slopeBiasTexels, 0.05f, 0.0f, 64.0f, "%.3f texels"))
+            light.ShadowSlopeBiasTexels = slopeBiasTexels;
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Upper bias used at grazing angles and for receiver normal offset.");
+            ImGui.SetTooltip("Receiver-plane slope scale. Increase only if grazing surfaces still self-shadow.");
 
-        float expBase = light.ShadowExponentBase;
-        if (ImGui.DragFloat("Bias Base", ref expBase, 0.001f, 0.0f, 100.0f, "%.4f"))
-            light.ShadowExponentBase = MathF.Max(0.0f, expBase);
-
-        float exp = light.ShadowExponent;
-        if (ImGui.DragFloat("Bias Exponent", ref exp, 0.001f, 0.0f, 100.0f, "%.4f"))
-            light.ShadowExponent = MathF.Max(0.0f, exp);
+        float normalBiasTexels = light.ShadowNormalBiasTexels;
+        if (ImGui.DragFloat("Normal Offset##shadowmap", ref normalBiasTexels, 0.05f, 0.0f, 64.0f, "%.3f texels"))
+            light.ShadowNormalBiasTexels = normalBiasTexels;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("World-space receiver offset along the surface normal, scaled by the active shadow texel size.");
     }
 
     private static void DrawShadowFilteringControls(LightComponent light)
@@ -555,7 +553,7 @@ internal static class LightComponentEditorShared
                 light.ContactShadowFadeEnd = MathF.Max(0.0f, fadeEnd);
 
             float normalOffset = light.ContactShadowNormalOffset;
-            if (ImGui.DragFloat("Normal Offset", ref normalOffset, 0.001f, 0.0f, 10.0f, "%.4f"))
+            if (ImGui.DragFloat("Normal Offset##contactshadow", ref normalOffset, 0.001f, 0.0f, 10.0f, "%.4f"))
                 light.ContactShadowNormalOffset = MathF.Max(0.0f, normalOffset);
 
             float jitter = light.ContactShadowJitterStrength;

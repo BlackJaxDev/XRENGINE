@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
@@ -182,7 +183,7 @@ public sealed class ShadowAtlasManager
                 continue;
             }
 
-            ShadowAtlasAllocation allocation = AllocateRequest(request, out SkipReason skipReason);
+            ShadowAtlasAllocation allocation = AllocateRequest(request, out _);
             if (!allocation.IsResident)
             {
                 _frameAllocations.Add(allocation);
@@ -197,26 +198,126 @@ public sealed class ShadowAtlasManager
 
     public int RenderScheduledTiles(bool collectVisibleNow = false)
     {
+        long frameStart = Stopwatch.GetTimestamp();
         int budget = Math.Max(0, _settings.MaxTilesRenderedPerFrame);
+        long startTimestamp = _settings.MaxRenderMilliseconds > 0.0f
+            ? Stopwatch.GetTimestamp()
+            : 0L;
         int scheduled = 0;
+        int checkedTiles = 0;
+        int skippedClean = 0;
+        int failedRender = 0;
+        int deferredByBudget = 0;
+        int firstDeferredRequestIndex = -1;
+
         for (int i = 0; i < _requests.Count && scheduled < budget; i++)
         {
+            if (scheduled > 0 && HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
+            {
+                deferredByBudget = _requests.Count - i;
+                firstDeferredRequestIndex = i;
+                break;
+            }
+
             ShadowMapRequest request = _requests[i];
-            if (!_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation allocation) ||
-                !RequiresTileRender(request, allocation))
+            if (!_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation allocation))
+            {
+                LogDirectionalRequestRenderState(request, default, "NoCurrentAllocation", requiresRender: false);
+                skippedClean++;
                 continue;
+            }
+
+            bool requiresRender = RequiresTileRender(request, allocation);
+            if (!requiresRender)
+            {
+                LogDirectionalRequestRenderState(request, allocation, "SkippedClean", requiresRender: false);
+                skippedClean++;
+                continue;
+            }
 
             bool forceCollectVisible = collectVisibleNow;
+            checkedTiles++;
+
             if (!TryRenderTile(request, allocation, forceCollectVisible))
+            {
+                LogDirectionalRequestRenderState(request, allocation, "RenderFailed", requiresRender: true);
+                failedRender++;
                 continue;
+            }
 
             MarkTileRendered(request.Key, allocation);
+            if (_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation renderedAllocation))
+                LogDirectionalRequestRenderState(request, renderedAllocation, "Rendered", requiresRender: true);
             scheduled++;
+
+            if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
+            {
+                deferredByBudget = _requests.Count - i - 1;
+                firstDeferredRequestIndex = i + 1;
+                break;
+            }
         }
 
         _tilesScheduledThisFrame = scheduled;
+        double elapsedMs = ElapsedMilliseconds(frameStart);
+        if (deferredByBudget > 0)
+        {
+            XREngine.Debug.RenderingEvery(
+                "ShadowAtlas.RenderBudget.Deferred",
+                TimeSpan.FromSeconds(2.0),
+                "[ShadowAtlas] Deferred {0} shadow request(s) after rendering {1}/{2} tile(s) in {3:F2}ms (budget {4:F2}ms, firstDeferredIndex={5}).",
+                deferredByBudget,
+                scheduled,
+                budget,
+                elapsedMs,
+                _settings.MaxRenderMilliseconds,
+                firstDeferredRequestIndex);
+        }
+
+        double slowThresholdMs = Math.Max(16.0, _settings.MaxRenderMilliseconds * 4.0);
+        if (scheduled > 0 && elapsedMs > slowThresholdMs)
+        {
+            XREngine.Debug.RenderingWarningEvery(
+                "ShadowAtlas.RenderScheduledTiles.Slow",
+                TimeSpan.FromSeconds(2.0),
+                "[ShadowAtlas] Shadow tile rendering exceeded its frame budget: rendered={0}, checked={1}, skippedClean={2}, failed={3}, deferred={4}, elapsedMs={5:F2}, budgetMs={6:F2}.",
+                scheduled,
+                checkedTiles,
+                skippedClean,
+                failedRender,
+                deferredByBudget,
+                elapsedMs,
+                _settings.MaxRenderMilliseconds);
+        }
+
+        LogShadowAtlasRenderSummary(
+            scheduled,
+            checkedTiles,
+            skippedClean,
+            failedRender,
+            deferredByBudget,
+            firstDeferredRequestIndex,
+            elapsedMs,
+            budget);
+
         return scheduled;
     }
+
+    private static bool HasRenderBudgetExpired(long startTimestamp, float maxRenderMilliseconds)
+    {
+        if (startTimestamp == 0L || maxRenderMilliseconds <= 0.0f)
+            return false;
+
+        long elapsedTicks = Stopwatch.GetTimestamp() - startTimestamp;
+        double elapsedMilliseconds = elapsedTicks * 1000.0 / Stopwatch.Frequency;
+        return elapsedMilliseconds >= maxRenderMilliseconds;
+    }
+
+    private static double ElapsedMilliseconds(long startTimestamp)
+        => (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
+
+    private static string LightName(LightComponent light)
+        => light.SceneNode?.Name ?? light.Name ?? light.GetType().Name;
 
     public void PublishFrameData()
     {
@@ -438,14 +539,16 @@ public sealed class ShadowAtlasManager
 
     private bool TryRenderTile(ShadowMapRequest request, ShadowAtlasAllocation allocation, bool collectVisibleNow)
     {
+        long start = Stopwatch.GetTimestamp();
         if (request.Encoding != EShadowMapEncoding.Depth ||
             !GetEncodingState(request.Encoding).TryGetPageResource(allocation.PageIndex, out ShadowAtlasPageResource? page) ||
             page is null)
         {
+            LogDirectionalRequestRenderState(request, allocation, "MissingPageResource", requiresRender: true);
             return false;
         }
 
-        return request.ProjectionType switch
+        bool result = request.ProjectionType switch
         {
             EShadowProjectionType.SpotPrimary when request.Light is SpotLightComponent spotLight
                 => spotLight.RenderShadowAtlasTile(page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
@@ -455,7 +558,104 @@ public sealed class ShadowAtlasManager
                 => cascadeDirectionalLight.RenderCascadeShadowAtlasTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
             _ => false,
         };
+
+        if (result)
+        {
+            double elapsedMs = ElapsedMilliseconds(start);
+            double slowThresholdMs = Math.Max(16.0, _settings.MaxRenderMilliseconds * 4.0);
+            if (elapsedMs > slowThresholdMs)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"ShadowAtlas.Tile.Slow.{request.Key}",
+                    TimeSpan.FromSeconds(2.0),
+                    "[ShadowAtlas] Slow shadow tile render: key={0}, light='{1}', projection={2}, faceOrCascade={3}, elapsedMs={4:F2}, frameBudgetMs={5:F2}.",
+                    request.Key,
+                    LightName(request.Light),
+                    request.ProjectionType,
+                    request.FaceOrCascadeIndex,
+                    elapsedMs,
+                    _settings.MaxRenderMilliseconds);
+            }
+        }
+
+        return result;
     }
+
+    private void LogShadowAtlasRenderSummary(
+        int scheduled,
+        int checkedTiles,
+        int skippedClean,
+        int failedRender,
+        int deferredByBudget,
+        int firstDeferredRequestIndex,
+        double elapsedMs,
+        int budget)
+    {
+        if (!XREngine.Debug.ShouldLogEvery(
+            $"DirectionalShadowAudit.AtlasRenderSummary.{GetHashCode()}",
+            TimeSpan.FromSeconds(1.0)))
+        {
+            return;
+        }
+
+        XREngine.Debug.Out(
+            XREngine.EOutputVerbosity.Normal,
+            false,
+            "[DirectionalShadowAudit][AtlasRenderSummary] frame={0} requests={1} scheduled={2} checked={3} skippedClean={4} failed={5} deferred={6} firstDeferredIndex={7} elapsedMs={8:F2} budgetTiles={9} budgetMs={10:F2} activeCameras={11}",
+            _frameId,
+            _requests.Count,
+            scheduled,
+            checkedTiles,
+            skippedClean,
+            failedRender,
+            deferredByBudget,
+            firstDeferredRequestIndex,
+            elapsedMs,
+            budget,
+            _settings.MaxRenderMilliseconds,
+            _activeCameraCount);
+    }
+
+    private static void LogDirectionalRequestRenderState(
+        ShadowMapRequest request,
+        ShadowAtlasAllocation allocation,
+        string state,
+        bool requiresRender)
+    {
+        if (!IsDirectionalRequest(request) ||
+            !XREngine.Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.AtlasRequestRender.{request.Key}.{state}",
+                TimeSpan.FromSeconds(1.0)))
+        {
+            return;
+        }
+
+        XREngine.Debug.Out(
+            XREngine.EOutputVerbosity.Normal,
+            false,
+            "[DirectionalShadowAudit][AtlasRequestRender] frame={0} state={1} light='{2}' projection={3} cascadeOrFace={4} dirty={5} canReuse={6} requiresRender={7} fallbackRequest={8} allocationResident={9} allocationFallback={10} lastRenderedFrame={11} page={12} rect={13} content={14}",
+            Engine.Rendering.State.RenderFrameId,
+            state,
+            LightName(request.Light),
+            request.ProjectionType,
+            request.FaceOrCascadeIndex,
+            request.IsDirty,
+            request.CanReusePreviousFrame,
+            requiresRender,
+            request.Fallback,
+            allocation.IsResident,
+            allocation.ActiveFallback,
+            allocation.LastRenderedFrame,
+            allocation.PageIndex,
+            FormatRect(allocation.InnerPixelRect),
+            request.ContentHash);
+    }
+
+    private static bool IsDirectionalRequest(ShadowMapRequest request)
+        => request.ProjectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary;
+
+    private static string FormatRect(BoundingRectangle rect)
+        => $"{rect.X},{rect.Y},{rect.Width}x{rect.Height}";
 
     private ShadowAtlasAllocation CreateSkippedAllocation(ShadowMapRequest request, SkipReason skipReason)
         => new(

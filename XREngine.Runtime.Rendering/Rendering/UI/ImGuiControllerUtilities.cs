@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ImGuiNET;
 using Silk.NET.Input;
@@ -17,6 +18,7 @@ internal static class ImGuiControllerUtilities
     private static readonly BindingFlags StaticPrivate = BindingFlags.Static | BindingFlags.NonPublic;
 
     private static readonly HashSet<nint> _fontLoadedContexts = [];
+    private static bool _warnedManualInputUnavailable;
 
     // ── Primary font glyph ranges ────────────────────────────────────────
     // Covers Latin (Basic + Extended-A/B + Additional), Greek, Cyrillic,
@@ -138,6 +140,68 @@ internal static class ImGuiControllerUtilities
         lock (_fontLoadedContexts)
             _fontLoadedContexts.Remove(context);
     }
+
+    public static bool TryUpdateWithoutPollingInput(
+        ImGuiController controller,
+        float deltaSeconds,
+        Action queueInputBeforeNewFrame)
+    {
+        try
+        {
+            nint oldContext = ImGui.GetCurrentContext();
+            if (oldContext != controller.Context)
+                ImGui.SetCurrentContext(controller.Context);
+
+            try
+            {
+                ref bool frameBegun = ref GetFrameBegun(controller);
+                if (frameBegun)
+                    ImGui.Render();
+
+                SetPerFrameImGuiData(controller, deltaSeconds);
+                queueInputBeforeNewFrame();
+                FlushPressedChars(controller);
+
+                frameBegun = true;
+                ImGui.NewFrame();
+            }
+            finally
+            {
+                if (oldContext != controller.Context)
+                    ImGui.SetCurrentContext(oldContext);
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is MissingFieldException or MissingMethodException or TypeLoadException)
+        {
+            if (!_warnedManualInputUnavailable)
+            {
+                _warnedManualInputUnavailable = true;
+                Debug.LogWarning($"ImGui multiviewport input isolation unavailable; falling back to Silk input polling: {ex.Message}");
+            }
+
+            return false;
+        }
+    }
+
+    private static void FlushPressedChars(ImGuiController controller)
+    {
+        List<char> pressedChars = GetPressedChars(controller);
+        var io = ImGui.GetIO();
+        for (int i = 0; i < pressedChars.Count; i++)
+            io.AddInputCharacter(pressedChars[i]);
+        pressedChars.Clear();
+    }
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_frameBegun")]
+    private static extern ref bool GetFrameBegun(ImGuiController controller);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_pressedChars")]
+    private static extern ref List<char> GetPressedChars(ImGuiController controller);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "SetPerFrameImGuiData")]
+    private static extern void SetPerFrameImGuiData(ImGuiController controller, float deltaSeconds);
 
     private static unsafe bool TryLoadEditorFont(ImGuiIOPtr io, float sizePixels, out string? loadedFontPath)
     {

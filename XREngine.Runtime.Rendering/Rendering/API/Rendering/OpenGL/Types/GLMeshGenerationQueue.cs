@@ -73,6 +73,8 @@ namespace XREngine.Rendering.OpenGL
             public int MaxThrottledPriorityRenderersPerFrame { get; set; } = 4;
 
             private double _savedBudgetMs;
+            private int _savedMaxNormalRenderersPerFrame;
+            private int _savedMaxThrottledPriorityRenderersPerFrame;
             private volatile bool _budgetBoosted;
 
             /// <summary>
@@ -87,13 +89,22 @@ namespace XREngine.Rendering.OpenGL
             /// The original budget is automatically restored when the pending queue empties.
             /// Safe to call from any thread.
             /// </summary>
-            public void BoostBudgetUntilDrained(double boostedMs)
+            public void BoostBudgetUntilDrained(
+                double boostedMs,
+                int? maxNormalRenderersPerFrame = null,
+                int? maxThrottledPriorityRenderersPerFrame = null)
             {
                 if (_budgetBoosted)
                     return;
 
                 _savedBudgetMs = FrameBudgetMs;
+                _savedMaxNormalRenderersPerFrame = MaxNormalRenderersPerFrame;
+                _savedMaxThrottledPriorityRenderersPerFrame = MaxThrottledPriorityRenderersPerFrame;
                 FrameBudgetMs = boostedMs;
+                if (maxNormalRenderersPerFrame.HasValue)
+                    MaxNormalRenderersPerFrame = Math.Max(1, maxNormalRenderersPerFrame.Value);
+                if (maxThrottledPriorityRenderersPerFrame.HasValue)
+                    MaxThrottledPriorityRenderersPerFrame = Math.Max(1, maxThrottledPriorityRenderersPerFrame.Value);
                 _budgetBoosted = true;
             }
 
@@ -220,6 +231,8 @@ namespace XREngine.Rendering.OpenGL
                 if (_budgetBoosted && PendingCount == 0)
                 {
                     FrameBudgetMs = _savedBudgetMs;
+                    MaxNormalRenderersPerFrame = _savedMaxNormalRenderersPerFrame;
+                    MaxThrottledPriorityRenderersPerFrame = _savedMaxThrottledPriorityRenderersPerFrame;
                     _budgetBoosted = false;
                 }
 

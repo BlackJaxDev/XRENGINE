@@ -238,6 +238,21 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void ForwardLightingUpload_OwnsContactShadowCameraMatrices()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs");
+
+        source.ShouldContain("SetForwardLightingCameraUniforms(program);");
+        source.ShouldContain("EEngineUniform.ViewMatrix");
+        source.ShouldContain("EEngineUniform.InverseViewMatrix");
+        source.ShouldContain("EEngineUniform.InverseProjMatrix");
+        source.ShouldContain("EEngineUniform.ProjMatrix");
+        source.ShouldContain("EEngineUniform.ViewProjectionMatrix");
+        source.ShouldContain("EEngineUniform.DepthMode");
+        source.ShouldContain("camera.ViewProjectionMatrixUnjittered");
+    }
+
+    [Test]
     public void DefaultUberMaterialContract_RequestsForwardEngineUniforms_AndFeatureDefaults()
     {
         ShaderVar[] parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters();
@@ -292,6 +307,26 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("layout(location = 20) in vec3 FragPosLocal;");
         source.ShouldContain("mesh.viewDir = normalize(u_CameraPosition - FragPos);");
         source.ShouldContain("mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);");
+    }
+
+    [Test]
+    public void UberStaticVertexVariants_EmitFragmentInputContracts()
+    {
+        foreach (string shaderPath in new[]
+        {
+            Path.Combine("Uber", "UberShader.vert"),
+            Path.Combine("Uber", "UberShader_OVR.vert"),
+            Path.Combine("Uber", "UberShader_NV.vert"),
+        })
+        {
+            string source = LoadShaderSource(shaderPath);
+
+            source.ShouldContain("layout(location = 0) out vec3 FragPos;");
+            source.ShouldContain("layout(location = 1) out vec3 FragNorm;");
+            source.ShouldContain("layout(location = 4) out vec2 FragUV0;");
+            source.ShouldContain("layout(location = 12) out vec4 FragColor0;");
+            source.ShouldContain("layout(location = 20) out vec3 FragPosLocal;");
+        }
     }
 
     [Test]
@@ -389,6 +424,18 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
 
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"Shader file not found: {fullPath}", fullPath);
+
+        return File.ReadAllText(fullPath);
+    }
+
+    private static string ReadWorkspaceFile(string relativePath)
+    {
+        string workspaceRoot = Path.GetFullPath(Path.Combine(ResolveShaderRoot(), "..", "..", ".."));
+        string normalizedRelativePath = relativePath.Replace('/', Path.DirectorySeparatorChar);
+        string fullPath = Path.Combine(workspaceRoot, normalizedRelativePath);
+
+        if (!File.Exists(fullPath))
+            throw new FileNotFoundException($"Workspace file not found: {fullPath}", fullPath);
 
         return File.ReadAllText(fullPath);
     }

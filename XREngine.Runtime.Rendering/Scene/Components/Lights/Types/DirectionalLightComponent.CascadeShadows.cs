@@ -297,7 +297,7 @@ namespace XREngine.Components.Lights
             if (manual.Enabled)
                 return new CascadeShadowBiasSettings(true, manual.BiasMin, manual.BiasMax, manual.ReceiverOffset, 0.0f);
 
-            return new CascadeShadowBiasSettings(false, ShadowMinBias, ShadowMaxBias, ShadowMaxBias, 0.0f);
+            return new CascadeShadowBiasSettings(false, 0.0f, ShadowSlopeBiasTexels, 0.0f, 0.0f);
         }
 
         public CascadeShadowBiasOverride GetCascadeBiasOverride(int index)
@@ -381,7 +381,7 @@ namespace XREngine.Components.Lights
         private static CascadeShadowBiasOverride NormalizeCascadeBiasOverride(CascadeShadowBiasOverride value)
         {
             float minBias = MathF.Max(0.0f, value.BiasMin);
-            float maxBias = MathF.Max(minBias, value.BiasMax);
+            float maxBias = MathF.Max(0.0f, value.BiasMax);
             float receiverOffset = MathF.Max(0.0f, value.ReceiverOffset);
             return new CascadeShadowBiasOverride(value.Enabled, minBias, maxBias, receiverOffset);
         }
@@ -513,9 +513,9 @@ namespace XREngine.Components.Lights
                     {
                         splits[i] = float.MaxValue;
                         blendWidths[i] = 0.0f;
-                        biasMins[i] = ShadowMinBias;
-                        biasMaxes[i] = ShadowMaxBias;
-                        receiverOffsets[i] = ShadowMaxBias;
+                        biasMins[i] = 0.0f;
+                        biasMaxes[i] = ShadowSlopeBiasTexels;
+                        receiverOffsets[i] = 0.0f;
                         matrices[i] = Matrix4x4.Identity;
                     }
                 }
@@ -606,6 +606,13 @@ namespace XREngine.Components.Lights
             }
         }
 
+        private static bool IsDirectionalAtlasSlotSampleable(in DirectionalCascadeAtlasSlot slot)
+            => slot.HasAllocation &&
+               slot.IsResident &&
+               slot.LastRenderedFrame != 0u &&
+               slot.PageIndex >= 0 &&
+               slot.Fallback == ShadowFallbackMode.None;
+
         internal void CopyPublishedCascadeAtlasUniformData(
             Span<IVector4> packed0,
             Span<Vector4> uvScaleBias,
@@ -618,10 +625,7 @@ namespace XREngine.Components.Lights
                 for (int i = 0; i < copyCount; i++)
                 {
                     DirectionalCascadeAtlasSlot slot = i < _cascadeShadowSlices.Count ? _cascadeAtlasSlots[i] : default;
-                    bool enabled = slot.HasAllocation &&
-                        slot.IsResident &&
-                        slot.LastRenderedFrame != 0u &&
-                        slot.PageIndex >= 0;
+                    bool enabled = IsDirectionalAtlasSlotSampleable(slot);
 
                     ShadowFallbackMode fallback = slot.Fallback != ShadowFallbackMode.None
                         ? slot.Fallback
@@ -657,10 +661,7 @@ namespace XREngine.Components.Lights
                 for (int i = 0; i < copyCount; i++)
                 {
                     DirectionalCascadeAtlasSlot slot = i == 0 ? _primaryAtlasSlot : default;
-                    bool enabled = slot.HasAllocation &&
-                        slot.IsResident &&
-                        slot.LastRenderedFrame != 0u &&
-                        slot.PageIndex >= 0;
+                    bool enabled = IsDirectionalAtlasSlotSampleable(slot);
 
                     ShadowFallbackMode fallback = slot.HasAllocation
                         ? (slot.Fallback != ShadowFallbackMode.None ? slot.Fallback : ShadowFallbackMode.Lit)
@@ -888,7 +889,11 @@ namespace XREngine.Components.Lights
             transform.Translation = center - lightDirection * halfExtents.Z;
             transform.Rotation = orientation;
 
-            transform.RecalculateMatrices(forceWorldRecalc: true);
+            // Cascade cameras are rebuilt during shadow collection, after the normal
+            // world-to-render matrix handoff for the frame. Publish their render
+            // matrices immediately so culling, rendering, and shader uniforms all
+            // describe the same cascade for this frame.
+            transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
 
             float width = MathF.Max(halfExtents.X * 2.0f, 1e-3f);
             float height = MathF.Max(halfExtents.Y * 2.0f, 1e-3f);
@@ -907,24 +912,6 @@ namespace XREngine.Components.Lights
                 ortho.NearZ = nearZ;
                 ortho.FarZ = farZ;
             }
-        }
-
-        private float GetPrimaryShadowDepthRange()
-        {
-            if (ShadowCamera is XRCamera camera)
-                return MathF.Max(ShadowBiasDepthRangeEpsilon, camera.FarZ - camera.NearZ);
-
-            return MathF.Max(ShadowBiasDepthRangeEpsilon, Scale.Z - NearZ * 2.0f);
-        }
-
-        private static float NormalizeCompareBiasForDepthRange(float bias, float referenceDepthRange, float targetDepthRange)
-        {
-            if (!float.IsFinite(bias) || bias <= 0.0f)
-                return 0.0f;
-
-            float safeReference = MathF.Max(ShadowBiasDepthRangeEpsilon, referenceDepthRange);
-            float safeTarget = MathF.Max(ShadowBiasDepthRangeEpsilon, targetDepthRange);
-            return bias * safeReference / safeTarget;
         }
 
         private CascadeShadowBiasSettings ResolveCascadeBiasSettings(
@@ -946,13 +933,12 @@ namespace XREngine.Components.Lights
                 return new CascadeShadowBiasSettings(true, manual.BiasMin, manual.BiasMax, manual.ReceiverOffset, texelWorldSize);
             }
 
-            float referenceDepthRange = GetPrimaryShadowDepthRange();
             float cascadeDepthRange = MathF.Max(ShadowBiasDepthRangeEpsilon, halfExtents.Z * 2.0f);
-            float biasMin = NormalizeCompareBiasForDepthRange(ShadowMinBias, referenceDepthRange, cascadeDepthRange);
-            float biasMax = NormalizeCompareBiasForDepthRange(ShadowMaxBias, referenceDepthRange, cascadeDepthRange);
-            biasMax = MathF.Max(biasMax, biasMin);
+            float biasMin = texelWorldSize * ShadowDepthBiasTexels / cascadeDepthRange;
+            float biasMax = ShadowSlopeBiasTexels;
+            float receiverOffset = texelWorldSize * ShadowNormalBiasTexels;
 
-            return new CascadeShadowBiasSettings(false, biasMin, biasMax, ShadowMaxBias, texelWorldSize);
+            return new CascadeShadowBiasSettings(false, biasMin, biasMax, receiverOffset, texelWorldSize);
         }
 
         private int CopyCascadeSourceFrusta(XRCamera primaryCamera, Span<Frustum> destination)
@@ -1026,6 +1012,7 @@ namespace XREngine.Components.Lights
         {
             if (!CastsShadows || !EnableCascadedShadows || ShadowCamera is null)
             {
+                LogCascadeClearReason("disabled-or-missing-shadow-camera");
                 ClearCascadeShadows();
                 return;
             }
@@ -1039,6 +1026,7 @@ namespace XREngine.Components.Lights
             XRTexture2DArray? cascadeTexture = _cascadeShadowMapTexture;
             if (cascadeTexture is null || camerasSnapshot.Length == 0 || transformsSnapshot.Length != camerasSnapshot.Length)
             {
+                LogCascadeClearReason($"invalid-resources texture={cascadeTexture is not null} cameras={camerasSnapshot.Length} transforms={transformsSnapshot.Length}");
                 ClearCascadeShadows();
                 return;
             }
@@ -1047,6 +1035,7 @@ namespace XREngine.Components.Lights
             int sourceFrustumCount = CopyCascadeSourceFrusta(playerCamera, sourceFrusta);
             if (sourceFrustumCount <= 0)
             {
+                LogCascadeClearReason("no-source-frustum");
                 ClearCascadeShadows();
                 return;
             }
@@ -1161,6 +1150,8 @@ namespace XREngine.Components.Lights
                     _publishedCascadeRangeNear = cameraNear;
                     _publishedCascadeRangeFar = effectiveCascadeFar;
                 }
+
+                LogCascadeUpdate(playerCamera, resourceSlot, cameraNear, effectiveCascadeFar, totalDepth, nextShadowSlices.AsSpan(0, resourceSlot));
             }
             finally
             {
@@ -1250,9 +1241,7 @@ namespace XREngine.Components.Lights
                 World is null ||
                 renderRect.Width <= 0 ||
                 renderRect.Height <= 0)
-            {
                 return false;
-            }
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
@@ -1283,6 +1272,7 @@ namespace XREngine.Components.Lights
                 shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
             }
 
+            LogDirectionalAtlasTileRender("cascade", cascadeIndex, renderRect, collectVisibleNow, viewport.Camera);
             return true;
         }
 
@@ -1293,9 +1283,7 @@ namespace XREngine.Components.Lights
                 World is null ||
                 renderRect.Width <= 0 ||
                 renderRect.Height <= 0)
-            {
                 return false;
-            }
 
             XRViewport viewport = PrimaryShadowViewport;
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
@@ -1321,6 +1309,7 @@ namespace XREngine.Components.Lights
                 shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
             }
 
+            LogDirectionalAtlasTileRender("primary", 0, renderRect, collectVisibleNow, viewport.Camera);
             return true;
         }
 
@@ -1340,6 +1329,11 @@ namespace XREngine.Components.Lights
 
             var shadowMap = ShadowMap;
             XRMaterial? shadowMaterial = shadowMap?.Material;
+            XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
+            XRFrameBuffer[] cascadeShadowFrameBuffers = _cascadeShadowFrameBuffers;
+            int cascadeCount = GetPublishedCascadeRenderCount(cascadeShadowViewports, cascadeShadowFrameBuffers);
+
+            LogLegacyDirectionalShadowRender(renderCascades, shadowMap is not null, shadowMaterial is not null, cascadeCount);
 
             if (ShouldCollectPrimaryShadowViewport() && shadowMap is not null && shadowMaterial is not null)
                 PrimaryShadowViewport.Render(shadowMap, null, null, true, shadowMaterial);
@@ -1347,12 +1341,147 @@ namespace XREngine.Components.Lights
             if (shadowMaterial is null)
                 return;
 
-            XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
-            XRFrameBuffer[] cascadeShadowFrameBuffers = _cascadeShadowFrameBuffers;
-            int cascadeCount = GetPublishedCascadeRenderCount(cascadeShadowViewports, cascadeShadowFrameBuffers);
             if (renderCascades)
                 for (int i = 0; i < cascadeCount; i++)
                     cascadeShadowViewports[i].Render(cascadeShadowFrameBuffers[i], null, null, true, shadowMaterial);
         }
+
+        private void LogCascadeClearReason(string reason)
+        {
+            if (!Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.CascadeClear.{GetHashCode()}",
+                TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][CascadeClear] frame={0} light='{1}' reason={2} casts={3} cascadesEnabled={4} shadowCamera={5} useDirAtlas={6}",
+                Engine.Rendering.State.RenderFrameId,
+                SceneNode?.Name ?? Name ?? GetType().Name,
+                reason,
+                CastsShadows,
+                EnableCascadedShadows,
+                ShadowCamera is not null,
+                Engine.Rendering.Settings.UseDirectionalShadowAtlas);
+        }
+
+        private void LogCascadeUpdate(
+            XRCamera sourceCamera,
+            int cascadeCount,
+            float cameraNear,
+            float effectiveCascadeFar,
+            float totalDepth,
+            ReadOnlySpan<CascadeShadowSlice> slices)
+        {
+            if (!Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.CascadeUpdate.{GetHashCode()}",
+                TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            Vector3 sourcePosition = sourceCamera.Transform.RenderTranslation;
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][CascadeUpdate] frame={0} light='{1}' sourceCamera={2} sourcePos={3} sourceNear={4:F3} sourceFar={5:F3} sourceShadowMax={6:F3} rangeNear={7:F3} rangeFar={8:F3} totalDepth={9:F3} activeCascades={10} requestedCascades={11} atlasSetting={12} cascadeTex={13}",
+                Engine.Rendering.State.RenderFrameId,
+                SceneNode?.Name ?? Name ?? GetType().Name,
+                sourceCamera.GetHashCode(),
+                FormatVector(sourcePosition),
+                sourceCamera.NearZ,
+                sourceCamera.FarZ,
+                sourceCamera.ShadowCollectMaxDistance,
+                cameraNear,
+                effectiveCascadeFar,
+                totalDepth,
+                cascadeCount,
+                CascadeCount,
+                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                _cascadeShadowMapTexture is not null);
+
+            int detailCount = Math.Min(cascadeCount, Math.Min(4, slices.Length));
+            for (int i = 0; i < detailCount; i++)
+            {
+                CascadeShadowSlice slice = slices[i];
+                Debug.Out(
+                    EOutputVerbosity.Normal,
+                    false,
+                    "[DirectionalShadowAudit][CascadeSlice] frame={0} light='{1}' slot={2} cascadeIndex={3} splitFar={4:F3} blendWidth={5:F3} texelWorld={6:F6} center={7} halfExtents={8} biasMin={9:E3} biasMax={10:F3} receiverOffset={11:F6}",
+                    Engine.Rendering.State.RenderFrameId,
+                    SceneNode?.Name ?? Name ?? GetType().Name,
+                    i,
+                    slice.CascadeIndex,
+                    slice.SplitFarDistance,
+                    slice.BlendWidth,
+                    slice.TexelWorldSize,
+                    FormatVector(slice.Center),
+                    FormatVector(slice.HalfExtents),
+                    slice.BiasMin,
+                    slice.BiasMax,
+                    slice.ReceiverOffset);
+            }
+        }
+
+        private void LogDirectionalAtlasTileRender(
+            string projection,
+            int cascadeIndex,
+            BoundingRectangle renderRect,
+            bool collectVisibleNow,
+            XRCamera? camera)
+        {
+            if (!Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.AtlasTileRender.{GetHashCode()}.{projection}.{cascadeIndex}",
+                TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][AtlasTileRender] frame={0} light='{1}' projection={2} cascadeOrFace={3} rect={4},{5},{6}x{7} collectVisibleNow={8} camera={9} splitFar={10:F3}",
+                Engine.Rendering.State.RenderFrameId,
+                SceneNode?.Name ?? Name ?? GetType().Name,
+                projection,
+                cascadeIndex,
+                renderRect.X,
+                renderRect.Y,
+                renderRect.Width,
+                renderRect.Height,
+                collectVisibleNow,
+                camera?.GetHashCode().ToString() ?? "<null>",
+                projection == "cascade" ? GetCascadeSplit(cascadeIndex) : 0.0f);
+        }
+
+        private void LogLegacyDirectionalShadowRender(bool renderCascades, bool hasShadowMap, bool hasShadowMaterial, int cascadeCount)
+        {
+            if (!Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.LegacyRender.{GetHashCode()}",
+                TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][LegacyRender] frame={0} light='{1}' useDirAtlas={2} renderCascades={3} hasShadowMap={4} hasShadowMaterial={5} cascadeRenderCount={6} activeCascades={7} cascadeTex={8}",
+                Engine.Rendering.State.RenderFrameId,
+                SceneNode?.Name ?? Name ?? GetType().Name,
+                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                renderCascades,
+                hasShadowMap,
+                hasShadowMaterial,
+                cascadeCount,
+                ActiveCascadeCount,
+                _cascadeShadowMapTexture is not null);
+        }
+
+        private static string FormatVector(Vector3 value)
+            => $"({value.X:F2},{value.Y:F2},{value.Z:F2})";
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Components;
@@ -78,52 +79,60 @@ namespace XREngine.Scene
 
         private XRCamera? ResolveDirectionalShadowSourceCamera()
         {
+            XRCamera? preferredCascaded = null;
+            XRCamera? preferredFallback = null;
+            XRCamera? cascadedFallback = null;
             XRCamera? fallback = null;
+
+            void ConsiderViewport(XRViewport viewport)
+            {
+                if (!ViewportTargetsWorld(viewport, World) || viewport.Suppress3DSceneRendering)
+                    return;
+
+                XRCamera? camera = viewport.ActiveCamera;
+                if (camera is null)
+                    return;
+
+                if (ViewportPrefersCascadedDirectionalShadows(viewport))
+                {
+                    if (viewport.AssociatedPlayer is not null)
+                    {
+                        preferredCascaded = camera;
+                        return;
+                    }
+
+                    cascadedFallback ??= camera;
+                    return;
+                }
+
+                if (viewport.AssociatedPlayer is not null)
+                    preferredFallback ??= camera;
+                fallback ??= camera;
+            }
 
             foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
             {
-                if (!ViewportTargetsWorld(viewport, World) || viewport.Suppress3DSceneRendering)
-                    continue;
-
-                XRCamera? camera = viewport.ActiveCamera;
-                if (camera is null)
-                    continue;
-
-                if (ViewportPrefersCascadedDirectionalShadows(viewport))
-                    return camera;
-
-                fallback ??= camera;
+                ConsiderViewport(viewport);
+                if (preferredCascaded is not null)
+                    return preferredCascaded;
             }
 
-            XRViewport?[] vrViewports =
-            [
-                Engine.VRState.LeftEyeViewport,
-                Engine.VRState.RightEyeViewport,
-            ];
+            if (Engine.VRState.LeftEyeViewport is XRViewport leftEye)
+                ConsiderViewport(leftEye);
+            if (preferredCascaded is not null)
+                return preferredCascaded;
 
-            for (int i = 0; i < vrViewports.Length; i++)
-            {
-                XRViewport? viewport = vrViewports[i];
-                if (viewport is null || !ViewportTargetsWorld(viewport, World) || viewport.Suppress3DSceneRendering)
-                    continue;
+            if (Engine.VRState.RightEyeViewport is XRViewport rightEye)
+                ConsiderViewport(rightEye);
 
-                XRCamera? camera = viewport.ActiveCamera;
-                if (camera is null)
-                    continue;
-
-                if (ViewportPrefersCascadedDirectionalShadows(viewport))
-                    return camera;
-
-                fallback ??= camera;
-            }
-
-            return fallback;
+            return preferredCascaded ?? cascadedFallback ?? preferredFallback ?? fallback;
         }
 
         private void PrepareDirectionalShadowMaps()
         {
             bool wantsCascades = HasActiveCascadedDirectionalShadowViewport();
             XRCamera? cascadeCamera = wantsCascades ? ResolveDirectionalShadowSourceCamera() : null;
+            LogDirectionalShadowSourceAudit(wantsCascades, cascadeCamera);
 
             int lightCount = DynamicDirectionalLights.Count;
             for (int i = 0; i < lightCount; i++)
@@ -137,6 +146,71 @@ namespace XREngine.Scene
                 else
                     light.ClearCascadeShadows();
             }
+        }
+
+        private void LogDirectionalShadowSourceAudit(bool wantsCascades, XRCamera? cascadeCamera)
+        {
+            if (!Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.Source.{GetHashCode()}",
+                TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][Source] frame={0} useDirAtlas={1} wantsCascades={2} selectedCamera={3} dirLights={4}",
+                Engine.Rendering.State.RenderFrameId,
+                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                wantsCascades,
+                DescribeDirectionalShadowCamera(cascadeCamera),
+                DynamicDirectionalLights.Count);
+
+            int ordinal = 0;
+            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+                LogDirectionalShadowViewportAudit("active", viewport, ordinal++);
+
+            LogDirectionalShadowViewportAudit("leftEye", Engine.VRState.LeftEyeViewport, ordinal++);
+            LogDirectionalShadowViewportAudit("rightEye", Engine.VRState.RightEyeViewport, ordinal);
+        }
+
+        private void LogDirectionalShadowViewportAudit(string source, XRViewport? viewport, int ordinal)
+        {
+            if (viewport is null)
+            {
+                Debug.Out(
+                    EOutputVerbosity.Normal,
+                    false,
+                    "[DirectionalShadowAudit][Viewport] frame={0} source={1} ordinal={2} viewport=<null>",
+                    Engine.Rendering.State.RenderFrameId,
+                    source,
+                    ordinal);
+                return;
+            }
+
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][Viewport] frame={0} source={1} ordinal={2} vpIndex={3} worldMatch={4} suppress3D={5} player={6} mode={7} activeCamera={8}",
+                Engine.Rendering.State.RenderFrameId,
+                source,
+                ordinal,
+                viewport.Index,
+                ViewportTargetsWorld(viewport, World),
+                viewport.Suppress3DSceneRendering,
+                viewport.AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>",
+                viewport.CameraComponent?.DirectionalShadowRenderingMode.ToString() ?? "<none>",
+                DescribeDirectionalShadowCamera(viewport.ActiveCamera));
+        }
+
+        private static string DescribeDirectionalShadowCamera(XRCamera? camera)
+        {
+            if (camera is null)
+                return "<null>";
+
+            Vector3 pos = camera.Transform.RenderTranslation;
+            return $"hash={camera.GetHashCode()},near={camera.NearZ:F3},far={camera.FarZ:F3},shadowMax={camera.ShadowCollectMaxDistance:F3},pos=({pos.X:F2},{pos.Y:F2},{pos.Z:F2})";
         }
 
         private void UpdateDirectionalCameraLightIntersections(IReadOnlyList<DirectionalLightComponent> lights, XRCamera camera, PreparedFrustum preparedCamera, ColorF4 debugColor)

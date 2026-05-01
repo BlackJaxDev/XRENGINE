@@ -124,4 +124,26 @@ public sealed class ModelComponentTests
         cloneComponent.Meshes.Count.ShouldBe(2);
         cloneComponent.RenderedObjects.Length.ShouldBe(2);
     }
+
+    [Test]
+    public void ModelMeshAddRange_PublishesRenderableObjectsOnceForEntireRange()
+    {
+        var node = new SceneNode("ModelComponentAddRangeNode");
+        Transform bone = node.SetTransform<Transform>();
+        var component = node.AddComponent<ModelComponent>()!;
+        component.Model = new Model();
+
+        int modelChangedCount = 0;
+        component.ModelChanged += () => modelChangedCount++;
+
+        SubMesh[] subMeshes = Enumerable.Range(0, 25)
+            .Select(i => CreateSkinnedSubMesh(bone, $"AddedMesh{i}"))
+            .ToArray();
+
+        component.Model.Meshes.AddRange(subMeshes);
+
+        component.Meshes.Count.ShouldBe(subMeshes.Length);
+        component.RenderedObjects.Length.ShouldBe(subMeshes.Length);
+        modelChangedCount.ShouldBe(1);
+    }
 }

@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using XREngine.Components;
@@ -21,6 +22,8 @@ namespace XREngine.Components.Scene.Mesh
     public class ModelComponent : RenderableComponent
     {
         private readonly ConcurrentDictionary<SubMesh, RenderableMesh> _meshLinks = new();
+        private readonly List<RenderableMesh> _batchedRenderableAdds = [];
+        private int _pendingModelMeshAddRangeCount;
         private bool _pendingRuntimeMeshRebuild;
 
         private Model? _model;
@@ -75,19 +78,7 @@ namespace XREngine.Components.Scene.Mesh
                 {
                     case nameof(Model):
                         if (Model != null)
-                        {
-                            foreach (SubMesh mesh in Model.Meshes)
-                            {
-                                if (_meshLinks.TryRemove(mesh, out RenderableMesh? mesh2))
-                                {
-                                    Meshes.Remove(mesh2);
-                                    mesh2.Dispose();
-                                }
-                            }
-
-                            Model.Meshes.PostAnythingAdded -= AddMesh;
-                            Model.Meshes.PostAnythingRemoved -= RemoveMesh;
-                        }
+                            UnsubscribeModelMeshEvents(Model);
                         break;
                 }
             }
@@ -127,42 +118,49 @@ namespace XREngine.Components.Scene.Mesh
         private void OnModelChanged()
         {
             using var t = Engine.Profiler.Start("ModelComponent.ModelChanged");
+            long start = Stopwatch.GetTimestamp();
 
-            if (Model is not null)
-            {
-                Model.Meshes.PostAnythingAdded -= AddMesh;
-                Model.Meshes.PostAnythingRemoved -= RemoveMesh;
-            }
+            Model? model = Model;
+            int modelMeshCount = model?.Meshes.Count ?? 0;
+
+            if (model is not null)
+                UnsubscribeModelMeshEvents(model);
 
             // Dispose any remaining renderable meshes not already cleaned up in
             // OnPropertyChanging. This unsubscribes bone transform events and destroys
             // GPU buffers, preventing leaked subscriptions and stale SSBO references.
-            foreach (RenderableMesh mesh in Meshes)
+            RenderableMesh[] oldMeshes = Meshes.Count == 0 ? [] : Meshes.ToArray();
+            ClearMeshesWithoutEvents();
+            foreach (RenderableMesh mesh in oldMeshes)
                 mesh.Dispose();
-            Meshes.Clear();
             _meshLinks.Clear();
-            if (Model is null)
+            ResetPendingModelMeshAddRange();
+
+            if (model is null)
             {
                 ModelChanged?.Invoke();
                 return;
             }
-            
-            foreach (SubMesh mesh in Model.Meshes)
+
+            List<RenderableMesh> renderableMeshes = new(model.Meshes.Count);
+            foreach (SubMesh mesh in model.Meshes)
             {
-                RenderableMesh rendMesh = new(mesh, this)
-                {
-                    //RootTransform = mesh.RootTransform
-                };
-                Meshes.Add(rendMesh);
+                RenderableMesh rendMesh = CreateRenderableMesh(mesh);
+                renderableMeshes.Add(rendMesh);
                 _meshLinks.TryAdd(mesh, rendMesh);
             }
 
-            Model.Meshes.PostAnythingAdded += AddMesh;
-            Model.Meshes.PostAnythingRemoved += RemoveMesh;
+            AddMeshesWithoutEvents(renderableMeshes);
+            SubscribeModelMeshEvents(model);
 
-            BuildMeshBVHs();
+            BuildMeshBVHs(renderableMeshes);
 
             ModelChanged?.Invoke();
+            WarnIfSlowModelPublish(
+                "ModelChanged",
+                start,
+                modelMeshCount,
+                RenderedObjects.Length);
         }
 
         protected override void OwningSceneNodePostDeserialize()
@@ -188,8 +186,11 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private void BuildMeshBVHs()
+            => BuildMeshBVHs(Meshes);
+
+        private void BuildMeshBVHs(IEnumerable<RenderableMesh> meshes)
         {
-            foreach (RenderableMesh renderable in Meshes)
+            foreach (RenderableMesh renderable in meshes)
                 ScheduleMeshBVHWarmup(renderable);
         }
 
@@ -206,14 +207,112 @@ namespace XREngine.Components.Scene.Mesh
 
         private void AddMesh(SubMesh item)
         {
-            RenderableMesh mesh = new(item, this)
+            RenderableMesh mesh = CreateRenderableMesh(item);
+
+            if (_pendingModelMeshAddRangeCount > 0)
             {
-                //RootTransform = item.RootTransform
-            };
-            Meshes.Add(mesh);
+                if (Meshes.Add(mesh, reportAdded: false, reportModified: false))
+                {
+                    _meshLinks.TryAdd(item, mesh);
+                    _batchedRenderableAdds.Add(mesh);
+                }
+                else
+                {
+                    mesh.Dispose();
+                }
+
+                _pendingModelMeshAddRangeCount--;
+                if (_pendingModelMeshAddRangeCount == 0)
+                    CompleteModelMeshAddRange();
+                return;
+            }
+
+            if (!Meshes.Add(mesh))
+            {
+                mesh.Dispose();
+                return;
+            }
+
             _meshLinks.TryAdd(item, mesh);
             ScheduleMeshBVHWarmup(mesh);
             ModelChanged?.Invoke();
+        }
+
+        private RenderableMesh CreateRenderableMesh(SubMesh item)
+            => new(item, this)
+            {
+                //RootTransform = item.RootTransform
+            };
+
+        private void BeginModelMeshAddRange(IEnumerable<SubMesh> items)
+        {
+            int count = CountItems(items);
+            if (count <= 1)
+                return;
+
+            if (_pendingModelMeshAddRangeCount == 0)
+                _batchedRenderableAdds.Clear();
+
+            _pendingModelMeshAddRangeCount += count;
+        }
+
+        private void CompleteModelMeshAddRange()
+        {
+            using var t = Engine.Profiler.Start("ModelComponent.AddMeshRange");
+            long start = Stopwatch.GetTimestamp();
+            int batchedCount = _batchedRenderableAdds.Count;
+
+            if (_batchedRenderableAdds.Count > 0)
+            {
+                AppendRenderedObjects(_batchedRenderableAdds);
+                BuildMeshBVHs(_batchedRenderableAdds);
+            }
+
+            _batchedRenderableAdds.Clear();
+            ModelChanged?.Invoke();
+            WarnIfSlowModelPublish(
+                "CompleteModelMeshAddRange",
+                start,
+                batchedCount,
+                RenderedObjects.Length);
+        }
+
+        private void ResetPendingModelMeshAddRange()
+        {
+            _pendingModelMeshAddRangeCount = 0;
+            _batchedRenderableAdds.Clear();
+        }
+
+        private void SubscribeModelMeshEvents(Model model)
+        {
+            model.Meshes.PostAddedRange -= BeginModelMeshAddRange;
+            model.Meshes.PostAnythingAdded -= AddMesh;
+            model.Meshes.PostAnythingRemoved -= RemoveMesh;
+
+            model.Meshes.PostAddedRange += BeginModelMeshAddRange;
+            model.Meshes.PostAnythingAdded += AddMesh;
+            model.Meshes.PostAnythingRemoved += RemoveMesh;
+        }
+
+        private void UnsubscribeModelMeshEvents(Model model)
+        {
+            model.Meshes.PostAddedRange -= BeginModelMeshAddRange;
+            model.Meshes.PostAnythingAdded -= AddMesh;
+            model.Meshes.PostAnythingRemoved -= RemoveMesh;
+            ResetPendingModelMeshAddRange();
+        }
+
+        private static int CountItems(IEnumerable<SubMesh> items)
+        {
+            if (items is ICollection<SubMesh> collection)
+                return collection.Count;
+            if (items is IReadOnlyCollection<SubMesh> readOnlyCollection)
+                return readOnlyCollection.Count;
+
+            int count = 0;
+            foreach (SubMesh _ in items)
+                count++;
+            return count;
         }
 
         private static void ScheduleMeshBVHWarmup(RenderableMesh mesh)
@@ -223,6 +322,22 @@ namespace XREngine.Components.Scene.Mesh
                 () => WarmupMeshBVHJob(mesh),
                 error: ex => Debug.LogException(ex, "ModelComponent BVH warmup failed."),
                 priority: JobPriority.Low);
+        }
+
+        private static void WarnIfSlowModelPublish(string operation, long startTimestamp, int sourceMeshCount, int renderedObjectCount)
+        {
+            double elapsedMs = (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
+            if (elapsedMs <= 8.0)
+                return;
+
+            Debug.RenderingWarningEvery(
+                $"ModelComponent.{operation}.Slow",
+                TimeSpan.FromSeconds(2.0),
+                "[ModelComponent] Slow model publish path: operation={0}, sourceMeshes={1}, renderedObjects={2}, elapsedMs={3:F2}.",
+                operation,
+                sourceMeshCount,
+                renderedObjectCount,
+                elapsedMs);
         }
 
         private static IEnumerable WarmupMeshBVHJob(RenderableMesh renderable)

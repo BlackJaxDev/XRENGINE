@@ -1034,6 +1034,19 @@ public partial class DefaultRenderPipeline
         };
     }
 
+    private XRFrameBuffer CreateForwardContactPrePassCopyFBO()
+    {
+        IFrameBufferAttachement dsAttach = EnsureTextureAttachment(ForwardContactDepthStencilTextureName, CreateForwardContactDepthStencilTexture);
+        IFrameBufferAttachement normalAttach = EnsureTextureAttachment(ForwardContactNormalTextureName, CreateForwardContactNormalTexture);
+
+        return new XRFrameBuffer(
+            (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = ForwardContactPrePassCopyFBOName
+        };
+    }
+
     private XRFrameBuffer CreateLightCombineFBO()
     {
         var diffuseTexture = GetTexture<XRTexture>(DiffuseTextureName)!;

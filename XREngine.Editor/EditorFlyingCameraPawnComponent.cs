@@ -2517,6 +2517,30 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         input.RegisterKeyEvent(EKey.F10, EButtonInputType.Pressed, UpdateStoredFrustum);
     }
 
+    protected override void YawRight(bool pressed)
+    {
+        if (!EditorImGuiUI.IsHierarchyWindowKeyboardFocused)
+            base.YawRight(pressed);
+    }
+
+    protected override void YawLeft(bool pressed)
+    {
+        if (!EditorImGuiUI.IsHierarchyWindowKeyboardFocused)
+            base.YawLeft(pressed);
+    }
+
+    protected override void PitchUp(bool pressed)
+    {
+        if (!EditorImGuiUI.IsHierarchyWindowKeyboardFocused)
+            base.PitchUp(pressed);
+    }
+
+    protected override void PitchDown(bool pressed)
+    {
+        if (!EditorImGuiUI.IsHierarchyWindowKeyboardFocused)
+            base.PitchDown(pressed);
+    }
+
     private void SetTransformModeParent() => TransformTool3D.TransformSpace = ETransformSpace.Parent;
     private void SetTransformModeScreen() => TransformTool3D.TransformSpace = ETransformSpace.Screen;
     private void SetTransformModeLocal() => TransformTool3D.TransformSpace = ETransformSpace.Local;

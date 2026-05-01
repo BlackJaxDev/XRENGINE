@@ -35,6 +35,9 @@ namespace XREngine.Components.Lights
             ShadowExponent = 1.221f;
             ShadowMinBias = 0.00001f;
             ShadowMaxBias = 0.004f;
+            ShadowDepthBiasTexels = 1.0f;
+            ShadowSlopeBiasTexels = 2.0f;
+            ShadowNormalBiasTexels = 1.0f;
             BlockerSamples = 8;
             FilterSamples = 8;
             FilterRadius = 0.0012f;
@@ -121,6 +124,31 @@ namespace XREngine.Components.Lights
             XROrthographicCameraParameters parameters = new(Scale.X, Scale.Y, NearZ, Scale.Z - NearZ);
             parameters.SetOriginPercentages(0.5f, 0.5f);
             return parameters;
+        }
+
+        [Browsable(false)]
+        public override Vector4 ShadowBiasProjectionParameters
+            => GetPrimaryShadowBiasProjectionParameters();
+
+        internal Vector4 GetPrimaryShadowBiasProjectionParameters()
+        {
+            float width = MathF.Max(Scale.X, 1e-4f);
+            float height = MathF.Max(Scale.Y, 1e-4f);
+            float depthRange = MathF.Max(Scale.Z - NearZ, 1e-4f);
+
+            if (ShadowCamera?.Parameters is XROrthographicCameraParameters ortho)
+            {
+                width = MathF.Max(ortho.Width, 1e-4f);
+                height = MathF.Max(ortho.Height, 1e-4f);
+                depthRange = MathF.Max(ortho.FarZ - ortho.NearZ, 1e-4f);
+            }
+
+            float mapWidth = MathF.Max(1.0f, ShadowMapResolutionWidth);
+            float mapHeight = MathF.Max(1.0f, ShadowMapResolutionHeight);
+            float texelWorldSize = MathF.Max(width / mapWidth, height / mapHeight);
+            float constantDepthBias = texelWorldSize * ShadowDepthBiasTexels / depthRange;
+            float normalOffset = texelWorldSize * ShadowNormalBiasTexels;
+            return new Vector4(constantDepthBias, normalOffset, texelWorldSize, depthRange);
         }
 
         protected override TransformBase GetShadowCameraParentTransform()

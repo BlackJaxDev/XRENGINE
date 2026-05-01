@@ -15,8 +15,13 @@ namespace XREngine.Rendering.OpenGL
 {
     public partial class OpenGLRenderer
     {
+        /// <summary>
+        /// Bridges ImGui multi-viewport platform/renderer callbacks to OpenGL windows and input handling.
+        /// </summary>
         private sealed unsafe class OpenGLImGuiMultiViewportController : IDisposable
         {
+            #region Callback delegate type definitions
+
             private delegate void RenderImDrawDataDelegate(ImGuiController controller, ImDrawDataPtr drawData);
             private delegate ImGuiKey TranslateInputKeyDelegate(Key key);
 
@@ -43,6 +48,9 @@ namespace XREngine.Rendering.OpenGL
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
             private delegate void ViewportRenderCallback(ImGuiViewport* viewport, void* renderArg);
+            #endregion
+
+            #region Bound callbacks and function pointers
 
             private static readonly RenderImDrawDataDelegate? RenderImDrawData = CreateRenderImDrawDataDelegate();
             private static readonly TranslateInputKeyDelegate? TranslateInputKey = CreateTranslateInputKeyDelegate();
@@ -99,11 +107,19 @@ namespace XREngine.Rendering.OpenGL
             private readonly nint _rendererSetWindowSizePtr;
             private readonly nint _rendererRenderWindowPtr;
             private readonly nint _rendererSwapBuffersPtr;
+            #endregion
 
+            #region Instance state and resources
             private bool _installed;
             private bool _disposed;
+            private bool _lastLeftMouseDown;
+            private bool _lastRightMouseDown;
+            private bool _lastMiddleMouseDown;
             private nint _monitorData;
             private int _monitorCapacity;
+            #endregion
+
+            #region Construction and initialization
 
             private OpenGLImGuiMultiViewportController(OpenGLRenderer renderer, ImGuiController controller)
             {
@@ -159,6 +175,9 @@ namespace XREngine.Rendering.OpenGL
                 _rendererSwapBuffersPtr = Marshal.GetFunctionPointerForDelegate(_rendererSwapBuffers);
             }
 
+            /// <summary>
+            /// Create and initialize a controller only when all required ImGui hooks are available.
+            /// </summary>
             public static OpenGLImGuiMultiViewportController? TryCreate(OpenGLRenderer renderer, ImGuiController controller)
             {
                 if (RenderImDrawData is null)
@@ -176,6 +195,9 @@ namespace XREngine.Rendering.OpenGL
                 return new OpenGLImGuiMultiViewportController(renderer, controller);
             }
 
+            /// <summary>
+            /// Wires ImGui platform/renderer callbacks and enables multi-viewport behavior.
+            /// </summary>
             public void Install()
             {
                 if (_installed || _disposed)
@@ -221,6 +243,9 @@ namespace XREngine.Rendering.OpenGL
                 Debug.Rendering("OpenGL ImGui multi-viewports enabled.");
             }
 
+            /// <summary>
+            /// Pushes one-time mouse state transition data for the main platform window.
+            /// </summary>
             public void QueueMainViewportInput()
             {
                 if (!_installed || _disposed)
@@ -238,6 +263,7 @@ namespace XREngine.Rendering.OpenGL
                     io.AddMousePosEvent(position.X, position.Y);
                     io.AddMouseViewportEvent(viewportId);
                     io.MouseHoveredViewport = viewportId;
+                    QueueMainMouseButtonEvents(io);
                 }
                 catch (Exception ex)
                 {
@@ -245,6 +271,9 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            /// <summary>
+            /// Continuously updates main-window hover and cursor state in ImGui IO.
+            /// </summary>
             public void UpdateMainViewportInput()
             {
                 if (!_installed || _disposed)
@@ -269,6 +298,9 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            /// <summary>
+            /// Updates and renders ImGui platform windows, then restores the primary OpenGL context.
+            /// </summary>
             public void RenderPlatformWindows()
             {
                 if (!_installed || _disposed)
@@ -312,6 +344,9 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            /// <summary>
+            /// Unhooks platform callbacks, disposes popup windows, and disables multi-viewport mode.
+            /// </summary>
             public void Dispose()
             {
                 if (_disposed)
@@ -342,6 +377,9 @@ namespace XREngine.Rendering.OpenGL
                     window.Dispose();
                 _platformWindows.Clear();
             }
+            #endregion
+
+            #region Platform and lifecycle callback plumbing
 
             private void ClearPlatformCallbacks()
             {
@@ -370,6 +408,9 @@ namespace XREngine.Rendering.OpenGL
                 platformIO.NativePtr->Renderer_SwapBuffers = nint.Zero;
                 _installed = false;
             }
+            #endregion
+
+            #region Platform window and monitor callbacks
 
             private void EnsureMainViewportPlatformData()
             {
@@ -419,6 +460,53 @@ namespace XREngine.Rendering.OpenGL
 
                 return 0;
             }
+
+            private void QueueMainMouseButtonEvents(ImGuiIOPtr io)
+            {
+                if (!TryReadMouseButtonState(out bool leftDown, out bool rightDown, out bool middleDown))
+                    return;
+
+                QueueMouseButtonTransition(io, 0, leftDown, ref _lastLeftMouseDown);
+                QueueMouseButtonTransition(io, 1, rightDown, ref _lastRightMouseDown);
+                QueueMouseButtonTransition(io, 2, middleDown, ref _lastMiddleMouseDown);
+            }
+
+            private static void QueueMouseButtonTransition(ImGuiIOPtr io, int button, bool down, ref bool previousDown)
+            {
+                if (down == previousDown)
+                    return;
+
+                previousDown = down;
+                io.AddMouseButtonEvent(button, down);
+            }
+
+            private bool TryReadMouseButtonState(out bool leftDown, out bool rightDown, out bool middleDown)
+            {
+                leftDown = false;
+                rightDown = false;
+                middleDown = false;
+
+                if (OperatingSystem.IsWindows())
+                {
+                    leftDown = IsNativeMouseButtonDown(NativeVirtualKeyLeftButton);
+                    rightDown = IsNativeMouseButtonDown(NativeVirtualKeyRightButton);
+                    middleDown = IsNativeMouseButtonDown(NativeVirtualKeyMiddleButton);
+                    return true;
+                }
+
+                IInputContext? input = _renderer.XRWindow.Input;
+                if (input is null || input.Mice.Count == 0)
+                    return false;
+
+                IMouse mouse = input.Mice[0];
+                leftDown = mouse.IsButtonPressed(MouseButton.Left);
+                rightDown = mouse.IsButtonPressed(MouseButton.Right);
+                middleDown = mouse.IsButtonPressed(MouseButton.Middle);
+                return true;
+            }
+
+            private static bool IsNativeMouseButtonDown(int virtualKey)
+                => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 
             private PlatformWindow? GetPlatformWindow(ImGuiViewportPtr viewport)
             {
@@ -820,6 +908,9 @@ namespace XREngine.Rendering.OpenGL
             private void PlatformOnChangedViewport(ImGuiViewport* nativeViewport)
             {
             }
+            #endregion
+
+            #region Renderer callbacks
 
             private void RendererCreateWindow(ImGuiViewport* nativeViewport)
             {
@@ -853,6 +944,9 @@ namespace XREngine.Rendering.OpenGL
             private void RendererSwapBuffers(ImGuiViewport* nativeViewport, void* renderArg)
             {
             }
+            #endregion
+
+            #region Input event forwarding
 
             private void RequestClose(uint viewportId)
             {
@@ -909,6 +1003,9 @@ namespace XREngine.Rendering.OpenGL
                 _controller.MakeCurrent();
                 ImGui.GetIO().AddInputCharacter(value);
             }
+            #endregion
+
+            #region Input translation and key/mouse helpers
 
             private static bool TryTranslateMouseButton(MouseButton button, out int imGuiButton)
             {
@@ -1003,6 +1100,9 @@ namespace XREngine.Rendering.OpenGL
                 Vector2D<int> clientOffset = clientPosition - windowPosition;
                 window.Position = targetClientPosition - clientOffset;
             }
+            #endregion
+
+            #region Native interop structs, imports, and utilities
 
             [StructLayout(LayoutKind.Sequential)]
             private struct NativePoint
@@ -1059,6 +1159,9 @@ namespace XREngine.Rendering.OpenGL
             [DllImport("user32.dll", SetLastError = true)]
             private static extern bool GetWindowRect(nint hWnd, out NativeRect rect);
 
+            [DllImport("user32.dll")]
+            private static extern short GetAsyncKeyState(int virtualKey);
+
             [DllImport("user32.dll", SetLastError = true)]
             private static extern bool EnumDisplayMonitors(nint hdc, nint clipRect, MonitorEnumProc callback, nint data);
 
@@ -1067,6 +1170,10 @@ namespace XREngine.Rendering.OpenGL
 
             [DllImport("shcore.dll")]
             private static extern int GetDpiForMonitor(nint monitor, MonitorDpiType dpiType, out uint dpiX, out uint dpiY);
+
+            private const int NativeVirtualKeyLeftButton = 0x01;
+            private const int NativeVirtualKeyRightButton = 0x02;
+            private const int NativeVirtualKeyMiddleButton = 0x04;
 
             private static float GetMonitorDpiScale(nint monitor)
             {
@@ -1120,6 +1227,9 @@ namespace XREngine.Rendering.OpenGL
                     callback,
                     ex.Message);
             }
+            #endregion
+
+            #region Nested platform window wrapper
 
             private sealed class PlatformWindow : IDisposable
             {
@@ -1292,6 +1402,7 @@ namespace XREngine.Rendering.OpenGL
                 private void OnKeyChar(IKeyboard keyboard, char value)
                     => _owner.PushChar(value);
             }
+            #endregion
         }
     }
 }

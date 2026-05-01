@@ -194,11 +194,13 @@ The shared `VolumetricFogSettings` constructor defaults and both pipeline schema
 
 ## 12. Forward Lighting: Shadow Uniform Binding
 
-**Rule:** Primary directional shadow tuning uniforms in `ForwardLighting.glsl` (`ShadowBase`, `ShadowMult`, `ShadowBias*`, `ShadowBlockerSamples`, `ShadowFilterSamples`, `ShadowFilterRadius`, `ShadowBlockerSearchRadius`, penumbra clamps, plus contact-shadow controls) are **global base settings**, not per-light array fields.
+**Rule:** Primary directional shadow tuning uniforms in `ForwardLighting.glsl` (`ShadowBiasParams`, `ShadowBiasProjectionParams`, `ShadowBlockerSamples`, `ShadowFilterSamples`, `ShadowFilterRadius`, `ShadowBlockerSearchRadius`, penumbra clamps, plus contact-shadow controls) are **global base settings**, not per-light array fields.
 
 `Lights3DCollection.SetForwardLightingUniforms` must bind these globals from `DynamicDirectionalLights[0]`. Without this, the forward path silently uses shader-literal defaults even when per-light values differ.
 
-Cascaded directional shadows publish per-cascade effective bias values on the directional light struct (`CascadeBiasMin`, `CascadeBiasMax`, `CascadeReceiverOffsets`). Automatic values are derived from the light's base bias settings plus cascade texel size, split distance, light-space depth span, and shadow-map resolution; manual cascade overrides replace those resolved values for that cascade only.
+Cascaded directional shadows publish per-cascade effective bias values on the directional light struct (`CascadeBiasMin`, `CascadeBiasMax`, `CascadeReceiverOffsets`). Automatic values are derived from the light's texel bias controls plus cascade texel size, light-space depth span, and shadow-map resolution. `CascadeBiasMin` is the constant depth floor, `CascadeBiasMax` is the slope scale in texels, and `CascadeReceiverOffsets` is the world-space normal offset.
+
+Live forward and deferred shadow receivers use three user-facing bias controls: `ShadowDepthBiasTexels`, `ShadowSlopeBiasTexels`, and `ShadowNormalBiasTexels`. The shaders convert those texel values to the active shadow map, cascade, atlas tile, spot projection, or cubemap face instead of relying on fixed absolute compare-bias numbers.
 
 Local point and spot lights use SSBO-backed per-light metadata for the same tuning values. Keep `ForwardPointShadowData` / `ForwardSpotShadowData` in `ForwardLighting.glsl` and the matching `ForwardPointShadowGpu` / `ForwardSpotShadowGpu` upload structs in `Lights3DCollection.ForwardLighting.cs` in sync whenever a new shadow control is added. Do not move this metadata back to large uniform arrays; NVIDIA's OpenGL uniform constant path can exceed the 1024-register limit.
 
@@ -215,7 +217,8 @@ The old deferred screen-space contact-shadow march did not use a shared receiver
 ### Fix
 
 - Route deferred directional, spot, and point contact shadows through `XRENGINE_SampleContactShadowScreenSpace` using G-buffer depth.
-- Route forward directional, spot, and point contact shadows through `XRENGINE_SampleForwardContactShadowScreenSpace` when `ForwardDepthPrePassEnabled` has produced shared `DepthView` and `Normal` targets. Mono uses 2D samplers; stereo uses layered array samplers selected by the forward view index. Forward falls back to the older light-space contact helpers when those pre-pass textures are unavailable.
+- Route forward directional, spot, and point contact shadows through `XRENGINE_SampleForwardContactShadowScreenSpace` when `ForwardDepthPrePassEnabled` has produced a stable `ForwardContactDepthView`/`ForwardContactNormal` snapshot. The snapshot is copied from the completed forward depth-normal merge prepass before the forward color pass binds the main depth attachment, avoiding an OpenGL framebuffer feedback loop where the Uber shader samples the same depth texture it is rendering into. Mono uses 2D samplers; stereo uses layered array samplers selected by the forward view index. Forward falls back to the older light-space contact helpers when those pre-pass textures are unavailable.
+- Reconstruct contact-shadow scene positions from raw depth with the matching `InverseProjMatrix`; do not flip reversed-Z depth before inverse projection. Only the far-depth validity check is depth-mode aware.
 - Keep the screen-space march in the shared snippet, not per-light local shader code, so all light types use the same bias clamp, normal offset, ray-thickness rejection, MSAA depth sampling, screen-edge fade, and optional pre-pass normal rejection.
 - Reuse `XRENGINE_ResolveContactShadowSampleCount` so forward and deferred scale contact-shadow step counts identically.
 
