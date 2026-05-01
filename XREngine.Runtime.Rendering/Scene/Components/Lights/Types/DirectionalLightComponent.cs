@@ -58,6 +58,9 @@ namespace XREngine.Components.Lights
         public override bool SupportsShadowMapStorageFormat(EShadowMapStorageFormat format)
             => IsDepthShadowMapStorageFormat(format);
 
+        protected override bool UsesAtlasShadowViewport
+            => Engine.Rendering.Settings.UseDirectionalShadowAtlas;
+
         /// <summary>
         /// Scale of the orthographic shadow volume.
         /// </summary>

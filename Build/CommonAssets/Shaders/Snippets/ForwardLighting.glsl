@@ -1068,6 +1068,35 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
                 viewDepth);
     }
 
+    if (DirectionalShadowAtlasEnabled)
+    {
+        ivec4 atlasI0 = DirectionalShadowAtlasPacked0[0];
+        bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < XRENGINE_MAX_FORWARD_SPOT_ATLAS_PAGES;
+        int fallbackMode = atlasI0.z;
+        if (atlasEnabled)
+        {
+            vec4 atlasUvScaleBias = DirectionalShadowAtlasParams0[0];
+            vec2 atlasUv = fragCoord.xy * atlasUvScaleBias.xy + atlasUvScaleBias.zw;
+            float atlasRadiusScale = max(atlasUvScaleBias.x, atlasUvScaleBias.y);
+            return XRENGINE_SampleDirectionalAtlasPage(
+                atlasI0.y,
+                vec3(atlasUv, fragCoord.z),
+                bias,
+                ShadowBlockerSamples,
+                ShadowFilterSamples,
+                ShadowFilterRadius * atlasRadiusScale,
+                ShadowBlockerSearchRadius * atlasRadiusScale,
+                SoftShadowMode,
+                LightSourceRadius * atlasRadiusScale,
+                ShadowMinPenumbra * atlasRadiusScale,
+                ShadowMaxPenumbra * atlasRadiusScale,
+                ShadowVogelTapCount) * contact;
+        }
+
+        if (fallbackMode == 1 || fallbackMode == 2 || fallbackMode == 4)
+            return contact;
+    }
+
     return XRENGINE_SampleShadowMapFiltered(
         ShadowMap,
         fragCoord,

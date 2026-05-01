@@ -215,6 +215,14 @@ public static partial class EditorImGuiUI
         private static readonly List<XRAsset> _closePromptAssets = [];
         private static readonly Dictionary<Guid, bool> _closePromptSelections = [];
 
+        private enum ClosePromptDialogAction
+        {
+            None,
+            SaveSelectedAndClose,
+            CloseWithoutSaving,
+            Cancel,
+        }
+
         private const string PanelVisibilityIniSectionHeader = "[XREngine][PanelVisibility]";
 
         private readonly record struct ImGuiPanelVisibilityState(
@@ -825,6 +833,8 @@ public static partial class EditorImGuiUI
                 return;
             }
 
+            ClosePromptDialogAction action = ClosePromptDialogAction.None;
+
             ImGui.TextUnformatted("You have unsaved changes. Select which files to save before closing.");
             ImGui.Separator();
 
@@ -873,29 +883,62 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                bool canSave = _closePromptSelections.Values.Any(static value => value);
+                bool canSave = HasSelectedClosePromptAssets();
                 if (!canSave)
                     ImGui.BeginDisabled();
 
                 if (ImGui.Button("Save Selected and Close"))
-                    BeginSaveSelectedAndClose();
+                    action = ClosePromptDialogAction.SaveSelectedAndClose;
 
                 if (!canSave)
                     ImGui.EndDisabled();
 
                 ImGui.SameLine();
                 if (ImGui.Button("Don't Save and Close"))
-                    ClosePromptAndCloseWindow();
+                    action = ClosePromptDialogAction.CloseWithoutSaving;
 
                 ImGui.SameLine();
                 if (ImGui.Button("Cancel"))
-                    CancelClosePrompt();
+                    action = ClosePromptDialogAction.Cancel;
             }
 
             ImGui.EndPopup();
 
-            if (!keepOpen)
-                CancelClosePrompt();
+            if (!keepOpen && action == ClosePromptDialogAction.None)
+                action = ClosePromptDialogAction.Cancel;
+
+            HandleClosePromptDialogAction(action);
+        }
+
+        private static bool HasSelectedClosePromptAssets()
+        {
+            foreach (bool selected in _closePromptSelections.Values)
+            {
+                if (selected)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static void HandleClosePromptDialogAction(ClosePromptDialogAction action)
+        {
+            switch (action)
+            {
+                case ClosePromptDialogAction.None:
+                    break;
+                case ClosePromptDialogAction.SaveSelectedAndClose:
+                    BeginSaveSelectedAndClose();
+                    break;
+                case ClosePromptDialogAction.CloseWithoutSaving:
+                    QueueClosePromptAndCloseWindow();
+                    break;
+                case ClosePromptDialogAction.Cancel:
+                    CancelClosePrompt();
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(action), action, null);
+            }
         }
 
         private static void BeginSaveSelectedAndClose()
@@ -947,6 +990,24 @@ public static partial class EditorImGuiUI
             var window = _closePromptWindow;
             ResetClosePromptState();
 
+            CloseWindowBypassingUnsavedPrompt(window);
+        }
+
+        private static void QueueClosePromptAndCloseWindow()
+        {
+            var window = _closePromptWindow;
+            ResetClosePromptState();
+
+            if (window?.Window is null)
+                return;
+
+            Engine.EnqueueMainThreadTask(
+                () => CloseWindowBypassingUnsavedPrompt(window),
+                "Editor.ClosePrompt.CloseWindow");
+        }
+
+        private static void CloseWindowBypassingUnsavedPrompt(XRWindow? window)
+        {
             if (window?.Window is null)
                 return;
 

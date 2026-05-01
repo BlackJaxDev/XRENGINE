@@ -296,6 +296,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _currentLightComponent.SetUniforms(materialProgram);
 
             bool useCascadedDirectionalShadows = false;
+            bool directionalAtlasEnabled = false;
             if (_currentLightComponent is DirectionalLightComponent directionalLight)
             {
                 var cameraComponent = ActivePipelineInstance.RenderState.WindowViewport?.CameraComponent;
@@ -310,7 +311,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 else
                     materialProgram.Sampler("ShadowMapArray", DummyShadowMapArray, 5);
 
-                BindDirectionalAtlasShadows(materialProgram, directionalLight, useCascadedDirectionalShadows);
+                directionalAtlasEnabled = BindDirectionalAtlasShadows(materialProgram, directionalLight, useCascadedDirectionalShadows);
             }
             else
             {
@@ -341,7 +342,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             bool hasShadowMap = _currentLightComponent.CastsShadows && selectedShadowMap is not null;
-            bool directionalHasShadowMap = useCascadedDirectionalShadows;
+            bool directionalHasShadowMap = useCascadedDirectionalShadows || directionalAtlasEnabled;
             if (_currentLightComponent is DirectionalLightComponent directionalLightComponent)
                 directionalHasShadowMap |= hasShadowMap && directionalLightComponent.IntersectsActiveCamera;
 
@@ -453,7 +454,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             return ActivePipelineInstance.RenderState.WindowViewport?.World?.Lights;
         }
 
-        private static void BindDirectionalAtlasShadows(
+        private static bool BindDirectionalAtlasShadows(
             XRRenderProgram materialProgram,
             DirectionalLightComponent directionalLight,
             bool useCascadedDirectionalShadows)
@@ -463,9 +464,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             var lights = ResolveLightsForLight(directionalLight);
             bool enabled = Engine.Rendering.Settings.UseDirectionalShadowAtlas &&
-                useCascadedDirectionalShadows &&
                 lights is not null &&
-                directionalLight.ActiveCascadeCount > 0;
+                directionalLight.CastsShadows;
 
             for (int pageIndex = 0; pageIndex < maxDeferredDirectionalAtlasPages; pageIndex++)
             {
@@ -481,7 +481,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             Array.Clear(_directionalShadowAtlasDepthParams);
             if (enabled)
             {
-                directionalLight.CopyPublishedCascadeAtlasUniformData(
+                directionalLight.CopyPublishedDirectionalAtlasUniformData(
+                    useCascadedDirectionalShadows,
                     _directionalShadowAtlasPacked0,
                     _directionalShadowAtlasUvScaleBias,
                     _directionalShadowAtlasDepthParams);
@@ -491,6 +492,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             materialProgram.Uniform("DirectionalShadowAtlasPacked0", _directionalShadowAtlasPacked0);
             materialProgram.Uniform("DirectionalShadowAtlasUvScaleBias", _directionalShadowAtlasUvScaleBias);
             materialProgram.Uniform("DirectionalShadowAtlasDepthParams", _directionalShadowAtlasDepthParams);
+            return enabled;
         }
 
         private static void BindDisabledDirectionalAtlasShadows(XRRenderProgram materialProgram)

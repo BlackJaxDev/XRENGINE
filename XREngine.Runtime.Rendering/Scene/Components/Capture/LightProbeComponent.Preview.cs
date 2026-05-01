@@ -13,8 +13,10 @@ namespace XREngine.Components.Capture.Lights
     {
         #region Preview Methods
 
+        private const uint PreviewSpherePrecision = 48u;
+
         private static XRMesh SharedPreviewSphereMesh
-            => s_previewSphereMesh ??= XRMesh.Shapes.SolidSphere(Vector3.Zero, 0.5f, 20u);
+            => s_previewSphereMesh ??= XRMesh.Shapes.SolidSphere(Vector3.Zero, 0.5f, PreviewSpherePrecision);
 
         public XRTexture? GetPreviewTexture()
             => PreviewDisplay switch
@@ -79,6 +81,24 @@ namespace XREngine.Components.Capture.Lights
                 _visualRC.WorldMatrix = _previewRenderMatrix;
         }
 
+        private void BindPreviewTextureUniform(XRMaterialBase _, XRRenderProgram program)
+        {
+            XRTexture? previewTexture = _previewSphereTexture;
+            if (previewTexture is null)
+                return;
+
+            program.Sampler("Texture0", previewTexture, 0);
+        }
+
+        private void ConfigurePreviewMaterial(XRMaterial material, XRTexture? previewTexture, XRShader previewShader, int pass)
+        {
+            material.SettingUniforms -= BindPreviewTextureUniform;
+            material.SettingUniforms += BindPreviewTextureUniform;
+            material.Textures = [previewTexture];
+            material.Shaders = [previewShader];
+            material.RenderPass = pass;
+        }
+
         private void CachePreviewSphere()
         {
             bool shouldMaterialize = PreviewEnabled || (AutoShowPreviewOnSelect && IsSceneNodeSelected());
@@ -106,10 +126,12 @@ namespace XREngine.Components.Capture.Lights
 
             int pass = (int)EDefaultRenderPass.OpaqueForward;
             XRShader previewShader = XRShader.EngineShader(previewShaderPath, EShaderType.Fragment);
+            _previewSphereTexture = previewTexture;
 
             if (PreviewSphere is null)
             {
-                XRMaterial material = new([previewTexture], previewShader) { RenderPass = pass };
+                XRMaterial material = new([previewTexture], previewShader);
+                ConfigurePreviewMaterial(material, previewTexture, previewShader, pass);
                 PreviewSphere = new XRMeshRenderer(SharedPreviewSphereMesh, material);
             }
             else
@@ -117,9 +139,7 @@ namespace XREngine.Components.Capture.Lights
                 PreviewSphere.Mesh = SharedPreviewSphereMesh;
 
                 XRMaterial material = PreviewSphere.Material ?? new XRMaterial();
-                material.Textures = [previewTexture];
-                material.Shaders = [previewShader];
-                material.RenderPass = pass;
+                ConfigurePreviewMaterial(material, previewTexture, previewShader, pass);
                 PreviewSphere.Material = material;
             }
 
@@ -128,7 +148,6 @@ namespace XREngine.Components.Capture.Lights
 
             VisualRenderInfo.LocalCullingVolume = SharedPreviewSphereMesh.Bounds;
             UpdatePreviewRenderMatrix(renderMatrix);
-            _previewSphereTexture = previewTexture;
             _previewSphereShaderPath = previewShaderPath;
             _previewSphereDirty = false;
         }

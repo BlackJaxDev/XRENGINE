@@ -91,7 +91,7 @@ namespace XREngine.Rendering
             return Matrix4x4.CreatePerspectiveOffCenter(xMin, xMax, yMin, yMax, nearZ, farZ);
         }
 
-        protected override Frustum CalculateUntransformedFrustum()
+        protected override Frustum CalculateUntransformedFrustum(Matrix4x4 inverseProjectionMatrix)
         {
             float nearZ = MathF.Max(0.001f, NearZ);
             float farZ = FarZ;

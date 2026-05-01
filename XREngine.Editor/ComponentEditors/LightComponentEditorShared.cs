@@ -159,21 +159,21 @@ internal static class LightComponentEditorShared
         if (light is DirectionalLightComponent)
         {
             bool useDirectionalAtlas = Engine.Rendering.Settings.UseDirectionalShadowAtlas;
-            if (ImGui.Checkbox("Use Directional Cascade Atlas", ref useDirectionalAtlas))
+            if (ImGui.Checkbox("Use Directional Shadow Atlas", ref useDirectionalAtlas))
                 Engine.Rendering.Settings.UseDirectionalShadowAtlas = useDirectionalAtlas;
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Global renderer setting. When enabled, directional cascades render and sample through the dynamic shadow atlas.");
+                ImGui.SetTooltip("Global renderer setting. When enabled, directional shadow maps and cascades render and sample through the dynamic shadow atlas.");
 
             if (useDirectionalAtlas)
             {
-                ImGui.TextColored(AtlasActiveTextColor, "Active: directional cascade atlas");
-                ImGui.TextDisabled("Cascade resolution controls request atlas tile size; actual size can be demoted by budget.");
-                ImGui.TextDisabled("Cascade direct lighting ignores Storage Format while atlas sampling is active; atlas pages use R16F depth.");
+                ImGui.TextColored(AtlasActiveTextColor, "Active: directional shadow atlas");
+                ImGui.TextDisabled("Resolution controls request atlas tile size; actual size can be demoted by budget.");
+                ImGui.TextDisabled("Directional direct lighting ignores Storage Format while atlas sampling is active; atlas pages use R16F depth.");
             }
             else
             {
                 ImGui.TextColored(AtlasDiagnosticTextColor, "Active: legacy directional/cascade shadows");
-                ImGui.TextDisabled("Directional atlas requests are disabled. Cascade texture array format and resolution are used directly.");
+                ImGui.TextDisabled("Directional atlas requests are disabled. Shadow map and cascade texture array formats are used directly.");
             }
         }
     }
@@ -738,8 +738,6 @@ internal static class LightComponentEditorShared
         if (!IsDirectionalShadowAtlasActive(light) || light is not DirectionalLightComponent dirLight)
             return false;
 
-        ImGui.TextDisabled("Previewing active directional cascade atlas tiles.");
-
         XRWorldInstance? world = dirLight.WorldAs<XRWorldInstance>();
         if (world?.Lights is null)
         {
@@ -748,13 +746,28 @@ internal static class LightComponentEditorShared
         }
 
         int activeCascades = dirLight.ActiveCascadeCount;
-        if (activeCascades <= 0)
+        string lightLabel = dirLight.SceneNode?.Name ?? dirLight.Name ?? dirLight.GetType().Name;
+        if (!dirLight.EnableCascadedShadows || activeCascades <= 0)
         {
-            ImGui.TextDisabled("No active cascades.");
+            ImGui.TextDisabled("Previewing active directional atlas tile.");
+            if (!dirLight.TryGetPrimaryAtlasSlot(out DirectionalLightComponent.DirectionalCascadeAtlasSlot primarySlot) ||
+                !primarySlot.HasAllocation)
+            {
+                ImGui.TextDisabled("No atlas allocation published for this directional light yet.");
+                return true;
+            }
+
+            DrawDirectionalAtlasSlotPreview(
+                world,
+                primarySlot,
+                "Directional Shadow Atlas Tile",
+                lightLabel,
+                "Primary",
+                null);
             return true;
         }
 
-        string lightLabel = dirLight.SceneNode?.Name ?? dirLight.Name ?? dirLight.GetType().Name;
+        ImGui.TextDisabled("Previewing active directional cascade atlas tiles.");
         ImGui.TextDisabled($"{lightLabel}: {activeCascades} active cascade(s)");
 
         for (int cascadeIndex = 0; cascadeIndex < activeCascades; cascadeIndex++)
@@ -778,7 +791,7 @@ internal static class LightComponentEditorShared
                 continue;
             }
 
-            if (!world.Lights.ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, slot.PageIndex, out XRTexture2D pageTexture))
+            if (!world.Lights.ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, slot.PageIndex, out _))
             {
                 ImGui.TextDisabled($"Cascade {cascadeIndex}: atlas page {slot.PageIndex} unavailable.");
                 continue;
@@ -787,28 +800,64 @@ internal static class LightComponentEditorShared
             if (cascadeIndex > 0 && cascadeIndex % ArrayPreviewsPerRow != 0)
                 ImGui.SameLine();
 
-            Vector4 uv = slot.UvScaleBias;
-            Vector2 uv0 = new(uv.Z, uv.W + uv.Y);
-            Vector2 uv1 = new(uv.Z + uv.X, uv.W);
-            Vector2 tilePixelSize = new(
-                MathF.Max(1.0f, slot.InnerPixelRect.Width),
-                MathF.Max(1.0f, slot.InnerPixelRect.Height));
-            string details =
-                $"{lightLabel} | Cascade {cascadeIndex}\n" +
-                $"Record {slot.RecordIndex} | Page {slot.PageIndex}\n" +
-                $"Tile {slot.InnerPixelRect.X},{slot.InnerPixelRect.Y} {slot.InnerPixelRect.Width}x{slot.InnerPixelRect.Height}\n" +
-                $"Page {pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n" +
-                $"Split Far: {dirLight.GetCascadeSplit(cascadeIndex):F1}\n" +
-                $"Last rendered frame {slot.LastRenderedFrame}";
-
             ImGui.BeginGroup();
-            Draw2DTexturePreview($"Directional Cascade {cascadeIndex}", pageTexture, uv0, uv1, tilePixelSize, details);
+            DrawDirectionalAtlasSlotPreview(
+                world,
+                slot,
+                $"Directional Cascade {cascadeIndex}",
+                lightLabel,
+                $"Cascade {cascadeIndex}",
+                $"Split Far: {dirLight.GetCascadeSplit(cascadeIndex):F1}");
             ImGui.TextDisabled($"Cascade {cascadeIndex}");
             ImGui.TextDisabled($"Split {dirLight.GetCascadeSplit(cascadeIndex):F1}");
             ImGui.EndGroup();
         }
 
         return true;
+    }
+
+    private static void DrawDirectionalAtlasSlotPreview(
+        XRWorldInstance world,
+        DirectionalLightComponent.DirectionalCascadeAtlasSlot slot,
+        string previewLabel,
+        string lightLabel,
+        string slotLabel,
+        string? extraDetails)
+    {
+        if (!slot.IsResident)
+        {
+            ImGui.TextDisabled($"{slotLabel}: not resident. Fallback: {slot.Fallback}");
+            return;
+        }
+
+        if (slot.LastRenderedFrame == 0u)
+        {
+            ImGui.TextDisabled($"{slotLabel}: tile allocated but not rendered yet.");
+            return;
+        }
+
+        if (!world.Lights.ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, slot.PageIndex, out XRTexture2D pageTexture))
+        {
+            ImGui.TextDisabled($"{slotLabel}: atlas page {slot.PageIndex} unavailable.");
+            return;
+        }
+
+        Vector4 uv = slot.UvScaleBias;
+        Vector2 uv0 = new(uv.Z, uv.W + uv.Y);
+        Vector2 uv1 = new(uv.Z + uv.X, uv.W);
+        Vector2 tilePixelSize = new(
+            MathF.Max(1.0f, slot.InnerPixelRect.Width),
+            MathF.Max(1.0f, slot.InnerPixelRect.Height));
+        string details =
+            $"{lightLabel} | {slotLabel}\n" +
+            $"Record {slot.RecordIndex} | Page {slot.PageIndex}\n" +
+            $"Tile {slot.InnerPixelRect.X},{slot.InnerPixelRect.Y} {slot.InnerPixelRect.Width}x{slot.InnerPixelRect.Height}\n" +
+            $"Page {pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n";
+        if (!string.IsNullOrEmpty(extraDetails))
+            details += $"{extraDetails}\n";
+        details += $"Last rendered frame {slot.LastRenderedFrame}";
+
+        Draw2DTexturePreview(previewLabel, pageTexture, uv0, uv1, tilePixelSize, details);
     }
 
     private static void DrawDirectionalCascadePreview(global::XREngine.Components.Lights.DirectionalLightComponent light, XRTexture2DArray cascadeTexture, int activeCascades)

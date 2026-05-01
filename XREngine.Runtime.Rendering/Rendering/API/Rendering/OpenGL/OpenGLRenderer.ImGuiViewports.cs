@@ -27,7 +27,7 @@ namespace XREngine.Rendering.OpenGL
             private delegate void ViewportSetVec2Callback(ImGuiViewport* viewport, Vector2 value);
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate Vector2 ViewportGetVec2Callback(ImGuiViewport* viewport);
+            private delegate void ViewportGetVec2Callback(ImGuiViewport* viewport, Vector2* value);
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
             private delegate byte ViewportGetBoolCallback(ImGuiViewport* viewport);
@@ -51,6 +51,7 @@ namespace XREngine.Rendering.OpenGL
             private readonly ImGuiController _controller;
             private readonly IWindow _mainWindow;
             private readonly Dictionary<uint, PlatformWindow> _platformWindows = [];
+            private readonly List<ImGuiPlatformMonitor> _monitorScratch = [];
 
             private readonly ViewportCallback _platformCreateWindow;
             private readonly ViewportCallback _platformDestroyWindow;
@@ -74,6 +75,7 @@ namespace XREngine.Rendering.OpenGL
             private readonly ViewportSetVec2Callback _rendererSetWindowSize;
             private readonly ViewportRenderCallback _rendererRenderWindow;
             private readonly ViewportRenderCallback _rendererSwapBuffers;
+            private readonly MonitorEnumProc _monitorEnumProc;
 
             private readonly nint _platformCreateWindowPtr;
             private readonly nint _platformDestroyWindowPtr;
@@ -100,6 +102,8 @@ namespace XREngine.Rendering.OpenGL
 
             private bool _installed;
             private bool _disposed;
+            private nint _monitorData;
+            private int _monitorCapacity;
 
             private OpenGLImGuiMultiViewportController(OpenGLRenderer renderer, ImGuiController controller)
             {
@@ -129,6 +133,7 @@ namespace XREngine.Rendering.OpenGL
                 _rendererSetWindowSize = RendererSetWindowSize;
                 _rendererRenderWindow = RendererRenderWindow;
                 _rendererSwapBuffers = RendererSwapBuffers;
+                _monitorEnumProc = EnumMonitor;
 
                 _platformCreateWindowPtr = Marshal.GetFunctionPointerForDelegate(_platformCreateWindow);
                 _platformDestroyWindowPtr = Marshal.GetFunctionPointerForDelegate(_platformDestroyWindow);
@@ -204,8 +209,12 @@ namespace XREngine.Rendering.OpenGL
                 platformIO.NativePtr->Renderer_SwapBuffers = _rendererSwapBuffersPtr;
 
                 EnsureMainViewportPlatformData();
+                UpdatePlatformMonitors();
 
-                io.BackendFlags |= ImGuiBackendFlags.PlatformHasViewports | ImGuiBackendFlags.RendererHasViewports;
+                io.BackendFlags |=
+                    ImGuiBackendFlags.PlatformHasViewports |
+                    ImGuiBackendFlags.RendererHasViewports |
+                    ImGuiBackendFlags.HasMouseHoveredViewport;
                 io.ConfigFlags |= ImGuiConfigFlags.ViewportsEnable;
                 _installed = true;
 
@@ -222,12 +231,13 @@ namespace XREngine.Rendering.OpenGL
                     _controller.MakeCurrent();
                     EnsureMainViewportPlatformData();
 
-                    if (!TryGetMainMousePosition(out Vector2 position))
+                    if (!TryGetMousePosition(out Vector2 position, out uint viewportId))
                         return;
 
                     var io = ImGui.GetIO();
                     io.AddMousePosEvent(position.X, position.Y);
-                    io.AddMouseViewportEvent(ImGui.GetMainViewport().ID);
+                    io.AddMouseViewportEvent(viewportId);
+                    io.MouseHoveredViewport = viewportId;
                 }
                 catch (Exception ex)
                 {
@@ -245,12 +255,13 @@ namespace XREngine.Rendering.OpenGL
                     _controller.MakeCurrent();
                     EnsureMainViewportPlatformData();
 
-                    if (!TryGetMainMousePosition(out Vector2 position))
+                    if (!TryGetMousePosition(out Vector2 position, out uint viewportId))
                         return;
 
                     var io = ImGui.GetIO();
                     io.MousePos = position;
-                    io.AddMouseViewportEvent(ImGui.GetMainViewport().ID);
+                    io.AddMouseViewportEvent(viewportId);
+                    io.MouseHoveredViewport = viewportId;
                 }
                 catch (Exception ex)
                 {
@@ -271,6 +282,7 @@ namespace XREngine.Rendering.OpenGL
                 nint previousContext = ImGui.GetCurrentContext();
                 try
                 {
+                    UpdatePlatformMonitors();
                     ImGui.UpdatePlatformWindows();
                     ImGui.RenderPlatformWindowsDefault();
                 }
@@ -314,11 +326,12 @@ namespace XREngine.Rendering.OpenGL
                     if (_installed && ImGuiContextTracker.IsAlive(_controller.Context))
                         ImGui.DestroyPlatformWindows();
 
+                    ClearPlatformMonitors();
                     ClearPlatformCallbacks();
 
                     var io = ImGui.GetIO();
                     io.ConfigFlags &= ~ImGuiConfigFlags.ViewportsEnable;
-                    io.BackendFlags &= ~(ImGuiBackendFlags.PlatformHasViewports | ImGuiBackendFlags.RendererHasViewports);
+                    io.BackendFlags &= ~(ImGuiBackendFlags.PlatformHasViewports | ImGuiBackendFlags.RendererHasViewports | ImGuiBackendFlags.HasMouseHoveredViewport);
                 }
                 catch (Exception ex)
                 {
@@ -367,9 +380,18 @@ namespace XREngine.Rendering.OpenGL
                 mainViewport.Pos = new Vector2(clientPosition.X, clientPosition.Y);
             }
 
-            private bool TryGetMainMousePosition(out Vector2 position)
+            private bool TryGetMousePosition(out Vector2 position, out uint viewportId)
             {
                 position = default;
+                viewportId = 0;
+
+                if (OperatingSystem.IsWindows() && GetCursorPos(out NativePoint cursorPosition))
+                {
+                    position = new Vector2(cursorPosition.X, cursorPosition.Y);
+                    viewportId = ResolveHoveredViewportId(cursorPosition);
+                    return true;
+                }
+
                 IInputContext? input = _renderer.XRWindow.Input;
                 if (input is null || input.Mice.Count == 0)
                     return false;
@@ -377,7 +399,25 @@ namespace XREngine.Rendering.OpenGL
                 Vector2 localPosition = input.Mice[0].Position;
                 Vector2D<int> clientPosition = GetClientScreenPosition(_mainWindow);
                 position = new Vector2(clientPosition.X + localPosition.X, clientPosition.Y + localPosition.Y);
+                viewportId = ImGui.GetMainViewport().ID;
                 return true;
+            }
+
+            private uint ResolveHoveredViewportId(NativePoint screenPosition)
+            {
+                foreach (PlatformWindow window in _platformWindows.Values)
+                {
+                    if (window.IsDisposed)
+                        continue;
+
+                    if (TryGetWindowScreenRect(window.Window, out NativeRect rect) && rect.Contains(screenPosition))
+                        return window.ViewportId;
+                }
+
+                if (TryGetWindowScreenRect(_mainWindow, out NativeRect mainRect) && mainRect.Contains(screenPosition))
+                    return ImGui.GetMainViewport().ID;
+
+                return 0;
             }
 
             private PlatformWindow? GetPlatformWindow(ImGuiViewportPtr viewport)
@@ -467,17 +507,17 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            private Vector2 PlatformGetWindowPos(ImGuiViewport* nativeViewport)
+            private void PlatformGetWindowPos(ImGuiViewport* nativeViewport, Vector2* outPosition)
             {
                 try
                 {
                     Vector2D<int> position = GetClientScreenPosition(GetWindow(new ImGuiViewportPtr(nativeViewport)));
-                    return new Vector2(position.X, position.Y);
+                    *outPosition = new Vector2(position.X, position.Y);
                 }
                 catch (Exception ex)
                 {
                     LogCallbackException(nameof(PlatformGetWindowPos), ex);
-                    return Vector2.Zero;
+                    *outPosition = Vector2.Zero;
                 }
             }
 
@@ -494,17 +534,17 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            private Vector2 PlatformGetWindowSize(ImGuiViewport* nativeViewport)
+            private void PlatformGetWindowSize(ImGuiViewport* nativeViewport, Vector2* outSize)
             {
                 try
                 {
                     Vector2D<int> size = GetWindow(new ImGuiViewportPtr(nativeViewport)).Size;
-                    return new Vector2(size.X, size.Y);
+                    *outSize = new Vector2(size.X, size.Y);
                 }
                 catch (Exception ex)
                 {
                     LogCallbackException(nameof(PlatformGetWindowSize), ex);
-                    return Vector2.One;
+                    *outSize = Vector2.One;
                 }
             }
 
@@ -536,6 +576,130 @@ namespace XREngine.Rendering.OpenGL
                     LogCallbackException(nameof(PlatformGetWindowFocus), ex);
                     return 0;
                 }
+            }
+
+            private void UpdatePlatformMonitors()
+            {
+                _monitorScratch.Clear();
+
+                if (OperatingSystem.IsWindows())
+                {
+                    try
+                    {
+                        EnumDisplayMonitors(nint.Zero, nint.Zero, _monitorEnumProc, nint.Zero);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogCallbackException(nameof(UpdatePlatformMonitors), ex);
+                    }
+                }
+
+                if (_monitorScratch.Count == 0)
+                    AddFallbackMonitor();
+
+                WritePlatformMonitorBuffer();
+            }
+
+            private bool EnumMonitor(nint monitor, nint hdc, ref NativeRect rect, nint data)
+            {
+                NativeMonitorInfo monitorInfo = new()
+                {
+                    Size = Marshal.SizeOf<NativeMonitorInfo>()
+                };
+
+                if (!GetMonitorInfo(monitor, ref monitorInfo))
+                    return true;
+
+                _monitorScratch.Add(new ImGuiPlatformMonitor
+                {
+                    MainPos = new Vector2(monitorInfo.Monitor.Left, monitorInfo.Monitor.Top),
+                    MainSize = new Vector2(monitorInfo.Monitor.Width, monitorInfo.Monitor.Height),
+                    WorkPos = new Vector2(monitorInfo.Work.Left, monitorInfo.Work.Top),
+                    WorkSize = new Vector2(monitorInfo.Work.Width, monitorInfo.Work.Height),
+                    DpiScale = GetMonitorDpiScale(monitor),
+                    PlatformHandle = (void*)monitor
+                });
+
+                return true;
+            }
+
+            private void AddFallbackMonitor()
+            {
+                IMonitor? monitor = _mainWindow.Monitor;
+                if (monitor is not null)
+                {
+                    Rectangle<int> bounds = monitor.Bounds;
+                    _monitorScratch.Add(new ImGuiPlatformMonitor
+                    {
+                        MainPos = new Vector2(bounds.Origin.X, bounds.Origin.Y),
+                        MainSize = new Vector2(bounds.Size.X, bounds.Size.Y),
+                        WorkPos = new Vector2(bounds.Origin.X, bounds.Origin.Y),
+                        WorkSize = new Vector2(bounds.Size.X, bounds.Size.Y),
+                        DpiScale = 1.0f,
+                        PlatformHandle = null
+                    });
+                    return;
+                }
+
+                Vector2D<int> position = GetClientScreenPosition(_mainWindow);
+                Vector2D<int> size = _mainWindow.Size;
+                _monitorScratch.Add(new ImGuiPlatformMonitor
+                {
+                    MainPos = new Vector2(position.X, position.Y),
+                    MainSize = new Vector2(Math.Max(1, size.X), Math.Max(1, size.Y)),
+                    WorkPos = new Vector2(position.X, position.Y),
+                    WorkSize = new Vector2(Math.Max(1, size.X), Math.Max(1, size.Y)),
+                    DpiScale = 1.0f,
+                    PlatformHandle = null
+                });
+            }
+
+            private void WritePlatformMonitorBuffer()
+            {
+                int count = _monitorScratch.Count;
+                EnsureMonitorCapacity(count);
+
+                var platformIO = ImGui.GetPlatformIO();
+                var monitors = (MutableImVector*)&platformIO.NativePtr->Monitors;
+                monitors->Size = count;
+                monitors->Capacity = _monitorCapacity;
+                monitors->Data = _monitorData;
+
+                if (count == 0)
+                    return;
+
+                var destination = (ImGuiPlatformMonitor*)_monitorData;
+                for (int i = 0; i < count; i++)
+                    destination[i] = _monitorScratch[i];
+            }
+
+            private void EnsureMonitorCapacity(int count)
+            {
+                if (count <= _monitorCapacity)
+                    return;
+
+                if (_monitorData != nint.Zero)
+                    Marshal.FreeHGlobal(_monitorData);
+
+                int stride = sizeof(ImGuiPlatformMonitor);
+                _monitorData = Marshal.AllocHGlobal(stride * count);
+                _monitorCapacity = count;
+            }
+
+            private void ClearPlatformMonitors()
+            {
+                var platformIO = ImGui.GetPlatformIO();
+                var monitors = (MutableImVector*)&platformIO.NativePtr->Monitors;
+                monitors->Size = 0;
+                monitors->Capacity = 0;
+                monitors->Data = nint.Zero;
+
+                if (_monitorData == nint.Zero)
+                    return;
+
+                Marshal.FreeHGlobal(_monitorData);
+                _monitorData = nint.Zero;
+                _monitorCapacity = 0;
             }
 
             private byte PlatformGetWindowMinimized(ImGuiViewport* nativeViewport)
@@ -815,6 +979,23 @@ namespace XREngine.Rendering.OpenGL
                 return window.Position;
             }
 
+            private static bool TryGetWindowScreenRect(IWindow window, out NativeRect rect)
+            {
+                if (OperatingSystem.IsWindows() && window.Handle != nint.Zero && GetWindowRect(window.Handle, out rect))
+                    return true;
+
+                Vector2D<int> position = GetClientScreenPosition(window);
+                Vector2D<int> size = window.Size;
+                rect = new NativeRect
+                {
+                    Left = position.X,
+                    Top = position.Y,
+                    Right = position.X + Math.Max(1, size.X),
+                    Bottom = position.Y + Math.Max(1, size.Y)
+                };
+                return true;
+            }
+
             private static void SetClientScreenPosition(IWindow window, Vector2D<int> targetClientPosition)
             {
                 Vector2D<int> clientPosition = GetClientScreenPosition(window);
@@ -830,8 +1011,79 @@ namespace XREngine.Rendering.OpenGL
                 public int Y;
             }
 
+            [StructLayout(LayoutKind.Sequential)]
+            private struct NativeRect
+            {
+                public int Left;
+                public int Top;
+                public int Right;
+                public int Bottom;
+
+                public int Width => Right - Left;
+                public int Height => Bottom - Top;
+
+                public readonly bool Contains(NativePoint point)
+                    => point.X >= Left && point.X < Right && point.Y >= Top && point.Y < Bottom;
+            }
+
+            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+            private struct NativeMonitorInfo
+            {
+                public int Size;
+                public NativeRect Monitor;
+                public NativeRect Work;
+                public uint Flags;
+            }
+
+            private enum MonitorDpiType
+            {
+                Effective = 0
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct MutableImVector
+            {
+                public int Size;
+                public int Capacity;
+                public nint Data;
+            }
+
+            private delegate bool MonitorEnumProc(nint monitor, nint hdc, ref NativeRect rect, nint data);
+
             [DllImport("user32.dll", SetLastError = true)]
             private static extern bool ClientToScreen(nint hWnd, ref NativePoint point);
+
+            [DllImport("user32.dll", SetLastError = true)]
+            private static extern bool GetCursorPos(out NativePoint point);
+
+            [DllImport("user32.dll", SetLastError = true)]
+            private static extern bool GetWindowRect(nint hWnd, out NativeRect rect);
+
+            [DllImport("user32.dll", SetLastError = true)]
+            private static extern bool EnumDisplayMonitors(nint hdc, nint clipRect, MonitorEnumProc callback, nint data);
+
+            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+            private static extern bool GetMonitorInfo(nint monitor, ref NativeMonitorInfo monitorInfo);
+
+            [DllImport("shcore.dll")]
+            private static extern int GetDpiForMonitor(nint monitor, MonitorDpiType dpiType, out uint dpiX, out uint dpiY);
+
+            private static float GetMonitorDpiScale(nint monitor)
+            {
+                if (!OperatingSystem.IsWindowsVersionAtLeast(6, 3))
+                    return 1.0f;
+
+                try
+                {
+                    return GetDpiForMonitor(monitor, MonitorDpiType.Effective, out uint dpiX, out uint dpiY) == 0
+                        ? MathF.Max(MathF.Max(dpiX, dpiY) / 96.0f, 1.0f)
+                        : 1.0f;
+                }
+                catch
+                {
+                    return 1.0f;
+                }
+            }
 
             private static RenderImDrawDataDelegate? CreateRenderImDrawDataDelegate()
             {
@@ -910,6 +1162,7 @@ namespace XREngine.Rendering.OpenGL
                 public IWindow Window { get; }
                 public uint ViewportId { get; }
                 public bool Focused { get; private set; }
+                public bool IsDisposed => _disposed;
                 public nint Handle => GCHandle.ToIntPtr(_handle);
 
                 public void Dispose()
@@ -1006,7 +1259,17 @@ namespace XREngine.Rendering.OpenGL
                     => Focused = focused;
 
                 private void OnClosing()
-                    => _owner.RequestClose(ViewportId);
+                {
+                    _owner.RequestClose(ViewportId);
+
+                    try
+                    {
+                        Window.IsClosing = false;
+                    }
+                    catch
+                    {
+                    }
+                }
 
                 private void OnMouseMove(IMouse mouse, Vector2 position)
                     => _owner.PushMousePosition(ViewportId, Window, position);

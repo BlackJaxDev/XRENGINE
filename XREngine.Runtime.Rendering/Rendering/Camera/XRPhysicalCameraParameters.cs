@@ -217,11 +217,11 @@ namespace XREngine.Rendering
             return Matrix4x4.CreatePerspectiveOffCenter(xMin, xMax, yMin, yMax, n, FarZ);
         }
 
-        protected override Frustum CalculateUntransformedFrustum()
+        protected override Frustum CalculateUntransformedFrustum(Matrix4x4 inverseProjectionMatrix)
         {
             // The engine's frustum helpers support reconstruction from inverse projection.
             // This also correctly handles asymmetric (off-axis) projections.
-            return new Frustum(GetInverseProjectionMatrix());
+            return new Frustum(inverseProjectionMatrix);
         }
 
         public override void SetUniforms(XRRenderProgram program)

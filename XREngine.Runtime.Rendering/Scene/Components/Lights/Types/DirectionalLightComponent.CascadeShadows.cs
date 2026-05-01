@@ -114,10 +114,7 @@ namespace XREngine.Components.Lights
 
         private const int MaxCascadeRenderCount = 8;
         private const float CascadeBoundsPadding = 0.05f;
-        private const float CascadeAutoBiasReferenceResolution = 4096.0f;
-        private const float CascadeAutoBiasCompareTexels = 2.0f;
-        private const float CascadeAutoBiasMinTexels = 0.25f;
-        private const float CascadeAutoReceiverOffsetTexels = 1.5f;
+        private const float ShadowBiasDepthRangeEpsilon = 1e-4f;
 
         private int _cascadeCount = 4;
         private float[] _cascadePercentages = [0.1f, 0.2f, 0.3f, 0.4f];
@@ -136,6 +133,7 @@ namespace XREngine.Components.Lights
         private Transform[] _cascadeShadowTransforms = [];
         private XRCamera[] _cascadeShadowCameras = [];
         private readonly DirectionalCascadeAtlasSlot[] _cascadeAtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
+        private DirectionalCascadeAtlasSlot _primaryAtlasSlot;
         private readonly Frustum[] _cascadeSourceFrusta = new Frustum[3];
         private XRMaterial? _shadowAtlasMaterial;
 
@@ -506,9 +504,9 @@ namespace XREngine.Components.Lights
                         CascadeShadowSlice slice = _cascadeShadowSlices[i];
                         splits[i] = slice.SplitFarDistance;
                         blendWidths[i] = slice.BlendWidth;
-                        biasMins[i] = slice.HasManualBiasOverride ? slice.BiasMin : ShadowMinBias;
-                        biasMaxes[i] = slice.HasManualBiasOverride ? slice.BiasMax : ShadowMaxBias;
-                        receiverOffsets[i] = slice.HasManualBiasOverride ? slice.ReceiverOffset : ShadowMaxBias;
+                        biasMins[i] = slice.BiasMin;
+                        biasMaxes[i] = slice.BiasMax;
+                        receiverOffsets[i] = slice.ReceiverOffset;
                         matrices[i] = slice.WorldToLightSpaceMatrix;
                     }
                     else
@@ -527,7 +525,37 @@ namespace XREngine.Components.Lights
         internal void ClearCascadeAtlasSlots()
         {
             lock (_cascadeDataLock)
+            {
+                _primaryAtlasSlot = default;
                 Array.Clear(_cascadeAtlasSlots);
+            }
+        }
+
+        private static DirectionalCascadeAtlasSlot CreateAtlasSlot(
+            ShadowAtlasAllocation allocation,
+            int recordIndex,
+            float nearPlane,
+            float farPlane)
+        {
+            ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
+                ? allocation.ActiveFallback
+                : ShadowFallbackMode.Lit;
+            float texelSize = allocation.Resolution > 0u ? 1.0f / allocation.Resolution : 0.0f;
+
+            return new DirectionalCascadeAtlasSlot(
+                HasAllocation: true,
+                IsResident: allocation.IsResident,
+                PageIndex: allocation.PageIndex,
+                RecordIndex: recordIndex,
+                UvScaleBias: allocation.UvScaleBias,
+                NearPlane: nearPlane,
+                FarPlane: farPlane,
+                TexelSize: texelSize,
+                Resolution: allocation.Resolution,
+                Fallback: fallback,
+                PixelRect: allocation.PixelRect,
+                InnerPixelRect: allocation.InnerPixelRect,
+                LastRenderedFrame: allocation.LastRenderedFrame);
         }
 
         internal void SetCascadeAtlasSlot(
@@ -540,28 +568,18 @@ namespace XREngine.Components.Lights
             if ((uint)index >= (uint)MaxCascadeRenderCount)
                 return;
 
-            ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
-                ? allocation.ActiveFallback
-                : ShadowFallbackMode.Lit;
-            float texelSize = allocation.Resolution > 0u ? 1.0f / allocation.Resolution : 0.0f;
-
             lock (_cascadeDataLock)
-            {
-                _cascadeAtlasSlots[index] = new DirectionalCascadeAtlasSlot(
-                    HasAllocation: true,
-                    IsResident: allocation.IsResident,
-                    PageIndex: allocation.PageIndex,
-                    RecordIndex: recordIndex,
-                    UvScaleBias: allocation.UvScaleBias,
-                    NearPlane: nearPlane,
-                    FarPlane: farPlane,
-                    TexelSize: texelSize,
-                    Resolution: allocation.Resolution,
-                    Fallback: fallback,
-                    PixelRect: allocation.PixelRect,
-                    InnerPixelRect: allocation.InnerPixelRect,
-                    LastRenderedFrame: allocation.LastRenderedFrame);
-            }
+                _cascadeAtlasSlots[index] = CreateAtlasSlot(allocation, recordIndex, nearPlane, farPlane);
+        }
+
+        internal void SetPrimaryAtlasSlot(
+            ShadowAtlasAllocation allocation,
+            int recordIndex,
+            float nearPlane,
+            float farPlane)
+        {
+            lock (_cascadeDataLock)
+                _primaryAtlasSlot = CreateAtlasSlot(allocation, recordIndex, nearPlane, farPlane);
         }
 
         public bool TryGetCascadeAtlasSlot(int index, out DirectionalCascadeAtlasSlot slot)
@@ -577,6 +595,15 @@ namespace XREngine.Components.Lights
 
             slot = default;
             return false;
+        }
+
+        public bool TryGetPrimaryAtlasSlot(out DirectionalCascadeAtlasSlot slot)
+        {
+            lock (_cascadeDataLock)
+            {
+                slot = _primaryAtlasSlot;
+                return slot.HasAllocation;
+            }
         }
 
         internal void CopyPublishedCascadeAtlasUniformData(
@@ -599,6 +626,45 @@ namespace XREngine.Components.Lights
                     ShadowFallbackMode fallback = slot.Fallback != ShadowFallbackMode.None
                         ? slot.Fallback
                         : ShadowFallbackMode.Lit;
+                    int pageIndex = slot.HasAllocation ? slot.PageIndex : -1;
+                    int recordIndex = slot.HasAllocation ? slot.RecordIndex : -1;
+                    float nearPlane = slot.HasAllocation ? slot.NearPlane : NearZ;
+                    float farPlane = slot.HasAllocation ? slot.FarPlane : 1.0f;
+
+                    packed0[i] = new IVector4(enabled ? 1 : 0, pageIndex, (int)fallback, recordIndex);
+                    uvScaleBias[i] = enabled ? slot.UvScaleBias : Vector4.Zero;
+                    depthParams[i] = new Vector4(nearPlane, MathF.Max(farPlane, nearPlane + 0.001f), slot.TexelSize, 0.0f);
+                }
+            }
+        }
+
+        internal void CopyPublishedDirectionalAtlasUniformData(
+            bool useCascades,
+            Span<IVector4> packed0,
+            Span<Vector4> uvScaleBias,
+            Span<Vector4> depthParams)
+        {
+            if (useCascades)
+            {
+                CopyPublishedCascadeAtlasUniformData(packed0, uvScaleBias, depthParams);
+                return;
+            }
+
+            int copyCount = Math.Min(MaxCascadeRenderCount, Math.Min(packed0.Length, Math.Min(uvScaleBias.Length, depthParams.Length)));
+
+            lock (_cascadeDataLock)
+            {
+                for (int i = 0; i < copyCount; i++)
+                {
+                    DirectionalCascadeAtlasSlot slot = i == 0 ? _primaryAtlasSlot : default;
+                    bool enabled = slot.HasAllocation &&
+                        slot.IsResident &&
+                        slot.LastRenderedFrame != 0u &&
+                        slot.PageIndex >= 0;
+
+                    ShadowFallbackMode fallback = slot.HasAllocation
+                        ? (slot.Fallback != ShadowFallbackMode.None ? slot.Fallback : ShadowFallbackMode.Lit)
+                        : ShadowFallbackMode.Legacy;
                     int pageIndex = slot.HasAllocation ? slot.PageIndex : -1;
                     int recordIndex = slot.HasAllocation ? slot.RecordIndex : -1;
                     float nearPlane = slot.HasAllocation ? slot.NearPlane : NearZ;
@@ -843,12 +909,27 @@ namespace XREngine.Components.Lights
             }
         }
 
+        private float GetPrimaryShadowDepthRange()
+        {
+            if (ShadowCamera is XRCamera camera)
+                return MathF.Max(ShadowBiasDepthRangeEpsilon, camera.FarZ - camera.NearZ);
+
+            return MathF.Max(ShadowBiasDepthRangeEpsilon, Scale.Z - NearZ * 2.0f);
+        }
+
+        private static float NormalizeCompareBiasForDepthRange(float bias, float referenceDepthRange, float targetDepthRange)
+        {
+            if (!float.IsFinite(bias) || bias <= 0.0f)
+                return 0.0f;
+
+            float safeReference = MathF.Max(ShadowBiasDepthRangeEpsilon, referenceDepthRange);
+            float safeTarget = MathF.Max(ShadowBiasDepthRangeEpsilon, targetDepthRange);
+            return bias * safeReference / safeTarget;
+        }
+
         private CascadeShadowBiasSettings ResolveCascadeBiasSettings(
             int cascadeIndex,
-            float splitStartDistance,
-            float splitEndDistance,
             Vector3 halfExtents,
-            float cascadeRangeFar,
             uint shadowMapWidth,
             uint shadowMapHeight,
             CascadeShadowBiasOverride[] biasOverrides)
@@ -865,7 +946,13 @@ namespace XREngine.Components.Lights
                 return new CascadeShadowBiasSettings(true, manual.BiasMin, manual.BiasMax, manual.ReceiverOffset, texelWorldSize);
             }
 
-            return new CascadeShadowBiasSettings(false, ShadowMinBias, ShadowMaxBias, ShadowMaxBias, texelWorldSize);
+            float referenceDepthRange = GetPrimaryShadowDepthRange();
+            float cascadeDepthRange = MathF.Max(ShadowBiasDepthRangeEpsilon, halfExtents.Z * 2.0f);
+            float biasMin = NormalizeCompareBiasForDepthRange(ShadowMinBias, referenceDepthRange, cascadeDepthRange);
+            float biasMax = NormalizeCompareBiasForDepthRange(ShadowMaxBias, referenceDepthRange, cascadeDepthRange);
+            biasMax = MathF.Max(biasMax, biasMin);
+
+            return new CascadeShadowBiasSettings(false, biasMin, biasMax, ShadowMaxBias, texelWorldSize);
         }
 
         private int CopyCascadeSourceFrusta(XRCamera primaryCamera, Span<Frustum> destination)
@@ -928,6 +1015,7 @@ namespace XREngine.Components.Lights
             {
                 _cascadeAabbs.Clear();
                 _cascadeShadowSlices.Clear();
+                _primaryAtlasSlot = default;
                 Array.Clear(_cascadeAtlasSlots);
                 _publishedCascadeRangeNear = 0.0f;
                 _publishedCascadeRangeFar = 0.0f;
@@ -1035,10 +1123,7 @@ namespace XREngine.Components.Lights
                     Matrix4x4 viewProj = cascadeView * cascadeProj;
                     CascadeShadowBiasSettings biasSettings = ResolveCascadeBiasSettings(
                         cascadeIndex,
-                        splitStart,
-                        splitEnd,
                         halfExtents,
-                        effectiveCascadeFar,
                         fitResolution,
                         fitResolution,
                         biasOverrideSnapshot);
@@ -1106,17 +1191,15 @@ namespace XREngine.Components.Lights
 
         private bool ShouldCollectPrimaryShadowViewport()
         {
-            if (ShadowMap is null)
-                return false;
-
-            if (!EnableCascadedShadows || CascadedShadowMapTexture is null || ActiveCascadeCount <= 0)
-                return true;
-
             IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
-            if (world is null)
-                return true;
+            bool needsPrimary = !EnableCascadedShadows ||
+                CascadedShadowMapTexture is null ||
+                ActiveCascadeCount <= 0 ||
+                world is null ||
+                world.Lights.NeedsPrimaryDirectionalShadowMap();
 
-            return world.Lights.NeedsPrimaryDirectionalShadowMap();
+            return needsPrimary &&
+                (ShadowMap is not null || Engine.Rendering.Settings.UseDirectionalShadowAtlas);
         }
 
         public override void CollectVisibleItems()
@@ -1177,6 +1260,44 @@ namespace XREngine.Components.Lights
                 return false;
 
             XRViewport viewport = cascadeShadowViewports[cascadeIndex];
+            if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
+                return false;
+
+            if (collectVisibleNow)
+            {
+                CollectVisibleItems();
+                SwapBuffers();
+            }
+
+            bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
+            shadowPipeline.PreserveExistingRenderArea = true;
+            try
+            {
+                var state = viewport.RenderPipelineInstance.RenderState;
+                using var renderArea = state.PushRenderArea(renderRect);
+                using var cropArea = state.PushCropArea(renderRect);
+                viewport.Render(atlasFbo, null, null, true, ShadowAtlasMaterial);
+            }
+            finally
+            {
+                shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
+            }
+
+            return true;
+        }
+
+        internal bool RenderPrimaryShadowAtlasTile(XRFrameBuffer atlasFbo, BoundingRectangle renderRect, bool collectVisibleNow)
+        {
+            if (!CastsShadows ||
+                ShadowCamera is null ||
+                World is null ||
+                renderRect.Width <= 0 ||
+                renderRect.Height <= 0)
+            {
+                return false;
+            }
+
+            XRViewport viewport = PrimaryShadowViewport;
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
                 return false;
 

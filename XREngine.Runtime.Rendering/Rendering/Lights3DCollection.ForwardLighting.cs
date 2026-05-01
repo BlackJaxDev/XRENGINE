@@ -613,8 +613,7 @@ namespace XREngine.Scene
 
                     useDirectionalShadowAtlas =
                         Engine.Rendering.Settings.UseDirectionalShadowAtlas &&
-                        useCascadedDirectionalShadows &&
-                        firstDirLight.ActiveCascadeCount > 0;
+                        firstDirLight.CastsShadows;
 
                     if (forwardShadowTex is null && forwardCascadeShadowTex is null)
                     {
@@ -818,7 +817,8 @@ namespace XREngine.Scene
             Array.Clear(_directionalShadowAtlasParams1);
             if (useDirectionalShadowAtlas && directionalLightCount > 0)
             {
-                DynamicDirectionalLights[0].CopyPublishedCascadeAtlasUniformData(
+                DynamicDirectionalLights[0].CopyPublishedDirectionalAtlasUniformData(
+                    useCascadedDirectionalShadows,
                     _directionalShadowAtlasPacked0,
                     _directionalShadowAtlasParams0,
                     _directionalShadowAtlasParams1);

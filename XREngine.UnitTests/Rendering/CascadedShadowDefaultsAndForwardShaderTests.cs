@@ -78,6 +78,8 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("XRENGINE_SampleContactShadow2D(");
         source.ShouldContain("XRENGINE_SampleShadowMapFiltered(");
         source.ShouldContain("XRENGINE_SampleShadowMapArrayFiltered(");
+        source.ShouldContain("ivec4 atlasI0 = DirectionalShadowAtlasPacked0[0];");
+        source.ShouldContain("vec4 atlasUvScaleBias = DirectionalShadowAtlasParams0[0];");
         source.ShouldContain("XRENGINE_SampleShadowCubeFiltered(");
         source.ShouldContain("XRENGINE_ResolveContactShadowSampleCount(");
         source.ShouldContain("float XRENGINE_ReadDirectionalContactShadowOnly(");
@@ -349,16 +351,19 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
-    public void DirectionalCascadeDefaultBias_UsesDirectionalLightBiasValues()
+    public void DirectionalCascadeDefaultBias_NormalizesDirectionalLightBiasToCascadeDepthRange()
     {
         string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
 
-        source.ShouldContain("return new CascadeShadowBiasSettings(false, ShadowMinBias, ShadowMaxBias, ShadowMaxBias, texelWorldSize);");
-        source.ShouldNotContain("ShadowMinBias * biasScale");
-        source.ShouldNotContain("ShadowMaxBias * biasScale");
-        source.ShouldContain("biasMins[i] = slice.HasManualBiasOverride ? slice.BiasMin : ShadowMinBias;");
-        source.ShouldContain("biasMaxes[i] = slice.HasManualBiasOverride ? slice.BiasMax : ShadowMaxBias;");
-        source.ShouldContain("receiverOffsets[i] = slice.HasManualBiasOverride ? slice.ReceiverOffset : ShadowMaxBias;");
+        source.ShouldContain("float referenceDepthRange = GetPrimaryShadowDepthRange();");
+        source.ShouldContain("float cascadeDepthRange = MathF.Max(ShadowBiasDepthRangeEpsilon, halfExtents.Z * 2.0f);");
+        source.ShouldContain("NormalizeCompareBiasForDepthRange(ShadowMinBias, referenceDepthRange, cascadeDepthRange)");
+        source.ShouldContain("NormalizeCompareBiasForDepthRange(ShadowMaxBias, referenceDepthRange, cascadeDepthRange)");
+        source.ShouldContain("return new CascadeShadowBiasSettings(false, biasMin, biasMax, ShadowMaxBias, texelWorldSize);");
+        source.ShouldContain("biasMins[i] = slice.BiasMin;");
+        source.ShouldContain("biasMaxes[i] = slice.BiasMax;");
+        source.ShouldContain("receiverOffsets[i] = slice.ReceiverOffset;");
+        source.ShouldNotContain("biasMins[i] = slice.HasManualBiasOverride ? slice.BiasMin : ShadowMinBias;");
     }
 
     [Test]
@@ -376,6 +381,57 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         deferredSource.ShouldContain("LightData.CascadeBiasMin[cascadeIndex]");
         deferredSource.ShouldContain("LightData.CascadeBiasMax[cascadeIndex]");
         deferredSource.ShouldContain("SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)");
+    }
+
+    [Test]
+    public void DirectionalPrimaryShadowAtlas_IsSubmittedRenderedBoundAndPreviewed()
+    {
+        string lightSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
+        lightSource.ShouldContain("protected override bool UsesAtlasShadowViewport");
+        lightSource.ShouldContain("Engine.Rendering.Settings.UseDirectionalShadowAtlas");
+
+        string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
+        cascadeSource.ShouldContain("private DirectionalCascadeAtlasSlot _primaryAtlasSlot;");
+        cascadeSource.ShouldContain("internal void SetPrimaryAtlasSlot(");
+        cascadeSource.ShouldContain("public bool TryGetPrimaryAtlasSlot(");
+        cascadeSource.ShouldContain("internal void CopyPublishedDirectionalAtlasUniformData(");
+        cascadeSource.ShouldContain("internal bool RenderPrimaryShadowAtlasTile(");
+        cascadeSource.ShouldContain("(ShadowMap is not null || Engine.Rendering.Settings.UseDirectionalShadowAtlas)");
+
+        string shadowCollectionSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.Shadows.cs"));
+        shadowCollectionSource.ShouldContain("DirectionalLightComponent => Engine.Rendering.Settings.UseDirectionalShadowAtlas");
+        shadowCollectionSource.ShouldContain("EShadowProjectionType.DirectionalPrimary");
+        shadowCollectionSource.ShouldContain("TryGetDirectionalPrimaryShadowAtlasAllocation");
+        shadowCollectionSource.ShouldContain("directionalLight.SetPrimaryAtlasSlot(");
+
+        string atlasManagerSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasManager.cs"));
+        atlasManagerSource.ShouldContain("EShadowProjectionType.DirectionalPrimary");
+        atlasManagerSource.ShouldContain("RenderPrimaryShadowAtlasTile(");
+
+        string forwardSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.ForwardLighting.cs"));
+        forwardSource.ShouldContain("firstDirLight.CastsShadows");
+        forwardSource.ShouldContain("CopyPublishedDirectionalAtlasUniformData(");
+
+        string editorSource = LoadRepoSource(Path.Combine("XREngine.Editor", "ComponentEditors", "LightComponentEditorShared.cs"));
+        editorSource.ShouldContain("Use Directional Shadow Atlas");
+        editorSource.ShouldContain("Directional Shadow Atlas Tile");
+        editorSource.ShouldContain("TryGetPrimaryAtlasSlot(");
+    }
+
+    [Test]
+    public void DirectionalPrimaryShadowAtlasShaders_SamplePrimaryTileBeforeLegacyMap()
+    {
+        string forwardSource = LoadShaderSource("Snippets/ForwardLighting.glsl");
+        forwardSource.ShouldContain("ivec4 atlasI0 = DirectionalShadowAtlasPacked0[0];");
+        forwardSource.ShouldContain("vec4 atlasUvScaleBias = DirectionalShadowAtlasParams0[0];");
+        forwardSource.ShouldContain("ShadowFilterRadius * atlasRadiusScale");
+        forwardSource.ShouldContain("if (fallbackMode == 1 || fallbackMode == 2 || fallbackMode == 4)");
+
+        string deferredSource = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
+        deferredSource.ShouldContain("ivec4 atlasI0 = DirectionalShadowAtlasPacked0[0];");
+        deferredSource.ShouldContain("vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[0];");
+        deferredSource.ShouldContain("ShadowFilterRadius * atlasRadiusScale");
+        deferredSource.ShouldContain("if (fallbackMode == 1 || fallbackMode == 2 || fallbackMode == 4)");
     }
 
     [Test]
