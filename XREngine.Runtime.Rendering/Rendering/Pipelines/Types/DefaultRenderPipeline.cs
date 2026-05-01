@@ -1047,6 +1047,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string DepthPreloadFBOName = "DepthPreloadFBO";
     public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
     public const string ForwardDepthPrePassMergeFBOName = "ForwardDepthPrePassMergeFBO";
+    public const string ForwardContactPrePassCopyFBOName = "ForwardContactPrePassCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
@@ -1063,13 +1064,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string HBAOPlusBlurIntermediateTextureName = "HBAOPlusBlurIntermediateTexture";
     public const string NormalTextureName = "Normal";
     public const string ForwardPrePassNormalTextureName = "ForwardPrePassNormal";
+    public const string ForwardContactNormalTextureName = "ForwardContactNormal";
     public const string DepthViewTextureName = "DepthView";
+    public const string ForwardContactDepthViewTextureName = "ForwardContactDepthView";
     public const string StencilViewTextureName = "StencilView";
     public const string AlbedoOpacityTextureName = "AlbedoOpacity";
     public const string RMSETextureName = "RMSE";
     public const string TransformIdTextureName = "TransformId";
     public const string DepthStencilTextureName = "DepthStencil";
     public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
+    public const string ForwardContactDepthStencilTextureName = "ForwardContactDepthStencil";
     public const string ForwardPassMsaaDepthStencilTextureName = "ForwardPassMsaaDepthStencil";
     public const string ForwardPassMsaaDepthViewTextureName = "ForwardPassMsaaDepthView";
     public const string DiffuseTextureName = "LightingTexture";
@@ -2213,6 +2217,18 @@ public partial class DefaultRenderPipeline : RenderPipeline
             ResizeTextureInternalSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardContactDepthStencilTextureName,
+            CreateForwardContactDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardContactDepthViewTextureName,
+            CreateForwardContactDepthViewTexture,
+            t => NeedsRecreateTextureView(t, ForwardContactDepthStencilTextureName),
+            t => RetargetTextureView(t, ForwardContactDepthStencilTextureName));
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardPassMsaaDepthStencilTextureName,
             CreateForwardPassMsaaDepthStencilTexture,
             NeedsRecreateMsaaTextureInternalSize,
@@ -2271,6 +2287,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardPrePassNormalTextureName,
             CreateForwardPrePassNormalTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardContactNormalTextureName,
+            CreateForwardContactNormalTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 

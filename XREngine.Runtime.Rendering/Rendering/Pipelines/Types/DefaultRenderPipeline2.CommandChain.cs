@@ -262,6 +262,19 @@ public partial class DefaultRenderPipeline2
             shareIfElse.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
             shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
             shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
+            shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardContactPrePassCopyFBOName,
+                CreateForwardContactPrePassCopyFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                ForwardDepthPrePassMergeFBOName,
+                ForwardContactPrePassCopyFBOName,
+                EReadBufferMode.ColorAttachment0,
+                blitColor: true,
+                blitDepth: true,
+                blitStencil: false,
+                linearFilter: false);
             prePassChoice.TrueCommands = shareChoice;
         }
 
@@ -1144,6 +1157,18 @@ public partial class DefaultRenderPipeline2
             ResizeTextureInternalSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardContactDepthStencilTextureName,
+            CreateForwardContactDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardContactDepthViewTextureName,
+            CreateForwardContactDepthViewTexture,
+            t => NeedsRecreateTextureView(t, ForwardContactDepthStencilTextureName),
+            t => RetargetTextureView(t, ForwardContactDepthStencilTextureName));
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardPassMsaaDepthStencilTextureName,
             CreateForwardPassMsaaDepthStencilTexture,
             NeedsRecreateMsaaTextureInternalSize,
@@ -1202,6 +1227,12 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardPrePassNormalTextureName,
             CreateForwardPrePassNormalTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardContactNormalTextureName,
+            CreateForwardContactNormalTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 

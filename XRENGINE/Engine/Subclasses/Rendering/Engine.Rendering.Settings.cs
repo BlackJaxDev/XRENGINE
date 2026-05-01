@@ -502,7 +502,18 @@ namespace XREngine
                 public bool UseDirectionalShadowAtlas
                 {
                     get => _useDirectionalShadowAtlas;
-                    set => SetField(ref _useDirectionalShadowAtlas, value);
+                    set
+                    {
+                        if (!SetField(ref _useDirectionalShadowAtlas, value))
+                            return;
+
+                        XREngine.Debug.Out(
+                            EOutputVerbosity.Normal,
+                            false,
+                            "[DirectionalShadowAudit][Setting] frame={0} UseDirectionalShadowAtlas={1}",
+                            Engine.Rendering.State.RenderFrameId,
+                            value);
+                    }
                 }
 
                 [Category("Shadows")]

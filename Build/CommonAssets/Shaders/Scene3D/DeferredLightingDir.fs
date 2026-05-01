@@ -62,6 +62,8 @@ uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
+uniform vec4 ShadowBiasParams = vec4(1.0f, 2.0f, 1.0f, 0.0f); // depth texels, slope texels, normal texels, reserved
+uniform vec4 ShadowBiasProjectionParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // constant depth bias, normal offset, world texel size, depth range
 uniform int ShadowSamples = 8;
 uniform int ShadowBlockerSamples = 8;
 uniform int ShadowFilterSamples = 8;
@@ -399,12 +401,6 @@ float GetShadowBias(in float NoL)
 	return GetShadowBiasRange(NoL, ShadowBiasMin, ShadowBiasMax);
 }
 
-float ViewDepthFromWorldPos(in vec3 fragPosWS)
-{
-	vec4 viewPos = ViewMatrix * vec4(fragPosWS, 1.0f);
-	return abs(viewPos.z);
-}
-
 float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDirWS, in float receiverOffset, in float compareBias, in float viewDepth)
 {
 	int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
@@ -474,12 +470,13 @@ float SampleDirectionalAtlasPage(
 	in int vogelTapCount);
 
 //0 is fully in shadow, 1 is fully lit
-float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
+float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewDepth, in mat4 lightMatrix)
 {
 		if (!LightHasShadowMap)
 			return 1.0f;
 
-		vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
+		float receiverOffset = max(ShadowBiasProjectionParams.y, 0.0f);
+		vec3 offsetPosWS = fragPosWS + N * receiverOffset;
 		vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
 		vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
 		fragCoord = fragCoord * 0.5f + 0.5f;
@@ -489,11 +486,15 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 			fragCoord.z < 0.0f || fragCoord.z > 1.0f)
 			return 1.0f;
 
-		//Create bias depending on angle of normal to the light
-		float bias = GetShadowBias(NoL);
-		float viewDepth = ViewDepthFromWorldPos(fragPosWS);
+		vec2 shadowTexelSize = 1.0f / vec2(textureSize(ShadowMap, 0));
+		float bias = XRENGINE_ComputeShadowDepthBias(
+			fragCoord,
+			shadowTexelSize,
+			ShadowFilterRadius,
+			ShadowBiasProjectionParams.x,
+			max(ShadowBiasParams.y, 0.0f));
 		float contact = EnableContactShadows
-			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), ShadowBiasMax, bias, viewDepth)
+			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)
 			: 1.0f;
 
 		if (DirectionalShadowAtlasEnabled)
@@ -506,10 +507,17 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[0];
 				vec2 atlasUv = fragCoord.xy * atlasUvScaleBias.xy + atlasUvScaleBias.zw;
 				float atlasRadiusScale = max(atlasUvScaleBias.x, atlasUvScaleBias.y);
+				vec2 atlasTexelSize = max(vec2(DirectionalShadowAtlasDepthParams[0].z) * atlasUvScaleBias.xy, vec2(1e-7f));
+				float atlasBias = XRENGINE_ComputeShadowDepthBias(
+					vec3(atlasUv, fragCoord.z),
+					atlasTexelSize,
+					ShadowFilterRadius * atlasRadiusScale,
+					ShadowBiasProjectionParams.x,
+					max(ShadowBiasParams.y, 0.0f));
 				return SampleDirectionalAtlasPage(
 					atlasI0.y,
 					vec3(atlasUv, fragCoord.z),
-					bias,
+					atlasBias,
 					ShadowBlockerSamples,
 					ShadowFilterSamples,
 					ShadowFilterRadius * atlasRadiusScale,
@@ -600,7 +608,7 @@ float ReadDirectionalAtlasCenterDepth(in int pageIndex, in vec2 uv)
 	return 1.0f;
 }
 
-float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int cascadeIndex, in bool clampToEdge)
+float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewDepth, in int cascadeIndex)
 {
 		if (!LightHasShadowMap)
 			return 1.0f;
@@ -612,20 +620,23 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int ca
 		vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
 		fragCoord = fragCoord * 0.5f + 0.5f;
 
-		if (clampToEdge)
-			fragCoord.xy = clamp(fragCoord.xy, 0.0f, 1.0f);
-		else if (fragCoord.x < 0.0f || fragCoord.x > 1.0f ||
+		if (fragCoord.x < 0.0f || fragCoord.x > 1.0f ||
 			fragCoord.y < 0.0f || fragCoord.y > 1.0f ||
 			fragCoord.z < 0.0f || fragCoord.z > 1.0f)
 			return -1.0f;
 
-		float bias = GetShadowBiasRange(NoL, LightData.CascadeBiasMin[cascadeIndex], LightData.CascadeBiasMax[cascadeIndex]);
-		float viewDepth = ViewDepthFromWorldPos(fragPosWS);
+		float cascadeScale = 1.0f + float(cascadeIndex) * 0.35f;
+		float filterRadius = ShadowFilterRadius * cascadeScale;
+		vec2 shadowTexelSize = 1.0f / vec2(textureSize(ShadowMapArray, 0).xy);
+		float bias = XRENGINE_ComputeShadowDepthBias(
+			fragCoord,
+			shadowTexelSize,
+			filterRadius,
+			LightData.CascadeBiasMin[cascadeIndex],
+			LightData.CascadeBiasMax[cascadeIndex]);
 		float contact = EnableContactShadows
 			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)
 			: 1.0f;
-		float cascadeScale = 1.0f + float(cascadeIndex) * 0.35f;
-		float filterRadius = ShadowFilterRadius * cascadeScale;
 
 		if (DirectionalShadowAtlasEnabled)
 		{
@@ -637,10 +648,17 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int ca
 				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[cascadeIndex];
 				vec2 atlasUv = fragCoord.xy * atlasUvScaleBias.xy + atlasUvScaleBias.zw;
 				float atlasRadiusScale = max(atlasUvScaleBias.x, atlasUvScaleBias.y);
+				vec2 atlasTexelSize = max(vec2(DirectionalShadowAtlasDepthParams[cascadeIndex].z) * atlasUvScaleBias.xy, vec2(1e-7f));
+				float atlasBias = XRENGINE_ComputeShadowDepthBias(
+					vec3(atlasUv, fragCoord.z),
+					atlasTexelSize,
+					filterRadius * atlasRadiusScale,
+					LightData.CascadeBiasMin[cascadeIndex],
+					LightData.CascadeBiasMax[cascadeIndex]);
 				return SampleDirectionalAtlasPage(
 					atlasI0.y,
 					vec3(atlasUv, fragCoord.z),
-					bias,
+					atlasBias,
 					ShadowBlockerSamples,
 					ShadowFilterSamples,
 					filterRadius * atlasRadiusScale,
@@ -715,7 +733,8 @@ in vec3 V,
 in vec3 fragPosWS,
 in vec3 albedo,
 in vec3 rms,
-in vec3 F0)
+in vec3 F0,
+in float viewDepth)
 {
 		vec3 L = -LightData.Direction;
 		vec3 H = normalize(V + L);
@@ -730,10 +749,11 @@ in vec3 F0)
 
 		float shadow = 1.0f;
 		int debugCascadeIndex = -1;
+		int debugNextCascadeIndex = -1;
+		float debugCascadeBlend = 0.0f;
 
 		if (UseCascadedDirectionalShadows && EnableCascadedShadows && LightData.CascadeCount > 0)
 		{
-			float viewDepth = ViewDepthFromWorldPos(fragPosWS);
 			int cascadeCount = min(LightData.CascadeCount, MAX_CASCADES);
 
 			for (int i = 0; i < cascadeCount; ++i)
@@ -743,8 +763,7 @@ in vec3 F0)
 
 				if (viewDepth <= splitFar || isLast)
 				{
-					bool clampToEdge = isLast && viewDepth > splitFar;
-					float s0 = ReadCascadeShadowMap(fragPosWS, N, NoL, i, clampToEdge);
+					float s0 = ReadCascadeShadowMap(fragPosWS, N, NoL, viewDepth, i);
 					if (s0 < 0.0f) s0 = 1.0f;
 					debugCascadeIndex = i;
 
@@ -754,9 +773,11 @@ in vec3 F0)
 						if (blendWidth > 0.0f && viewDepth > splitFar - blendWidth)
 						{
 							float t = clamp((viewDepth - (splitFar - blendWidth)) / blendWidth, 0.0f, 1.0f);
-							float s1 = ReadCascadeShadowMap(fragPosWS, N, NoL, i + 1, false);
+							float s1 = ReadCascadeShadowMap(fragPosWS, N, NoL, viewDepth, i + 1);
 							if (s1 < 0.0f) s1 = s0;
 							shadow = mix(s0, s1, t);
+							debugNextCascadeIndex = i + 1;
+							debugCascadeBlend = t;
 							break;
 						}
 					}
@@ -768,7 +789,7 @@ in vec3 F0)
 		}
 		else
 		{
-			shadow = ReadShadowMap2D(fragPosWS, N, NoL, LightData.WorldToLightSpaceMatrix);
+			shadow = ReadShadowMap2D(fragPosWS, N, NoL, viewDepth, LightData.WorldToLightSpaceMatrix);
 		}
 
 		vec3 result = color * shadow;
@@ -777,6 +798,11 @@ in vec3 F0)
 		if (DebugCascadeColors && debugCascadeIndex >= 0)
 		{
 			vec3 debugColor = CascadeDebugColorTable[debugCascadeIndex % MAX_CASCADES];
+			if (debugNextCascadeIndex >= 0)
+			{
+				vec3 nextDebugColor = CascadeDebugColorTable[debugNextCascadeIndex % MAX_CASCADES];
+				debugColor = mix(debugColor, nextDebugColor, debugCascadeBlend);
+			}
 			result = mix(result, debugColor * max(shadow, 0.15), 0.5);
 		}
 
@@ -787,12 +813,13 @@ in vec3 fragPosWS,
 in vec3 normal,
 in vec3 albedo,
 in vec3 rms,
-in vec3 cameraPosition)
+in vec3 cameraPosition,
+in float viewDepth)
 {
 		float metallic = rms.y;
 		vec3 V = normalize(cameraPosition - fragPosWS);
 		vec3 F0 = mix(vec3(0.04f), albedo, metallic);
-		return CalcLight(normal, V, fragPosWS, albedo, rms, F0);
+		return CalcLight(normal, V, fragPosWS, albedo, rms, F0, viewDepth);
 }
 void main()
 {
@@ -817,9 +844,13 @@ void main()
 			return;
 		}
 
-		//Resolve world fragment position using depth and screen UV
-		vec3 fragPosWS = XRENGINE_WorldPosFromDepth(depth, uv, InverseProjMatrix, InverseViewMatrix);
+		// Drive cascade selection from the G-buffer's own player-camera depth.
+		// Reusing this view-space reconstruction keeps CSM blend boundaries tied
+		// to the rendered camera even when world reconstruction changes.
+		vec3 fragPosVS = XRENGINE_ViewPosFromDepthRaw(depth, uv, InverseProjMatrix);
+		float viewDepth = abs(fragPosVS.z);
+		vec3 fragPosWS = (InverseViewMatrix * vec4(fragPosVS, 1.0f)).xyz;
 		vec3 cameraPosition = InverseViewMatrix[3].xyz;
 
-		OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms, cameraPosition);
+		OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms, cameraPosition, viewDepth);
 }

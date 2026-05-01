@@ -40,6 +40,7 @@ uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
+uniform vec4 ShadowBiasParams = vec4(1.0f, 2.0f, 1.0f, 0.0f); // depth texels, slope texels, normal texels, reserved
 uniform bool LightHasShadowMap = true; // Added
 uniform int ShadowSamples = 4;
 uniform int ShadowBlockerSamples = 4;
@@ -284,7 +285,12 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 {
 	if (!LightHasShadowMap) return 1.0f;
 
-	vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
+	vec3 lightToFragBase = fragPosWS - LightData.Position;
+	float receiverDist = length(lightToFragBase);
+	float faceSize = max(float(textureSize(ShadowMap, 0).x), 1.0f);
+	float texelRelBase = 2.0f / faceSize;
+	float normalOffset = receiverDist * texelRelBase * max(ShadowBiasParams.z, 0.0f);
+	vec3 offsetPosWS = fragPosWS + N * normalOffset;
 	vec3 fragToLight = offsetPosWS - LightData.Position;
 	float lightDist = length(fragToLight);
 	float nearPlaneDist = max(ShadowNearPlaneDist, 0.0f);
@@ -294,25 +300,17 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 	// The cubemap shadow cameras clip everything inside the near plane.
 	// Triangles crossing that clip can form a synthetic blocker shell around the light,
 	// so receivers inside the blind zone must be treated as unshadowed.
-	if (lightDist <= nearPlaneDist + ShadowBiasMax)
+	if (lightDist <= nearPlaneDist + normalOffset)
 	{
 		_dbgShadowMargin = nearPlaneDist / max(farPlaneDist, 0.001f);
 		_dbgShadowLit = 1.0f;
 		return 1.0f;
 	}
 
-	float faceSize = max(float(textureSize(ShadowMap, 0).x), 1.0f);
-
-	// ---- Cubemap texel bias (relative) ----
-	// Per cube-map texel, the stored radial depth varies by lightDist*tan(theta)*texelAngularSize,
-	// where theta is the angle between the surface normal and the direction-to-light. The previous
-	// (1 + 3*slope^2) factor undershoots at grazing angles, letting the cubemap texel grid show
-	// through as radial herringbone bristles around the lit spot. tan(theta) is the geometrically
-	// correct multiplier; +1 keeps a base texel-width margin at normal incidence and the 2x on
-	// tan(theta) absorbs sub-texel sampling phase + R16f quantisation.
 	float NoLSafe = max(NoL, 0.05f);
 	float tanTheta = sqrt(max(1.0f - NoLSafe * NoLSafe, 0.0f)) / NoLSafe;
-	float texelRel = (2.0f / faceSize) * (1.0f + 2.0f * tanTheta);
+	float filterTexels = max(1.0f, clamp(ShadowFilterRadius * 256.0f, 0.0f, 8.0f));
+	float texelRel = texelRelBase * (max(ShadowBiasParams.x, 0.0f) + max(ShadowBiasParams.y, 0.0f) * tanTheta * filterTexels);
 
 	// ---- GBuffer depth-precision bias ----
 	// The deferred receiver position is reconstructed from a 24-bit depth buffer
@@ -331,13 +329,10 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 	                 / max(cameraNear * cameraFar * 16777216.0f, 1e-10f);
 	float depthRel = depthError / max(lightDist, 0.001f);
 
-	// ---- User bias (converted to relative) ----
-	float userBias = GetShadowBias(NoL);
-	float userRel  = userBias / max(lightDist, 0.001f);
 	float r16fRel  = 1.0f / 512.0f;
 
 	// Take the largest of the three contributors
-	float relThreshold = max(texelRel, max(userRel, max(depthRel, r16fRel)));
+	float relThreshold = max(texelRel, max(depthRel, r16fRel));
 
 	// Pre-multiply threshold into lightDist for a single comparison per sample
 	float biasedLightDist = lightDist * (1.0f - relThreshold);
@@ -346,10 +341,10 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 	float blockerSearchRadius = GetShadowCubeSampleRadius(ShadowMap, ShadowBlockerSearchRadius);
 	float minPenumbra = GetShadowCubeSampleRadius(ShadowMap, ShadowMinPenumbra);
 	float maxPenumbra = GetShadowCubeSampleRadius(ShadowMap, ShadowMaxPenumbra);
-	float contactBias = max(userBias, lightDist * relThreshold);
+	float contactBias = lightDist * relThreshold;
 	float viewDepth = length(fragPosWS - vec3(InverseViewMatrix[3]));
 	float contact = EnableContactShadows
-		? SampleDeferredContactShadow(fragPosWS, N, normalize(LightData.Position - fragPosWS), ShadowBiasMax, contactBias, viewDepth)
+		? SampleDeferredContactShadow(fragPosWS, N, normalize(LightData.Position - fragPosWS), normalOffset, contactBias, viewDepth)
 		: 1.0f;
 
 	float lit = SampleShadowCubeFilteredLocal(
@@ -467,8 +462,9 @@ void main()
 		return;
 	}
 
-	//Resolve world fragment position using depth and screen UV
-	vec3 fragPosWS = XRENGINE_WorldPosFromDepth(depth, uv, InverseProjMatrix, InverseViewMatrix);
+	// InverseProjMatrix already encodes the active depth convention. Use raw
+	// depth so reversed-Z does not get flipped a second time.
+	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
 
 	OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms);
 

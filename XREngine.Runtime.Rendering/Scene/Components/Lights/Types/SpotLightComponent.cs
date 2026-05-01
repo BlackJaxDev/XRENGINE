@@ -45,6 +45,9 @@ namespace XREngine.Components.Capture.Lights.Types
             ShadowMaxBias = 0.07f;
             ShadowExponentBase = 0.2f;
             ShadowExponent = 1.0f;
+            ShadowDepthBiasTexels = 1.0f;
+            ShadowSlopeBiasTexels = 2.0f;
+            ShadowNormalBiasTexels = 1.0f;
             BlockerSamples = 8;
             FilterSamples = 8;
             FilterRadius = 0.0012f;
@@ -292,9 +295,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 World is null ||
                 renderRect.Width <= 0 ||
                 renderRect.Height <= 0)
-            {
                 return false;
-            }
 
             XRViewport viewport = PrimaryShadowViewport;
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)

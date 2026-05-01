@@ -737,7 +737,6 @@ namespace XREngine.Rendering
         public void GlobalPreRender()
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.GlobalPreRender");
-
             VisualScene.GlobalPreRender();
             Lights.RenderShadowMaps(false);
         }

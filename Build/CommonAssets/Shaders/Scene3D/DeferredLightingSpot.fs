@@ -40,6 +40,7 @@ uniform float ShadowBase = 0.2f;
 uniform float ShadowMult = 1.0f;
 uniform float ShadowBiasMin = 0.0001f;
 uniform float ShadowBiasMax = 0.07f;
+uniform vec4 ShadowBiasParams = vec4(1.0f, 2.0f, 1.0f, 0.0f); // depth texels, slope texels, normal texels, reserved
 uniform bool LightHasShadowMap = true; // Added
 uniform bool SpotShadowAtlasEnabled = false;
 uniform int SpotShadowAtlasRecordIndex = -1;
@@ -276,6 +277,18 @@ float LinearizeSpotShadowDepth01(float depth, float nearZ, float farZ)
 	return clamp((linearZ - n) / (f - n), 0.0f, 1.0f);
 }
 
+float GetSpotDistanceAlongAxis(in vec3 fragPosWS)
+{
+	return max(dot(fragPosWS - LightData.Position, normalize(LightData.Direction)), 0.0001f);
+}
+
+float GetSpotShadowWorldTexelSize(in vec3 fragPosWS, in float texelUvSize)
+{
+	float cosOuter = clamp(LightData.OuterCutoff, 0.001f, 0.999999f);
+	float tanOuter = sqrt(max(1.0f - cosOuter * cosOuter, 0.0f)) / cosOuter;
+	return 2.0f * GetSpotDistanceAlongAxis(fragPosWS) * tanOuter * max(texelUvSize, 1e-7f);
+}
+
 float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDirWS, in float receiverOffset, in float compareBias, in float viewDepth)
 {
 	int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
@@ -338,22 +351,32 @@ float _dbgShadowMargin = 1.0f;
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
 {
   if (NoL <= 0.0f) return 0.0f;
-	//Create bias depending on angle of normal to the light
-	float bias = GetShadowBias(NoL);
+	float nearZ = SpotShadowAtlasEnabled ? SpotShadowAtlasDepthParams.x : ShadowMomentDepthParams.x;
+	float farZ = SpotShadowAtlasEnabled ? SpotShadowAtlasDepthParams.y : ShadowMomentDepthParams.y;
+	float localTexelSize = SpotShadowAtlasEnabled && SpotShadowAtlasDepthParams.z > 0.0f
+		? SpotShadowAtlasDepthParams.z
+		: 1.0f / max(float(textureSize(ShadowMap, 0).x), 1.0f);
+	float worldTexelSize = GetSpotShadowWorldTexelSize(fragPosWS, localTexelSize);
+	float receiverOffset = worldTexelSize * max(ShadowBiasParams.z, 0.0f);
+	float constantBias = XRENGINE_PerspectiveDepthBiasForWorldOffset(
+		worldTexelSize * max(ShadowBiasParams.x, 0.0f),
+		GetSpotDistanceAlongAxis(fragPosWS),
+		nearZ,
+		farZ);
 	float viewDepth = abs((ViewMatrix * vec4(fragPosWS, 1.0f)).z);
-	float contact = EnableContactShadows
-		? SampleDeferredContactShadow(fragPosWS, N, normalize(LightData.Position - fragPosWS), ShadowBiasMax, bias, viewDepth)
-		: 1.0f;
 
 	if (!LightHasShadowMap)
 	{
-		float fallbackLit = SpotShadowAtlasFallbackMode == 2 ? contact : 1.0f;
+		float fallbackContact = EnableContactShadows
+			? SampleDeferredContactShadow(fragPosWS, N, normalize(LightData.Position - fragPosWS), receiverOffset, constantBias, viewDepth)
+			: 1.0f;
+		float fallbackLit = SpotShadowAtlasFallbackMode == 2 ? fallbackContact : 1.0f;
 		_dbgShadowLit = fallbackLit;
 		_dbgShadowMargin = 1.0f;
 		return fallbackLit;
 	}
 
-	vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
+	vec3 offsetPosWS = fragPosWS + N * receiverOffset;
 	vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
 	vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
 	fragCoord = fragCoord * 0.5f + 0.5f;
@@ -361,6 +384,16 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 		fragCoord.y < 0.0f || fragCoord.y > 1.0f ||
 		fragCoord.z < 0.0f || fragCoord.z > 1.0f)
  return 1.0f;
+
+	float bias = XRENGINE_ComputeShadowDepthBias(
+		fragCoord,
+		vec2(localTexelSize),
+		ShadowFilterRadius,
+		constantBias,
+		max(ShadowBiasParams.y, 0.0f));
+	float contact = EnableContactShadows
+		? SampleDeferredContactShadow(fragPosWS, N, normalize(LightData.Position - fragPosWS), receiverOffset, bias, viewDepth)
+		: 1.0f;
 
 	float lit = 1.0f;
 	if (SpotShadowAtlasEnabled)
@@ -375,11 +408,18 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 			atlasFarZ);
 		float atlasFilterRadius = ShadowFilterRadius * atlasRadiusScale;
 		float atlasBlockerRadius = ShadowBlockerSearchRadius * atlasRadiusScale;
+		vec2 atlasTexelSize = max(vec2(SpotShadowAtlasDepthParams.z) * SpotShadowAtlasUvScaleBias.xy, vec2(1e-7f));
+		float atlasBias = XRENGINE_ComputeShadowDepthBias(
+			vec3(atlasUv, fragCoord.z),
+			atlasTexelSize,
+			atlasFilterRadius,
+			constantBias,
+			max(ShadowBiasParams.y, 0.0f));
 		lit = XRENGINE_SampleLinearDepthShadowMapFilteredAsPerspective(
 			SpotShadowAtlas,
 			vec3(atlasUv, atlasDepth),
 			fragCoord.z,
-			bias,
+			atlasBias,
 			ShadowBlockerSamples,
 			ShadowFilterSamples,
 			atlasFilterRadius,
@@ -395,7 +435,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 		if (ShadowDebugMode != 0)
 		{
 			float centerDepth = XRENGINE_LinearDepth01ToPerspectiveDepth(texture(SpotShadowAtlas, atlasUv).r, atlasNearZ, atlasFarZ);
-			_dbgShadowMargin = centerDepth - (fragCoord.z - bias);
+			_dbgShadowMargin = centerDepth - (fragCoord.z - atlasBias);
 		}
 	}
 	else
@@ -564,8 +604,9 @@ void main()
 		return;
 	}
 
-	//Resolve world fragment position using depth and screen UV
-	vec3 fragPosWS = XRENGINE_WorldPosFromDepth(depth, uv, InverseProjMatrix, InverseViewMatrix);
+	// InverseProjMatrix already encodes the active depth convention. Use raw
+	// depth so reversed-Z does not get flipped a second time.
+	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
 
 	vec3 CameraPosition = vec3(InverseViewMatrix[3]);
 	OutColor = CalcTotalLight(CameraPosition, fragPosWS, normal, albedo, rms);

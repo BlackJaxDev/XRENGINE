@@ -49,15 +49,13 @@ layout(location = 7) in vec4 Color0;
 // ============================================
 // Vertex Outputs
 // ============================================
-layout(location = 0) out vec4 v_Uv01;
-layout(location = 1) out vec4 v_Uv23;
-layout(location = 2) out vec3 v_WorldPos;
-layout(location = 3) out vec3 v_WorldNormal;
-layout(location = 4) out vec3 v_WorldTangent;
-layout(location = 5) out float v_TangentSign;
-layout(location = 6) out vec4 v_VertexColor;
-layout(location = 7) out vec3 v_LocalPos;
-layout(location = 8) out vec3 v_ViewDir;
+layout(location = 0) out vec3 FragPos;
+layout(location = 1) out vec3 FragNorm;
+layout(location = 2) out vec3 FragTan;
+layout(location = 3) out vec3 FragBinorm;
+layout(location = 4) out vec2 FragUV0;
+layout(location = 12) out vec4 FragColor0;
+layout(location = 20) out vec3 FragPosLocal;
 layout(location = 22) out float FragViewIndex;
 
 // ============================================
@@ -101,8 +99,8 @@ void main() {
 
 	// Object -> world (shared by both eyes).
 	vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);
-	v_WorldPos = worldPosition.xyz;
-	v_LocalPos = pos;
+	FragPos = worldPosition.xyz;
+	FragPosLocal = pos;
 
 	// Emit both eye clip positions from a single vertex invocation. The NV
 	// stereo extension then routes each eye to its own viewport/layer.
@@ -115,17 +113,12 @@ void main() {
 	// vectors; normalize() below absorbs the determinant scalar. Avoids a full
 	// mat3/mat4 inverse — see uniforms.glsl for the math.
 	mat3 normalMatrix = u_NormalMatrix;
-	v_WorldNormal  = normalize(normalMatrix * norm);
-	v_WorldTangent = normalize(normalMatrix * tan);
-	v_TangentSign  = tanSign;
+	FragNorm = normalize(normalMatrix * norm);
+	FragTan = normalize(normalMatrix * tan);
+	FragBinorm = normalize(normalMatrix * (cross(norm, tan) * tanSign));
 
-	v_Uv01 = vec4(TexCoord0, TexCoord1);
-	v_Uv23 = vec4(TexCoord2, TexCoord3);
-	v_VertexColor = Color0;
-	// Only one set of varyings is interpolated across both eyes, so we just
-	// use the left eye's camera position for the view direction. Per-eye
-	// specular / matcap offsets are handled in the fragment stage if needed.
-	v_ViewDir = normalize(LeftEyeInverseViewMatrix_VTX[3].xyz - worldPosition.xyz);
+	FragUV0 = TexCoord0;
+	FragColor0 = Color0;
 	// FragViewIndex is not per-eye in this single-pass path (we only run
 	// main() once), so leave it at 0; the fragment stage can derive the eye
 	// from gl_Layer if it cares.

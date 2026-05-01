@@ -618,13 +618,40 @@ namespace XREngine
             bool? processMeshesAsynchronously = null,
             bool? batchSubmeshAddsDuringAsyncImport = null)
         {
-            using var importer = new ModelImporter(path, onCompleted, materialFactory);
-            var node = importer.Import(options, true, true, scaleConversion, zUp, true, processMeshesAsynchronously, batchSubmeshAddsDuringAsyncImport);
-            materials = importer._materials;
-            meshes = importer._meshes;
-            if (parent != null && node != null)
-                parent.Transform.AddChild(node.Transform, false, EParentAssignmentMode.Immediate);
-            return node;
+            ModelImporter? importer = null;
+            int completed = 0;
+
+            void CompleteImport()
+            {
+                if (Interlocked.Exchange(ref completed, 1) != 0)
+                    return;
+
+                try
+                {
+                    onCompleted?.Invoke();
+                }
+                finally
+                {
+                    importer?.Dispose();
+                }
+            }
+
+            importer = new ModelImporter(path, CompleteImport, materialFactory);
+            try
+            {
+                var node = importer.Import(options, true, true, scaleConversion, zUp, true, processMeshesAsynchronously, batchSubmeshAddsDuringAsyncImport);
+                materials = importer._materials;
+                meshes = importer._meshes;
+                if (parent != null && node != null)
+                    parent.Transform.AddChild(node.Transform, false, EParentAssignmentMode.Immediate);
+                return node;
+            }
+            catch
+            {
+                if (Interlocked.Exchange(ref completed, 1) == 0)
+                    importer.Dispose();
+                throw;
+            }
         }
 
         public static Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> ImportAsync(
@@ -678,26 +705,89 @@ namespace XREngine
             bool? batchSubmeshAddsDuringAsyncImport = null,
             int layer = DefaultLayers.DynamicIndex)
         {
-            using var importer = new ModelImporter(path, onCompleted: null, materialFactory);
-            if (makeMaterialAction is not null)
-                importer.MakeMaterialAction = makeMaterialAction;
-            importer.ImportOptions = importOptions;
-            importer._importLayer = layer;
+            ModelImporter? importer = null;
+            ModelImporterResult? result = null;
+            object completionLock = new();
+            bool meshProcessingCompleted = false;
+            bool resultReady = false;
+            bool finishedInvoked = false;
 
-            // Let mesh processing mode follow the engine setting unless an explicit override is passed at a higher level.
-            // This avoids long synchronous import bursts that starve the job system during startup/world load.
-            var node = importer.Import(options, true, true, scaleConversion, zUp, true, null, batchSubmeshAddsDuringAsyncImport, cancellationToken, onProgress, rootTransformMatrix);
+            void TryInvokeFinished()
+            {
+                ModelImporterResult? resultToInvoke = null;
+                ModelImporter? importerToDispose = null;
 
-            cancellationToken.ThrowIfCancellationRequested();
+                lock (completionLock)
+                {
+                    if (!meshProcessingCompleted || !resultReady || finishedInvoked)
+                        return;
 
-            // Add to parent using deferred mode - this queues the assignment to be processed
-            // during PostUpdate, avoiding any blocking on the render thread
-            if (parent != null && node != null)
-                parent.Transform.AddChild(node.Transform, false, EParentAssignmentMode.Deferred);
+                    finishedInvoked = true;
+                    resultToInvoke = result;
+                    importerToDispose = importer;
+                    importer = null;
+                }
 
-            var result = new ModelImporterResult(node, importer._materials, importer._meshes);
-            onFinished?.Invoke(result);
-            return result;
+                try
+                {
+                    if (resultToInvoke is ModelImporterResult completedResult)
+                        onFinished?.Invoke(completedResult);
+                }
+                finally
+                {
+                    importerToDispose?.Dispose();
+                }
+            }
+
+            void CompleteMeshProcessing()
+            {
+                lock (completionLock)
+                    meshProcessingCompleted = true;
+
+                TryInvokeFinished();
+            }
+
+            importer = new ModelImporter(path, CompleteMeshProcessing, materialFactory);
+            try
+            {
+                if (makeMaterialAction is not null)
+                    importer.MakeMaterialAction = makeMaterialAction;
+                importer.ImportOptions = importOptions;
+                importer._importLayer = layer;
+
+                // Let mesh processing mode follow the engine setting unless an explicit override is passed at a higher level.
+                // This avoids long synchronous import bursts that starve the job system during startup/world load.
+                var node = importer.Import(options, true, true, scaleConversion, zUp, true, null, batchSubmeshAddsDuringAsyncImport, cancellationToken, onProgress, rootTransformMatrix);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // Add to parent using deferred mode - this queues the assignment to be processed
+                // during PostUpdate, avoiding any blocking on the render thread
+                if (parent != null && node != null)
+                    parent.Transform.AddChild(node.Transform, false, EParentAssignmentMode.Deferred);
+
+                ModelImporterResult importResult = new(node, importer._materials, importer._meshes);
+                result = importResult;
+                lock (completionLock)
+                    resultReady = true;
+
+                TryInvokeFinished();
+                return importResult;
+            }
+            catch
+            {
+                lock (completionLock)
+                {
+                    if (!finishedInvoked)
+                    {
+                        finishedInvoked = true;
+                        importer?.Dispose();
+                        importer = null;
+                    }
+                }
+
+                throw;
+            }
         }
 
         private static readonly ConcurrentDictionary<(string path, string samplerName), XRTexture2D> _uberSamplerTextureCache = new();
@@ -1520,28 +1610,57 @@ namespace XREngine
             Action<float>? onProgress = null,
             Matrix4x4? rootTransformMatrix = null)
         {
-            using var importedTextureStreamingScope = XRTexture2D.EnterImportedTextureStreamingScope();
+            IDisposable? importedTextureStreamingScope = XRTexture2D.EnterImportedTextureStreamingScope();
 
-            ModelImportOptions effectiveImportOptions = ResolveEffectiveImportOptions(
-                options,
-                preservePivots,
-                removeAssimpFBXNodes,
-                scaleConversion,
-                zUp,
-                multiThread,
-                processMeshesAsynchronously,
-                batchSubmeshAddsDuringAsyncImport);
-
-            using var _ = ImportOptionsScope.Push(effectiveImportOptions);
-            using var __ = ImportSourceScope.Push(SourceFilePath);
-
-            if (ShouldUseNativeGltfBackend(effectiveImportOptions))
+            try
             {
-                bool allowAssimpFallback = effectiveImportOptions.GltfBackend == GltfImportBackend.Auto;
+                ModelImportOptions effectiveImportOptions = ResolveEffectiveImportOptions(
+                    options,
+                    preservePivots,
+                    removeAssimpFBXNodes,
+                    scaleConversion,
+                    zUp,
+                    multiThread,
+                    processMeshesAsynchronously,
+                    batchSubmeshAddsDuringAsyncImport);
 
-                try
+                using var _ = ImportOptionsScope.Push(effectiveImportOptions);
+                using var __ = ImportSourceScope.Push(SourceFilePath);
+
+                if (ShouldUseNativeGltfBackend(effectiveImportOptions))
                 {
-                    NativeGltfSceneImporter.ImportResult result = NativeGltfSceneImporter.Import(
+                    bool allowAssimpFallback = effectiveImportOptions.GltfBackend == GltfImportBackend.Auto;
+
+                    try
+                    {
+                        NativeGltfSceneImporter.ImportResult result = NativeGltfSceneImporter.Import(
+                            this,
+                            SourceFilePath,
+                            effectiveImportOptions,
+                            effectiveImportOptions.ScaleConversion,
+                            effectiveImportOptions.ZUp,
+                            _importLayer,
+                            cancellationToken,
+                            onProgress,
+                            rootTransformMatrix);
+
+                        foreach (XRMaterial material in result.Materials)
+                            _materials.Add(material);
+                        foreach (XRMesh mesh in result.Meshes)
+                            _meshes.Add(mesh);
+
+                        _onCompleted?.Invoke();
+                        return result.RootNode;
+                    }
+                    catch (Exception ex) when (allowAssimpFallback)
+                    {
+                        LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Native glTF import failed for '{SourceFilePath}'. Falling back to Assimp. {ex.Message}");
+                    }
+                }
+
+                if (ShouldUseNativeFbxBackend(effectiveImportOptions))
+                {
+                    NativeFbxSceneImporter.ImportResult result = NativeFbxSceneImporter.Import(
                         this,
                         SourceFilePath,
                         effectiveImportOptions,
@@ -1557,78 +1676,59 @@ namespace XREngine
                     foreach (XRMesh mesh in result.Meshes)
                         _meshes.Add(mesh);
 
+                    _onCompleted?.Invoke();
                     return result.RootNode;
                 }
-                catch (Exception ex) when (allowAssimpFallback)
+
+                SetAssimpConfig(effectiveImportOptions);
+
+                AScene scene;
+                using (Engine.Profiler.Start($"Assimp ImportFile: {SourceFilePath} with options: {effectiveImportOptions.PostProcessSteps}"))
                 {
-                    LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Native glTF import failed for '{SourceFilePath}'. Falling back to Assimp. {ex.Message}");
+                    scene = _assimp.ImportFile(SourceFilePath, effectiveImportOptions.PostProcessSteps);
                 }
-            }
 
-            if (ShouldUseNativeFbxBackend(effectiveImportOptions))
+                if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
+                {
+                    LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Assimp returned null/incomplete scene for '{SourceFilePath}'. scene={scene != null}, flags={scene?.SceneFlags}, rootNode={scene?.RootNode != null}");
+                    _onCompleted?.Invoke();
+                    return null;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                _meshProcessRoutines.Clear();
+                _meshFinalizeActions.Clear();
+                bool processMeshesAsync = effectiveImportOptions.ProcessMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
+                bool batchSubmeshAdds = effectiveImportOptions.BatchSubmeshAddsDuringAsyncImport;
+                bool importedRenderersGenerateAsync = effectiveImportOptions.GenerateMeshRenderersAsync;
+                bool splitSubmeshesIntoSeparateModelComponents = effectiveImportOptions.SplitSubmeshesIntoSeparateModelComponents;
+
+                SceneNode rootNode;
+                using (Engine.Profiler.Start($"Assemble model hierarchy"))
+                {
+                    rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath)) { Layer = _importLayer };
+                    _nodeTransforms.Clear();
+                    ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, effectiveImportOptions.CollapseGeneratedFbxHelperNodes, null, cancellationToken);
+                    NormalizeNodeScales(
+                        scene,
+                        rootNode,
+                        cancellationToken,
+                        processMeshesAsync,
+                        batchSubmeshAdds,
+                        importedRenderersGenerateAsync,
+                        splitSubmeshesIntoSeparateModelComponents);
+                }
+
+                void meshProcessAction() => ProcessMeshesOnJobThread(onProgress, cancellationToken);
+                RunMeshProcessing(meshProcessAction, processMeshesAsync, cancellationToken, importedTextureStreamingScope);
+                importedTextureStreamingScope = null;
+                return rootNode;
+            }
+            finally
             {
-                NativeFbxSceneImporter.ImportResult result = NativeFbxSceneImporter.Import(
-                    this,
-                    SourceFilePath,
-                    effectiveImportOptions,
-                    effectiveImportOptions.ScaleConversion,
-                    effectiveImportOptions.ZUp,
-                    _importLayer,
-                    cancellationToken,
-                    onProgress,
-                    rootTransformMatrix);
-
-                foreach (XRMaterial material in result.Materials)
-                    _materials.Add(material);
-                foreach (XRMesh mesh in result.Meshes)
-                    _meshes.Add(mesh);
-
-                return result.RootNode;
+                importedTextureStreamingScope?.Dispose();
             }
-
-            SetAssimpConfig(effectiveImportOptions);
-
-            AScene scene;
-            using (Engine.Profiler.Start($"Assimp ImportFile: {SourceFilePath} with options: {effectiveImportOptions.PostProcessSteps}"))
-            {
-                scene = _assimp.ImportFile(SourceFilePath, effectiveImportOptions.PostProcessSteps);
-            }
-
-            if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
-            {
-                LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Assimp returned null/incomplete scene for '{SourceFilePath}'. scene={scene != null}, flags={scene?.SceneFlags}, rootNode={scene?.RootNode != null}");
-                return null;
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            _meshProcessRoutines.Clear();
-            _meshFinalizeActions.Clear();
-            bool processMeshesAsync = effectiveImportOptions.ProcessMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
-            bool batchSubmeshAdds = effectiveImportOptions.BatchSubmeshAddsDuringAsyncImport;
-            bool importedRenderersGenerateAsync = effectiveImportOptions.GenerateMeshRenderersAsync;
-            bool splitSubmeshesIntoSeparateModelComponents = effectiveImportOptions.SplitSubmeshesIntoSeparateModelComponents;
-
-            SceneNode rootNode;
-            using (Engine.Profiler.Start($"Assemble model hierarchy"))
-            {
-                rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath)) { Layer = _importLayer };
-                _nodeTransforms.Clear();
-                ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, effectiveImportOptions.CollapseGeneratedFbxHelperNodes, null, cancellationToken);
-                NormalizeNodeScales(
-                    scene,
-                    rootNode,
-                    cancellationToken,
-                    processMeshesAsync,
-                    batchSubmeshAdds,
-                    importedRenderersGenerateAsync,
-                    splitSubmeshesIntoSeparateModelComponents);
-            }
-
-            void meshProcessAction() => ProcessMeshesOnJobThread(onProgress, cancellationToken);
-            RunMeshProcessing(meshProcessAction, processMeshesAsync, cancellationToken);
-
-            return rootNode;
         }
 
         private ModelImportOptions ResolveEffectiveImportOptions(
@@ -1721,19 +1821,37 @@ namespace XREngine
             }
         }
 
-        private void RunMeshProcessing(Action meshProcessAction, bool processAsynchronously, CancellationToken cancellationToken)
+        private void RunMeshProcessing(
+            Action meshProcessAction,
+            bool processAsynchronously,
+            CancellationToken cancellationToken,
+            IDisposable? completionScope)
         {
             if (!processAsynchronously)
             {
-                meshProcessAction();
-                _onCompleted?.Invoke();
+                try
+                {
+                    meshProcessAction();
+                    _onCompleted?.Invoke();
+                }
+                finally
+                {
+                    completionScope?.Dispose();
+                }
                 return;
             }
 
             int total = _meshProcessRoutines.Count;
             if (total <= 0)
             {
-                _onCompleted?.Invoke();
+                try
+                {
+                    _onCompleted?.Invoke();
+                }
+                finally
+                {
+                    completionScope?.Dispose();
+                }
                 return;
             }
 
@@ -1755,7 +1873,7 @@ namespace XREngine
                 if (Interlocked.Exchange(ref finalized, 1) != 0)
                     return;
 
-                Engine.EnqueueSwapTask(() =>
+                Engine.EnqueueAppThreadTask(() =>
                 {
                     try
                     {
@@ -1771,7 +1889,11 @@ namespace XREngine
                     {
                         LogImportException(ex, $"Mesh finalize failed for '{SourceFilePath}'.");
                     }
-                });
+                    finally
+                    {
+                        completionScope?.Dispose();
+                    }
+                }, "ModelImporter.FinalizeAsyncMeshProcessing");
             }
 
             void TryFinalize()
@@ -2091,9 +2213,10 @@ namespace XREngine
                     ? targetModelsByMeshIndex[meshIndex]
                     : sharedModel!;
 
-            // Async processing publishes mesh additions on the swap thread so scene/render state is not
-            // mutated from worker threads. The publish policy decides whether those additions are flushed
-            // once at the end or streamed as contiguous source-order submeshes become ready.
+            // Async processing publishes mesh additions on the app thread so scene/render state is not
+            // mutated from worker threads or delayed behind render-thread GL work. The publish policy
+            // decides whether those additions are flushed once at the end or streamed as contiguous
+            // source-order submeshes become ready.
             ConcurrentDictionary<int, (Model model, SubMesh subMesh)>? pending = publishSubMeshesOnSwapThread
                 ? new ConcurrentDictionary<int, (Model model, SubMesh subMesh)>()
                 : null;
@@ -2106,11 +2229,32 @@ namespace XREngine
                 if (pending is null || ordered is null)
                     return;
 
+                Model? currentModel = null;
+                List<SubMesh>? currentBatch = null;
+
+                void FlushCurrentBatch()
+                {
+                    if (currentModel is null || currentBatch is null || currentBatch.Count == 0)
+                        return;
+
+                    currentModel.Meshes.AddRange(currentBatch);
+                    currentBatch.Clear();
+                }
+
                 while (nextPublishOffset < ordered.Length && pending.TryRemove(ordered[nextPublishOffset], out var pendingSubMesh))
                 {
-                    pendingSubMesh.model.Meshes.Add(pendingSubMesh.subMesh);
+                    if (!ReferenceEquals(currentModel, pendingSubMesh.model))
+                    {
+                        FlushCurrentBatch();
+                        currentModel = pendingSubMesh.model;
+                        currentBatch ??= [];
+                    }
+
+                    currentBatch!.Add(pendingSubMesh.subMesh);
                     nextPublishOffset++;
                 }
+
+                FlushCurrentBatch();
             }
 
             if (pending != null)
@@ -2156,7 +2300,7 @@ namespace XREngine
                 {
                     pending[meshIndex] = (targetModel, subMesh);
                     if (!batchSubmeshAddsDuringAsyncImport)
-                        Engine.EnqueueSwapTask(FlushReadySubMeshes);
+                        Engine.EnqueueAppThreadTask(FlushReadySubMeshes, "ModelImporter.FlushReadySubMeshes");
                 }
                 else
                 {

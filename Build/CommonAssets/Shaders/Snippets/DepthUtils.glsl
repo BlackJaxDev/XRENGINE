@@ -31,6 +31,13 @@ vec3 XRENGINE_WorldPosFromDepthRaw(float depth, vec2 uv, mat4 invProj, mat4 invV
     return (invView * viewSpacePosition).xyz;
 }
 
+vec3 XRENGINE_ViewPosFromDepthRaw(float depth, vec2 uv, mat4 invProj)
+{
+    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
+    vec4 viewSpacePosition = invProj * clipSpacePosition;
+    return viewSpacePosition.xyz / viewSpacePosition.w;
+}
+
 vec3 XRENGINE_ViewPosFromDepth(float depth, vec2 uv, mat4 invProj)
 {
     float z = XRENGINE_ResolveDepth(depth) * 2.0 - 1.0;

@@ -30,6 +30,7 @@ namespace XREngine.Rendering
         private const uint IndirectLegacyBaseInstanceFlag = 0x80000000u;
         private const uint IndirectPreviousLodBaseInstanceFlag = 0x40000000u;
         private const uint IndirectBaseInstanceCommandIndexMask = 0x3FFFFFFFu;
+        private const int FragLodTransitionRoleLocation = 23;
         private const string FragLodTransitionRoleName = "XreFragLodTransitionRole";
         private const string GlyphTransformsBufferName = "GlyphTransformsBuffer";
         private const string GlyphTexCoordsBufferName = "GlyphTexCoordsBuffer";
@@ -1776,8 +1777,9 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
             if (emitTransformId)
                 sb.AppendLine($"layout(location=21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine($"layout(location=22) out float {DefaultVertexShaderGenerator.FragViewIndexName};");
             if (emitLodTransitionRole)
-                sb.AppendLine($"layout(location=22) flat out uint {FragLodTransitionRoleName};");
+                sb.AppendLine($"layout(location={FragLodTransitionRoleLocation}) flat out uint {FragLodTransitionRoleName};");
             sb.AppendLine();
 
             sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -1837,6 +1839,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    uint commandIndex = ResolveCommandIndex(rawBaseInstance, instanceLinearIndex);");
             if (emitTransformId)
                 sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = 0.0;");
             if (emitLodTransitionRole)
                 sb.AppendLine($"    {FragLodTransitionRoleName} = (rawBaseInstance & XRE_PREVIOUS_LOD_BASEINSTANCE_FLAG) != 0u ? 1u : 0u;");
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
@@ -1844,10 +1847,7 @@ namespace XREngine.Rendering
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
             sb.AppendLine("    vec4 worldPos = ModelMatrix * localPos;");
             sb.AppendLine($"    vec4 clipPos = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix} * viewMatrix * worldPos;");
-            sb.AppendLine($"    if ({EEngineUniform.VRMode})");
-            sb.AppendLine("        FragPos = worldPos.xyz;");
-            sb.AppendLine("    else");
-            sb.AppendLine("        FragPos = clipPos.xyz / max(clipPos.w, 1e-6);");
+            sb.AppendLine("    FragPos = worldPos.xyz;");
             sb.AppendLine();
 
             if (hasNormals || hasTangents)
@@ -1911,6 +1911,7 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(location = 20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
             if (emitTransformId)
                 sb.AppendLine($"layout(location = 21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine($"layout(location = 22) out float {DefaultVertexShaderGenerator.FragViewIndexName};");
             sb.AppendLine();
 
             sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -1953,6 +1954,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(commandIndex);");
             if (emitTransformId)
                 sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = 0.0;");
             sb.AppendLine("    int cmdBase = int(commandIndex) * COMMAND_FLOATS;");
             sb.AppendLine($"    uint glyphBase = floatBitsToUint(culled[cmdBase + {IndirectTextGlyphOffsetFloatIndex}]);");
             sb.AppendLine("    uint glyphIndex = glyphBase + uint(gl_InstanceID);");
@@ -1972,10 +1974,7 @@ namespace XREngine.Rendering
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
             sb.AppendLine("    vec4 worldPos = ModelMatrix * localPos;");
             sb.AppendLine($"    vec4 clipPos = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix} * viewMatrix * worldPos;");
-            sb.AppendLine($"    if ({EEngineUniform.VRMode})");
-            sb.AppendLine("        FragPos = worldPos.xyz;");
-            sb.AppendLine("    else");
-            sb.AppendLine("        FragPos = clipPos.xyz / max(clipPos.w, 1e-6);");
+            sb.AppendLine("    FragPos = worldPos.xyz;");
             sb.AppendLine("    mat3 normalMatrix = transpose(inverse(mat3(ModelMatrix)));");
             sb.AppendLine("    FragNorm = normalize(normalMatrix * Normal);");
             sb.AppendLine("    GlyphUVBounds = uv;");
@@ -2074,15 +2073,15 @@ namespace XREngine.Rendering
                 source.Contains("location = 21", StringComparison.Ordinal) ||
                 source.Contains("location=21", StringComparison.Ordinal);
             bool hasRole = source.Contains(FragLodTransitionRoleName, StringComparison.Ordinal) ||
-                source.Contains("location = 22", StringComparison.Ordinal) ||
-                source.Contains("location=22", StringComparison.Ordinal);
+                source.Contains($"location = {FragLodTransitionRoleLocation}", StringComparison.Ordinal) ||
+                source.Contains($"location={FragLodTransitionRoleLocation}", StringComparison.Ordinal);
 
             var helper = new StringBuilder();
             helper.AppendLine();
             if (!hasTransformId)
                 helper.AppendLine($"layout(location = 21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
             if (!hasRole)
-                helper.AppendLine($"layout(location = 22) flat in uint {FragLodTransitionRoleName};");
+                helper.AppendLine($"layout(location = {FragLodTransitionRoleLocation}) flat in uint {FragLodTransitionRoleName};");
             helper.AppendLine($"layout(std430, binding = {LodTransitionSsboBinding}) readonly buffer XreLodTransitionBuffer {{ uint xreLodTransitions[]; }};");
             helper.AppendLine("const uint XRE_LOD_TRANSITION_ACTIVE = 1u;");
             helper.AppendLine("const uint XRE_LOD_TRANSITION_UINTS = 4u;");
@@ -2465,6 +2464,7 @@ namespace XREngine.Rendering
                 sb.AppendLine($"layout(location={12 + i}) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, i)};");
 
             sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
+            sb.AppendLine($"layout(location=22) out float {DefaultVertexShaderGenerator.FragViewIndexName};");
 
             sb.AppendLine("uniform mat4 ModelMatrix;");
             // ViewMatrix is the actual view transform (camera.Transform.InverseRenderMatrix)
@@ -2483,10 +2483,8 @@ namespace XREngine.Rendering
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
             sb.AppendLine("    vec4 worldPos = ModelMatrix * localPos;");
             sb.AppendLine($"    vec4 clipPos = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix} * viewMatrix * worldPos;");
-            sb.AppendLine($"    if ({EEngineUniform.VRMode})");
-            sb.AppendLine("        FragPos = worldPos.xyz;");
-            sb.AppendLine("    else");
-            sb.AppendLine("        FragPos = clipPos.xyz / max(clipPos.w, 1e-6);");
+            sb.AppendLine("    FragPos = worldPos.xyz;");
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = 0.0;");
 
             if (hasNormals || hasTangents)
                 sb.AppendLine("    mat3 normalMatrix = transpose(inverse(mat3(ModelMatrix)));");

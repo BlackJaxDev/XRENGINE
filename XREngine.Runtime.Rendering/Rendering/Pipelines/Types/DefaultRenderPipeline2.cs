@@ -807,6 +807,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string DepthPreloadFBOName = "DepthPreloadFBO";
     public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
     public const string ForwardDepthPrePassMergeFBOName = "ForwardDepthPrePassMergeFBO";
+    public const string ForwardContactPrePassCopyFBOName = "ForwardContactPrePassCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
@@ -823,13 +824,16 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string HBAOPlusBlurIntermediateTextureName = "HBAOPlusBlurIntermediateTexture";
     public const string NormalTextureName = "Normal";
     public const string ForwardPrePassNormalTextureName = "ForwardPrePassNormal";
+    public const string ForwardContactNormalTextureName = "ForwardContactNormal";
     public const string DepthViewTextureName = "DepthView";
+    public const string ForwardContactDepthViewTextureName = "ForwardContactDepthView";
     public const string StencilViewTextureName = "StencilView";
     public const string AlbedoOpacityTextureName = "AlbedoOpacity";
     public const string RMSETextureName = "RMSE";
     public const string TransformIdTextureName = "TransformId";
     public const string DepthStencilTextureName = "DepthStencil";
     public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
+    public const string ForwardContactDepthStencilTextureName = "ForwardContactDepthStencil";
     public const string ForwardPassMsaaDepthStencilTextureName = "ForwardPassMsaaDepthStencil";
     public const string ForwardPassMsaaDepthViewTextureName = "ForwardPassMsaaDepthView";
     public const string DiffuseTextureName = "LightingTexture";

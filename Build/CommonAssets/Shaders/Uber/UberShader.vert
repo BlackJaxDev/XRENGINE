@@ -44,20 +44,16 @@ layout(location = 7) in vec4 Color0;
 // ============================================
 // Vertex Outputs
 // ============================================
-// UVs are packed two-per-vec4 to conserve interpolator slots. World-space
-// position/normal/tangent are the standard inputs the fragment stage expects.
-// Locations here are a shared contract with UberShader.frag — do not renumber
-// without updating the fragment side too.
-layout(location = 0)  out vec4 v_Uv01;          // xy: uv0, zw: uv1
-layout(location = 1)  out vec4 v_Uv23;          // xy: uv2, zw: uv3
-layout(location = 2)  out vec3 v_WorldPos;      // world-space position
-layout(location = 3)  out vec3 v_WorldNormal;   // world-space normal
-layout(location = 4)  out vec3 v_WorldTangent;  // world-space tangent
-layout(location = 5)  out float v_TangentSign;  // bitangent sign carried from Tangent.w
-layout(location = 6)  out vec4 v_VertexColor;
-layout(location = 7)  out vec3 v_LocalPos;      // object/local-space position
-layout(location = 8)  out vec3 v_ViewDir;       // world-space fragment -> camera
-layout(location = 22) out float FragViewIndex;  // which eye (0/1) for stereo
+// Locations here are a shared contract with UberShader.frag and the engine's
+// generated vertex shader.
+layout(location = 0)  out vec3 FragPos;        // world-space position
+layout(location = 1)  out vec3 FragNorm;       // world-space geometric normal
+layout(location = 2)  out vec3 FragTan;        // world-space tangent
+layout(location = 3)  out vec3 FragBinorm;     // world-space bitangent
+layout(location = 4)  out vec2 FragUV0;        // primary texture coordinates
+layout(location = 12) out vec4 FragColor0;     // per-vertex RGBA color
+layout(location = 20) out vec3 FragPosLocal;   // object/local-space position
+layout(location = 22) out float FragViewIndex; // which eye (0/1) for stereo
 
 // ============================================
 // Uniforms
@@ -99,8 +95,8 @@ void main() {
 
     // ---- Position: object -> world, object -> clip -------------------------
     vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);
-    v_WorldPos = worldPosition.xyz;
-    v_LocalPos = pos;
+    FragPos = worldPosition.xyz;
+    FragPosLocal = pos;
 
     // Clip-space position via the engine-provided combined MVP. Using the
     // combined matrix (instead of P*V*M here) lets the engine fold in any
@@ -113,19 +109,13 @@ void main() {
     // scalar so this is exact vs. inverse-transpose for rendering purposes.
     // ~9 muls + 6 subs instead of a full mat3 or mat4 inverse.
     mat3 normalMatrix = u_NormalMatrix;
-    v_WorldNormal  = normalize(normalMatrix * norm);
-    v_WorldTangent = normalize(normalMatrix * tan);
-    v_TangentSign  = tanSign;
+    FragNorm = normalize(normalMatrix * norm);
+    FragTan = normalize(normalMatrix * tan);
+    FragBinorm = normalize(normalMatrix * (cross(norm, tan) * tanSign));
 
     // ---- Pass-throughs -----------------------------------------------------
-    // Pack two UV channels per vec4 to save interpolator slots.
-    v_Uv01 = vec4(TexCoord0, TexCoord1);
-    v_Uv23 = vec4(TexCoord2, TexCoord3);
-    v_VertexColor = Color0;
-
-    // View direction in world space (points from the fragment toward the
-    // camera). Used by matcap, rim light, parallax, specular, etc.
-    v_ViewDir = normalize(u_CameraPosition - worldPosition.xyz);
+    FragUV0 = TexCoord0;
+    FragColor0 = Color0;
 
     // Single-view build — always eye 0.
     FragViewIndex = 0.0;

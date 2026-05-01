@@ -29,8 +29,12 @@ public static partial class EditorImGuiUI
     private static readonly List<SceneNode> _unassignedRootsScratch = [];
     private static readonly HashSet<SceneNode> _selectedHierarchyNodesScratch = new(ReferenceEqualityComparer.Instance);
     private static readonly HashSet<SceneNode> _expandedLargeHierarchyRootsScratch = new(ReferenceEqualityComparer.Instance);
+    private static readonly Dictionary<SceneNode, bool> _hierarchyExpandedState = new(ReferenceEqualityComparer.Instance);
+    private static readonly List<SceneNode> _hierarchyVisibleNodes = [];
     private static SceneNode? _lastSelectedHierarchyNode;
     private static SceneNode? _hierarchyAssetDropTargetNode;
+    private static SceneNode? _pendingHierarchyScrollNode;
+    internal static bool IsHierarchyWindowKeyboardFocused { get; private set; }
 
     // Cache node labels (name + child count string) to avoid per-node per-frame string allocation.
     private static readonly Dictionary<SceneNode, (string? name, int childCount, string label)> _nodeLabelCache = new(ReferenceEqualityComparer.Instance);
@@ -57,9 +61,14 @@ public static partial class EditorImGuiUI
 
     private static void DrawHierarchyPanel()
     {
-        if (!_showHierarchy) return;
+        if (!_showHierarchy)
+        {
+            IsHierarchyWindowKeyboardFocused = false;
+            return;
+        }
         if (!ImGui.Begin("Hierarchy", ref _showHierarchy))
         {
+            IsHierarchyWindowKeyboardFocused = false;
             ImGui.End();
             return;
         }
@@ -138,6 +147,25 @@ public static partial class EditorImGuiUI
 
         RefreshHierarchySelectionCache();
         DrawWorldHeader(world);
+
+        if (ImGui.SmallButton("Expand All##HierarchyExpandAll"))
+            SetHierarchyExpansion(world, true);
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Collapse All##HierarchyCollapseAll"))
+            SetHierarchyExpansion(world, false);
+
+        ImGui.SameLine();
+        if (Selection.SceneNodes.Length > 0)
+        {
+            if (ImGui.SmallButton("Focus Selected##HierarchyFocusSelected"))
+                _pendingHierarchyScrollNode = Selection.LastSceneNode;
+        }
+
+        ImGui.Separator();
+
+        IsHierarchyWindowKeyboardFocused = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
+        HandleHierarchyKeyboardNavigation(world);
 
         // Editor-only content lives in a hidden scene (gizmos, tools, UI, etc.)
         // Keep it hidden by default, but allow toggling for debugging.
@@ -234,14 +262,21 @@ public static partial class EditorImGuiUI
         bool autoCollapseLargeRoot = depth == 0
             && childCount >= LargeHierarchyRootAutoCollapseChildCount
             && !_expandedLargeHierarchyRootsScratch.Contains(node);
+        bool isNodeExpanded = IsHierarchyNodeExpanded(node, childCount, depth, autoCollapseLargeRoot);
         if (autoCollapseLargeRoot)
             ImGui.SetNextItemOpen(false, ImGuiCond.Always);
+
+        if (childCount > 0)
+            ImGui.SetNextItemOpen(isNodeExpanded, ImGuiCond.Always);
 
         ImGuiTreeNodeFlags flags = childCount > 0
             ? ImGuiTreeNodeFlags.None
             : ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen;
 
         bool nodeOpen = DrawSceneNodeEntry(node, world, nodeLabel, flags, owningScene);
+        if (childCount > 0)
+            SetHierarchyNodeExpanded(node, childCount, nodeOpen);
+
         if (autoCollapseLargeRoot && nodeOpen)
             _expandedLargeHierarchyRootsScratch.Add(node);
 
@@ -279,6 +314,12 @@ public static partial class EditorImGuiUI
             fullFlags |= ImGuiTreeNodeFlags.Selected;
         bool nodeOpen = ImGui.TreeNodeEx("##TreeNode", fullFlags);
         bool treeItemHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem);
+        if (ReferenceEquals(_pendingHierarchyScrollNode, node))
+        {
+            ImGui.SetScrollHereY(0.5f);
+            _pendingHierarchyScrollNode = null;
+        }
+
         if (treeItemHovered)
         {
             var payload = ImGui.GetDragDropPayload();
@@ -394,6 +435,283 @@ public static partial class EditorImGuiUI
         ImGui.PopID();
 
         return nodeOpen;
+    }
+
+    private static void HandleHierarchyKeyboardNavigation(XRWorldInstance world)
+    {
+        if (_nodePendingRename is not null)
+            return;
+
+        if (!IsHierarchyWindowKeyboardFocused)
+            return;
+
+        if (ImGui.IsAnyItemActive())
+            return;
+
+        BuildHierarchyVisibleNodeList(world, _hierarchyVisibleNodes);
+        if (_hierarchyVisibleNodes.Count == 0)
+            return;
+
+        SceneNode? selectedNode = _lastSelectedHierarchyNode;
+        if (selectedNode is null && Selection.SceneNodes.Length > 0)
+            selectedNode = Selection.SceneNodes[0];
+
+        if (selectedNode is null)
+            return;
+
+        int selectedIndex = -1;
+        for (int i = 0; i < _hierarchyVisibleNodes.Count; i++)
+        {
+            if (ReferenceEquals(_hierarchyVisibleNodes[i], selectedNode))
+            {
+                selectedIndex = i;
+                break;
+            }
+        }
+
+        if (selectedIndex < 0)
+        {
+            if (!TrySetHierarchySelection(_hierarchyVisibleNodes[0]))
+                return;
+
+            selectedNode = _hierarchyVisibleNodes[0];
+            selectedIndex = 0;
+        }
+
+        if (selectedNode is null)
+            return;
+
+        if (ImGui.IsKeyPressed(ImGuiKey.Home))
+        {
+            TrySetHierarchySelection(_hierarchyVisibleNodes[0]);
+            return;
+        }
+
+        if (ImGui.IsKeyPressed(ImGuiKey.End))
+        {
+            TrySetHierarchySelection(_hierarchyVisibleNodes[^1]);
+            return;
+        }
+
+        if (ImGui.IsKeyPressed(ImGuiKey.UpArrow))
+        {
+            if (selectedIndex > 0)
+                TrySetHierarchySelection(_hierarchyVisibleNodes[selectedIndex - 1]);
+
+            return;
+        }
+
+        if (ImGui.IsKeyPressed(ImGuiKey.DownArrow))
+        {
+            if (selectedIndex < _hierarchyVisibleNodes.Count - 1)
+                TrySetHierarchySelection(_hierarchyVisibleNodes[selectedIndex + 1]);
+
+            return;
+        }
+
+        if (ImGui.IsKeyPressed(ImGuiKey.LeftArrow))
+        {
+            HandleHierarchyArrowBranchNavigation(selectedNode, isLeft: true);
+            return;
+        }
+
+        if (ImGui.IsKeyPressed(ImGuiKey.RightArrow))
+        {
+            HandleHierarchyArrowBranchNavigation(selectedNode, isLeft: false);
+        }
+    }
+
+    private static bool TrySetHierarchySelection(SceneNode? node)
+    {
+        if (node is null)
+            return false;
+
+        Selection.SceneNodes = [node];
+        _pendingHierarchyScrollNode = node;
+        return true;
+    }
+
+    private static void HandleHierarchyArrowBranchNavigation(SceneNode node, bool isLeft)
+    {
+        int childCount = node.Transform.Children.Count;
+        bool isRoot = node.Transform.Parent is null;
+        bool autoCollapseLargeRoot = isRoot
+            && childCount >= LargeHierarchyRootAutoCollapseChildCount
+            && !_expandedLargeHierarchyRootsScratch.Contains(node);
+        bool isExpanded = IsHierarchyNodeExpanded(node, childCount, isRoot ? 0 : 1, autoCollapseLargeRoot);
+
+        if (isLeft)
+        {
+            if (childCount > 0 && isExpanded)
+            {
+                SetHierarchyNodeExpanded(node, childCount, false);
+                return;
+            }
+
+            if (node.Transform.Parent?.SceneNode is SceneNode parent)
+            {
+                TrySetHierarchySelection(parent);
+            }
+
+            return;
+        }
+
+        if (childCount == 0)
+            return;
+
+        if (!isExpanded)
+        {
+            SetHierarchyNodeExpanded(node, childCount, true);
+            return;
+        }
+
+        var children = node.Transform.Children;
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i]?.SceneNode is SceneNode child)
+            {
+                TrySetHierarchySelection(child);
+                break;
+            }
+        }
+    }
+
+    private static void BuildHierarchyVisibleNodeList(XRWorldInstance world, List<SceneNode> output)
+    {
+        output.Clear();
+
+        var targetWorld = world.TargetWorld;
+        if (targetWorld?.Scenes.Count > 0)
+        {
+            for (int sceneIndex = 0; sceneIndex < targetWorld.Scenes.Count; sceneIndex++)
+            {
+                XRScene? scene = targetWorld.Scenes[sceneIndex];
+                if (scene is null || scene.IsEditorOnly)
+                    continue;
+
+                var roots = scene.RootNodes;
+                for (int rootIndex = 0; rootIndex < roots.Count; rootIndex++)
+                    AddVisibleHierarchyNodes(roots[rootIndex], 0, output);
+            }
+
+            var unassignedRoots = CollectUnassignedRoots(world, targetWorld.Scenes);
+            for (int rootIndex = 0; rootIndex < unassignedRoots.Count; rootIndex++)
+                AddVisibleHierarchyNodes(unassignedRoots[rootIndex], 0, output);
+        }
+        else
+        {
+            var runtimeRoots = world.RootNodes;
+            for (int rootIndex = 0; rootIndex < runtimeRoots.Count; rootIndex++)
+                AddVisibleHierarchyNodes(runtimeRoots[rootIndex], 0, output);
+        }
+
+        if (_showEditorSceneHierarchy && world.EditorScene is not null)
+        {
+            var editorRoots = world.EditorScene.RootNodes;
+            for (int rootIndex = 0; rootIndex < editorRoots.Count; rootIndex++)
+                AddVisibleHierarchyNodes(editorRoots[rootIndex], 0, output);
+        }
+    }
+
+    private static void AddVisibleHierarchyNodes(SceneNode? node, int depth, List<SceneNode> output)
+    {
+        if (node is null)
+            return;
+
+        output.Add(node);
+
+        var children = node.Transform.Children;
+        int childCount = children.Count;
+        if (childCount == 0)
+            return;
+
+        bool autoCollapseLargeRoot = depth == 0
+            && childCount >= LargeHierarchyRootAutoCollapseChildCount
+            && !_expandedLargeHierarchyRootsScratch.Contains(node);
+        if (!IsHierarchyNodeExpanded(node, childCount, depth, autoCollapseLargeRoot))
+            return;
+
+        for (int i = 0; i < childCount; i++)
+            AddVisibleHierarchyNodes(children[i]?.SceneNode, depth + 1, output);
+    }
+
+    private static bool IsHierarchyNodeExpanded(SceneNode node, int childCount, int depth, bool autoCollapseLargeRoot)
+    {
+        if (childCount == 0)
+            return false;
+
+        if (_hierarchyExpandedState.TryGetValue(node, out bool expanded))
+            return expanded;
+
+        return !(depth == 0 && autoCollapseLargeRoot);
+    }
+
+    private static void SetHierarchyNodeExpanded(SceneNode node, int childCount, bool expanded)
+    {
+        if (childCount == 0)
+            return;
+
+        _hierarchyExpandedState[node] = expanded;
+
+        if (_hierarchyExpandedState.Count > 2048)
+            _hierarchyExpandedState.Clear();
+    }
+
+    private static void SetHierarchyExpansion(XRWorldInstance world, bool expanded)
+    {
+        _hierarchyExpandedState.Clear();
+        _expandedLargeHierarchyRootsScratch.Clear();
+
+        var targetWorld = world.TargetWorld;
+        if (targetWorld?.Scenes.Count > 0)
+        {
+            for (int sceneIndex = 0; sceneIndex < targetWorld.Scenes.Count; sceneIndex++)
+            {
+                XRScene? scene = targetWorld.Scenes[sceneIndex];
+                if (scene is null || scene.IsEditorOnly)
+                    continue;
+
+                var roots = scene.RootNodes;
+                for (int rootIndex = 0; rootIndex < roots.Count; rootIndex++)
+                    SetHierarchyNodeExpandedRecursive(roots[rootIndex], expanded);
+            }
+
+            var unassignedRoots = CollectUnassignedRoots(world, targetWorld.Scenes);
+            for (int rootIndex = 0; rootIndex < unassignedRoots.Count; rootIndex++)
+                SetHierarchyNodeExpandedRecursive(unassignedRoots[rootIndex], expanded);
+        }
+        else
+        {
+            var runtimeRoots = world.RootNodes;
+            for (int rootIndex = 0; rootIndex < runtimeRoots.Count; rootIndex++)
+                SetHierarchyNodeExpandedRecursive(runtimeRoots[rootIndex], expanded);
+        }
+
+        if (_showEditorSceneHierarchy && world.EditorScene is not null)
+        {
+            var editorRoots = world.EditorScene.RootNodes;
+            for (int rootIndex = 0; rootIndex < editorRoots.Count; rootIndex++)
+                SetHierarchyNodeExpandedRecursive(editorRoots[rootIndex], expanded);
+        }
+    }
+
+    private static void SetHierarchyNodeExpandedRecursive(SceneNode? node, bool expanded)
+    {
+        if (node is null)
+            return;
+
+        int childCount = node.Transform.Children.Count;
+        if (childCount == 0)
+            return;
+
+        _hierarchyExpandedState[node] = expanded;
+
+        if (_hierarchyExpandedState.Count > 2048)
+            _hierarchyExpandedState.Clear();
+
+        var children = node.Transform.Children;
+        for (int i = 0; i < children.Count; i++)
+            SetHierarchyNodeExpandedRecursive(children[i]?.SceneNode, expanded);
     }
 
     private static IReadOnlyList<SceneNode> GetHierarchyDuplicateTargets(SceneNode clickedNode)

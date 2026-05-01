@@ -49,6 +49,10 @@ internal class Program
     private static int s_textShaderPrewarmStarted;
     private static int s_startupTimerStopped;
     private static string? s_bootstrapTracePath;
+    private const double StartupMeshGenerationBudgetMs = 18.0;
+    private const int StartupMeshGenerationNormalRendererCap = 8;
+    private const int StartupMeshGenerationPriorityRendererCap = 8;
+    private const double StartupUploadBudgetMs = 6.0;
 
     /// <summary>
     /// Determines which world to load on startup.
@@ -529,9 +533,13 @@ internal class Program
 
         if (window.Renderer is OpenGLRenderer glRenderer)
         {
-            glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(glRenderer.MeshGenerationQueue.FrameBudgetMs);
-            glRenderer.UploadQueue.BoostBudgetUntilDrained(glRenderer.UploadQueue.FrameBudgetMs);
-            WriteBootstrapTrace("Enabled GL startup warmup throttling without increasing mesh-generation or upload budgets.");
+            glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(
+                StartupMeshGenerationBudgetMs,
+                StartupMeshGenerationNormalRendererCap,
+                StartupMeshGenerationPriorityRendererCap);
+            glRenderer.UploadQueue.BoostBudgetUntilDrained(StartupUploadBudgetMs);
+            WriteBootstrapTrace(
+                $"Enabled GL startup warmup budgets: mesh={StartupMeshGenerationBudgetMs:F0}ms/{StartupMeshGenerationNormalRendererCap} normal renderers, upload={StartupUploadBudgetMs:F0}ms.");
         }
 
         window.PostRenderViewportsCallback += OnStartupPostRenderViewports;

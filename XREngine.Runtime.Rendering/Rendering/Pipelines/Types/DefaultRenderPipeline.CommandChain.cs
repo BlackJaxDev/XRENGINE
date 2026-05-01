@@ -230,6 +230,19 @@ public partial class DefaultRenderPipeline
             shareIfElse.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
             shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
             shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
+            shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardContactPrePassCopyFBOName,
+                CreateForwardContactPrePassCopyFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                ForwardDepthPrePassMergeFBOName,
+                ForwardContactPrePassCopyFBOName,
+                EReadBufferMode.ColorAttachment0,
+                blitColor: true,
+                blitDepth: true,
+                blitStencil: false,
+                linearFilter: false);
             prePassChoice.TrueCommands = shareChoice;
         }
     }

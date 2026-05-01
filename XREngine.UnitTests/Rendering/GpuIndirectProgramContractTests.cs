@@ -11,7 +11,7 @@ public sealed class GpuIndirectProgramContractTests
     [Test]
     public void IndirectProgramCache_ReissuesLinkRequests_And_SeesMeshVertexBuffers()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/HybridRenderingManager.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
 
         source.ShouldContain("existing.Program.Link();");
         source.ShouldContain("renderer.Mesh?.Buffers is not null && renderer.Mesh.Buffers.TryGetValue(binding, out _)");
@@ -22,7 +22,7 @@ public sealed class GpuIndirectProgramContractTests
     [Test]
     public void IndirectProgramCache_KeepsLastKnownGoodUntilReplacementLinks()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/HybridRenderingManager.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
 
         source.ShouldContain("private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _pendingMaterialPrograms = [];");
         source.ShouldContain("pending.ShaderStateRevision == shaderStateRevision");
@@ -35,11 +35,35 @@ public sealed class GpuIndirectProgramContractTests
     [Test]
     public void OpenGlIndirectBinding_SkipsUnlinkedPrograms_And_UsePollsLinkState()
     {
-        string rendererSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs");
-        string programSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+        string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs");
+        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
 
         rendererSource.ShouldContain("if (glProgram is null || glMesh is null || !glProgram.IsLinked)");
         programSource.ShouldContain("if (!Data.LinkReady || !Link())");
+    }
+
+    [Test]
+    public void IndirectVertexShaders_EmitWorldSpaceFragPos_ForForwardUberLighting()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+
+        source.ShouldContain("FragPos = worldPos.xyz;");
+        source.ShouldNotContain("FragPos = clipPos.xyz / max(clipPos.w, 1e-6);");
+    }
+
+    [Test]
+    public void IndirectVertexShaders_PreserveForwardViewIndexSlot()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+
+        source.ShouldContain("FragLodTransitionRoleLocation = 23;");
+        source.ShouldContain("layout(location=22) out float");
+        source.ShouldContain("layout(location = 22) out float");
+        source.ShouldContain("FragViewIndexName} = 0.0;");
+        source.ShouldContain("layout(location={FragLodTransitionRoleLocation}) flat out uint");
+        source.ShouldContain("layout(location = {FragLodTransitionRoleLocation}) flat in uint");
+        source.ShouldNotContain("layout(location=22) flat out uint");
+        source.ShouldNotContain("layout(location = 22) flat in uint");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

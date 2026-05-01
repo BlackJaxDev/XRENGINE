@@ -106,6 +106,7 @@ namespace XREngine.Scene
             public Vector4 Params2;
             public Vector4 Params3;
             public Vector4 Params4;
+            public Vector4 Params5;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -123,6 +124,7 @@ namespace XREngine.Scene
             public IVector4 AtlasPacked0;
             public Vector4 AtlasParams0;
             public Vector4 AtlasParams1;
+            public Vector4 Params6;
         }
 
         private static XRDataBuffer CreateForwardLightBuffer<T>(string name, uint elementCount) where T : unmanaged
@@ -344,6 +346,79 @@ namespace XREngine.Scene
                 _ => false,
             };
 
+        private static void SetForwardLightingCameraUniforms(XRRenderProgram program)
+        {
+            bool stereoPass = Engine.Rendering.State.IsStereoPass;
+            bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+            XRCamera? leftCamera = Engine.Rendering.State.RenderingCamera;
+            program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)(leftCamera?.DepthMode ?? XRCamera.EDepthMode.Normal));
+
+            SetForwardLightingCameraUniforms(
+                program,
+                leftCamera,
+                EEngineUniform.ViewMatrix,
+                EEngineUniform.InverseViewMatrix,
+                EEngineUniform.InverseProjMatrix,
+                EEngineUniform.ProjMatrix,
+                EEngineUniform.ViewProjectionMatrix,
+                useUnjittered);
+
+            if (!stereoPass)
+                return;
+
+            SetForwardLightingCameraUniforms(
+                program,
+                leftCamera,
+                EEngineUniform.LeftEyeViewMatrix,
+                EEngineUniform.LeftEyeInverseViewMatrix,
+                EEngineUniform.LeftEyeInverseProjMatrix,
+                EEngineUniform.LeftEyeProjMatrix,
+                EEngineUniform.LeftEyeViewProjectionMatrix,
+                useUnjittered);
+
+            SetForwardLightingCameraUniforms(
+                program,
+                Engine.Rendering.State.RenderingStereoRightEyeCamera,
+                EEngineUniform.RightEyeViewMatrix,
+                EEngineUniform.RightEyeInverseViewMatrix,
+                EEngineUniform.RightEyeInverseProjMatrix,
+                EEngineUniform.RightEyeProjMatrix,
+                EEngineUniform.RightEyeViewProjectionMatrix,
+                useUnjittered);
+        }
+
+        private static void SetForwardLightingCameraUniforms(
+            XRRenderProgram program,
+            XRCamera? camera,
+            EEngineUniform view,
+            EEngineUniform inverseView,
+            EEngineUniform inverseProj,
+            EEngineUniform proj,
+            EEngineUniform viewProj,
+            bool useUnjittered)
+        {
+            Matrix4x4 viewMatrix = Matrix4x4.Identity;
+            Matrix4x4 inverseViewMatrix = Matrix4x4.Identity;
+            Matrix4x4 inverseProjMatrix = Matrix4x4.Identity;
+            Matrix4x4 projMatrix = Matrix4x4.Identity;
+            Matrix4x4 viewProjectionMatrix = Matrix4x4.Identity;
+
+            if (camera is not null)
+            {
+                viewMatrix = camera.Transform.InverseRenderMatrix;
+                inverseViewMatrix = camera.Transform.RenderMatrix;
+                inverseProjMatrix = useUnjittered ? camera.InverseProjectionMatrixUnjittered : camera.InverseProjectionMatrix;
+                projMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
+                viewProjectionMatrix = useUnjittered ? camera.ViewProjectionMatrixUnjittered : camera.ViewProjectionMatrix;
+            }
+
+            program.Uniform(view.ToStringFast(), viewMatrix);
+            program.Uniform(inverseView.ToStringFast(), inverseViewMatrix);
+            program.Uniform(inverseProj.ToStringFast(), inverseProjMatrix);
+            program.Uniform(proj.ToStringFast(), projMatrix);
+            program.Uniform(viewProj.ToStringFast(), viewProjectionMatrix);
+        }
+
         internal void SetForwardLightingUniforms(XRRenderProgram program)
         {
             const int maxForwardShadowedPointLights = 4;
@@ -372,6 +447,10 @@ namespace XREngine.Scene
 
             // Camera position for specular calculations
             program.Uniform("CameraPosition", Engine.Rendering.State.RenderingCamera?.Transform.RenderTranslation ?? Vector3.Zero);
+            // Forward contact shadows project world-space ray samples into the
+            // prepass depth texture, so the lighting upload owns these matrices
+            // instead of relying on every material to request Camera uniforms.
+            SetForwardLightingCameraUniforms(program);
 
             var area = Engine.Rendering.State.RenderArea;
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
@@ -451,8 +530,8 @@ namespace XREngine.Scene
             bool forwardContactPrePassAvailable = false;
             if (Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled && currentPipeline is not null)
             {
-                currentPipeline.TryGetTexture(DefaultRenderPipeline.DepthViewTextureName, out forwardContactDepthTexture);
-                currentPipeline.TryGetTexture(DefaultRenderPipeline.NormalTextureName, out forwardContactNormalTexture);
+                currentPipeline.TryGetTexture(DefaultRenderPipeline.ForwardContactDepthViewTextureName, out forwardContactDepthTexture);
+                currentPipeline.TryGetTexture(DefaultRenderPipeline.ForwardContactNormalTextureName, out forwardContactNormalTexture);
                 if (forwardContactDepthTexture is not null && forwardContactNormalTexture is not null)
                 {
                     forwardContactPrePass2DAvailable =
@@ -550,6 +629,7 @@ namespace XREngine.Scene
             Matrix4x4 primaryDirLightWorldToLightProj = Matrix4x4.Identity;
             bool useCascadedDirectionalShadows = false;
             bool useDirectionalShadowAtlas = false;
+            bool directionalAtlasSampleable = false;
             if (directionalLightCount > 0)
             {
                 var firstDirLight = DynamicDirectionalLights[0];
@@ -583,6 +663,8 @@ namespace XREngine.Scene
                     firstDirLight.ContactShadowNormalOffset,
                     firstDirLight.ContactShadowJitterStrength,
                     0.0f));
+                program.Uniform("ShadowBiasParams", firstDirLight.ShadowBiasParameters);
+                program.Uniform("ShadowBiasProjectionParams", firstDirLight.GetPrimaryShadowBiasProjectionParameters());
 
                 if (firstDirLight.CastsShadows)
                 {
@@ -645,20 +727,12 @@ namespace XREngine.Scene
             // unpopulated and only forwardCascadeShadowTex is available, so this
             // flag flipped to false and every consumer (uber shader, volumetric fog
             // scatter, etc.) short-circuited to "fully lit" — no shafts, no shadows.
-            // Treat either texture as "shadows available"; downstream shaders already
-            // prefer the cascade path when UseCascadedDirectionalShadows is true and
-            // fall back to the 2D map otherwise.
-            bool shadowEnabled = forwardShadowTex != null || forwardCascadeShadowTex != null || useDirectionalShadowAtlas;
-            program.Uniform("ShadowMapEnabled", shadowEnabled);
+            // Treat real legacy/cascade textures as available immediately. Atlas shadows
+            // only count once a published slot is resident; otherwise the shader should
+            // use the legacy fallback or stay lit instead of sampling dummy atlas pages.
             program.Uniform("UseCascadedDirectionalShadows", useCascadedDirectionalShadows);
-            program.Uniform("DirectionalShadowAtlasEnabled", useDirectionalShadowAtlas);
             program.Uniform("PrimaryDirLightWorldToLightInvViewMatrix", primaryDirLightWorldToLightInvView);
             program.Uniform("PrimaryDirLightWorldToLightProjMatrix", primaryDirLightWorldToLightProj);
-            if (!_loggedShadowMapEnabledOnce)
-            {
-                _loggedShadowMapEnabledOnce = true;
-                Debug.Out($"[ForwardShadow] ShadowMapEnabled={shadowEnabled}, forwardShadowTex={forwardShadowTex?.GetType().Name ?? "null"}");
-            }
 
             // Diagnostic: log every transition of shadowEnabled / primary-dir-light state so we can
             // diff "CastsShadows=true" vs "CastsShadows=false" uniforms upstream of the uber shader.
@@ -722,6 +796,7 @@ namespace XREngine.Scene
                     Params2 = new Vector4(light.MinPenumbra, light.MaxPenumbra, light.EffectiveLightSourceRadius, light.ContactShadowDistance),
                     Params3 = new Vector4(light.ContactShadowThickness, light.ContactShadowFadeStart, light.ContactShadowFadeEnd, light.ContactShadowNormalOffset),
                     Params4 = new Vector4(light.ContactShadowJitterStrength, 0.0f, 0.0f, 0.0f),
+                    Params5 = light.ShadowBiasParameters,
                 });
             }
             for (; pointShadowSlot < maxForwardShadowedPointLights; ++pointShadowSlot)
@@ -765,6 +840,7 @@ namespace XREngine.Scene
                         : ShadowFallbackMode.Lit;
                     atlasResident = allocation.IsResident &&
                         allocation.LastRenderedFrame != 0u &&
+                        allocation.ActiveFallback == ShadowFallbackMode.None &&
                         allocation.PageIndex >= 0 &&
                         allocation.PageIndex < maxForwardSpotAtlasPages;
                     float atlasNearPlane = light.ShadowCamera?.NearZ ?? 0.1f;
@@ -804,6 +880,7 @@ namespace XREngine.Scene
                     AtlasPacked0 = atlasPacked0,
                     AtlasParams0 = atlasParams0,
                     AtlasParams1 = atlasParams1,
+                    Params6 = light.ShadowBiasParameters,
                 });
             }
             for (; spotShadowSlot < maxForwardShadowedSpotLights; ++spotShadowSlot)
@@ -822,11 +899,35 @@ namespace XREngine.Scene
                     _directionalShadowAtlasPacked0,
                     _directionalShadowAtlasParams0,
                     _directionalShadowAtlasParams1);
+                directionalAtlasSampleable = AreRequiredDirectionalAtlasTilesSampleable(
+                    _directionalShadowAtlasPacked0,
+                    useCascadedDirectionalShadows ? DynamicDirectionalLights[0].ActiveCascadeCount : 1);
             }
 
+            program.Uniform("DirectionalShadowAtlasEnabled", directionalAtlasSampleable);
             program.Uniform("DirectionalShadowAtlasPacked0", _directionalShadowAtlasPacked0);
             program.Uniform("DirectionalShadowAtlasParams0", _directionalShadowAtlasParams0);
             program.Uniform("DirectionalShadowAtlasParams1", _directionalShadowAtlasParams1);
+
+            LogForwardDirectionalShadowBinding(
+                directionalLightCount > 0 ? DynamicDirectionalLights[0] : null,
+                useDirectionalShadowAtlas,
+                directionalAtlasSampleable,
+                useCascadedDirectionalShadows,
+                forwardShadowTex,
+                forwardCascadeShadowTex);
+
+            bool shadowEnabled = forwardShadowTex != null || forwardCascadeShadowTex != null || directionalAtlasSampleable;
+            program.Uniform("ShadowMapEnabled", shadowEnabled);
+            if (!_loggedShadowMapEnabledOnce)
+            {
+                _loggedShadowMapEnabledOnce = true;
+                Debug.Out(
+                    $"[ForwardShadow] ShadowMapEnabled={shadowEnabled}, " +
+                    $"forwardShadowTex={forwardShadowTex?.GetType().Name ?? "null"}, " +
+                    $"cascadeTex={forwardCascadeShadowTex?.GetType().Name ?? "null"}, " +
+                    $"directionalAtlasSampleable={directionalAtlasSampleable}");
+            }
 
             // Bind the actual shadow texture after per-light SetUniforms.
             // ALWAYS bind a texture to unit 15 - if no shadow map, use a 1x1 white dummy.
@@ -864,6 +965,66 @@ namespace XREngine.Scene
                 if (textures[t]?.SamplerName == "ShadowMap")
                     return textures[t];
             return null;
+        }
+
+        private void LogForwardDirectionalShadowBinding(
+            DirectionalLightComponent? light,
+            bool requested,
+            bool shaderAtlasEnabled,
+            bool useCascadedDirectionalShadows,
+            XRTexture? forwardShadowTex,
+            XRTexture2DArray? forwardCascadeShadowTex)
+        {
+            if (light is null ||
+                !Debug.ShouldLogEvery(
+                    $"DirectionalShadowAudit.ForwardBind.{light.GetHashCode()}",
+                    TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            ShadowAtlasMetrics metrics = ShadowAtlas.PublishedFrameData.Metrics;
+            Debug.Out(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][ForwardBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMapTex={6} cascadeTex={7} atlasRequests={8} atlasRenderedThisFrame={9} atlasPages={10} c0={11} c1={12} c2={13} c3={14}",
+                Engine.Rendering.State.RenderFrameId,
+                light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
+                requested,
+                shaderAtlasEnabled,
+                useCascadedDirectionalShadows,
+                light.ActiveCascadeCount,
+                forwardShadowTex?.GetType().Name ?? "null",
+                forwardCascadeShadowTex?.GetType().Name ?? "null",
+                metrics.RequestCount,
+                metrics.TilesScheduledThisFrame,
+                metrics.PageCount,
+                FormatAtlasPacked(_directionalShadowAtlasPacked0, 0),
+                FormatAtlasPacked(_directionalShadowAtlasPacked0, 1),
+                FormatAtlasPacked(_directionalShadowAtlasPacked0, 2),
+                FormatAtlasPacked(_directionalShadowAtlasPacked0, 3));
+        }
+
+        private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int count)
+        {
+            int clampedCount = Math.Min(Math.Max(count, 0), packed0.Length);
+            if (clampedCount <= 0)
+                return false;
+
+            for (int i = 0; i < clampedCount; i++)
+                if (packed0[i].X == 0)
+                    return false;
+
+            return true;
+        }
+
+        private static string FormatAtlasPacked(IVector4[] packed0, int index)
+        {
+            if ((uint)index >= (uint)packed0.Length)
+                return "<out>";
+
+            IVector4 value = packed0[index];
+            return $"({value.X},{value.Y},{value.Z},{value.W})";
         }
 
         #endregion
