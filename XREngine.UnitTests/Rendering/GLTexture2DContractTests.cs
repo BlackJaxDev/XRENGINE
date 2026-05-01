@@ -91,6 +91,31 @@ public sealed class GLTexture2DContractTests
     }
 
     [Test]
+    public void GLTexture2D_ValidatesSubImageUploadRectBeforeCallingTexSubImage2D()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+
+        source.ShouldContain("TryPrepareTexSubImageUpload");
+        source.ShouldContain("TryValidateTexSubImageUpload");
+        source.ShouldContain("TryGetAllocatedMipDimensions");
+        source.ShouldContain("uploadRect=");
+        source.ShouldContain("allocatedMipDims=");
+        source.ShouldContain("Recreating immutable storage");
+    }
+
+    [Test]
+    public void GLTexture2D_CancelsStaleProgressiveUploadsAfterStorageGenerationChanges()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+
+        source.ShouldContain("private int _storageGeneration;");
+        source.ShouldContain("CurrentStorageGeneration");
+        source.ShouldContain("AdvanceStorageGeneration();");
+        source.ShouldContain("scheduledStorageGeneration");
+        source.ShouldContain("Canceling stale progressive mip upload");
+    }
+
+    [Test]
     public void GLTexture2D_SparseStorageTracksLogicalAllocationMetadata()
     {
         string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
@@ -297,6 +322,51 @@ public sealed class GLTexture2DContractTests
         source.ShouldContain("public bool LogMaterialTextureBindings");
     }
 
+    [Test]
+    public void TextureRuntimeDiagnostics_RoutesEventsToDedicatedTextureLog()
+    {
+        string debugSource = ReadWorkspaceFile("XREngine.Runtime.Core/Core/Diagnostics/Debug.cs");
+        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/TextureRuntimeDiagnostics.cs");
+        string settingsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
+
+        debugSource.ShouldContain("Textures");
+        debugSource.ShouldContain("[ELogCategory.Textures] = null");
+        diagnosticsSource.ShouldContain("ELogCategory.Textures");
+        diagnosticsSource.ShouldContain("Texture.UploadValidationFailed");
+        diagnosticsSource.ShouldContain("Texture.VramPressure");
+        diagnosticsSource.ShouldContain("Texture.VramSummary");
+        settingsSource.ShouldContain("TextureRuntimeLogMode");
+        settingsSource.ShouldContain("TextureUploadFrameBudgetMilliseconds");
+    }
+
+    [Test]
+    public void TextureStreamingManager_CoalescesAndBudgetsImportEraPromotion()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+
+        source.ShouldContain("MaxImportEraPromotionBytesPerFrame");
+        source.ShouldContain("PromotionCooldownUntilFrameId");
+        source.ShouldContain("DemotionCooldownUntilFrameId");
+        source.ShouldContain("PinUntilFrameId");
+        source.ShouldContain("LogTransitionCoalesced");
+        source.ShouldContain("visible import-era promotion");
+        source.ShouldContain("vram pressure demotion");
+    }
+
+    [Test]
+    public void TextureStreamingPanel_ExposesQueueUploadPriorityAndFilters()
+    {
+        string source = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.TextureStreamingPanel.cs");
+
+        source.ShouldContain("_textureStreamingFilterVisibleOnly");
+        source.ShouldContain("_textureStreamingFilterValidationOnly");
+        source.ShouldContain("TextureStreamingSortMode.QueueWait");
+        source.ShouldContain("OldestQueueWaitMilliseconds");
+        source.ShouldContain("LastUploadMilliseconds");
+        source.ShouldContain("PriorityScore");
+        source.ShouldContain("DumpImportedTextureStreamingSummary");
+    }
+
     private static int CountOccurrences(string text, string substring)
     {
         if (string.IsNullOrEmpty(substring))
@@ -315,7 +385,7 @@ public sealed class GLTexture2DContractTests
     private static string ReadWorkspaceFile(string relativePath)
     {
         string repoRoot = ResolveRepoRoot();
-        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        string path = ResolveWorkspacePath(repoRoot, relativePath);
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
 
         // Include sibling partial-class files that share the stem (e.g. GLTexture2D.cs + GLTexture2D.Parameters.cs
@@ -337,6 +407,31 @@ public sealed class GLTexture2DContractTests
             }
         }
         return sb.ToString();
+    }
+
+    private static string ResolveWorkspacePath(string repoRoot, string relativePath)
+    {
+        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (File.Exists(path))
+            return path;
+
+        const string legacyRenderingPrefix = "XRENGINE/Rendering/";
+        if (relativePath.StartsWith(legacyRenderingPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            string migratedPath = "XREngine.Runtime.Rendering/Rendering/" + relativePath[legacyRenderingPrefix.Length..];
+            path = Path.Combine(repoRoot, migratedPath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(path))
+                return path;
+        }
+
+        const string legacyScenePrefix = "XRENGINE/Scene/";
+        if (relativePath.StartsWith(legacyScenePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            string migratedPath = "XREngine.Runtime.Rendering/Scene/" + relativePath[legacyScenePrefix.Length..];
+            path = Path.Combine(repoRoot, migratedPath.Replace('/', Path.DirectorySeparatorChar));
+        }
+
+        return path;
     }
 
     private static string ResolveRepoRoot()

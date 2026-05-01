@@ -275,9 +275,37 @@ namespace XREngine.Rendering.Models.Materials.Textures
             }
 
             if (hasPushedResized || _storageSet)
+            {
+                uint configuredLevels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
+                if (i < 0 || w == 0 || h == 0 || (_storageSet && (uint)i >= configuredLevels))
+                {
+                    TextureRuntimeDiagnostics.LogUploadValidationFailed(
+                        RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                        GetDescribingName(),
+                        null,
+                        BindingId,
+                        i,
+                        0u,
+                        0u,
+                        w,
+                        h,
+                        Data.Extent,
+                        Data.Extent,
+                        configuredLevels,
+                        0,
+                        "OpenGL",
+                        "cube TexSubImage2D outside configured mip range");
+                    Debug.OpenGLWarning(
+                        $"[GLTextureCube] Skipping TexSubImage2D outside configured mip range for '{GetDescribingName()}': mip={i}, size={w}x{h}, extent={Data.Extent}, levels={configuredLevels}.");
+                    return;
+                }
+
                 Api.TexSubImage2D(glTarget, i, 0, 0, w, h, pixelFormat, pixelType, ptr);
+            }
             else
+            {
                 Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, ptr);
+            }
         }
 
         protected override void SetParameters()

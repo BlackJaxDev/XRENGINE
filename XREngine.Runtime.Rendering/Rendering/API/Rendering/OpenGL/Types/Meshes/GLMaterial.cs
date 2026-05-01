@@ -324,6 +324,7 @@ namespace XREngine.Rendering.OpenGL
             private void SetTextureUniforms(GLRenderProgram program, XRMaterialBase material)
             {
                 using var sample = Engine.Profiler.Start("GLMaterial.SetTextureUniforms");
+                XRTexture2D.RecordImportedTextureMaterialBinding(material);
 
                 // Use textureIndex as textureUnit so that null entries preserve
                 // the correspondence between array position and GL texture unit.
@@ -342,6 +343,7 @@ namespace XREngine.Rendering.OpenGL
             private void SetTextureUniforms(GLRenderProgram program, XRMaterialBase material, IReadOnlyList<int> textureIndices)
             {
                 using var sample = Engine.Profiler.Start("GLMaterial.SetTextureUniforms");
+                XRTexture2D.RecordImportedTextureMaterialBinding(material);
 
                 for (int index = 0; index < textureIndices.Count; ++index)
                 {
@@ -355,6 +357,7 @@ namespace XREngine.Rendering.OpenGL
 
             public void SetTextureUniform(GLRenderProgram program, int textureIndex, string? samplerNameOverride = null)
             {
+                XRTexture2D.RecordImportedTextureMaterialBinding(Data);
                 if (!TryGetTextureBinding(Data, textureIndex, out IGLTexture texture, out int textureUnit))
                     return;
 

@@ -5,6 +5,7 @@ using System.Text;
 using XREngine.Components;
 using XREngine.Core;
 using XREngine.Data.Core;
+using XREngine.Rendering;
 using XREngine.Timers;
 
 namespace XREngine
@@ -886,6 +887,7 @@ namespace XREngine
                     builder.Append("RenderScopePath: ").Append(scopePath).AppendLine();
                     builder.Append("QueuedRenderJobsNow: ").Append(GetQueuedRenderThreadJobCount()).AppendLine();
                     builder.Append("IsDispatchingRenderFrame: ").Append(IsDispatchingRenderFrame).AppendLine();
+                    XRTexture2D.AppendRenderWorkBudgetProfilerSummary(builder);
 
                     if (!string.IsNullOrWhiteSpace(_lastCompletedRenderThreadHotPath))
                     {
@@ -918,6 +920,7 @@ namespace XREngine
                     builder.Append("StallScopePathAtDetection: ").Append(_renderStallScopePath).AppendLine();
                     builder.Append("QueuedRenderJobsNow: ").Append(GetQueuedRenderThreadJobCount()).AppendLine();
                     builder.Append("IsDispatchingRenderFrame: ").Append(IsDispatchingRenderFrame).AppendLine();
+                    XRTexture2D.AppendRenderWorkBudgetProfilerSummary(builder);
 
                     if (!string.IsNullOrWhiteSpace(_lastCompletedRenderThreadHotPath))
                     {
@@ -1022,6 +1025,7 @@ namespace XREngine
                     AppendRenderMatrixStatsSnapshot(builder);
                     AppendSkinnedBoundsStatsSnapshot(builder);
                     AppendOctreeStatsSnapshot(builder);
+                    XRTexture2D.AppendRenderWorkBudgetProfilerSummary(builder);
                     Debug.WriteAuxiliaryLog("profiler-fps-drops.log", builder.ToString());
                 }
             }

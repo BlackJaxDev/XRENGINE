@@ -22,6 +22,10 @@ public partial class GLTexture2D
     /// </summary>
     private const long ProgressivePushDataThresholdBytes = 4 * 1024;
     private const long ProgressiveMipUploadChunkBytes = 16 * 1024;
+    private const long ProgressiveSmallMipFastPathBytes = 64 * 1024;
+
+    private int _preparedMipChunkMipIndex = -1;
+    private int _preparedMipChunkNextRow;
 
     private void ResetUnpackStateForTextureUpload()
         => ResetUnpackStateForTextureUpload(Api);
@@ -240,6 +244,7 @@ public partial class GLTexture2D
         // Start the coroutine one step above the already-uploaded smallest mip.
         int nextMip = smallestResidentMip - 1;
         int nextMipRow = 0;
+        int scheduledStorageGeneration = CurrentStorageGeneration;
         string textureName = string.IsNullOrWhiteSpace(Data.Name)
             ? BindingId.ToString()
             : Data.Name;
@@ -257,6 +262,28 @@ public partial class GLTexture2D
                 IsPushing = false;
                 if (allowPostPushCallback)
                     OnPostPushData();
+                return true;
+            }
+
+            if (scheduledStorageGeneration != CurrentStorageGeneration)
+            {
+                TextureRuntimeDiagnostics.LogStaleUploadCanceled(
+                    RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                    GetDescribingName(),
+                    Data.FilePath,
+                    BindingId,
+                    scheduledStorageGeneration,
+                    CurrentStorageGeneration,
+                    "OpenGL",
+                    "progressive upload storage generation changed");
+                Debug.OpenGLWarning(
+                    $"[GLTexture2D] Canceling stale progressive mip upload for '{GetDescribingName()}': " +
+                    $"scheduledStorageGeneration={scheduledStorageGeneration} currentStorageGeneration={CurrentStorageGeneration} " +
+                    $"nextMip={nextMip} allocatedDims={_allocatedWidth}x{_allocatedHeight} allocatedLevels={_allocatedLevels}.");
+                ClearProgressiveVisibleMipRange();
+                IsPushing = false;
+                Invalidate();
+                Unbind();
                 return true;
             }
 
@@ -380,19 +407,36 @@ public partial class GLTexture2D
             return false;
         }
 
-        using var uploadSample = Engine.Profiler.Start("GLTexture2D.PushMipmap.UploadChunk");
-        PushWithDataRows(
-            glTarget,
+        int startRow = nextRow;
+        long uploadStart = TextureRuntimeDiagnostics.StartTiming();
+        using (Engine.Profiler.Start("GLTexture2D.PushMipmap.UploadChunk"))
+        {
+            PushWithDataRows(
+                glTarget,
+                glLevel,
+                mip.Width,
+                mip.Height,
+                pixelFormat,
+                pixelType,
+                internalPixelFormat,
+                data,
+                startRow,
+                rowsPerChunk,
+                info.NeedsFullPush);
+        }
+
+        TextureRuntimeDiagnostics.LogUploadChunk(
+            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            GetDescribingName(),
+            Data.FilePath,
+            BindingId,
             glLevel,
-            mip.Width,
-            mip.Height,
-            pixelFormat,
-            pixelType,
-            internalPixelFormat,
-            data,
-            nextRow,
+            startRow,
             rowsPerChunk,
-            info.NeedsFullPush);
+            rowBytes * rowsPerChunk,
+            TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart),
+            CurrentStorageGeneration,
+            "OpenGL");
 
         nextRow += rowsPerChunk;
         if (nextRow >= mip.Height)
@@ -404,7 +448,7 @@ public partial class GLTexture2D
         return true;
     }
 
-    private void PushPreparedMipLevel(int mipIndex)
+    private bool PushPreparedMipLevel(int mipIndex)
     {
         if (!Engine.IsRenderThread)
         {
@@ -412,11 +456,11 @@ public partial class GLTexture2D
             Engine.EnqueueMainThreadTask(
                 () => PushPreparedMipLevel(mipIndex),
                 $"GLTexture2D.PushPreparedMipLevel[{textureName}].Mip{mipIndex}");
-            return;
+            return false;
         }
 
         if (mipIndex < 0 || mipIndex >= Mipmaps.Length)
-            return;
+            return true;
 
         ApplyPendingImmutableStorageRecreate();
         Generate();
@@ -435,14 +479,67 @@ public partial class GLTexture2D
             int actualMipIndex = Data.SparseTextureStreamingEnabled
                 ? mipIndex + SparseTextureResidentBaseMipLevelOrZero
                 : mipIndex;
-            PushMipmap(ToGLEnum(TextureTarget), actualMipIndex, Mipmaps[mipIndex], internalFormatForce);
 
-            SetParameters();
-            IsInvalidated = false;
+            MipmapInfo mipInfo = Mipmaps[mipIndex];
+            Mipmap2D mip = mipInfo.Mipmap;
+            long mipBytes = mip.Data?.Length ?? 0L;
+            bool shouldChunk = mipBytes > ProgressiveSmallMipFastPathBytes
+                && mip.StreamingPBO is null
+                && !Data.MultiSample
+                && mip.Height > 0;
+
+            bool completed = true;
+            if (shouldChunk)
+            {
+                if (_preparedMipChunkMipIndex != mipIndex)
+                {
+                    _preparedMipChunkMipIndex = mipIndex;
+                    _preparedMipChunkNextRow = 0;
+                }
+
+                int beforeRow = _preparedMipChunkNextRow;
+                bool chunked = TryPushProgressiveMipChunk(
+                    ToGLEnum(TextureTarget),
+                    actualMipIndex,
+                    mipInfo,
+                    internalFormatForce,
+                    ref _preparedMipChunkNextRow);
+                completed = !chunked || _preparedMipChunkNextRow <= 0;
+                if (chunked && !completed && !IsMultisampleTarget)
+                {
+                    int hiddenBase = Math.Min(actualMipIndex + 1, actualMipIndex + Math.Max(0, Mipmaps.Length - mipIndex - 1));
+                    int hiddenMax = Math.Max(hiddenBase, SparseTextureResidentBaseMipLevelOrZero + Mipmaps.Length - 1);
+                    SetProgressiveVisibleMipRange(hiddenBase, hiddenMax);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in hiddenBase);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in hiddenMax);
+                }
+
+                if (!chunked && beforeRow == 0)
+                    PushMipmap(ToGLEnum(TextureTarget), actualMipIndex, mipInfo, internalFormatForce);
+            }
+            else
+            {
+                PushMipmap(ToGLEnum(TextureTarget), actualMipIndex, mipInfo, internalFormatForce);
+            }
+
+            if (completed)
+            {
+                if (_preparedMipChunkMipIndex == mipIndex)
+                {
+                    _preparedMipChunkMipIndex = -1;
+                    _preparedMipChunkNextRow = 0;
+                }
+
+                SetParameters();
+                IsInvalidated = false;
+            }
+
+            return completed;
         }
         catch (Exception ex)
         {
             Debug.OpenGLException(ex);
+            return true;
         }
         finally
         {
@@ -602,6 +699,13 @@ public partial class GLTexture2D
         if (pbo is not null && pbo.Target != EBufferTarget.PixelUnpackBuffer)
             throw new ArgumentException("PBO must be of type PixelUnpackBuffer.");
 
+        bool usesSubImageUpload = !fullPush || StorageSet;
+        if (usesSubImageUpload
+            && !TryPrepareTexSubImageUpload(glTarget, mipLevel, 0u, 0u, width, height, allowImmutableRecreate: fullPush, operation: "TexSubImage2D"))
+        {
+            return;
+        }
+
         bool uploadParamsAdjusted = SanitizeUploadParams(
             mipLevel,
             width,
@@ -696,6 +800,19 @@ public partial class GLTexture2D
             return;
         }
 
+        if (!TryPrepareTexSubImageUpload(
+            glTarget,
+            mipLevel,
+            0u,
+            (uint)startRow,
+            width,
+            (uint)rowCount,
+            allowImmutableRecreate: false,
+            operation: "TexSubImage2D rows"))
+        {
+            return;
+        }
+
         long rowBytes = data.Length / (long)Math.Max(1u, height);
         byte* rowPointer = (byte*)data.Address.Pointer + (startRow * rowBytes);
         ResetUnpackStateForTextureUpload();
@@ -705,6 +822,184 @@ public partial class GLTexture2D
             $"format={pixelFormat} type={pixelType} internal={internalPixelFormat} sized={Data.SizedInternalFormat} storage={StorageSet}");
         */
         Api.TexSubImage2D(glTarget, mipLevel, 0, startRow, width, (uint)rowCount, pixelFormat, pixelType, rowPointer);
+    }
+
+    private bool TryPrepareTexSubImageUpload(
+        GLEnum glTarget,
+        int mipLevel,
+        uint xOffset,
+        uint yOffset,
+        uint width,
+        uint height,
+        bool allowImmutableRecreate,
+        string operation)
+    {
+        if (TryValidateTexSubImageUpload(mipLevel, xOffset, yOffset, width, height, operation, logFailure: false))
+            return true;
+
+        if (!allowImmutableRecreate
+            || Data.Resizable
+            || Data.SparseTextureStreamingEnabled
+            || Data.UsesOpenGlExternalMemoryImport
+            || !Engine.IsRenderThread)
+        {
+            TryValidateTexSubImageUpload(mipLevel, xOffset, yOffset, width, height, operation, logFailure: true);
+            Invalidate();
+            return false;
+        }
+
+        Debug.OpenGLWarning(
+            $"[GLTexture2D] Recreating immutable storage for '{GetDescribingName()}' after invalid {operation} request: " +
+            $"mip={mipLevel} uploadRect={xOffset},{yOffset} {width}x{height} " +
+            $"previousAllocatedDims={_allocatedWidth}x{_allocatedHeight} previousAllocatedLevels={_allocatedLevels} " +
+            $"previousStorageGeneration={CurrentStorageGeneration}.");
+
+        if (!TryRecreateImmutableStorageForUploadMismatch(glTarget))
+        {
+            Invalidate();
+            return false;
+        }
+
+        if (TryValidateTexSubImageUpload(mipLevel, xOffset, yOffset, width, height, operation, logFailure: true))
+            return true;
+
+        Invalidate();
+        return false;
+    }
+
+    private bool TryValidateTexSubImageUpload(
+        int mipLevel,
+        uint xOffset,
+        uint yOffset,
+        uint width,
+        uint height,
+        string operation,
+        bool logFailure)
+    {
+        if (!StorageSet)
+        {
+            if (logFailure)
+            {
+                LogTexSubImageValidationFailure(mipLevel, xOffset, yOffset, width, height, operation, "storage not allocated");
+                Debug.OpenGLError(
+                    $"[GLTexture2D] Skipping {operation} without allocated storage for '{GetDescribingName()}': " +
+                    $"mip={mipLevel} uploadRect={xOffset},{yOffset} {width}x{height} " +
+                    $"allocatedDims={_allocatedWidth}x{_allocatedHeight} allocatedLevels={_allocatedLevels} " +
+                    $"storageGeneration={CurrentStorageGeneration}.");
+            }
+            return false;
+        }
+
+        if (width == 0u || height == 0u)
+        {
+            if (logFailure)
+            {
+                LogTexSubImageValidationFailure(mipLevel, xOffset, yOffset, width, height, operation, "empty upload extent");
+                Debug.OpenGLError(
+                    $"[GLTexture2D] Skipping {operation} with empty upload extent for '{GetDescribingName()}': " +
+                    $"mip={mipLevel} uploadRect={xOffset},{yOffset} {width}x{height} " +
+                    $"allocatedDims={_allocatedWidth}x{_allocatedHeight} allocatedLevels={_allocatedLevels} " +
+                    $"storageGeneration={CurrentStorageGeneration}.");
+            }
+            return false;
+        }
+
+        if (!TryGetAllocatedMipDimensions(mipLevel, out uint allocatedMipWidth, out uint allocatedMipHeight))
+        {
+            if (logFailure)
+            {
+                LogTexSubImageValidationFailure(mipLevel, xOffset, yOffset, width, height, operation, "mip outside allocated storage");
+                Debug.OpenGLError(
+                    $"[GLTexture2D] Skipping {operation} outside allocated storage for '{GetDescribingName()}': " +
+                    $"mip={mipLevel} uploadRect={xOffset},{yOffset} {width}x{height} " +
+                    $"allocatedDims={_allocatedWidth}x{_allocatedHeight} allocatedMipDims=unavailable " +
+                    $"allocatedLevels={_allocatedLevels} storageGeneration={CurrentStorageGeneration} " +
+                    $"sparseEnabled={Data.SparseTextureStreamingEnabled} residentBase={Data.SparseTextureStreamingResidentBaseMipLevel}.");
+            }
+            return false;
+        }
+
+        ulong uploadRight = (ulong)xOffset + width;
+        ulong uploadBottom = (ulong)yOffset + height;
+        if (uploadRight <= allocatedMipWidth && uploadBottom <= allocatedMipHeight)
+            return true;
+
+        if (logFailure)
+        {
+            LogTexSubImageValidationFailure(mipLevel, xOffset, yOffset, width, height, operation, "upload rectangle outside allocated mip bounds");
+            Debug.OpenGLError(
+                $"[GLTexture2D] Skipping {operation} outside allocated mip bounds for '{GetDescribingName()}': " +
+                $"mip={mipLevel} uploadRect={xOffset},{yOffset} {width}x{height} " +
+                $"allocatedMipDims={allocatedMipWidth}x{allocatedMipHeight} allocatedBaseDims={_allocatedWidth}x{_allocatedHeight} " +
+                $"allocatedLevels={_allocatedLevels} storageGeneration={CurrentStorageGeneration} " +
+                $"mipmapCount={Mipmaps?.Length ?? 0} SmallestAllowedMipmapLevel={Data.SmallestAllowedMipmapLevel} " +
+                $"LargestMipmapLevel={Data.LargestMipmapLevel} StreamingLockMipLevel={Data.StreamingLockMipLevel} " +
+                $"sized={Data.SizedInternalFormat} sparseEnabled={Data.SparseTextureStreamingEnabled} " +
+                $"residentBase={Data.SparseTextureStreamingResidentBaseMipLevel} logicalMipCount={Data.SparseTextureStreamingLogicalMipCount}.");
+        }
+        return false;
+    }
+
+    private void LogTexSubImageValidationFailure(
+        int mipLevel,
+        uint xOffset,
+        uint yOffset,
+        uint width,
+        uint height,
+        string operation,
+        string reason)
+    {
+        Data.RecordTextureUploadValidationFailure();
+        TextureRuntimeDiagnostics.LogUploadValidationFailed(
+            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            GetDescribingName(),
+            Data.FilePath,
+            BindingId,
+            mipLevel,
+            xOffset,
+            yOffset,
+            width,
+            height,
+            _allocatedWidth,
+            _allocatedHeight,
+            _allocatedLevels,
+            CurrentStorageGeneration,
+            "OpenGL",
+            $"{operation}: {reason}");
+    }
+
+    private bool TryRecreateImmutableStorageForUploadMismatch(GLEnum glTarget)
+    {
+        _pendingImmutableStorageRecreate = false;
+        int previousGeneration = CurrentStorageGeneration;
+
+        if (IsGenerated)
+            Destroy();
+
+        uint binding = BindingId;
+        if (binding == InvalidBindingId)
+            return false;
+
+        Api.BindTexture(glTarget, binding);
+        Renderer.SetBoundTexture(TextureTarget, this, Data.Name);
+        EnsureStorageAllocated();
+        if (StorageSet)
+        {
+            TextureRuntimeDiagnostics.LogStorageRecreated(
+                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                GetDescribingName(),
+                Data.FilePath,
+                BindingId,
+                _allocatedWidth,
+                _allocatedHeight,
+                _allocatedLevels,
+                previousGeneration,
+                CurrentStorageGeneration,
+                "OpenGL",
+                "full-push upload mismatch repair");
+        }
+
+        return StorageSet;
     }
 
     private bool CanUseProgressiveChunkUpload(GLEnum pixelFormat, GLEnum pixelType)

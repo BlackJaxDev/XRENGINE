@@ -15,7 +15,8 @@ public partial class XRTexture2D
         => ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports;
 
     internal static bool ShouldLogImportedTextureTiming
-        => ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports;
+        => ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports
+            || TextureRuntimeDiagnostics.IsEnabled;
 
     public static IDisposable EnterImportedTextureStreamingScope()
         => ImportedTextureStreamingManager.Instance.EnterScope();
@@ -48,11 +49,17 @@ public partial class XRTexture2D
     public static void RecordImportedTextureStreamingUsage(XRMaterial? material, ImportedTextureStreamingUsage usage)
         => ImportedTextureStreamingManager.Instance.RecordUsage(material, usage);
 
+    public static void RecordImportedTextureMaterialBinding(XRMaterialBase? material)
+        => ImportedTextureStreamingManager.Instance.RecordMaterialBinding(material);
+
     public static ImportedTextureStreamingTelemetry GetImportedTextureStreamingTelemetry()
         => ImportedTextureStreamingManager.Instance.GetTelemetry();
 
     public static IReadOnlyList<ImportedTextureStreamingTextureTelemetry> GetImportedTextureStreamingTextureTelemetry()
         => ImportedTextureStreamingManager.Instance.GetTrackedTextureTelemetry();
+
+    public static void DumpImportedTextureStreamingSummary()
+        => ImportedTextureStreamingManager.Instance.DumpSummary();
 
     internal static bool HasAssetExtensionInternal(string filePath)
         => HasAssetExtension(filePath);
@@ -118,13 +125,29 @@ public partial class XRTexture2D
             return;
 
         double totalMilliseconds = decodeMilliseconds + cloneMilliseconds + resizeMilliseconds + mipBuildMilliseconds;
+        double decodeResizeThreshold = RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds;
+        double mipBuildThreshold = RuntimeRenderingHostServices.Current.TextureSlowMipBuildMilliseconds;
         if (totalMilliseconds < ImportedTextureTimingLogThresholdMilliseconds
-            && decodeMilliseconds < ImportedTextureTimingLogThresholdMilliseconds
-            && resizeMilliseconds < ImportedTextureTimingLogThresholdMilliseconds
-            && mipBuildMilliseconds < ImportedTextureTimingLogThresholdMilliseconds)
+            && decodeMilliseconds < decodeResizeThreshold
+            && resizeMilliseconds < decodeResizeThreshold
+            && mipBuildMilliseconds < mipBuildThreshold)
         {
             return;
         }
+
+        TextureRuntimeDiagnostics.LogCpuTextureWorkSlow(
+            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            sourceLabel,
+            sourceWidth,
+            sourceHeight,
+            requestedResidentMaxDimension,
+            residentMaxDimension,
+            includeMipChain,
+            mipCount,
+            decodeMilliseconds,
+            resizeMilliseconds,
+            mipBuildMilliseconds,
+            totalMilliseconds);
 
         RuntimeRenderingHostServices.Current.LogOutput(
             $"[ImportedTextureTiming] '{sourceLabel}' source={sourceWidth}x{sourceHeight} requestedMax={requestedResidentMaxDimension} resident={residentMaxDimension} includeMipChain={includeMipChain} mips={mipCount} decode={decodeMilliseconds:F1}ms clone={cloneMilliseconds:F1}ms resize={resizeMilliseconds:F1}ms mipBuild={mipBuildMilliseconds:F1}ms total={totalMilliseconds:F1}ms");

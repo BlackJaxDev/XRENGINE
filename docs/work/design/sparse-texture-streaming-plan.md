@@ -45,6 +45,14 @@ This plan also separates two concerns that are easy to conflate:
 
 Sparse residency solves the first problem. It does not by itself solve the second. PNG is still a poor on-demand source format because higher-resolution data usually requires a full CPU decode before mip generation. Real streaming therefore also needs a cooked texture asset format with individually addressable mips, and eventually page-addressable data for very large textures.
 
+## 1.1 Runtime Texture Scheduler Contract
+
+The texture-management runtime now exposes renderer-neutral residency and upload telemetry records in `TextureRuntimeTelemetry.cs`. OpenGL still owns the first implementation, but policy should move through backend-neutral fields: resident max dimension, base mip, level count, page selection, estimated committed bytes, source version/hash, queue wait, execution time, and storage generation.
+
+Cooked texture metadata should keep enough addressing data for the upload scheduler to request work without reopening or decoding the whole source: per-mip offsets, optional sparse page offsets, source version/hash, and resident-byte estimates by format. Future BCn or neural-compressed assets should report bytes in compressed resident units and upload chunks in the scheduler's neutral `TextureUploadTelemetry`, leaving backend-specific block/page math behind the residency backend.
+
+The Vulkan renderer has placeholder hooks for staged image upload progress, sparse image residency, and generation-gated cancellation. Those hooks should consume the same telemetry contract rather than adding Vulkan-only policy fields above the backend layer.
+
 ## 2. Problem Statement
 
 ## 2.1 Current problems

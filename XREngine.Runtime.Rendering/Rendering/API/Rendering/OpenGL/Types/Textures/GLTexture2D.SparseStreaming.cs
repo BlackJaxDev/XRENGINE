@@ -201,6 +201,19 @@ public partial class GLTexture2D
         _sparseLogicalMipCount = request.LogicalMipCount;
         _sparseNumSparseLevels = numSparseLevels;
         Data.SparseTextureStreamingEnabled = true;
+        int storageGeneration = AdvanceStorageGeneration();
+        TextureRuntimeDiagnostics.LogStorageAllocated(
+            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            GetDescribingName(),
+            Data.FilePath,
+            BindingId,
+            request.LogicalWidth,
+            request.LogicalHeight,
+            (uint)request.LogicalMipCount,
+            0L,
+            storageGeneration,
+            "OpenGL",
+            "sparse logical storage");
 
         // Sparse immutable storage is a logical allocation only. Track only committed bytes
         // in VRAM stats, not the full logical mip chain.

@@ -64,6 +64,13 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public long TrackedVramBytes => Engine.Rendering.Stats.AllocatedVRAMBytes;
     public long TrackedVramBudgetBytes => Engine.Rendering.Stats.VramBudgetBytes;
     public bool EnableGpuIndirectDebugLogging => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+    public TextureRuntimeLogMode TextureLogMode => Engine.Rendering.Settings.TextureLogMode;
+    public double TextureSlowCpuDecodeResizeMilliseconds => Engine.Rendering.Settings.TextureSlowCpuDecodeResizeMilliseconds;
+    public double TextureSlowMipBuildMilliseconds => Engine.Rendering.Settings.TextureSlowMipBuildMilliseconds;
+    public double TextureSlowUploadChunkMilliseconds => Engine.Rendering.Settings.TextureSlowUploadChunkMilliseconds;
+    public double TextureSlowTransitionMilliseconds => Engine.Rendering.Settings.TextureSlowTransitionMilliseconds;
+    public double TextureSlowQueueWaitMilliseconds => Engine.Rendering.Settings.TextureSlowQueueWaitMilliseconds;
+    public double TextureUploadFrameBudgetMilliseconds => Engine.Rendering.Settings.TextureUploadFrameBudgetMilliseconds;
     public ETwoPlayerPreference TwoPlayerViewportPreference => Engine.GameSettings.TwoPlayerViewportPreference;
     public EThreePlayerPreference ThreePlayerViewportPreference => Engine.GameSettings.ThreePlayerViewportPreference;
     public RuntimeGraphicsApiKind CurrentRenderBackend

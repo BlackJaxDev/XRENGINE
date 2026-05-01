@@ -59,7 +59,10 @@ public readonly record struct ImportedTextureStreamingTelemetry(
     int PendingTransitionCount,
     int ActiveDecodeCount,
     int QueuedDecodeCount,
+    int ActiveGpuUploadCount,
     int QueuedTransitionsThisFrame,
+    int QueuedPromotionTransitionsThisFrame,
+    int QueuedDemotionTransitionsThisFrame,
     long LastFrameId,
     long CurrentManagedBytes,
     long AvailableManagedBytes,
@@ -85,7 +88,17 @@ public readonly record struct ImportedTextureStreamingTextureTelemetry(
     float DesiredPageCoverage,
     bool PreviewReady,
     long CurrentCommittedBytes,
-    long DesiredCommittedBytes);
+    long DesiredCommittedBytes,
+    bool HasPendingTransition,
+    bool IsVisible,
+    bool IsSlow,
+    bool WasPressureDemoted,
+    bool HasValidationFailure,
+    int ValidationFailureCount,
+    double OldestQueueWaitMilliseconds,
+    double LastUploadMilliseconds,
+    float PriorityScore,
+    string BackendName);
 
 internal interface ITextureStreamingSource
 {
@@ -940,9 +953,18 @@ internal sealed class ImportedTextureStreamingManager
     private const int MaxPromotionTransitionsPerFrame = 1;
     private const int MaxSparseFinalizationsPerFrame = 2;
     private const int MinTransitionCooldownFrames = 2;
+    private const int PromotionCooldownFrames = 6;
+    private const int DemotionCooldownFrames = 90;
+    private const int VisiblePromotionPinFrames = 180;
     private const int PromotionFadeFrames = 90;
+    private const int RecentlyBoundFallbackFrames = 3;
     private const long MaxPromotionBytesPerFrame = 12L * 1024L * 1024L;
+    private const long MaxImportEraPromotionBytesPerFrame = 4L * 1024L * 1024L;
+    private const uint BoundMaterialRelatedMinResidentMaxDimension = 512u;
+    private const float BoundMaterialFallbackProjectedPixelSpan = 384.0f;
+    private const float BoundMaterialFallbackScreenCoverage = 0.12f;
     private const int RecordRefCompactionIntervalFrames = 600;
+    private const int TextureSummaryIntervalFrames = 60;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
     private static readonly bool EnablePartialSparsePageResidency = false;
 
@@ -977,6 +999,8 @@ internal sealed class ImportedTextureStreamingManager
     private int _activeImportedModelImports;
     private long _collectFrameId;
     private int _queuedTransitionsThisFrame;
+    private int _queuedPromotionTransitionsThisFrame;
+    private int _queuedDemotionTransitionsThisFrame;
     private int _sparseFinalizeScheduled;
     private long _lastTelemetryFrameId;
     private long _lastCurrentManagedBytes;
@@ -1027,12 +1051,27 @@ internal sealed class ImportedTextureStreamingManager
         public float MaxScreenCoverage;
         public float UvDensityHint = 1.0f;
         public SparseTextureStreamingPageSelection VisiblePageSelection = SparseTextureStreamingPageSelection.Full;
+        public long LastBoundFrameId = long.MinValue;
+        public int LastBoundMaterialTextureCount;
         public bool PreviewReady;
         public CancellationTokenSource? PendingLoadCts;
         public SparseTextureStreamingPageSelection PendingPageSelection = SparseTextureStreamingPageSelection.Full;
         public SparseTextureStreamingTransitionRequest PendingSparseTransitionRequest;
         public SparseTextureStreamingTransitionResult? PendingSparseTransitionResult;
         public long LastTransitionFrameId = long.MinValue;
+        public long PendingTransitionQueuedTimestamp;
+        public double LastTransitionQueueWaitMilliseconds;
+        public double LastTransitionExecutionMilliseconds;
+        public long PromotionCooldownUntilFrameId = long.MinValue;
+        public long DemotionCooldownUntilFrameId = long.MinValue;
+        public long PinUntilFrameId = long.MinValue;
+        public long LastPressureDemotionFrameId = long.MinValue;
+        public bool PendingTransitionWasPressureDemotion;
+        public uint PendingTransitionPreviousResidentSize;
+        public long PendingTransitionPreviousCommittedBytes;
+        public long PendingTransitionTargetCommittedBytes;
+        public string PendingTransitionBackendName = string.Empty;
+        public string PendingTransitionReason = string.Empty;
         public float BaseLodBias;
         public float CurrentStreamingLodBias;
         public float PromotionFadeStartBias;
@@ -1056,13 +1095,22 @@ internal sealed class ImportedTextureStreamingManager
         long CurrentCommittedBytes,
         SparseTextureStreamingPageSelection CurrentPageSelection,
         long LastVisibleFrameId,
+        long LastBoundFrameId,
+        int LastBoundMaterialTextureCount,
         float MinVisibleDistance,
         float MaxProjectedPixelSpan,
         float MaxScreenCoverage,
         float UvDensityHint,
         SparseTextureStreamingPageSelection VisiblePageSelection,
         bool PreviewReady,
-        long LastTransitionFrameId);
+        long LastTransitionFrameId,
+        long PendingTransitionQueuedTimestamp,
+        double LastTransitionQueueWaitMilliseconds,
+        double LastTransitionExecutionMilliseconds,
+        long LastPressureDemotionFrameId,
+        int ValidationFailureCount,
+        double LastTextureQueueWaitMilliseconds,
+        double LastTextureUploadMilliseconds);
 
     public IDisposable EnterScope()
     {
@@ -1115,11 +1163,19 @@ internal sealed class ImportedTextureStreamingManager
         }
 
         ITextureResidencyBackend previewBackend = record.Backend;
+        TextureRuntimeDiagnostics.LogImportPreviewQueued(
+            Volatile.Read(ref _collectFrameId),
+            target.Name,
+            authorityPath,
+            previewBackend.PreviewMaxDimension,
+            previewBackend.Name);
+
         return previewBackend.SchedulePreviewLoad(
             record.Source ?? TextureStreamingSourceFactory.Create(filePath),
             target,
             residentData =>
             {
+                ITextureResidencyBackend readyBackend;
                 lock (record.Sync)
                 {
                     record.Format = ESizedInternalFormat.Rgba8;
@@ -1130,7 +1186,25 @@ internal sealed class ImportedTextureStreamingManager
                     record.PendingMaxDimension = 0;
                     record.PreviewReady = true;
                     record.Backend = ResolveBackendForTexture(residentData.SourceWidth, residentData.SourceHeight, record.Format);
+                    readyBackend = record.Backend;
                 }
+
+                long committedBytes = readyBackend.EstimateCommittedBytes(
+                    residentData.SourceWidth,
+                    residentData.SourceHeight,
+                    residentData.ResidentMaxDimension,
+                    ESizedInternalFormat.Rgba8,
+                    sparseNumLevels: 0,
+                    SparseTextureStreamingPageSelection.Full);
+                TextureRuntimeDiagnostics.LogImportPreviewReady(
+                    Volatile.Read(ref _collectFrameId),
+                    target.Name,
+                    authorityPath,
+                    residentData.SourceWidth,
+                    residentData.SourceHeight,
+                    residentData.ResidentMaxDimension,
+                    committedBytes,
+                    readyBackend.Name);
             },
             onDeferred: null,
             tex =>
@@ -1206,6 +1280,53 @@ internal sealed class ImportedTextureStreamingManager
 
                     record.VisiblePageSelection = record.VisiblePageSelection.Union(pageSelection);
                 }
+
+                if (TextureRuntimeDiagnostics.IsVerboseEnabled)
+                {
+                    float priorityScore = (projectedPixelSpan + screenCoverage * 1024.0f)
+                        * ResolveTextureRoleMultiplier(texture.SamplerName)
+                        * uvDensityHint;
+                    TextureRuntimeDiagnostics.LogVisibilityRecorded(
+                        frameId,
+                        texture.Name,
+                        record.FilePath,
+                        projectedPixelSpan,
+                        screenCoverage,
+                        priorityScore);
+                }
+            }
+            finally
+            {
+                Monitor.Exit(record.Sync);
+            }
+        }
+    }
+
+    public void RecordMaterialBinding(XRMaterialBase? material)
+    {
+        if (material?.Textures is not { Count: > 0 } || s_recordRefs.IsEmpty)
+            return;
+
+        long frameId = Volatile.Read(ref _collectFrameId);
+        if (frameId <= 0)
+            return;
+
+        int materialTextureCount = material.Textures.Count;
+        for (int textureIndex = 0; textureIndex < materialTextureCount; textureIndex++)
+        {
+            if (material.Textures[textureIndex] is not XRTexture2D texture
+                || !s_recordsByTexture.TryGetValue(texture, out ImportedTextureStreamingRecord? record))
+            {
+                continue;
+            }
+
+            if (!Monitor.TryEnter(record.Sync))
+                continue;
+
+            try
+            {
+                record.LastBoundFrameId = frameId;
+                record.LastBoundMaterialTextureCount = materialTextureCount;
             }
             finally
             {
@@ -1245,7 +1366,10 @@ internal sealed class ImportedTextureStreamingManager
             pendingTransitions,
             _tieredBackend.ActiveDecodeCount + _sparseBackend.ActiveDecodeCount,
             _tieredBackend.QueuedDecodeCount + _sparseBackend.QueuedDecodeCount,
+            _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount,
             Volatile.Read(ref _queuedTransitionsThisFrame),
+            Volatile.Read(ref _queuedPromotionTransitionsThisFrame),
+            Volatile.Read(ref _queuedDemotionTransitionsThisFrame),
             Volatile.Read(ref _lastTelemetryFrameId),
             Volatile.Read(ref _lastCurrentManagedBytes),
             Volatile.Read(ref _lastAvailableManagedBytes),
@@ -1258,6 +1382,9 @@ internal sealed class ImportedTextureStreamingManager
     {
         List<ImportedTextureStreamingSnapshot> snapshots = CollectSnapshots();
         List<ImportedTextureStreamingTextureTelemetry> telemetry = new(snapshots.Count);
+        long currentFrameId = Volatile.Read(ref _lastTelemetryFrameId);
+        double slowQueueThreshold = RuntimeRenderingHostServices.Current.TextureSlowQueueWaitMilliseconds;
+        double slowUploadThreshold = RuntimeRenderingHostServices.Current.TextureSlowTransitionMilliseconds;
         for (int i = 0; i < snapshots.Count; i++)
         {
             ImportedTextureStreamingSnapshot snapshot = snapshots[i];
@@ -1275,6 +1402,13 @@ internal sealed class ImportedTextureStreamingManager
                 snapshot.Format,
                 snapshot.SparseNumLevels,
                 desiredPageSelection);
+            bool hasPendingTransition = snapshot.PendingMaxDimension != 0;
+            double oldestQueueWaitMilliseconds = hasPendingTransition && snapshot.PendingTransitionQueuedTimestamp != 0L
+                ? TextureRuntimeDiagnostics.ElapsedMilliseconds(snapshot.PendingTransitionQueuedTimestamp)
+                : Math.Max(snapshot.LastTransitionQueueWaitMilliseconds, snapshot.LastTextureQueueWaitMilliseconds);
+            double lastUploadMilliseconds = Math.Max(snapshot.LastTransitionExecutionMilliseconds, snapshot.LastTextureUploadMilliseconds);
+            bool isSlow = oldestQueueWaitMilliseconds >= slowQueueThreshold
+                || lastUploadMilliseconds >= slowUploadThreshold;
 
             telemetry.Add(new ImportedTextureStreamingTextureTelemetry(
                 snapshot.TextureName,
@@ -1294,10 +1428,26 @@ internal sealed class ImportedTextureStreamingManager
                 desiredPageSelection.CoverageFraction,
                 snapshot.PreviewReady,
                 snapshot.CurrentCommittedBytes,
-                desiredCommittedBytes));
+                desiredCommittedBytes,
+                hasPendingTransition,
+                snapshot.LastVisibleFrameId == currentFrameId,
+                isSlow,
+                snapshot.LastPressureDemotionFrameId != long.MinValue,
+                snapshot.ValidationFailureCount > 0,
+                snapshot.ValidationFailureCount,
+                oldestQueueWaitMilliseconds,
+                lastUploadMilliseconds,
+                CalculatePriorityScore(snapshot),
+                snapshot.Backend.Name));
         }
 
         return telemetry;
+    }
+
+    public void DumpSummary()
+    {
+        long frameId = Volatile.Read(ref _lastTelemetryFrameId);
+        TextureRuntimeDiagnostics.LogSummary(frameId, GetTelemetry(), GetTrackedTextureTelemetry(), force: true);
     }
 
     internal static uint DetermineDesiredResidentSize(
@@ -1779,7 +1929,8 @@ internal sealed class ImportedTextureStreamingManager
             return;
         }
 
-        bool allowPromotions = Volatile.Read(ref _activeImportedModelImports) == 0;
+        bool importsActive = Volatile.Read(ref _activeImportedModelImports) > 0;
+        bool allowPromotions = true;
         long currentManagedBytes = 0L;
         for (int i = 0; i < snapshots.Count; i++)
             currentManagedBytes += snapshots[i].CurrentCommittedBytes;
@@ -1844,15 +1995,17 @@ internal sealed class ImportedTextureStreamingManager
         long assignedManagedBytes = 0L;
         int queuedTransitions = 0;
         int queuedPromotions = 0;
+        int queuedDemotions = 0;
         long queuedPromotionBytes = 0L;
         Dictionary<string, int> promotionCountsByGroup = new(StringComparer.OrdinalIgnoreCase);
-        List<(ImportedTextureStreamingSnapshot Snapshot, uint AssignedResidentSize, SparseTextureStreamingPageSelection DesiredPageSelection, long TargetCommittedBytes)> deferredPromotions = [];
+        List<(ImportedTextureStreamingSnapshot Snapshot, uint AssignedResidentSize, SparseTextureStreamingPageSelection DesiredPageSelection, long TargetCommittedBytes, bool PressureDemotion)> deferredPromotions = [];
 
         bool TryQueueCandidate(
             ImportedTextureStreamingSnapshot snapshot,
             uint assignedResidentSize,
             SparseTextureStreamingPageSelection desiredPageSelection,
             long targetCommittedBytes,
+            bool pressureDemotion,
             bool enforceFairness)
         {
             SparseTextureStreamingPageSelection currentPageSelection = snapshot.PendingMaxDimension != 0
@@ -1879,8 +2032,21 @@ internal sealed class ImportedTextureStreamingManager
 
             bool isPromotion = targetCommittedBytes > currentCommittedBytes;
             long deltaBytes = Math.Max(0L, targetCommittedBytes - currentCommittedBytes);
+            bool visibleThisFrame = snapshot.LastVisibleFrameId == frameId || IsRecentlyBound(snapshot, frameId);
             if (isPromotion)
             {
+                if (frameId < snapshot.Record.PromotionCooldownUntilFrameId && !visibleThisFrame)
+                    return false;
+
+                if (importsActive)
+                {
+                    if (!visibleThisFrame)
+                        return false;
+
+                    if (queuedPromotionBytes + deltaBytes > MaxImportEraPromotionBytesPerFrame)
+                        return false;
+                }
+
                 if (queuedTransitions >= MaxResidentTransitionsPerFrame
                     || queuedPromotions >= MaxPromotionTransitionsPerFrame
                     || queuedPromotionBytes + deltaBytes > MaxPromotionBytesPerFrame)
@@ -1892,17 +2058,41 @@ internal sealed class ImportedTextureStreamingManager
                     && !string.IsNullOrWhiteSpace(snapshot.FairnessGroupKey)
                     && promotionCountsByGroup.GetValueOrDefault(snapshot.FairnessGroupKey) > 0)
                 {
-                    deferredPromotions.Add((snapshot, assignedResidentSize, desiredPageSelection, targetCommittedBytes));
+                    deferredPromotions.Add((snapshot, assignedResidentSize, desiredPageSelection, targetCommittedBytes, pressureDemotion));
                     return false;
                 }
             }
-            else if (queuedTransitions >= MaxResidentTransitionsPerFrame)
+            else
+            {
+                if (!pressureDemotion)
+                {
+                    if (importsActive)
+                        return false;
+
+                    if (frameId < snapshot.Record.DemotionCooldownUntilFrameId
+                        || frameId < snapshot.Record.PinUntilFrameId)
+                    {
+                        return false;
+                    }
+                }
+
+                if (queuedTransitions >= MaxResidentTransitionsPerFrame)
+                    return false;
+            }
+
+            string reason = ResolveTransitionReason(snapshot, frameId, isPromotion, pressureDemotion, importsActive);
+            if (!QueueResidentTransition(
+                snapshot,
+                assignedResidentSize,
+                desiredPageSelection,
+                frameId,
+                currentCommittedBytes,
+                targetCommittedBytes,
+                pressureDemotion,
+                reason))
             {
                 return false;
             }
-
-            if (!QueueResidentTransition(snapshot, assignedResidentSize, desiredPageSelection, frameId))
-                return false;
 
             queuedTransitions++;
             if (isPromotion)
@@ -1912,6 +2102,10 @@ internal sealed class ImportedTextureStreamingManager
                 if (!string.IsNullOrWhiteSpace(snapshot.FairnessGroupKey))
                     promotionCountsByGroup[snapshot.FairnessGroupKey] = promotionCountsByGroup.GetValueOrDefault(snapshot.FairnessGroupKey) + 1;
             }
+            else
+            {
+                queuedDemotions++;
+            }
 
             return true;
         }
@@ -1919,21 +2113,43 @@ internal sealed class ImportedTextureStreamingManager
         for (int i = 0; i < snapshots.Count; i++)
         {
             ImportedTextureStreamingSnapshot snapshot = snapshots[i];
+            bool visibleThisFrame = snapshot.LastVisibleFrameId == frameId;
+            bool recentlyBoundFallback = !visibleThisFrame && IsRecentlyBound(snapshot, frameId);
+            long policyVisibleFrameId = visibleThisFrame || recentlyBoundFallback
+                ? frameId
+                : snapshot.LastVisibleFrameId;
+            float policyProjectedPixelSpan = recentlyBoundFallback
+                ? Math.Max(snapshot.MaxProjectedPixelSpan, BoundMaterialFallbackProjectedPixelSpan)
+                : snapshot.MaxProjectedPixelSpan;
+            float policyScreenCoverage = recentlyBoundFallback
+                ? Math.Max(snapshot.MaxScreenCoverage, BoundMaterialFallbackScreenCoverage)
+                : snapshot.MaxScreenCoverage;
             uint desiredResidentSize = DetermineDesiredResidentSize(
                 new ImportedTextureStreamingPolicyInput(
                     snapshot.SourceWidth,
                     snapshot.SourceHeight,
                     snapshot.ResidentMaxDimension,
                     snapshot.PreviewReady,
-                    snapshot.LastVisibleFrameId,
+                    policyVisibleFrameId,
                     snapshot.MinVisibleDistance,
-                    snapshot.MaxProjectedPixelSpan,
-                    snapshot.MaxScreenCoverage,
+                    policyProjectedPixelSpan,
+                    policyScreenCoverage,
                     snapshot.UvDensityHint,
                     snapshot.SamplerName),
                 frameId,
                 allowPromotions,
                 snapshot.Backend.PreviewMaxDimension);
+            if (visibleThisFrame || recentlyBoundFallback)
+            {
+                uint sourceMaxDimension = Math.Max(snapshot.SourceWidth, snapshot.SourceHeight);
+                if (sourceMaxDimension > snapshot.Backend.PreviewMaxDimension
+                    && snapshot.LastBoundMaterialTextureCount > 1)
+                {
+                    desiredResidentSize = Math.Max(
+                        desiredResidentSize,
+                        Math.Min(sourceMaxDimension, BoundMaterialRelatedMinResidentMaxDimension));
+                }
+            }
 
             SparseTextureStreamingPageSelection budgetPageSelection = DetermineDesiredPageSelection(snapshot, desiredResidentSize, frameId);
 
@@ -1961,6 +2177,20 @@ internal sealed class ImportedTextureStreamingManager
                 snapshot.Format,
                 snapshot.SparseNumLevels,
                 desiredPageSelection);
+            bool pressureDemotion = assignedResidentSize < desiredResidentSize
+                && targetCommittedBytes < snapshot.CurrentCommittedBytes
+                && availableManagedBytes != long.MaxValue;
+
+            TextureRuntimeDiagnostics.LogResidencyDesired(
+                frameId,
+                snapshot.TextureName,
+                snapshot.FilePath,
+                snapshot.ResidentMaxDimension,
+                assignedResidentSize,
+                snapshot.CurrentCommittedBytes,
+                targetCommittedBytes,
+                snapshot.Backend.Name,
+                pressureDemotion ? "vram pressure fit" : importsActive ? "import-era policy" : "visibility policy");
 
             assignedManagedBytes += targetCommittedBytes;
             if (!Monitor.TryEnter(snapshot.Record.Sync))
@@ -1975,7 +2205,7 @@ internal sealed class ImportedTextureStreamingManager
                 Monitor.Exit(snapshot.Record.Sync);
             }
 
-            _ = TryQueueCandidate(snapshot, assignedResidentSize, desiredPageSelection, targetCommittedBytes, enforceFairness: true);
+            _ = TryQueueCandidate(snapshot, assignedResidentSize, desiredPageSelection, targetCommittedBytes, pressureDemotion, enforceFairness: true);
         }
 
         for (int i = 0; i < deferredPromotions.Count; i++)
@@ -1983,22 +2213,51 @@ internal sealed class ImportedTextureStreamingManager
             if (queuedTransitions >= MaxResidentTransitionsPerFrame || queuedPromotions >= MaxPromotionTransitionsPerFrame)
                 break;
 
-            (ImportedTextureStreamingSnapshot Snapshot, uint AssignedResidentSize, SparseTextureStreamingPageSelection DesiredPageSelection, long TargetCommittedBytes) deferred = deferredPromotions[i];
+            (ImportedTextureStreamingSnapshot Snapshot, uint AssignedResidentSize, SparseTextureStreamingPageSelection DesiredPageSelection, long TargetCommittedBytes, bool PressureDemotion) deferred = deferredPromotions[i];
             _ = TryQueueCandidate(
                 deferred.Snapshot,
                 deferred.AssignedResidentSize,
                 deferred.DesiredPageSelection,
                 deferred.TargetCommittedBytes,
+                deferred.PressureDemotion,
                 enforceFairness: false);
         }
 
         Volatile.Write(ref _queuedTransitionsThisFrame, queuedTransitions);
+        Volatile.Write(ref _queuedPromotionTransitionsThisFrame, queuedPromotions);
+        Volatile.Write(ref _queuedDemotionTransitionsThisFrame, queuedDemotions);
         Volatile.Write(ref _lastTelemetryFrameId, frameId);
         Volatile.Write(ref _lastCurrentManagedBytes, currentManagedBytes);
         Volatile.Write(ref _lastAvailableManagedBytes, availableManagedBytes);
         Volatile.Write(ref _lastAssignedManagedBytes, assignedManagedBytes);
 
-        // Periodic streaming diagnostics (every ~10 seconds at 60fps, or first few frames for early state)
+        int pendingTextureQueueDepth = XRTexture2D.QueuedProgressiveUploadCount;
+        int urgentTextureRepairDepth = 0;
+        double oldestTextureQueueWaitMilliseconds = 0.0;
+        for (int i = 0; i < snapshots.Count; i++)
+        {
+            ImportedTextureStreamingSnapshot snapshot = snapshots[i];
+            if (snapshot.PendingMaxDimension == 0)
+                continue;
+
+            pendingTextureQueueDepth++;
+            if (snapshot.PendingTransitionQueuedTimestamp != 0L)
+                oldestTextureQueueWaitMilliseconds = Math.Max(oldestTextureQueueWaitMilliseconds, TextureRuntimeDiagnostics.ElapsedMilliseconds(snapshot.PendingTransitionQueuedTimestamp));
+
+            bool importantNow = snapshot.LastVisibleFrameId == frameId || IsRecentlyBound(snapshot, frameId);
+            if (importantNow && (snapshot.PendingMaxDimension > snapshot.ResidentMaxDimension || snapshot.ValidationFailureCount > 0))
+                urgentTextureRepairDepth++;
+        }
+
+        RenderWorkBudgetCoordinator.RecordTextureQueue(
+            pendingTextureQueueDepth,
+            Math.Max(oldestTextureQueueWaitMilliseconds, TextureRuntimeDiagnostics.MaxQueueWaitMilliseconds));
+        RenderWorkBudgetCoordinator.RecordUrgentTextureRepairQueue(urgentTextureRepairDepth);
+
+        if (frameId % TextureSummaryIntervalFrames == 0)
+            TextureRuntimeDiagnostics.LogSummary(frameId, GetTelemetry(), GetTrackedTextureTelemetry());
+
+        // Periodic legacy streaming diagnostics (kept in general log for early startup correlation).
         bool shouldLog = frameId % 600 == 0
             || (frameId <= 60 && frameId % 10 == 0)
             || (frameId > 60 && frameId <= 300 && frameId % 60 == 0);
@@ -2028,8 +2287,8 @@ internal sealed class ImportedTextureStreamingManager
                 $"[TextureStreaming] frame={frameId} tracked={snapshots.Count} visible={visibleCount} " +
                 $"previewReady={previewReadyCount} atPreview={atPreviewCount} promoted={promotedCount} " +
                 $"pending={pendingCount} maxResident={maxResident} maxPixelSpan={maxPixelSpan:F0} " +
-                $"allowPromotions={allowPromotions} activeImports={Volatile.Read(ref _activeImportedModelImports)} " +
-                $"queuedTransitions={queuedTransitions} queuedPromotions={queuedPromotions} " +
+                $"allowPromotions={allowPromotions} importsActive={importsActive} activeImports={Volatile.Read(ref _activeImportedModelImports)} " +
+                $"queuedTransitions={queuedTransitions} queuedPromotions={queuedPromotions} queuedDemotions={queuedDemotions} " +
                 $"budget={(availableManagedBytes == long.MaxValue ? "unlimited" : $"{availableManagedBytes / (1024 * 1024)}MB")}");
         }
     }
@@ -2074,13 +2333,22 @@ internal sealed class ImportedTextureStreamingManager
                         ? texture.SparseTextureStreamingResidentPageSelection
                         : SparseTextureStreamingPageSelection.Full,
                     record.LastVisibleFrameId,
+                    record.LastBoundFrameId,
+                    record.LastBoundMaterialTextureCount,
                     record.MinVisibleDistance,
                     record.MaxProjectedPixelSpan,
                     record.MaxScreenCoverage,
                     record.UvDensityHint,
                     record.VisiblePageSelection,
                     record.PreviewReady,
-                    record.LastTransitionFrameId));
+                    record.LastTransitionFrameId,
+                    record.PendingTransitionQueuedTimestamp,
+                    record.LastTransitionQueueWaitMilliseconds,
+                    record.LastTransitionExecutionMilliseconds,
+                    record.LastPressureDemotionFrameId,
+                    texture.TextureUploadValidationFailureCount,
+                    texture.LastTextureQueueWaitMilliseconds,
+                    texture.LastTextureUploadDurationMilliseconds));
             }
             finally
             {
@@ -2101,6 +2369,11 @@ internal sealed class ImportedTextureStreamingManager
         if (leftVisible != rightVisible)
             return leftVisible ? -1 : 1;
 
+        bool leftRecentlyBound = IsRecentlyBound(left, frameId);
+        bool rightRecentlyBound = IsRecentlyBound(right, frameId);
+        if (leftRecentlyBound != rightRecentlyBound)
+            return leftRecentlyBound ? -1 : 1;
+
         if (leftVisible && rightVisible)
         {
             int priorityCompare = CalculatePriorityScore(right).CompareTo(CalculatePriorityScore(left));
@@ -2116,13 +2389,54 @@ internal sealed class ImportedTextureStreamingManager
         if (recencyCompare != 0)
             return recencyCompare;
 
+        int bindingRecencyCompare = right.LastBoundFrameId.CompareTo(left.LastBoundFrameId);
+        if (bindingRecencyCompare != 0)
+            return bindingRecencyCompare;
+
         return right.ResidentMaxDimension.CompareTo(left.ResidentMaxDimension);
     }
 
     private static float CalculatePriorityScore(ImportedTextureStreamingSnapshot snapshot)
-        => (snapshot.MaxProjectedPixelSpan + snapshot.MaxScreenCoverage * 1024.0f)
+    {
+        float projectedPixelSpan = snapshot.MaxProjectedPixelSpan;
+        float screenCoverage = snapshot.MaxScreenCoverage;
+        if (snapshot.LastBoundMaterialTextureCount > 1)
+        {
+            projectedPixelSpan = Math.Max(projectedPixelSpan, BoundMaterialFallbackProjectedPixelSpan);
+            screenCoverage = Math.Max(screenCoverage, BoundMaterialFallbackScreenCoverage);
+        }
+
+        return (projectedPixelSpan + screenCoverage * 1024.0f)
             * ResolveTextureRoleMultiplier(snapshot.SamplerName)
             * NormalizeUvDensityHint(snapshot.UvDensityHint);
+    }
+
+    private static bool IsRecentlyBound(ImportedTextureStreamingSnapshot snapshot, long frameId)
+        => snapshot.LastBoundFrameId != long.MinValue
+            && frameId >= snapshot.LastBoundFrameId
+            && frameId - snapshot.LastBoundFrameId <= RecentlyBoundFallbackFrames;
+
+    private static string ResolveTransitionReason(
+        ImportedTextureStreamingSnapshot snapshot,
+        long frameId,
+        bool isPromotion,
+        bool pressureDemotion,
+        bool importsActive)
+    {
+        if (pressureDemotion)
+            return "vram pressure demotion";
+
+        if (isPromotion && snapshot.LastVisibleFrameId == frameId)
+            return importsActive ? "visible import-era promotion" : "visible quality promotion";
+
+        if (isPromotion && IsRecentlyBound(snapshot, frameId))
+            return importsActive ? "bound import-era promotion" : "recent material binding promotion";
+
+        if (isPromotion)
+            return "recent visibility promotion";
+
+        return importsActive ? "import-era demotion skipped" : "visibility grace demotion";
+    }
 
     private static string ResolveFairnessGroupKey(string? filePath)
     {
@@ -2157,7 +2471,15 @@ internal sealed class ImportedTextureStreamingManager
         }
     }
 
-    private bool QueueResidentTransition(ImportedTextureStreamingSnapshot snapshot, uint targetResidentSize, SparseTextureStreamingPageSelection pageSelection, long frameId)
+    private bool QueueResidentTransition(
+        ImportedTextureStreamingSnapshot snapshot,
+        uint targetResidentSize,
+        SparseTextureStreamingPageSelection pageSelection,
+        long frameId,
+        long currentCommittedBytes,
+        long targetCommittedBytes,
+        bool pressureDemotion,
+        string reason)
     {
         ImportedTextureStreamingRecord record = snapshot.Record;
         uint sourceMaxDimension = Math.Max(snapshot.SourceWidth, snapshot.SourceHeight);
@@ -2175,12 +2497,30 @@ internal sealed class ImportedTextureStreamingManager
 
             if (normalizedTarget == record.PendingMaxDimension
                 && record.PendingPageSelection.NearlyEquals(normalizedPageSelection))
+            {
+                TextureRuntimeDiagnostics.LogTransitionCoalesced(
+                    frameId,
+                    snapshot.TextureName,
+                    snapshot.FilePath,
+                    normalizedTarget,
+                    snapshot.Backend.Name,
+                    "identical pending transition");
                 return false;
+            }
 
             if (record.PendingMaxDimension == 0
                 && normalizedTarget == record.ResidentMaxDimension
                 && snapshot.CurrentPageSelection.NearlyEquals(normalizedPageSelection))
+            {
+                TextureRuntimeDiagnostics.LogTransitionCoalesced(
+                    frameId,
+                    snapshot.TextureName,
+                    snapshot.FilePath,
+                    normalizedTarget,
+                    snapshot.Backend.Name,
+                    "already resident");
                 return false;
+            }
         }
         finally
         {
@@ -2196,6 +2536,7 @@ internal sealed class ImportedTextureStreamingManager
         CancellationTokenSource cts = new();
         CancellationTokenSource? previousPendingLoadCts;
         bool includeMipChain;
+        uint previousResidentSize;
         if (!Monitor.TryEnter(record.Sync))
         {
             cts.Dispose();
@@ -2209,9 +2550,33 @@ internal sealed class ImportedTextureStreamingManager
             backend = record.Backend ?? ResolveBackendForTexture(record.SourceWidth, record.SourceHeight, record.Format);
             includeMipChain = normalizedTarget > minimumResidentSize;
             previousPendingLoadCts = record.PendingLoadCts;
+            previousResidentSize = record.PendingMaxDimension != 0
+                ? record.PendingMaxDimension
+                : record.ResidentMaxDimension;
+            if (previousPendingLoadCts is not null)
+            {
+                TextureRuntimeDiagnostics.LogTransitionCoalesced(
+                    frameId,
+                    texture.Name,
+                    filePath,
+                    normalizedTarget,
+                    backend.Name,
+                    "superseded pending transition");
+            }
+
             record.PendingLoadCts = cts;
             record.PendingMaxDimension = normalizedTarget;
             record.PendingPageSelection = normalizedPageSelection;
+            record.PendingTransitionQueuedTimestamp = TextureRuntimeDiagnostics.StartTiming();
+            record.PendingTransitionWasPressureDemotion = pressureDemotion;
+            record.PendingTransitionPreviousResidentSize = previousResidentSize;
+            record.PendingTransitionPreviousCommittedBytes = currentCommittedBytes;
+            record.PendingTransitionTargetCommittedBytes = targetCommittedBytes;
+            record.PendingTransitionBackendName = backend.Name;
+            record.PendingTransitionReason = reason;
+            record.PendingSparseTransitionRequest = default;
+            record.PendingSparseTransitionResult = null;
+            record.LastTransitionFrameId = frameId;
         }
         finally
         {
@@ -2228,9 +2593,27 @@ internal sealed class ImportedTextureStreamingManager
 
         if (string.IsNullOrWhiteSpace(filePath) || source is null)
         {
+            TextureRuntimeDiagnostics.LogTransitionCanceled(
+                frameId,
+                texture.Name,
+                filePath,
+                normalizedTarget,
+                backend.Name,
+                "missing streaming source");
             ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId);
             return false;
         }
+
+        TextureRuntimeDiagnostics.LogTransitionQueued(
+            frameId,
+            texture.Name,
+            filePath,
+            previousResidentSize,
+            normalizedTarget,
+            currentCommittedBytes,
+            targetCommittedBytes,
+            backend.Name,
+            reason);
 
         backend.ScheduleResidentLoad(
             source,
@@ -2283,6 +2666,17 @@ internal sealed class ImportedTextureStreamingManager
         bool shouldApplyLodBias = false;
         float textureLodBias = texture?.LodBias ?? 0.0f;
         int sparseNumLevels = texture?.SparseTextureStreamingNumSparseLevels ?? 0;
+        uint previousResidentSize = 0;
+        uint pendingResidentSize = 0;
+        long pendingPreviousBytes = 0L;
+        long pendingTargetBytes = 0L;
+        bool pressureDemotion = false;
+        string backendName = string.Empty;
+        string reason = string.Empty;
+        double queueWaitMilliseconds = 0.0;
+        double executionMilliseconds = 0.0;
+        string? textureName = texture?.Name;
+        string? filePath;
         lock (record.Sync)
         {
             if (!ReferenceEquals(record.PendingLoadCts, cts))
@@ -2291,11 +2685,39 @@ internal sealed class ImportedTextureStreamingManager
                 return;
             }
 
+            filePath = record.FilePath;
+            previousResidentSize = record.ResidentMaxDimension;
+            pendingResidentSize = record.PendingMaxDimension;
+            pendingPreviousBytes = record.PendingTransitionPreviousCommittedBytes;
+            pendingTargetBytes = record.PendingTransitionTargetCommittedBytes;
+            pressureDemotion = record.PendingTransitionWasPressureDemotion;
+            backendName = string.IsNullOrWhiteSpace(record.PendingTransitionBackendName)
+                ? record.Backend?.Name ?? "Unknown"
+                : record.PendingTransitionBackendName;
+            reason = record.PendingTransitionReason;
+            if (record.PendingTransitionQueuedTimestamp != 0L)
+            {
+                queueWaitMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(record.PendingTransitionQueuedTimestamp);
+                executionMilliseconds = queueWaitMilliseconds;
+                record.LastTransitionQueueWaitMilliseconds = queueWaitMilliseconds;
+                record.LastTransitionExecutionMilliseconds = executionMilliseconds;
+            }
+
             if (completedResidentSize > 0)
             {
-                uint previousResidentSize = record.ResidentMaxDimension;
                 record.ResidentMaxDimension = completedResidentSize;
                 record.PreviewReady = true;
+                if (completedResidentSize > previousResidentSize)
+                {
+                    record.PromotionCooldownUntilFrameId = frameId + PromotionCooldownFrames;
+                    record.PinUntilFrameId = frameId + VisiblePromotionPinFrames;
+                }
+                else if (completedResidentSize < previousResidentSize)
+                {
+                    record.DemotionCooldownUntilFrameId = frameId + DemotionCooldownFrames;
+                    if (pressureDemotion)
+                        record.LastPressureDemotionFrameId = frameId;
+                }
 
                 if (texture is not null)
                 {
@@ -2342,11 +2764,60 @@ internal sealed class ImportedTextureStreamingManager
             record.PendingPageSelection = SparseTextureStreamingPageSelection.Full;
             record.PendingSparseTransitionRequest = default;
             record.PendingSparseTransitionResult = null;
+            record.PendingTransitionQueuedTimestamp = 0L;
+            record.PendingTransitionWasPressureDemotion = false;
+            record.PendingTransitionPreviousResidentSize = 0;
+            record.PendingTransitionPreviousCommittedBytes = 0L;
+            record.PendingTransitionTargetCommittedBytes = 0L;
+            record.PendingTransitionBackendName = string.Empty;
+            record.PendingTransitionReason = string.Empty;
             record.LastTransitionFrameId = frameId;
         }
 
         if (texture is not null && shouldApplyLodBias && !NearlyEquals(texture.LodBias, targetLodBias))
             texture.LodBias = targetLodBias;
+
+        if (texture is not null)
+        {
+            texture.RecordTextureQueueWait(queueWaitMilliseconds);
+            texture.RecordTextureUploadDuration(executionMilliseconds);
+        }
+
+        if (completedResidentSize > 0)
+        {
+            TextureRuntimeDiagnostics.LogTransitionApplied(
+                frameId,
+                textureName,
+                filePath,
+                previousResidentSize,
+                completedResidentSize,
+                pendingTargetBytes,
+                queueWaitMilliseconds,
+                executionMilliseconds,
+                backendName);
+
+            if (pressureDemotion && completedResidentSize < previousResidentSize)
+            {
+                TextureRuntimeDiagnostics.LogVramPressure(
+                    frameId,
+                    textureName,
+                    filePath,
+                    Math.Max(0L, pendingPreviousBytes - pendingTargetBytes),
+                    RuntimeRenderingHostServices.Current.TrackedVramBytes,
+                    RuntimeRenderingHostServices.Current.TrackedVramBudgetBytes,
+                    string.IsNullOrWhiteSpace(reason) ? "vram pressure demotion" : reason);
+            }
+        }
+        else
+        {
+            TextureRuntimeDiagnostics.LogTransitionCanceled(
+                frameId,
+                textureName,
+                filePath,
+                pendingResidentSize,
+                backendName,
+                "transition canceled before completion");
+        }
 
         cts.Dispose();
     }
