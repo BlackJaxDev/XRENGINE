@@ -14,6 +14,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
+using TextureRuntimeLogMode = XREngine.Rendering.TextureRuntimeLogMode;
 
 namespace XREngine
 {
@@ -140,6 +141,13 @@ namespace XREngine
                 private bool _enableGpuIndirectCpuFallback = false;
                 private bool _enableGpuIndirectValidationLogging = false;
                 private bool _enableZeroReadbackMaterialScatter = false;
+                private TextureRuntimeLogMode _textureLogMode = TextureRuntimeLogMode.Summary;
+                private double _textureSlowCpuDecodeResizeMilliseconds = 5.0;
+                private double _textureSlowMipBuildMilliseconds = 5.0;
+                private double _textureSlowUploadChunkMilliseconds = 2.0;
+                private double _textureSlowTransitionMilliseconds = 8.0;
+                private double _textureSlowQueueWaitMilliseconds = 100.0;
+                private double _textureUploadFrameBudgetMilliseconds = 2.0;
 
                 /// <summary>
                 /// Whether to enable frame logging for performance profiling.
@@ -205,6 +213,62 @@ namespace XREngine
                 {
                     get => _enableGpuIndirectValidationLogging;
                     set => SetField(ref _enableGpuIndirectValidationLogging, value);
+                }
+
+                [Category("Debug")]
+                [Description("Texture runtime log detail written to log_textures.txt. Summary logs periodic summaries and high-severity events; SlowOnly logs slow/high-severity events; Verbose logs every texture transition/upload diagnostic.")]
+                public TextureRuntimeLogMode TextureLogMode
+                {
+                    get => _textureLogMode;
+                    set => SetField(ref _textureLogMode, value);
+                }
+
+                [Category("Debug")]
+                [Description("Texture CPU decode or resize operations at or above this duration are logged as slow.")]
+                public double TextureSlowCpuDecodeResizeMilliseconds
+                {
+                    get => _textureSlowCpuDecodeResizeMilliseconds;
+                    set => SetField(ref _textureSlowCpuDecodeResizeMilliseconds, Math.Max(0.0, value));
+                }
+
+                [Category("Debug")]
+                [Description("Texture mip build operations at or above this duration are logged as slow.")]
+                public double TextureSlowMipBuildMilliseconds
+                {
+                    get => _textureSlowMipBuildMilliseconds;
+                    set => SetField(ref _textureSlowMipBuildMilliseconds, Math.Max(0.0, value));
+                }
+
+                [Category("Debug")]
+                [Description("Render-thread texture upload chunks at or above this duration are logged as slow.")]
+                public double TextureSlowUploadChunkMilliseconds
+                {
+                    get => _textureSlowUploadChunkMilliseconds;
+                    set => SetField(ref _textureSlowUploadChunkMilliseconds, Math.Max(0.0, value));
+                }
+
+                [Category("Debug")]
+                [Description("Full texture residency transitions at or above this duration are logged as slow.")]
+                public double TextureSlowTransitionMilliseconds
+                {
+                    get => _textureSlowTransitionMilliseconds;
+                    set => SetField(ref _textureSlowTransitionMilliseconds, Math.Max(0.0, value));
+                }
+
+                [Category("Debug")]
+                [Description("Queued texture work that waits this long before execution is logged as slow.")]
+                public double TextureSlowQueueWaitMilliseconds
+                {
+                    get => _textureSlowQueueWaitMilliseconds;
+                    set => SetField(ref _textureSlowQueueWaitMilliseconds, Math.Max(0.0, value));
+                }
+
+                [Category("Performance")]
+                [Description("Approximate per-frame render-thread budget for background texture upload work.")]
+                public double TextureUploadFrameBudgetMilliseconds
+                {
+                    get => _textureUploadFrameBudgetMilliseconds;
+                    set => SetField(ref _textureUploadFrameBudgetMilliseconds, Math.Clamp(value, 0.1, 100.0));
                 }
 
                 /// <summary>

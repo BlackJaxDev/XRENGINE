@@ -167,6 +167,13 @@ public interface IRuntimeRenderingHostServices
     long TrackedVramBytes { get; }
     long TrackedVramBudgetBytes { get; }
     bool EnableGpuIndirectDebugLogging { get; }
+    TextureRuntimeLogMode TextureLogMode { get; }
+    double TextureSlowCpuDecodeResizeMilliseconds { get; }
+    double TextureSlowMipBuildMilliseconds { get; }
+    double TextureSlowUploadChunkMilliseconds { get; }
+    double TextureSlowTransitionMilliseconds { get; }
+    double TextureSlowQueueWaitMilliseconds { get; }
+    double TextureUploadFrameBudgetMilliseconds { get; }
     ETwoPlayerPreference TwoPlayerViewportPreference { get; }
     EThreePlayerPreference ThreePlayerViewportPreference { get; }
     RuntimeGraphicsApiKind CurrentRenderBackend { get; }
@@ -344,6 +351,13 @@ public static class RuntimeRenderingHostServices
         public long TrackedVramBytes => 0L;
         public long TrackedVramBudgetBytes => long.MaxValue;
         public bool EnableGpuIndirectDebugLogging => false;
+        public TextureRuntimeLogMode TextureLogMode => TextureRuntimeLogMode.Summary;
+        public double TextureSlowCpuDecodeResizeMilliseconds => 5.0;
+        public double TextureSlowMipBuildMilliseconds => 5.0;
+        public double TextureSlowUploadChunkMilliseconds => 2.0;
+        public double TextureSlowTransitionMilliseconds => 8.0;
+        public double TextureSlowQueueWaitMilliseconds => 100.0;
+        public double TextureUploadFrameBudgetMilliseconds => 2.0;
         public ETwoPlayerPreference TwoPlayerViewportPreference => ETwoPlayerPreference.SplitHorizontally;
         public EThreePlayerPreference ThreePlayerViewportPreference => EThreePlayerPreference.PreferFirstPlayer;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;

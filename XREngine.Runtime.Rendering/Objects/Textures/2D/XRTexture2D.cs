@@ -9,6 +9,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Numerics;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine;
@@ -47,6 +48,9 @@ namespace XREngine.Rendering
         public static bool HasLargeProgressiveUploadBacklog
             => ActiveProgressiveUploadCount >= MaxConcurrentProgressiveOpenGlUploads
                 && ProgressiveUploadBytesScheduledThisFrame >= CaptureDeferralBacklogBytesPerFrame;
+
+        public static void AppendRenderWorkBudgetProfilerSummary(StringBuilder builder)
+            => RenderWorkBudgetCoordinator.AppendProfilerSummary(builder);
 
         public override void Reload(string path)
         {
@@ -442,6 +446,22 @@ namespace XREngine.Rendering
         {
             texture.RuntimeManagedProgressiveUploadActive = true;
             texture.RuntimeManagedProgressiveFinalizePending = false;
+            long queueTimestamp = TextureRuntimeDiagnostics.StartTiming();
+            long estimatedBytes = CalculateResidentUploadBytes(new TextureStreamingResidentData(
+                texture.Mipmaps ?? [],
+                texture.Width,
+                texture.Height,
+                Math.Max(texture.Width, texture.Height)));
+            TextureUploadWorkItem workItem = new(
+                new WeakReference<XRTexture2D>(texture),
+                TextureUploadKind.Promotion,
+                TextureUploadSourceKind.CpuPointer,
+                FirstMipLevel: 0,
+                MipLevelCount: texture.Mipmaps?.Length ?? 0,
+                EstimatedBytes: estimatedBytes,
+                CapturedStorageGeneration: 0,
+                TextureUploadPriorityClass.Background,
+                queueTimestamp);
 
             // Increment the upload token before TryAdd so that any existing coroutine
             // detects the supersede on its next tick and cleans up.
@@ -461,6 +481,13 @@ namespace XREngine.Rendering
                         if (cancellationToken.IsCancellationRequested)
                         {
                             texture.RuntimeManagedProgressiveUploadActive = false;
+                            TextureRuntimeDiagnostics.LogTransitionCanceled(
+                                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                                texture.Name,
+                                texture.FilePath,
+                                0,
+                                RuntimeGraphicsApiKind.OpenGL.ToString(),
+                                "progressive upload cancellation requested before retry");
                             return;
                         }
 
@@ -468,6 +495,13 @@ namespace XREngine.Rendering
                         if (uploadToken != Volatile.Read(ref texture._progressiveUploadToken))
                         {
                             texture.RuntimeManagedProgressiveUploadActive = false;
+                            TextureRuntimeDiagnostics.LogTransitionCoalesced(
+                                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                                texture.Name,
+                                texture.FilePath,
+                                0,
+                                RuntimeGraphicsApiKind.OpenGL.ToString(),
+                                "superseded progressive upload token");
                             onCompleted?.Invoke();
                             return;
                         }
@@ -480,27 +514,34 @@ namespace XREngine.Rendering
                             // Still can't register — another upload is active. Let the caller know
                             // so ClearPendingTransition runs and the next Evaluate cycle re-queues.
                             texture.RuntimeManagedProgressiveUploadActive = false;
+                            TextureRuntimeDiagnostics.LogTransitionCoalesced(
+                                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                                texture.Name,
+                                texture.FilePath,
+                                0,
+                                RuntimeGraphicsApiKind.OpenGL.ToString(),
+                                "duplicate progressive upload already active");
                             //RuntimeRenderingHostServices.Current.LogWarning(
                             //    $"[UploadMipmaps] Could not register progressive upload for '{texture.Name}' after deferred retry. Clearing pending transition.");
                             onCompleted?.Invoke();
                             return;
                         }
 
-                        StartProgressiveCoroutine(texture, uploadToken, cancellationToken, onCompleted);
+                        StartProgressiveCoroutine(texture, uploadToken, workItem, cancellationToken, onCompleted);
                     },
                     GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ProgressiveUploadRetry"));
                 return;
             }
 
             if (RuntimeRenderingHostServices.Current.IsRenderThread)
-                StartProgressiveCoroutine(texture, uploadToken, cancellationToken, onCompleted);
+                StartProgressiveCoroutine(texture, uploadToken, workItem, cancellationToken, onCompleted);
             else
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
-                    () => StartProgressiveCoroutine(texture, uploadToken, cancellationToken, onCompleted),
+                    () => StartProgressiveCoroutine(texture, uploadToken, workItem, cancellationToken, onCompleted),
                     GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ProgressiveUploadStart"));
         }
 
-        private static void StartProgressiveCoroutine(XRTexture2D texture, int uploadToken, CancellationToken cancellationToken, Action? onCompleted)
+        private static void StartProgressiveCoroutine(XRTexture2D texture, int uploadToken, TextureUploadWorkItem workItem, CancellationToken cancellationToken, Action? onCompleted)
         {
             bool slotAcquired = false;
             bool waitLogged = false;
@@ -593,6 +634,23 @@ namespace XREngine.Rendering
                         }
 
                         slotAcquired = true;
+                        double queueWaitMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(workItem.QueueTimestamp);
+                        texture.RecordTextureQueueWait(queueWaitMilliseconds);
+                        TextureRuntimeDiagnostics.RecordQueueWait(queueWaitMilliseconds);
+                        RenderWorkBudgetCoordinator.RecordTextureQueue(QueuedProgressiveUploadCount, queueWaitMilliseconds);
+                        if (queueWaitMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowQueueWaitMilliseconds)
+                        {
+                            TextureRuntimeDiagnostics.LogTransitionApplied(
+                                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                                texture.Name,
+                                texture.FilePath,
+                                0,
+                                Math.Max(texture.Width, texture.Height),
+                                workItem.EstimatedBytes,
+                                queueWaitMilliseconds,
+                                0.0,
+                                RuntimeGraphicsApiKind.OpenGL.ToString());
+                        }
                         //RuntimeRenderingHostServices.Current.LogOutput(
                         //    $"[UploadMipmaps] Starting progressive upload for '{texture.Name}' ({mipmaps[0].Width}x{mipmaps[0].Height}), {mipmaps.Length} mipmaps, lockMip={lockMipLevel}. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
                     }
@@ -607,8 +665,19 @@ namespace XREngine.Rendering
                         texture.LargestMipmapLevel = lockMipLevel;
                         texture.SmallestAllowedMipmapLevel = lockMipLevel;
                         long lockMipBytes = mipmaps[lockMipLevel].Data?.Length ?? 0;
+                        if (!RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
+                            return false;
+
                         RegisterProgressiveUploadBytesForCurrentFrame(lockMipBytes);
-                        texture.PushMipLevel(lockMipLevel);
+                        long seedUploadStart = TextureRuntimeDiagnostics.StartTiming();
+                        bool lockMipCompleted = texture.PushMipLevel(lockMipLevel);
+                        double seedUploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(seedUploadStart);
+                        texture.RecordTextureUploadDuration(seedUploadMilliseconds);
+                        TextureRuntimeDiagnostics.RecordUploadDuration(seedUploadMilliseconds);
+                        RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, seedUploadMilliseconds);
+                        if (!lockMipCompleted)
+                            return false;
+
                         mipmaps[lockMipLevel].StreamingPBO = null;
                         seedUploaded = true;
                         return false;
@@ -622,6 +691,16 @@ namespace XREngine.Rendering
                         // Keep runtime ownership until GL applies the final restored mip range.
                         texture.RuntimeManagedProgressiveFinalizePending = true;
                         CleanupProgressiveUpload(releaseRuntimeOwnership: false);
+                        TextureRuntimeDiagnostics.LogTransitionApplied(
+                            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                            texture.Name,
+                            texture.FilePath,
+                            0,
+                            Math.Max(texture.Width, texture.Height),
+                            workItem.EstimatedBytes,
+                            texture.LastTextureQueueWaitMilliseconds,
+                            TextureRuntimeDiagnostics.ElapsedMilliseconds(workItem.QueueTimestamp),
+                            RuntimeGraphicsApiKind.OpenGL.ToString());
                         //RuntimeRenderingHostServices.Current.LogOutput(
                         //    $"[UploadMipmaps] Completed progressive upload for '{texture.Name}': restored Largest={originalLargestLevel} " +
                         //    $"SmallestAllowed={originalSmallestAllowedLevel} mipmapCount={mipmaps.Length}.");
@@ -665,15 +744,26 @@ namespace XREngine.Rendering
                     }
 
                     budgetWaitLogged = false;
+                    if (!RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
+                        return false;
+
                     RegisterProgressiveUploadBytesForCurrentFrame(nextMipBytes);
 
-                    texture.PushMipLevel(nextMipToUpload);
-                    mipmaps[nextMipToUpload].StreamingPBO = null;
-                    nextMipToUpload--;
+                    long uploadStart = TextureRuntimeDiagnostics.StartTiming();
+                    bool mipCompleted = texture.PushMipLevel(nextMipToUpload);
+                    double uploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart);
+                    texture.RecordTextureUploadDuration(uploadMilliseconds);
+                    TextureRuntimeDiagnostics.RecordUploadDuration(uploadMilliseconds);
+                    RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, uploadMilliseconds);
+                    if (mipCompleted)
+                    {
+                        mipmaps[nextMipToUpload].StreamingPBO = null;
+                        nextMipToUpload--;
+                    }
 
                     return false;
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     //RuntimeRenderingHostServices.Current.LogWarning(
                     //    $"[UploadMipmaps] Exception during progressive upload for '{texture.Name}' (mip={nextMipToUpload}): {ex.Message}");
@@ -1474,6 +1564,15 @@ namespace XREngine.Rendering
         private int _progressiveUploadToken;
 
         [MemoryPackIgnore]
+        private int _textureUploadValidationFailureCount;
+
+        [MemoryPackIgnore]
+        private double _lastTextureUploadDurationMilliseconds;
+
+        [MemoryPackIgnore]
+        private double _lastTextureQueueWaitMilliseconds;
+
+        [MemoryPackIgnore]
         private int _streamingLockMipLevel = -1;
 
         [MemoryPackIgnore]
@@ -1514,13 +1613,51 @@ namespace XREngine.Rendering
             set => _runtimeManagedProgressiveFinalizePending = value;
         }
 
+        public int TextureUploadValidationFailureCount
+            => Volatile.Read(ref _textureUploadValidationFailureCount);
+
+        public double LastTextureUploadDurationMilliseconds
+            => Volatile.Read(ref _lastTextureUploadDurationMilliseconds);
+
+        public double LastTextureQueueWaitMilliseconds
+            => Volatile.Read(ref _lastTextureQueueWaitMilliseconds);
+
+        internal void RecordTextureUploadValidationFailure()
+            => Interlocked.Increment(ref _textureUploadValidationFailureCount);
+
+        internal void RecordTextureUploadDuration(double milliseconds)
+        {
+            if (milliseconds >= 0.0)
+                Volatile.Write(ref _lastTextureUploadDurationMilliseconds, milliseconds);
+        }
+
+        internal void RecordTextureQueueWait(double milliseconds)
+        {
+            if (milliseconds >= 0.0)
+                Volatile.Write(ref _lastTextureQueueWaitMilliseconds, milliseconds);
+        }
+
         [MemoryPackIgnore]
         private readonly ConcurrentDictionary<int, byte> _pendingPboLoadMipIndices = [];
 
-        public event Action<int>? PushMipLevelRequested;
+        public event Func<int, bool>? PushMipLevelRequested;
 
-        public void PushMipLevel(int mipIndex)
-            => PushMipLevelRequested?.Invoke(mipIndex);
+        public bool PushMipLevel(int mipIndex)
+        {
+            Func<int, bool>? handler = PushMipLevelRequested;
+            if (handler is null)
+                return false;
+
+            bool completed = true;
+            Delegate[] handlers = handler.GetInvocationList();
+            for (int i = 0; i < handlers.Length; i++)
+            {
+                if (handlers[i] is Func<int, bool> callback && !callback(mipIndex))
+                    completed = false;
+            }
+
+            return completed;
+        }
 
         public bool ShouldLoadDataFromInternalPBO
         {

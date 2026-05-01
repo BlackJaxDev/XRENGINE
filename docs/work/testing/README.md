@@ -9,3 +9,4 @@ Focused validation plans for features whose implementation work has landed but s
 - [Ambient Occlusion](ambient-occlusion.md)
 - [fastgltf glTF Import](gltf-import.md)
 - [Physics Chain Performance](physics-chain-performance.md)
+- [Texture Management Runtime Baseline](texture-management-runtime-baseline-2026-05-01.md)

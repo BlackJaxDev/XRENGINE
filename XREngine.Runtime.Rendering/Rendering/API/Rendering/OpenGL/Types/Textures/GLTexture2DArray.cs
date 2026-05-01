@@ -144,13 +144,18 @@ namespace XREngine.Rendering.OpenGL
 
         public override void AttachToFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
         {
-            for (int i = 0; i < Data.Depth; ++i)
-                AttachImageToFBO(fbo, attachment, i, mipLevel);
+            if (Renderer.GetOrCreateAPIRenderObject(fbo) is not GLObjectBase apiFBO)
+                return;
+
+            Api.NamedFramebufferTexture(apiFBO.BindingId, ToGLEnum(attachment), BindingId, mipLevel);
         }
+
         public override void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
         {
-            for (int i = 0; i < Data.Depth; ++i)
-                DetachImageFromFBO(fbo, attachment, i, mipLevel);
+            if (Renderer.GetOrCreateAPIRenderObject(fbo) is not GLObjectBase apiFBO)
+                return;
+
+            Api.NamedFramebufferTexture(apiFBO.BindingId, ToGLEnum(attachment), 0, mipLevel);
         }
 
         private void DetachImageFromFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int layer, int mipLevel)
@@ -260,6 +265,18 @@ namespace XREngine.Rendering.OpenGL
             _allocatedLevels = levels;
             _allocatedVRAMBytes = requestedBytes;
             Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
+            TextureRuntimeDiagnostics.LogStorageAllocated(
+                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                GetDescribingName(),
+                null,
+                BindingId,
+                width,
+                height,
+                levels,
+                _allocatedVRAMBytes,
+                0,
+                "OpenGL",
+                $"2D array immutable storage layers={depth}");
 
             Debug.OpenGL(
                 $"[GLTexture2DArray] Storage allocated for '{GetDescribingName()}': binding={BindingId} dims={width}x{height} layers={depth} levels={levels} format={desiredFormat}.");

@@ -208,6 +208,7 @@ public sealed class ShadowAtlasManager
         int skippedClean = 0;
         int failedRender = 0;
         int deferredByBudget = 0;
+        int deferredByTexture = 0;
         int firstDeferredRequestIndex = -1;
 
         for (int i = 0; i < _requests.Count && scheduled < budget; i++)
@@ -235,6 +236,13 @@ public sealed class ShadowAtlasManager
                 continue;
             }
 
+            if (RenderWorkBudgetCoordinator.ShouldDeferShadowAtlasLowPriorityTile(request.Priority, request.EditorPinned))
+            {
+                deferredByTexture = _requests.Count - i;
+                firstDeferredRequestIndex = i;
+                break;
+            }
+
             bool forceCollectVisible = collectVisibleNow;
             checkedTiles++;
 
@@ -260,17 +268,40 @@ public sealed class ShadowAtlasManager
 
         _tilesScheduledThisFrame = scheduled;
         double elapsedMs = ElapsedMilliseconds(frameStart);
-        if (deferredByBudget > 0)
+        int deferredTotal = deferredByBudget + deferredByTexture;
+        RenderWorkBudgetCoordinator.RecordShadowAtlasQueue(deferredTotal);
+        RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.ShadowAtlas, elapsedMs);
+        if (deferredByTexture > 0)
         {
+            TextureRuntimeDiagnostics.LogRenderWorkBudget(
+                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                "Shadow.DelayedByTexture",
+                RenderWorkBudgetCoordinator.GetSnapshot(),
+                "urgent visible texture repair deferred low-priority shadow tiles");
+        }
+
+        if (deferredTotal > 0)
+        {
+            RenderWorkBudgetSnapshot budgetSnapshot = RenderWorkBudgetCoordinator.GetSnapshot();
+            if (deferredByBudget > 0 && budgetSnapshot.TextureUploadQueueDepth > 0)
+            {
+                TextureRuntimeDiagnostics.LogRenderWorkBudget(
+                    RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                    "Texture.DelayedByShadow",
+                    budgetSnapshot,
+                    "shadow atlas render budget deferred while texture uploads were queued");
+            }
+
             XREngine.Debug.RenderingEvery(
                 "ShadowAtlas.RenderBudget.Deferred",
                 TimeSpan.FromSeconds(2.0),
-                "[ShadowAtlas] Deferred {0} shadow request(s) after rendering {1}/{2} tile(s) in {3:F2}ms (budget {4:F2}ms, firstDeferredIndex={5}).",
-                deferredByBudget,
+                "[ShadowAtlas] Deferred {0} shadow request(s) after rendering {1}/{2} tile(s) in {3:F2}ms (budget {4:F2}ms, textureDeferred={5}, firstDeferredIndex={6}).",
+                deferredTotal,
                 scheduled,
                 budget,
                 elapsedMs,
                 _settings.MaxRenderMilliseconds,
+                deferredByTexture,
                 firstDeferredRequestIndex);
         }
 
@@ -285,7 +316,7 @@ public sealed class ShadowAtlasManager
                 checkedTiles,
                 skippedClean,
                 failedRender,
-                deferredByBudget,
+                deferredTotal,
                 elapsedMs,
                 _settings.MaxRenderMilliseconds);
         }
@@ -295,7 +326,7 @@ public sealed class ShadowAtlasManager
             checkedTiles,
             skippedClean,
             failedRender,
-            deferredByBudget,
+            deferredTotal,
             firstDeferredRequestIndex,
             elapsedMs,
             budget);

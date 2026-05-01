@@ -15,8 +15,15 @@ public partial class GLTexture2D
     private uint _allocatedWidth = 0;
     private uint _allocatedHeight = 0;
     private ESizedInternalFormat _allocatedInternalFormat;
+    private int _storageGeneration;
     private volatile bool _pendingImmutableStorageRecreate;
     private uint _externalMemoryObject;
+
+    private int CurrentStorageGeneration
+        => System.Threading.Volatile.Read(ref _storageGeneration);
+
+    private int AdvanceStorageGeneration()
+        => System.Threading.Interlocked.Increment(ref _storageGeneration);
 
     private EPixelInternalFormat? EnsureStorageAllocated()
     {
@@ -182,9 +189,22 @@ public partial class GLTexture2D
             _allocatedWidth = width;
             _allocatedHeight = height;
             _allocatedInternalFormat = Data.SizedInternalFormat;
+            int storageGeneration = AdvanceStorageGeneration();
 
             _allocatedVRAMBytes = CalculateTextureVRAMSize(width, height, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
             Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
+            TextureRuntimeDiagnostics.LogStorageAllocated(
+                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                GetDescribingName(),
+                Data.FilePath,
+                BindingId,
+                width,
+                height,
+                levels,
+                _allocatedVRAMBytes,
+                storageGeneration,
+                "OpenGL",
+                Data.SparseTextureStreamingEnabled ? "sparse logical storage" : "immutable storage");
 /*
             Debug.OpenGL(
                 $"[GLTexture2D] Storage allocated for '{GetDescribingName()}': binding={BindingId} dims={width}x{height} levels={levels} " +
@@ -199,6 +219,18 @@ public partial class GLTexture2D
 
     private bool IsMipLevelInAllocatedRange(int glLevel)
         => glLevel >= 0 && glLevel < _allocatedLevels;
+
+    private bool TryGetAllocatedMipDimensions(int glLevel, out uint width, out uint height)
+    {
+        width = 0u;
+        height = 0u;
+        if (!StorageSet || !IsMipLevelInAllocatedRange(glLevel) || _allocatedWidth == 0u || _allocatedHeight == 0u)
+            return false;
+
+        width = Math.Max(1u, _allocatedWidth >> glLevel);
+        height = Math.Max(1u, _allocatedHeight >> glLevel);
+        return true;
+    }
 
     private static uint GetLegalMipLevelCount(uint width, uint height)
     {

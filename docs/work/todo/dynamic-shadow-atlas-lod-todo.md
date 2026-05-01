@@ -23,7 +23,9 @@ Replace fixed per-light shadow textures with a budgeted shadow atlas system:
 - [ ] Every skipped request publishes an explicit fallback: `Lit`, `ContactOnly`, `StaleTile`, or `Disabled`.
 - [ ] Tile gutters are included in allocation rects; receiver sampling uses only inner rects.
 - [ ] Directional cascade matrices are texel-snapped at the allocated resolution.
-- [ ] Point lights become six independent 2D face requests in atlas mode.
+- [ ] Point lights become six independent direct-to-atlas 2D face requests in atlas mode; no cubemap shadow texture is produced or sampled on the atlas path.
+- [ ] Point-light atlas rendering supports per-face priority, LOD, residency, and skip/fallback. A point light does not require all six faces to be resident in order to cast useful shadows.
+- [ ] The optimized point-light atlas path is a true atlas geometry-shader renderer: selected faces fan out directly into atlas pages/tiles, not into an intermediate cubemap.
 - [ ] `Submit(in ShadowMapRequest)` performs no heap allocation after warmup.
 - [ ] Allocation, sorting, packing, and frame-data publish perform no per-frame hot-path allocations after warmup.
 - [ ] `ShadowAtlasFrameData` and the GPU metadata buffer are double-buffered and carry a generation counter.
@@ -89,6 +91,8 @@ struct ShadowAtlasTile
     mat4 worldToShadow;
 };
 ```
+
+Point-light atlas metadata must reference six independent face records or indices, not one cubemap slot. Each face carries its own residency, page/tile, last-rendered frame, LOD, and fallback state. Receiver shaders compute the point-light face from the light-to-fragment direction, then resolve that face's metadata; nonresident faces must return their explicit fallback without touching atlas memory.
 
 ## Recommended Defaults
 
@@ -302,31 +306,55 @@ Phase 0 decisions and the migration table are captured in [Shadow Resource Migra
 
 ## Phase 5: Point Lights In Atlas
 
-**Goal:** migrate point shadows from cubemap ownership to six atlas face tiles.
+**Goal:** migrate point shadows from cubemap ownership to direct-to-atlas face tiles with independent per-face residency.
+
+### Design Decisions
+
+- Point lights are represented as six independent `PointFace` requests keyed by light id + face index.
+- Each face is scored independently from the active consumer camera set. Faces that cannot meaningfully affect the current view may be skipped entirely or kept as stale resident tiles when reuse is allowed.
+- Atlas point shadows are rendered as 2D face tiles. The atlas path must not allocate, render, or sample a cubemap as an intermediate representation.
+- Sequential rendering is valid as a bring-up/debug path, but it still renders each selected face directly into its atlas tile.
+- The production optimized path is true atlas GS fan-out: one draw path may emit only the selected faces and route them to their allocated atlas tile/page state. It must support a face mask, per-face tile metadata, and page grouping or texture-array pages as needed.
+- If atlas pages remain separate `sampler2D` resources, true atlas GS batching is grouped by destination page. If pages become a texture array, the GS can route pages through `gl_Layer`; in both cases tile isolation still comes from viewport/scissor state and inner-rect metadata.
+- A legacy cubemap GS face-mask optimization is separate from atlas mode. It may remain useful for the debug/fallback cubemap path, but it must not be treated as the point-light atlas implementation.
+- Receiver sampling selects a face by major axis, converts the direction to face-local UV, and samples that face's atlas metadata. Missing faces return the published fallback (`Lit`, `ContactOnly`, `StaleTile`, or `Disabled`) without undefined reads.
 
 ### Tasks
 
 - [ ] Convert each point light to six face requests.
 - [ ] Add face matrix generation for `+X`, `-X`, `+Y`, `-Y`, `+Z`, `-Z`.
+- [ ] Define point receiver metadata as six face records/indices plus a validity/fallback mask, or as a base index into six contiguous face records.
+- [ ] Add per-face active-consumer scoring using face frustum overlap, projected receiver/caster importance, distance, light radius, brightness, and editor pinning.
 - [ ] Allow per-face LOD and optional per-face skip when the face cannot affect active consumers.
-- [ ] Keep valid skipped faces resident when content is reusable.
+- [ ] Keep valid skipped faces resident when content is reusable and `StaleTile` fallback is allowed.
+- [ ] Add direct-to-atlas sequential rendering for selected point faces.
+- [ ] Add true atlas GS rendering for selected point faces:
+  - [ ] face mask uniform/metadata,
+  - [ ] per-face view-projection matrices,
+  - [ ] per-face atlas uv scale/bias and inner rect,
+  - [ ] atlas page routing via page-grouped draws or texture-array pages,
+  - [ ] viewport/scissor setup that prevents writes outside each allocated tile.
 - [ ] Add shader face selection by major axis.
 - [ ] Convert receiver direction to face-local UV.
 - [ ] Compare radial normalized receiver depth.
 - [ ] Duplicate edge texels or otherwise protect gutters against face seams.
-- [ ] Keep cubemap shadows as fallback until seam validation passes.
+- [ ] Keep legacy cubemap shadows only as a debug/fallback path outside atlas mode until seam validation passes.
 
 ### Exit Criteria
 
-- [ ] Point atlas path renders all six faces correctly.
+- [ ] Point atlas path renders any subset of selected faces correctly, including one-face, partial-face, and all-six-face cases.
 - [ ] Face orientation debug view proves no swapped or mirrored faces.
 - [ ] Seams are no worse than the legacy cubemap path.
+- [ ] Nonresident point faces produce explicit fallback behavior and never sample undefined atlas data.
+- [ ] True atlas GS output matches sequential direct-to-atlas output for the same selected face set.
 
 ### Validation
 
 - [ ] Point light in a six-sided orientation test scene.
 - [ ] Moving receiver across face boundaries.
 - [ ] Oversubscribed point-light scene near the camera.
+- [ ] Partial-face scene where only one to three faces are resident.
+- [ ] GS path versus sequential path comparison with identical face masks.
 
 ## Phase 6: Unified Forward+ Local Shadow Metadata
 
@@ -340,6 +368,7 @@ Phase 0 decisions and the migration table are captured in [Shadow Resource Migra
   - [ ] `PointLightShadowMaps[4]`
   - [ ] `SpotLightShadowMaps[4]`
   - [ ] packed fixed per-light shadow arrays
+- [ ] Replace point-light `shadowSlot` metadata with six atlas face references/fallbacks.
 - [ ] Keep compatibility defines until common materials use atlas sampling.
 - [ ] Add shader-source tests for required atlas bindings.
 
@@ -363,6 +392,8 @@ Phase 0 decisions and the migration table are captured in [Shadow Resource Migra
 - [ ] Add render scheduling budget:
   - [ ] max tiles per frame,
   - [ ] max shadow render milliseconds.
+- [x] Publish shadow atlas queue/render cost into the shared render-work budget coordinator so texture uploads can attribute contention.
+- [x] Defer low-priority shadow tiles when urgent visible texture repair is pending; validate with Sponza/shadow-heavy scenes after runtime repros are available.
 - [ ] Schedule high-priority dirty directional cascades first, then spots, point faces, static refreshes, and low-priority lights.
 - [ ] Keep resident stale tiles until refreshed when `StaleTile` fallback is allowed.
 - [ ] Add LOD hysteresis thresholds for promotion/demotion.
@@ -470,6 +501,7 @@ Phase 0 decisions and the migration table are captured in [Shadow Resource Migra
 - [ ] LOD demotion when pages fill
 - [ ] stable allocation reuse
 - [ ] point light expands to six requests
+- [ ] point-light face metadata supports partial residency
 - [ ] directional light expands to cascade requests
 - [ ] skipped request fallback metadata
 - [ ] editor-pinned budget bypass
@@ -485,6 +517,7 @@ Phase 0 decisions and the migration table are captured in [Shadow Resource Migra
 
 - [ ] many spot lights beyond atlas capacity
 - [ ] many point lights near the camera
+- [ ] partial point-face residency and fallback
 - [ ] one directional light with cascades
 - [ ] mixed moving and static shadow casters
 - [ ] moment filtering with gutters

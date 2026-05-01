@@ -199,6 +199,13 @@ public sealed class RuntimeRenderingHostServicesTests
         public long TrackedVramBytes => 0L;
         public long TrackedVramBudgetBytes => long.MaxValue;
         public bool EnableGpuIndirectDebugLogging => false;
+        public TextureRuntimeLogMode TextureLogMode => TextureRuntimeLogMode.Disabled;
+        public double TextureSlowCpuDecodeResizeMilliseconds => 5.0;
+        public double TextureSlowMipBuildMilliseconds => 5.0;
+        public double TextureSlowUploadChunkMilliseconds => 2.0;
+        public double TextureSlowTransitionMilliseconds => 8.0;
+        public double TextureSlowQueueWaitMilliseconds => 100.0;
+        public double TextureUploadFrameBudgetMilliseconds => 2.0;
         public ETwoPlayerPreference TwoPlayerViewportPreference => ETwoPlayerPreference.SplitHorizontally;
         public EThreePlayerPreference ThreePlayerViewportPreference => EThreePlayerPreference.PreferFirstPlayer;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;

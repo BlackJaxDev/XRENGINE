@@ -198,9 +198,13 @@ The shared `VolumetricFogSettings` constructor defaults and both pipeline schema
 
 `Lights3DCollection.SetForwardLightingUniforms` must bind these globals from `DynamicDirectionalLights[0]`. Without this, the forward path silently uses shader-literal defaults even when per-light values differ.
 
+Forward shading reserves two directional shadow slots. `DirectionalShadowMaps[0..1]`, `DirectionalShadowMapArrays[0..1]`, and the flattened directional atlas metadata cover only `DynamicDirectionalLights[0]` and `[1]`; additional directional lights still shade but do not sample forward shadow maps. The global shadow-filter controls remain sourced from light 0, while `DirectionalShadowBiasProjectionParams[0..1]` carries the per-light primary projection bias needed by non-cascaded maps.
+
 Cascaded directional shadows publish per-cascade effective bias values on the directional light struct (`CascadeBiasMin`, `CascadeBiasMax`, `CascadeReceiverOffsets`). Automatic values are derived from the light's texel bias controls plus cascade texel size, light-space depth span, and shadow-map resolution. `CascadeBiasMin` is the constant depth floor, `CascadeBiasMax` is the slope scale in texels, and `CascadeReceiverOffsets` is the world-space normal offset.
 
 Live forward and deferred shadow receivers use three user-facing bias controls: `ShadowDepthBiasTexels`, `ShadowSlopeBiasTexels`, and `ShadowNormalBiasTexels`. The shaders convert those texel values to the active shadow map, cascade, atlas tile, spot projection, or cubemap face instead of relying on fixed absolute compare-bias numbers.
+
+Legacy directional cascade texture-array rendering supports `Sequential` and `GeometryShader` modes. `GeometryShader` renders all active cascades to a layered 2D-array framebuffer using `gl_Layer`. `InstancedLayered` is exposed in the editor as the intended vertex-layered path, but until the shadow renderer can issue caster draws with a cascade instance dimension it logs and falls back to `Sequential`.
 
 Local point and spot lights use SSBO-backed per-light metadata for the same tuning values. Keep `ForwardPointShadowData` / `ForwardSpotShadowData` in `ForwardLighting.glsl` and the matching `ForwardPointShadowGpu` / `ForwardSpotShadowGpu` upload structs in `Lights3DCollection.ForwardLighting.cs` in sync whenever a new shadow control is added. Do not move this metadata back to large uniform arrays; NVIDIA's OpenGL uniform constant path can exceed the 1024-register limit.
 
@@ -226,7 +230,7 @@ The old deferred screen-space contact-shadow march did not use a shared receiver
 
 ## 14. Fallback Sampler Unit Collisions
 
-**Rule:** Forward-lighting mesh draws reserve many fixed sampler units (env/refl 12–13, AO 14 & 25, directional shadow 15–16, point shadows 17–20, spot shadows 21–24, forward contact depth/normal 26–27, forward contact depth/normal arrays 28–29). Fallback sampler binding must allocate from genuinely unused units, not hard-coded offsets.
+**Rule:** Forward-lighting mesh draws reserve many fixed sampler units: directional atlas pages 9-10, env/refl 12-13, AO 14 and 27, directional 2D shadows 15-16, directional cascade arrays 17-18, point shadows 19-22, spot shadows 23-26, forward contact depth/normal 28-29, forward contact depth/normal arrays 30-31, and spot atlas pages 32-33. Fallback sampler binding must allocate from genuinely unused units, not hard-coded offsets.
 
 ---
 
@@ -361,3 +365,23 @@ Generated vertex shaders are allowed to trim `FragTransformId` for ordinary pass
 - The geometry-shader path renders all six cubemap faces from one viewport and culls against the point light influence sphere. Keep that sphere and the shadow camera parent render transform synchronized to `Transform.RenderTranslation` before collection and rendering.
 - Shared opaque casters usually render with the point shadow material itself as the global override. `GLMaterial` must call `OnSettingShadowUniforms` for that material during shadow passes so `LightPos`, `FarPlaneDist`, and geometry-shader `ViewProjectionMatrices[]` are populated. Alpha/transparent point-shadow variants route through `ShadowUniformSourceMaterial`; if the global override path skips shadow uniforms, transparent casters can appear while shared opaque casters write invalid or no point-shadow data.
 - The six-pass fallback renders each cubemap face with its own shadow camera and the same point-shadow material. If it captures only transparent forward meshes, inspect opaque-pass command collection and point-shadow material override/variant selection; filtering mode and contact shadows are not the root cause.
+
+---
+
+## 23. Texture Runtime Diagnostics And Upload Budgeting
+
+**Rule:** Runtime texture residency, OpenGL upload safety, and texture/shadow render-work contention should be diagnosable from `log_textures.txt`.
+
+File logging creates `log_textures.txt` beside the existing per-session logs under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`. The texture log receives residency and upload events such as `Texture.ImportPreviewQueued`, `Texture.TransitionQueued`, `Texture.TransitionCoalesced`, `Texture.UploadChunk`, `Texture.UploadSlow`, `Texture.UploadValidationFailed`, `Texture.VramPressure`, and `Texture.VramSummary`.
+
+The rendering settings expose `TextureLogMode` with `Disabled`, `Summary`, `SlowOnly`, and `Verbose` modes. Summary mode is the normal diagnostic default; verbose mode is for short repro captures only. Slow thresholds are configurable for CPU decode/resize, mip build, upload chunks, full transitions, queue wait, and per-frame texture upload budget.
+
+OpenGL `TexSubImage2D` upload paths must validate allocated storage, mip level, upload rectangle, sparse state, and storage generation before touching the driver. Validation failures are mirrored into the texture log and still emit OpenGL context so `log_opengl.txt` and `log_textures.txt` can be correlated.
+
+Runtime-managed imported-texture promotions are chunked for CPU-pointer mips where the format allows row uploads. Partial rows stay hidden by clamping the sampled mip range until the mip is complete. Pending transitions carry queue timing and are coalesced when the target residency/page selection is unchanged.
+
+During active imports, textures bound by material uniform setup can act as a fallback priority source before a visibility snapshot exists. Related textures on the same material get a small shared residency floor so albedo, normal, and roughness detail tiers do not diverge obviously during startup.
+
+Texture uploads and shadow atlas tile rendering publish queue and budget counters through the shared render-work budget coordinator. Profiler FPS-drop and render-stall logs include those counters, and the shadow atlas can defer lower-priority tiles when urgent visible texture repair is pending. Startup boost is bounded by frame/time limits so it cannot turn into multi-second starvation.
+
+The ImGui Texture Streaming panel shows tracked textures with backend, committed bytes, priority, queue wait, last upload duration, visibility, pending state, pressure-demotion state, and validation-failure state. Use **Dump Summary** from that panel to force an immediate `Texture.VramSummary` event.

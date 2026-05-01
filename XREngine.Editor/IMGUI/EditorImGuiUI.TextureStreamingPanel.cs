@@ -1,4 +1,5 @@
 using ImGuiNET;
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Rendering;
@@ -9,8 +10,23 @@ public static partial class EditorImGuiUI
 {
     private static bool _showTextureStreaming;
     private static bool _textureStreamingFrozen;
+    private static bool _textureStreamingFilterVisibleOnly;
+    private static bool _textureStreamingFilterPendingOnly;
+    private static bool _textureStreamingFilterSlowOnly;
+    private static bool _textureStreamingFilterPressureOnly;
+    private static bool _textureStreamingFilterValidationOnly;
+    private static bool _textureStreamingSortDescending = true;
+    private static TextureStreamingSortMode _textureStreamingSortMode = TextureStreamingSortMode.CommittedBytes;
     private static ImportedTextureStreamingTelemetry _frozenTelemetry;
     private static IReadOnlyList<ImportedTextureStreamingTextureTelemetry>? _frozenTextureTelemetry;
+
+    private enum TextureStreamingSortMode
+    {
+        CommittedBytes,
+        QueueWait,
+        UploadTime,
+        Priority,
+    }
 
     private static void DrawTextureStreamingPanel()
     {
@@ -27,6 +43,10 @@ public static partial class EditorImGuiUI
                 _textureStreamingFrozen = !_textureStreamingFrozen;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Freeze stops updating the panel with live data so you can inspect a snapshot.");
+            if (ImGui.MenuItem("Dump Summary"))
+                XRTexture2D.DumpImportedTextureStreamingSummary();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Write an immediate Texture.VramSummary event to log_textures.txt.");
             ImGui.EndMenuBar();
         }
 
@@ -75,8 +95,10 @@ public static partial class EditorImGuiUI
         ImGui.Text($"Active import scopes: {t.ActiveImportScopes}");
         ImGui.Text($"Pending transitions: {t.PendingTransitionCount}");
         ImGui.Text($"Queued this frame:  {t.QueuedTransitionsThisFrame}");
+        ImGui.Text($"Queued promote/demote: {t.QueuedPromotionTransitionsThisFrame}/{t.QueuedDemotionTransitionsThisFrame}");
         ImGui.Text($"Active decodes:     {t.ActiveDecodeCount}");
         ImGui.Text($"Queued decodes:     {t.QueuedDecodeCount}");
+        ImGui.Text($"Active uploads:     {t.ActiveGpuUploadCount}");
 
         ImGui.Spacing();
 
@@ -113,10 +135,49 @@ public static partial class EditorImGuiUI
         if (!ImGui.CollapsingHeader($"Textures ({textures.Count})", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
+        ImGui.Checkbox("Visible", ref _textureStreamingFilterVisibleOnly);
+        ImGui.SameLine();
+        ImGui.Checkbox("Pending", ref _textureStreamingFilterPendingOnly);
+        ImGui.SameLine();
+        ImGui.Checkbox("Slow", ref _textureStreamingFilterSlowOnly);
+        ImGui.SameLine();
+        ImGui.Checkbox("Pressure", ref _textureStreamingFilterPressureOnly);
+        ImGui.SameLine();
+        ImGui.Checkbox("Validation", ref _textureStreamingFilterValidationOnly);
+
+        string sortLabel = _textureStreamingSortMode switch
+        {
+            TextureStreamingSortMode.QueueWait => "Queue wait",
+            TextureStreamingSortMode.UploadTime => "Upload time",
+            TextureStreamingSortMode.Priority => "Priority",
+            _ => "Committed bytes",
+        };
+        ImGui.SetNextItemWidth(150f);
+        if (ImGui.BeginCombo("Sort", sortLabel))
+        {
+            DrawTextureStreamingSortOption(TextureStreamingSortMode.CommittedBytes, "Committed bytes");
+            DrawTextureStreamingSortOption(TextureStreamingSortMode.QueueWait, "Queue wait");
+            DrawTextureStreamingSortOption(TextureStreamingSortMode.UploadTime, "Upload time");
+            DrawTextureStreamingSortOption(TextureStreamingSortMode.Priority, "Priority");
+            ImGui.EndCombo();
+        }
+        ImGui.SameLine();
+        ImGui.Checkbox("Descending", ref _textureStreamingSortDescending);
+
+        List<ImportedTextureStreamingTextureTelemetry> rows = new(textures.Count);
+        for (int i = 0; i < textures.Count; i++)
+        {
+            ImportedTextureStreamingTextureTelemetry tex = textures[i];
+            if (PassesTextureStreamingFilters(tex))
+                rows.Add(tex);
+        }
+        rows.Sort(CompareTextureStreamingRows);
+
         ImGuiTableFlags flags =
             ImGuiTableFlags.Resizable |
             ImGuiTableFlags.Reorderable |
             ImGuiTableFlags.Hideable |
+            ImGuiTableFlags.Sortable |
             ImGuiTableFlags.ScrollY |
             ImGuiTableFlags.RowBg |
             ImGuiTableFlags.BordersOuter |
@@ -124,28 +185,32 @@ public static partial class EditorImGuiUI
             ImGuiTableFlags.SizingStretchProp;
 
         float tableHeight = ImGui.GetContentRegionAvail().Y - ImGui.GetTextLineHeightWithSpacing();
-        if (!ImGui.BeginTable("TextureStreamingTable", 12, flags, new Vector2(0, tableHeight)))
+        if (!ImGui.BeginTable("TextureStreamingTable", 16, flags, new Vector2(0, tableHeight)))
             return;
 
         ImGui.TableSetupScrollFreeze(0, 1);
         ImGui.TableSetupColumn("Name",         ImGuiTableColumnFlags.None,      180f);
+        ImGui.TableSetupColumn("Backend",      ImGuiTableColumnFlags.None,       80f);
         ImGui.TableSetupColumn("Source",       ImGuiTableColumnFlags.None,       70f);
         ImGui.TableSetupColumn("Resident",     ImGuiTableColumnFlags.None,       65f);
         ImGui.TableSetupColumn("Desired",      ImGuiTableColumnFlags.None,       60f);
         ImGui.TableSetupColumn("Pending",      ImGuiTableColumnFlags.None,       60f);
         ImGui.TableSetupColumn("Committed",    ImGuiTableColumnFlags.None,       70f);
+        ImGui.TableSetupColumn("Priority",     ImGuiTableColumnFlags.None,       65f);
+        ImGui.TableSetupColumn("Queue",        ImGuiTableColumnFlags.None,       55f);
+        ImGui.TableSetupColumn("Upload",       ImGuiTableColumnFlags.None,       55f);
         ImGui.TableSetupColumn("PxSpan",       ImGuiTableColumnFlags.None,       65f);
         ImGui.TableSetupColumn("Pages",        ImGuiTableColumnFlags.None,       70f);
         ImGui.TableSetupColumn("UV",           ImGuiTableColumnFlags.None,       45f);
         ImGui.TableSetupColumn("Distance",     ImGuiTableColumnFlags.None,       60f);
         ImGui.TableSetupColumn("Visibility",   ImGuiTableColumnFlags.None,       80f);
-        ImGui.TableSetupColumn("Preview",      ImGuiTableColumnFlags.None,       55f);
+        ImGui.TableSetupColumn("Flags",        ImGuiTableColumnFlags.None,       95f);
         ImGui.TableHeadersRow();
 
-        for (int i = 0; i < textures.Count; i++)
+        for (int i = 0; i < rows.Count; i++)
         {
-            ImportedTextureStreamingTextureTelemetry tex = textures[i];
-            bool visibleThisFrame = tex.LastVisibleFrameId == currentFrameId;
+            ImportedTextureStreamingTextureTelemetry tex = rows[i];
+            bool visibleThisFrame = tex.IsVisible || tex.LastVisibleFrameId == currentFrameId;
             long framesSinceVisible = tex.LastVisibleFrameId < 0
                 ? long.MaxValue
                 : Math.Max(0L, currentFrameId - tex.LastVisibleFrameId);
@@ -164,22 +229,22 @@ public static partial class EditorImGuiUI
                 ImGui.SetTooltip(tooltip);
             }
 
-            // Source size
             ImGui.TableSetColumnIndex(1);
+            ImGui.TextUnformatted(tex.BackendName);
+
+            ImGui.TableSetColumnIndex(2);
             if (tex.SourceWidth == 0 && tex.SourceHeight == 0)
                 ImGui.TextDisabled("?");
             else
                 ImGui.Text($"{tex.SourceWidth}x{tex.SourceHeight}");
 
-            // Resident size
-            ImGui.TableSetColumnIndex(2);
+            ImGui.TableSetColumnIndex(3);
             if (tex.ResidentMaxDimension == 0)
                 ImGui.TextDisabled("none");
             else
                 ImGui.Text($"{tex.ResidentMaxDimension}");
 
-            // Desired size
-            ImGui.TableSetColumnIndex(3);
+            ImGui.TableSetColumnIndex(4);
             if (tex.DesiredResidentMaxDimension == 0)
                 ImGui.TextDisabled("none");
             else if (tex.DesiredResidentMaxDimension > tex.ResidentMaxDimension)
@@ -189,38 +254,40 @@ public static partial class EditorImGuiUI
             else
                 ImGui.Text($"{tex.DesiredResidentMaxDimension}");
 
-            // Pending size
-            ImGui.TableSetColumnIndex(4);
-            if (tex.PendingResidentMaxDimension == 0)
+            ImGui.TableSetColumnIndex(5);
+            if (!tex.HasPendingTransition)
                 ImGui.TextDisabled("-");
             else
                 ImGui.TextColored(new Vector4(1.0f, 1.0f, 0.4f, 1.0f), $"{tex.PendingResidentMaxDimension}");
 
-            // Committed bytes
-            ImGui.TableSetColumnIndex(5);
-            float committedKB = tex.CurrentCommittedBytes / 1024f;
-            ImGui.Text(committedKB >= 1024f ? $"{committedKB / 1024f:F1} MB" : $"{committedKB:F0} KB");
-
-            // Projected pixel span
             ImGui.TableSetColumnIndex(6);
+            DrawTextureStreamingBytes(tex.CurrentCommittedBytes);
+
+            ImGui.TableSetColumnIndex(7);
+            ImGui.Text($"{tex.PriorityScore:F0}");
+
+            ImGui.TableSetColumnIndex(8);
+            DrawTextureStreamingDuration(tex.OldestQueueWaitMilliseconds, tex.IsSlow);
+
+            ImGui.TableSetColumnIndex(9);
+            DrawTextureStreamingDuration(tex.LastUploadMilliseconds, tex.IsSlow);
+
+            ImGui.TableSetColumnIndex(10);
             if (tex.MaxProjectedPixelSpan <= 0.0f)
                 ImGui.TextDisabled("-");
             else
                 ImGui.Text($"{tex.MaxProjectedPixelSpan:F0}");
 
-            // Page coverage
-            ImGui.TableSetColumnIndex(7);
+            ImGui.TableSetColumnIndex(11);
             string pageText = $"{tex.CurrentPageCoverage * 100.0f:F0}%";
             if (MathF.Abs(tex.DesiredPageCoverage - tex.CurrentPageCoverage) > 0.01f)
                 pageText = $"{pageText}->{tex.DesiredPageCoverage * 100.0f:F0}%";
             ImGui.Text(pageText);
 
-            // UV density hint
-            ImGui.TableSetColumnIndex(8);
+            ImGui.TableSetColumnIndex(12);
             ImGui.Text($"{tex.UvDensityHint:F2}");
 
-            // Distance
-            ImGui.TableSetColumnIndex(9);
+            ImGui.TableSetColumnIndex(13);
             if (!visibleThisFrame)
                 ImGui.TextDisabled("-");
             else if (float.IsInfinity(tex.MinVisibleDistance))
@@ -228,8 +295,7 @@ public static partial class EditorImGuiUI
             else
                 ImGui.Text($"{tex.MinVisibleDistance:F1}");
 
-            // Visibility
-            ImGui.TableSetColumnIndex(10);
+            ImGui.TableSetColumnIndex(14);
             if (visibleThisFrame)
                 ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "visible");
             else if (framesSinceVisible <= 12)
@@ -237,14 +303,93 @@ public static partial class EditorImGuiUI
             else
                 ImGui.TextDisabled("hidden");
 
-            // Preview ready
-            ImGui.TableSetColumnIndex(11);
-            if (tex.PreviewReady)
-                ImGui.TextColored(new Vector4(0.5f, 0.9f, 0.5f, 1.0f), "ready");
+            ImGui.TableSetColumnIndex(15);
+            string flagsText = BuildTextureStreamingFlags(tex);
+            if (tex.HasValidationFailure)
+                ImGui.TextColored(new Vector4(1.0f, 0.35f, 0.25f, 1.0f), flagsText);
+            else if (tex.WasPressureDemoted)
+                ImGui.TextColored(new Vector4(1.0f, 0.65f, 0.25f, 1.0f), flagsText);
+            else if (!tex.PreviewReady)
+                ImGui.TextColored(new Vector4(1.0f, 0.6f, 0.3f, 1.0f), flagsText);
             else
-                ImGui.TextColored(new Vector4(1.0f, 0.6f, 0.3f, 1.0f), "loading");
+                ImGui.TextUnformatted(flagsText);
         }
 
         ImGui.EndTable();
+    }
+
+    private static void DrawTextureStreamingSortOption(TextureStreamingSortMode mode, string label)
+    {
+        bool selected = _textureStreamingSortMode == mode;
+        if (ImGui.Selectable(label, selected))
+            _textureStreamingSortMode = mode;
+        if (selected)
+            ImGui.SetItemDefaultFocus();
+    }
+
+    private static bool PassesTextureStreamingFilters(ImportedTextureStreamingTextureTelemetry tex)
+    {
+        if (_textureStreamingFilterVisibleOnly && !tex.IsVisible)
+            return false;
+        if (_textureStreamingFilterPendingOnly && !tex.HasPendingTransition)
+            return false;
+        if (_textureStreamingFilterSlowOnly && !tex.IsSlow)
+            return false;
+        if (_textureStreamingFilterPressureOnly && !tex.WasPressureDemoted)
+            return false;
+        if (_textureStreamingFilterValidationOnly && !tex.HasValidationFailure)
+            return false;
+
+        return true;
+    }
+
+    private static int CompareTextureStreamingRows(ImportedTextureStreamingTextureTelemetry left, ImportedTextureStreamingTextureTelemetry right)
+    {
+        int result = _textureStreamingSortMode switch
+        {
+            TextureStreamingSortMode.QueueWait => left.OldestQueueWaitMilliseconds.CompareTo(right.OldestQueueWaitMilliseconds),
+            TextureStreamingSortMode.UploadTime => left.LastUploadMilliseconds.CompareTo(right.LastUploadMilliseconds),
+            TextureStreamingSortMode.Priority => left.PriorityScore.CompareTo(right.PriorityScore),
+            _ => left.CurrentCommittedBytes.CompareTo(right.CurrentCommittedBytes),
+        };
+
+        return _textureStreamingSortDescending ? -result : result;
+    }
+
+    private static void DrawTextureStreamingBytes(long bytes)
+    {
+        float committedKB = bytes / 1024f;
+        ImGui.Text(committedKB >= 1024f ? $"{committedKB / 1024f:F1} MB" : $"{committedKB:F0} KB");
+    }
+
+    private static void DrawTextureStreamingDuration(double milliseconds, bool highlight)
+    {
+        if (milliseconds <= 0.0)
+        {
+            ImGui.TextDisabled("-");
+            return;
+        }
+
+        string text = milliseconds >= 1000.0
+            ? $"{milliseconds / 1000.0:F1}s"
+            : $"{milliseconds:F1}ms";
+        if (highlight)
+            ImGui.TextColored(new Vector4(1.0f, 0.55f, 0.2f, 1.0f), text);
+        else
+            ImGui.Text(text);
+    }
+
+    private static string BuildTextureStreamingFlags(ImportedTextureStreamingTextureTelemetry tex)
+    {
+        string flags = tex.PreviewReady ? "ready" : "loading";
+        if (tex.HasPendingTransition)
+            flags += ",pending";
+        if (tex.IsSlow)
+            flags += ",slow";
+        if (tex.WasPressureDemoted)
+            flags += ",pressure";
+        if (tex.HasValidationFailure)
+            flags += $",invalid:{tex.ValidationFailureCount}";
+        return flags;
     }
 }

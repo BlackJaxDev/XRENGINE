@@ -31,6 +31,7 @@ namespace XREngine
         VR,
         Scripting,
         AI,
+        Textures,
     }
 
     public interface IRuntimeDebugHostServices
@@ -112,6 +113,7 @@ namespace XREngine
             [ELogCategory.VR] = null,
             [ELogCategory.Scripting] = null,
             [ELogCategory.AI] = null,
+            [ELogCategory.Textures] = null,
         };
 
         /// <summary>
