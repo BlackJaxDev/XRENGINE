@@ -176,7 +176,7 @@ public sealed class ShadowAtlasManager
         for (int i = 0; i < _requests.Count; i++)
         {
             ShadowMapRequest request = _requests[i];
-            if (!request.Light.CastsShadows || !request.Light.IsActive)
+            if (!request.Light.CastsShadows || !request.Light.IsActiveInHierarchy)
             {
                 _frameAllocations.Add(CreateSkippedAllocation(request, SkipReason.DisabledByLight));
                 continue;
@@ -206,7 +206,8 @@ public sealed class ShadowAtlasManager
                 !RequiresTileRender(request, allocation))
                 continue;
 
-            if (!TryRenderTile(request, allocation, collectVisibleNow))
+            bool forceCollectVisible = collectVisibleNow;
+            if (!TryRenderTile(request, allocation, forceCollectVisible))
                 continue;
 
             MarkTileRendered(request.Key, allocation);
@@ -366,6 +367,12 @@ public sealed class ShadowAtlasManager
         ulong lastRendered = _previousAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation prior)
             ? prior.LastRenderedFrame
             : 0u;
+        bool requiresFreshRenderBeforeSampling = lastRendered == 0u ||
+            request.IsDirty ||
+            !request.CanReusePreviousFrame;
+        ShadowFallbackMode activeFallback = requiresFreshRenderBeforeSampling && request.Fallback != ShadowFallbackMode.None
+            ? request.Fallback
+            : ShadowFallbackMode.None;
 
         return new ShadowAtlasAllocation(
             request.Key,
@@ -380,25 +387,38 @@ public sealed class ShadowAtlasManager
             LastRenderedFrame: lastRendered,
             IsResident: true,
             IsStaticCacheBacked: false,
-            ActiveFallback: ShadowFallbackMode.None,
+            ActiveFallback: activeFallback,
             SkipReason: SkipReason.None);
     }
 
     private void MarkTileRendered(ShadowRequestKey key, ShadowAtlasAllocation allocation)
     {
-        ShadowAtlasAllocation rendered = allocation with { LastRenderedFrame = _frameId };
+        ulong renderedFrameId = _frameId != 0u ? _frameId : 1u;
+        ShadowAtlasAllocation rendered = allocation with
+        {
+            LastRenderedFrame = renderedFrameId,
+            ActiveFallback = ShadowFallbackMode.None,
+        };
         _currentAllocations[key] = rendered;
         if (_currentAllocationIndices.TryGetValue(key, out int index))
             _frameAllocations[index] = rendered;
     }
 
     private bool RequiresTileRender(ShadowMapRequest request, ShadowAtlasAllocation allocation)
-        => RequiresTileRender(
+    {
+        if (allocation.LastRenderedFrame == 0u)
+            return true;
+
+        if (!request.CanReusePreviousFrame)
+            return true;
+
+        return RequiresTileRender(
             request,
             allocation.PageIndex,
             allocation.PixelRect.X,
             allocation.PixelRect.Y,
             allocation.Resolution);
+    }
 
     private bool RequiresTileRender(ShadowMapRequest request, int pageIndex, int x, int y, uint resolution)
     {

@@ -35,7 +35,11 @@ uniform float _OutlineVertexColorTint;
 
 uniform vec3 GlobalAmbient;
 uniform int DirLightCount; 
-uniform DirLight DirectionalLights[2];
+
+layout(std430, binding = 22) readonly buffer ForwardDirectionalLightsBuffer
+{
+    DirLight DirectionalLights[];
+};
 
 // Compatibility macros
 #define u_LightDirection (DirLightCount > 0 ? DirectionalLights[0].Direction : vec3(0.0, -1.0, 0.0))

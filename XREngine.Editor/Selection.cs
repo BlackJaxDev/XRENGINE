@@ -26,6 +26,7 @@ public static class Selection
             if (value.Length > 0)
                 _lastSceneNode = value[0];
             SelectionChanged?.Invoke(value);
+            /*
             switch (value.Length)
             {
                 case 0:
@@ -38,6 +39,7 @@ public static class Selection
                     Debug.Out($"Selection changed to {value.Length} nodes: {string.Join(", ", value.Select(n => n.Name))}");
                     break;
             }
+            */
         }
     }
 

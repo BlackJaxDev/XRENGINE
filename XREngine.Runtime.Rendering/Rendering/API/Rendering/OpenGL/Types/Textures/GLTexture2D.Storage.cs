@@ -185,12 +185,13 @@ public partial class GLTexture2D
 
             _allocatedVRAMBytes = CalculateTextureVRAMSize(width, height, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
             Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
-
+/*
             Debug.OpenGL(
                 $"[GLTexture2D] Storage allocated for '{GetDescribingName()}': binding={BindingId} dims={width}x{height} levels={levels} " +
                 $"format={Data.SizedInternalFormat} mipmapCount={mipmapCount} " +
                 $"SmallestAllowedMipmapLevel={Data.SmallestAllowedMipmapLevel} LargestMipmapLevel={Data.LargestMipmapLevel} " +
                 $"StreamingLockMipLevel={Data.StreamingLockMipLevel} sparseEnabled={Data.SparseTextureStreamingEnabled}.");
+*/
         }
 
         return internalFormatForce;

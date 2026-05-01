@@ -225,10 +225,9 @@ namespace XREngine.Rendering.OpenGL
                 int maxTextureUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
                 for (int candidate = maxTextureUnits - 1; candidate >= 0; candidate--)
                 {
-                    if (_boundSamplerUnits.Contains(candidate))
+                    if (_boundSamplerUnits.ContainsKey(candidate))
                         continue;
 
-                    _boundSamplerUnits.Add(candidate);
                     textureUnit = candidate;
                     return true;
                 }
@@ -259,7 +258,7 @@ namespace XREngine.Rendering.OpenGL
                     if (_boundSamplerUnits.Count > 0)
                     {
                         Api.GetUniform(BindingId, location, out int assignedUnit);
-                        if (assignedUnit >= 0 && _boundSamplerUnits.Contains(assignedUnit))
+                        if (assignedUnit >= 0 && _boundSamplerUnits.ContainsKey(assignedUnit))
                             continue;
                     }
 

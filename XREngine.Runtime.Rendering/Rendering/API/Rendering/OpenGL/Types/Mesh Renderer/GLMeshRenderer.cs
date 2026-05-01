@@ -14,7 +14,7 @@ namespace XREngine.Rendering.OpenGL
         /// <summary>
         /// OpenGL-backed mesh renderer responsible for VAO setup, shader selection, and draw dispatch.
         /// </summary>
-        public partial class GLMeshRenderer(OpenGLRenderer renderer, XRMeshRenderer.BaseVersion mesh) : GLObject<XRMeshRenderer.BaseVersion>(renderer, mesh)
+        public partial class GLMeshRenderer(OpenGLRenderer renderer, XRMeshRenderer.BaseVersion mesh) : GLObject<XRMeshRenderer.BaseVersion>(renderer, mesh), IRenderPreparationState
         {
             public XRMeshRenderer MeshRenderer => Data.Parent;
             public XRMesh? Mesh => MeshRenderer.Mesh;
@@ -173,6 +173,15 @@ namespace XREngine.Rendering.OpenGL
                     return false;
 
                 return true;
+            }
+
+            private void PrepareDynamicRenderData()
+            {
+                if (!MeshRenderer.HasRenderDataPreparation)
+                    return;
+
+                MeshRenderer.OnPreparingRenderData();
+                _buffersReadyCacheFrame = -1;
             }
 
             private void ConfigureDrawTopology(GLRenderProgram vertexProgram, GLRenderProgram? materialProgram)

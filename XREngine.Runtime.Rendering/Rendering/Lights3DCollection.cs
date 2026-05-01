@@ -95,6 +95,7 @@ namespace XREngine.Scene
         private long _lastStreamingPressureLogFrameTicks = -1;
         private int _captureWorkQueueDepth;
         private int _lightProbeBatchCaptureNesting;
+        private int _lightProbeBatchCompletedVersion;
         private long _lightProbeBatchStructuralRefreshTicks;
         private int _lightProbeBatchStructuralRefreshCount;
         private long _lightProbeBatchContentRefreshTicks;
@@ -115,6 +116,7 @@ namespace XREngine.Scene
         public bool RenderingShadowMaps { get; private set; } = false;
         public bool CollectingVisibleShadowMaps { get; private set; } = false;
         public bool LightProbeBatchCaptureActive => Volatile.Read(ref _lightProbeBatchCaptureNesting) > 0;
+        public int LightProbeBatchCompletedVersion => Volatile.Read(ref _lightProbeBatchCompletedVersion);
         public int PendingCaptureWorkItemCount => Math.Max(0, Volatile.Read(ref _captureWorkQueueDepth));
         public int PendingCaptureComponentCount
         {
@@ -177,9 +179,9 @@ namespace XREngine.Scene
 
         public void EndLightProbeBatchCapture()
         {
-            int nesting = Interlocked.Decrement(ref _lightProbeBatchCaptureNesting);
-            if (nesting < 0)
-                Interlocked.Exchange(ref _lightProbeBatchCaptureNesting, 0);
+            int nesting = Interlocked.Exchange(ref _lightProbeBatchCaptureNesting, 0);
+            if (nesting > 0)
+                Interlocked.Increment(ref _lightProbeBatchCompletedVersion);
         }
 
         public LightProbeBatchDiagnosticSnapshot ConsumeLightProbeBatchDiagnostics()

@@ -71,6 +71,7 @@ namespace XREngine.Rendering
         protected Matrix4x4? _projectionMatrix;
         protected Matrix4x4? _inverseProjectionMatrix;
         protected Frustum? _untransformedFrustum;
+        private readonly object _projectionLock = new();
         private uint _projectionVersion;
 
         /// <summary>
@@ -104,12 +105,15 @@ namespace XREngine.Rendering
 
         private void InvalidateProjection()
         {
-            _projectionMatrix = null;
-            _inverseProjectionMatrix = null;
-            _untransformedFrustum = null;
-            unchecked
+            lock (_projectionLock)
             {
-                _projectionVersion++;
+                _projectionMatrix = null;
+                _inverseProjectionMatrix = null;
+                _untransformedFrustum = null;
+                unchecked
+                {
+                    _projectionVersion++;
+                }
             }
         }
 
@@ -117,21 +121,25 @@ namespace XREngine.Rendering
         {
             bool changed = false;
 
-            if (_projectionMatrix is null)
+            lock (_projectionLock)
             {
-                _projectionMatrix = CalculateProjectionMatrix();
-                if (!Matrix4x4.Invert(_projectionMatrix.Value, out Matrix4x4 inverseProjectionMatrix))
+                if (_projectionMatrix is null)
                 {
-                    Debug.LogWarning($"Failed to invert {nameof(XRCameraParameters)} projection. Parameters: {this}");
-                    inverseProjectionMatrix = Matrix4x4.Identity;
+                    Matrix4x4 projectionMatrix = CalculateProjectionMatrix();
+                    if (!Matrix4x4.Invert(projectionMatrix, out Matrix4x4 inverseProjectionMatrix))
+                    {
+                        Debug.LogWarning($"Failed to invert {nameof(XRCameraParameters)} projection. Parameters: {this}");
+                        inverseProjectionMatrix = Matrix4x4.Identity;
+                    }
+
+                    _projectionMatrix = projectionMatrix;
+                    _inverseProjectionMatrix = inverseProjectionMatrix;
+                    changed = true;
                 }
 
-                _inverseProjectionMatrix = inverseProjectionMatrix;
-                changed = true;
+                if (_untransformedFrustum is null || changed)
+                    _untransformedFrustum = CalculateUntransformedFrustum();
             }
-
-            if (_untransformedFrustum is null || changed)
-                _untransformedFrustum = CalculateUntransformedFrustum();
 
             if (changed)
                 ProjectionMatrixChanged?.Invoke(this);
@@ -145,13 +153,15 @@ namespace XREngine.Rendering
         public Matrix4x4 GetProjectionMatrix()
         {
             VerifyProjection();
-            return _projectionMatrix ?? Matrix4x4.Identity;
+            lock (_projectionLock)
+                return _projectionMatrix ?? Matrix4x4.Identity;
         }
 
         public Matrix4x4 GetInverseProjectionMatrix()
         {
             VerifyProjection();
-            return _inverseProjectionMatrix ?? Matrix4x4.Identity;
+            lock (_projectionLock)
+                return _inverseProjectionMatrix ?? Matrix4x4.Identity;
         }
 
         /// <summary>
@@ -160,14 +170,11 @@ namespace XREngine.Rendering
         /// <returns></returns>
         protected abstract Matrix4x4 CalculateProjectionMatrix();
 
-        private object _untransformedFrustumLock = new();
         public Frustum GetUntransformedFrustum()
         {
-            lock (_untransformedFrustumLock)
-            {
-                VerifyProjection();
+            VerifyProjection();
+            lock (_projectionLock)
                 return _untransformedFrustum!.Value;
-            }
         }
         protected abstract Frustum CalculateUntransformedFrustum();
 

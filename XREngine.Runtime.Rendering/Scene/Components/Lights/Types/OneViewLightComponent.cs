@@ -96,9 +96,14 @@ namespace XREngine.Components.Capture.Lights.Types
             base.OnComponentDeactivated();
         }
 
+        protected virtual bool UsesAtlasShadowViewport => false;
+
+        private bool ShouldProcessShadowViewport()
+            => CastsShadows && (ShadowMap is not null || UsesAtlasShadowViewport);
+
         public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
         {
-            if (!CastsShadows || ShadowMap is null)
+            if (!ShouldProcessShadowViewport())
                 return;
 
             PrimaryShadowViewport.SwapBuffers();
@@ -106,7 +111,7 @@ namespace XREngine.Components.Capture.Lights.Types
         }
         public override void CollectVisibleItems()
         {
-            if (!CastsShadows || ShadowMap is null)
+            if (!ShouldProcessShadowViewport())
                 return;
 
             PrimaryShadowViewport.CollectVisible(false);

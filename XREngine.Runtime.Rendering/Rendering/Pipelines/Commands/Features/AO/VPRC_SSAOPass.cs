@@ -15,8 +15,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_SSAOPass : ViewportRenderCommand
     {
-        private static void Log(string message)
-            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][SSAO] {0}", message);
+        //private static void Log(string message)
+        //    => Debug.Out(EOutputVerbosity.Normal, false, "[AO][SSAO] {0}", message);
 
         private static void LogGuardFailure(string location, string reason)
             => Debug.RenderingEvery(
@@ -194,17 +194,20 @@ namespace XREngine.Rendering.Pipelines.Commands
                 //Log("Skipping regenerate; dimensions unchanged and not forced");
                 return;
             }
-                Debug.RenderingEvery(
-                    $"AO.SSAO.Execute.{RuntimeHelpers.GetHashCode(instance)}",
-                    TimeSpan.FromSeconds(1),
-                    "[AO][SSAO] Execute forceRebuild={0} size={1}x{2} stereo={3} normal={4} depth={5} output={6}",
-                    forceRebuild,
-                    width,
-                    height,
-                    Stereo,
-                    normalTex.Name ?? "null",
-                    depthViewTex.Name ?? "null",
-                    SSAOIntensityTextureName);
+
+            /*
+            Debug.RenderingEvery(
+                $"AO.SSAO.Execute.{RuntimeHelpers.GetHashCode(instance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][SSAO] Execute forceRebuild={0} size={1}x{2} stereo={3} normal={4} depth={5} output={6}",
+                forceRebuild,
+                width,
+                height,
+                Stereo,
+                normalTex.Name ?? "null",
+                depthViewTex.Name ?? "null",
+                SSAOIntensityTextureName);
+            */
 
             RegenerateFBOs(
                 instance,
@@ -396,15 +399,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                 rc.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.ScreenSpace);
 
             var region = instance.RenderState.CurrentRenderRegion;
-                Debug.RenderingEvery(
-                    $"AO.SSAO.GenUniforms.{RuntimeHelpers.GetHashCode(instance)}",
-                    TimeSpan.FromSeconds(1),
-                    "[AO][SSAO] Gen depthMode={0} region={1}x{2} stereoPass={3} samples={4}",
-                    rc.DepthMode,
-                    region.Width,
-                    region.Height,
-                    Engine.Rendering.State.IsStereoPass,
-                    Samples);
+            /*
+            Debug.RenderingEvery(
+                $"AO.SSAO.GenUniforms.{RuntimeHelpers.GetHashCode(instance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][SSAO] Gen depthMode={0} region={1}x{2} stereoPass={3} samples={4}",
+                rc.DepthMode,
+                region.Width,
+                region.Height,
+                Engine.Rendering.State.IsStereoPass,
+                Samples);
+            */
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), 0.0f);

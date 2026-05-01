@@ -2,6 +2,7 @@
 // Usage: #pragma snippet "LightStructs"
 
 const int XRENGINE_MAX_CASCADES = 8;
+const int XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS = 2;
 
 struct BaseLight
 {

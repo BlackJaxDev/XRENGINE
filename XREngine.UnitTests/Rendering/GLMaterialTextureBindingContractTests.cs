@@ -11,9 +11,9 @@ public sealed class GLMaterialTextureBindingContractTests
     [Test]
     public void GLMaterial_PreservesTextureIndexBindingForSparseTextureLists()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
 
-        source.ShouldContain("SetTextureUniform(program, textureIndex, texture, textureIndex);");
+        source.ShouldContain("SetTextureUniform(program, material, textureIndex, texture, textureIndex);");
         source.ShouldContain("textureUnit = textureIndex;");
         source.ShouldNotContain("int textureUnit = 0;");
         source.ShouldNotContain("textureUnit++;");
@@ -23,9 +23,9 @@ public sealed class GLMaterialTextureBindingContractTests
     [Test]
     public void GLMaterial_BindsIndexedTextureAliasWhenShaderExpectsTextureSlots()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
 
-        source.ShouldContain("string indexedSamplerName = $\"Texture{textureIndex}\";");
+        source.ShouldContain("string indexedSamplerName = XRTexture.GetIndexedSamplerName(textureIndex);");
         source.ShouldContain("if (program.GetUniformLocation(resolvedSamplerName) >= 0)");
         source.ShouldContain("if (program.GetUniformLocation(indexedSamplerName) >= 0)");
         source.ShouldContain("program.Sampler(indexedSamplerName, texture, textureUnit);");
@@ -34,11 +34,24 @@ public sealed class GLMaterialTextureBindingContractTests
     [Test]
     public void FallbackSamplerBinding_PreservesExistingLayoutBoundSamplerAssignments()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.UniformBinding.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.UniformBinding.cs");
 
         source.ShouldContain("Api.GetUniform(BindingId, location, out int assignedUnit);");
         source.ShouldContain("if (assignedUnit >= 0 && _boundSamplerUnits.ContainsKey(assignedUnit))");
         source.ShouldContain("continue;");
+    }
+
+    [Test]
+    public void SamplerBinding_RelocatesNamedEngineSamplersWhenMaterialSlotsAlreadyUseFixedUnits()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Samplers.cs");
+
+        source.ShouldContain("TryResolveSamplerTextureUnit(location, texture, textureUnit, out int resolvedTextureUnit)");
+        source.ShouldContain("if (location < 0)");
+        source.ShouldContain("return false;");
+        source.ShouldContain("TryFindFreeSamplerTextureUnit(out resolvedTextureUnit)");
+        source.ShouldContain("Uniform(location, resolvedTextureUnit);");
+        source.ShouldNotContain("_boundSamplerUnits.Add(textureUnit);");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

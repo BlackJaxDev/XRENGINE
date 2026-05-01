@@ -45,7 +45,7 @@ The default hand-authored material shape is intentionally lean. Optional familie
 
 The always-on core covers the base fragment surface: normal mapping, base color, alpha, PBR ambient and direct lighting, and shadow sampling. Optional families sit behind `XRENGINE_UBER_DISABLE_*` compile-time guards, including stylized lighting, emission, matcap, rim, detail, backface, subsurface, glitter, flipbook, parallax, dissolve, and color adjustments.
 
-Imported materials use a distinct import family keyed by `XRENGINE_UBER_IMPORT_MATERIAL`. That pipeline axis applies a deterministic disable set for features the importers do not bind, which keeps GL fragment uniform pressure predictable and gives the variant cache a canonical import shape.
+Imported materials use the same canonical Uber family as hand-authored materials. Importers author feature state directly, and the generated variant trims unused feature families from that state.
 
 Do not reintroduce runtime `_Enable<Family>` or `_<Family>Toggle` uniforms for feature membership. Sub-option selectors inside an already compiled feature can remain runtime controls when they describe content mode rather than feature inclusion.
 

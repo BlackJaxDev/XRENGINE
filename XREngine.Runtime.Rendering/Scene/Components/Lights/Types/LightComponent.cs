@@ -170,7 +170,18 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            EnsureShadowMapForActiveDynamicLight();
             SyncDynamicWorldRegistration();
+        }
+
+        protected void EnsureShadowMapForActiveDynamicLight()
+        {
+            if (Type != ELightType.Dynamic || !CastsShadows || ShadowMap is not null)
+                return;
+
+            SetShadowMapResolution(
+                Math.Max(1u, ShadowMapResolutionWidth),
+                Math.Max(1u, ShadowMapResolutionHeight));
         }
 
         protected virtual void RegisterDynamicLight(IRuntimeRenderWorld world)

@@ -15,7 +15,7 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class UberMaterialVariantTests
 {
     [Test]
-    public void EnsureUberStateInitialized_InfersFeatureStateAndPropertyModesFromFragmentSource()
+    public void EnsureUberStateInitialized_UsesManifestFeatureDefaultAndPropertyModes()
     {
         XRMaterial material = CreateUberMaterial(
             """
@@ -32,9 +32,36 @@ public sealed class UberMaterialVariantTests
 
         material.EnsureUberStateInitialized();
 
-        material.IsUberFeatureEnabled("emission", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("emission", defaultEnabled: true).ShouldBeTrue();
         material.GetUberPropertyMode("_EmissionColor", EShaderUiPropertyMode.Unspecified, isSampler: false).ShouldBe(EShaderUiPropertyMode.Static);
         material.GetUberPropertyMode("_Color", EShaderUiPropertyMode.Unspecified, isSampler: false).ShouldBe(EShaderUiPropertyMode.Animated);
+    }
+
+    [Test]
+    public void RequestUberVariantRebuild_StripsCanonicalFeatureGuard_WhenFeatureIsEnabled()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            #define XRENGINE_UBER_DISABLE_EMISSION 1
+            //@feature(id="emission", name="Emission", default=on)
+            #ifndef XRENGINE_UBER_DISABLE_EMISSION
+            //@property(name="_EmissionColor", display="Emission Color", mode=static)
+            uniform vec4 _EmissionColor;
+            #endif
+            """,
+            new ShaderVector4(new Vector4(0.2f, 0.1f, 0.4f, 1.0f), "_EmissionColor"));
+
+        material.EnsureUberStateInitialized();
+
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        string generatedSource = GetFragmentSource(material);
+        generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
+        generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
+        generatedSource.ShouldContain("#define _EmissionColor vec4(0.2, 0.1, 0.4, 1.0)");
+        material.ActiveUberVariant.EnabledFeatures.ShouldContain("emission");
     }
 
     [Test]
@@ -71,6 +98,36 @@ public sealed class UberMaterialVariantTests
 
         material.ActiveUberVariant.StaticProperties.ShouldContain("_Color=vec4(1.0, 0.5, 0.25, 1.0)");
         material.ActiveUberVariant.EnabledFeatures.ShouldNotContain("emission");
+    }
+
+    [Test]
+    public void RequestUberVariantRebuild_UnauthoredFeatureUsesManifestDefault()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@feature(id="stylized-shading", name="Stylized Lighting", default=off)
+            #ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+            //@property(name="_LightingMode", display="Lighting Mode", mode=static)
+            uniform int _LightingMode;
+            #endif
+            """);
+
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        string generatedSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;
+        generatedSource.ShouldContain("#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1");
+        material.ActiveUberVariant.EnabledFeatures.ShouldNotContain("stylized-shading");
+    }
+
+    [Test]
+    public void DefaultForwardPlusUberParameters_DoNotEmitWithoutAuthoredStrength()
+    {
+        ShaderVar[] parameters = global::XREngine.ModelImporter.CreateDefaultForwardPlusUberShaderParameters();
+        ShaderFloat emissionStrength = parameters.OfType<ShaderFloat>().Single(x => x.Name == "_EmissionStrength");
+
+        emissionStrength.Value.ShouldBe(0.0f);
     }
 
     [Test]
@@ -345,20 +402,20 @@ public sealed class UberMaterialVariantTests
 
         material.RequestUberVariantRebuild();
         WaitForActiveUberVariant(material);
-        material.GetShader(EShaderType.Fragment)!.Source!.Text.ShouldContain("uniform vec4 _Color;");
+        GetFragmentSource(material).ShouldContain("uniform vec4 _Color;");
 
         material.SetUberPropertyMode("_Color", EShaderUiPropertyMode.Static).ShouldBeTrue();
         material.UberAuthoredState.GetProperty("_Color")?.StaticLiteral.ShouldBe("vec4(0.1, 0.2, 0.3, 0.4)");
 
         material.RequestUberVariantRebuild();
         WaitForActiveUberVariant(material);
-        material.GetShader(EShaderType.Fragment)!.Source!.Text.ShouldContain("#define _Color vec4(0.1, 0.2, 0.3, 0.4)");
+        GetFragmentSource(material).ShouldContain("#define _Color vec4(0.1, 0.2, 0.3, 0.4)");
 
         material.SetUberPropertyMode("_Color", EShaderUiPropertyMode.Animated).ShouldBeTrue();
         material.RequestUberVariantRebuild();
         WaitForActiveUberVariant(material);
 
-        string finalSource = material.GetShader(EShaderType.Fragment)!.Source!.Text;
+        string finalSource = GetFragmentSource(material);
         finalSource.ShouldContain("uniform vec4 _Color;");
         finalSource.ShouldNotContain("#define _Color ");
         material.Parameter<ShaderVector4>("_Color")!.Value.ShouldBe(new Vector4(0.1f, 0.2f, 0.3f, 0.4f));
@@ -556,5 +613,14 @@ public sealed class UberMaterialVariantTests
 
         completed.ShouldBeTrue();
         material.UberVariantStatus.Stage.ShouldBe(EUberMaterialVariantStage.Active, customMessage: material.UberVariantStatus.FailureReason);
+    }
+
+    private static string GetFragmentSource(XRMaterial material)
+    {
+        XRShader? fragmentShader = material.GetShader(EShaderType.Fragment);
+        fragmentShader.ShouldNotBeNull();
+        fragmentShader!.Source.ShouldNotBeNull();
+        fragmentShader.Source!.Text.ShouldNotBeNull();
+        return fragmentShader.Source.Text!;
     }
 }

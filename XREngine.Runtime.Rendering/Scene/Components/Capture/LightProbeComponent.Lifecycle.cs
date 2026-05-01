@@ -62,6 +62,11 @@ namespace XREngine.Components.Capture.Lights
                 case nameof(EnvironmentTextureEquirect):
                     if (EnvironmentTextureEquirect is not null)
                         InitializeStatic();
+                    else
+                    {
+                        IblTexturesValid = false;
+                        CaptureVersion = 0;
+                    }
                     break;
                 case nameof(IrradianceResolution):
                     if (EnvironmentTextureEquirect is not null)

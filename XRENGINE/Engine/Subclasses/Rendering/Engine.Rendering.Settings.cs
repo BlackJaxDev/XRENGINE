@@ -490,7 +490,7 @@ namespace XREngine
                 }
 
                 [Category("Shadows")]
-                [Description("If true, dynamic spot lights render and sample through the dynamic shadow atlas. Disable to use legacy per-light spot shadow maps for debugging.")]
+                [Description("If true, dynamic spot lights render and sample through the dynamic shadow atlas. Disable to use per-light spot shadow maps for debugging.")]
                 public bool UseSpotShadowAtlas
                 {
                     get => _useSpotShadowAtlas;

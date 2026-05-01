@@ -230,7 +230,8 @@ public sealed class ProbeGridLookupTests
     {
         string source = ReadShaderFile("Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl");
 
-        source.ShouldContain("return GlobalAmbient * albedo * diffuseAO;");
+        source.ShouldContain("const float XRENGINE_MIN_FORWARD_AMBIENT_FALLBACK = 0.08;");
+        source.ShouldContain("return XRENGINE_ResolveForwardAmbientFallback() * albedo * diffuseAO;");
         source.ShouldContain("vec3 diffuse = GlobalAmbient * irradianceColor * albedo;");
     }
 

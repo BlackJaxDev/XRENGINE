@@ -318,12 +318,11 @@ public sealed class ImportedDeferredMaterialTests
         material.Parameter<ShaderFloat>("_AlphaForceOpaque")?.Value.ShouldBe(0.0f);
 
         string source = material.FragmentShaders[0].Source?.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
-        source.ShouldNotContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
         source.ShouldContain("#define XRENGINE_FORWARD_WEIGHTED_OIT");
     }
 
     [Test]
-    public void MakeMaterialForwardPlusUberShader_UsesFullUberFragmentInsteadOfImportVariant()
+    public void MakeMaterialForwardPlusUberShader_UsesGeneratedUberFragment()
     {
         XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader([], [], "UberFullFeatureMaterial");
 
@@ -333,7 +332,6 @@ public sealed class ImportedDeferredMaterialTests
         Path.GetFileName(fragmentShader.Source?.FilePath ?? fragmentShader.FilePath ?? string.Empty)
             .ShouldBe("UberShader.frag");
         source.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
-        source.ShouldNotContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
         source.ShouldContain("#define XRENGINE_UBER_DISABLE_PARALLAX 1");
         source.ShouldContain("#define XRENGINE_UBER_DISABLE_DISSOLVE 1");
         source.ShouldContain("#define XRENGINE_UBER_DISABLE_FLIPBOOK 1");

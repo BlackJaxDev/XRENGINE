@@ -75,19 +75,25 @@ uniform sampler2D Texture3; // Alpha mask (R channel)
 
 layout (location = 0) in vec3 FragPos;
 layout (location = 1) in vec3 FragNorm;
+#if !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
 layout (location = 3) in vec3 FragBinorm;
 layout (location = 2) in vec3 FragTan;
+#endif
 layout (location = 4) in vec2 FragUV0;
 
 #pragma snippet "ForwardLighting"
 #pragma snippet "AmbientOcclusionSampling"
+#if !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
 #pragma snippet "SurfaceDetailNormalMapping"
+#endif
 #pragma snippet "NormalEncoding"
 
+#if !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
 vec3 getNormalFromMap()
 {
     return XRENGINE_GetSurfaceDetailNormal(FragUV0, FragTan, FragBinorm, FragNorm);
 }
+#endif
 
 void main()
 {

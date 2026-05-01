@@ -1,5 +1,7 @@
 using System;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
@@ -16,42 +18,27 @@ namespace XREngine.Scene
     {
         #region Forward Lighting
 
-        // Cached arrays for per-draw shadow metadata uploads.
-        // Reused every call to avoid 24 heap allocations per draw on the render thread.
-        // Safe because only the single render thread calls SetForwardLightingUniforms.
-        private static readonly IVector4 _inactiveShadowPack = new(-1, 0, 0, 0);
-        private static readonly IVector4[] _pointShadowPacked0 = new IVector4[16];
-        private static readonly IVector4[] _pointShadowPacked1 = new IVector4[16];
-        private static readonly Vector4[] _pointShadowParams0 = new Vector4[16];
-        private static readonly Vector4[] _pointShadowParams1 = new Vector4[16];
-        private static readonly Vector4[] _pointShadowParams2 = new Vector4[16];
-        private static readonly Vector4[] _pointShadowParams3 = new Vector4[16];
-        private static readonly Vector4[] _pointShadowParams4 = new Vector4[16];
+        private const int MaxForwardDirectionalLights = 2;
+        private const uint MinForwardLocalLightBufferCapacity = 1024;
+        private const int ForwardMaxCascades = 8;
+        private const uint ForwardDirectionalLightsBinding = 22;
+        private const uint ForwardPointLightsBinding = 23;
+        private const uint ForwardSpotLightsBinding = 26;
+        private const uint ForwardPointShadowMetadataBinding = 27;
+        private const uint ForwardSpotShadowMetadataBinding = 28;
 
-        private static readonly IVector4[] _spotShadowPacked0 = new IVector4[16];
-        private static readonly IVector4[] _spotShadowPacked1 = new IVector4[16];
-        private static readonly Vector4[] _spotShadowParams0 = new Vector4[16];
-        private static readonly Vector4[] _spotShadowParams1 = new Vector4[16];
-        private static readonly Vector4[] _spotShadowParams2 = new Vector4[16];
-        private static readonly Vector4[] _spotShadowParams3 = new Vector4[16];
-        private static readonly IVector4[] _spotShadowPacked2 = new IVector4[16];
-        private static readonly Vector4[] _spotShadowParams4 = new Vector4[16];
-        private static readonly Vector4[] _spotShadowParams5 = new Vector4[16];
-        private static readonly IVector4[] _spotShadowAtlasPacked0 = new IVector4[16];
-        private static readonly Vector4[] _spotShadowAtlasParams0 = new Vector4[16];
-        private static readonly Vector4[] _spotShadowAtlasParams1 = new Vector4[16];
+        private XRDataBuffer? _forwardDirectionalLightsBuffer;
+        private XRDataBuffer? _forwardPointLightsBuffer;
+        private XRDataBuffer? _forwardSpotLightsBuffer;
+        private XRDataBuffer? _forwardPointShadowMetadataBuffer;
+        private XRDataBuffer? _forwardSpotShadowMetadataBuffer;
+
         private static readonly IVector4[] _directionalShadowAtlasPacked0 = new IVector4[8];
         private static readonly Vector4[] _directionalShadowAtlasParams0 = new Vector4[8];
         private static readonly Vector4[] _directionalShadowAtlasParams1 = new Vector4[8];
 
-        // Pre-computed uniform name strings for light array indices.
+        // Pre-computed sampler uniform names for indexed shadow resources.
         // Avoids per-draw string interpolation allocations on the render thread.
-        private static readonly string[] _dirLightGenNames = CreateIndexedNames("DirectionalLights", 16);
-        private static readonly string[] _dirLightLegacyNames = CreateIndexedNames("DirLightData", 16);
-        private static readonly string[] _spotLightGenNames = CreateIndexedNames("SpotLights", 16);
-        private static readonly string[] _spotLightLegacyNames = CreateIndexedNames("SpotLightData", 16);
-        private static readonly string[] _pointLightGenNames = CreateIndexedNames("PointLights", 16);
-        private static readonly string[] _pointLightLegacyNames = CreateIndexedNames("PointLightData", 16);
         private static readonly string[] _pointShadowMapNames = CreateIndexedNames("PointLightShadowMaps", 4);
         private static readonly string[] _spotShadowMapNames = CreateIndexedNames("SpotLightShadowMaps", 4);
         private static readonly string[] _spotShadowAtlasPageNames = CreateIndexedNames("SpotLightShadowAtlasPages", 2);
@@ -63,6 +50,280 @@ namespace XREngine.Scene
             for (int i = 0; i < count; i++)
                 names[i] = $"{prefix}[{i}]";
             return names;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ForwardBaseLightGpu
+        {
+            public Vector4 ColorDiffuse;
+            public Vector4 AmbientPadding;
+            public Matrix4x4 WorldToLightSpaceProjMatrix;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private unsafe struct ForwardDirectionalLightGpu
+        {
+            public ForwardBaseLightGpu Base;
+            public Vector4 DirectionPadding;
+            public Matrix4x4 WorldToLightInvViewMatrix;
+            public Matrix4x4 WorldToLightProjMatrix;
+            public Matrix4x4 WorldToLightSpaceMatrix;
+            public fixed float CascadeSplits[ForwardMaxCascades];
+            public fixed float CascadeBlendWidths[ForwardMaxCascades];
+            public fixed float CascadeBiasMin[ForwardMaxCascades];
+            public fixed float CascadeBiasMax[ForwardMaxCascades];
+            public fixed float CascadeReceiverOffsets[ForwardMaxCascades];
+            public fixed float CascadeMatrices[ForwardMaxCascades * 16];
+            public int CascadeCount;
+            private int _padding0;
+            private int _padding1;
+            private int _padding2;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ForwardPointLightGpu
+        {
+            public ForwardBaseLightGpu Base;
+            public Vector4 PositionRadius;
+            public Vector4 BrightnessPadding;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ForwardSpotLightGpu
+        {
+            public ForwardPointLightGpu Base;
+            public Vector4 DirectionInnerCutoff;
+            public Vector4 OuterCutoffExponentPadding;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ForwardPointShadowGpu
+        {
+            public IVector4 Packed0;
+            public IVector4 Packed1;
+            public Vector4 Params0;
+            public Vector4 Params1;
+            public Vector4 Params2;
+            public Vector4 Params3;
+            public Vector4 Params4;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ForwardSpotShadowGpu
+        {
+            public IVector4 Packed0;
+            public IVector4 Packed1;
+            public Vector4 Params0;
+            public Vector4 Params1;
+            public Vector4 Params2;
+            public Vector4 Params3;
+            public IVector4 Packed2;
+            public Vector4 Params4;
+            public Vector4 Params5;
+            public IVector4 AtlasPacked0;
+            public Vector4 AtlasParams0;
+            public Vector4 AtlasParams1;
+        }
+
+        private static XRDataBuffer CreateForwardLightBuffer<T>(string name, uint elementCount) where T : unmanaged
+        {
+            var buffer = new XRDataBuffer(
+                name,
+                EBufferTarget.ShaderStorageBuffer,
+                elementCount,
+                EComponentType.Struct,
+                (uint)Unsafe.SizeOf<T>(),
+                normalize: false,
+                integral: false)
+            {
+                Usage = EBufferUsage.StreamDraw,
+                PadEndingToVec4 = true,
+            };
+            buffer.PushData();
+            return buffer;
+        }
+
+        private static XRDataBuffer EnsureForwardBuffer<T>(XRDataBuffer? buffer, string name, uint elementCount) where T : unmanaged
+        {
+            if (buffer is not null && buffer.ElementCount >= elementCount)
+                return buffer;
+
+            buffer?.Dispose();
+            return CreateForwardLightBuffer<T>(name, elementCount);
+        }
+
+        private static uint ResolveForwardLocalBufferCapacity(int requiredCount)
+        {
+            if (requiredCount <= 0)
+                return 1u;
+
+            uint required = (uint)requiredCount;
+            uint capacity = MinForwardLocalLightBufferCapacity;
+            while (capacity < required && capacity <= uint.MaxValue / 2u)
+                capacity <<= 1;
+
+            return Math.Max(capacity, required);
+        }
+
+        private static void PushForwardBufferSubData<T>(XRDataBuffer buffer, int writtenElementCount) where T : unmanaged
+        {
+            uint elementCount = (uint)Math.Max(writtenElementCount, 1);
+            buffer.PushSubData(0, elementCount * (uint)Unsafe.SizeOf<T>());
+        }
+
+        private void EnsureForwardLightBuffers(int pointLightCount, int spotLightCount)
+        {
+            uint pointCapacity = ResolveForwardLocalBufferCapacity(pointLightCount);
+            uint spotCapacity = ResolveForwardLocalBufferCapacity(spotLightCount);
+
+            _forwardDirectionalLightsBuffer = EnsureForwardBuffer<ForwardDirectionalLightGpu>(
+                _forwardDirectionalLightsBuffer,
+                "ForwardDirectionalLights",
+                MaxForwardDirectionalLights);
+            _forwardPointLightsBuffer = EnsureForwardBuffer<ForwardPointLightGpu>(
+                _forwardPointLightsBuffer,
+                "ForwardPointLights",
+                pointCapacity);
+            _forwardSpotLightsBuffer = EnsureForwardBuffer<ForwardSpotLightGpu>(
+                _forwardSpotLightsBuffer,
+                "ForwardSpotLights",
+                spotCapacity);
+            _forwardPointShadowMetadataBuffer = EnsureForwardBuffer<ForwardPointShadowGpu>(
+                _forwardPointShadowMetadataBuffer,
+                "ForwardPointShadowMetadata",
+                pointCapacity);
+            _forwardSpotShadowMetadataBuffer = EnsureForwardBuffer<ForwardSpotShadowGpu>(
+                _forwardSpotShadowMetadataBuffer,
+                "ForwardSpotShadowMetadata",
+                spotCapacity);
+        }
+
+        private void BindForwardLightBuffers(XRRenderProgram program)
+        {
+            program.BindBuffer(_forwardDirectionalLightsBuffer!, ForwardDirectionalLightsBinding);
+            program.BindBuffer(_forwardPointLightsBuffer!, ForwardPointLightsBinding);
+            program.BindBuffer(_forwardSpotLightsBuffer!, ForwardSpotLightsBinding);
+            program.BindBuffer(_forwardPointShadowMetadataBuffer!, ForwardPointShadowMetadataBinding);
+            program.BindBuffer(_forwardSpotShadowMetadataBuffer!, ForwardSpotShadowMetadataBinding);
+        }
+
+        private void UploadForwardLightBuffers(int directionalLightCount, int pointLightCount, int spotLightCount)
+        {
+            EnsureForwardLightBuffers(pointLightCount, spotLightCount);
+
+            for (int i = 0; i < MaxForwardDirectionalLights; i++)
+            {
+                ForwardDirectionalLightGpu light = i < directionalLightCount
+                    ? CreateForwardDirectionalLightGpu(DynamicDirectionalLights[i])
+                    : default;
+                _forwardDirectionalLightsBuffer!.Set((uint)i, light);
+            }
+
+            if (pointLightCount == 0)
+                _forwardPointLightsBuffer!.Set(0, default(ForwardPointLightGpu));
+            for (int i = 0; i < pointLightCount; i++)
+            {
+                _forwardPointLightsBuffer!.Set((uint)i, CreateForwardPointLightGpu(DynamicPointLights[i]));
+            }
+
+            if (spotLightCount == 0)
+                _forwardSpotLightsBuffer!.Set(0, default(ForwardSpotLightGpu));
+            for (int i = 0; i < spotLightCount; i++)
+            {
+                _forwardSpotLightsBuffer!.Set((uint)i, CreateForwardSpotLightGpu(DynamicSpotLights[i]));
+            }
+
+            _forwardDirectionalLightsBuffer!.PushSubData();
+            PushForwardBufferSubData<ForwardPointLightGpu>(_forwardPointLightsBuffer!, pointLightCount);
+            PushForwardBufferSubData<ForwardSpotLightGpu>(_forwardSpotLightsBuffer!, spotLightCount);
+        }
+
+        private static ForwardBaseLightGpu CreateForwardBaseLightGpu(LightComponent light, Matrix4x4 worldToLightSpaceProjMatrix, float ambientIntensity)
+            => new()
+            {
+                ColorDiffuse = new Vector4(light.Color, light.DiffuseIntensity),
+                AmbientPadding = new Vector4(ambientIntensity, 0.0f, 0.0f, 0.0f),
+                WorldToLightSpaceProjMatrix = worldToLightSpaceProjMatrix,
+            };
+
+        private static unsafe ForwardDirectionalLightGpu CreateForwardDirectionalLightGpu(DirectionalLightComponent light)
+        {
+            Matrix4x4 lightView = light.ShadowCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 lightProj = light.ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 lightViewProj = lightView * lightProj;
+
+            ForwardDirectionalLightGpu data = new()
+            {
+                Base = CreateForwardBaseLightGpu(light, lightViewProj, 0.05f),
+                DirectionPadding = new Vector4(light.Transform.WorldForward, 0.0f),
+                WorldToLightInvViewMatrix = light.ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity,
+                WorldToLightProjMatrix = lightProj,
+                WorldToLightSpaceMatrix = lightViewProj,
+            };
+
+            Span<float> cascadeSplits = stackalloc float[ForwardMaxCascades];
+            Span<float> cascadeBlendWidths = stackalloc float[ForwardMaxCascades];
+            Span<float> cascadeBiasMins = stackalloc float[ForwardMaxCascades];
+            Span<float> cascadeBiasMaxes = stackalloc float[ForwardMaxCascades];
+            Span<float> cascadeReceiverOffsets = stackalloc float[ForwardMaxCascades];
+            Span<Matrix4x4> cascadeMatrices = stackalloc Matrix4x4[ForwardMaxCascades];
+            light.CopyPublishedCascadeUniformData(
+                cascadeSplits,
+                cascadeBlendWidths,
+                cascadeBiasMins,
+                cascadeBiasMaxes,
+                cascadeReceiverOffsets,
+                cascadeMatrices,
+                out int cascadeCount);
+
+            data.CascadeCount = Math.Clamp(cascadeCount, 0, ForwardMaxCascades);
+            CopyFloatSpan(data.CascadeSplits, cascadeSplits);
+            CopyFloatSpan(data.CascadeBlendWidths, cascadeBlendWidths);
+            CopyFloatSpan(data.CascadeBiasMin, cascadeBiasMins);
+            CopyFloatSpan(data.CascadeBiasMax, cascadeBiasMaxes);
+            CopyFloatSpan(data.CascadeReceiverOffsets, cascadeReceiverOffsets);
+            CopyMatrixSpan(data.CascadeMatrices, cascadeMatrices);
+
+            return data;
+        }
+
+        private static ForwardPointLightGpu CreateForwardPointLightGpu(PointLightComponent light)
+            => new()
+            {
+                Base = CreateForwardBaseLightGpu(light, Matrix4x4.Identity, 0.0f),
+                PositionRadius = new Vector4(light.Transform.RenderTranslation, light.Radius),
+                BrightnessPadding = new Vector4(light.Brightness, 0.0f, 0.0f, 0.0f),
+            };
+
+        private static ForwardSpotLightGpu CreateForwardSpotLightGpu(SpotLightComponent light)
+        {
+            Matrix4x4 lightView = light.ShadowCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 lightProj = light.ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 lightViewProj = lightView * lightProj;
+
+            return new ForwardSpotLightGpu
+            {
+                Base = new ForwardPointLightGpu
+                {
+                    Base = CreateForwardBaseLightGpu(light, lightViewProj, 0.05f),
+                    PositionRadius = new Vector4(light.Transform.RenderTranslation, light.Distance),
+                    BrightnessPadding = new Vector4(light.Brightness, 0.0f, 0.0f, 0.0f),
+                },
+                DirectionInnerCutoff = new Vector4(light.Transform.RenderForward, light.InnerCutoff),
+                OuterCutoffExponentPadding = new Vector4(light.OuterCutoff, light.Exponent, 0.0f, 0.0f),
+            };
+        }
+
+        private static unsafe void CopyFloatSpan(float* destination, ReadOnlySpan<float> source)
+        {
+            for (int i = 0; i < source.Length; i++)
+                destination[i] = source[i];
+        }
+
+        private static unsafe void CopyMatrixSpan(float* destination, ReadOnlySpan<Matrix4x4> source)
+        {
+            for (int i = 0; i < source.Length; i++)
+                Unsafe.WriteUnaligned(destination + (i * 16), source[i]);
         }
 
         private static bool IsTexture2D(XRTexture texture)
@@ -117,9 +378,15 @@ namespace XREngine.Scene
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
 
-            program.Uniform("DirLightCount", DynamicDirectionalLights.Count);
-            program.Uniform("PointLightCount", DynamicPointLights.Count);
-            program.Uniform("SpotLightCount", DynamicSpotLights.Count);
+            int directionalLightCount = Math.Min(DynamicDirectionalLights.Count, MaxForwardDirectionalLights);
+            int pointLightCount = DynamicPointLights.Count;
+            int spotLightCount = DynamicSpotLights.Count;
+
+            program.Uniform("DirLightCount", directionalLightCount);
+            program.Uniform("PointLightCount", pointLightCount);
+            program.Uniform("SpotLightCount", spotLightCount);
+            UploadForwardLightBuffers(directionalLightCount, pointLightCount, spotLightCount);
+            BindForwardLightBuffers(program);
 
             // Forward+ bindings (optional). Shaders may ignore these if they don't declare Forward+ support.
             program.Uniform("ForwardPlusEnabled", Engine.Rendering.State.ForwardPlusEnabled);
@@ -283,7 +550,7 @@ namespace XREngine.Scene
             Matrix4x4 primaryDirLightWorldToLightProj = Matrix4x4.Identity;
             bool useCascadedDirectionalShadows = false;
             bool useDirectionalShadowAtlas = false;
-            if (DynamicDirectionalLights.Count > 0)
+            if (directionalLightCount > 0)
             {
                 var firstDirLight = DynamicDirectionalLights[0];
                 program.Uniform("ShadowPackedI0", new IVector4(
@@ -431,31 +698,10 @@ namespace XREngine.Scene
             program.Uniform("ShadowMap", forwardShadowMapUnit);
             program.Uniform("ShadowMapArray", forwardShadowMapArrayUnit);
 
-            for (int i = 0; i < DynamicDirectionalLights.Count; ++i)
-            {
-                DynamicDirectionalLights[i].SetUniforms(program, _dirLightGenNames[i]);
-                DynamicDirectionalLights[i].SetUniforms(program, _dirLightLegacyNames[i]);
-            }
-            for (int i = 0; i < DynamicSpotLights.Count; ++i)
-            {
-                DynamicSpotLights[i].SetUniforms(program, _spotLightGenNames[i]);
-                DynamicSpotLights[i].SetUniforms(program, _spotLightLegacyNames[i]);
-            }
-            for (int i = 0; i < DynamicPointLights.Count; ++i)
-            {
-                DynamicPointLights[i].SetUniforms(program, _pointLightGenNames[i]);
-                DynamicPointLights[i].SetUniforms(program, _pointLightLegacyNames[i]);
-            }
-
-            Array.Fill(_pointShadowPacked0, _inactiveShadowPack);
-            Array.Clear(_pointShadowPacked1);
-            Array.Clear(_pointShadowParams0);
-            Array.Clear(_pointShadowParams1);
-            Array.Clear(_pointShadowParams2);
-            Array.Clear(_pointShadowParams3);
-            Array.Clear(_pointShadowParams4);
             int pointShadowSlot = 0;
-            for (int i = 0; i < DynamicPointLights.Count && i < _pointShadowPacked0.Length; ++i)
+            if (pointLightCount == 0)
+                _forwardPointShadowMetadataBuffer!.Set(0, default(ForwardPointShadowGpu));
+            for (int i = 0; i < pointLightCount; ++i)
             {
                 PointLightComponent light = DynamicPointLights[i];
                 int shadowSlot = -1;
@@ -468,26 +714,20 @@ namespace XREngine.Scene
                     pointShadowSlot++;
                 }
 
-                _pointShadowPacked0[i] = new IVector4(shadowSlot, light.FilterSamples, light.BlockerSamples, light.VogelTapCount);
-                _pointShadowPacked1[i] = new IVector4((int)light.SoftShadowMode, light.ShadowDebugMode, light.EnableContactShadows ? 1 : 0, light.ContactShadowSamples);
-                _pointShadowParams0[i] = new Vector4(light.ShadowNearPlaneDistance, light.Radius, light.ShadowExponentBase, light.ShadowExponent);
-                _pointShadowParams1[i] = new Vector4(light.ShadowMinBias, light.ShadowMaxBias, light.FilterRadius, light.BlockerSearchRadius);
-                _pointShadowParams2[i] = new Vector4(light.MinPenumbra, light.MaxPenumbra, light.EffectiveLightSourceRadius, light.ContactShadowDistance);
-                _pointShadowParams3[i] = new Vector4(light.ContactShadowThickness, light.ContactShadowFadeStart, light.ContactShadowFadeEnd, light.ContactShadowNormalOffset);
-                _pointShadowParams4[i] = new Vector4(light.ContactShadowJitterStrength, 0.0f, 0.0f, 0.0f);
+                _forwardPointShadowMetadataBuffer!.Set((uint)i, new ForwardPointShadowGpu
+                {
+                    Packed0 = new IVector4(shadowSlot, light.FilterSamples, light.BlockerSamples, light.VogelTapCount),
+                    Packed1 = new IVector4((int)light.SoftShadowMode, light.ShadowDebugMode, light.EnableContactShadows ? 1 : 0, light.ContactShadowSamples),
+                    Params0 = new Vector4(light.ShadowNearPlaneDistance, light.Radius, light.ShadowExponentBase, light.ShadowExponent),
+                    Params1 = new Vector4(light.ShadowMinBias, light.ShadowMaxBias, light.FilterRadius, light.BlockerSearchRadius),
+                    Params2 = new Vector4(light.MinPenumbra, light.MaxPenumbra, light.EffectiveLightSourceRadius, light.ContactShadowDistance),
+                    Params3 = new Vector4(light.ContactShadowThickness, light.ContactShadowFadeStart, light.ContactShadowFadeEnd, light.ContactShadowNormalOffset),
+                    Params4 = new Vector4(light.ContactShadowJitterStrength, 0.0f, 0.0f, 0.0f),
+                });
             }
             for (; pointShadowSlot < maxForwardShadowedPointLights; ++pointShadowSlot)
                 program.Sampler(_pointShadowMapNames[pointShadowSlot], DummyPointShadowMap, pointShadowStartUnit + pointShadowSlot);
 
-            Array.Fill(_spotShadowPacked0, _inactiveShadowPack);
-            Array.Clear(_spotShadowPacked1);
-            Array.Clear(_spotShadowParams0);
-            Array.Clear(_spotShadowParams1);
-            Array.Clear(_spotShadowParams2);
-            Array.Clear(_spotShadowParams3);
-            Array.Clear(_spotShadowPacked2);
-            Array.Clear(_spotShadowParams4);
-            Array.Clear(_spotShadowParams5);
             int spotShadowSlot = 0;
             bool useSpotAtlas = Engine.Rendering.Settings.UseSpotShadowAtlas;
             for (int pageIndex = 0; pageIndex < maxForwardSpotAtlasPages; pageIndex++)
@@ -500,40 +740,31 @@ namespace XREngine.Scene
 
             for (int pageIndex = 0; pageIndex < maxForwardDirectionalAtlasPages; pageIndex++)
             {
-                XRTexture2D atlasDepthTexture = useDirectionalShadowAtlas &&
-                    ShadowAtlas.TryGetPageRasterDepthTexture(EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageDepthTexture)
-                        ? pageDepthTexture
+                XRTexture2D atlasTexture = useDirectionalShadowAtlas &&
+                    ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
+                        ? pageTexture
                         : DummyShadowMap;
-                program.Sampler(_directionalShadowAtlasPageNames[pageIndex], atlasDepthTexture, directionalShadowAtlasStartUnit + pageIndex);
+                program.Sampler(_directionalShadowAtlasPageNames[pageIndex], atlasTexture, directionalShadowAtlasStartUnit + pageIndex);
             }
 
-            Array.Clear(_spotShadowAtlasPacked0);
-            Array.Clear(_spotShadowAtlasParams0);
-            Array.Clear(_spotShadowAtlasParams1);
-            for (int i = 0; i < DynamicSpotLights.Count && i < _spotShadowPacked0.Length; ++i)
+            if (spotLightCount == 0)
+                _forwardSpotShadowMetadataBuffer!.Set(0, default(ForwardSpotShadowGpu));
+            for (int i = 0; i < spotLightCount; ++i)
             {
                 SpotLightComponent light = DynamicSpotLights[i];
                 int shadowSlot = -1;
 
-                if (!useSpotAtlas)
-                {
-                    XRTexture? shadowTexture = FindShadowMapTexture(light);
-                    if (shadowTexture is XRTexture2D shadowMap && spotShadowSlot < maxForwardShadowedSpotLights)
-                    {
-                        shadowSlot = spotShadowSlot;
-                        program.Sampler(_spotShadowMapNames[spotShadowSlot], shadowMap, spotShadowStartUnit + spotShadowSlot);
-                        spotShadowSlot++;
-                    }
-                }
-
-                _spotShadowAtlasPacked0[i] = new IVector4(0, -1, (int)ShadowFallbackMode.Lit, -1);
+                IVector4 atlasPacked0 = new(0, -1, (int)ShadowFallbackMode.Lit, -1);
+                Vector4 atlasParams0 = Vector4.Zero;
+                Vector4 atlasParams1 = Vector4.Zero;
+                bool atlasResident = false;
                 if (useSpotAtlas &&
                     TryGetSpotShadowAtlasAllocation(light, out ShadowAtlasAllocation allocation, out int recordIndex))
                 {
                     ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
                         ? allocation.ActiveFallback
                         : ShadowFallbackMode.Lit;
-                    bool atlasResident = allocation.IsResident &&
+                    atlasResident = allocation.IsResident &&
                         allocation.LastRenderedFrame != 0u &&
                         allocation.PageIndex >= 0 &&
                         allocation.PageIndex < maxForwardSpotAtlasPages;
@@ -541,32 +772,51 @@ namespace XREngine.Scene
                     float atlasFarPlane = light.ShadowCamera?.FarZ ?? MathF.Max(atlasNearPlane + 0.001f, light.Distance);
                     float texelSize = allocation.Resolution > 0u ? 1.0f / allocation.Resolution : 0.0f;
 
-                    _spotShadowAtlasPacked0[i] = new IVector4(atlasResident ? 1 : 0, allocation.PageIndex, (int)fallback, recordIndex);
-                    _spotShadowAtlasParams0[i] = allocation.UvScaleBias;
-                    _spotShadowAtlasParams1[i] = new Vector4(atlasNearPlane, atlasFarPlane, texelSize, 0.0f);
+                    atlasPacked0 = new IVector4(atlasResident ? 1 : 0, allocation.PageIndex, (int)fallback, recordIndex);
+                    atlasParams0 = allocation.UvScaleBias;
+                    atlasParams1 = new Vector4(atlasNearPlane, atlasFarPlane, texelSize, 0.0f);
                 }
 
-                _spotShadowPacked0[i] = new IVector4(shadowSlot, light.FilterSamples, light.BlockerSamples, light.VogelTapCount);
-                _spotShadowPacked1[i] = new IVector4((int)light.SoftShadowMode, light.ShadowDebugMode, light.EnableContactShadows ? 1 : 0, light.ContactShadowSamples);
-                _spotShadowParams0[i] = new Vector4(light.ShadowExponentBase, light.ShadowExponent, light.ShadowMinBias, light.ShadowMaxBias);
-                _spotShadowParams1[i] = new Vector4(light.FilterRadius, light.BlockerSearchRadius, light.MinPenumbra, light.MaxPenumbra);
-                _spotShadowParams2[i] = new Vector4(light.EffectiveLightSourceRadius, light.ContactShadowDistance, light.ContactShadowThickness, light.ContactShadowFadeStart);
-                _spotShadowParams3[i] = new Vector4(light.ContactShadowFadeEnd, light.ContactShadowNormalOffset, light.ContactShadowJitterStrength, 0.0f);
+                if ((!useSpotAtlas || !atlasResident) && spotShadowSlot < maxForwardShadowedSpotLights)
+                {
+                    XRTexture? shadowTexture = FindShadowMapTexture(light);
+                    if (shadowTexture is XRTexture2D shadowMap)
+                    {
+                        shadowSlot = spotShadowSlot;
+                        program.Sampler(_spotShadowMapNames[spotShadowSlot], shadowMap, spotShadowStartUnit + spotShadowSlot);
+                        spotShadowSlot++;
+                    }
+                }
 
                 ShadowMapFormatSelection shadowFormat = light.ResolveShadowMapFormat(preferredStorageFormat: light.ShadowMapStorageFormat);
                 float momentNearPlane = light.ShadowCamera?.NearZ ?? light.ShadowNearPlaneDistance;
                 float momentFarPlane = light.ShadowCamera?.FarZ ?? MathF.Max(momentNearPlane + 0.001f, light.Distance);
-                _spotShadowPacked2[i] = new IVector4((int)shadowFormat.Encoding, light.ShadowMomentUseMipmaps ? 1 : 0, 0, 0);
-                _spotShadowParams4[i] = new Vector4(light.ShadowMomentMinVariance, light.ShadowMomentLightBleedReduction, shadowFormat.PositiveExponent, shadowFormat.NegativeExponent);
-                _spotShadowParams5[i] = new Vector4(momentNearPlane, momentFarPlane, light.ShadowMomentMipBias, 0.0f);
+                _forwardSpotShadowMetadataBuffer!.Set((uint)i, new ForwardSpotShadowGpu
+                {
+                    Packed0 = new IVector4(shadowSlot, light.FilterSamples, light.BlockerSamples, light.VogelTapCount),
+                    Packed1 = new IVector4((int)light.SoftShadowMode, light.ShadowDebugMode, light.EnableContactShadows ? 1 : 0, light.ContactShadowSamples),
+                    Params0 = new Vector4(light.ShadowExponentBase, light.ShadowExponent, light.ShadowMinBias, light.ShadowMaxBias),
+                    Params1 = new Vector4(light.FilterRadius, light.BlockerSearchRadius, light.MinPenumbra, light.MaxPenumbra),
+                    Params2 = new Vector4(light.EffectiveLightSourceRadius, light.ContactShadowDistance, light.ContactShadowThickness, light.ContactShadowFadeStart),
+                    Params3 = new Vector4(light.ContactShadowFadeEnd, light.ContactShadowNormalOffset, light.ContactShadowJitterStrength, 0.0f),
+                    Packed2 = new IVector4((int)shadowFormat.Encoding, light.ShadowMomentUseMipmaps ? 1 : 0, 0, 0),
+                    Params4 = new Vector4(light.ShadowMomentMinVariance, light.ShadowMomentLightBleedReduction, shadowFormat.PositiveExponent, shadowFormat.NegativeExponent),
+                    Params5 = new Vector4(momentNearPlane, momentFarPlane, light.ShadowMomentMipBias, 0.0f),
+                    AtlasPacked0 = atlasPacked0,
+                    AtlasParams0 = atlasParams0,
+                    AtlasParams1 = atlasParams1,
+                });
             }
             for (; spotShadowSlot < maxForwardShadowedSpotLights; ++spotShadowSlot)
                 program.Sampler(_spotShadowMapNames[spotShadowSlot], DummyShadowMap, spotShadowStartUnit + spotShadowSlot);
 
+            PushForwardBufferSubData<ForwardPointShadowGpu>(_forwardPointShadowMetadataBuffer!, pointLightCount);
+            PushForwardBufferSubData<ForwardSpotShadowGpu>(_forwardSpotShadowMetadataBuffer!, spotLightCount);
+
             Array.Clear(_directionalShadowAtlasPacked0);
             Array.Clear(_directionalShadowAtlasParams0);
             Array.Clear(_directionalShadowAtlasParams1);
-            if (useDirectionalShadowAtlas && DynamicDirectionalLights.Count > 0)
+            if (useDirectionalShadowAtlas && directionalLightCount > 0)
             {
                 DynamicDirectionalLights[0].CopyPublishedCascadeAtlasUniformData(
                     _directionalShadowAtlasPacked0,
@@ -574,26 +824,6 @@ namespace XREngine.Scene
                     _directionalShadowAtlasParams1);
             }
 
-            program.Uniform("PointLightShadowPacked0", _pointShadowPacked0);
-            program.Uniform("PointLightShadowPacked1", _pointShadowPacked1);
-            program.Uniform("PointLightShadowParams0", _pointShadowParams0);
-            program.Uniform("PointLightShadowParams1", _pointShadowParams1);
-            program.Uniform("PointLightShadowParams2", _pointShadowParams2);
-            program.Uniform("PointLightShadowParams3", _pointShadowParams3);
-            program.Uniform("PointLightShadowParams4", _pointShadowParams4);
-
-            program.Uniform("SpotLightShadowPacked0", _spotShadowPacked0);
-            program.Uniform("SpotLightShadowPacked1", _spotShadowPacked1);
-            program.Uniform("SpotLightShadowParams0", _spotShadowParams0);
-            program.Uniform("SpotLightShadowParams1", _spotShadowParams1);
-            program.Uniform("SpotLightShadowParams2", _spotShadowParams2);
-            program.Uniform("SpotLightShadowParams3", _spotShadowParams3);
-            program.Uniform("SpotLightShadowPacked2", _spotShadowPacked2);
-            program.Uniform("SpotLightShadowParams4", _spotShadowParams4);
-            program.Uniform("SpotLightShadowParams5", _spotShadowParams5);
-            program.Uniform("SpotLightShadowAtlasPacked0", _spotShadowAtlasPacked0);
-            program.Uniform("SpotLightShadowAtlasParams0", _spotShadowAtlasParams0);
-            program.Uniform("SpotLightShadowAtlasParams1", _spotShadowAtlasParams1);
             program.Uniform("DirectionalShadowAtlasPacked0", _directionalShadowAtlasPacked0);
             program.Uniform("DirectionalShadowAtlasParams0", _directionalShadowAtlasParams0);
             program.Uniform("DirectionalShadowAtlasParams1", _directionalShadowAtlasParams1);

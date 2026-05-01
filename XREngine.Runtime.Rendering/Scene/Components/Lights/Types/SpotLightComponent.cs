@@ -129,6 +129,9 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public override bool SupportsLightRadiusContactHardening => true;
 
+        protected override bool UsesAtlasShadowViewport
+            => Engine.Rendering.Settings.UseSpotShadowAtlas;
+
         protected override float ContactHardeningLightRadius
             => CalculateOuterConeRadius(Distance, OuterCutoffAngleDegrees);
 

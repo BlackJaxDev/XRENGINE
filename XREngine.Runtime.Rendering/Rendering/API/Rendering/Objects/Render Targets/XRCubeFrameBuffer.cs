@@ -31,11 +31,17 @@ namespace XREngine.Rendering
         private void SetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
             => SettingUniforms?.Invoke(materialProgram);
 
+        public bool TryPrepareForRendering(bool forceNoStereo = true)
+            => FullScreenCubeMesh.TryPrepareForRendering(forceNoStereo);
+
         /// <summary>
         /// Renders the one side of the FBO to the entire region set by Engine.Rendering.State.PushRenderArea.
         /// </summary>
-        public void RenderFullscreen(ECubemapFace face)
+        public bool RenderFullscreen(ECubemapFace face)
         {
+            if (!TryPrepareForRendering(true))
+                return false;
+
             var cam = LocalCameras[(int)face];
 
             var state = Engine.Rendering.State.RenderingPipelineState;
@@ -50,6 +56,8 @@ namespace XREngine.Rendering
                 FullScreenCubeMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, true);
                 Engine.Rendering.State.RenderingCameraOverride = null;
             }
+
+            return true;
         }
 
         /// <summary>

@@ -152,7 +152,7 @@ internal static class LightComponentEditorShared
         if (light is PointLightComponent)
         {
             ImGui.TextColored(AtlasDiagnosticTextColor, "Active: legacy point cubemap shadows");
-            ImGui.TextDisabled("Atlas point-face requests are diagnostic allocations only until point atlas sampling lands.");
+            ImGui.TextDisabled("Point atlas rendering and sampling are not implemented yet.");
             return;
         }
 

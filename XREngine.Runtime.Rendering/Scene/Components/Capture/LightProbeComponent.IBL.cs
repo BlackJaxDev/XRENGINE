@@ -95,6 +95,9 @@ namespace XREngine.Components.Capture.Lights
                 (int)Math.Max(EnvironmentTextureEquirect.Width, EnvironmentTextureEquirect.Height),
                 GetOctaExtent(IrradianceResolution),
                 GetOctaExtent(Resolution));
+
+            SynchronizeCaptureTextureWrites();
+            CompleteIblGenerationAttempt(releaseTransientEnvironmentTexturesOnSuccess: false);
         }
 
         private void InitializeDynamicIblResources(
@@ -111,8 +114,8 @@ namespace XREngine.Components.Capture.Lights
             XRShader fullscreenVertex = GetFullscreenTriVertexShader();
             bool outputsRecreated = false;
 
-            outputsRecreated |= EnsureIblOutputTexture(ref _irradianceTexture, irradianceOctaExtent, CreateIrradianceTexture);
-            outputsRecreated |= EnsureIblOutputTexture(ref _prefilterTexture, prefilterOctaExtent, CreatePrefilterTexture);
+            outputsRecreated |= EnsureIrradianceOutputTexture(irradianceOctaExtent);
+            outputsRecreated |= EnsurePrefilterOutputTexture(prefilterOctaExtent);
 
             EnsureProbeFullscreenMaterial(
                 ref _irradianceFBO,
@@ -138,6 +141,8 @@ namespace XREngine.Components.Capture.Lights
 
             if (outputsRecreated)
             {
+                IblTexturesValid = false;
+                CaptureVersion = 0;
                 _previewSphereDirty = true;
                 CachePreviewSphere();
             }
@@ -154,8 +159,8 @@ namespace XREngine.Components.Capture.Lights
             DestroyCubemapConvolutionResources();
             _useCubemapConvolution = false;
             bool outputsRecreated = false;
-            outputsRecreated |= EnsureIblOutputTexture(ref _irradianceTexture, irradianceExtent, CreateIrradianceTexture);
-            outputsRecreated |= EnsureIblOutputTexture(ref _prefilterTexture, prefilterExtent, CreatePrefilterTexture);
+            outputsRecreated |= EnsureIrradianceOutputTexture(irradianceExtent);
+            outputsRecreated |= EnsurePrefilterOutputTexture(prefilterExtent);
 
             ShaderVar[] prefilterVars = CreatePrefilterShaderVars(sourceDimension);
             _prefilterSourceDimension = Math.Max(1, sourceDimension);
@@ -190,18 +195,30 @@ namespace XREngine.Components.Capture.Lights
 
             if (outputsRecreated)
             {
+                IblTexturesValid = false;
+                CaptureVersion = 0;
                 _previewSphereDirty = true;
                 CachePreviewSphere();
             }
         }
 
-        private bool EnsureIblOutputTexture(ref XRTexture2D? texture, uint extent, Func<uint, XRTexture2D> factory)
+        private bool EnsureIrradianceOutputTexture(uint extent)
+            => EnsureIblOutputTexture(IrradianceTexture, extent, CreateIrradianceTexture, texture => IrradianceTexture = texture);
+
+        private bool EnsurePrefilterOutputTexture(uint extent)
+            => EnsureIblOutputTexture(PrefilterTexture, extent, CreatePrefilterTexture, texture => PrefilterTexture = texture);
+
+        private static bool EnsureIblOutputTexture(
+            XRTexture2D? texture,
+            uint extent,
+            Func<uint, XRTexture2D> factory,
+            Action<XRTexture2D?> setTexture)
         {
             if (texture is not null && texture.Width == extent && texture.Height == extent)
                 return false;
 
             texture?.Destroy();
-            texture = factory(extent);
+            setTexture(factory(extent));
             return true;
         }
 
@@ -301,42 +318,48 @@ namespace XREngine.Components.Capture.Lights
             IrradianceTexture = null;
             PrefilterTexture?.Destroy();
             PrefilterTexture = null;
+            IblTexturesValid = false;
+            CaptureVersion = 0;
             _previewSphereDirty = true;
         }
 
-        private void GenerateIrradianceInternal()
+        private bool GenerateIrradianceInternal()
         {
             if (_irradianceFBO is null || IrradianceTexture is null)
-                return;
+                return false;
 
             if (_useCubemapConvolution)
             {
                 if (_irradianceCubeFBO is null || _irradianceTextureCubemap is null)
-                    return;
+                    return false;
 
-                RenderIrradianceCubemapInternal();
+                if (!RenderIrradianceCubemapInternal())
+                    return false;
                 SynchronizeCaptureTextureWrites();
             }
 
             int width = (int)Math.Max(1u, IrradianceTexture.Width);
             int height = (int)Math.Max(1u, IrradianceTexture.Height);
             _irradianceFBO.SetRenderTargets((IrradianceTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-            RunFullscreenProbePass(_irradianceFBO, width, height);
+            if (!RunFullscreenProbePass(_irradianceFBO, width, height))
+                return false;
 
             IrradianceTexture.GenerateMipmapsGPU();
+            return true;
         }
 
-        private void GeneratePrefilterInternal()
+        private bool GeneratePrefilterInternal()
         {
             if (_prefilterFBO is null || PrefilterTexture is null)
-                return;
+                return false;
 
             if (_useCubemapConvolution)
             {
                 if (_prefilterCubeFBO is null || _prefilterTextureCubemap is null)
-                    return;
+                    return false;
 
-                RenderPrefilterCubemapInternal();
+                if (!RenderPrefilterCubemapInternal())
+                    return false;
                 SynchronizeCaptureTextureWrites();
             }
 
@@ -355,14 +378,20 @@ namespace XREngine.Components.Capture.Lights
                 }
 
                 _prefilterFBO.SetRenderTargets((PrefilterTexture, EFrameBufferAttachment.ColorAttachment0, mip, -1));
-                RunFullscreenProbePass(_prefilterFBO, mipWidth, mipHeight);
+                if (!RunFullscreenProbePass(_prefilterFBO, mipWidth, mipHeight))
+                    return false;
             }
+
+            return true;
         }
 
-        private void RenderIrradianceCubemapInternal()
+        private bool RenderIrradianceCubemapInternal()
         {
             if (_irradianceCubeFBO is null || _irradianceTextureCubemap is null)
-                return;
+                return false;
+
+            if (!_irradianceCubeFBO.TryPrepareForRendering(true))
+                return false;
 
             int extent = Math.Max(1, (int)_irradianceTextureCubemap.Extent);
             using StateObject? renderArea = Engine.Rendering.State.RenderingPipelineState?.PushRenderArea(extent, extent);
@@ -374,14 +403,20 @@ namespace XREngine.Components.Capture.Lights
                 _irradianceCubeFBO.SetRenderTargets((_irradianceTextureCubemap, EFrameBufferAttachment.ColorAttachment0, 0, faceIndex));
                 using var bindScope = _irradianceCubeFBO.BindForWritingState();
                 Engine.Rendering.State.ClearByBoundFBO(true, false, false);
-                _irradianceCubeFBO.RenderFullscreen((ECubemapFace)faceIndex);
+                if (!_irradianceCubeFBO.RenderFullscreen((ECubemapFace)faceIndex))
+                    return false;
             }
+
+            return true;
         }
 
-        private void RenderPrefilterCubemapInternal()
+        private bool RenderPrefilterCubemapInternal()
         {
             if (_prefilterCubeFBO is null || _prefilterTextureCubemap is null || EnvironmentTextureCubemap is null)
-                return;
+                return false;
+
+            if (!_prefilterCubeFBO.TryPrepareForRendering(true))
+                return false;
 
             int maxMipLevels = _prefilterTextureCubemap.Mipmaps.Length;
             int baseExtent = Math.Max(1, (int)_prefilterTextureCubemap.Extent);
@@ -402,9 +437,12 @@ namespace XREngine.Components.Capture.Lights
                     _prefilterCubeFBO.SetRenderTargets((_prefilterTextureCubemap, EFrameBufferAttachment.ColorAttachment0, mip, faceIndex));
                     using var bindScope = _prefilterCubeFBO.BindForWritingState();
                     Engine.Rendering.State.ClearByBoundFBO(true, false, false);
-                    _prefilterCubeFBO.RenderFullscreen((ECubemapFace)faceIndex);
+                    if (!_prefilterCubeFBO.RenderFullscreen((ECubemapFace)faceIndex))
+                        return false;
                 }
             }
+
+            return true;
         }
 
         private void BindIrradianceSourceSampler(XRRenderProgram program)
@@ -422,11 +460,44 @@ namespace XREngine.Components.Capture.Lights
             program.Sampler("Texture0", sourceTexture, 0);
         }
 
-        private static void RunFullscreenProbePass(XRQuadFrameBuffer fbo, int width, int height)
+        private bool CompleteIblGenerationAttempt(bool releaseTransientEnvironmentTexturesOnSuccess)
         {
+            IblTexturesValid = false;
+
+            bool irradianceGenerated = GenerateIrradianceInternal();
+            bool prefilterGenerated = GeneratePrefilterInternal();
+            SynchronizeCaptureTextureWrites();
+
+            bool success = irradianceGenerated && prefilterGenerated;
+            IblTexturesValid = success;
+            if (success)
+            {
+                if (releaseTransientEnvironmentTexturesOnSuccess)
+                    ReleaseTransientEnvironmentTexturesAfterIblGeneration();
+            }
+            else
+            {
+                _previewSphereDirty = true;
+                CachePreviewSphere();
+                Debug.LogWarning(
+                    $"[LightProbe] IBL generation failed for '{SceneNode?.Name ?? GetType().Name}'. " +
+                    $"irradiance={irradianceGenerated}, prefilter={prefilterGenerated}. " +
+                    "Keeping captured environment textures and excluding this probe from GI until a valid IBL pass completes.");
+            }
+
+            CaptureVersion++;
+            return success;
+        }
+
+        private static bool RunFullscreenProbePass(XRQuadFrameBuffer fbo, int width, int height)
+        {
+            if (!fbo.TryPrepareForRendering(forceNoStereo: true))
+                return false;
+
             var pipelineState = Engine.Rendering.State.RenderingPipelineState;
             BoundingRectangle previousCrop = pipelineState?.CurrentCropRegion ?? BoundingRectangle.Empty;
             bool hadCrop = previousCrop.Width > 0 && previousCrop.Height > 0;
+            bool rendered;
 
             using (fbo.BindForWritingState())
             {
@@ -438,7 +509,7 @@ namespace XREngine.Components.Capture.Lights
 
                 Engine.Rendering.State.ClearColor(ColorF4.Black);
                 Engine.Rendering.State.ClearByBoundFBO();
-                fbo.Render(null, true);
+                rendered = fbo.Render(null, true);
             }
 
             if (hadCrop)
@@ -446,12 +517,21 @@ namespace XREngine.Components.Capture.Lights
                 AbstractRenderer.Current?.SetCroppingEnabled(true);
                 AbstractRenderer.Current?.CropRenderArea(previousCrop);
             }
+
+            return rendered;
         }
 
         private void ReleaseTransientEnvironmentTexturesAfterIblGeneration()
         {
             if (!ReleaseTransientEnvironmentTexturesAfterCapture)
                 return;
+
+            if (PreviewDisplay == ERenderPreview.Environment
+                && (PreviewEnabled || (AutoShowPreviewOnSelect && IsSceneNodeSelected())))
+            {
+                CachePreviewSphere();
+                return;
+            }
 
             ReleaseCapturedEnvironmentTextures(releaseCubemap: true, releaseOctahedral: true);
             CachePreviewSphere();
@@ -473,11 +553,7 @@ namespace XREngine.Components.Capture.Lights
                     return;
 
                 SynchronizeCaptureTextureWrites();
-                GenerateIrradianceInternal();
-                GeneratePrefilterInternal();
-                SynchronizeCaptureTextureWrites();
-                ReleaseTransientEnvironmentTexturesAfterIblGeneration();
-                CaptureVersion++;
+                CompleteIblGenerationAttempt(releaseTransientEnvironmentTexturesOnSuccess: true);
             }
             finally
             {
@@ -508,11 +584,7 @@ namespace XREngine.Components.Capture.Lights
             {
                 base.FinalizeCubemapCapture();
                 SynchronizeCaptureTextureWrites();
-                GenerateIrradianceInternal();
-                GeneratePrefilterInternal();
-                SynchronizeCaptureTextureWrites();
-                ReleaseTransientEnvironmentTexturesAfterIblGeneration();
-                CaptureVersion++;
+                CompleteIblGenerationAttempt(releaseTransientEnvironmentTexturesOnSuccess: true);
             }
             finally
             {

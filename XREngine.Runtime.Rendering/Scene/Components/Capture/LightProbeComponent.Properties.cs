@@ -131,8 +131,29 @@ namespace XREngine.Components.Capture.Lights
             set => SetField(ref _environmentTextureEquirect, value);
         }
 
+        private uint _captureVersion;
+        private bool _iblTexturesValid;
+
         [Browsable(false)]
-        public uint CaptureVersion { get; private set; }
+        public uint CaptureVersion
+        {
+            get => _captureVersion;
+            private set => SetField(ref _captureVersion, value);
+        }
+
+        [Browsable(false)]
+        public bool IblTexturesValid
+        {
+            get => _iblTexturesValid;
+            private set => SetField(ref _iblTexturesValid, value);
+        }
+
+        [Browsable(false)]
+        public bool HasUsableIblTextures
+            => IrradianceTexture is not null
+            && PrefilterTexture is not null
+            && IblTexturesValid
+            && CaptureVersion > 0u;
 
         #endregion
 

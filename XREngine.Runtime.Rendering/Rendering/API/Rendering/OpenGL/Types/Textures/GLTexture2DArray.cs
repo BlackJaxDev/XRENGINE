@@ -260,6 +260,9 @@ namespace XREngine.Rendering.OpenGL
             _allocatedLevels = levels;
             _allocatedVRAMBytes = requestedBytes;
             Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
+
+            Debug.OpenGL(
+                $"[GLTexture2DArray] Storage allocated for '{GetDescribingName()}': binding={BindingId} dims={width}x{height} layers={depth} levels={levels} format={desiredFormat}.");
         }
 
         private static long CalculateTextureArrayVRAMSize(uint width, uint height, uint depth, uint mipLevels, ESizedInternalFormat format)
