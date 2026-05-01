@@ -485,7 +485,7 @@ namespace XREngine.Components.Lights
             }
         }
 
-        private void CopyPublishedCascadeUniformData(
+        internal void CopyPublishedCascadeUniformData(
             Span<float> splits,
             Span<float> blendWidths,
             Span<float> biasMins,
@@ -503,12 +503,13 @@ namespace XREngine.Components.Lights
                 {
                     if (i < cascadeCount)
                     {
-                        splits[i] = _cascadeShadowSlices[i].SplitFarDistance;
-                        blendWidths[i] = _cascadeShadowSlices[i].BlendWidth;
-                        biasMins[i] = _cascadeShadowSlices[i].BiasMin;
-                        biasMaxes[i] = _cascadeShadowSlices[i].BiasMax;
-                        receiverOffsets[i] = _cascadeShadowSlices[i].ReceiverOffset;
-                        matrices[i] = _cascadeShadowSlices[i].WorldToLightSpaceMatrix;
+                        CascadeShadowSlice slice = _cascadeShadowSlices[i];
+                        splits[i] = slice.SplitFarDistance;
+                        blendWidths[i] = slice.BlendWidth;
+                        biasMins[i] = slice.HasManualBiasOverride ? slice.BiasMin : ShadowMinBias;
+                        biasMaxes[i] = slice.HasManualBiasOverride ? slice.BiasMax : ShadowMaxBias;
+                        receiverOffsets[i] = slice.HasManualBiasOverride ? slice.ReceiverOffset : ShadowMaxBias;
+                        matrices[i] = slice.WorldToLightSpaceMatrix;
                     }
                     else
                     {
@@ -826,9 +827,10 @@ namespace XREngine.Components.Lights
             float width = MathF.Max(halfExtents.X * 2.0f, 1e-3f);
             float height = MathF.Max(halfExtents.Y * 2.0f, 1e-3f);
             float depth = MathF.Max(halfExtents.Z * 2.0f, nearZ + 1e-3f);
+            float farZ = MathF.Max(depth, nearZ + 1e-3f);
             if (camera.Parameters is not XROrthographicCameraParameters ortho)
             {
-                ortho = new XROrthographicCameraParameters(width, height, nearZ, depth - nearZ);
+                ortho = new XROrthographicCameraParameters(width, height, nearZ, farZ);
                 ortho.InheritAspectRatio = false;
                 ortho.SetOriginPercentages(0.5f, 0.5f);
                 camera.Parameters = ortho;
@@ -837,7 +839,7 @@ namespace XREngine.Components.Lights
             {
                 ortho.Resize(width, height); // Bypass InheritAspectRatio coupling
                 ortho.NearZ = nearZ;
-                ortho.FarZ = depth - nearZ;
+                ortho.FarZ = farZ;
             }
         }
 
@@ -863,21 +865,7 @@ namespace XREngine.Components.Lights
                 return new CascadeShadowBiasSettings(true, manual.BiasMin, manual.BiasMax, manual.ReceiverOffset, texelWorldSize);
             }
 
-            float depthRange = MathF.Max(1e-4f, halfExtents.Z * 2.0f);
-            float normalizedTexelDepth = texelWorldSize / depthRange;
-            float rangeFar = MathF.Max(1e-4f, cascadeRangeFar);
-            float distanceMidpoint = (splitStartDistance + splitEndDistance) * 0.5f;
-            float distanceT = Math.Clamp(distanceMidpoint / rangeFar, 0.0f, 1.0f);
-            float distanceScale = 0.75f + MathF.Sqrt(distanceT) * 1.25f;
-            float resolutionScale = Math.Clamp(CascadeAutoBiasReferenceResolution / MathF.Max(mapWidth, mapHeight), 0.5f, 4.0f);
-            float biasScale = Math.Clamp(distanceScale * resolutionScale, 0.35f, 8.0f);
-
-            float minBias = MathF.Max(ShadowMinBias * biasScale, normalizedTexelDepth * CascadeAutoBiasMinTexels);
-            float maxBias = MathF.Max(ShadowMaxBias * biasScale, normalizedTexelDepth * CascadeAutoBiasCompareTexels);
-            maxBias = MathF.Max(minBias, maxBias);
-
-            float receiverOffset = MathF.Max(ShadowMaxBias * biasScale, texelWorldSize * CascadeAutoReceiverOffsetTexels);
-            return new CascadeShadowBiasSettings(false, minBias, maxBias, receiverOffset, texelWorldSize);
+            return new CascadeShadowBiasSettings(false, ShadowMinBias, ShadowMaxBias, ShadowMaxBias, texelWorldSize);
         }
 
         private int CopyCascadeSourceFrusta(XRCamera primaryCamera, Span<Frustum> destination)

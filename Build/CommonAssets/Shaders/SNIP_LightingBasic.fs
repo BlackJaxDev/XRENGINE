@@ -11,13 +11,23 @@ layout(binding = 15) uniform sampler2D ShadowMap;
 uniform bool ShadowMapEnabled;
 
 uniform int DirLightCount; 
-uniform DirLight DirectionalLights[2];
-
 uniform int SpotLightCount;
-uniform SpotLight SpotLights[16];
-
 uniform int PointLightCount;
-uniform PointLight PointLights[16];
+
+layout(std430, binding = 22) readonly buffer ForwardDirectionalLightsBuffer
+{
+    DirLight DirectionalLights[];
+};
+
+layout(std430, binding = 23) readonly buffer ForwardPointLightsBuffer
+{
+    PointLight PointLights[];
+};
+
+layout(std430, binding = 26) readonly buffer ForwardSpotLightsBuffer
+{
+    SpotLight SpotLights[];
+};
 
 //0 is fully in shadow, 1 is fully lit
 float ReadShadowMap(in vec3 fragPos, in vec3 normal, in float diffuseFactor, in mat4 lightMatrix)

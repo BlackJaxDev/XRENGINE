@@ -256,7 +256,7 @@ uniform vec2 _EmissionMapPan;
 uniform int _EmissionMapUV;
 //@property(name="_EmissionColor", display="Emission Color", mode=static)
 uniform vec4 _EmissionColor;
-//@property(name="_EmissionStrength", display="Emission Strength", mode=static, range=[0,8])
+//@property(name="_EmissionStrength", display="Emission Strength", mode=static, range=[0,8], default="0.0")
 uniform float _EmissionStrength;
 
 // Emission scrolling

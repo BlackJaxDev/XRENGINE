@@ -17,7 +17,6 @@ internal static partial class UberShaderVariantBuilder
     private static readonly ConcurrentDictionary<UberVariantCacheKey, XRShader> GeneratedShaderCache = new();
     private static readonly string[] PipelineAxisMacros =
     [
-        "XRENGINE_UBER_IMPORT_MATERIAL",
         "XRENGINE_DEPTH_NORMAL_PREPASS",
         "XRENGINE_SHADOW_CASTER_PASS",
         "XRENGINE_FORWARD_WEIGHTED_OIT",
@@ -152,12 +151,13 @@ internal static partial class UberShaderVariantBuilder
 
     private static string GenerateVariantSource(string resolvedSource, ShaderUiManifest manifest, UberMaterialVariantRequest request)
     {
+        HashSet<string> featureGuardMacros = ResolveFeatureGuardMacros(manifest);
         HashSet<string> disabledFeatureMacros = ResolveDisabledFeatureMacros(manifest, request.EnabledFeatures);
         HashSet<string> staticPropertyNames = request.StaticProperties
             .Select(static x => x.Split('=', 2)[0])
             .ToHashSet(StringComparer.Ordinal);
 
-        string strippedSource = StripRecognizedDefines(resolvedSource, disabledFeatureMacros, request.PipelineMacros);
+        string strippedSource = StripRecognizedDefines(resolvedSource, featureGuardMacros, request.PipelineMacros);
         strippedSource = StripStaticUniformDeclarations(strippedSource, staticPropertyNames);
 
         List<string> defines = [];
@@ -182,6 +182,18 @@ internal static partial class UberShaderVariantBuilder
         }
 
         return InsertDefinesAfterVersion(strippedSource, defines);
+    }
+
+    private static HashSet<string> ResolveFeatureGuardMacros(ShaderUiManifest manifest)
+    {
+        HashSet<string> macros = new(StringComparer.Ordinal);
+        foreach (ShaderUiFeature feature in manifest.Features)
+        {
+            if (!string.IsNullOrWhiteSpace(feature.GuardMacro))
+                macros.Add(feature.GuardMacro);
+        }
+
+        return macros;
     }
 
     private static HashSet<string> ResolveDisabledFeatureMacros(ShaderUiManifest manifest, IReadOnlyCollection<string> enabledFeatures)
@@ -210,12 +222,12 @@ internal static partial class UberShaderVariantBuilder
             .ToArray();
     }
 
-    private static string StripRecognizedDefines(string source, IEnumerable<string> disabledFeatureMacros, IEnumerable<string> pipelineMacros)
+    private static string StripRecognizedDefines(string source, IEnumerable<string> featureGuardMacros, IEnumerable<string> pipelineMacros)
     {
         HashSet<string> macrosToStrip = new(StringComparer.Ordinal);
         foreach (string macro in PipelineAxisMacros)
             macrosToStrip.Add(macro);
-        foreach (string macro in disabledFeatureMacros)
+        foreach (string macro in featureGuardMacros)
             macrosToStrip.Add(macro);
         foreach (string macro in pipelineMacros)
             macrosToStrip.Add(macro);
@@ -273,11 +285,7 @@ internal static partial class UberShaderVariantBuilder
         if (authored is not null)
             return authored.Enabled;
 
-        if (string.IsNullOrWhiteSpace(feature.GuardMacro))
-            return feature.DefaultEnabled;
-
-        bool isDefined = Regex.IsMatch(canonicalShader.Source?.Text ?? string.Empty, $@"^[ \t]*#define[ \t]+{Regex.Escape(feature.GuardMacro)}(?:\s+.*)?$", RegexOptions.Multiline);
-        return feature.GuardDefinedEnablesFeature ? isDefined : !isDefined;
+        return feature.DefaultEnabled;
     }
 
     internal static EShaderUiPropertyMode ResolvePropertyMode(XRMaterial material, ShaderUiProperty property)

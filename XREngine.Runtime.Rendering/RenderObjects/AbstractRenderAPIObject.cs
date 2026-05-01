@@ -51,3 +51,9 @@ public abstract class AbstractRenderAPIObject : XRBase, IDisposable
 
     public virtual nint GetHandle() => 0;
 }
+
+public interface IRenderPreparationState
+{
+    bool IsPreparedForRendering { get; }
+    bool TryPrepareForRendering();
+}

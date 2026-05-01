@@ -46,6 +46,19 @@ float XRENGINE_ResolveContactShadowDepth(float depth, int depthMode)
     return depthMode == 1 ? (1.0 - depth) : depth;
 }
 
+vec3 XRENGINE_ContactShadowViewPosFromDepth(
+    float depth,
+    vec2 uv,
+    mat4 inverseProjMatrix,
+    int depthMode)
+{
+    float resolvedDepth = XRENGINE_ResolveContactShadowDepth(depth, depthMode);
+    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, resolvedDepth * 2.0 - 1.0, 1.0);
+    vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
+    viewSpacePosition /= viewSpacePosition.w;
+    return viewSpacePosition.xyz;
+}
+
 vec3 XRENGINE_ContactShadowWorldPosFromDepth(
     float depth,
     vec2 uv,
@@ -53,11 +66,43 @@ vec3 XRENGINE_ContactShadowWorldPosFromDepth(
     mat4 inverseViewMatrix,
     int depthMode)
 {
-    float resolvedDepth = XRENGINE_ResolveContactShadowDepth(depth, depthMode);
-    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, resolvedDepth * 2.0 - 1.0, 1.0);
-    vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
-    viewSpacePosition /= viewSpacePosition.w;
-    return (inverseViewMatrix * viewSpacePosition).xyz;
+    vec3 viewSpacePosition = XRENGINE_ContactShadowViewPosFromDepth(depth, uv, inverseProjMatrix, depthMode);
+    return (inverseViewMatrix * vec4(viewSpacePosition, 1.0)).xyz;
+}
+
+vec3 XRENGINE_ContactShadowViewPosFromWorldPos(vec3 worldPos, mat4 inverseViewMatrix)
+{
+    vec3 cameraPositionWS = inverseViewMatrix[3].xyz;
+    vec3 cameraRightWS = inverseViewMatrix[0].xyz;
+    vec3 cameraUpWS = inverseViewMatrix[1].xyz;
+    vec3 cameraForwardWS = inverseViewMatrix[2].xyz;
+    vec3 cameraToWorldPos = worldPos - cameraPositionWS;
+    return vec3(
+        dot(cameraToWorldPos, cameraRightWS),
+        dot(cameraToWorldPos, cameraUpWS),
+        dot(cameraToWorldPos, cameraForwardWS));
+}
+
+float XRENGINE_ContactShadowViewDepthFromWorldPos(vec3 worldPos, mat4 inverseViewMatrix)
+{
+    vec3 viewPos = XRENGINE_ContactShadowViewPosFromWorldPos(worldPos, inverseViewMatrix);
+    return abs(viewPos.z);
+}
+
+bool XRENGINE_TryProjectContactShadowWorldPos(
+    vec3 worldPos,
+    mat4 inverseViewMatrix,
+    mat4 projMatrix,
+    out vec2 uv)
+{
+    vec3 viewPos = XRENGINE_ContactShadowViewPosFromWorldPos(worldPos, inverseViewMatrix);
+    vec4 sampleClip = projMatrix * vec4(viewPos, 1.0);
+    if (sampleClip.w <= 0.0001)
+        return false;
+
+    vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
+    uv = sampleNdc.xy * 0.5 + 0.5;
+    return uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0;
 }
 
 float XRENGINE_ContactShadowScreenEdgeFade(vec2 uv)
@@ -98,15 +143,15 @@ float XRENGINE_EvaluateContactShadowScreenSpaceHit(
     if (resolvedSceneDepth >= 0.999999)
         return 0.0;
 
-    vec3 scenePosWS = XRENGINE_ContactShadowWorldPosFromDepth(
+    vec3 scenePosVS = XRENGINE_ContactShadowViewPosFromDepth(
         sceneDepth,
         sampleUv,
         inverseProjMatrix,
-        inverseViewMatrix,
         depthMode);
+    vec3 scenePosWS = (inverseViewMatrix * vec4(scenePosVS, 1.0)).xyz;
 
-    float sampleViewDepth = abs((viewMatrix * vec4(samplePosWS, 1.0)).z);
-    float sceneViewDepth = abs((viewMatrix * vec4(scenePosWS, 1.0)).z);
+    float sampleViewDepth = XRENGINE_ContactShadowViewDepthFromWorldPos(samplePosWS, inverseViewMatrix);
+    float sceneViewDepth = abs(scenePosVS.z);
     float depthDelta = sampleViewDepth - sceneViewDepth;
 
     float contactBias = max(min(compareBias, contactDistance * 0.05), contactDistance * 0.001);
@@ -143,7 +188,7 @@ float XRENGINE_SampleContactShadowScreenSpace(
     mat4 viewMatrix,
     mat4 inverseProjMatrix,
     mat4 inverseViewMatrix,
-    mat4 viewProjectionMatrix,
+    mat4 projMatrix,
     int depthMode,
     vec3 fragPosWS,
     vec3 normalWS,
@@ -187,13 +232,8 @@ float XRENGINE_SampleContactShadowScreenSpace(
         float travel = (float(i) + 0.5 + (noise - 0.5) * jitterStrength) * stepSize;
         travel = clamp(travel, stepSize * 0.25, contactDistance);
         vec3 samplePosWS = rayOriginWS + lightDir * travel;
-        vec4 sampleClip = viewProjectionMatrix * vec4(samplePosWS, 1.0);
-        if (sampleClip.w <= 0.0001)
-            continue;
-
-        vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
-        vec2 sampleUv = sampleNdc.xy * 0.5 + 0.5;
-        if (sampleUv.x <= 0.0 || sampleUv.x >= 1.0 || sampleUv.y <= 0.0 || sampleUv.y >= 1.0)
+        vec2 sampleUv;
+        if (!XRENGINE_TryProjectContactShadowWorldPos(samplePosWS, inverseViewMatrix, projMatrix, sampleUv))
             continue;
 
         float sceneDepthValue = texture(sceneDepth, clamp(sampleUv, texelSize * 0.5, 1.0 - texelSize * 0.5)).r;
@@ -227,7 +267,7 @@ float XRENGINE_SampleContactShadowScreenSpace(
     mat4 viewMatrix,
     mat4 inverseProjMatrix,
     mat4 inverseViewMatrix,
-    mat4 viewProjectionMatrix,
+    mat4 projMatrix,
     int depthMode,
     vec3 fragPosWS,
     vec3 normalWS,
@@ -271,13 +311,8 @@ float XRENGINE_SampleContactShadowScreenSpace(
         float travel = (float(i) + 0.5 + (noise - 0.5) * jitterStrength) * stepSize;
         travel = clamp(travel, stepSize * 0.25, contactDistance);
         vec3 samplePosWS = rayOriginWS + lightDir * travel;
-        vec4 sampleClip = viewProjectionMatrix * vec4(samplePosWS, 1.0);
-        if (sampleClip.w <= 0.0001)
-            continue;
-
-        vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
-        vec2 sampleUv = sampleNdc.xy * 0.5 + 0.5;
-        if (sampleUv.x <= 0.0 || sampleUv.x >= 1.0 || sampleUv.y <= 0.0 || sampleUv.y >= 1.0)
+        vec2 sampleUv;
+        if (!XRENGINE_TryProjectContactShadowWorldPos(samplePosWS, inverseViewMatrix, projMatrix, sampleUv))
             continue;
 
         vec2 sampleUvClamped = clamp(sampleUv, texelSize * 0.5, 1.0 - texelSize * 0.5);
@@ -314,7 +349,7 @@ float XRENGINE_SampleContactShadowScreenSpace(
     mat4 viewMatrix,
     mat4 inverseProjMatrix,
     mat4 inverseViewMatrix,
-    mat4 viewProjectionMatrix,
+    mat4 projMatrix,
     int depthMode,
     vec3 fragPosWS,
     vec3 normalWS,
@@ -358,13 +393,8 @@ float XRENGINE_SampleContactShadowScreenSpace(
         float travel = (float(i) + 0.5 + (noise - 0.5) * jitterStrength) * stepSize;
         travel = clamp(travel, stepSize * 0.25, contactDistance);
         vec3 samplePosWS = rayOriginWS + lightDir * travel;
-        vec4 sampleClip = viewProjectionMatrix * vec4(samplePosWS, 1.0);
-        if (sampleClip.w <= 0.0001)
-            continue;
-
-        vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
-        vec2 sampleUv = sampleNdc.xy * 0.5 + 0.5;
-        if (sampleUv.x <= 0.0 || sampleUv.x >= 1.0 || sampleUv.y <= 0.0 || sampleUv.y >= 1.0)
+        vec2 sampleUv;
+        if (!XRENGINE_TryProjectContactShadowWorldPos(samplePosWS, inverseViewMatrix, projMatrix, sampleUv))
             continue;
 
         vec2 sampleUvClamped = clamp(sampleUv, texelSize * 0.5, 1.0 - texelSize * 0.5);
@@ -401,7 +431,7 @@ float XRENGINE_SampleContactShadowScreenSpace(
     mat4 viewMatrix,
     mat4 inverseProjMatrix,
     mat4 inverseViewMatrix,
-    mat4 viewProjectionMatrix,
+    mat4 projMatrix,
     int depthMode,
     vec3 fragPosWS,
     vec3 normalWS,
@@ -446,13 +476,8 @@ float XRENGINE_SampleContactShadowScreenSpace(
         float travel = (float(i) + 0.5 + (noise - 0.5) * jitterStrength) * stepSize;
         travel = clamp(travel, stepSize * 0.25, contactDistance);
         vec3 samplePosWS = rayOriginWS + lightDir * travel;
-        vec4 sampleClip = viewProjectionMatrix * vec4(samplePosWS, 1.0);
-        if (sampleClip.w <= 0.0001)
-            continue;
-
-        vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
-        vec2 sampleUv = sampleNdc.xy * 0.5 + 0.5;
-        if (sampleUv.x <= 0.0 || sampleUv.x >= 1.0 || sampleUv.y <= 0.0 || sampleUv.y >= 1.0)
+        vec2 sampleUv;
+        if (!XRENGINE_TryProjectContactShadowWorldPos(samplePosWS, inverseViewMatrix, projMatrix, sampleUv))
             continue;
 
         ivec2 sampleCoord = ivec2(clamp(floor(sampleUv * safeScreenSize), vec2(0.0), vec2(depthSize - ivec2(1))));

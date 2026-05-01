@@ -602,13 +602,10 @@ public partial class XRMaterial
         // Feature UI annotations (//@feature(... default=off)) in the canonical
         // source are the source of truth for a feature's default state.
         //
-        // The canonical Uber fragment source contains NO unconditional
-        // XRENGINE_UBER_DISABLE_* defines for hand-authored materials; those
-        // are injected per-material by UberShaderVariantBuilder from authored
-        // state. The only source-level disable cascade is inside the
-        // XRENGINE_UBER_IMPORT_MATERIAL pipeline-axis block, which applies
-        // exclusively to the imported-material variant and is ignored here
-        // because we inspect the raw canonical source.
+        // The canonical Uber fragment source may contain fallback
+        // XRENGINE_UBER_DISABLE_* guards so raw, unprepared shader use stays
+        // safe. Those guards are not authored material state; the variant
+        // builder strips them and reinjects the material's own feature mask.
         //
         // So: honor feature.DefaultEnabled directly. Features without a guard
         // macro also fall through to the same annotation-driven default.

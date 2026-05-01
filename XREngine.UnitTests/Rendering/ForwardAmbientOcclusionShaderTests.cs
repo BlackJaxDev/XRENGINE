@@ -70,6 +70,9 @@ public sealed class ForwardAmbientOcclusionShaderTests : GpuTestBase
         source.ShouldContain("XRENGINE_GetForwardViewIndex()");
         source.ShouldContain("uniform bool AmbientOcclusionEnabled;");
         source.ShouldContain("float XRENGINE_SampleAmbientOcclusion()");
+        source.ShouldContain("vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;");
+        source.ShouldContain("vec2 aoUv = clamp(fragCoordLocal / viewportSize, vec2(0.0), vec2(0.999999));");
+        source.ShouldNotContain("ivec2 pixel = ivec2(floor(gl_FragCoord.xy - ScreenOrigin));");
     }
 
     [Test]

@@ -31,8 +31,10 @@ float XRENGINE_SampleAmbientOcclusion()
     if (aoSize.x <= 0 || aoSize.y <= 0)
         return 1.0;
 
-    ivec2 pixel = ivec2(floor(gl_FragCoord.xy - ScreenOrigin));
-    pixel = clamp(pixel, ivec2(0), aoSize - ivec2(1));
+    vec2 viewportSize = max(vec2(ScreenWidth, ScreenHeight), vec2(1.0));
+    vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;
+    vec2 aoUv = clamp(fragCoordLocal / viewportSize, vec2(0.0), vec2(0.999999));
+    ivec2 pixel = ivec2(floor(aoUv * vec2(aoSize)));
     float ao = AmbientOcclusionArrayEnabled
         ? texelFetch(AmbientOcclusionTextureArray, ivec3(pixel, XRENGINE_GetForwardViewIndex()), 0).r
         : texelFetch(AmbientOcclusionTexture, pixel, 0).r;

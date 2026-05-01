@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Text.RegularExpressions;
 using ImGuiNET;
 using XREngine.Core.Files;
 using XREngine.Rendering;
@@ -18,25 +17,6 @@ public sealed partial class XRMaterialInspector
     private static readonly Vector4 UberFeatureRequestedColor = new(0.90f, 0.74f, 0.28f, 1.0f);
     private static readonly Vector4 UberFeatureCompilingColor = new(0.33f, 0.67f, 0.89f, 1.0f);
     private static readonly Vector4 UberFeatureUnavailableColor = new(0.56f, 0.56f, 0.56f, 1.0f);
-    private static readonly HashSet<string> UberImportVariantUnavailableFeatureIds = new(StringComparer.Ordinal)
-    {
-        "advanced-specular",
-        "backface",
-        "color-adjustments",
-        "detail-textures",
-        "dissolve",
-        "emission",
-        "flipbook",
-        "glitter",
-        "matcap",
-        "material-ao",
-        "outline",
-        "parallax",
-        "rim-lighting",
-        "shadow-masks",
-        "stylized-shading",
-        "subsurface",
-    };
     private static readonly ConditionalWeakTable<XRMaterial, PendingUberFeatureResolution> PendingUberFeatureResolutions = new();
 
     private static void DrawUberInspector(XRMaterial material)
@@ -456,9 +436,10 @@ public sealed partial class XRMaterialInspector
         if (parameter is not null && TrySerializeShaderParameterValue(parameter, out string serializedValue) && ImGui.MenuItem("Copy Value"))
             ImGui.SetClipboardText(serializedValue);
 
-        if (parameter is not null && ImGui.MenuItem("Paste Value", null, false, CanApplyShaderParameterClipboard(parameter, ImGui.GetClipboardText())))
+        string? clipboardText = parameter is not null ? GetClipboardTextSafe() : null;
+        if (parameter is not null && ImGui.MenuItem("Paste Value", null, false, CanApplyShaderParameterClipboard(parameter, clipboardText)))
         {
-            if (TryApplyShaderParameterClipboard(material, parameter, ImGui.GetClipboardText()) && propertyMode == EShaderUiPropertyMode.Static)
+            if (TryApplyShaderParameterClipboard(material, parameter, clipboardText) && propertyMode == EShaderUiPropertyMode.Static)
                 constantLiteralChanged |= material.RefreshUberPropertyStaticLiteral(property.Name);
         }
 
@@ -961,20 +942,7 @@ public sealed partial class XRMaterialInspector
         => milliseconds > 0.0 ? $"{milliseconds:0.##} ms" : "n/a";
 
     private static HashSet<string> ResolveUnavailableUberFeatureIds(XRShader activeFragmentShader, ShaderUiManifest manifest)
-    {
-        string activeSource = activeFragmentShader.Source?.Text ?? string.Empty;
-        if (!Regex.IsMatch(activeSource, @"^[ \t]*#define[ \t]+XRENGINE_UBER_IMPORT_MATERIAL(?:\s+.*)?$", RegexOptions.Multiline))
-            return [];
-
-        HashSet<string> unavailableFeatureIds = new(StringComparer.Ordinal);
-        foreach (ShaderUiFeature feature in manifest.Features)
-        {
-            if (UberImportVariantUnavailableFeatureIds.Contains(feature.Id))
-                unavailableFeatureIds.Add(feature.Id);
-        }
-
-        return unavailableFeatureIds;
-    }
+        => [];
 
     private static void DrawUberBulkActions(XRMaterial material, ShaderUiManifest manifest, IReadOnlyList<ShaderUiProperty> visibleProperties)
     {

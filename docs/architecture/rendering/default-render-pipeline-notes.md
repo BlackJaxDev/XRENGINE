@@ -200,7 +200,7 @@ The shared `VolumetricFogSettings` constructor defaults and both pipeline schema
 
 Cascaded directional shadows publish per-cascade effective bias values on the directional light struct (`CascadeBiasMin`, `CascadeBiasMax`, `CascadeReceiverOffsets`). Automatic values are derived from the light's base bias settings plus cascade texel size, split distance, light-space depth span, and shadow-map resolution; manual cascade overrides replace those resolved values for that cascade only.
 
-Local point and spot lights use per-light uniform arrays for the same tuning values. Keep those arrays in sync with `LightComponent.SetUniforms(...)` whenever a new shadow control is added.
+Local point and spot lights use SSBO-backed per-light metadata for the same tuning values. Keep `ForwardPointShadowData` / `ForwardSpotShadowData` in `ForwardLighting.glsl` and the matching `ForwardPointShadowGpu` / `ForwardSpotShadowGpu` upload structs in `Lights3DCollection.ForwardLighting.cs` in sync whenever a new shadow control is added. Do not move this metadata back to large uniform arrays; NVIDIA's OpenGL uniform constant path can exceed the 1024-register limit.
 
 ---
 

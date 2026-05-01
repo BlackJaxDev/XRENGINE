@@ -171,6 +171,9 @@ namespace XREngine.Rendering
                 case nameof(Height):
                     Resized();
                     break;
+                default:
+                    base.OnPropertyChanged(propName, prev, field);
+                    break;
             }
         }
 
@@ -180,7 +183,23 @@ namespace XREngine.Rendering
             => new(screenPoint.X - _orthoLeft, screenPoint.Y - _orthoBottom, screenPoint.Z);
 
         protected override Matrix4x4 CalculateProjectionMatrix()
-            => Matrix4x4.CreateOrthographicOffCenter(_orthoLeft, _orthoRight, _orthoBottom, _orthoTop, NearZ, FarZ);
+        {
+            float left = float.IsFinite(_orthoLeft) ? _orthoLeft : -0.5f;
+            float right = float.IsFinite(_orthoRight) ? _orthoRight : 0.5f;
+            float bottom = float.IsFinite(_orthoBottom) ? _orthoBottom : -0.5f;
+            float top = float.IsFinite(_orthoTop) ? _orthoTop : 0.5f;
+            float nearZ = float.IsFinite(NearZ) ? NearZ : 0.0f;
+            float farZ = float.IsFinite(FarZ) ? FarZ : nearZ + 1.0f;
+
+            if (MathF.Abs(right - left) < 0.0001f)
+                right = left + 0.0001f;
+            if (MathF.Abs(top - bottom) < 0.0001f)
+                top = bottom + 0.0001f;
+            if (farZ <= nearZ + 0.0001f)
+                farZ = nearZ + 0.0001f;
+
+            return Matrix4x4.CreateOrthographicOffCenter(left, right, bottom, top, nearZ, farZ);
+        }
 
         protected override Frustum CalculateUntransformedFrustum()
             => new(Width, Height, NearZ, FarZ);

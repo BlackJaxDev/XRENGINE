@@ -303,6 +303,7 @@ namespace XREngine.Rendering.UI
             if (mesh is not null)
             {
                 mesh.SettingUniforms -= MeshRend_SettingUniforms;
+                mesh.PreparingRenderData -= MeshRend_PreparingRenderData;
                 mesh.Destroy();
             }
 
@@ -311,6 +312,7 @@ namespace XREngine.Rendering.UI
                 CreateMaterial(atlas));
 
             rend.SettingUniforms += MeshRend_SettingUniforms;
+            rend.PreparingRenderData += MeshRend_PreparingRenderData;
             CreateSSBOs(rend);
             Mesh = rend;
         }
@@ -445,6 +447,12 @@ namespace XREngine.Rendering.UI
         /// <param name="vertexProgram"></param>
         /// <param name="materialProgram"></param>
         private void MeshRend_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+            => PushGlyphDataIfNeeded();
+
+        private void MeshRend_PreparingRenderData()
+            => PushGlyphDataIfNeeded();
+
+        private void PushGlyphDataIfNeeded()
         {
             if (!_dataChanged)
                 return;

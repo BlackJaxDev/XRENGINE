@@ -12,42 +12,34 @@
 //   * Weighted-Blended OIT, Per-Pixel Linked-List OIT, and Depth Peeling
 //     for order-independent transparency
 //
-// Feature gating is compile-time only, driven by XRENGINE_UBER_DISABLE_*
-// macros injected by UberShaderVariantBuilder from the material's authored
-// state. This file contains NO baked feature disables for hand-authored
-// materials; the per-material variant generator owns that decision. The
-// only source-level feature cascade is the XRENGINE_UBER_IMPORT_MATERIAL
-// pipeline axis below, which trims the feature surface for imported glTF/
-// FBX materials that never bind those uniforms.
+// Feature gating is compile-time only. The canonical shader keeps default-off
+// feature modules disabled as a safe fallback; UberShaderVariantBuilder strips
+// these recognized guards and reinjects the material's authored feature set.
 // =============================================================================
 
 #version 450 core
 
 #define XRENGINE_UBER_MVP_FRAGMENT 1
 
-// Pipeline-axis cascade: imported materials ride a lean Uber variant that
-// strips features the model importer never touches, keeping GL fragment
-// uniform pressure below older-driver register budgets and giving the
-// variant cache a single canonical "import" shape.
-#ifdef XRENGINE_UBER_IMPORT_MATERIAL
-#define XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS 1
-#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1
-#define XRENGINE_UBER_DISABLE_SHADOW_MASKS 1
-#define XRENGINE_UBER_DISABLE_RIM_LIGHTING 1
+// Canonical fallback safety: raw UberShader.frag can be compiled before a
+// per-material variant is adopted. Keep additive/default-off modules stripped
+// here so unprepared imported meshes do not render as emissive white.
 #define XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR 1
-#define XRENGINE_UBER_DISABLE_DETAIL_TEXTURES 1
-#define XRENGINE_UBER_DISABLE_OUTLINE 1
 #define XRENGINE_UBER_DISABLE_BACKFACE 1
-#define XRENGINE_UBER_DISABLE_GLITTER 1
-#define XRENGINE_UBER_DISABLE_FLIPBOOK 1
-#define XRENGINE_UBER_DISABLE_SUBSURFACE 1
+#define XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS 1
+#define XRENGINE_UBER_DISABLE_DETAIL_TEXTURES 1
 #define XRENGINE_UBER_DISABLE_DISSOLVE 1
-#define XRENGINE_UBER_DISABLE_PARALLAX 1
-#define XRENGINE_UBER_DISABLE_MATERIAL_AO 1
 #define XRENGINE_UBER_DISABLE_EMISSION 1
+#define XRENGINE_UBER_DISABLE_FLIPBOOK 1
+#define XRENGINE_UBER_DISABLE_GLITTER 1
+#define XRENGINE_UBER_DISABLE_MATERIAL_AO 1
 #define XRENGINE_UBER_DISABLE_MATCAP 1
-#define XRENGINE_UBER_DISABLE_RENDER_TIME 1
-#endif
+#define XRENGINE_UBER_DISABLE_OUTLINE 1
+#define XRENGINE_UBER_DISABLE_PARALLAX 1
+#define XRENGINE_UBER_DISABLE_RIM_LIGHTING 1
+#define XRENGINE_UBER_DISABLE_SHADOW_MASKS 1
+#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1
+#define XRENGINE_UBER_DISABLE_SUBSURFACE 1
 
 // Shared engine headers:
 //   common.glsl   - math helpers, color space conversions, hashes, noise, ...
@@ -777,7 +769,7 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
             shadow = smoothstep(border - blur, border + blur, light.lightMap);
             
             vec3 shadowColor = _ShadowColor.rgb * _ShadowColor.a;
-            finalLight = mix(shadowColor * light.indirectColor, light.color, shadow);
+            finalLight = mix(light.color * shadowColor, light.color, shadow);
             break;
         }
         
@@ -788,7 +780,7 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
             shadow = smoothstep(_LightingGradientStart, _LightingGradientEnd, wrappedNDotL);
             
             vec3 shadowColor = _LightingShadowColor;
-            finalLight = mix(shadowColor * light.indirectColor, light.color, shadow);
+            finalLight = mix(light.color * shadowColor, light.color, shadow);
             break;
         }
         
@@ -805,29 +797,30 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
         case 6: // Realistic (plain Lambert)
         {
             shadow = saturate(light.nDotL);
-            finalLight = light.color * shadow + light.indirectColor;
+            finalLight = light.color * shadow;
             break;
         }
         
         default: // Fallback to flat
         {
             shadow = light.lightMap;
-            finalLight = light.color * shadow + light.indirectColor;
+            finalLight = light.color * shadow;
             break;
         }
     }
 
-    // Fold explicit shadowing/visibility into the stylized shadow term.
-    shadow *= shadowMapFactor;
+    float combinedShadow = saturate(shadow * shadowMapFactor);
 
     // Artist-friendly softening toward fully lit.
-    shadow = mix(1.0, shadow, _ShadowStrength);
+    float directVisibility = mix(1.0, saturate(shadowMapFactor), _ShadowStrength);
+    float tintVisibility = mix(1.0, combinedShadow, _ShadowStrength);
 
     // Colored tint in shadowed regions (e.g. cool blue shadows).
-    vec3 shadowTint = mix(_LightingShadowColor, vec3(1.0), shadow);
+    vec3 shadowTint = mix(_LightingShadowColor, vec3(1.0), tintVisibility);
 
-    // Compose: albedo * light * shadow tint.
-    vec3 result = baseColor * finalLight * shadowTint;
+    // Compose direct lighting separately from ambient/IBL so AO and texture
+    // color remain visible even outside direct-light cones.
+    vec3 result = baseColor * finalLight * directVisibility * shadowTint + light.indirectColor;
 
     // Optional hard ceiling on lit brightness to keep highlights readable
     // under strong lights.

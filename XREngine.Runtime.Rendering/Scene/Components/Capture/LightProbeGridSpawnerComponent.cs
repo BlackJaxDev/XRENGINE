@@ -490,7 +490,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
-        SpawnGrid();
+        RequestGridBuild(replaceExistingGrid: false, restartSequentialCapture: AutoSequentialCaptureOnBeginPlay);
     }
 
     protected override void OnComponentDeactivated()

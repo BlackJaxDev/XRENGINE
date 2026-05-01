@@ -1293,7 +1293,7 @@ namespace XREngine
                 new ShaderVector2(Vector2.Zero, "_EmissionMapPan"),
                 new ShaderInt(0, "_EmissionMapUV"),
                 new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_EmissionColor"),
-                new ShaderFloat(1.0f, "_EmissionStrength"),
+                new ShaderFloat(0.0f, "_EmissionStrength"),
                 new ShaderFloat(0.0f, "_EmissionScrollingEnabled"),
                 new ShaderVector2(Vector2.Zero, "_EmissionScrollingSpeed"),
                 new ShaderFloat(0.0f, "_EmissionScrollingVertexColor"),

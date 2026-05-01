@@ -83,8 +83,8 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         deferredSpot.ShouldContain("ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH");
         deferredSpot.ShouldContain("XRENGINE_SampleShadowMoment2D(");
         deferredSpot.ShouldContain("* contact");
-        forwardLighting.ShouldContain("uniform ivec4 SpotLightShadowPacked2");
-        forwardLighting.ShouldContain("uniform vec4 SpotLightShadowParams4");
+        forwardLighting.ShouldContain("ivec4 shadowI2 = shadowData.Packed2");
+        forwardLighting.ShouldContain("vec4 shadowF4 = shadowData.Params4");
         forwardLighting.ShouldContain("XRENGINE_SampleShadowMoment2D(");
     }
 

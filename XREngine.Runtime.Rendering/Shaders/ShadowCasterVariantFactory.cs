@@ -5,6 +5,20 @@ namespace XREngine.Rendering.Shaders;
 
 public static class ShadowCasterVariantFactory
 {
+    private const string PointShadowDepthFragmentShader = """
+        #version 450
+        layout(location = 0) in vec3 FragPos;
+        layout(location = 0) out vec4 Depth;
+
+        uniform vec3 LightPos;
+        uniform float FarPlaneDist;
+
+        void main()
+        {
+            Depth = vec4(length(FragPos - LightPos) / max(FarPlaneDist, 0.0001), 0.0, 0.0, 0.0);
+        }
+        """;
+
     public static XRMaterial? CreateMaterialVariant(XRMaterial sourceMaterial)
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
@@ -43,19 +57,24 @@ public static class ShadowCasterVariantFactory
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
-        XRShader? fragmentShader = sourceMaterial.FragmentShaders.FirstOrDefault();
-        if (fragmentShader is null)
-            return null;
-
-        XRShader? fragmentVariantShader = ShaderHelper.GetPointShadowCasterForwardVariant(fragmentShader);
-        if (fragmentVariantShader is null)
-            return null;
-
         List<XRShader> shaders = [];
         if (useGeometryShader)
+        {
             shaders.Add(XRShader.EngineShader("PointLightShadowDepth.gs", EShaderType.Geometry));
+            shaders.Add(new XRShader(EShaderType.Fragment, PointShadowDepthFragmentShader));
+        }
+        else
+        {
+            XRShader? fragmentShader = sourceMaterial.FragmentShaders.FirstOrDefault();
+            if (fragmentShader is null)
+                return null;
 
-        shaders.Add(fragmentVariantShader);
+            XRShader? fragmentVariantShader = ShaderHelper.GetPointShadowCasterForwardVariant(fragmentShader);
+            if (fragmentVariantShader is null)
+                return null;
+
+            shaders.Add(fragmentVariantShader);
+        }
 
         XRMaterial variant = new(shaders)
         {
@@ -86,6 +105,6 @@ public static class ShadowCasterVariantFactory
                 Function = source?.DepthTest?.Function ?? EComparison.Lequal,
                 UpdateDepth = true,
             },
-            RequiredEngineUniforms = EUniformRequirements.None,
+            RequiredEngineUniforms = EUniformRequirements.Camera,
         };
 }

@@ -387,6 +387,22 @@ namespace XREngine.Rendering
             remove => _settingUniforms -= value;
         }
 
+        public delegate void DelPrepareRenderData();
+        /// <summary>
+        /// Subscribe to this event to upload renderer-owned dynamic data before readiness checks.
+        /// </summary>
+        [MemoryPackIgnore]
+        private DelPrepareRenderData? _preparingRenderData;
+
+        public event DelPrepareRenderData? PreparingRenderData
+        {
+            add => _preparingRenderData += value;
+            remove => _preparingRenderData -= value;
+        }
+
+        internal bool HasRenderDataPreparation
+            => _preparingRenderData is not null;
+
         public delegate ShaderVar DelParameterRequested(int index);
 
         public class SubMesh : XRBase
@@ -785,6 +801,16 @@ namespace XREngine.Rendering
         /// <param name="materialOverride"></param>
         public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null)
             => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None);
+
+        public bool TryPrepareForRendering(bool forceNoStereo = false)
+        {
+            BaseVersion version = GetVersion(forceNoStereo);
+            AbstractRenderAPIObject? apiObject = AbstractRenderer.Current?.GetOrCreateAPIRenderObject(version);
+            if (apiObject is IRenderPreparationState preparationState)
+                return preparationState.TryPrepareForRendering();
+
+            return apiObject is not null;
+        }
 
         /// <summary>
         /// Get the weight of a blendshape by name, with the weight returned being a percentage from 0 to 100.
@@ -2100,6 +2126,9 @@ namespace XREngine.Rendering
 
             _settingUniforms?.Invoke(vertexProgram, materialProgram);
         }
+
+        internal void OnPreparingRenderData()
+            => _preparingRenderData?.Invoke();
 
         /// <summary>
         /// Retrieve all meshes and materials used by this renderer.

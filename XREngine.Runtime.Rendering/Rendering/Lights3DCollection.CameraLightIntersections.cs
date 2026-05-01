@@ -38,7 +38,7 @@ namespace XREngine.Scene
         {
             bool Matches(XRViewport? viewport)
                 => viewport is not null
-                    && ReferenceEquals(viewport.World, World)
+                    && ViewportTargetsWorld(viewport, World)
                     && !viewport.Suppress3DSceneRendering
                     && viewport.ActiveCamera is not null
                     && ViewportPrefersCascadedDirectionalShadows(viewport);
@@ -57,7 +57,7 @@ namespace XREngine.Scene
             bool PrefersPrimary(XRViewport? viewport)
             {
                 if (viewport is null ||
-                    !ReferenceEquals(viewport.World, World) ||
+                    !ViewportTargetsWorld(viewport, World) ||
                     viewport.Suppress3DSceneRendering ||
                     viewport.ActiveCamera is null)
                     return false;
@@ -82,7 +82,7 @@ namespace XREngine.Scene
 
             foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
             {
-                if (!ReferenceEquals(viewport.World, World) || viewport.Suppress3DSceneRendering)
+                if (!ViewportTargetsWorld(viewport, World) || viewport.Suppress3DSceneRendering)
                     continue;
 
                 XRCamera? camera = viewport.ActiveCamera;
@@ -104,7 +104,7 @@ namespace XREngine.Scene
             for (int i = 0; i < vrViewports.Length; i++)
             {
                 XRViewport? viewport = vrViewports[i];
-                if (viewport is null || !ReferenceEquals(viewport.World, World) || viewport.Suppress3DSceneRendering)
+                if (viewport is null || !ViewportTargetsWorld(viewport, World) || viewport.Suppress3DSceneRendering)
                     continue;
 
                 XRCamera? camera = viewport.ActiveCamera;

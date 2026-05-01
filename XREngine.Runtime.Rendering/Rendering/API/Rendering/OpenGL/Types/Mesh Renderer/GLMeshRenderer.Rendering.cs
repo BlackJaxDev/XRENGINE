@@ -55,6 +55,8 @@ namespace XREngine.Rendering.OpenGL
                     XRMaterial? shadowVariant = shadowSourceMaterial?.ShadowCasterVariant;
                     if (shadowVariant is not null)
                     {
+                        shadowVariant.ShadowUniformSourceMaterial = globalMaterialOverride;
+
                         // Fast path: reuse cached GLMaterial when the shadow variant hasn't changed.
                         if (ReferenceEquals(shadowVariant, _shadowVariantKey) && _shadowMaterialCache is not null)
                             return _shadowMaterialCache;
@@ -186,6 +188,12 @@ namespace XREngine.Rendering.OpenGL
                         Dbg("Not generated yet - calling Generate()", "Render");
                         Generate();
                     }
+                }
+
+                if (!IsPreparedForRendering)
+                {
+                    if (MeshRenderer.HasRenderDataPreparation)
+                        _ = TryPrepareForRendering();
                 }
 
                 if (!IsPreparedForRendering)

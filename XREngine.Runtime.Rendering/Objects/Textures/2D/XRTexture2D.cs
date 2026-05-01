@@ -376,7 +376,7 @@ namespace XREngine.Rendering
                     var mipmaps = texture.Mipmaps;
                     uint w = mipmaps?.Length > 0 ? mipmaps[0].Width : 0;
                     uint h = mipmaps?.Length > 0 ? mipmaps[0].Height : 0;
-                    RuntimeRenderingHostServices.Current.LogOutput($"[UploadMipmaps] Starting upload for '{texture.Name}' ({w}x{h}), {mipmaps?.Length ?? 0} mipmaps, IsRenderThread={RuntimeRenderingHostServices.Current.IsRenderThread}");
+                    //RuntimeRenderingHostServices.Current.LogOutput($"[UploadMipmaps] Starting upload for '{texture.Name}' ({w}x{h}), {mipmaps?.Length ?? 0} mipmaps, IsRenderThread={RuntimeRenderingHostServices.Current.IsRenderThread}");
 
                     if (mipmaps is not null && mipmaps.Length > 0)
                     {
@@ -390,7 +390,7 @@ namespace XREngine.Rendering
 
                     texture.Generate();
                     texture.PushData();
-                    RuntimeRenderingHostServices.Current.LogOutput($"[UploadMipmaps] Completed upload for '{texture.Name}'");
+                    //RuntimeRenderingHostServices.Current.LogOutput($"[UploadMipmaps] Completed upload for '{texture.Name}'");
 
                     onCompleted?.Invoke();
                 }
@@ -452,8 +452,8 @@ namespace XREngine.Rendering
                 // An existing progressive upload is still registered for this texture.
                 // It will detect the token mismatch on its next coroutine tick and clean up.
                 // Defer our start to the render thread so the old entry has a chance to be removed.
-                RuntimeRenderingHostServices.Current.LogOutput(
-                    $"[UploadMipmaps] Deferring progressive upload for '{texture.Name}' (previous still registered). active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
+                //RuntimeRenderingHostServices.Current.LogOutput(
+                //    $"[UploadMipmaps] Deferring progressive upload for '{texture.Name}' (previous still registered). active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
 
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
                     () =>
@@ -480,8 +480,8 @@ namespace XREngine.Rendering
                             // Still can't register — another upload is active. Let the caller know
                             // so ClearPendingTransition runs and the next Evaluate cycle re-queues.
                             texture.RuntimeManagedProgressiveUploadActive = false;
-                            RuntimeRenderingHostServices.Current.LogWarning(
-                                $"[UploadMipmaps] Could not register progressive upload for '{texture.Name}' after deferred retry. Clearing pending transition.");
+                            //RuntimeRenderingHostServices.Current.LogWarning(
+                            //    $"[UploadMipmaps] Could not register progressive upload for '{texture.Name}' after deferred retry. Clearing pending transition.");
                             onCompleted?.Invoke();
                             return;
                         }
@@ -586,24 +586,24 @@ namespace XREngine.Rendering
                             if (!waitLogged)
                             {
                                 waitLogged = true;
-                                RuntimeRenderingHostServices.Current.LogOutput(
-                                    $"[UploadMipmaps] Deferring progressive upload for '{texture.Name}' until a slot is free. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
+                                //RuntimeRenderingHostServices.Current.LogOutput(
+                                //    $"[UploadMipmaps] Deferring progressive upload for '{texture.Name}' until a slot is free. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
                             }
                             return false;
                         }
 
                         slotAcquired = true;
-                        RuntimeRenderingHostServices.Current.LogOutput(
-                            $"[UploadMipmaps] Starting progressive upload for '{texture.Name}' ({mipmaps[0].Width}x{mipmaps[0].Height}), {mipmaps.Length} mipmaps, lockMip={lockMipLevel}. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
+                        //RuntimeRenderingHostServices.Current.LogOutput(
+                        //    $"[UploadMipmaps] Starting progressive upload for '{texture.Name}' ({mipmaps[0].Width}x{mipmaps[0].Height}), {mipmaps.Length} mipmaps, lockMip={lockMipLevel}. active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}");
                     }
 
                     // Seed phase: upload the lock mip first so the first EnsureStorageAllocated call
                     // immediately has equivalent-quality data — preventing a black flash.
                     if (!seedUploaded)
                     {
-                        RuntimeRenderingHostServices.Current.LogOutput(
-                            $"[UploadMipmaps] Seeding lockMip={lockMipLevel} for '{texture.Name}': pinning Largest/SmallestAllowed={lockMipLevel} " +
-                            $"(originalLargest={originalLargestLevel}, originalSmallestAllowed={originalSmallestAllowedLevel}, mipmapCount={mipmaps.Length}, smallestResidentMip={smallestResidentMip}).");
+                        //RuntimeRenderingHostServices.Current.LogOutput(
+                        //    $"[UploadMipmaps] Seeding lockMip={lockMipLevel} for '{texture.Name}': pinning Largest/SmallestAllowed={lockMipLevel} " +
+                        //    $"(originalLargest={originalLargestLevel}, originalSmallestAllowed={originalSmallestAllowedLevel}, mipmapCount={mipmaps.Length}, smallestResidentMip={smallestResidentMip}).");
                         texture.LargestMipmapLevel = lockMipLevel;
                         texture.SmallestAllowedMipmapLevel = lockMipLevel;
                         long lockMipBytes = mipmaps[lockMipLevel].Data?.Length ?? 0;
@@ -622,9 +622,9 @@ namespace XREngine.Rendering
                         // Keep runtime ownership until GL applies the final restored mip range.
                         texture.RuntimeManagedProgressiveFinalizePending = true;
                         CleanupProgressiveUpload(releaseRuntimeOwnership: false);
-                        RuntimeRenderingHostServices.Current.LogOutput(
-                            $"[UploadMipmaps] Completed progressive upload for '{texture.Name}': restored Largest={originalLargestLevel} " +
-                            $"SmallestAllowed={originalSmallestAllowedLevel} mipmapCount={mipmaps.Length}.");
+                        //RuntimeRenderingHostServices.Current.LogOutput(
+                        //    $"[UploadMipmaps] Completed progressive upload for '{texture.Name}': restored Largest={originalLargestLevel} " +
+                        //    $"SmallestAllowed={originalSmallestAllowedLevel} mipmapCount={mipmaps.Length}.");
                         onCompleted?.Invoke();
                         return true;
                     }
@@ -658,8 +658,8 @@ namespace XREngine.Rendering
                         if (!budgetWaitLogged)
                         {
                             budgetWaitLogged = true;
-                            RuntimeRenderingHostServices.Current.LogOutput(
-                                $"[UploadMipmaps] Deferring mip {nextMipToUpload} for '{texture.Name}' to stay within frame budget. bytes={nextMipBytes}, scheduled={scheduledBytes}, budget={ProgressiveOpenGlUploadBytesPerFrame}");
+                            //RuntimeRenderingHostServices.Current.LogOutput(
+                            //    $"[UploadMipmaps] Deferring mip {nextMipToUpload} for '{texture.Name}' to stay within frame budget. bytes={nextMipBytes}, scheduled={scheduledBytes}, budget={ProgressiveOpenGlUploadBytesPerFrame}");
                         }
                         return false;
                     }
@@ -675,8 +675,8 @@ namespace XREngine.Rendering
                 }
                 catch (Exception ex)
                 {
-                    RuntimeRenderingHostServices.Current.LogWarning(
-                        $"[UploadMipmaps] Exception during progressive upload for '{texture.Name}' (mip={nextMipToUpload}): {ex.Message}");
+                    //RuntimeRenderingHostServices.Current.LogWarning(
+                    //    $"[UploadMipmaps] Exception during progressive upload for '{texture.Name}' (mip={nextMipToUpload}): {ex.Message}");
                     CleanupProgressiveUpload();
                     onCompleted?.Invoke();
                     return true;
@@ -707,8 +707,8 @@ namespace XREngine.Rendering
             long total = Interlocked.Add(ref _progressiveUploadBytesScheduledThisFrame, bytes);
             if (Interlocked.Exchange(ref _progressiveUploadTelemetryFrameTicks, currentFrame) != currentFrame)
             {
-                RuntimeRenderingHostServices.Current.LogOutput(
-                    $"[UploadMipmaps] Telemetry: active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}, bytesScheduledThisFrame={total}");
+                //RuntimeRenderingHostServices.Current.LogOutput(
+                //    $"[UploadMipmaps] Telemetry: active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}, bytesScheduledThisFrame={total}");
             }
         }
 

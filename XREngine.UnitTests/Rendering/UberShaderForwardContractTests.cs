@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
+using System.Reflection;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
@@ -104,6 +105,20 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void UberShaderFragment_StylizedPrimaryLighting_AppliesEngineShadowsAndAmbientSeparately()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+
+        source.ShouldContain("float combinedShadow = saturate(shadow * shadowMapFactor);");
+        source.ShouldContain("float directVisibility = mix(1.0, saturate(shadowMapFactor), _ShadowStrength);");
+        source.ShouldContain("vec3 result = baseColor * finalLight * directVisibility * shadowTint + light.indirectColor;");
+        source.ShouldContain("finalLight = mix(light.color * shadowColor, light.color, shadow);");
+        source.ShouldContain("finalLight = light.color * shadow;");
+        source.ShouldNotContain("finalLight = mix(shadowColor * light.indirectColor, light.color, shadow);");
+        source.ShouldNotContain("finalLight = light.color * shadow + light.indirectColor;");
+    }
+
+    [Test]
     public void UberShaderFragment_SharedScreenOriginUniform_IsGuardedAcrossSnippets()
     {
         string forwardLighting = LoadShaderSource(Path.Combine("Snippets", "ForwardLighting.glsl"));
@@ -124,21 +139,20 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
         string uniforms = LoadShaderSource(Path.Combine("Uber", "uniforms.glsl"));
 
-        // MVP marker is the only unconditional #define in the canonical source.
         source.ShouldContain("#define XRENGINE_UBER_MVP_FRAGMENT 1");
 
-        // Canonical source must NOT bake in any feature-disable macros for
-        // hand-authored materials. Feature gating is driven by authored state
-        // via UberShaderVariantBuilder, not hard-coded in the shader. The
-        // only legitimate disable cascade lives inside the
-        // #ifdef XRENGINE_UBER_IMPORT_MATERIAL block for the import pipeline
-        // axis.
-        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1\n");
-        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_DETAIL_TEXTURES 1\n");
-        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_DISSOLVE 1\n");
-        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_PARALLAX 1\n");
-        source.ShouldNotContain("\n#define XRENGINE_UBER_DISABLE_SUBSURFACE 1\n");
-        source.ShouldContain("#ifdef XRENGINE_UBER_IMPORT_MATERIAL");
+        // The raw canonical shader is a safe fallback before per-material
+        // variant adoption. The variant builder strips these and reinjects the
+        // authored feature mask.
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_DETAIL_TEXTURES 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_DISSOLVE 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_PARALLAX 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_SUBSURFACE 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_MATCAP 1");
+        source.ShouldContain("#define XRENGINE_UBER_DISABLE_RIM_LIGHTING 1");
+        source.ShouldNotContain("UBER_IMPORT");
 
         // Runtime feature-toggle uniforms must not reappear: feature gating
         // is compile-time only.
@@ -169,54 +183,37 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
-    public void ImportedUberFragmentVariant_DefinesLeanImportFeatureSet()
+    public void UberTransparentVariant_NormalizesToCanonicalForwardShader()
     {
-        XRShader variant = ShaderHelper.UberImportFragForward();
-
-        string source = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
-        source.IndexOf("#version 450 core", StringComparison.Ordinal).ShouldBeLessThan(
-            source.IndexOf("#define XRENGINE_UBER_IMPORT_MATERIAL", StringComparison.Ordinal));
-        source.ShouldContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
-        source.ShouldNotContain("#define XRENGINE_UBER_DISABLE_ALPHA_MASKS 1");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_MATERIAL_AO 1");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_MATCAP 1");
-        source.ShouldContain("#define XRENGINE_UBER_DISABLE_RENDER_TIME 1");
-    }
-
-    [Test]
-    public void ImportedUberTransparentVariant_PreservesImportFeatureSet_WhenNormalized()
-    {
-        XRShader weighted = ShaderHelper.GetWeightedBlendedOitForwardVariant(ShaderHelper.UberImportFragForward())
+        XRShader weighted = ShaderHelper.GetWeightedBlendedOitForwardVariant(ShaderHelper.UberFragForward())
             ?? throw new InvalidOperationException("Weighted Uber variant was null.");
 
         XRShader normalized = ShaderHelper.GetStandardForwardVariant(weighted)
             ?? throw new InvalidOperationException("Normalized Uber variant was null.");
 
         string source = normalized.Source.Text ?? throw new InvalidOperationException("Normalized shader source text was null.");
-        source.ShouldContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
+        source.ShouldContain("#define XRENGINE_UBER_MVP_FRAGMENT 1");
         source.ShouldNotContain("#define XRENGINE_FORWARD_WEIGHTED_OIT");
     }
 
     [Test]
-    public void ImportedUberWeightedOitVariant_UsesTransparentForwardOutputContract()
+    public void UberWeightedOitVariant_UsesTransparentForwardOutputContract()
     {
-        XRShader variant = ShaderHelper.GetWeightedBlendedOitForwardVariant(ShaderHelper.UberImportFragForward())
+        XRShader variant = ShaderHelper.GetWeightedBlendedOitForwardVariant(ShaderHelper.UberFragForward())
             ?? throw new InvalidOperationException("Weighted Uber variant was null.");
 
         string source = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
-        source.ShouldContain("#define XRENGINE_UBER_IMPORT_MATERIAL");
         source.ShouldContain("#define XRENGINE_FORWARD_WEIGHTED_OIT");
         source.ShouldContain("layout(location = 0) out vec4 OutAccum;");
         source.ShouldContain("layout(location = 1) out vec4 OutRevealage;");
     }
 
     [Test]
-    public void ImportedUberFragmentVariant_CompilesOnOpenGl()
+    public void UberFragmentVariant_CompilesOnOpenGl()
     {
         RunWithGLContext(gl =>
         {
-            XRShader fragment = ShaderHelper.UberImportFragForward();
+            XRShader fragment = ShaderHelper.UberFragForward();
             string resolvedSource = fragment.GetResolvedSource();
 
             uint shader = CompileShader(gl, ShaderType.FragmentShader, resolvedSource);
@@ -225,14 +222,19 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
-    public void ImportedUberFragmentVariant_TrimsLocalShadowUniformSurface()
+    public void ForwardLighting_UsesStorageBuffersForForwardLightArrays()
     {
-        XRShader fragment = ShaderHelper.UberImportFragForward();
-        string resolvedSource = fragment.GetResolvedSource();
+        string forwardLighting = LoadShaderSource(Path.Combine("Snippets", "ForwardLighting.glsl"));
 
-        resolvedSource.ShouldContain("#define XRENGINE_FORWARD_DISABLE_LOCAL_LIGHT_SHADOWS 1");
-        resolvedSource.ShouldNotContain("uniform int PointLightShadowSlots[");
-        resolvedSource.ShouldNotContain("uniform int SpotLightShadowSlots[");
+        forwardLighting.ShouldContain("layout(std430, binding = 22) readonly buffer ForwardDirectionalLightsBuffer");
+        forwardLighting.ShouldContain("layout(std430, binding = 23) readonly buffer ForwardPointLightsBuffer");
+        forwardLighting.ShouldContain("layout(std430, binding = 26) readonly buffer ForwardSpotLightsBuffer");
+        forwardLighting.ShouldContain("layout(std430, binding = 27) readonly buffer ForwardPointShadowMetadataBuffer");
+        forwardLighting.ShouldContain("layout(std430, binding = 28) readonly buffer ForwardSpotShadowMetadataBuffer");
+        forwardLighting.ShouldNotContain("uniform DirLight DirectionalLights");
+        forwardLighting.ShouldNotContain("uniform PointLight PointLights");
+        forwardLighting.ShouldNotContain("uniform SpotLight SpotLights");
+        forwardLighting.ShouldNotContain("XRENGINE_MAX_FORWARD_LOCAL_LIGHTS");
     }
 
     [Test]
@@ -279,7 +281,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
-    public void ImportedUberFragment_ConsumesGeneratedVertexContracts()
+    public void UberFragment_ConsumesGeneratedVertexContracts()
     {
         string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
 
@@ -297,17 +299,17 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     {
         XRMesh mesh = CreateGeneratedContractMesh();
 
-        bool previousComputeSkinning = Engine.Rendering.Settings.CalculateSkinningInComputeShader;
-        bool previousComputeBlendshapes = Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
-        bool previousAllowSkinning = Engine.Rendering.Settings.AllowSkinning;
-        bool previousAllowBlendshapes = Engine.Rendering.Settings.AllowBlendshapes;
+        bool previousComputeSkinning = GetRuntimeRenderingBool("CalculateSkinningInComputeShader");
+        bool previousComputeBlendshapes = GetRuntimeRenderingBool("CalculateBlendshapesInComputeShader");
+        bool previousAllowSkinning = GetRuntimeRenderingBool("AllowSkinning");
+        bool previousAllowBlendshapes = GetRuntimeRenderingBool("AllowBlendshapes");
 
         try
         {
-            Engine.Rendering.Settings.AllowSkinning = true;
-            Engine.Rendering.Settings.AllowBlendshapes = true;
-            Engine.Rendering.Settings.CalculateSkinningInComputeShader = false;
-            Engine.Rendering.Settings.CalculateBlendshapesInComputeShader = true;
+            SetRuntimeRenderingBool("AllowSkinning", true);
+            SetRuntimeRenderingBool("AllowBlendshapes", true);
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", false);
+            SetRuntimeRenderingBool("CalculateBlendshapesInComputeShader", true);
 
             string source = new DefaultVertexShaderGenerator(mesh).Generate();
 
@@ -318,10 +320,10 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         }
         finally
         {
-            Engine.Rendering.Settings.CalculateSkinningInComputeShader = previousComputeSkinning;
-            Engine.Rendering.Settings.CalculateBlendshapesInComputeShader = previousComputeBlendshapes;
-            Engine.Rendering.Settings.AllowSkinning = previousAllowSkinning;
-            Engine.Rendering.Settings.AllowBlendshapes = previousAllowBlendshapes;
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", previousComputeSkinning);
+            SetRuntimeRenderingBool("CalculateBlendshapesInComputeShader", previousComputeBlendshapes);
+            SetRuntimeRenderingBool("AllowSkinning", previousAllowSkinning);
+            SetRuntimeRenderingBool("AllowBlendshapes", previousAllowBlendshapes);
         }
     }
 
@@ -330,17 +332,17 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     {
         XRMesh mesh = CreateGeneratedContractMesh();
 
-        bool previousComputeSkinning = Engine.Rendering.Settings.CalculateSkinningInComputeShader;
-        bool previousComputeBlendshapes = Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
-        bool previousAllowSkinning = Engine.Rendering.Settings.AllowSkinning;
-        bool previousAllowBlendshapes = Engine.Rendering.Settings.AllowBlendshapes;
+        bool previousComputeSkinning = GetRuntimeRenderingBool("CalculateSkinningInComputeShader");
+        bool previousComputeBlendshapes = GetRuntimeRenderingBool("CalculateBlendshapesInComputeShader");
+        bool previousAllowSkinning = GetRuntimeRenderingBool("AllowSkinning");
+        bool previousAllowBlendshapes = GetRuntimeRenderingBool("AllowBlendshapes");
 
         try
         {
-            Engine.Rendering.Settings.AllowSkinning = true;
-            Engine.Rendering.Settings.AllowBlendshapes = true;
-            Engine.Rendering.Settings.CalculateSkinningInComputeShader = true;
-            Engine.Rendering.Settings.CalculateBlendshapesInComputeShader = false;
+            SetRuntimeRenderingBool("AllowSkinning", true);
+            SetRuntimeRenderingBool("AllowBlendshapes", true);
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", true);
+            SetRuntimeRenderingBool("CalculateBlendshapesInComputeShader", false);
 
             string source = new DefaultVertexShaderGenerator(mesh).Generate();
 
@@ -350,11 +352,33 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         }
         finally
         {
-            Engine.Rendering.Settings.CalculateSkinningInComputeShader = previousComputeSkinning;
-            Engine.Rendering.Settings.CalculateBlendshapesInComputeShader = previousComputeBlendshapes;
-            Engine.Rendering.Settings.AllowSkinning = previousAllowSkinning;
-            Engine.Rendering.Settings.AllowBlendshapes = previousAllowBlendshapes;
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", previousComputeSkinning);
+            SetRuntimeRenderingBool("CalculateBlendshapesInComputeShader", previousComputeBlendshapes);
+            SetRuntimeRenderingBool("AllowSkinning", previousAllowSkinning);
+            SetRuntimeRenderingBool("AllowBlendshapes", previousAllowBlendshapes);
         }
+    }
+
+    private static bool GetRuntimeRenderingBool(string propertyName)
+        => (bool)GetRuntimeRenderingSettingsProperty(propertyName).GetValue(GetRuntimeRenderingSettings())!;
+
+    private static void SetRuntimeRenderingBool(string propertyName, bool value)
+        => GetRuntimeRenderingSettingsProperty(propertyName).SetValue(GetRuntimeRenderingSettings(), value);
+
+    private static PropertyInfo GetRuntimeRenderingSettingsProperty(string propertyName)
+    {
+        object settings = GetRuntimeRenderingSettings();
+        return settings.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException($"Runtime render setting '{propertyName}' was not found.");
+    }
+
+    private static object GetRuntimeRenderingSettings()
+    {
+        Type engineType = typeof(DefaultVertexShaderGenerator).Assembly.GetType("XREngine.Engine", throwOnError: true)!;
+        Type renderingType = engineType.GetNestedType("Rendering", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Runtime rendering facade was not found.");
+        return renderingType.GetProperty("Settings", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(null)
+            ?? throw new InvalidOperationException("Runtime render settings were not found.");
     }
 
     private static string LoadShaderSource(string shaderRelativePath)

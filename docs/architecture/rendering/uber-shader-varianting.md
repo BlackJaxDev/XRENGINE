@@ -118,16 +118,15 @@ Feature gating is **compile-time only**. There are no runtime `_Enable*` / `_*To
 
 The canonical `UberShader.frag` source contains **no unconditional** feature disables. Every optional family sits behind an `#ifndef XRENGINE_UBER_DISABLE_*` guard. Default feature enablement for newly instantiated hand-authored materials is driven by the `//@feature(id="...", default=on|off)` annotations parsed into `ShaderUiManifest`; `XRMaterial.ResolveInitialFeatureEnabled` honors `feature.DefaultEnabled` directly. This means the annotation surface is the source of truth for "what does a fresh Uber material start with enabled," and the shader text never silently overrides it.
 
-There are **two deliberate family shapes**:
+There is **one canonical family shape** for hand-authored and imported materials.
 
-1. **Full family (hand-authored materials).** Starts with every optional feature at its annotation default (typically `default=off`) and opts in through the editor. The variant builder trims the compiled shape per material from authored state.
-2. **Import family (glTF / FBX imports).** Rides the `XRENGINE_UBER_IMPORT_MATERIAL` pipeline-axis macro, which is recognized by `UberShaderVariantBuilder.PipelineAxisMacros` and injected by `ShaderHelper.UberImportFragForward()`. A single `#ifdef XRENGINE_UBER_IMPORT_MATERIAL` cascade at the top of `UberShader.frag` disables the features that the importer never binds (stylized shading, detail textures, rim, parallax, subsurface, glitter, dissolve, outline, backface, flipbook, color adjustments, advanced specular, shadow masks, material AO, emission, matcap, render time). This keeps GL fragment uniform pressure predictable for older drivers and gives the variant cache a single canonical "import" shape. The cascade is covered by `ImportedUberFragmentVariant_DefinesLeanImportFeatureSet`.
+Fresh hand-authored materials start with every optional feature at its annotation default (typically `default=off`) and opt in through the editor. Imported glTF / FBX materials author the same feature-state surface explicitly, so the variant builder trims the compiled shape from material state rather than from a separate import-only pipeline axis.
 
-The two families are distinct at the pipeline-axis level — `XRENGINE_UBER_IMPORT_MATERIAL` is part of the variant hash input — so an imported material and a hand-authored material that happen to produce the same authored-state mask will still hash to different variants and not share cache entries. That is intentional: it keeps the import-side disable cascade deterministic and testable.
+Keeping imported materials on the same canonical family means two materials that produce the same authored-state mask share cache entries. OpenGL uniform pressure is controlled by generated per-material disables plus the forward lighting SSBO path, not by a second shader-source cascade.
 
 ### Rules
 
 - Do not reintroduce unconditional `#define XRENGINE_UBER_DISABLE_*` into the canonical source. All hand-authored feature state flows through authored state → variant builder.
 - Do not reintroduce `_Enable<Family>` / `_<Family>Toggle` runtime uniforms. They were redundant with the compile-time guards and actively undermined the "authored state is the sole source of truth" rule.
 - Sub-option selectors inside an already-compiled feature (e.g. `_MainHueShiftToggle`, `_LightingMode`, `_MainAlphaMaskMode`, `_AlphaForceOpaque`) are not feature toggles — they are content/mode controls — and may remain runtime uniforms.
-- Imported-material behavior must continue to cascade from `XRENGINE_UBER_IMPORT_MATERIAL`, not from ad hoc defines scattered across shader or C# code.
+- Imported-material behavior must flow through authored feature state and generated variants, not through import-only shader-source defines.

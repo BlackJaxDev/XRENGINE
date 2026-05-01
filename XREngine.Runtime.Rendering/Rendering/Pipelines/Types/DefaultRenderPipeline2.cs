@@ -2,6 +2,7 @@ using XREngine.Extensions;
 using System;
 using System.Collections;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Components;
@@ -1137,6 +1138,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private ProbeParamData[] _cachedProbeParamData = [];
     private volatile bool _pendingProbeRefresh;
     private bool _pendingProbeRefreshContentOnly;
+    private bool _pendingProbeRefreshDeferredByBatchCapture;
+    private int _observedLightProbeBatchCompletedVersion;
     private ulong _probeRefreshEarliestFrameId;
     private readonly List<LightProbeComponent> _cachedReadyProbes = new();
     private ulong _probeBindingStateFrameId = ulong.MaxValue;
@@ -1239,6 +1242,16 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             return false;
         }
 
+        if (IsProbeGiSamplingSuppressedForCurrentPass())
+        {
+            SuppressOptionalProbeSamplers();
+            program.Uniform("ForwardPbrResourcesEnabled", false);
+            program.Uniform("ProbeCount", 0);
+            program.Uniform("TetraCount", 0);
+            program.Uniform("UseProbeGrid", false);
+            return false;
+        }
+
         if (_probeBindingStateFrameId != Engine.Rendering.State.RenderFrameId)
             SyncPbrLightingResourcesForFrame(brdfTexture);
 
@@ -1291,6 +1304,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private void SyncPbrLightingResourcesForFrame(XRTexture? brdfTexture)
     {
+        if (IsProbeGiSamplingSuppressedForCurrentPass())
+            return;
+
         ulong frameId = Engine.Rendering.State.RenderFrameId;
         if (_probeBindingStateFrameId == frameId)
             return;
@@ -1306,15 +1322,29 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (world is null)
             return;
 
+        bool batchCaptureActive = world.Lights.LightProbeBatchCaptureActive;
+        int batchCompletedVersion = world.Lights.LightProbeBatchCompletedVersion;
+        bool batchCompletedSinceLastSync = false;
+        if (!batchCaptureActive)
+        {
+            batchCompletedSinceLastSync = batchCompletedVersion != _observedLightProbeBatchCompletedVersion;
+            _observedLightProbeBatchCompletedVersion = batchCompletedVersion;
+        }
+
         IReadOnlyList<LightProbeComponent> probes = world.Lights.LightProbes;
         var readyProbes = GetReadyProbes(probes, _cachedReadyProbes);
         if (readyProbes.Count == 0)
         {
+            ReportNoReadyProbeResources(probes, batchCompletedSinceLastSync);
             ClearProbeResources();
             return;
         }
 
-        switch (ProbeConfigurationChanged(readyProbes))
+        if (batchCompletedSinceLastSync)
+        {
+            BuildProbeResources(readyProbes, deferredByBatchCapture: true);
+        }
+        else switch (ProbeConfigurationChanged(readyProbes, batchCaptureActive))
         {
             case EProbeRefreshKind.Immediate:
                 BuildProbeResources(readyProbes);
@@ -1326,10 +1356,16 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
         if (_pendingProbeRefresh && frameId >= _probeRefreshEarliestFrameId)
         {
-            if (_pendingProbeRefreshContentOnly && _probeIrradianceArray is not null)
-                RefreshProbeTextureContent(readyProbes);
-            else
-                BuildProbeResources(readyProbes);
+            if (!(_pendingProbeRefreshDeferredByBatchCapture && batchCaptureActive))
+            {
+                bool deferredByBatchCapture = _pendingProbeRefreshDeferredByBatchCapture;
+                _pendingProbeRefreshDeferredByBatchCapture = false;
+
+                if (_pendingProbeRefreshContentOnly && _probeIrradianceArray is not null)
+                    RefreshProbeTextureContent(readyProbes, deferredByBatchCapture);
+                else
+                    BuildProbeResources(readyProbes, deferredByBatchCapture);
+            }
         }
 
         _probeBindingResourcesEnabled = brdfTexture is not null
@@ -1665,12 +1701,17 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         target.Clear();
         foreach (var probe in probes)
         {
-            if (probe.IrradianceTexture != null && probe.PrefilterTexture != null)
+            if (probe.HasUsableIblTextures)
                 target.Add(probe);
         }
 
         return target;
     }
+
+    private static bool IsProbeGiSamplingSuppressedForCurrentPass()
+        => Engine.Rendering.State.IsLightProbePass
+        || Engine.Rendering.State.IsSceneCapturePass
+        || Engine.Rendering.State.IsShadowPass;
 
     private enum EProbeRefreshKind : byte
     {
@@ -1679,23 +1720,70 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         DeferredContentOnly,
     }
 
-    private void ScheduleDeferredProbeRefresh()
+    private void ScheduleDeferredProbeRefresh(bool deferredByBatchCapture = false)
     {
         _pendingProbeRefresh = true;
         _pendingProbeRefreshContentOnly = true;
-        _probeRefreshEarliestFrameId = Engine.Rendering.State.RenderFrameId + ProbeContentRefreshDebounceFrames;
+        _pendingProbeRefreshDeferredByBatchCapture = deferredByBatchCapture;
+
+        ulong delayFrames = deferredByBatchCapture ? 1ul : ProbeContentRefreshDebounceFrames;
+        ulong earliestFrameId = Engine.Rendering.State.RenderFrameId + delayFrames;
+        if (_probeRefreshEarliestFrameId < earliestFrameId)
+            _probeRefreshEarliestFrameId = earliestFrameId;
     }
 
-    private EProbeRefreshKind ProbeConfigurationChanged(IReadOnlyList<LightProbeComponent> readyProbes)
+    private void ScheduleDeferredStructuralProbeRefreshForBatchCapture()
     {
+        _pendingProbeRefresh = true;
+        _pendingProbeRefreshContentOnly = false;
+        _pendingProbeRefreshDeferredByBatchCapture = true;
+
+        ulong earliestFrameId = Engine.Rendering.State.RenderFrameId + 1;
+        if (_probeRefreshEarliestFrameId < earliestFrameId)
+            _probeRefreshEarliestFrameId = earliestFrameId;
+    }
+
+    private EProbeRefreshKind ResolveStructuralProbeRefresh(bool batchCaptureActive)
+    {
+        if (batchCaptureActive)
+        {
+            ScheduleDeferredStructuralProbeRefreshForBatchCapture();
+            return EProbeRefreshKind.None;
+        }
+
+        return EProbeRefreshKind.Immediate;
+    }
+
+    private EProbeRefreshKind ResolveContentProbeRefresh(bool batchCaptureActive)
+    {
+        if (batchCaptureActive)
+        {
+            ScheduleDeferredProbeRefresh(deferredByBatchCapture: true);
+            return EProbeRefreshKind.None;
+        }
+
+        return EProbeRefreshKind.DeferredContentOnly;
+    }
+
+    private bool AreProbeBindingResourcesMissing()
+        => _probeIrradianceArray is null
+        || _probePrefilterArray is null
+        || _probePositionBuffer is null
+        || _probeParamBuffer is null;
+
+    private EProbeRefreshKind ProbeConfigurationChanged(IReadOnlyList<LightProbeComponent> readyProbes, bool batchCaptureActive)
+    {
+        if (AreProbeBindingResourcesMissing())
+            return ResolveStructuralProbeRefresh(batchCaptureActive);
+
         if (_lastProbeCount != readyProbes.Count)
         {
-            return EProbeRefreshKind.Immediate;
+            return ResolveStructuralProbeRefresh(batchCaptureActive);
         }
 
         if (_cachedProbePositions.Count != readyProbes.Count || _cachedProbeTextures.Count != readyProbes.Count)
         {
-            return EProbeRefreshKind.Immediate;
+            return ResolveStructuralProbeRefresh(batchCaptureActive);
         }
 
         bool contentOnlyChanged = false;
@@ -1705,14 +1793,14 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             var position = probe.Transform.RenderTranslation;
             if (!_cachedProbePositions.TryGetValue(probe.ID, out var cachedPos) || cachedPos != position)
             {
-                return EProbeRefreshKind.Immediate;
+                return ResolveStructuralProbeRefresh(batchCaptureActive);
             }
 
             if (!_cachedProbeTextures.TryGetValue(probe.ID, out var cachedTex)
                 || cachedTex.Irradiance != probe.IrradianceTexture
                 || cachedTex.Prefilter != probe.PrefilterTexture)
             {
-                return EProbeRefreshKind.Immediate;
+                return ResolveStructuralProbeRefresh(batchCaptureActive);
             }
 
             if (!_observedProbeCaptureVersions.TryGetValue(probe.ID, out var observedVersion)
@@ -1723,7 +1811,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             }
         }
 
-        return contentOnlyChanged ? EProbeRefreshKind.DeferredContentOnly : EProbeRefreshKind.None;
+        return contentOnlyChanged ? ResolveContentProbeRefresh(batchCaptureActive) : EProbeRefreshKind.None;
     }
 
     private void ClearProbeResources()
@@ -1757,6 +1845,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _lastProbeCount = 0;
         _pendingProbeRefresh = false;
         _pendingProbeRefreshContentOnly = false;
+        _pendingProbeRefreshDeferredByBatchCapture = false;
         _probeRefreshEarliestFrameId = 0;
         _probeBindingStateFrameId = ulong.MaxValue;
         _probeTetrahedraDebugRenderFrameId = ulong.MaxValue;
@@ -1771,8 +1860,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     /// Re-copies all source texture layers into the existing texture arrays on the GPU
     /// without destroying/recreating any GPU resources or rebuilding the grid.
     /// </summary>
-    private void RefreshProbeTextureContent(IList<LightProbeComponent> readyProbes)
+    private void RefreshProbeTextureContent(IList<LightProbeComponent> readyProbes, bool deferredByBatchCapture = false)
     {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+
         _probeIrradianceArray?.PushData();
         _probePrefilterArray?.PushData();
 
@@ -1781,15 +1872,24 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
         _pendingProbeRefresh = false;
         _pendingProbeRefreshContentOnly = false;
+        _pendingProbeRefreshDeferredByBatchCapture = false;
+
+        stopwatch.Stop();
+        ReportProbeResourceRefresh(structuralRefresh: false, readyProbes.Count, stopwatch.Elapsed, deferredByBatchCapture);
     }
 
-    private void BuildProbeResources(IList<LightProbeComponent> readyProbes)
+    private void BuildProbeResources(IList<LightProbeComponent> readyProbes, bool deferredByBatchCapture = false)
     {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+
         ClearProbeResources();
 
         if (readyProbes.Count == 0)
         {
             _pendingProbeRefresh = false;
+            stopwatch.Stop();
+            if (deferredByBatchCapture)
+                Debug.Out("[ProbeGI] Batch completed but no usable probe resources were built. Ready=0");
             return;
         }
 
@@ -1821,7 +1921,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         }
 
         if (irrTextures.Count == 0 || preTextures.Count == 0)
+        {
+            stopwatch.Stop();
             return;
+        }
 
         _probeIrradianceArray = new XRTexture2DArray([.. irrTextures])
         {
@@ -1838,6 +1941,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             MagFilter = ETexMagFilter.Linear,
             SizedInternalFormat = ESizedInternalFormat.Rgb16f,  // Match prefilter texture format
         };
+        PushProbeTextureArrays();
 
         _probePositionBuffer = new XRDataBuffer("LightProbePositions", EBufferTarget.ShaderStorageBuffer, (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
         {
@@ -1862,8 +1966,79 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _lastProbeCount = positions.Count;
         _pendingProbeRefresh = false;
         _pendingProbeRefreshContentOnly = false;
+        _pendingProbeRefreshDeferredByBatchCapture = false;
 
         StartTetrahedralizationJob(readyProbes);
+
+        stopwatch.Stop();
+        ReportProbeResourceRefresh(structuralRefresh: true, readyProbes.Count, stopwatch.Elapsed, deferredByBatchCapture);
+    }
+
+    private void PushProbeTextureArrays()
+    {
+        var renderer = AbstractRenderer.Current;
+        if (_probeIrradianceArray is not null)
+        {
+            renderer?.GetOrCreateAPIRenderObject(_probeIrradianceArray, generateNow: true);
+            _probeIrradianceArray.PushData();
+        }
+
+        if (_probePrefilterArray is not null)
+        {
+            renderer?.GetOrCreateAPIRenderObject(_probePrefilterArray, generateNow: true);
+            _probePrefilterArray.PushData();
+        }
+    }
+
+    private void ReportProbeResourceRefresh(bool structuralRefresh, int readyProbeCount, TimeSpan elapsed, bool deferredByBatchCapture)
+    {
+        IRuntimeRenderWorld? world = RenderingWorld;
+        if (world?.Lights is not { } lights)
+            return;
+
+        lights.RecordLightProbeResourceRefresh(structuralRefresh, elapsed);
+
+        if (!lights.LightProbeBatchCaptureActive && !deferredByBatchCapture)
+            return;
+
+        string refreshKind = structuralRefresh ? "structural" : "content";
+        Debug.Out($"[ProbeGI] {refreshKind} refresh ready={readyProbeCount} elapsedMs={elapsed.TotalMilliseconds:F2} deferredByBatchCapture={deferredByBatchCapture}");
+    }
+
+    private static void ReportNoReadyProbeResources(IReadOnlyList<LightProbeComponent> probes, bool batchCompletedSinceLastSync)
+    {
+        if (probes.Count == 0)
+            return;
+
+        if (!batchCompletedSinceLastSync)
+        {
+            Debug.RenderingEvery(
+                "ProbeGI.NoReady.V2",
+                TimeSpan.FromSeconds(5),
+                "[ProbeGI] No usable probes. Total={0}, Ready=0 (need valid irradiance+prefilter textures and CaptureVersion>0)",
+                probes.Count);
+            return;
+        }
+
+        int withIrradiance = 0;
+        int withPrefilter = 0;
+        int validIbl = 0;
+        int captured = 0;
+        for (int i = 0; i < probes.Count; ++i)
+        {
+            LightProbeComponent probe = probes[i];
+            if (probe.IrradianceTexture is not null)
+                withIrradiance++;
+            if (probe.PrefilterTexture is not null)
+                withPrefilter++;
+            if (probe.IblTexturesValid)
+                validIbl++;
+            if (probe.CaptureVersion > 0u)
+                captured++;
+        }
+
+        Debug.Out(
+            $"[ProbeGI] Batch completed but no usable probes are available. Total={probes.Count}, WithIrradiance={withIrradiance}, WithPrefilter={withPrefilter}, ValidIbl={validIbl}, Captured={captured}");
     }
 
     private void StartTetrahedralizationJob(IList<LightProbeComponent> probes)

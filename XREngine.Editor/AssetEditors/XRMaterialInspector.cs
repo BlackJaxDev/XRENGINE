@@ -1058,7 +1058,8 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     private static void DrawShaderParameterContextMenu(XRMaterial material, ShaderVar param)
     {
         bool canCopy = TrySerializeShaderParameterValue(param, out string serializedValue);
-        bool canPaste = CanApplyShaderParameterClipboard(param, ImGui.GetClipboardText());
+        string? clipboardText = GetClipboardTextSafe();
+        bool canPaste = CanApplyShaderParameterClipboard(param, clipboardText);
 
         if (!ImGui.BeginPopupContextItem($"ShaderParamContext_{param.GetHashCode()}"))
             return;
@@ -1067,9 +1068,21 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             ImGui.SetClipboardText(serializedValue);
 
         if (ImGui.MenuItem("Paste Value", null, false, canPaste))
-            TryApplyShaderParameterClipboard(material, param, ImGui.GetClipboardText());
+            TryApplyShaderParameterClipboard(material, param, clipboardText);
 
         ImGui.EndPopup();
+    }
+
+    private static string? GetClipboardTextSafe()
+    {
+        try
+        {
+            return ImGui.GetClipboardText();
+        }
+        catch (NullReferenceException)
+        {
+            return null;
+        }
     }
 
     private static bool TrySerializeShaderParameterValue(ShaderVar param, out string serialized)

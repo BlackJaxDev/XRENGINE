@@ -20,7 +20,6 @@ public static class ShaderHelper
     private const string WeightedBlendedOitDefine = "XRENGINE_FORWARD_WEIGHTED_OIT";
     private const string PerPixelLinkedListDefine = "XRENGINE_FORWARD_PPLL";
     private const string DepthPeelingDefine = "XRENGINE_FORWARD_DEPTH_PEEL";
-    private const string UberImportMaterialDefine = "XRENGINE_UBER_IMPORT_MATERIAL";
     private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<DefinedVariantCacheKey, string>> DefinedVariantSourceCache = new();
     private static readonly ConcurrentDictionary<DefinedVariantShaderCacheKey, XRShader> DefinedVariantShaderCache = new();
     private static readonly ConcurrentDictionary<EngineShaderCacheKey, Task<XRShader>> EngineShaderLoadTasks = new();
@@ -105,16 +104,6 @@ public static class ShaderHelper
         source._type = shaderType;
         return source;
     }
-
-    /// <summary>
-    /// Lean import-focused Uber fragment shader variant that strips optional features
-    /// the model importer never binds, keeping GL fragment uniform pressure below
-    /// older driver register budgets.
-    /// </summary>
-    public static XRShader UberImportFragForward()
-        => CreateDefinedShaderVariant(
-            UberFragForward(),
-            UberImportMaterialDefine)!;
 
     #region Forward Lit Shaders
 
@@ -418,13 +407,6 @@ public static class ShaderHelper
             sourceText.Contains($"#define {DepthPeelingDefine}", StringComparison.Ordinal);
     }
 
-    private static bool HasDefine(XRShader? shader, string defineName)
-    {
-        string? sourceText = shader?.Source?.Text;
-        return !string.IsNullOrWhiteSpace(sourceText) &&
-            sourceText.Contains($"#define {defineName}", StringComparison.Ordinal);
-    }
-
     private static XRShader? LoadStandardForwardShaderByFileName(string fileName)
         => fileName switch
         {
@@ -705,7 +687,7 @@ public static class ShaderHelper
 
         string fileName = Path.GetFileName(path);
         if (fileName.Equals("UberShader.frag", StringComparison.OrdinalIgnoreCase) && HasTransparencyForwardVariantDefine(shader))
-            return HasDefine(shader, UberImportMaterialDefine) ? UberImportFragForward() : UberFragForward();
+            return UberFragForward();
 
         if (TryGetStandardForwardFileName(fileName, out string standardFileName))
             return LoadStandardForwardShaderByFileName(standardFileName);

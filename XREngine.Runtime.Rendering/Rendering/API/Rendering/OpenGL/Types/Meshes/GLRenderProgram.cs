@@ -43,7 +43,7 @@ namespace XREngine.Rendering.OpenGL
 
             // Binding-batch sampler tracking is scoped to the active draw on the render thread.
             private readonly HashSet<int> _boundSamplerLocations = [];
-            private readonly HashSet<int> _boundSamplerUnits = [];
+            private readonly Dictionary<int, SamplerUnitBinding> _boundSamplerUnits = [];
             private readonly HashSet<string> _boundSamplerNames = new(StringComparer.Ordinal);
             private readonly HashSet<string> _suppressedFallbackSamplerNames = new(StringComparer.Ordinal);
 
@@ -71,6 +71,7 @@ namespace XREngine.Rendering.OpenGL
 
             private readonly record struct UniformInfo(GLEnum Type, int Size);
             private readonly record struct SamplerUniformInfo(string Name, GLEnum Type);
+            private readonly record struct SamplerUnitBinding(uint TextureId, ETextureTarget Target);
             internal readonly record struct UniformMetadataEntry(string Name, GLEnum Type, int Size);
 
             private static XRTexture2D? _fallbackTexture2D;
@@ -134,7 +135,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             internal IReadOnlyCollection<int> GetBoundSamplerUnitsView()
-                => _boundSamplerUnits;
+                => _boundSamplerUnits.Keys;
 
             private void CacheUniformLocation(string name)
             {

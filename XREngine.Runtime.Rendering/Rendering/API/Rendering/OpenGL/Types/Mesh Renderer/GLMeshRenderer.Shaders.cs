@@ -91,13 +91,13 @@ namespace XREngine.Rendering.OpenGL
                 GenProgramsAndBuffers();
             }
 
-            internal bool IsPreparedForRendering
+            public bool IsPreparedForRendering
                 => IsGenerated
                 && _shaderConfigVersion == Engine.Rendering.Settings.ShaderConfigVersion
                 && BuffersBound
                 && AreBuffersReadyForRendering();
 
-            internal bool TryPrepareForRendering()
+            public bool TryPrepareForRendering()
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.TryPrepareForRendering");
 
@@ -127,6 +127,9 @@ namespace XREngine.Rendering.OpenGL
 
                 if (!BuffersBound)
                     BindBuffers(vertexProgram!);
+
+                if (BuffersBound)
+                    PrepareDynamicRenderData();
 
                 return BuffersBound && AreBuffersReadyForRendering();
             }

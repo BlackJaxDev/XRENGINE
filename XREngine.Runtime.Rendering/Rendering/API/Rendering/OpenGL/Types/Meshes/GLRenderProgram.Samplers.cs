@@ -49,8 +49,9 @@ namespace XREngine.Rendering.OpenGL
                 RememberSamplerBindingName(name);
                 int location = GetUniformLocation(name);
 
-                // If the uniform is optimized out (e.g., layout(binding=) samplers), still bind the texture to the unit
-                // so fixed-binding samplers can sample correctly. Log once when the uniform is missing.
+                // If the uniform is optimized out (e.g. a layout(binding=) sampler),
+                // fixed-unit binding below can still make the sampler usable when
+                // the requested unit is free.
                 if (location < 0 && Engine.Rendering.Settings.LogMissingShaderSamplers)
                 {
                     string key = $"{Data.Name ?? BindingId.ToString()}:{name}:{textureUnit}";
@@ -58,11 +59,10 @@ namespace XREngine.Rendering.OpenGL
                     {
                         Debug.OpenGLWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
                             $"Texture: '{texture.Name}', SamplerName: '{texture.SamplerName}'. " +
-                            $"Binding anyway due to fixed sampler binding.");
+                            $"Using fixed sampler binding if the unit is free.");
                     }
                 }
 
-                // Always bind to the requested unit; Uniform() will be a no-op if location < 0.
                 Sampler(location, texture, textureUnit);
             }
 
@@ -84,7 +84,7 @@ namespace XREngine.Rendering.OpenGL
                         string samplerName = (texture.Data as XRTexture)?.SamplerName ?? "null";
                         Debug.OpenGLWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
                             $"Texture: '{texName}', SamplerName: '{samplerName}'. " +
-                            $"Binding anyway due to fixed sampler binding.");
+                            $"Using fixed sampler binding if the unit is free.");
                     }
                 }
 
@@ -96,16 +96,20 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void Sampler(int location, IGLTexture texture, int textureUnit)
             {
-                // Even if the uniform location is invalid (-1), we still want the GL state
-                // to have the texture bound at the requested unit for layout(binding=) samplers.
-                _boundSamplerUnits.Add(textureUnit);
                 bool canBindUniform = MarkSamplerBinding(location);
 
                 if (location >= 0)
                     _boundSamplerLocations.Add(location);
 
                 texture.PreSampling();
-                Renderer.SetActiveTextureUnit(textureUnit);
+                if (!TryResolveSamplerTextureUnit(location, texture, textureUnit, out int resolvedTextureUnit))
+                {
+                    texture.PostSampling();
+                    return;
+                }
+
+                _boundSamplerUnits[resolvedTextureUnit] = new SamplerUnitBinding(texture.BindingId, texture.TextureTarget);
+                Renderer.SetActiveTextureUnit(resolvedTextureUnit);
 
                 // Unbind stale texture targets on this unit that conflict with the
                 // new binding (e.g. a cubemap left from a previous pass when this
@@ -114,11 +118,56 @@ namespace XREngine.Rendering.OpenGL
                 Renderer.ClearConflictingTextureTargets(texture.TextureTarget);
 
                 if (canBindUniform && location >= 0)
-                    Uniform(location, textureUnit);
+                    Uniform(location, resolvedTextureUnit);
 
                 texture.Bind();
                 texture.PostSampling();
             }
+
+            private bool TryResolveSamplerTextureUnit(int location, IGLTexture texture, int requestedTextureUnit, out int resolvedTextureUnit)
+            {
+                int maxTextureUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
+                if (requestedTextureUnit >= 0 && requestedTextureUnit < maxTextureUnits)
+                {
+                    if (!_boundSamplerUnits.TryGetValue(requestedTextureUnit, out SamplerUnitBinding existing)
+                        || IsSameSamplerBinding(existing, texture))
+                    {
+                        resolvedTextureUnit = requestedTextureUnit;
+                        return true;
+                    }
+
+                    if (location < 0)
+                    {
+                        resolvedTextureUnit = -1;
+                        return false;
+                    }
+                }
+
+                if (location >= 0 && TryFindFreeSamplerTextureUnit(out resolvedTextureUnit))
+                    return true;
+
+                resolvedTextureUnit = requestedTextureUnit;
+                return requestedTextureUnit >= 0 && requestedTextureUnit < maxTextureUnits;
+            }
+
+            private bool TryFindFreeSamplerTextureUnit(out int textureUnit)
+            {
+                int maxTextureUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
+                for (int candidate = maxTextureUnits - 1; candidate >= 0; candidate--)
+                {
+                    if (_boundSamplerUnits.ContainsKey(candidate))
+                        continue;
+
+                    textureUnit = candidate;
+                    return true;
+                }
+
+                textureUnit = -1;
+                return false;
+            }
+
+            private static bool IsSameSamplerBinding(SamplerUnitBinding binding, IGLTexture texture)
+                => binding.TextureId == texture.BindingId && binding.Target == texture.TextureTarget;
             #endregion
         }
     }
