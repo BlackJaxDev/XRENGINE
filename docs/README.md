@@ -53,6 +53,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Model Import](features/model-import.md)
 - [Native Dependencies](features/native-dependencies.md)
 - [Networking](features/networking.md)
+- [Octahedral Billboard Capture](features/octahedral-billboard-capture.md)
 - [ImGui Shader Editor](features/shader-editor.md)
 - [Steam Audio Integration](features/steam-audio.md)
 - [Unity Conversion Integrations](features/unity-conversion-integrations.md)

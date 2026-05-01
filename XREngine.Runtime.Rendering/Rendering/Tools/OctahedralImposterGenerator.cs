@@ -2,267 +2,603 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Threading;
-using Silk.NET.OpenGL;
+using System.Threading.Tasks;
 using XREngine.Components.Scene.Mesh;
-using XREngine.Components.Scene.Transforms;
+using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
-using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.Tools;
 
+public enum EOctahedralImposterCaptureMode
+{
+    Model,
+    SelectedSubmeshes,
+}
+
+public enum EOctahedralImposterDepthMode
+{
+    None,
+}
+
 /// <summary>
-/// Utility for baking 26-view octahedral impostor sheets from an existing <see cref="ModelComponent"/>.
-/// The capture set covers axes, mid-axes, and elevated diagonals so that the runtime shader can blend the
-/// closest three views from the billboard's facing direction.
+/// Persistent metadata and texture references for a baked directional octahedral billboard.
+/// </summary>
+public sealed class OctahedralBillboardAsset : XRAsset
+{
+    public const int CurrentVersion = 1;
+    public const string ColorSamplerName = "ImposterViews";
+
+    private int _version = CurrentVersion;
+    private XRTexture2DArray? _colorViews;
+    private XRTexture2DArray? _depthViews;
+    private Vector3[] _captureDirections = [];
+    private int[] _sourceSubmeshIndices = [];
+    private EOctahedralImposterCaptureMode _captureMode;
+    private EOctahedralImposterDepthMode _depthMode = EOctahedralImposterDepthMode.None;
+    private uint _captureResolution;
+    private float _capturePadding = 1.15f;
+    private float _orthographicExtent;
+    private Vector3 _captureCenterWorld;
+    private Vector3 _captureCenterLocal;
+    private AABB _worldBounds;
+    private AABB _localBounds;
+    private Vector2 _billboardSize = Vector2.One;
+    private int _sourceLayer;
+    private bool _sourceCastsShadows;
+    private string? _sourceModelPath;
+    private string? _sourceMaterialMode;
+    private string? _rendererBackend;
+    private string? _qualityNotes;
+
+    public int Version
+    {
+        get => _version;
+        set => SetField(ref _version, value);
+    }
+
+    public XRTexture2DArray? ColorViews
+    {
+        get => _colorViews;
+        set
+        {
+            if (value is not null)
+                ConfigureColorViewTexture(value);
+            SetField(ref _colorViews, value);
+        }
+    }
+
+    public XRTexture2DArray? DepthViews
+    {
+        get => _depthViews;
+        set => SetField(ref _depthViews, value);
+    }
+
+    public Vector3[] CaptureDirections
+    {
+        get => _captureDirections;
+        set => SetField(ref _captureDirections, value ?? []);
+    }
+
+    public int[] SourceSubmeshIndices
+    {
+        get => _sourceSubmeshIndices;
+        set => SetField(ref _sourceSubmeshIndices, value ?? []);
+    }
+
+    public EOctahedralImposterCaptureMode CaptureMode
+    {
+        get => _captureMode;
+        set => SetField(ref _captureMode, value);
+    }
+
+    public EOctahedralImposterDepthMode DepthMode
+    {
+        get => _depthMode;
+        set => SetField(ref _depthMode, value);
+    }
+
+    public uint CaptureResolution
+    {
+        get => _captureResolution;
+        set => SetField(ref _captureResolution, value);
+    }
+
+    public float CapturePadding
+    {
+        get => _capturePadding;
+        set => SetField(ref _capturePadding, value);
+    }
+
+    public float OrthographicExtent
+    {
+        get => _orthographicExtent;
+        set => SetField(ref _orthographicExtent, value);
+    }
+
+    public Vector3 CaptureCenterWorld
+    {
+        get => _captureCenterWorld;
+        set => SetField(ref _captureCenterWorld, value);
+    }
+
+    public Vector3 CaptureCenterLocal
+    {
+        get => _captureCenterLocal;
+        set => SetField(ref _captureCenterLocal, value);
+    }
+
+    public AABB WorldBounds
+    {
+        get => _worldBounds;
+        set => SetField(ref _worldBounds, value);
+    }
+
+    public AABB LocalBounds
+    {
+        get => _localBounds;
+        set => SetField(ref _localBounds, value);
+    }
+
+    public Vector2 BillboardSize
+    {
+        get => _billboardSize;
+        set => SetField(ref _billboardSize, value);
+    }
+
+    public int SourceLayer
+    {
+        get => _sourceLayer;
+        set => SetField(ref _sourceLayer, Math.Clamp(value, 0, 31));
+    }
+
+    public bool SourceCastsShadows
+    {
+        get => _sourceCastsShadows;
+        set => SetField(ref _sourceCastsShadows, value);
+    }
+
+    public string? SourceModelPath
+    {
+        get => _sourceModelPath;
+        set => SetField(ref _sourceModelPath, value);
+    }
+
+    public string? SourceMaterialMode
+    {
+        get => _sourceMaterialMode;
+        set => SetField(ref _sourceMaterialMode, value);
+    }
+
+    public string? RendererBackend
+    {
+        get => _rendererBackend;
+        set => SetField(ref _rendererBackend, value);
+    }
+
+    public string? QualityNotes
+    {
+        get => _qualityNotes;
+        set => SetField(ref _qualityNotes, value);
+    }
+
+    internal static void ConfigureColorViewTexture(XRTexture2DArray texture)
+    {
+        texture.Name ??= "OctahedralImpostorViews";
+        texture.SamplerName = ColorSamplerName;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = true;
+    }
+}
+
+/// <summary>
+/// Utility for baking 26-view octahedral impostor textures from an existing <see cref="ModelComponent"/>.
 /// </summary>
 public sealed class OctahedralImposterGenerator
 {
+    private const string UnsupportedDepthMessage =
+        "Depth output for octahedral billboards is deferred for v1. Captures use a depth buffer for correct rendering, but no depth texture asset is produced.";
+
     private static readonly Vector3[] s_captureDirections = BuildCaptureDirections();
+    private static readonly object s_resourceLock = new();
+    private static CaptureResources? s_resources;
 
-    /// <summary>
-    /// Configuration values for the capture process.
-    /// </summary>
-    public sealed record Settings(uint SheetSize = 1024, float CapturePadding = 1.15f, bool CaptureDepth = true);
+    public static IReadOnlyList<Vector3> CaptureDirections => s_captureDirections;
 
-    /// <summary>
-    /// Result textures from a bake.
-    /// </summary>
-    public sealed record Result(
-        XRTexture2DArray Views,
-        XRTexture2D? Depth,
-        AABB LocalBounds,
-        IReadOnlyList<Vector3> CaptureDirections);
+    public sealed record Settings(
+        uint SheetSize = 1024,
+        float CapturePadding = 1.15f,
+        bool CaptureDepth = false);
 
-    /// <summary>
-    /// Generates a new impostor sheet for the supplied model component.
-    /// This method dispatches rendering work to the main thread and blocks until complete.
-    /// </summary>
-    /// <param name="component">Component that owns the model to capture.</param>
-    /// <param name="settings">Capture settings such as resolution.</param>
-    /// <returns>A <see cref="Result"/> containing the finished textures or <c>null</c> when capture failed.</returns>
-    public static Result? Generate(ModelComponent component, Settings settings)
+    public sealed record CaptureProgress(int CompletedViews, int TotalViews, string Message)
     {
-        ArgumentNullException.ThrowIfNull(component);
+        public float Normalized => TotalViews <= 0 ? 0.0f : Math.Clamp((float)CompletedViews / TotalViews, 0.0f, 1.0f);
+    }
 
-        Model? model = component.Model;
-        if (model is null)
-        {
-            Debug.LogWarning("Cannot generate impostor: no model assigned.");
-            return null;
-        }
+    public sealed record Result(
+        OctahedralBillboardAsset Asset,
+        XRTexture2DArray Views,
+        XRTexture2DArray? DepthViews,
+        AABB LocalBounds,
+        AABB WorldBounds,
+        Vector3 CaptureCenterWorld,
+        Vector3 CaptureCenterLocal,
+        float OrthographicExtent,
+        IReadOnlyList<Vector3> CaptureDirections,
+        IReadOnlyList<int> SourceSubmeshIndices,
+        EOctahedralImposterCaptureMode CaptureMode,
+        IReadOnlyList<XRTexture> PreviewTextures,
+        string? Warning);
 
-        // Build world-space bounds, preferring skinned bounds from live renderable meshes.
-        AABB captureBounds = CalculateCombinedWorldBounds(component);
-        if (!captureBounds.IsValid)
-        {
-            // Fallback to static model bounds transformed by the component.
-            AABB modelBounds = CalculateCombinedModelBounds(model);
-            captureBounds = TransformBoundsToWorld(modelBounds, component.Transform);
-        }
+    public static Result? Generate(ModelComponent component, Settings settings)
+        => Generate(component, settings, null);
 
-        if (!captureBounds.IsValid)
-        {
-            Debug.LogWarning("Cannot generate impostor: model has no valid bounds.");
-            return null;
-        }
-
-        // Use the component's existing world - it is already activated and visible
-        IRuntimeRenderWorld? world = component.WorldAs<IRuntimeRenderWorld>();
-        if (world is null)
-        {
-            Debug.LogWarning("Cannot generate impostor: component has no world.");
-            return null;
-        }
-
-        Vector3 captureCenter = captureBounds.Center;
-
+    public static Result? Generate(ModelComponent component, Settings settings, IReadOnlyCollection<int>? submeshIndices)
+    {
         Result? result = null;
+        Exception? exception = null;
 
-        // If we're already on the main/render thread, execute directly
         if (Engine.IsRenderThread)
         {
-            result = ExecuteCapture(component, world, captureCenter, captureBounds, settings);
+            try
+            {
+                result = GenerateOnRenderThread(component, settings, submeshIndices, null, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                exception = ex;
+            }
         }
         else
         {
-            // Dispatch to main thread and wait for completion
             using ManualResetEventSlim completionEvent = new(false);
             Engine.EnqueueMainThreadTask(() =>
             {
                 try
                 {
-                    result = ExecuteCapture(component, world, captureCenter, captureBounds, settings);
+                    result = GenerateOnRenderThread(component, settings, submeshIndices, null, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    exception = ex;
                 }
                 finally
                 {
                     completionEvent.Set();
                 }
-            });
+            }, "OctahedralImposterGenerator.Generate");
             completionEvent.Wait();
         }
+
+        if (exception is not null)
+            Debug.LogException(exception, "Octahedral impostor generation failed.");
 
         return result;
     }
 
-    /// <summary>
-    /// Executes the actual capture work on the main/render thread.
-    /// </summary>
-    private static Result? ExecuteCapture(
+    public static Task<Result?> GenerateAsync(
         ModelComponent component,
-        IRuntimeRenderWorld world,
-        Vector3 captureCenter,
-        AABB captureBounds,
-        Settings settings)
+        Settings settings,
+        IReadOnlyCollection<int>? submeshIndices = null,
+        IProgress<CaptureProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
-        // Save original layers and switch to Gizmos layer for isolated capture
-        Dictionary<RenderInfo, int> originalLayers = [];
-        foreach (RenderInfo ri in component.RenderedObjects)
+        ArgumentNullException.ThrowIfNull(component);
+
+        TaskCompletionSource<Result?> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Engine.EnqueueMainThreadTask(() =>
         {
-            if (ri is RenderInfo3D ri3d)
+            if (cancellationToken.IsCancellationRequested)
             {
-                originalLayers[ri] = ri3d.Layer;
-                ri3d.Layer = DefaultLayers.GizmosIndex;
+                tcs.TrySetCanceled(cancellationToken);
+                return;
             }
-        }
+
+            try
+            {
+                Result? result = GenerateOnRenderThread(component, settings, submeshIndices, progress, cancellationToken);
+                if (cancellationToken.IsCancellationRequested)
+                    tcs.TrySetCanceled(cancellationToken);
+                else
+                    tcs.TrySetResult(result);
+            }
+            catch (OperationCanceledException)
+            {
+                tcs.TrySetCanceled(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, "Octahedral impostor generation failed.");
+                tcs.TrySetException(ex);
+            }
+        }, "OctahedralImposterGenerator.GenerateAsync");
+
+        return tcs.Task;
+    }
+
+    private static Result? GenerateOnRenderThread(
+        ModelComponent component,
+        Settings settings,
+        IReadOnlyCollection<int>? submeshIndices,
+        IProgress<CaptureProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(component);
+
+        Model? model = component.Model;
+        if (model is null)
+            return Fail("Cannot generate impostor: no model assigned.");
+
+        IRuntimeRenderWorld? world = component.WorldAs<IRuntimeRenderWorld>();
+        if (world is null)
+            return Fail("Cannot generate impostor: component has no world.");
+
+        RenderInfo3D[] targets = ResolveTargetRenderInfos(component, submeshIndices, out int[] normalizedIndices, out EOctahedralImposterCaptureMode captureMode);
+        if (targets.Length == 0)
+            return Fail("Cannot generate impostor: no renderable meshes matched the capture request.");
+
+        AABB worldBounds = CalculateCombinedWorldBounds(component, model, normalizedIndices);
+        if (!worldBounds.IsValid)
+            return Fail("Cannot generate impostor: model has no valid bounds.");
+
+        AABB localBounds = CalculateCombinedLocalBounds(component, model, normalizedIndices, worldBounds);
+        Vector3 captureCenterWorld = worldBounds.Center;
+        Vector3 captureCenterLocal = TransformPointToLocal(component, captureCenterWorld);
+
+        float orthographicExtent = CalculateOrthographicExtent(worldBounds, settings.CapturePadding);
+        if (!float.IsFinite(orthographicExtent) || orthographicExtent <= 0.0f)
+            return Fail("Cannot generate impostor: calculated capture extent is invalid.");
+
+        string? warning = settings.CaptureDepth ? UnsupportedDepthMessage : null;
+        if (warning is not null)
+            Debug.LogWarning(warning);
+
+        XRTexture2DArray colorArray = CreateColorArray(settings.SheetSize);
+        XRRenderBuffer depthBuffer = new(settings.SheetSize, settings.SheetSize, ERenderBufferStorage.Depth24Stencil8)
+        {
+            Name = "OctahedralImpostorDepthBuffer"
+        };
+
+        XRFrameBuffer[] framebuffers = BuildLayerFramebuffers(colorArray, depthBuffer);
+        XRTexture[] previewTextures = BuildPreviewTextures(colorArray);
+        CaptureResources resources = GetCaptureResources(settings.SheetSize);
+        ConfigureCommandCollection(resources);
 
         try
         {
-            XRTexture2DArray viewArray = XRTexture2DArray.CreateFrameBufferTexture(
-                (uint)s_captureDirections.Length,
-                settings.SheetSize,
-                settings.SheetSize,
-                EPixelInternalFormat.Rgba16f,
-                EPixelFormat.Rgba,
-                EPixelType.Float,
-                EFrameBufferAttachment.ColorAttachment0);
-            viewArray.Name = "OctahedralImpostorViews";
-
-            // Match sampling defaults for captures
-            viewArray.MinFilter = ETexMinFilter.Linear;
-            viewArray.MagFilter = ETexMagFilter.Linear;
-            viewArray.UWrap = ETexWrapMode.ClampToEdge;
-            viewArray.VWrap = ETexWrapMode.ClampToEdge;
-            viewArray.SizedInternalFormat = viewArray.Textures[0].SizedInternalFormat;
-
-            // Allocate GPU storage up front so FBO attachments are complete
-            viewArray.PushData();
-
-            bool useDepthTexture = settings.CaptureDepth && AbstractRenderer.Current is OpenGLRenderer;
-            XRTexture2D? depthTexture = useDepthTexture
-                ? new XRTexture2D(settings.SheetSize, settings.SheetSize, EPixelInternalFormat.DepthComponent32f, EPixelFormat.DepthComponent, EPixelType.Float, false)
-                {
-                    FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
-                    Name = "ImpostorDepth"
-                }
-                : null;
-
-            XRRenderBuffer? depthBuffer = settings.CaptureDepth && !useDepthTexture
-                ? new XRRenderBuffer(settings.SheetSize, settings.SheetSize, ERenderBufferStorage.Depth24Stencil8)
-                {
-                    Name = "ImpostorDepth"
-                }
-                : null;
-
-            depthTexture?.PushData();
+            progress?.Report(new CaptureProgress(0, s_captureDirections.Length, "Starting octahedral capture."));
 
             for (int i = 0; i < s_captureDirections.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 bool ok = CaptureViewLayer(
+                    resources,
                     world,
-                    captureCenter,
-                    captureBounds,
+                    targets,
+                    captureCenterWorld,
+                    orthographicExtent,
                     settings.SheetSize,
-                    settings.CapturePadding,
                     s_captureDirections[i],
                     i,
-                    viewArray,
-                    depthTexture,
-                    depthBuffer);
+                    framebuffers[i]);
                 if (!ok)
-                    return null;
+                    return Fail($"Octahedral impostor capture failed for view {i}.");
+
+                SynchronizeCaptureTextureWrites();
+                progress?.Report(new CaptureProgress(i + 1, s_captureDirections.Length, $"Captured view {i + 1} of {s_captureDirections.Length}."));
             }
 
-            return new Result(viewArray, depthTexture, captureBounds, s_captureDirections);
+            SynchronizeCaptureTextureWrites();
+            PopulateCpuMipmapsFromGpu(colorArray);
         }
         finally
         {
-            // Restore original layers
-            foreach (var kvp in originalLayers)
-            {
-                if (kvp.Key is RenderInfo3D ri3d)
-                    ri3d.Layer = kvp.Value;
-            }
+            resources.Viewport.MeshRenderCommandsOverride = null;
         }
-    }
 
-    private static AABB CalculateCombinedModelBounds(Model model)
-    {
-        AABB total = new();
-        foreach (SubMesh mesh in model.Meshes)
-            total = AABB.Union(total, mesh.CullingBounds ?? mesh.Bounds);
-        return total;
-    }
-
-    private static AABB CalculateCombinedWorldBounds(ModelComponent component)
-    {
-        AABB total = new();
-        foreach (RenderableMesh mesh in component.Meshes)
+        var asset = new OctahedralBillboardAsset
         {
-            if (mesh.TryGetWorldBounds(out AABB worldBounds))
-                total = AABB.Union(total, worldBounds);
-        }
-        return total;
+            Name = BuildDefaultAssetName(model, normalizedIndices),
+            Version = OctahedralBillboardAsset.CurrentVersion,
+            ColorViews = colorArray,
+            DepthViews = null,
+            CaptureDirections = [.. s_captureDirections],
+            SourceSubmeshIndices = normalizedIndices,
+            CaptureMode = captureMode,
+            DepthMode = EOctahedralImposterDepthMode.None,
+            CaptureResolution = settings.SheetSize,
+            CapturePadding = settings.CapturePadding,
+            OrthographicExtent = orthographicExtent,
+            CaptureCenterWorld = captureCenterWorld,
+            CaptureCenterLocal = captureCenterLocal,
+            WorldBounds = worldBounds,
+            LocalBounds = localBounds,
+            BillboardSize = new Vector2(orthographicExtent * 2.0f, orthographicExtent * 2.0f),
+            SourceLayer = ResolveSourceLayer(targets),
+            SourceCastsShadows = ResolveSourceCastsShadows(targets),
+            SourceModelPath = model.FilePath,
+            SourceMaterialMode = ResolveSourceMaterialMode(targets),
+            RendererBackend = AbstractRenderer.Current?.GetType().Name,
+            QualityNotes = "V1 uses directional layer blending without depth/parallax reprojection."
+        };
+
+        progress?.Report(new CaptureProgress(s_captureDirections.Length, s_captureDirections.Length, "Octahedral capture complete."));
+
+        return new Result(
+            asset,
+            colorArray,
+            null,
+            localBounds,
+            worldBounds,
+            captureCenterWorld,
+            captureCenterLocal,
+            orthographicExtent,
+            s_captureDirections,
+            normalizedIndices,
+            captureMode,
+            previewTextures,
+            warning);
     }
 
-    private static AABB TransformBoundsToWorld(AABB bounds, TransformBase transform)
+    private static Result? Fail(string message)
     {
-        Matrix4x4 renderMatrix = transform.RenderMatrix;
-        return bounds.Transformed(point => Vector3.Transform(point, renderMatrix));
+        Debug.LogWarning(message);
+        return null;
+    }
+
+    private static XRTexture2DArray CreateColorArray(uint sheetSize)
+    {
+        XRTexture2DArray viewArray = XRTexture2DArray.CreateFrameBufferTexture(
+            (uint)s_captureDirections.Length,
+            sheetSize,
+            sheetSize,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.Float,
+            EFrameBufferAttachment.ColorAttachment0);
+
+        viewArray.Name = "OctahedralImpostorViews";
+        viewArray.SizedInternalFormat = viewArray.Textures.Length > 0
+            ? viewArray.Textures[0].SizedInternalFormat
+            : ESizedInternalFormat.Rgba16f;
+        OctahedralBillboardAsset.ConfigureColorViewTexture(viewArray);
+        viewArray.PushData();
+        return viewArray;
+    }
+
+    private static XRFrameBuffer[] BuildLayerFramebuffers(XRTexture2DArray colorArray, XRRenderBuffer depthBuffer)
+    {
+        XRFrameBuffer[] framebuffers = new XRFrameBuffer[s_captureDirections.Length];
+        for (int i = 0; i < framebuffers.Length; i++)
+        {
+            framebuffers[i] = new XRFrameBuffer(
+                (colorArray, EFrameBufferAttachment.ColorAttachment0, 0, i),
+                (depthBuffer, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            {
+                Name = $"OctahedralImpostorView{i}"
+            };
+        }
+
+        return framebuffers;
+    }
+
+    private static XRTexture[] BuildPreviewTextures(XRTexture2DArray colorArray)
+    {
+        XRTexture[] views = new XRTexture[colorArray.Depth];
+        for (uint i = 0; i < colorArray.Depth; i++)
+        {
+            views[i] = new XRTexture2DArrayView(
+                colorArray,
+                0u,
+                1u,
+                i,
+                1u,
+                colorArray.SizedInternalFormat,
+                array: false,
+                multisample: false)
+            {
+                Name = $"OctahedralImpostorView{i}",
+                SamplerName = OctahedralBillboardAsset.ColorSamplerName,
+                MinFilter = ETexMinFilter.Linear,
+                MagFilter = ETexMagFilter.Linear,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge
+            };
+        }
+
+        return views;
+    }
+
+    private static CaptureResources GetCaptureResources(uint resolution)
+    {
+        lock (s_resourceLock)
+        {
+            s_resources ??= new CaptureResources();
+            s_resources.Configure(resolution);
+            return s_resources;
+        }
+    }
+
+    private static void ConfigureCommandCollection(CaptureResources resources)
+    {
+        RenderPipeline? pipeline = resources.Viewport.RenderPipeline;
+        if (pipeline is null)
+            return;
+
+        resources.Commands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
+        resources.Commands.SetOwnerPipeline(resources.Viewport.RenderPipelineInstance);
     }
 
     private static bool CaptureViewLayer(
+        CaptureResources resources,
         IRuntimeRenderWorld world,
+        IReadOnlyList<RenderInfo3D> targets,
         Vector3 captureCenter,
-        AABB bounds,
+        float orthographicExtent,
         uint resolution,
-        float padding,
         Vector3 axis,
         int viewIndex,
-        XRTexture2DArray colorArray,
-        XRTexture2D? sharedDepthTexture,
-        XRRenderBuffer? sharedDepthBuffer)
+        XRFrameBuffer fbo)
     {
-        Vector3 halfExtents = bounds.Size * 0.5f;
-        float maxHalfExtent = MathF.Max(halfExtents.X, MathF.Max(halfExtents.Y, halfExtents.Z));
-        float paddedHalfExtent = maxHalfExtent * padding;
+        XRCamera camera = BuildCaptureCamera(captureCenter, orthographicExtent, axis);
+        XRViewport viewport = resources.Viewport;
+        RenderCommandCollection commands = resources.Commands;
+        viewport.Camera = camera;
+        viewport.Resize(resolution, resolution);
+        viewport.WorldInstanceOverride = world;
+        viewport.MeshRenderCommandsOverride = commands;
 
-        XRTexture2D? previewLayer = (viewIndex >= 0 && viewIndex < colorArray.Textures.Length)
-            ? colorArray.Textures[viewIndex]
-            : null;
+        Frustum frustum = camera.WorldFrustum();
+        for (int i = 0; i < targets.Count; i++)
+        {
+            RenderInfo3D target = targets[i];
+            if (!target.IsVisible || !target.ShouldRender)
+                continue;
 
-        XRFrameBuffer fbo = sharedDepthTexture is null && sharedDepthBuffer is null
-            ? new XRFrameBuffer((colorArray, EFrameBufferAttachment.ColorAttachment0, 0, viewIndex))
-            : sharedDepthTexture is not null
-                ? new XRFrameBuffer(
-                    (colorArray, EFrameBufferAttachment.ColorAttachment0, 0, viewIndex),
-                    (sharedDepthTexture, EFrameBufferAttachment.DepthAttachment, 0, -1))
-                : new XRFrameBuffer(
-                    (colorArray, EFrameBufferAttachment.ColorAttachment0, 0, viewIndex),
-                    (sharedDepthBuffer!, EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
+            if (target.AllowRender(frustum, commands, camera, containsOnly: false, collectMirrors: false))
+                target.CollectCommands(commands, camera);
+        }
 
+        viewport.SwapBuffers(commands, allowScreenSpaceUISwap: false);
+
+        if (!fbo.IsLastCheckComplete)
+        {
+            Debug.LogWarning($"Octahedral impostor capture skipped view {viewIndex}: framebuffer is incomplete.");
+            return false;
+        }
+
+        using StateObject passScope = VPRCRenderTargetHelpers.PushSceneCapturePass();
+        viewport.Render(fbo, world, camera);
+
+        if (!fbo.IsLastCheckComplete)
+        {
+            Debug.LogWarning($"Octahedral impostor capture failed view {viewIndex}: framebuffer became incomplete during render.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static XRCamera BuildCaptureCamera(Vector3 captureCenter, float orthographicExtent, Vector3 axis)
+    {
         Vector3 normalizedAxis = Vector3.Normalize(axis);
-        float eyeDistance = paddedHalfExtent + maxHalfExtent; // sit just outside the padded bounds
+        float eyeDistance = orthographicExtent * 2.0f;
         Vector3 eye = captureCenter + normalizedAxis * eyeDistance;
 
-        // Avoid degenerate look-at when the capture direction aligns with the global up vector.
         Vector3 up = MathF.Abs(Vector3.Dot(normalizedAxis, Vector3.UnitY)) > 0.95f
             ? Vector3.UnitZ
             : Vector3.UnitY;
@@ -275,57 +611,249 @@ public sealed class OctahedralImposterGenerator
         Transform cameraTransform = new(eye, rotation);
         cameraTransform.RecalculateMatrices(true, true);
 
-        XROrthographicCameraParameters cameraParameters = new(paddedHalfExtent * 2f, paddedHalfExtent * 2f, 0.01f, eyeDistance + paddedHalfExtent * 2f);
+        XROrthographicCameraParameters cameraParameters = new(
+            orthographicExtent * 2.0f,
+            orthographicExtent * 2.0f,
+            0.01f,
+            eyeDistance + orthographicExtent * 2.0f);
         cameraParameters.SetOriginCentered();
+
         XRCamera camera = new(cameraTransform, cameraParameters)
         {
             PostProcessStates = new CameraPostProcessStateCollection(),
-            // Only capture the Gizmos layer (where we temporarily moved the model)
-            CullingMask = 1 << DefaultLayers.GizmosIndex
+            CullingMask = LayerMask.Everything,
+            OutputHDROverride = true,
+            AntiAliasingModeOverride = EAntiAliasingMode.None,
+            MsaaSampleCountOverride = 1u,
+            TsrRenderScaleOverride = 1.0f
         };
 
-        XRViewport viewport = new(null, resolution, resolution)
+        var colorStage = camera.GetPostProcessStageState<ColorGradingSettings>();
+        if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
         {
-            Camera = camera,
-            RenderPipeline = Engine.Rendering.NewRenderPipeline(),
-            SetRenderPipelineFromCamera = false,
-            AllowUIRender = false,
-            AutomaticallyCollectVisible = false,
-            AutomaticallySwapBuffers = false,
-            CullWithFrustum = true,
-            WorldInstanceOverride = world
-        };
-
-        Engine.Rendering.State.IsSceneCapturePass = true;
-        try
-        {
-            viewport.CollectVisible(false, world, camera);
-            viewport.SwapBuffers(); // match scene capture flow: swap between collect and render
-            viewport.Render(fbo, world, camera);
-
-            // After rendering into the array layer, copy that slice into the matching 2D texture
-            // so editor previews (which consume XRTexture2D) have pixels without a second render.
-            if (previewLayer is not null)
-                CopyArrayLayerToSlice(colorArray, viewIndex, previewLayer);
+            grading.AutoExposure = false;
+            grading.Exposure = 1.0f;
         }
-        finally
+        else
         {
-            Engine.Rendering.State.IsSceneCapturePass = false;
+            colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
+            colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
         }
 
-        return true;
+        return camera;
+    }
+
+    private static void SynchronizeCaptureTextureWrites()
+    {
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
+            return;
+
+        if (renderer is OpenGLRenderer)
+        {
+            renderer.MemoryBarrier(
+                EMemoryBarrierMask.Framebuffer |
+                EMemoryBarrierMask.TextureFetch |
+                EMemoryBarrierMask.TextureUpdate);
+        }
+        else
+        {
+            renderer.WaitForGpu();
+        }
+    }
+
+    private static void PopulateCpuMipmapsFromGpu(XRTexture2DArray colorArray)
+    {
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
+            return;
+
+        for (int layer = 0; layer < colorArray.Textures.Length; layer++)
+        {
+            if (!renderer.TryReadTextureMipRgbaFloat(colorArray, 0, layer, out float[]? rgbaFloats, out int width, out int height, out string failure) ||
+                rgbaFloats is null ||
+                width <= 0 ||
+                height <= 0)
+            {
+                Debug.LogWarning($"Could not read octahedral impostor layer {layer} for asset persistence: {failure}");
+                continue;
+            }
+
+            XRTexture2D slice = colorArray.Textures[layer];
+            slice.Name = $"OctahedralImpostorView{layer}";
+            slice.SamplerName = OctahedralBillboardAsset.ColorSamplerName;
+            slice.SizedInternalFormat = colorArray.SizedInternalFormat;
+            slice.MinFilter = ETexMinFilter.Linear;
+            slice.MagFilter = ETexMagFilter.Linear;
+            slice.UWrap = ETexWrapMode.ClampToEdge;
+            slice.VWrap = ETexWrapMode.ClampToEdge;
+            slice.AutoGenerateMipmaps = true;
+            slice.Mipmaps =
+            [
+                new Mipmap2D
+                {
+                    Width = (uint)width,
+                    Height = (uint)height,
+                    InternalFormat = EPixelInternalFormat.Rgba16f,
+                    PixelFormat = EPixelFormat.Rgba,
+                    PixelType = EPixelType.Float,
+                    Data = DataSource.FromArray(rgbaFloats)
+                }
+            ];
+        }
+    }
+
+    private static RenderInfo3D[] ResolveTargetRenderInfos(
+        ModelComponent component,
+        IReadOnlyCollection<int>? submeshIndices,
+        out int[] normalizedIndices,
+        out EOctahedralImposterCaptureMode captureMode)
+    {
+        if (submeshIndices is { Count: > 0 })
+        {
+            SortedSet<int> valid = [];
+            foreach (int index in submeshIndices)
+                if ((uint)index < (uint)component.Meshes.Count)
+                    valid.Add(index);
+
+            normalizedIndices = [.. valid];
+            captureMode = EOctahedralImposterCaptureMode.SelectedSubmeshes;
+            RenderInfo3D[] targets = new RenderInfo3D[normalizedIndices.Length];
+            for (int i = 0; i < normalizedIndices.Length; i++)
+                targets[i] = component.Meshes[normalizedIndices[i]].RenderInfo;
+            return targets;
+        }
+
+        normalizedIndices = [];
+        captureMode = EOctahedralImposterCaptureMode.Model;
+        List<RenderInfo3D> allTargets = [];
+        foreach (RenderInfo ri in component.RenderedObjects)
+        {
+            if (ri is RenderInfo3D ri3d)
+                allTargets.Add(ri3d);
+        }
+
+        return [.. allTargets];
+    }
+
+    private static AABB CalculateCombinedModelBounds(Model model, IReadOnlyList<int> submeshIndices)
+    {
+        AABB total = new();
+        if (submeshIndices.Count > 0)
+        {
+            for (int i = 0; i < submeshIndices.Count; i++)
+            {
+                int index = submeshIndices[i];
+                if ((uint)index >= (uint)model.Meshes.Count)
+                    continue;
+
+                SubMesh mesh = model.Meshes[index];
+                total = AABB.Union(total, mesh.CullingBounds ?? mesh.Bounds);
+            }
+
+            return total;
+        }
+
+        foreach (SubMesh mesh in model.Meshes)
+            total = AABB.Union(total, mesh.CullingBounds ?? mesh.Bounds);
+        return total;
+    }
+
+    private static AABB CalculateCombinedWorldBounds(ModelComponent component, Model model, IReadOnlyList<int> submeshIndices)
+    {
+        AABB total = new();
+        if (submeshIndices.Count > 0)
+        {
+            for (int i = 0; i < submeshIndices.Count; i++)
+            {
+                int index = submeshIndices[i];
+                if ((uint)index >= (uint)component.Meshes.Count)
+                    continue;
+
+                if (component.Meshes[index].TryGetWorldBounds(out AABB worldBounds))
+                    total = AABB.Union(total, worldBounds);
+            }
+        }
+        else
+        {
+            foreach (RenderableMesh mesh in component.Meshes)
+            {
+                if (mesh.TryGetWorldBounds(out AABB worldBounds))
+                    total = AABB.Union(total, worldBounds);
+            }
+        }
+
+        if (total.IsValid)
+            return total;
+
+        AABB modelBounds = CalculateCombinedModelBounds(model, submeshIndices);
+        return TransformBoundsToWorld(modelBounds, component.Transform);
+    }
+
+    private static AABB CalculateCombinedLocalBounds(ModelComponent component, Model model, IReadOnlyList<int> submeshIndices, AABB worldBounds)
+    {
+        AABB modelBounds = CalculateCombinedModelBounds(model, submeshIndices);
+        if (modelBounds.IsValid)
+            return modelBounds;
+
+        if (!Matrix4x4.Invert(component.Transform.RenderMatrix, out Matrix4x4 worldToLocal))
+            return worldBounds;
+
+        return worldBounds.Transformed(point => Vector3.Transform(point, worldToLocal));
+    }
+
+    private static AABB TransformBoundsToWorld(AABB bounds, TransformBase transform)
+    {
+        Matrix4x4 renderMatrix = transform.RenderMatrix;
+        return bounds.Transformed(point => Vector3.Transform(point, renderMatrix));
+    }
+
+    private static Vector3 TransformPointToLocal(ModelComponent component, Vector3 point)
+    {
+        if (!Matrix4x4.Invert(component.Transform.RenderMatrix, out Matrix4x4 worldToLocal))
+            return Vector3.Zero;
+
+        return Vector3.Transform(point, worldToLocal);
+    }
+
+    private static float CalculateOrthographicExtent(AABB bounds, float padding)
+    {
+        Vector3 halfExtents = bounds.Size * 0.5f;
+        float maxHalfExtent = MathF.Max(halfExtents.X, MathF.Max(halfExtents.Y, halfExtents.Z));
+        return MathF.Max(0.01f, maxHalfExtent * MathF.Max(1.0f, padding));
+    }
+
+    private static int ResolveSourceLayer(IReadOnlyList<RenderInfo3D> targets)
+        => targets.Count > 0 ? targets[0].Layer : 0;
+
+    private static bool ResolveSourceCastsShadows(IReadOnlyList<RenderInfo3D> targets)
+    {
+        for (int i = 0; i < targets.Count; i++)
+            if (targets[i].CastsShadows)
+                return true;
+        return false;
+    }
+
+    private static string ResolveSourceMaterialMode(IReadOnlyList<RenderInfo3D> targets)
+        => targets.Count == 1
+            ? "Single source renderable material commands"
+            : "Multiple source renderable material commands";
+
+    private static string BuildDefaultAssetName(Model model, IReadOnlyList<int> submeshIndices)
+    {
+        string baseName = string.IsNullOrWhiteSpace(model.Name)
+            ? "Model"
+            : model.Name!;
+
+        return submeshIndices.Count == 0
+            ? $"{baseName}_OctahedralBillboard"
+            : $"{baseName}_Submeshes_{string.Join("_", submeshIndices)}_OctahedralBillboard";
     }
 
     private static Vector3[] BuildCaptureDirections()
     {
         List<Vector3> directions = new(26)
         {
-            // Ordering matters: keep in sync with Build/CommonAssets/Shaders/Tools/OctahedralImposterBlend.fs.
-            // The runtime shader relies on this exact layout when selecting sampler bindings.
-            // 1. World axes (6)
-            // 2. Mid-axes (12) � 45� between the primary axes
-            // 3. Elevated diagonals (8) � 45� above/below the edge directions
-
             Vector3.UnitX,
             -Vector3.UnitX,
             Vector3.UnitY,
@@ -354,44 +882,34 @@ public sealed class OctahedralImposterGenerator
             directions.Add(Vector3.Normalize(raw));
 
         for (int xSign = -1; xSign <= 1; xSign += 2)
-        {
             for (int ySign = -1; ySign <= 1; ySign += 2)
-            {
                 for (int zSign = -1; zSign <= 1; zSign += 2)
-                {
                     directions.Add(Vector3.Normalize(new Vector3(xSign, ySign, zSign)));
-                }
-            }
-        }
 
         return [.. directions];
     }
 
-    private static void CopyArrayLayerToSlice(XRTexture2DArray sourceArray, int layer, XRTexture2D slice)
+    private sealed class CaptureResources
     {
-        if (AbstractRenderer.Current is not OpenGLRenderer gl)
-            return;
+        public XRViewport Viewport { get; } = new(null, 1u, 1u)
+        {
+            SetRenderPipelineFromCamera = false,
+            AllowUIRender = false,
+            AutomaticallyCollectVisible = false,
+            AutomaticallySwapBuffers = false,
+            CullWithFrustum = true,
+            RenderPipeline = Engine.Rendering.NewRenderPipeline()
+        };
 
-        var glArray = gl.GenericToAPI<GLTexture2DArray>(sourceArray);
-        var glSlice = gl.GenericToAPI<GLTexture2D>(slice);
-        if (glArray is null || glSlice is null)
-            return;
+        public RenderCommandCollection Commands { get; } = new();
 
-        // Ensure destination slice matches source format and is allocated on GPU.
-        slice.SizedInternalFormat = sourceArray.SizedInternalFormat;
-        if (slice.Width != sourceArray.Width || slice.Height != sourceArray.Height)
-            slice.Resize(sourceArray.Width, sourceArray.Height);
-        glSlice.PushData();
+        public void Configure(uint resolution)
+        {
+            uint safeResolution = Math.Max(1u, resolution);
+            if (Viewport.Width != safeResolution || Viewport.Height != safeResolution)
+                Viewport.Resize(safeResolution, safeResolution);
 
-        uint srcId = glArray.BindingId;
-        uint dstId = glSlice.BindingId;
-        var api = gl.RawGL;
-        if (!api.IsTexture(srcId) || !api.IsTexture(dstId))
-            return;
-
-        api.CopyImageSubData(
-            srcId, CopyImageSubDataTarget.Texture2DArray, 0, 0, 0, layer,
-            dstId, CopyImageSubDataTarget.Texture2D, 0, 0, 0, 0,
-            slice.Width, slice.Height, 1);
+            Viewport.RenderPipeline ??= Engine.Rendering.NewRenderPipeline();
+        }
     }
 }

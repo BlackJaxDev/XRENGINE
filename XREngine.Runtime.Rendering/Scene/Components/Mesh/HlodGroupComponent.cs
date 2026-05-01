@@ -144,7 +144,7 @@ namespace XREngine.Components.Scene.Mesh
 
         [Category("HLOD")]
         [DisplayName("Imposter Capture Depth")]
-        [Description("If true, capture a depth texture during bake (optional).")]
+        [Description("Reserved for future depth/parallax impostor output. V1 captures use a depth buffer but persist color views only.")]
         public bool ImposterCaptureDepth
         {
             get => _imposterCaptureDepth;
@@ -405,7 +405,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
             }
 
-            var settings = new OctahedralImposterGenerator.Settings(ImposterSheetSize, ImposterCapturePadding, ImposterCaptureDepth);
+            var settings = new OctahedralImposterGenerator.Settings(ImposterSheetSize, ImposterCapturePadding, CaptureDepth: false);
             var result = OctahedralImposterGenerator.Generate(captureModel, settings);
             captureNode.Destroy();
 
