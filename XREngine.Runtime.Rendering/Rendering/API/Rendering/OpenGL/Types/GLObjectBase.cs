@@ -115,6 +115,19 @@ namespace XREngine.Rendering.OpenGL
             protected internal virtual void PreDeleted() { }
             protected internal virtual void PostDeleted() { }
 
+            protected internal virtual void RemoveCacheEntry(uint bindingId) { }
+
+            protected internal void OrphanForDeferredDelete()
+            {
+                if (!TryGetBindingId(out uint bindingId))
+                    return;
+
+                RemoveCacheEntry(bindingId);
+                _bindingId = null;
+                _invalidated = true;
+                _hasSentInvalidationWarning = false;
+            }
+
             /// <summary>
             /// The unique id of this object when generated.
             /// If not generated yet, the object will be generated on first access.

@@ -93,7 +93,7 @@ namespace XREngine.Scene
             => light switch
             {
                 SpotLightComponent => Engine.Rendering.Settings.UseSpotShadowAtlas,
-                DirectionalLightComponent { EnableCascadedShadows: true } => Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                DirectionalLightComponent => Engine.Rendering.Settings.UseDirectionalShadowAtlas,
                 _ => false,
             };
 
@@ -373,23 +373,27 @@ namespace XREngine.Scene
                     continue;
 
                 int activeCascadeCount = light.ActiveCascadeCount;
-                for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
+                if (light.EnableCascadedShadows)
                 {
-                    XRCamera? cascadeCamera = light.GetCascadeCamera(cascadeIndex);
-                    if (cascadeCamera is null)
-                        continue;
+                    for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
+                    {
+                        XRCamera? cascadeCamera = light.GetCascadeCamera(cascadeIndex);
+                        if (cascadeCamera is null)
+                            continue;
 
-                    SubmitShadowAtlasRequest(
-                        light,
-                        EShadowProjectionType.DirectionalCascade,
-                        cascadeIndex,
-                        cascadeCamera,
-                        priority: 10000.0f - cascadeIndex * 100.0f,
-                        fallback: ShadowFallbackMode.StaleTile);
+                        SubmitShadowAtlasRequest(
+                            light,
+                            EShadowProjectionType.DirectionalCascade,
+                            cascadeIndex,
+                            cascadeCamera,
+                            priority: 10000.0f - cascadeIndex * 100.0f,
+                            fallback: ShadowFallbackMode.StaleTile);
+                    }
                 }
 
-                bool submitPrimary = light.ShadowMap is not null &&
-                    (!light.EnableCascadedShadows || activeCascadeCount <= 0 || NeedsPrimaryDirectionalShadowMap());
+                bool submitPrimary = !light.EnableCascadedShadows ||
+                    activeCascadeCount <= 0 ||
+                    NeedsPrimaryDirectionalShadowMap();
                 if (submitPrimary && light.ShadowCamera is XRCamera primaryCamera)
                 {
                     SubmitShadowAtlasRequest(
@@ -398,7 +402,7 @@ namespace XREngine.Scene
                         faceOrCascadeIndex: 0,
                         primaryCamera,
                         priority: 9000.0f,
-                        fallback: ShadowFallbackMode.StaleTile);
+                        fallback: ShadowFallbackMode.Legacy);
                 }
             }
         }
@@ -507,9 +511,11 @@ namespace XREngine.Scene
             bool needsLegacyCascades = light.EnableCascadedShadows &&
                 activeCascadeCount > 0 &&
                 !AreDirectionalCascadeAtlasTilesReady(light, activeCascadeCount);
+            bool needsLegacyPrimary = needsPrimaryShadowMap &&
+                !IsDirectionalPrimaryAtlasTileReady(light);
 
             renderCascades = needsLegacyCascades;
-            return (needsPrimaryShadowMap && light.ShadowMap is not null) || needsLegacyCascades;
+            return (needsLegacyPrimary && light.ShadowMap is not null) || needsLegacyCascades;
         }
 
         private bool AreDirectionalCascadeAtlasTilesReady(DirectionalLightComponent light, int activeCascadeCount)
@@ -527,6 +533,12 @@ namespace XREngine.Scene
 
             return true;
         }
+
+        private bool IsDirectionalPrimaryAtlasTileReady(DirectionalLightComponent light)
+            => TryGetDirectionalPrimaryShadowAtlasAllocation(light, out ShadowAtlasAllocation allocation, out _) &&
+               allocation.IsResident &&
+               allocation.LastRenderedFrame != 0u &&
+               allocation.ActiveFallback == ShadowFallbackMode.None;
 
         private static bool ViewportTargetsWorld(XRViewport viewport, IRuntimeRenderWorld world)
             => ReferenceEquals(viewport.World, world) ||
@@ -630,19 +642,30 @@ namespace XREngine.Scene
 
             int shadowRecordIndex =
                 request.ProjectionType == EShadowProjectionType.SpotPrimary ||
+                request.ProjectionType == EShadowProjectionType.DirectionalPrimary ||
                 request.ProjectionType == EShadowProjectionType.DirectionalCascade
                     ? recordIndex
                     : previousRecordIndex;
 
-            if (request.Light is DirectionalLightComponent directionalLight &&
-                request.ProjectionType == EShadowProjectionType.DirectionalCascade)
+            if (request.Light is DirectionalLightComponent directionalLight)
             {
-                directionalLight.SetCascadeAtlasSlot(
-                    request.FaceOrCascadeIndex,
-                    allocation,
-                    recordIndex,
-                    request.NearPlane,
-                    request.FarPlane);
+                if (request.ProjectionType == EShadowProjectionType.DirectionalCascade)
+                {
+                    directionalLight.SetCascadeAtlasSlot(
+                        request.FaceOrCascadeIndex,
+                        allocation,
+                        recordIndex,
+                        request.NearPlane,
+                        request.FarPlane);
+                }
+                else if (request.ProjectionType == EShadowProjectionType.DirectionalPrimary)
+                {
+                    directionalLight.SetPrimaryAtlasSlot(
+                        allocation,
+                        recordIndex,
+                        request.NearPlane,
+                        request.FarPlane);
+                }
             }
 
             light.SetShadowAtlasDiagnostic(new ShadowRequestDiagnostic(
@@ -703,6 +726,20 @@ namespace XREngine.Scene
             out int shadowRecordIndex)
         {
             ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalCascade, cascadeIndex, EShadowMapEncoding.Depth);
+            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+                return true;
+
+            allocation = default;
+            shadowRecordIndex = -1;
+            return false;
+        }
+
+        internal bool TryGetDirectionalPrimaryShadowAtlasAllocation(
+            DirectionalLightComponent light,
+            out ShadowAtlasAllocation allocation,
+            out int shadowRecordIndex)
+        {
+            ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalPrimary, 0, EShadowMapEncoding.Depth);
             if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 

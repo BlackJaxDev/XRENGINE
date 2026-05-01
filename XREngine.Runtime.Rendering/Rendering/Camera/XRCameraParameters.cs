@@ -138,7 +138,7 @@ namespace XREngine.Rendering
                 }
 
                 if (_untransformedFrustum is null || changed)
-                    _untransformedFrustum = CalculateUntransformedFrustum();
+                    _untransformedFrustum = CalculateUntransformedFrustum(_inverseProjectionMatrix ?? Matrix4x4.Identity);
             }
 
             if (changed)
@@ -176,7 +176,7 @@ namespace XREngine.Rendering
             lock (_projectionLock)
                 return _untransformedFrustum!.Value;
         }
-        protected abstract Frustum CalculateUntransformedFrustum();
+        protected abstract Frustum CalculateUntransformedFrustum(Matrix4x4 inverseProjectionMatrix);
 
         public virtual void SetUniforms(XRRenderProgram program)
         {

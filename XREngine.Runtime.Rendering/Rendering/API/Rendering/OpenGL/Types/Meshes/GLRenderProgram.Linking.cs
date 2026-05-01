@@ -475,6 +475,28 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private static readonly ConcurrentDictionary<ulong, byte> InFlightCompilations = new();
             private static readonly ConcurrentDictionary<GLRenderProgram, byte> PendingAsyncPrograms = new();
+            private static readonly ConcurrentQueue<DeferredAsyncLinkCleanup> DeferredAsyncLinkCleanups = new();
+
+            private sealed class DeferredAsyncLinkCleanup(OpenGLRenderer renderer, uint programId, uint[] shaderIds)
+            {
+                public bool TryProcess()
+                {
+                    GL api = renderer.Api;
+
+                    if (programId != 0 && api.IsProgram(programId))
+                    {
+                        api.GetProgram(programId, (GLEnum)GLShader.GL_COMPLETION_STATUS_ARB, out int complete);
+                        if (complete == 0)
+                            return false;
+
+                        DetachShaders(api, programId, shaderIds);
+                        api.DeleteProgram(programId);
+                    }
+
+                    DeleteShaders(api, shaderIds);
+                    return true;
+                }
+            }
 
             private bool HasPendingAsyncWork
                 => _asyncBinaryUploadPending || _asyncCompileLinkPending || _asyncLinkPhase != EAsyncLinkPhase.Idle;
@@ -503,6 +525,25 @@ namespace XREngine.Rendering.OpenGL
 
                     if (!program.HasPendingAsyncWork)
                         program.UnregisterPendingAsyncProgram();
+                }
+
+                ProcessDeferredAsyncLinkCleanups(maxPrograms);
+            }
+
+            private static void ProcessDeferredAsyncLinkCleanups(int maxPrograms)
+            {
+                int remaining = Math.Max(1, maxPrograms);
+                while (remaining-- > 0 && DeferredAsyncLinkCleanups.TryDequeue(out DeferredAsyncLinkCleanup? cleanup))
+                {
+                    try
+                    {
+                        if (!cleanup.TryProcess())
+                            DeferredAsyncLinkCleanups.Enqueue(cleanup);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.OpenGLWarning($"Deferred async shader cleanup failed: {ex.Message}");
+                    }
                 }
             }
 
@@ -664,12 +705,38 @@ namespace XREngine.Rendering.OpenGL
                 UnregisterPendingAsyncProgram();
             }
 
+            private bool TryDeferAsyncLinkCleanupForDestroy()
+            {
+                if (_asyncLinkPhase != EAsyncLinkPhase.Linking ||
+                    _asyncAttachedShaderIds is not { Length: > 0 } attachedShaderIds ||
+                    !TryGetBindingId(out uint programId) ||
+                    programId == 0)
+                {
+                    return false;
+                }
+
+                uint[] shaderIds = [.. attachedShaderIds];
+
+                // Detaching while ARB_parallel_shader_compile is still linking can force a driver fence.
+                // Orphan the ids now and detach/delete after COMPLETION_STATUS reports finished.
+                OrphanForDeferredDelete();
+                foreach (GLShader shader in _shaderCache.Values)
+                    shader.OrphanForDeferredDelete();
+
+                DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, programId, shaderIds));
+                _asyncAttachedShaderIds = null;
+                _asyncLinkedProgramId = 0;
+                _asyncLinkPhase = EAsyncLinkPhase.Idle;
+                return true;
+            }
+
             private void ReleaseAsyncLinkState()
             {
                 if (Hash != 0)
                     InFlightCompilations.TryRemove(Hash, out _);
 
-                CleanupAsyncLink();
+                if (!TryDeferAsyncLinkCleanupForDestroy())
+                    CleanupAsyncLink();
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
                 ResetUberBackendTracking();
@@ -764,6 +831,9 @@ namespace XREngine.Rendering.OpenGL
                 => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
 
             private void DetachShaders(uint programId, ReadOnlySpan<uint> attachedShaderIds)
+                => DetachShaders(Api, programId, attachedShaderIds);
+
+            private static void DetachShaders(GL api, uint programId, ReadOnlySpan<uint> attachedShaderIds)
             {
                 if (programId == 0 || attachedShaderIds.Length == 0)
                     return;
@@ -774,7 +844,22 @@ namespace XREngine.Rendering.OpenGL
                     if (shaderId == 0 || !detachedShaderIds.Add(shaderId))
                         continue;
 
-                    Api.DetachShader(programId, shaderId);
+                    api.DetachShader(programId, shaderId);
+                }
+            }
+
+            private static void DeleteShaders(GL api, ReadOnlySpan<uint> shaderIds)
+            {
+                if (shaderIds.Length == 0)
+                    return;
+
+                HashSet<uint> deletedShaderIds = [];
+                foreach (uint shaderId in shaderIds)
+                {
+                    if (shaderId == 0 || !deletedShaderIds.Add(shaderId))
+                        continue;
+
+                    api.DeleteShader(shaderId);
                 }
             }
 

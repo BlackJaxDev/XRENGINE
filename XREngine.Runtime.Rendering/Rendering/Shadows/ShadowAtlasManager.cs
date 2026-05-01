@@ -449,8 +449,10 @@ public sealed class ShadowAtlasManager
         {
             EShadowProjectionType.SpotPrimary when request.Light is SpotLightComponent spotLight
                 => spotLight.RenderShadowAtlasTile(page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
-            EShadowProjectionType.DirectionalCascade when request.Light is DirectionalLightComponent directionalLight
-                => directionalLight.RenderCascadeShadowAtlasTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
+            EShadowProjectionType.DirectionalPrimary when request.Light is DirectionalLightComponent primaryDirectionalLight
+                => primaryDirectionalLight.RenderPrimaryShadowAtlasTile(page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
+            EShadowProjectionType.DirectionalCascade when request.Light is DirectionalLightComponent cascadeDirectionalLight
+                => cascadeDirectionalLight.RenderCascadeShadowAtlasTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
             _ => false,
         };
     }

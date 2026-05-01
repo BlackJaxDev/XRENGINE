@@ -74,10 +74,13 @@ namespace XREngine.Rendering.OpenGL
             protected override void DeleteObject()
             {
                 if (TryGetBindingId(out var bindingId))
-                    Cache.Remove(bindingId);
+                    RemoveCacheEntry(bindingId);
 
                 base.DeleteObject();
             }
+
+            protected internal override void RemoveCacheEntry(uint bindingId)
+                => Cache.Remove(bindingId);
 
             public static EventDictionary<uint, GLObject<T>> Cache { get; } = [];
         }

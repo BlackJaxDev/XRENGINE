@@ -459,6 +459,19 @@ float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDir
 #endif
 }
 
+float SampleDirectionalAtlasPage(
+	in int pageIndex,
+	in vec3 atlasCoord,
+	in float bias,
+	in int blockerSamples,
+	in int filterSamples,
+	in float filterRadius,
+	in float blockerSearchRadius,
+	in int softMode,
+	in float lightSourceRadius,
+	in float minPenumbra,
+	in float maxPenumbra,
+	in int vogelTapCount);
 
 //0 is fully in shadow, 1 is fully lit
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
@@ -482,6 +495,35 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 		float contact = EnableContactShadows
 			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), ShadowBiasMax, bias, viewDepth)
 			: 1.0f;
+
+		if (DirectionalShadowAtlasEnabled)
+		{
+			ivec4 atlasI0 = DirectionalShadowAtlasPacked0[0];
+			bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < 2;
+			int fallbackMode = atlasI0.z;
+			if (atlasEnabled)
+			{
+				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[0];
+				vec2 atlasUv = fragCoord.xy * atlasUvScaleBias.xy + atlasUvScaleBias.zw;
+				float atlasRadiusScale = max(atlasUvScaleBias.x, atlasUvScaleBias.y);
+				return SampleDirectionalAtlasPage(
+					atlasI0.y,
+					vec3(atlasUv, fragCoord.z),
+					bias,
+					ShadowBlockerSamples,
+					ShadowFilterSamples,
+					ShadowFilterRadius * atlasRadiusScale,
+					ShadowBlockerSearchRadius * atlasRadiusScale,
+					SoftShadowMode,
+					LightSourceRadius * atlasRadiusScale,
+					ShadowMinPenumbra * atlasRadiusScale,
+					ShadowMaxPenumbra * atlasRadiusScale,
+					ShadowVogelTapCount) * contact;
+			}
+
+			if (fallbackMode == 1 || fallbackMode == 2 || fallbackMode == 4)
+				return contact;
+		}
 
 		return SampleShadowMapFilteredLocal(
 			ShadowMap,
