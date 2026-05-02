@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Threading;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
@@ -33,8 +35,10 @@ internal static class TextureRuntimeDiagnostics
     private static long s_uploadValidationFailureCount;
     private static long s_slowUploadCount;
     private static long s_vramPressureCount;
+    private static long s_fallbackBoundCount;
     private static double s_maxUploadMilliseconds;
     private static double s_maxQueueWaitMilliseconds;
+    private static readonly ConcurrentDictionary<string, long> s_bindingRiskLastFrameByKey = [];
     [ThreadStatic]
     private static StringBuilder? t_builder;
 
@@ -49,6 +53,7 @@ internal static class TextureRuntimeDiagnostics
     public static long UploadValidationFailureCount => Interlocked.Read(ref s_uploadValidationFailureCount);
     public static long SlowUploadCount => Interlocked.Read(ref s_slowUploadCount);
     public static long VramPressureCount => Interlocked.Read(ref s_vramPressureCount);
+    public static long FallbackBoundCount => Interlocked.Read(ref s_fallbackBoundCount);
     public static double MaxUploadMilliseconds => Volatile.Read(ref s_maxUploadMilliseconds);
     public static double MaxQueueWaitMilliseconds => Volatile.Read(ref s_maxQueueWaitMilliseconds);
 
@@ -213,14 +218,16 @@ internal static class TextureRuntimeDiagnostics
         uint completedResident,
         long committedBytes,
         double queueWaitMilliseconds,
-        double executionMilliseconds,
+        double activeUploadMilliseconds,
+        double lifecycleMilliseconds,
         string backendName)
     {
         Interlocked.Increment(ref s_transitionAppliedCount);
         RecordQueueWait(queueWaitMilliseconds);
-        RecordUploadDuration(executionMilliseconds);
+        RecordUploadDuration(activeUploadMilliseconds > 0.0 ? activeUploadMilliseconds : lifecycleMilliseconds);
         bool slow = queueWaitMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowQueueWaitMilliseconds
-            || executionMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowTransitionMilliseconds;
+            || activeUploadMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowUploadChunkMilliseconds
+            || lifecycleMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowTransitionMilliseconds;
         if (slow)
             Interlocked.Increment(ref s_slowUploadCount);
 
@@ -228,7 +235,218 @@ internal static class TextureRuntimeDiagnostics
             return;
 
         Log(slow ? "Texture.UploadSlow" : "Texture.TransitionApplied",
-            $"frame={frameId} texture='{Label(textureName)}' source='{Label(sourcePath)}' previous={previousResident} resident={completedResident} committedBytes={committedBytes} queueWaitMs={queueWaitMilliseconds:F2} executionMs={executionMilliseconds:F2} backend={backendName}");
+            $"frame={frameId} texture='{Label(textureName)}' source='{Label(sourcePath)}' previous={previousResident} resident={completedResident} committedBytes={committedBytes} queueWaitMs={queueWaitMilliseconds:F2} activeUploadMs={activeUploadMilliseconds:F2} lifecycleMs={lifecycleMilliseconds:F2} backend={backendName}");
+    }
+
+    public static void LogCacheRead(
+        long frameId,
+        string? sourcePath,
+        string? cachePath,
+        uint sourceWidth,
+        uint sourceHeight,
+        uint requestedResidentMaxDimension,
+        uint residentMaxDimension,
+        bool includeMipChain,
+        int mipCount,
+        double cacheReadMilliseconds,
+        double cacheParseMilliseconds,
+        double totalMilliseconds,
+        bool usedCookedPayload)
+    {
+        bool slow = totalMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds;
+        if (slow)
+            Interlocked.Increment(ref s_slowUploadCount);
+
+        if (!ShouldLog(slow ? TextureRuntimeEventImportance.Slow : TextureRuntimeEventImportance.Verbose))
+            return;
+
+        Log(slow ? "Texture.CacheReadSlow" : "Texture.CacheRead",
+            $"frame={frameId} source='{Label(sourcePath)}' cache='{Label(cachePath)}' logical={sourceWidth}x{sourceHeight} requestedResident={requestedResidentMaxDimension} resident={residentMaxDimension} includeMipChain={includeMipChain} mips={mipCount} cacheReadMs={cacheReadMilliseconds:F2} cacheParseMs={cacheParseMilliseconds:F2} totalMs={totalMilliseconds:F2} cookedPayload={usedCookedPayload} backend=CPU");
+    }
+
+    public static void LogResidentDataReused(
+        long frameId,
+        string? sourcePath,
+        uint requestedResidentMaxDimension,
+        bool includeMipChain,
+        uint residentMaxDimension,
+        int mipCount,
+        string backendName)
+    {
+        if (!ShouldLog(TextureRuntimeEventImportance.Verbose))
+            return;
+
+        Log("Texture.ResidentDataReused",
+            $"frame={frameId} source='{Label(sourcePath)}' requestedResident={requestedResidentMaxDimension} resident={residentMaxDimension} includeMipChain={includeMipChain} mips={mipCount} backend={backendName}");
+    }
+
+    public static void LogSparseStateClearedForDenseUpload(
+        long frameId,
+        string? textureName,
+        string? sourcePath,
+        int sparseResidentBaseMipLevel,
+        int sparseCommittedBaseMipLevel,
+        long sparseCommittedBytes,
+        uint denseResidentMaxDimension,
+        int denseMipCount)
+    {
+        if (!ShouldLog(TextureRuntimeEventImportance.Warning))
+            return;
+
+        Log("Texture.SparseStateClearedForDenseUpload",
+            $"frame={frameId} texture='{Label(textureName)}' source='{Label(sourcePath)}' " +
+            $"sparseResidentBase={sparseResidentBaseMipLevel} sparseCommittedBase={sparseCommittedBaseMipLevel} " +
+            $"sparseCommittedBytes={sparseCommittedBytes} denseResident={denseResidentMaxDimension} denseMips={denseMipCount}");
+    }
+
+    public static void LogFallbackTextureBound(
+        long frameId,
+        string? textureName,
+        string? samplerName,
+        string reason)
+    {
+        Interlocked.Increment(ref s_fallbackBoundCount);
+        if (!ShouldLog(TextureRuntimeEventImportance.Warning))
+            return;
+
+        Log("Texture.FallbackBound",
+            $"frame={frameId} texture='{Label(textureName)}' sampler='{Label(samplerName)}' reason='{Label(reason)}'");
+    }
+
+    public static void LogMaterialBinding(
+        long frameId,
+        string? materialName,
+        string? programName,
+        int textureSlot,
+        int textureUnit,
+        string? samplerName,
+        string? textureName,
+        string? sourcePath,
+        uint glBindingId,
+        ETextureTarget textureTarget,
+        uint width,
+        uint height,
+        int mipCount,
+        int largestMipLevel,
+        int smallestAllowedMipLevel,
+        bool sparseEnabled,
+        int sparseResidentBaseMipLevel,
+        int sparseCommittedBaseMipLevel,
+        long sparseCommittedBytes)
+    {
+        if (!IsEnabled)
+            return;
+
+        StringBuilder builder = RentBuilder(512);
+        builder.Append("frame=").Append(frameId)
+            .Append(" material='").AppendLabel(materialName)
+            .Append("' program='").AppendLabel(programName)
+            .Append("' slot=").Append(textureSlot)
+            .Append(" unit=").Append(textureUnit)
+            .Append(" sampler='").AppendLabel(samplerName)
+            .Append("' texture='").AppendLabel(textureName)
+            .Append("' source='").AppendLabel(sourcePath)
+            .Append("' gl=").Append(glBindingId)
+            .Append(" target=").Append(textureTarget)
+            .Append(" size=").Append(width).Append('x').Append(height)
+            .Append(" mips=").Append(mipCount)
+            .Append(" largestMip=").Append(largestMipLevel)
+            .Append(" smallestAllowedMip=").Append(smallestAllowedMipLevel)
+            .Append(" sparse=").Append(sparseEnabled)
+            .Append(" sparseResidentBase=").Append(sparseResidentBaseMipLevel)
+            .Append(" sparseCommittedBase=").Append(sparseCommittedBaseMipLevel)
+            .Append(" sparseCommittedBytes=").Append(sparseCommittedBytes);
+        LogPooled("Texture.MaterialBinding", builder);
+    }
+
+    public static void LogBindingRisk(
+        long frameId,
+        string? materialName,
+        string? programName,
+        int textureSlot,
+        int textureUnit,
+        string? resolvedSamplerName,
+        string? indexedSamplerName,
+        bool resolvedUniformPresent,
+        bool indexedUniformPresent,
+        string? textureName,
+        string? sourcePath,
+        uint glBindingId,
+        ETextureTarget textureTarget,
+        uint width,
+        uint height,
+        int mipCount,
+        int largestMipLevel,
+        int smallestAllowedMipLevel,
+        int minLod,
+        int maxLod,
+        string? minFilter,
+        string? magFilter,
+        bool sparseEnabled,
+        uint sparseLogicalWidth,
+        uint sparseLogicalHeight,
+        int sparseLogicalMipCount,
+        int sparseResidentBaseMipLevel,
+        int sparseCommittedBaseMipLevel,
+        int sparseNumSparseLevels,
+        long sparseCommittedBytes,
+        SparseTextureStreamingPageSelection sparsePageSelection,
+        bool progressiveUploadActive,
+        bool progressiveFinalizePending,
+        int streamingLockMipLevel,
+        int validationFailureCount,
+        double lastQueueWaitMilliseconds,
+        double lastUploadMilliseconds,
+        string reason)
+    {
+        if (!ShouldLog(TextureRuntimeEventImportance.Warning))
+            return;
+
+        string key = $"{materialName}|{programName}|{textureSlot}|{textureName}|{sourcePath}|{reason}";
+        long lastFrame = s_bindingRiskLastFrameByKey.GetOrAdd(key, long.MinValue);
+        if (lastFrame != long.MinValue && frameId - lastFrame < 240L)
+            return;
+
+        s_bindingRiskLastFrameByKey[key] = frameId;
+
+        StringBuilder builder = RentBuilder(768);
+        builder.Append("frame=").Append(frameId)
+            .Append(" material='").AppendLabel(materialName)
+            .Append("' program='").AppendLabel(programName)
+            .Append("' slot=").Append(textureSlot)
+            .Append(" unit=").Append(textureUnit)
+            .Append(" sampler='").AppendLabel(resolvedSamplerName)
+            .Append("' indexedSampler='").AppendLabel(indexedSamplerName)
+            .Append("' samplerUniform=").Append(resolvedUniformPresent)
+            .Append(" indexedUniform=").Append(indexedUniformPresent)
+            .Append(" texture='").AppendLabel(textureName)
+            .Append("' source='").AppendLabel(sourcePath)
+            .Append("' gl=").Append(glBindingId)
+            .Append(" target=").Append(textureTarget)
+            .Append(" size=").Append(width).Append('x').Append(height)
+            .Append(" mips=").Append(mipCount)
+            .Append(" largestMip=").Append(largestMipLevel)
+            .Append(" smallestAllowedMip=").Append(smallestAllowedMipLevel)
+            .Append(" minLod=").Append(minLod)
+            .Append(" maxLod=").Append(maxLod)
+            .Append(" minFilter=").AppendLabel(minFilter)
+            .Append(" magFilter=").AppendLabel(magFilter)
+            .Append(" sparse=").Append(sparseEnabled)
+            .Append(" sparseLogical=").Append(sparseLogicalWidth).Append('x').Append(sparseLogicalHeight)
+            .Append(" sparseMips=").Append(sparseLogicalMipCount)
+            .Append(" sparseResidentBase=").Append(sparseResidentBaseMipLevel)
+            .Append(" sparseCommittedBase=").Append(sparseCommittedBaseMipLevel)
+            .Append(" sparseLevels=").Append(sparseNumSparseLevels)
+            .Append(" sparseCommittedBytes=").Append(sparseCommittedBytes)
+            .Append(" sparsePage=").Append(sparsePageSelection)
+            .Append(" progressiveUpload=").Append(progressiveUploadActive)
+            .Append(" progressiveFinalize=").Append(progressiveFinalizePending)
+            .Append(" lockMip=").Append(streamingLockMipLevel)
+            .Append(" validationFailures=").Append(validationFailureCount)
+            .Append(" queueWaitMs=").Append(lastQueueWaitMilliseconds.ToString("F2"))
+            .Append(" uploadMs=").Append(lastUploadMilliseconds.ToString("F2"))
+            .Append(" reason='").AppendLabel(reason).Append('\'');
+        LogPooled("Texture.BindingRisk", builder);
     }
 
     public static void LogUploadChunk(
@@ -276,13 +494,17 @@ internal static class TextureRuntimeDiagnostics
         bool includeMipChain,
         int mipCount,
         double decodeMilliseconds,
+        double cloneMilliseconds,
         double resizeMilliseconds,
         double mipBuildMilliseconds,
-        double totalMilliseconds)
+        double totalMilliseconds,
+        double totalThresholdMilliseconds)
     {
         bool slow = decodeMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds
+            || cloneMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds
             || resizeMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds
-            || mipBuildMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowMipBuildMilliseconds;
+            || mipBuildMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowMipBuildMilliseconds
+            || totalMilliseconds >= totalThresholdMilliseconds;
         if (slow)
             Interlocked.Increment(ref s_slowUploadCount);
 
@@ -290,7 +512,7 @@ internal static class TextureRuntimeDiagnostics
             return;
 
         Log(slow ? "Texture.UploadSlow" : "Texture.CpuResidentBuilt",
-            $"frame={frameId} source='{Label(sourcePath)}' logical={sourceWidth}x{sourceHeight} requestedResident={requestedResidentMaxDimension} resident={residentMaxDimension} includeMipChain={includeMipChain} mips={mipCount} decodeMs={decodeMilliseconds:F2} resizeMs={resizeMilliseconds:F2} mipBuildMs={mipBuildMilliseconds:F2} totalMs={totalMilliseconds:F2} backend=CPU");
+            $"frame={frameId} source='{Label(sourcePath)}' logical={sourceWidth}x{sourceHeight} requestedResident={requestedResidentMaxDimension} resident={residentMaxDimension} includeMipChain={includeMipChain} mips={mipCount} decodeMs={decodeMilliseconds:F2} cloneMs={cloneMilliseconds:F2} resizeMs={resizeMilliseconds:F2} mipBuildMs={mipBuildMilliseconds:F2} totalMs={totalMilliseconds:F2} totalThresholdMs={totalThresholdMilliseconds:F2} backend=CPU");
     }
 
     public static void LogStorageAllocated(
@@ -416,8 +638,15 @@ internal static class TextureRuntimeDiagnostics
             return;
 
         int visible = 0;
+        int visibleWithoutPreview = 0;
         int pending = 0;
         int slow = 0;
+        int noData = 0;
+        int previewQueued = 0;
+        int previewResident = 0;
+        int promotionQueued = 0;
+        int promoted = 0;
+        int failed = 0;
         long residentBytes = 0L;
         double oldestWait = 0.0;
         double maxUpload = 0.0;
@@ -432,12 +661,34 @@ internal static class TextureRuntimeDiagnostics
         for (int i = 0; i < textures.Count; i++)
         {
             ImportedTextureStreamingTextureTelemetry texture = textures[i];
-            if (texture.LastVisibleFrameId == frameId)
+            bool visibleThisFrame = texture.LastVisibleFrameId == frameId;
+            if (visibleThisFrame)
+            {
                 visible++;
+                if (!texture.PreviewReady)
+                    visibleWithoutPreview++;
+            }
+
             if (texture.HasPendingTransition)
                 pending++;
             if (texture.IsSlow)
                 slow++;
+            if (texture.HasValidationFailure)
+                failed++;
+
+            uint previewSize = texture.SourceWidth == 0 && texture.SourceHeight == 0
+                ? 64u
+                : XRTexture2D.GetPreviewResidentSize(Math.Max(texture.SourceWidth, texture.SourceHeight));
+            if (!texture.PreviewReady && texture.ResidentMaxDimension == 0)
+                noData++;
+            else if (!texture.PreviewReady && texture.HasPendingTransition)
+                previewQueued++;
+            else if (texture.PreviewReady && texture.ResidentMaxDimension <= previewSize)
+                previewResident++;
+            else if (texture.HasPendingTransition && texture.PendingResidentMaxDimension > texture.ResidentMaxDimension)
+                promotionQueued++;
+            else if (texture.ResidentMaxDimension > previewSize)
+                promoted++;
 
             long bytes = texture.CurrentCommittedBytes;
             residentBytes += bytes;
@@ -471,15 +722,24 @@ internal static class TextureRuntimeDiagnostics
         builder.Append("[TextureSummary] frame=").Append(frameId)
             .Append(" tracked=").Append(telemetry.TrackedTextureCount)
             .Append(" visible=").Append(visible)
+            .Append(" visibleNoPreview=").Append(visibleWithoutPreview)
             .Append(" pending=").Append(pending)
             .Append(" slow=").Append(slow)
             .Append(" uploading=").Append(telemetry.ActiveGpuUploadCount)
+            .Append(" noData=").Append(noData)
+            .Append(" previewQueued=").Append(previewQueued)
+            .Append(" previewResident=").Append(previewResident)
+            .Append(" promotionQueued=").Append(promotionQueued)
+            .Append(" promoted=").Append(promoted)
+            .Append(" fallback=").Append(FallbackBoundCount)
+            .Append(" failed=").Append(failed)
             .Append(" residentBytes=").Append(residentBytes)
             .Append(" budget=").Append(telemetry.AvailableManagedBytes)
             .Append(" pressure=").Append(telemetry.AvailableManagedBytes != long.MaxValue && residentBytes > telemetry.AvailableManagedBytes)
             .Append(" promotionsQueued=").Append(telemetry.QueuedPromotionTransitionsThisFrame)
             .Append(" demotionsQueued=").Append(telemetry.QueuedDemotionTransitionsThisFrame)
             .Append(" coalesced=").Append(TransitionCoalescedCount)
+            .Append(" canceled=").Append(TransitionCanceledCount)
             .Append(" canceledStale=").Append(StaleUploadCanceledCount)
             .Append(" slowUploads=").Append(SlowUploadCount)
             .Append(" maxUploadMs=").Append(maxUpload.ToString("F2"))

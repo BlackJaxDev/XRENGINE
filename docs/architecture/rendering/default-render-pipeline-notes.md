@@ -372,15 +372,25 @@ Generated vertex shaders are allowed to trim `FragTransformId` for ordinary pass
 
 **Rule:** Runtime texture residency, OpenGL upload safety, and texture/shadow render-work contention should be diagnosable from `log_textures.txt`.
 
-File logging creates `log_textures.txt` beside the existing per-session logs under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`. The texture log receives residency and upload events such as `Texture.ImportPreviewQueued`, `Texture.TransitionQueued`, `Texture.TransitionCoalesced`, `Texture.UploadChunk`, `Texture.UploadSlow`, `Texture.UploadValidationFailed`, `Texture.VramPressure`, and `Texture.VramSummary`.
+File logging creates `log_textures.txt` beside the existing per-session logs under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`. The texture log receives residency, cache, fallback, and upload events such as `Texture.CacheHit`, `Texture.CacheMiss`, `Texture.CacheStale`, `Texture.CacheFallbackToSource`, `Texture.CacheWrite`, `Texture.CacheRead`, `Texture.ImportPreviewQueued`, `Texture.TransitionQueued`, `Texture.TransitionCoalesced`, `Texture.TransitionCanceled`, `Texture.UploadChunk`, `Texture.UploadSlow`, `Texture.FallbackBound`, `Texture.UploadValidationFailed`, `Texture.VramPressure`, and `Texture.VramSummary`.
 
 The rendering settings expose `TextureLogMode` with `Disabled`, `Summary`, `SlowOnly`, and `Verbose` modes. Summary mode is the normal diagnostic default; verbose mode is for short repro captures only. Slow thresholds are configurable for CPU decode/resize, mip build, upload chunks, full transitions, queue wait, and per-frame texture upload budget.
+
+CPU-side imported texture preparation is logged to `log_textures.txt` as `Texture.UploadSlow` with `backend=CPU` whenever the decode, clone, resize, mip-build, or total resident-build time crosses its slow threshold. These events include `decodeMs`, `cloneMs`, `resizeMs`, `mipBuildMs`, `totalMs`, and `totalThresholdMs` so raw source decode stalls can be separated from resize/mip generation stalls.
+
+Fresh third-party texture caches are the preferred streaming authority after the first source import. Texture cache paths include a texture-streaming payload variant key for the current cooked RGBA8/uncompressed residency payload, so future payload changes do not silently reuse old cache files. Warm-cache streaming uses `AssetTextureStreamingSource` and records `Texture.CacheRead` or `Texture.CacheReadSlow` with `cacheReadMs`, `cacheParseMs`, `totalMs`, cache path, original source path, requested residency, mip count, and whether the streamable cooked payload was used.
+
+Texture transition timing now separates `queueWaitMs`, `activeUploadMs`, and `lifecycleMs`. `lifecycleMs` remains the user-visible latency from queue to completion, while `activeUploadMs` tracks actual upload work where the backend can measure it. `Texture.VramSummary` includes stage counters for visible textures without previews, no data, preview queued/resident, promotion queued/promoted, fallback binds, cancellations, and failures.
 
 OpenGL `TexSubImage2D` upload paths must validate allocated storage, mip level, upload rectangle, sparse state, and storage generation before touching the driver. Validation failures are mirrored into the texture log and still emit OpenGL context so `log_opengl.txt` and `log_textures.txt` can be correlated.
 
 Runtime-managed imported-texture promotions are chunked for CPU-pointer mips where the format allows row uploads. Partial rows stay hidden by clamping the sampled mip range until the mip is complete. Pending transitions carry queue timing and are coalesced when the target residency/page selection is unchanged.
 
 During active imports, textures bound by material uniform setup can act as a fallback priority source before a visibility snapshot exists. Related textures on the same material get a small shared residency floor so albedo, normal, and roughness detail tiers do not diverge obviously during startup.
+
+Visible preview loads are prioritized ahead of high-res promotions. Non-critical promotions are delayed while any visible or recently-bound texture lacks a resident preview. Superseded resident data is kept in a short-lived reuse cache keyed by authority path, source timestamp/length, requested resident dimension, mip-chain flag, and the current cooked payload format so canceled sparse/tiered transitions can reuse CPU-prepared mips instead of decoding the same source repeatedly.
+
+Preview paths that cannot provide their intended texture must bind an explicit role-aware fallback instead of leaving shader samplers unbound. Light probe preview materials bind a visible fallback for `Texture0` and log `Texture.FallbackBound` once for that missing-preview path.
 
 Texture uploads and shadow atlas tile rendering publish queue and budget counters through the shared render-work budget coordinator. Profiler FPS-drop and render-stall logs include those counters, and the shadow atlas can defer lower-priority tiles when urgent visible texture repair is pending. Startup boost is bounded by frame/time limits so it cannot turn into multi-second starvation.
 

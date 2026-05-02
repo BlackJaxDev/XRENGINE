@@ -107,14 +107,16 @@ public sealed class RuntimeRenderingHostServicesTests
     }
 
     [Test]
-    public void ImportedTextureStreamingScope_SuppressesTextureCacheWarmup()
+    public void ImportedTextureStreamingScope_EnablesImportedTextureTimingDiagnostics()
     {
-        XRTexture2D.ShouldSuppressTextureStreamingCacheWarmup.ShouldBeFalse();
+        RuntimeRenderingHostServices.Current = new TestRuntimeRenderingHostServices();
+
+        XRTexture2D.ShouldLogImportedTextureTiming.ShouldBeFalse();
 
         using (XRTexture2D.EnterImportedTextureStreamingScope())
-            XRTexture2D.ShouldSuppressTextureStreamingCacheWarmup.ShouldBeTrue();
+            XRTexture2D.ShouldLogImportedTextureTiming.ShouldBeTrue();
 
-        XRTexture2D.ShouldSuppressTextureStreamingCacheWarmup.ShouldBeFalse();
+        XRTexture2D.ShouldLogImportedTextureTiming.ShouldBeFalse();
     }
 
     [Test]

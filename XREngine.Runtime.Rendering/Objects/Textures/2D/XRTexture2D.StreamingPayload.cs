@@ -2,6 +2,7 @@ using ImageMagick;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text;
+using System.Threading;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using YamlDotNet.Core;
@@ -18,6 +19,7 @@ public partial class XRTexture2D
 {
     private const int StreamableMipSectionMagic = 0x58525453; // XRTS
     private const int StreamableMipSectionVersion = 1;
+    private const int TextureStreamingGpuCacheCookTimeoutMilliseconds = 120_000;
     private const int StreamableMipDescriptorSize =
         sizeof(uint) + sizeof(uint) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(long) + sizeof(int);
     private static readonly DataSourceYamlTypeConverter TextureYamlPayloadConverter = new();
@@ -40,20 +42,7 @@ public partial class XRTexture2D
 
     internal static byte[] CreateTextureStreamingPayload(string sourceFilePath, MagickImage image)
     {
-        XRTexture2D texture = new()
-        {
-            Name = Path.GetFileNameWithoutExtension(sourceFilePath),
-            FilePath = sourceFilePath,
-            MagFilter = ETexMagFilter.Linear,
-            MinFilter = ETexMinFilter.LinearMipmapLinear,
-            UWrap = ETexWrapMode.Repeat,
-            VWrap = ETexWrapMode.Repeat,
-            AlphaAsTransparency = true,
-            AutoGenerateMipmaps = false,
-            Resizable = false,
-            SizedInternalFormat = ESizedInternalFormat.Rgba8,
-            Mipmaps = GetMipmapsFromImage(image)
-        };
+        XRTexture2D texture = CreateTextureStreamingCacheTexture(sourceFilePath, image);
 
         long size = ((ICookedBinarySerializable)texture).CalculateCookedBinarySize();
         if (size > int.MaxValue)
@@ -70,6 +59,178 @@ public partial class XRTexture2D
         }
 
         return payload;
+    }
+
+    internal static bool TryCreateTextureStreamingCacheAsset(
+        XRTexture2D sourceTexture,
+        string sourceFilePath,
+        string cacheFilePath,
+        DateTime sourceLastWriteTimeUtc,
+        out XRTexture2D texture)
+    {
+        texture = new XRTexture2D();
+        if (sourceTexture is null)
+            return false;
+
+        if (TryCreateTextureStreamingCacheAssetGpu(
+                sourceTexture,
+                sourceFilePath,
+                cacheFilePath,
+                sourceLastWriteTimeUtc,
+                out texture))
+        {
+            return true;
+        }
+
+        return TryCreateTextureStreamingCacheAsset(
+            sourceFilePath,
+            cacheFilePath,
+            sourceLastWriteTimeUtc,
+            out texture);
+    }
+
+    internal static bool TryCreateTextureStreamingCacheAsset(
+        string sourceFilePath,
+        string cacheFilePath,
+        DateTime sourceLastWriteTimeUtc,
+        out XRTexture2D texture)
+    {
+        texture = new XRTexture2D();
+        if (string.IsNullOrWhiteSpace(sourceFilePath) || !File.Exists(sourceFilePath))
+            return false;
+
+        try
+        {
+            byte[] fileBytes = RuntimeRenderingHostServices.Current.ReadAllBytes(sourceFilePath);
+            using MagickImage sourceImage = new(fileBytes);
+            texture = CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(sourceImage));
+            texture.FilePath = cacheFilePath;
+            texture.OriginalPath = sourceFilePath;
+            texture.OriginalLastWriteTimeUtc = sourceLastWriteTimeUtc;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or MagickException or InvalidOperationException or NotSupportedException)
+        {
+            texture = new XRTexture2D();
+            return false;
+        }
+    }
+
+    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, MagickImage image)
+        => CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(image));
+
+    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, Mipmap2D[] mipmaps)
+        => new()
+        {
+            Name = Path.GetFileNameWithoutExtension(sourceFilePath),
+            FilePath = sourceFilePath,
+            MagFilter = ETexMagFilter.Linear,
+            MinFilter = ETexMinFilter.LinearMipmapLinear,
+            UWrap = ETexWrapMode.Repeat,
+            VWrap = ETexWrapMode.Repeat,
+            AlphaAsTransparency = true,
+            AutoGenerateMipmaps = false,
+            Resizable = false,
+            SizedInternalFormat = ESizedInternalFormat.Rgba8,
+            Mipmaps = mipmaps
+        };
+
+    private static bool TryCreateTextureStreamingCacheAssetGpu(
+        XRTexture2D sourceTexture,
+        string sourceFilePath,
+        string cacheFilePath,
+        DateTime sourceLastWriteTimeUtc,
+        out XRTexture2D texture)
+    {
+        texture = new XRTexture2D();
+        if (!CanUseGpuTextureStreamingCacheCook(sourceTexture))
+            return false;
+
+        ManualResetEventSlim completed = new(false);
+        int completionState = 0;
+        bool success = false;
+        Mipmap2D[]? gpuMipmaps = null;
+        string failure = string.Empty;
+
+        void Complete(bool callbackSuccess, Mipmap2D[]? callbackMipmaps, string callbackFailure)
+        {
+            if (Interlocked.Exchange(ref completionState, 1) != 0)
+                return;
+
+            success = callbackSuccess;
+            gpuMipmaps = callbackMipmaps;
+            failure = callbackFailure;
+            completed.Set();
+        }
+
+        try
+        {
+            RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                () =>
+                {
+                    AbstractRenderer? renderer = AbstractRenderer.Current;
+                    if (renderer is null)
+                    {
+                        Complete(false, null, "No active renderer was available for GPU texture cache cooking.");
+                        return;
+                    }
+
+                    renderer.TryBuildTexture2DMipChainRgba8Async(sourceTexture, Complete);
+                },
+                "XRTexture2D.TextureStreamingCacheGpuCook");
+
+            if (!completed.Wait(TextureStreamingGpuCacheCookTimeoutMilliseconds))
+            {
+                Interlocked.Exchange(ref completionState, 1);
+                RuntimeRenderingHostServices.Current.LogWarning(
+                    $"Timed out waiting for GPU texture streaming cache cook for '{sourceFilePath}'. Falling back to CPU mip generation.");
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            failure = ex.Message;
+            return false;
+        }
+        finally
+        {
+            completed.Dispose();
+        }
+
+        if (!success || gpuMipmaps is null || gpuMipmaps.Length == 0)
+        {
+            if (!string.IsNullOrWhiteSpace(failure))
+            {
+                RuntimeRenderingHostServices.Current.LogWarning(
+                    $"GPU texture streaming cache cook failed for '{sourceFilePath}'. Falling back to CPU mip generation. {failure}");
+            }
+
+            return false;
+        }
+
+        texture = CreateTextureStreamingCacheTexture(sourceFilePath, gpuMipmaps);
+        texture.FilePath = cacheFilePath;
+        texture.OriginalPath = sourceFilePath;
+        texture.OriginalLastWriteTimeUtc = sourceLastWriteTimeUtc;
+        return true;
+    }
+
+    private static bool CanUseGpuTextureStreamingCacheCook(XRTexture2D sourceTexture)
+    {
+        if (RuntimeRenderingHostServices.Current.IsRenderThread ||
+            !RuntimeRenderingHostServices.Current.IsRendererActive ||
+            RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.OpenGL)
+        {
+            return false;
+        }
+
+        Mipmap2D[] mipmaps = sourceTexture.Mipmaps;
+        return mipmaps is { Length: > 0 } &&
+            mipmaps[0] is not null &&
+            mipmaps[0].HasData() &&
+            sourceTexture.Width > 0u &&
+            sourceTexture.Height > 0u &&
+            !sourceTexture.MultiSample;
     }
 
     internal static bool TryReadResidentDataFromTextureStreamingPayload(
@@ -202,11 +363,21 @@ public partial class XRTexture2D
             return false;
         }
 
-        return TryReadResidentDataFromTextureAssetFileBytes(
+        if (!TryReadResidentDataFromTextureAssetFileBytes(
             assetBytes,
             ImportedPreviewMaxDimensionInternal,
-            includeMipChain: false,
-            out _);
+            includeMipChain: true,
+            out TextureStreamingResidentData residentData))
+        {
+            return false;
+        }
+
+        uint sourceMaxDimension = Math.Max(residentData.SourceWidth, residentData.SourceHeight);
+        uint expectedResidentMaxDimension = GetPreviewResidentSize(sourceMaxDimension);
+        if (residentData.ResidentMaxDimension > expectedResidentMaxDimension)
+            return false;
+
+        return sourceMaxDimension <= expectedResidentMaxDimension || residentData.Mipmaps.Length > 1;
     }
 
     private static bool TryExtractTextureStreamingPayloadFromYamlAsset(string assetYaml, out byte[]? payload)

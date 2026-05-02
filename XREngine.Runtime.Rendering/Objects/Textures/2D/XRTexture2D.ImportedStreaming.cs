@@ -11,9 +11,6 @@ public partial class XRTexture2D
     internal const uint ImportedPreviewMaxDimensionInternal = 64;
     internal const double ImportedTextureTimingLogThresholdMilliseconds = 5.0;
 
-    internal static bool ShouldSuppressTextureStreamingCacheWarmup
-        => ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports;
-
     internal static bool ShouldLogImportedTextureTiming
         => ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports
             || TextureRuntimeDiagnostics.IsEnabled;
@@ -129,6 +126,7 @@ public partial class XRTexture2D
         double mipBuildThreshold = RuntimeRenderingHostServices.Current.TextureSlowMipBuildMilliseconds;
         if (totalMilliseconds < ImportedTextureTimingLogThresholdMilliseconds
             && decodeMilliseconds < decodeResizeThreshold
+            && cloneMilliseconds < decodeResizeThreshold
             && resizeMilliseconds < decodeResizeThreshold
             && mipBuildMilliseconds < mipBuildThreshold)
         {
@@ -145,9 +143,11 @@ public partial class XRTexture2D
             includeMipChain,
             mipCount,
             decodeMilliseconds,
+            cloneMilliseconds,
             resizeMilliseconds,
             mipBuildMilliseconds,
-            totalMilliseconds);
+            totalMilliseconds,
+            ImportedTextureTimingLogThresholdMilliseconds);
 
         RuntimeRenderingHostServices.Current.LogOutput(
             $"[ImportedTextureTiming] '{sourceLabel}' source={sourceWidth}x{sourceHeight} requestedMax={requestedResidentMaxDimension} resident={residentMaxDimension} includeMipChain={includeMipChain} mips={mipCount} decode={decodeMilliseconds:F1}ms clone={cloneMilliseconds:F1}ms resize={resizeMilliseconds:F1}ms mipBuild={mipBuildMilliseconds:F1}ms total={totalMilliseconds:F1}ms");
@@ -156,12 +156,15 @@ public partial class XRTexture2D
     internal static TextureStreamingResidentData BuildResidentDataFromLoadedTexture(
         XRTexture2D texture,
         uint maxResidentDimension,
-        bool includeMipChain)
+        bool includeMipChain,
+        CancellationToken cancellationToken = default)
     {
         Mipmap2D[] sourceMipmaps = texture.Mipmaps;
         if (sourceMipmaps is { Length: > 0 } && sourceMipmaps[0] is not null && sourceMipmaps[0].HasData())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Mipmap2D[] residentMipmaps = SelectResidentMipmaps(sourceMipmaps, maxResidentDimension, includeMipChain);
+            cancellationToken.ThrowIfCancellationRequested();
             uint residentMaxDimension = residentMipmaps.Length > 0
                 ? Math.Max(residentMipmaps[0].Width, residentMipmaps[0].Height)
                 : 0u;
@@ -173,7 +176,7 @@ public partial class XRTexture2D
         }
 
         using MagickImage filler = (MagickImage)FillerImage.Clone();
-        return BuildResidentDataFromImage(filler, maxResidentDimension, includeMipChain);
+        return BuildResidentDataFromImage(filler, maxResidentDimension, includeMipChain, cancellationToken: cancellationToken);
     }
 
     internal static TextureStreamingResidentData BuildResidentDataFromImage(
@@ -181,25 +184,30 @@ public partial class XRTexture2D
         uint maxResidentDimension,
         bool includeMipChain,
         string? timingLabel = null,
-        double decodeMilliseconds = 0.0)
+        double decodeMilliseconds = 0.0,
+        CancellationToken cancellationToken = default)
     {
         uint sourceWidth = image.Width;
         uint sourceHeight = image.Height;
 
+        cancellationToken.ThrowIfCancellationRequested();
         long cloneStartTimestamp = StartImportedTextureTiming();
         using MagickImage residentImage = (MagickImage)image.Clone();
         double cloneMilliseconds = CompleteImportedTextureTiming(cloneStartTimestamp);
 
+        cancellationToken.ThrowIfCancellationRequested();
         long resizeStartTimestamp = StartImportedTextureTiming();
         ResizePreviewIfNeeded(residentImage, Math.Max(1u, maxResidentDimension));
         double resizeMilliseconds = CompleteImportedTextureTiming(resizeStartTimestamp);
 
+        cancellationToken.ThrowIfCancellationRequested();
         long mipBuildStartTimestamp = StartImportedTextureTiming();
         Mipmap2D[] mipmaps = includeMipChain
             ? GetMipmapsFromImage(residentImage)
             : [new Mipmap2D(residentImage)];
         double mipBuildMilliseconds = CompleteImportedTextureTiming(mipBuildStartTimestamp);
 
+        cancellationToken.ThrowIfCancellationRequested();
         uint residentMaxDimension = mipmaps.Length > 0
             ? Math.Max(mipmaps[0].Width, mipmaps[0].Height)
             : 0u;
@@ -247,6 +255,28 @@ public partial class XRTexture2D
         }
         texture.StreamingLockMipLevel = lockMipLevel;
 
+        // ApplyResidentData is the dense/tiered upload path. If this texture was
+        // previously using sparse residency, drop that state before publishing the
+        // new mip chain so the GL uploader does not offset full-chain mip indices
+        // by an old sparse resident base.
+        if (texture.SparseTextureStreamingEnabled
+            || texture.SparseTextureStreamingResidentBaseMipLevel != int.MaxValue
+            || texture.SparseTextureStreamingCommittedBaseMipLevel != int.MaxValue
+            || texture.SparseTextureStreamingCommittedBytes > 0L)
+        {
+            TextureRuntimeDiagnostics.LogSparseStateClearedForDenseUpload(
+                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                texture.Name,
+                texture.FilePath,
+                texture.SparseTextureStreamingResidentBaseMipLevel,
+                texture.SparseTextureStreamingCommittedBaseMipLevel,
+                texture.SparseTextureStreamingCommittedBytes,
+                residentData.ResidentMaxDimension,
+                residentData.Mipmaps.Length);
+        }
+
+        texture.ClearSparseTextureStreamingState();
+
         texture.Mipmaps = residentData.Mipmaps;
         texture.AutoGenerateMipmaps = false;
         texture.Resizable = false;
@@ -273,6 +303,11 @@ public partial class XRTexture2D
         => sourceMaxDimension == 0
             ? ImportedPreviewMaxDimensionInternal
             : Math.Min(sourceMaxDimension, ImportedPreviewMaxDimensionInternal);
+
+    internal static uint GetMinimumResidentSize(uint sourceMaxDimension)
+        => sourceMaxDimension == 0
+            ? 1u
+            : Math.Min(sourceMaxDimension, 1u);
 
     internal static long EstimateResidentBytes(
         uint sourceWidth,

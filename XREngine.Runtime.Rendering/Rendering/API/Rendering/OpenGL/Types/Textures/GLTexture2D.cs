@@ -51,6 +51,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
             uint newWidth = sourceMipmaps[0].Width;
             uint newHeight = sourceMipmaps[0].Height;
             uint requiredLevels = (uint)sourceMipmaps.Length;
+            bool switchingFromSparseStorage = _sparseStorageAllocated && !Data.SparseTextureStreamingEnabled;
             if (Data.SparseTextureStreamingEnabled)
             {
                 if (Data.SparseTextureStreamingLogicalWidth > 0)
@@ -63,7 +64,8 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
                     : (uint)(SparseTextureResidentBaseMipLevelOrZero + sourceMipmaps.Length);
             }
 
-            if (newWidth != _allocatedWidth
+            if (switchingFromSparseStorage
+                || newWidth != _allocatedWidth
                 || newHeight != _allocatedHeight
                 || requiredLevels > _allocatedLevels)
             {
