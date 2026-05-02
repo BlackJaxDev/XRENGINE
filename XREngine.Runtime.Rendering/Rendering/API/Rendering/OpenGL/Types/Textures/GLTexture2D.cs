@@ -122,6 +122,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         _allocatedWidth = 0;
         _allocatedHeight = 0;
         _allocatedInternalFormat = default;
+        AdvanceStorageGeneration();
         _sparseStorageAllocated = false;
         _sparseLogicalWidth = 0;
         _sparseLogicalHeight = 0;
@@ -185,6 +186,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
 
         Mipmaps.ForEach(SetFullPush);
         StorageSet = false;
+        AdvanceStorageGeneration();
         _sparseStorageAllocated = false;
         _sparseLogicalWidth = 0;
         _sparseLogicalHeight = 0;
@@ -210,6 +212,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         }
 
         StorageSet = false;
+        AdvanceStorageGeneration();
         _sparseStorageAllocated = false;
         _sparseLogicalWidth = 0;
         _sparseLogicalHeight = 0;

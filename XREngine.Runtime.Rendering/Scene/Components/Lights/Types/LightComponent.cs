@@ -12,12 +12,30 @@ using XREngine.Timers;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
+    /// <summary>
+    /// Shared runtime state for all scene lights, including dynamic-world registration,
+    /// preview-volume rendering, shadow-map resources, and shader uniform publication.
+    /// </summary>
     public abstract class LightComponent : XRComponent, IRenderable
     {
+        /// <summary>
+        /// Maximum supported sample count for Vogel-disk soft shadows.
+        /// </summary>
         public const int MaxVogelTapCount = 32;
+
+        /// <summary>
+        /// Upper bound for automatic PCSS/contact-hardening source radii.
+        /// </summary>
         public const float MaxAutomaticContactHardeningLightRadius = 0.25f;
 
+        /// <summary>
+        /// A camera/light frustum overlap expressed as an AABB for debug visualization.
+        /// </summary>
         public readonly record struct FrustumIntersectionAabb(int FrustumIndex, Vector3 Min, Vector3 Max);
+
+        /// <summary>
+        /// Complete GPU texture format tuple used when allocating sampled shadow maps.
+        /// </summary>
         public readonly record struct ShadowMapTextureFormat(
             EPixelInternalFormat InternalFormat,
             EPixelFormat PixelFormat,
@@ -273,6 +291,9 @@ namespace XREngine.Components.Capture.Lights.Types
             protected set => SetField(ref _shadowMap, value);
         }
 
+        /// <summary>
+        /// Latest atlas allocation diagnostics for this light's shadow request.
+        /// </summary>
         [Browsable(false)]
         public ShadowRequestDiagnostic ShadowAtlasDiagnostic => _shadowAtlasDiagnostic;
 
@@ -286,6 +307,9 @@ namespace XREngine.Components.Capture.Lights.Types
             ShadowRequestDomain domain = ShadowRequestDomain.Live)
             => new(ID, domain, projectionType, faceOrCascadeIndex, encoding);
 
+        /// <summary>
+        /// Enables live shadow-map creation and rendering for this light.
+        /// </summary>
         [Category("Shadows")]
         public bool CastsShadows
         {
@@ -450,6 +474,10 @@ namespace XREngine.Components.Capture.Lights.Types
         public virtual Vector4 ShadowBiasProjectionParameters => Vector4.Zero;
 
         private uint _shadowMapResolutionWidth = 4096u;
+
+        /// <summary>
+        /// Width of this light's standalone shadow map. Cubemap lights use the larger width/height as the face size.
+        /// </summary>
         [Category("Shadows")]
         public uint ShadowMapResolutionWidth
         {
@@ -458,6 +486,10 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         private uint _shadowMapResolutionHeight = 4096u;
+
+        /// <summary>
+        /// Height of this light's standalone shadow map. Cubemap lights use the larger width/height as the face size.
+        /// </summary>
         [Category("Shadows")]
         public uint ShadowMapResolutionHeight
         {
@@ -465,25 +497,41 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetShadowMapResolution(ShadowMapResolutionWidth, value);
         }
 
+        /// <summary>
+        /// Linear RGB light color applied before intensity.
+        /// </summary>
         public ColorF3 Color
         {
             get => _color;
             set => SetField(ref _color, value);
         }
 
+        /// <summary>
+        /// Diffuse lighting multiplier used by forward/deferred light shaders.
+        /// </summary>
         public float DiffuseIntensity
         {
             get => _diffuseIntensity;
             set => SetField(ref _diffuseIntensity, value);
         }
 
+        /// <summary>
+        /// Controls whether the light is registered as live dynamic lighting or treated as cacheable/static.
+        /// </summary>
         public ELightType Type
         {
             get => _type;
             set => SetField(ref _type, value);
         }
 
+        /// <summary>
+        /// Render info for the optional wireframe preview volume.
+        /// </summary>
         public RenderInfo3D RenderInfo { get; }
+
+        /// <summary>
+        /// IRenderable payload containing only the preview-volume render info.
+        /// </summary>
         public RenderInfo[] RenderedObjects { get; }
 
         /// <summary>
@@ -508,11 +556,15 @@ namespace XREngine.Components.Capture.Lights.Types
         /// Most recent intersections between the active player camera frustum and this light's shadow frusta.
         /// </summary>
         public IReadOnlyList<FrustumIntersectionAabb> CameraIntersections => _cameraIntersections;
+
         /// <summary>
         /// True when the active player camera intersects at least one of this light's shadow frusta.
         /// </summary>
         public bool IntersectsActiveCamera => _cameraIntersections.Count > 0;
 
+        /// <summary>
+        /// Creates or resizes the light's standalone shadow map resources.
+        /// </summary>
         public virtual void SetShadowMapResolution(uint width, uint height)
         {
             SetField(ref _shadowMapResolutionWidth, width, nameof(ShadowMapResolutionWidth));
@@ -526,6 +578,9 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected virtual EShadowMapStorageFormat DefaultShadowMapStorageFormat => EShadowMapStorageFormat.R16Float;
 
+        /// <summary>
+        /// Returns true when the light can allocate and sample the requested shadow-map storage format.
+        /// </summary>
         public virtual bool SupportsShadowMapStorageFormat(EShadowMapStorageFormat format)
             => IsColorShadowMapStorageFormat(format) || IsMomentShadowMapStorageFormat(format);
 
@@ -555,12 +610,18 @@ namespace XREngine.Components.Capture.Lights.Types
             set => FilterSamples = value;
         }
 
+        /// <summary>
+        /// Number of filter taps used by soft-shadow sampling paths.
+        /// </summary>
         public int FilterSamples
         {
             get => _filterSamples;
             set => SetField(ref _filterSamples, Math.Max(1, value));
         }
 
+        /// <summary>
+        /// Number of blocker-search taps used by contact-hardening PCSS.
+        /// </summary>
         public int BlockerSamples
         {
             get => _blockerSamples;
@@ -583,6 +644,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _filterRadius, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Search radius used while estimating blockers for PCSS shadows.
+        /// </summary>
         public float BlockerSearchRadius
         {
             get => _blockerSearchRadius;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Threading;
 using Silk.NET.OpenGL;
 using XREngine.Data;
@@ -9,6 +10,8 @@ namespace XREngine.Rendering.OpenGL;
 
 public partial class GLTexture2D
 {
+    private readonly ConcurrentDictionary<nint, int> _deferredSparseTransitionStorageGenerations = new();
+
     private readonly record struct PreparedSparseTransition(
         SparseTextureStreamingTransitionRequest Request,
         SparseTextureStreamingSupport Support,
@@ -17,7 +20,8 @@ public partial class GLTexture2D
         int CommittedBaseMipLevel,
         int PreviousCommittedBaseMipLevel,
         int NumSparseLevels,
-        long CommittedBytes);
+        long CommittedBytes,
+        int StorageGeneration);
 
     internal bool TryScheduleSparseTextureStreamingTransitionAsync(
         SparseTextureStreamingTransitionRequest request,
@@ -76,11 +80,19 @@ public partial class GLTexture2D
             {
                 if (waitResult == GLEnum.WaitFailed)
                 {
+                    _deferredSparseTransitionStorageGenerations.TryRemove(transitionResult.FenceSync, out _);
                     Api.DeleteSync(transitionResult.FenceSync);
                     return SparseTextureStreamingFinalizeResult.Failed("glClientWaitSync failed while finalizing a sparse texture promotion.");
                 }
 
                 return SparseTextureStreamingFinalizeResult.Pending();
+            }
+
+            if (!_deferredSparseTransitionStorageGenerations.TryRemove(transitionResult.FenceSync, out int storageGeneration)
+                || !IsStorageGenerationCurrent(storageGeneration))
+            {
+                Api.DeleteSync(transitionResult.FenceSync);
+                return SparseTextureStreamingFinalizeResult.Failed("Sparse texture storage changed before deferred promotion finalization.");
             }
 
             Api.DeleteSync(transitionResult.FenceSync);
@@ -110,6 +122,7 @@ public partial class GLTexture2D
             Debug.OpenGLException(ex);
             try
             {
+                _deferredSparseTransitionStorageGenerations.TryRemove(transitionResult.FenceSync, out _);
                 Api.DeleteSync(transitionResult.FenceSync);
             }
             catch
@@ -207,7 +220,8 @@ public partial class GLTexture2D
                 committedBaseMipLevel,
                 previousCommittedBaseMipLevel,
                 numSparseLevels,
-                committedBytes);
+                committedBytes,
+                CurrentStorageGeneration);
             return true;
         }
         catch (Exception ex)
@@ -244,6 +258,12 @@ public partial class GLTexture2D
 
         try
         {
+            if (!IsStorageGenerationCurrent(prepared.StorageGeneration))
+            {
+                onCompleted(SparseTextureStreamingTransitionResult.Unsupported("Sparse texture storage changed before async promotion began."));
+                return;
+            }
+
             gl.BindTexture(textureTarget, textureBindingId);
             ResetUnpackStateForTextureUpload(gl);
 
@@ -266,6 +286,14 @@ public partial class GLTexture2D
                 return;
             }
 
+            if (!IsStorageGenerationCurrent(prepared.StorageGeneration))
+            {
+                gl.DeleteSync(fenceSync);
+                onCompleted(SparseTextureStreamingTransitionResult.Unsupported("Sparse texture storage changed before async promotion completed."));
+                return;
+            }
+
+            _deferredSparseTransitionStorageGenerations[fenceSync] = prepared.StorageGeneration;
             onCompleted(new SparseTextureStreamingTransitionResult(
                 Applied: true,
                 UsedSparseResidency: true,

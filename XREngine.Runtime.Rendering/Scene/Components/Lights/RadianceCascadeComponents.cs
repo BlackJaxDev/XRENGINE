@@ -31,14 +31,17 @@ namespace XREngine.Components.Lights
     /// </summary>
     public class RadianceCascadeComponent : XRComponent
     {
+        /// <summary>
+        /// Maximum cascade records currently packed into the runtime GI shader path.
+        /// </summary>
         public const int MaxCascades = 4;
 
         private readonly ObservableCollection<RadianceCascadeLevel> _cascades = [];
         private ColorF4 _tint = ColorF4.White;
         private float _intensity = 1.0f;
         private bool _cascadesEnabled = true;
-        
-        // New settings for improvements
+
+        // Runtime quality controls consumed by the radiance-cascade render passes.
         private float _temporalBlendFactor = 0.85f;
         private float _normalOffsetScale = 1.5f;
         private bool _halfResolution = false;
@@ -201,7 +204,7 @@ namespace XREngine.Components.Lights
 
         private void RefreshRegistration()
         {
-            var world = WorldAs<IRuntimeRenderWorld>();
+            IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
             bool shouldRegister = world is not null && HasValidCascades;
 
             if (_registeredWorld is not null && (!shouldRegister || _registeredWorld != world))
@@ -235,7 +238,7 @@ namespace XREngine.Components.Lights
             {
                 lock (s_lock)
                 {
-                    if (!s_perWorld.TryGetValue(world, out var list))
+                    if (!s_perWorld.TryGetValue(world, out List<RadianceCascadeComponent>? list))
                     {
                         list = [];
                         s_perWorld[world] = list;
@@ -263,11 +266,11 @@ namespace XREngine.Components.Lights
             {
                 lock (s_lock)
                 {
-                    if (s_perWorld.TryGetValue(world, out var list))
+                    if (s_perWorld.TryGetValue(world, out List<RadianceCascadeComponent>? list))
                     {
                         for (int i = 0; i < list.Count; i++)
                         {
-                            var candidate = list[i];
+                            RadianceCascadeComponent candidate = list[i];
                             if (candidate.HasValidCascades)
                             {
                                 component = candidate;
@@ -293,6 +296,9 @@ namespace XREngine.Components.Lights
         private float _intensity = 1.0f;
         private bool _enabled = true;
 
+        /// <summary>
+        /// Baked radiance volume texture for this cascade level.
+        /// </summary>
         [Category("Radiance Cascades")]
         public XRTexture3D? RadianceTexture
         {
@@ -300,6 +306,9 @@ namespace XREngine.Components.Lights
             set => SetField(ref _radianceTexture, value);
         }
 
+        /// <summary>
+        /// Half-size of this cascade's local coverage bounds.
+        /// </summary>
         [Category("Radiance Cascades")]
         public Vector3 HalfExtents
         {
@@ -307,6 +316,9 @@ namespace XREngine.Components.Lights
             set => SetField(ref _halfExtents, value);
         }
 
+        /// <summary>
+        /// Per-cascade brightness multiplier.
+        /// </summary>
         [Category("Radiance Cascades")]
         public float Intensity
         {
@@ -314,6 +326,9 @@ namespace XREngine.Components.Lights
             set => SetField(ref _intensity, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Enables this cascade without removing it from the owning collection.
+        /// </summary>
         [Category("Radiance Cascades")]
         public bool Enabled
         {

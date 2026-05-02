@@ -17,6 +17,16 @@ public partial class GLTexture2D
     private ESizedInternalFormat _allocatedInternalFormat;
     private volatile bool _pendingImmutableStorageRecreate;
     private uint _externalMemoryObject;
+    private int _storageGeneration;
+
+    private int CurrentStorageGeneration
+        => System.Threading.Volatile.Read(ref _storageGeneration);
+
+    private void AdvanceStorageGeneration()
+        => System.Threading.Interlocked.Increment(ref _storageGeneration);
+
+    private bool IsStorageGenerationCurrent(int storageGeneration)
+        => CurrentStorageGeneration == storageGeneration;
 
     private EPixelInternalFormat? EnsureStorageAllocated()
     {

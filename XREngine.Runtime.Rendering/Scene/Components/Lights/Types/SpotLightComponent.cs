@@ -1,10 +1,11 @@
-using XREngine.Extensions;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Extensions;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shadows;
@@ -13,9 +14,28 @@ using static XREngine.Data.Core.XRMath;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
+    /// <summary>
+    /// Local cone light with a single perspective shadow view and optional shadow-atlas rendering.
+    /// </summary>
     [XRComponentEditor("XREngine.Editor.ComponentEditors.SpotLightComponentEditor")]
+    [Category("Lighting")]
+    [DisplayName("Spot Light")]
+    [Description("Emits a cone-shaped local light with optional perspective shadows.")]
     public class SpotLightComponent : OneViewLightComponent
     {
+        private float _outerCutoff;
+        private float _innerCutoff;
+        private float _distance;
+        private float _shadowNearPlaneDistance = 1.0f;
+        private float _exponent;
+        private float _brightness;
+        private Cone _outerCone;
+        private Cone _innerCone;
+        private XRMaterial? _shadowAtlasMaterial;
+
+        /// <summary>
+        /// Creates a spot light with explicit cone, attenuation, and intensity settings.
+        /// </summary>
         public SpotLightComponent(float distance, float outerCutoffDeg, float innerCutoffDeg, float brightness, float exponent)
         {
             _outerCutoff = (float)Math.Cos(DegToRad(outerCutoffDeg));
@@ -73,53 +93,78 @@ namespace XREngine.Components.Capture.Lights.Types
             _shadowNearPlaneDistance,
             MathF.Max(_distance, _shadowNearPlaneDistance + 0.001f));
 
-        private float 
-            _outerCutoff,
-            _innerCutoff,
-            _distance,
-            _shadowNearPlaneDistance = 1.0f,
-            _exponent,
-            _brightness;
-
-        private Cone _outerCone;
-
-        private Cone _innerCone;
-
-        private XRMaterial? _shadowAtlasMaterial;
-
-
+        /// <summary>
+        /// Distance from the light origin to the end of the cone.
+        /// </summary>
+        [Category("Attenuation")]
         public float Distance
         {
             get => _distance;
             set => SetField(ref _distance, value);
         }
+
+        /// <summary>
+        /// Near clipping distance for the spot shadow camera.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Shadow Near Plane")]
+        [Description("Near clipping distance used by the spot-light shadow camera.")]
         public float ShadowNearPlaneDistance
         {
             get => _shadowNearPlaneDistance;
             set => SetField(ref _shadowNearPlaneDistance, ClampShadowNearPlaneDistance(value, _distance));
         }
+
+        /// <summary>
+        /// Falloff exponent applied inside the cone.
+        /// </summary>
+        [Category("Attenuation")]
         public float Exponent
         {
             get => _exponent;
             set => SetField(ref _exponent, value);
         }
+
+        /// <summary>
+        /// Intensity multiplier for this light.
+        /// </summary>
+        [Category("Attenuation")]
         public float Brightness
         {
             get => _brightness;
             set => SetField(ref _brightness, value);
         }
+
+        /// <summary>
+        /// Outer cone angle in degrees. Pixels outside this angle receive no spot contribution.
+        /// </summary>
+        [Category("Cone")]
+        [DisplayName("Outer Cutoff Angle")]
         public float OuterCutoffAngleDegrees
         {
             get => RadToDeg((float)Math.Acos(_outerCutoff));
             set => SetCutoffs(InnerCutoffAngleDegrees, value, true);
         }
+
+        /// <summary>
+        /// Inner cone angle in degrees. Pixels inside this angle receive full spot intensity.
+        /// </summary>
+        [Category("Cone")]
+        [DisplayName("Inner Cutoff Angle")]
         public float InnerCutoffAngleDegrees
         {
             get => RadToDeg((float)Math.Acos(_innerCutoff));
             set => SetCutoffs(value, OuterCutoffAngleDegrees, false);
         }
 
+        /// <summary>
+        /// Cosine of the inner cone cutoff angle used by shaders.
+        /// </summary>
         public float InnerCutoff => _innerCutoff;
+
+        /// <summary>
+        /// Cosine of the outer cone cutoff angle used by shaders.
+        /// </summary>
         public float OuterCutoff => _outerCutoff;
 
         public static XRMesh GetVolumeMesh()
@@ -127,7 +172,14 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override XRMesh GetWireframeMesh()
             => XRMesh.Shapes.WireframeCone(Vector3.Zero, Globals.Backward, 1.0f, 1.0f, 32);
 
+        /// <summary>
+        /// Current world-space outer cone used for culling and debug drawing.
+        /// </summary>
         public Cone OuterCone => _outerCone;
+
+        /// <summary>
+        /// Current world-space inner cone used for editor visualization and shader data.
+        /// </summary>
         public Cone InnerCone => _innerCone;
 
         public override bool SupportsLightRadiusContactHardening => true;
@@ -138,17 +190,11 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override float ContactHardeningLightRadius
             => CalculateOuterConeRadius(Distance, OuterCutoffAngleDegrees);
 
+        /// <summary>
+        /// Creates a spot light with broad default coverage.
+        /// </summary>
         public SpotLightComponent()
             : this(100.0f, 60.0f, 30.0f, 1.0f, 1.0f) { }
-
-        protected override void OnComponentActivated()
-        {
-            base.OnComponentActivated();
-        }
-        protected override void OnComponentDeactivated()
-        {
-            base.OnComponentDeactivated();
-        }
 
         protected override void RegisterDynamicLight(IRuntimeRenderWorld world)
             => world.Lights.DynamicSpotLights.Add(this);
@@ -258,21 +304,21 @@ namespace XREngine.Components.Capture.Lights.Types
                 },
             ];
 
-            //This material is used for rendering to the framebuffer.
+            // This material is used for rendering to the framebuffer.
             XRMaterial mat = new(refs, new XRShader(EShaderType.Fragment, momentEncoding ? ShaderHelper.Frag_ShadowMomentOutput : ShaderHelper.Frag_DepthOutput));
 
-            //No culling so if a light exists inside of a mesh it will shadow everything.
+            // No culling so a light inside geometry still shadows everything around it.
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
 
             return mat;
         }
 
-        protected override XREngine.Data.Colors.ColorF4 GetShadowMapClearColor()
+        protected override ColorF4 GetShadowMapClearColor()
         {
             ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
             Vector4 clear = selection.ClearSentinel.Value;
-            return new XREngine.Data.Colors.ColorF4(clear.X, clear.Y, clear.Z, clear.W);
+            return new ColorF4(clear.X, clear.Y, clear.Z, clear.W);
         }
 
         private XRMaterial ShadowAtlasMaterial => _shadowAtlasMaterial ??= CreateShadowAtlasMaterial();
@@ -378,6 +424,9 @@ namespace XREngine.Components.Capture.Lights.Types
             UpdateCones(Transform.RenderMatrix);
         }
 
+        /// <summary>
+        /// Sets and normalizes inner/outer cone angles while keeping inner <= outer.
+        /// </summary>
         public void SetCutoffs(float innerDegrees, float outerDegrees, bool constrainInnerToOuter = true)
         {
             innerDegrees = innerDegrees.Clamp(0.0f, 90.0f);
