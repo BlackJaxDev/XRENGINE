@@ -12,6 +12,9 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Lights
 {
+    /// <summary>
+    /// Infinite directional light with one primary orthographic shadow view plus optional cascaded shadows.
+    /// </summary>
     [XRComponentEditor("XREngine.Editor.ComponentEditors.DirectionalLightComponentEditor")]
     [RequiresTransform(typeof(Transform))]
     [Category("Lighting")]
@@ -24,6 +27,9 @@ namespace XREngine.Components.Lights
         private Vector3 _scale = Vector3.One;
         private float _cascadedShadowDistance = 200.0f;
 
+        /// <summary>
+        /// Creates a directional light with tuned default shadow filtering and contact-shadow settings.
+        /// </summary>
         public DirectionalLightComponent()
             : base(EShadowMapStorageFormat.Depth24)
         {
@@ -116,6 +122,7 @@ namespace XREngine.Components.Lights
 
         public static XRMesh GetVolumeMesh()
             => XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f));
+
         protected override XRMesh GetWireframeMesh()
             => XRMesh.Shapes.WireframeBox(new Vector3(-0.5f), new Vector3(0.5f));
 
@@ -174,8 +181,9 @@ namespace XREngine.Components.Lights
         protected override void UnregisterDynamicLight(IRuntimeRenderWorld world)
             => world.Lights.DynamicDirectionalLights.Remove(this);
 
-        private static bool _loggedShadowCameraOnce = false;
-
+        /// <summary>
+        /// Publishes both the legacy flat uniforms and the structured ForwardLighting uniforms.
+        /// </summary>
         public override void SetUniforms(XRRenderProgram program, string? targetStructName = null)
         {
             base.SetUniforms(program, targetStructName);
@@ -196,26 +204,6 @@ namespace XREngine.Components.Lights
             // CPU: View * Proj (which becomes (Proj * View)^T when uploaded)
             // GLSL then computes: ((Proj * View)^T) * v = v^T * (Proj * View) = same result
             Matrix4x4 lightViewProj = lightView * lightProj;
-/*
-            // Debug shadow camera setup
-            if (!_loggedShadowCameraOnce)
-            {
-                _loggedShadowCameraOnce = true;
-                bool camNull = ShadowCamera is null;
-                Debug.Rendering($"[DirLightShadow] ShadowCamera null={camNull}, CastsShadows={CastsShadows}, Scale={Scale}");
-                if (!camNull)
-                {
-                    Debug.Rendering($"[DirLightShadow] lightProj diagonal: [{lightProj.M11:E3}, {lightProj.M22:E3}, {lightProj.M33:E3}, {lightProj.M44:E3}]");
-                    Debug.Rendering($"[DirLightShadow] lightView diagonal: [{lightView.M11:E3}, {lightView.M22:E3}, {lightView.M33:E3}, {lightView.M44:E3}]");
-                    Debug.Rendering($"[DirLightShadow] lightViewProj row0: [{lightViewProj.M11:E3}, {lightViewProj.M12:E3}, {lightViewProj.M13:E3}, {lightViewProj.M14:E3}]");
-                    Debug.Rendering($"[DirLightShadow] lightViewProj row1: [{lightViewProj.M21:E3}, {lightViewProj.M22:E3}, {lightViewProj.M23:E3}, {lightViewProj.M24:E3}]");
-                    Debug.Rendering($"[DirLightShadow] lightViewProj row2: [{lightViewProj.M31:E3}, {lightViewProj.M32:E3}, {lightViewProj.M33:E3}, {lightViewProj.M34:E3}]");
-                    Debug.Rendering($"[DirLightShadow] lightViewProj row3: [{lightViewProj.M41:E3}, {lightViewProj.M42:E3}, {lightViewProj.M43:E3}, {lightViewProj.M44:E3}]");
-                    if (ShadowCamera?.Parameters is XROrthographicCameraParameters ortho)
-                        Debug.Rendering($"[DirLightShadow] OrthoParams: W={ortho.Width}, H={ortho.Height}, NearZ={ortho.NearZ}, FarZ={ortho.FarZ}");
-                }
-            }
-*/
 
             program.Uniform($"{flatPrefix}WorldToLightProjMatrix", lightProj);
             program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
@@ -257,6 +245,21 @@ namespace XREngine.Components.Lights
             // to avoid overwriting material texture units.
         }
 
+        protected override void SetShadowMapUniforms(XRMaterialBase material, XRRenderProgram program)
+        {
+            base.SetShadowMapUniforms(material, program);
+
+            int cascadeCount;
+            lock (_cascadeDataLock)
+            {
+                cascadeCount = Math.Min(_cascadeShadowSlices.Count, MaxCascadeRenderCount);
+                for (int i = 0; i < cascadeCount; i++)
+                    program.Uniform(CascadeViewProjectionMatrixUniformNames[i], _cascadeShadowSlices[i].WorldToLightSpaceMatrix);
+            }
+
+            program.Uniform("CascadeLayerCount", cascadeCount);
+        }
+
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
         {
             ShadowMapTextureFormat shadowFormat = GetShadowMapTextureFormat(ShadowMapStorageFormat);
@@ -273,10 +276,10 @@ namespace XREngine.Components.Lights
                  }
             ];
 
-            //This material is used for rendering to the framebuffer.
+            // This material is used for rendering to the framebuffer.
             XRMaterial mat = new(refs, new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
 
-            //No culling so if a light exists inside of a mesh it will shadow everything.
+            // No culling so a light inside geometry still shadows everything around it.
             mat.RenderOptions.CullMode = ECullMode.None;
 
             return mat;

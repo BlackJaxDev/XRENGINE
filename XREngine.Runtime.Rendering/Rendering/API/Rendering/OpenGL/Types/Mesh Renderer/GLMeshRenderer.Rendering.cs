@@ -104,8 +104,16 @@ namespace XREngine.Rendering.OpenGL
                     && UsesPointLightShadowCubemap(globalMaterialOverride);
             }
 
+            private static bool IsShadowGeometryPass()
+            {
+                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                return renderState?.ShadowPass == true
+                    && renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
+                    && globalMaterialOverride.GeometryShaders.Count > 0;
+            }
+
             internal bool RequiresTriangleOnlyDrawsForCurrentPass()
-                => IsPointLightShadowGeometryPass();
+                => IsShadowGeometryPass();
 
             /// <summary>
             /// Primary render entry point, handling shader selection, buffer binding, and uniforms.
@@ -318,7 +326,7 @@ namespace XREngine.Rendering.OpenGL
                 SetUniformBoth(EEngineUniform.ModelMatrix, modelMatrix);
                 SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModelMatrix);
 
-                bool pointLightShadowGeometryPass = IsPointLightShadowGeometryPass();
+                bool shadowGeometryPass = IsShadowGeometryPass();
 
                 // CPU draw path has gl_BaseInstance==0; provide a per-draw TransformId uniform so
                 // deferred shaders can write stable per-transform IDs into the GBuffer.
@@ -328,7 +336,7 @@ namespace XREngine.Rendering.OpenGL
                 vertexProgram.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
                 materialProgram?.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
 
-                vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass || pointLightShadowGeometryPass);
+                vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass || shadowGeometryPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);
             }
 

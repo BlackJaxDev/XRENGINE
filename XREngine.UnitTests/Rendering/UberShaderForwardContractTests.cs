@@ -56,15 +56,20 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     public void UberShaderFragment_UsesSharedForwardLightingContracts()
     {
         string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+        string normalizedSource = source.Replace("\r\n", "\n");
         string uniforms = LoadShaderSource(Path.Combine("Uber", "uniforms.glsl"));
 
         source.ShouldContain("#pragma snippet \"ForwardLighting\"");
         source.ShouldContain("#pragma snippet \"AmbientOcclusionSampling\"");
         source.ShouldContain("XRENGINE_CalculateAmbientPbr");
+        normalizedSource.ShouldContain("XRENGINE_CalcDirLight(\n            i,\n            DirectionalLights[i],");
+        normalizedSource.ShouldNotContain("XRENGINE_CalcDirLight(\n            DirectionalLights[i],");
         source.ShouldContain("calculateForwardPlusPointLightPbr");
         source.ShouldContain("calculatePointLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, PointLights[i])");
         source.ShouldContain("calculateSpotLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, SpotLights[i])");
         source.ShouldContain("XRENGINE_ReadShadowMapDir");
+        source.ShouldContain("return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], worldPos, normal, max(nDotL, 0.0));");
+        source.ShouldNotContain("return XRENGINE_ReadShadowMapDir(worldPos, normal, max(nDotL, 0.0));");
         source.ShouldContain("int getForwardPlusVisibleLightBaseIndex()");
         source.ShouldContain("ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;");
         source.ShouldContain("tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));");

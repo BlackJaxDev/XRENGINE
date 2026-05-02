@@ -21,6 +21,7 @@ namespace XREngine.Scene
         private const int MaxForwardDirectionalLights = 2;
         private const uint MinForwardLocalLightBufferCapacity = 1024;
         private const int ForwardMaxCascades = 8;
+        private const int ForwardDirectionalShadowRecordCount = MaxForwardDirectionalLights * ForwardMaxCascades;
         private const uint ForwardDirectionalLightsBinding = 22;
         private const uint ForwardPointLightsBinding = 23;
         private const uint ForwardSpotLightsBinding = 26;
@@ -33,12 +34,18 @@ namespace XREngine.Scene
         private XRDataBuffer? _forwardPointShadowMetadataBuffer;
         private XRDataBuffer? _forwardSpotShadowMetadataBuffer;
 
-        private static readonly IVector4[] _directionalShadowAtlasPacked0 = new IVector4[8];
-        private static readonly Vector4[] _directionalShadowAtlasParams0 = new Vector4[8];
-        private static readonly Vector4[] _directionalShadowAtlasParams1 = new Vector4[8];
+        private static readonly IVector4[] _directionalShadowAtlasPacked0 = new IVector4[ForwardDirectionalShadowRecordCount];
+        private static readonly Vector4[] _directionalShadowAtlasParams0 = new Vector4[ForwardDirectionalShadowRecordCount];
+        private static readonly Vector4[] _directionalShadowAtlasParams1 = new Vector4[ForwardDirectionalShadowRecordCount];
+        private static readonly Vector4[] _directionalShadowBiasProjectionParams = new Vector4[MaxForwardDirectionalLights];
+        private static readonly int[] _directionalShadowMapEnabled = new int[MaxForwardDirectionalLights];
+        private static readonly int[] _directionalUseCascadedShadows = new int[MaxForwardDirectionalLights];
+        private static readonly int[] _directionalShadowAtlasEnabled = new int[MaxForwardDirectionalLights];
 
         // Pre-computed sampler uniform names for indexed shadow resources.
         // Avoids per-draw string interpolation allocations on the render thread.
+        private static readonly string[] _directionalShadowMapNames = CreateIndexedNames("DirectionalShadowMaps", MaxForwardDirectionalLights);
+        private static readonly string[] _directionalShadowMapArrayNames = CreateIndexedNames("DirectionalShadowMapArrays", MaxForwardDirectionalLights);
         private static readonly string[] _pointShadowMapNames = CreateIndexedNames("PointLightShadowMaps", 4);
         private static readonly string[] _spotShadowMapNames = CreateIndexedNames("SpotLightShadowMaps", 4);
         private static readonly string[] _spotShadowAtlasPageNames = CreateIndexedNames("SpotLightShadowAtlasPages", 2);
@@ -258,7 +265,7 @@ namespace XREngine.Scene
             {
                 Base = CreateForwardBaseLightGpu(light, lightViewProj, 0.05f),
                 DirectionPadding = new Vector4(light.Transform.WorldForward, 0.0f),
-                WorldToLightInvViewMatrix = light.ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity,
+                WorldToLightInvViewMatrix = light.ShadowCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity,
                 WorldToLightProjMatrix = lightProj,
                 WorldToLightSpaceMatrix = lightViewProj,
             };
@@ -423,15 +430,17 @@ namespace XREngine.Scene
         {
             const int maxForwardShadowedPointLights = 4;
             const int maxForwardShadowedSpotLights = 4;
-            const int pointShadowStartUnit = 17;
-            const int spotShadowStartUnit = 21;
-            const int forwardAmbientOcclusionArrayUnit = 25;
-            const int forwardContactDepthUnit = 26;
-            const int forwardContactNormalUnit = 27;
-            const int forwardContactDepthArrayUnit = 28;
-            const int forwardContactNormalArrayUnit = 29;
+            const int directionalShadowMapStartUnit = 15;
+            const int directionalShadowMapArrayStartUnit = 17;
+            const int pointShadowStartUnit = 19;
+            const int spotShadowStartUnit = 23;
+            const int forwardAmbientOcclusionArrayUnit = 27;
+            const int forwardContactDepthUnit = 28;
+            const int forwardContactNormalUnit = 29;
+            const int forwardContactDepthArrayUnit = 30;
+            const int forwardContactNormalArrayUnit = 31;
             const int directionalShadowAtlasStartUnit = 9;
-            const int spotShadowAtlasStartUnit = 30;
+            const int spotShadowAtlasStartUnit = 32;
             const int maxForwardSpotAtlasPages = 2;
             const int maxForwardDirectionalAtlasPages = 2;
 
@@ -621,8 +630,8 @@ namespace XREngine.Scene
             // Using a low fixed unit (like 4) for the shadow map collides with multi-texture materials
             // (e.g., Sponza) and manifests as "shadow" sampling a regular color texture.
             // Pick a dedicated high unit for forward shadow sampling.
-            const int forwardShadowMapUnit = 15;
-            const int forwardShadowMapArrayUnit = 16;
+            const int forwardShadowMapUnit = directionalShadowMapStartUnit;
+            const int forwardShadowMapArrayUnit = directionalShadowMapArrayStartUnit;
             XRTexture? forwardShadowTex = null;
             XRTexture2DArray? forwardCascadeShadowTex = null;
             Matrix4x4 primaryDirLightWorldToLightInvView = Matrix4x4.Identity;
@@ -630,6 +639,13 @@ namespace XREngine.Scene
             bool useCascadedDirectionalShadows = false;
             bool useDirectionalShadowAtlas = false;
             bool directionalAtlasSampleable = false;
+            bool anyDirectionalShadowEnabled = false;
+            var directionalShadowCameraComponent = currentPipeline?.RenderState.WindowViewport?.CameraComponent;
+
+            Array.Clear(_directionalShadowMapEnabled);
+            Array.Clear(_directionalUseCascadedShadows);
+            Array.Clear(_directionalShadowAtlasEnabled);
+            Array.Clear(_directionalShadowBiasProjectionParams);
             if (directionalLightCount > 0)
             {
                 var firstDirLight = DynamicDirectionalLights[0];
@@ -771,6 +787,40 @@ namespace XREngine.Scene
             program.Uniform("ShadowMap", forwardShadowMapUnit);
             program.Uniform("ShadowMapArray", forwardShadowMapArrayUnit);
 
+            for (int i = 0; i < MaxForwardDirectionalLights; i++)
+            {
+                XRTexture? perLightShadowTex = null;
+                XRTexture2DArray? perLightCascadeTex = null;
+                bool perLightUseCascades = false;
+
+                if (i < directionalLightCount)
+                {
+                    DirectionalLightComponent dirLight = DynamicDirectionalLights[i];
+                    _directionalShadowBiasProjectionParams[i] = dirLight.GetPrimaryShadowBiasProjectionParameters();
+
+                    if (dirLight.CastsShadows)
+                    {
+                        perLightShadowTex = FindShadowMapTexture(dirLight);
+                        perLightUseCascades =
+                            directionalShadowCameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
+                            dirLight.EnableCascadedShadows &&
+                            dirLight.CascadedShadowMapTexture is not null &&
+                            dirLight.ActiveCascadeCount > 0;
+
+                        if (perLightUseCascades)
+                            perLightCascadeTex = dirLight.CascadedShadowMapTexture;
+                    }
+
+                    bool perLightShadowEnabled = perLightShadowTex is not null || perLightCascadeTex is not null;
+                    _directionalShadowMapEnabled[i] = perLightShadowEnabled ? 1 : 0;
+                    _directionalUseCascadedShadows[i] = perLightUseCascades ? 1 : 0;
+                    anyDirectionalShadowEnabled |= perLightShadowEnabled;
+                }
+
+                program.Sampler(_directionalShadowMapNames[i], perLightShadowTex ?? DummyShadowMap, directionalShadowMapStartUnit + i);
+                program.Sampler(_directionalShadowMapArrayNames[i], perLightCascadeTex ?? DummyShadowMapArray, directionalShadowMapArrayStartUnit + i);
+            }
+
             int pointShadowSlot = 0;
             if (pointLightCount == 0)
                 _forwardPointShadowMetadataBuffer!.Set(0, default(ForwardPointShadowGpu));
@@ -814,7 +864,7 @@ namespace XREngine.Scene
 
             for (int pageIndex = 0; pageIndex < maxForwardDirectionalAtlasPages; pageIndex++)
             {
-                XRTexture2D atlasTexture = useDirectionalShadowAtlas &&
+                XRTexture2D atlasTexture = Engine.Rendering.Settings.UseDirectionalShadowAtlas &&
                     ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
                         ? pageTexture
                         : DummyShadowMap;
@@ -892,19 +942,43 @@ namespace XREngine.Scene
             Array.Clear(_directionalShadowAtlasPacked0);
             Array.Clear(_directionalShadowAtlasParams0);
             Array.Clear(_directionalShadowAtlasParams1);
-            if (useDirectionalShadowAtlas && directionalLightCount > 0)
+            if (Engine.Rendering.Settings.UseDirectionalShadowAtlas)
             {
-                DynamicDirectionalLights[0].CopyPublishedDirectionalAtlasUniformData(
-                    useCascadedDirectionalShadows,
-                    _directionalShadowAtlasPacked0,
-                    _directionalShadowAtlasParams0,
-                    _directionalShadowAtlasParams1);
-                directionalAtlasSampleable = AreRequiredDirectionalAtlasTilesSampleable(
-                    _directionalShadowAtlasPacked0,
-                    useCascadedDirectionalShadows ? DynamicDirectionalLights[0].ActiveCascadeCount : 1);
+                for (int i = 0; i < directionalLightCount; i++)
+                {
+                    DirectionalLightComponent dirLight = DynamicDirectionalLights[i];
+                    if (!dirLight.CastsShadows)
+                        continue;
+
+                    int atlasRecordOffset = i * ForwardMaxCascades;
+                    bool perLightUseCascades = _directionalUseCascadedShadows[i] != 0;
+                    dirLight.CopyPublishedDirectionalAtlasUniformData(
+                        perLightUseCascades,
+                        _directionalShadowAtlasPacked0.AsSpan(atlasRecordOffset, ForwardMaxCascades),
+                        _directionalShadowAtlasParams0.AsSpan(atlasRecordOffset, ForwardMaxCascades),
+                        _directionalShadowAtlasParams1.AsSpan(atlasRecordOffset, ForwardMaxCascades));
+
+                    bool perLightAtlasSampleable = AreRequiredDirectionalAtlasTilesSampleable(
+                        _directionalShadowAtlasPacked0,
+                        atlasRecordOffset,
+                        perLightUseCascades ? dirLight.ActiveCascadeCount : 1,
+                        maxForwardDirectionalAtlasPages);
+                    _directionalShadowAtlasEnabled[i] = perLightAtlasSampleable ? 1 : 0;
+                    if (perLightAtlasSampleable)
+                    {
+                        _directionalShadowMapEnabled[i] = 1;
+                        anyDirectionalShadowEnabled = true;
+                    }
+
+                    if (i == 0)
+                        directionalAtlasSampleable = perLightAtlasSampleable;
+                }
             }
 
-            program.Uniform("DirectionalShadowAtlasEnabled", directionalAtlasSampleable);
+            program.Uniform("DirectionalShadowMapEnabled", _directionalShadowMapEnabled);
+            program.Uniform("DirectionalUseCascadedShadows", _directionalUseCascadedShadows);
+            program.Uniform("DirectionalShadowBiasProjectionParams", _directionalShadowBiasProjectionParams);
+            program.Uniform("DirectionalShadowAtlasEnabled", _directionalShadowAtlasEnabled);
             program.Uniform("DirectionalShadowAtlasPacked0", _directionalShadowAtlasPacked0);
             program.Uniform("DirectionalShadowAtlasParams0", _directionalShadowAtlasParams0);
             program.Uniform("DirectionalShadowAtlasParams1", _directionalShadowAtlasParams1);
@@ -917,7 +991,7 @@ namespace XREngine.Scene
                 forwardShadowTex,
                 forwardCascadeShadowTex);
 
-            bool shadowEnabled = forwardShadowTex != null || forwardCascadeShadowTex != null || directionalAtlasSampleable;
+            bool shadowEnabled = anyDirectionalShadowEnabled;
             program.Uniform("ShadowMapEnabled", shadowEnabled);
             if (!_loggedShadowMapEnabledOnce)
             {
@@ -1006,14 +1080,23 @@ namespace XREngine.Scene
         }
 
         private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int count)
+            => AreRequiredDirectionalAtlasTilesSampleable(packed0, 0, count, int.MaxValue);
+
+        private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int startIndex, int count, int maxPageCount)
         {
-            int clampedCount = Math.Min(Math.Max(count, 0), packed0.Length);
+            if ((uint)startIndex >= (uint)packed0.Length)
+                return false;
+
+            int clampedCount = Math.Min(Math.Max(count, 0), packed0.Length - startIndex);
             if (clampedCount <= 0)
                 return false;
 
             for (int i = 0; i < clampedCount; i++)
-                if (packed0[i].X == 0)
+            {
+                IVector4 packed = packed0[startIndex + i];
+                if (packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount)
                     return false;
+            }
 
             return true;
         }

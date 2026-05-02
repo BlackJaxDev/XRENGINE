@@ -1,10 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
+using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Tools;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
@@ -144,9 +148,95 @@ public sealed class OctahedralMappingTests
         decoded.Z.ShouldBe(0.0f, 1e-6f);
     }
 
+    [Test]
+    public void GeneratorCaptureDirections_MatchShaderCaptureTable()
+    {
+        IReadOnlyList<Vector3> generatorDirections = OctahedralImposterGenerator.CaptureDirections;
+        generatorDirections.Count.ShouldBe(26);
+
+        string shader = LoadTextFile(Path.Combine(ShaderBasePath, "Common", "OctahedralImposter.glsl"));
+        shader.ShouldContain("const int XR_OCTA_VIEW_COUNT = 26;");
+
+        Vector3[] expected =
+        [
+            Vector3.UnitX,
+            -Vector3.UnitX,
+            Vector3.UnitY,
+            -Vector3.UnitY,
+            Vector3.UnitZ,
+            -Vector3.UnitZ,
+            Normalize(new Vector3(1, 1, 0)),
+            Normalize(new Vector3(1, -1, 0)),
+            Normalize(new Vector3(-1, 1, 0)),
+            Normalize(new Vector3(-1, -1, 0)),
+            Normalize(new Vector3(1, 0, 1)),
+            Normalize(new Vector3(1, 0, -1)),
+            Normalize(new Vector3(-1, 0, 1)),
+            Normalize(new Vector3(-1, 0, -1)),
+            Normalize(new Vector3(0, 1, 1)),
+            Normalize(new Vector3(0, 1, -1)),
+            Normalize(new Vector3(0, -1, 1)),
+            Normalize(new Vector3(0, -1, -1)),
+            Normalize(new Vector3(-1, -1, -1)),
+            Normalize(new Vector3(-1, -1, 1)),
+            Normalize(new Vector3(-1, 1, -1)),
+            Normalize(new Vector3(-1, 1, 1)),
+            Normalize(new Vector3(1, -1, -1)),
+            Normalize(new Vector3(1, -1, 1)),
+            Normalize(new Vector3(1, 1, -1)),
+            Normalize(new Vector3(1, 1, 1))
+        ];
+
+        for (int i = 0; i < expected.Length; i++)
+            Vector3.Dot(generatorDirections[i], expected[i]).ShouldBe(1.0f, 1e-6f);
+    }
+
+    [Test]
+    public void OctahedralBillboardAsset_ConfiguresPersistedColorViews()
+    {
+        XRTexture2DArray views = new(26, 4, 4, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.Float);
+        OctahedralBillboardAsset asset = new()
+        {
+            ColorViews = views,
+            CaptureDirections = [.. OctahedralImposterGenerator.CaptureDirections],
+            SourceSubmeshIndices = [1, 3],
+            CaptureMode = EOctahedralImposterCaptureMode.SelectedSubmeshes,
+            CaptureResolution = 4,
+            CapturePadding = 1.15f,
+            OrthographicExtent = 2.0f,
+            CaptureCenterLocal = new Vector3(1.0f, 2.0f, 3.0f),
+            LocalBounds = new AABB(new Vector3(-1.0f), new Vector3(1.0f)),
+            WorldBounds = new AABB(new Vector3(4.0f), new Vector3(6.0f)),
+            BillboardSize = new Vector2(4.0f, 4.0f),
+            SourceLayer = 7
+        };
+
+        asset.Version.ShouldBe(OctahedralBillboardAsset.CurrentVersion);
+        asset.ColorViews.ShouldBeSameAs(views);
+        asset.ColorViews!.SamplerName.ShouldBe(OctahedralBillboardAsset.ColorSamplerName);
+        asset.ColorViews.MinFilter.ShouldBe(ETexMinFilter.Linear);
+        asset.ColorViews.UWrap.ShouldBe(ETexWrapMode.ClampToEdge);
+        asset.SourceSubmeshIndices.ShouldBe([1, 3]);
+        asset.CaptureDirections.Length.ShouldBe(26);
+        asset.DepthMode.ShouldBe(EOctahedralImposterDepthMode.None);
+        asset.CapturePadding.ShouldBe(1.15f);
+        asset.CaptureCenterLocal.ShouldBe(new Vector3(1.0f, 2.0f, 3.0f));
+        asset.LocalBounds.Size.ShouldBe(new Vector3(2.0f));
+        asset.WorldBounds.Center.ShouldBe(new Vector3(5.0f));
+        asset.SourceLayer.ShouldBe(7);
+    }
+
     [TestCase("Scene3D/CubemapToOctahedron.fs")]
     [TestCase("Scene3D/SkyboxOctahedral.fs")]
     public void RepresentativeOctahedralShaders_CompileToSpirv(string shaderRelativePath)
+        => CompileShaderToSpirv(shaderRelativePath, EShaderType.Fragment);
+
+    [TestCase("Scene3D/OctahedralImposterBillboard.vs", EShaderType.Vertex)]
+    [TestCase("Scene3D/OctahedralImposterBillboard.fs", EShaderType.Fragment)]
+    public void OctahedralBillboardShaders_CompileToSpirv(string shaderRelativePath, EShaderType shaderType)
+        => CompileShaderToSpirv(shaderRelativePath, shaderType);
+
+    private static void CompileShaderToSpirv(string shaderRelativePath, EShaderType shaderType)
     {
         string fullPath = ResolveShaderPath(shaderRelativePath);
         var shaderSource = new TextFile
@@ -155,7 +245,7 @@ public sealed class OctahedralMappingTests
             Text = File.ReadAllText(fullPath)
         };
 
-        XRShader shader = new(EShaderType.Fragment, shaderSource);
+        XRShader shader = new(shaderType, shaderSource);
         byte[] spirv = VulkanShaderCompiler.Compile(
             shader,
             out string entryPoint,
