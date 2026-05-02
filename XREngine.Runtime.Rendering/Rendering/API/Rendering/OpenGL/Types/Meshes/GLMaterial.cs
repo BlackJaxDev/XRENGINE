@@ -369,6 +369,7 @@ namespace XREngine.Rendering.OpenGL
                 if (program is null)
                     return;
 
+                string resolvedSamplerName = texture.ResolveSamplerName(textureIndex, samplerNameOverride);
                 if (Engine.Rendering.Settings.LogMaterialTextureBindings)
                 {
                     // Opt-in diagnostic: record every material → texture → unit mapping so the exact
@@ -382,9 +383,41 @@ namespace XREngine.Rendering.OpenGL
                     Debug.OpenGL(
                         $"[GLMaterial.Bind] material='{matName}' slot={textureIndex} unit={textureUnit} " +
                         $"texture='{texName}' glId={texId} target={texture.TextureTarget} program='{program.Data?.Name}'.");
+
+                    XRTexture2D? texture2D = texture.Data as XRTexture2D;
+                    Vector3 dimensions = texture.WidthHeightDepth;
+                    TextureRuntimeDiagnostics.LogMaterialBinding(
+                        (long)Engine.Rendering.State.RenderFrameId,
+                        matName,
+                        program.Data?.Name,
+                        textureIndex,
+                        textureUnit,
+                        resolvedSamplerName,
+                        texName,
+                        texture2D?.FilePath,
+                        texId,
+                        texture.TextureTarget,
+                        texture2D?.Width ?? (uint)Math.Max(0.0f, dimensions.X),
+                        texture2D?.Height ?? (uint)Math.Max(0.0f, dimensions.Y),
+                        texture2D?.Mipmaps.Length ?? 0,
+                        texture2D?.LargestMipmapLevel ?? 0,
+                        texture2D?.SmallestAllowedMipmapLevel ?? 0,
+                        texture2D?.SparseTextureStreamingEnabled ?? false,
+                        texture2D?.SparseTextureStreamingResidentBaseMipLevel ?? int.MaxValue,
+                        texture2D?.SparseTextureStreamingCommittedBaseMipLevel ?? int.MaxValue,
+                        texture2D?.SparseTextureStreamingCommittedBytes ?? 0L);
                 }
 
-                string resolvedSamplerName = texture.ResolveSamplerName(textureIndex, samplerNameOverride);
+                if (TextureRuntimeDiagnostics.IsEnabled)
+                    LogTextureBindingRiskIfNeeded(
+                        program,
+                        material,
+                        textureIndex,
+                        textureUnit,
+                        texture,
+                        resolvedSamplerName,
+                        samplerNameOverride);
+
                 program.Sampler(resolvedSamplerName, texture, textureUnit);
 
                 if (!string.IsNullOrWhiteSpace(samplerNameOverride))
@@ -403,6 +436,132 @@ namespace XREngine.Rendering.OpenGL
                 if (program.GetUniformLocation(indexedSamplerName) >= 0)
                     program.Sampler(indexedSamplerName, texture, textureUnit);
             }
+
+            private static void LogTextureBindingRiskIfNeeded(
+                GLRenderProgram program,
+                XRMaterialBase? material,
+                int textureIndex,
+                int textureUnit,
+                IGLTexture texture,
+                string resolvedSamplerName,
+                string? samplerNameOverride)
+            {
+                if (Engine.Rendering.State.IsShadowPass)
+                    return;
+
+                if (texture.Data is not XRTexture2D texture2D)
+                    return;
+
+                string indexedSamplerName = XRTexture.GetIndexedSamplerName(textureIndex);
+                bool resolvedUniformPresent = program.GetUniformLocation(resolvedSamplerName) >= 0;
+                bool indexedUniformPresent = !string.Equals(resolvedSamplerName, indexedSamplerName, StringComparison.Ordinal)
+                    && program.GetUniformLocation(indexedSamplerName) >= 0;
+                string? reason = null;
+
+                if (!string.IsNullOrWhiteSpace(samplerNameOverride))
+                {
+                    if (!resolvedUniformPresent)
+                        AppendBindingRiskReason(ref reason, "override-sampler-uniform-missing");
+                }
+                else if (!resolvedUniformPresent && !indexedUniformPresent)
+                {
+                    AppendBindingRiskReason(ref reason, "sampler-uniform-missing");
+                }
+
+                if (texture.BindingId == GLObjectBase.InvalidBindingId)
+                    AppendBindingRiskReason(ref reason, "gl-texture-unavailable");
+
+                if (texture.IsInvalidated)
+                    AppendBindingRiskReason(ref reason, "gl-texture-invalidated");
+
+                if (texture2D.Mipmaps.Length == 0 || texture2D.Width == 0 || texture2D.Height == 0)
+                    AppendBindingRiskReason(ref reason, "no-source-mips");
+
+                if (texture2D.TextureUploadValidationFailureCount > 0)
+                    AppendBindingRiskReason(ref reason, "upload-validation-failed");
+
+                if (texture2D.RuntimeManagedProgressiveUploadActive)
+                    AppendBindingRiskReason(ref reason, "progressive-upload-active");
+
+                if (texture2D.RuntimeManagedProgressiveFinalizePending)
+                    AppendBindingRiskReason(ref reason, "progressive-finalize-pending");
+
+                if (texture2D.StreamingLockMipLevel >= 0
+                    && texture2D.LargestMipmapLevel < texture2D.StreamingLockMipLevel)
+                    AppendBindingRiskReason(ref reason, "base-mip-above-upload-lock");
+
+                if (texture2D.LargestMipmapLevel > texture2D.SmallestAllowedMipmapLevel)
+                    AppendBindingRiskReason(ref reason, "invalid-mip-range");
+
+                if (texture2D.SparseTextureStreamingEnabled)
+                {
+                    int residentBase = texture2D.SparseTextureStreamingResidentBaseMipLevel;
+                    int committedBase = texture2D.SparseTextureStreamingCommittedBaseMipLevel;
+                    if (texture2D.SparseTextureStreamingCommittedBytes <= 0)
+                        AppendBindingRiskReason(ref reason, "sparse-no-committed-bytes");
+
+                    if (residentBase == int.MaxValue)
+                        AppendBindingRiskReason(ref reason, "sparse-no-resident-base");
+
+                    if (committedBase == int.MaxValue)
+                        AppendBindingRiskReason(ref reason, "sparse-no-committed-base");
+
+                    if (residentBase != int.MaxValue
+                        && committedBase != int.MaxValue
+                        && residentBase < committedBase)
+                        AppendBindingRiskReason(ref reason, "sparse-sampling-uncommitted-higher-mip");
+
+                    if (committedBase != int.MaxValue
+                        && texture2D.LargestMipmapLevel < committedBase)
+                        AppendBindingRiskReason(ref reason, "texture-base-above-sparse-commit");
+                }
+
+                if (reason is null)
+                    return;
+
+                TextureRuntimeDiagnostics.LogBindingRisk(
+                    (long)Engine.Rendering.State.RenderFrameId,
+                    material?.Name,
+                    program.Data?.Name,
+                    textureIndex,
+                    textureUnit,
+                    resolvedSamplerName,
+                    indexedSamplerName,
+                    resolvedUniformPresent,
+                    indexedUniformPresent,
+                    texture2D.Name,
+                    texture2D.FilePath,
+                    texture.BindingId,
+                    texture.TextureTarget,
+                    texture2D.Width,
+                    texture2D.Height,
+                    texture2D.Mipmaps.Length,
+                    texture2D.LargestMipmapLevel,
+                    texture2D.SmallestAllowedMipmapLevel,
+                    texture2D.MinLOD,
+                    texture2D.MaxLOD,
+                    texture2D.MinFilter.ToString(),
+                    texture2D.MagFilter.ToString(),
+                    texture2D.SparseTextureStreamingEnabled,
+                    texture2D.SparseTextureStreamingLogicalWidth,
+                    texture2D.SparseTextureStreamingLogicalHeight,
+                    texture2D.SparseTextureStreamingLogicalMipCount,
+                    texture2D.SparseTextureStreamingResidentBaseMipLevel,
+                    texture2D.SparseTextureStreamingCommittedBaseMipLevel,
+                    texture2D.SparseTextureStreamingNumSparseLevels,
+                    texture2D.SparseTextureStreamingCommittedBytes,
+                    texture2D.SparseTextureStreamingResidentPageSelection,
+                    texture2D.RuntimeManagedProgressiveUploadActive,
+                    texture2D.RuntimeManagedProgressiveFinalizePending,
+                    texture2D.StreamingLockMipLevel,
+                    texture2D.TextureUploadValidationFailureCount,
+                    texture2D.LastTextureQueueWaitMilliseconds,
+                    texture2D.LastTextureUploadDurationMilliseconds,
+                    reason);
+            }
+
+            private static void AppendBindingRiskReason(ref string? reason, string value)
+                => reason = reason is null ? value : $"{reason},{value}";
 
             private bool TryGetTextureBinding(XRMaterialBase material, int textureIndex, out IGLTexture texture, out int textureUnit)
             {

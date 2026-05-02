@@ -142,6 +142,16 @@ public sealed class GLTexture2DContractTests
     }
 
     [Test]
+    public void GLTexture2D_RecreatesStorageWhenLeavingSparseResidency()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+
+        source.ShouldContain("bool switchingFromSparseStorage = _sparseStorageAllocated && !Data.SparseTextureStreamingEnabled;");
+        source.ShouldContain("switchingFromSparseStorage");
+        source.ShouldContain("DataResized();");
+    }
+
+    [Test]
     public void GLTexture2D_SparseStorageAllocationUsesLogicalDimensionsAndLegalLevelCount()
     {
         string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");

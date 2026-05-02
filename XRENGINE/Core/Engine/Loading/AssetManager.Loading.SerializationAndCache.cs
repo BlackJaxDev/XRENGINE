@@ -148,7 +148,8 @@ namespace XREngine
             bool useCache = ShouldUseThirdPartyCache(typeof(T));
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
             string cachePath = string.Empty;
-            bool hasCachePath = useCache && TryResolveCachePath(filePath, typeof(T), cacheVariantKey: null, out cachePath);
+            string? cacheVariantKey = ResolveDefaultCacheVariantKey(typeof(T), explicitVariantKey: null);
+            bool hasCachePath = useCache && TryResolveCachePath(filePath, typeof(T), cacheVariantKey, out cachePath);
             bool traceAnimClipLoad = typeof(T) == typeof(AnimationClip) && string.Equals(ext, "anim", StringComparison.OrdinalIgnoreCase);
 
             if (traceAnimClipLoad && hasCachePath)
@@ -156,6 +157,9 @@ namespace XREngine
 
             if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
             {
+                if (typeof(T) == typeof(XRTexture2D))
+                    LogTextureCacheEvent("Texture.CacheHit", filePath, cachePath, "fresh cached asset loaded");
+
                 if (traceAnimClipLoad)
                     Debug.Out($"[AssetManager] Animation clip cache hit for '{filePath}'.");
 
@@ -181,6 +185,9 @@ namespace XREngine
                 if (traceAnimClipLoad)
                     Debug.Out($"[AssetManager] Starting animation clip cache write for '{filePath}' -> '{cachePath}'.");
 
+                if (typeof(T) == typeof(XRTexture2D))
+                    LogTextureCacheEvent("Texture.CacheMiss", filePath, cachePath, "importing source before cache write");
+
                 TryWriteCacheAsset(cachePath, asset);
 
                 if (traceAnimClipLoad)
@@ -203,10 +210,14 @@ namespace XREngine
             bool useCache = ShouldUseThirdPartyCache(type);
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
             string cachePath = string.Empty;
-            bool hasCachePath = useCache && TryResolveCachePath(filePath, type, cacheVariantKey: null, out cachePath);
+            string? cacheVariantKey = ResolveDefaultCacheVariantKey(type, explicitVariantKey: null);
+            bool hasCachePath = useCache && TryResolveCachePath(filePath, type, cacheVariantKey, out cachePath);
 
             if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, type, out XRAsset? cachedAsset))
             {
+                if (type == typeof(XRTexture2D))
+                    LogTextureCacheEvent("Texture.CacheHit", filePath, cachePath, "fresh cached asset loaded");
+
                 cachedAsset!.OriginalLastWriteTimeUtc = timestampUtc;
                 return cachedAsset;
             }
@@ -219,7 +230,12 @@ namespace XREngine
                 asset.OriginalLastWriteTimeUtc = timestampUtc;
 
             if (hasTimestamp && hasCachePath)
+            {
+                if (type == typeof(XRTexture2D))
+                    LogTextureCacheEvent("Texture.CacheMiss", filePath, cachePath, "importing source before cache write");
+
                 TryWriteCacheAsset(cachePath, asset);
+            }
 
             return asset;
         }
@@ -236,13 +252,17 @@ namespace XREngine
             bool useCache = ShouldUseThirdPartyCache(typeof(T));
             bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
             string cachePath = string.Empty;
-            bool hasCachePath = useCache && TryResolveCachePath(filePath, typeof(T), cacheVariantKey: null, out cachePath);
+            string? cacheVariantKey = ResolveDefaultCacheVariantKey(typeof(T), explicitVariantKey: null);
+            bool hasCachePath = useCache && TryResolveCachePath(filePath, typeof(T), cacheVariantKey, out cachePath);
 
             if (hasTimestamp && hasCachePath)
             {
                 var cached = await TryLoadCachedAssetAsync<T>(cachePath, filePath, timestampUtc).ConfigureAwait(false);
                 if (cached is not null)
                 {
+                    if (typeof(T) == typeof(XRTexture2D))
+                        LogTextureCacheEvent("Texture.CacheHit", filePath, cachePath, "fresh cached asset loaded");
+
                     cached.OriginalLastWriteTimeUtc = timestampUtc;
                     return cached;
                 }
@@ -256,7 +276,12 @@ namespace XREngine
                 asset.OriginalLastWriteTimeUtc = timestampUtc;
 
             if (hasTimestamp && hasCachePath)
+            {
+                if (typeof(T) == typeof(XRTexture2D))
+                    LogTextureCacheEvent("Texture.CacheMiss", filePath, cachePath, "importing source before cache write");
+
                 await TryWriteCacheAssetAsync(cachePath, asset).ConfigureAwait(false);
+            }
 
             return asset;
         }
@@ -290,16 +315,26 @@ namespace XREngine
             if (!File.Exists(normalizedPath))
                 return normalizedPath;
 
-            if (!TryResolveCachePath(normalizedPath, typeof(XRTexture2D), cacheVariantKey: null, out string cachePath))
+            string? cacheVariantKey = ResolveDefaultCacheVariantKey(typeof(XRTexture2D), explicitVariantKey: null);
+            if (!TryResolveCachePath(normalizedPath, typeof(XRTexture2D), cacheVariantKey, out string cachePath))
+            {
+                LogTextureCacheEvent("Texture.CacheMiss", normalizedPath, null, "cache path unavailable");
                 return normalizedPath;
+            }
 
             if (IsCacheAssetFresh(cachePath, normalizedPath, typeof(XRTexture2D)))
+            {
+                LogTextureCacheEvent("Texture.CacheHit", normalizedPath, cachePath, "fresh streaming asset");
                 return cachePath;
+            }
 
-            if (XRTexture2D.ShouldSuppressTextureStreamingCacheWarmup)
-                return normalizedPath;
+            LogTextureCacheEvent(
+                File.Exists(cachePath) ? "Texture.CacheStale" : "Texture.CacheMiss",
+                normalizedPath,
+                cachePath,
+                File.Exists(cachePath) ? "cache is stale or not streaming-usable" : "cache file missing");
 
-            QueueTextureStreamingCacheImport(normalizedPath, cachePath);
+            QueueTextureStreamingCacheImport(normalizedPath, cachePath, cacheVariantKey);
             return normalizedPath;
         }
 
@@ -308,7 +343,7 @@ namespace XREngine
         /// </summary>
         /// <param name="sourcePath">The file path of the source texture asset.</param>
         /// <param name="cachePath">The file path of the cached texture asset.</param>
-        private void QueueTextureStreamingCacheImport(string sourcePath, string cachePath)
+        private void QueueTextureStreamingCacheImport(string sourcePath, string cachePath, string? cacheVariantKey)
         {
             if (!_pendingTextureStreamingCacheImports.TryAdd(sourcePath, 0))
                 return;
@@ -327,7 +362,7 @@ namespace XREngine
             IEnumerable CacheImportRoutine()
             {
                 if (!IsCacheAssetFresh(cachePath, sourcePath, typeof(XRTexture2D)))
-                    TryImportThirdPartyCacheAsset(sourcePath, typeof(XRTexture2D), importOptions: null, cacheVariantKey: null, cachePath);
+                    TryImportThirdPartyCacheAsset(sourcePath, typeof(XRTexture2D), importOptions: null, cacheVariantKey, cachePath);
 
                 yield break;
             }
@@ -363,6 +398,7 @@ namespace XREngine
             if (!File.Exists(normalizedPath))
                 return normalizedPath;
 
+            cacheVariantKey = ResolveDefaultCacheVariantKey(typeof(T), cacheVariantKey);
             if (!TryResolveCachePath(normalizedPath, typeof(T), cacheVariantKey, out string cachePath))
                 return normalizedPath;
 
@@ -410,11 +446,15 @@ namespace XREngine
 
             bool useCache = ShouldUseThirdPartyCache(typeof(T));
             string cachePath = string.Empty;
+            cacheVariantKey = ResolveDefaultCacheVariantKey(typeof(T), cacheVariantKey) ?? string.Empty;
             if (useCache && !TryResolveCachePath(filePath, typeof(T), cacheVariantKey, out cachePath))
                 return null;
 
             if (useCache && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
             {
+                if (typeof(T) == typeof(XRTexture2D))
+                    LogTextureCacheEvent("Texture.CacheHit", filePath, cachePath, "fresh variant cached asset loaded");
+
                 cachedAsset!.FilePath = filePath;
                 cachedAsset.OriginalPath = filePath;
                 cachedAsset.OriginalLastWriteTimeUtc = timestampUtc;
@@ -433,7 +473,12 @@ namespace XREngine
                 return null;
 
             if (useCache)
+            {
+                if (typeof(T) == typeof(XRTexture2D))
+                    LogTextureCacheEvent("Texture.CacheMiss", filePath, cachePath, "importing source variant before cache write");
+
                 TryWriteCacheAsset(cachePath, asset);
+            }
             return asset;
         }
 
@@ -469,10 +514,25 @@ namespace XREngine
 
             AssetImportContext context = CreateImportContext(filePath, cacheVariantKey);
             if (!asset.Load3rdParty(filePath, importOptions, context))
+            {
+                if (assetType == typeof(XRTexture2D))
+                    LogTextureCacheEvent("Texture.CacheFallbackToSource", filePath, cachePath, "cache import failed");
+
                 return false;
+            }
 
             TryWriteCacheAsset(cachePath, asset);
-            return File.Exists(cachePath);
+            bool cacheWritten = File.Exists(cachePath);
+            if (assetType == typeof(XRTexture2D))
+            {
+                LogTextureCacheEvent(
+                    cacheWritten ? "Texture.CacheWrite" : "Texture.CacheFallbackToSource",
+                    filePath,
+                    cachePath,
+                    cacheWritten ? "streaming cache asset written" : "cache write did not produce a file");
+            }
+
+            return cacheWritten;
         }
 
         /// <summary>
@@ -507,6 +567,18 @@ namespace XREngine
         /// <returns><c>true</c> if the cache path was successfully resolved; otherwise, <c>false</c>.</returns>
         private bool TryResolveCachePath(string filePath, Type assetType, out string cachePath)
             => TryResolveCachePath(filePath, assetType, cacheVariantKey: null, out cachePath);
+
+        private static string? ResolveDefaultCacheVariantKey(Type assetType, string? explicitVariantKey)
+        {
+            if (assetType != typeof(XRTexture2D))
+                return explicitVariantKey;
+
+            string texturePayloadKey = $"TextureStreaming_v2_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed";
+            if (string.IsNullOrWhiteSpace(explicitVariantKey))
+                return texturePayloadKey;
+
+            return Path.Combine(texturePayloadKey, explicitVariantKey);
+        }
 
         /// <summary>
         /// Attempts to compute a relative path from the specified root directory to the normalized source file path. This method is used to determine if the source file is located within a known asset directory (e.g., game assets or engine assets) and to compute the relative path that can be used for cache organization. If the source file is not located within the specified root directory, or if the root directory is null or empty, the method returns null, indicating that a relative path cannot be computed.
@@ -770,10 +842,16 @@ namespace XREngine
                 if (!string.IsNullOrWhiteSpace(directory))
                     Directory.CreateDirectory(directory);
 
-                asset.SerializeTo(cachePath, Serializer);
+                XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
+                cacheAsset.SerializeTo(cachePath, Serializer);
+                if (asset is XRTexture2D)
+                    LogTextureCacheEvent("Texture.CacheWrite", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, "asset serialized to third-party cache");
             }
             catch (Exception ex)
             {
+                if (asset is XRTexture2D)
+                    LogTextureCacheEvent("Texture.CacheFallbackToSource", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, ex.Message);
+
                 Debug.LogWarning($"Failed to write cached asset '{cachePath}'. {ex.Message}");
             }
         }
@@ -795,12 +873,64 @@ namespace XREngine
                 if (!string.IsNullOrWhiteSpace(directory))
                     Directory.CreateDirectory(directory);
 
-                await asset.SerializeToAsync(cachePath, Serializer).ConfigureAwait(false);
+                XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
+                await cacheAsset.SerializeToAsync(cachePath, Serializer).ConfigureAwait(false);
+                if (asset is XRTexture2D)
+                    LogTextureCacheEvent("Texture.CacheWrite", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, "asset serialized to third-party cache");
             }
             catch (Exception ex)
             {
+                if (asset is XRTexture2D)
+                    LogTextureCacheEvent("Texture.CacheFallbackToSource", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, ex.Message);
+
                 Debug.LogWarning($"Failed to write cached asset '{cachePath}'. {ex.Message}");
             }
+        }
+
+        private static XRAsset PrepareCacheAssetForWrite(string cachePath, XRAsset asset)
+        {
+            if (asset is not XRTexture2D texture || HasStreamableTextureCacheShape(texture))
+                return asset;
+
+            if (!TryResolveTextureCacheSourcePath(texture, out string sourcePath))
+                return asset;
+
+            DateTime sourceTimestampUtc = texture.OriginalLastWriteTimeUtc ?? File.GetLastWriteTimeUtc(sourcePath);
+            if (sourceTimestampUtc == DateTime.MinValue)
+                return asset;
+
+            return XRTexture2D.TryCreateTextureStreamingCacheAsset(
+                texture,
+                sourcePath,
+                cachePath,
+                sourceTimestampUtc,
+                out XRTexture2D streamingTexture)
+                ? streamingTexture
+                : asset;
+        }
+
+        private static bool HasStreamableTextureCacheShape(XRTexture2D texture)
+        {
+            Mipmap2D[] mipmaps = texture.Mipmaps;
+            if (mipmaps is null || mipmaps.Length == 0)
+                return false;
+
+            uint sourceMaxDimension = Math.Max(mipmaps[0].Width, mipmaps[0].Height);
+            uint previewMaxDimension = XRTexture2D.GetPreviewResidentSize(sourceMaxDimension);
+            return sourceMaxDimension <= previewMaxDimension || mipmaps.Length > 1;
+        }
+
+        private static bool TryResolveTextureCacheSourcePath(XRTexture2D texture, out string sourcePath)
+        {
+            sourcePath = texture.OriginalPath ?? texture.FilePath ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(sourcePath))
+                return false;
+
+            sourcePath = Path.GetFullPath(sourcePath);
+            if (Path.GetExtension(sourcePath).Equals($".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            return File.Exists(sourcePath);
         }
 
         /// <summary>
@@ -834,5 +964,17 @@ namespace XREngine
                 : null;
             return new AssetImportContext(filePath, cacheDir);
         }
+
+        private static void LogTextureCacheEvent(string eventName, string? sourcePath, string? cachePath, string reason)
+        {
+            Debug.Log(
+                ELogCategory.Textures,
+                EOutputVerbosity.Normal,
+                debugOnly: false,
+                $"[{eventName}] source='{LabelTextureCacheValue(sourcePath)}' cache='{LabelTextureCacheValue(cachePath)}' reason='{LabelTextureCacheValue(reason)}'");
+        }
+
+        private static string LabelTextureCacheValue(string? value)
+            => string.IsNullOrWhiteSpace(value) ? "<unknown>" : value.Replace('\'', '"');
     }
 }

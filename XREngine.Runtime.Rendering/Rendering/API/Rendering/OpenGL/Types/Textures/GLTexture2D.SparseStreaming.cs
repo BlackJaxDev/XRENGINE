@@ -79,6 +79,11 @@ public partial class GLTexture2D
             }
             else
             {
+                // Demotion still has to populate the target mip range before the sampler is
+                // pointed at it.  Otherwise a newly allocated sparse storage generation can
+                // expose committed-but-empty low mips and the material goes fully black.
+                CommitDesiredSparseCoverage(support, desiredPageSelection, committedBaseMipLevel, numSparseLevels, request.LogicalWidth, request.LogicalHeight, request.LogicalMipCount);
+                UploadSparseResidentMipmaps(request, support, desiredPageSelection, numSparseLevels);
                 SetSparseMipSamplingRange(requestedBaseMipLevel, request.LogicalMipCount - 1);
                 UncommitSparseMipRange(previousCommittedBaseMipLevel, committedBaseMipLevel, numSparseLevels, request.LogicalWidth, request.LogicalHeight);
             }

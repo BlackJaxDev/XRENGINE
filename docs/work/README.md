@@ -28,7 +28,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
 | GPU rendering roadmap | Active | [todo/gpu-rendering.md](todo/gpu-rendering.md) | Broad GPU-driven rendering work remains active. |
 | Shadow filtering and atlas allocation | Active | [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md), [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md), [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md), [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md) | VSM/EVSM filtering, dynamic atlas LOD allocation, and post-v1 advanced shadow follow-ups for directional, spot, and point lights. |
-| Texture management runtime | Active | [todo/texture-management-runtime-todo.md](todo/texture-management-runtime-todo.md), [design/texture-management-runtime-design.md](design/texture-management-runtime-design.md) | Phased implementation tracker plus source design for runtime texture residency, upload scheduling, GL storage safety, VRAM telemetry, and dedicated texture logging. |
+| Texture management runtime | Active | [todo/texture-management-runtime-todo.md](todo/texture-management-runtime-todo.md), [todo/texture-streaming-cooked-cache-todo.md](todo/texture-streaming-cooked-cache-todo.md), [design/texture-management-runtime-design.md](design/texture-management-runtime-design.md) | Phased implementation tracker plus focused cooked-cache follow-up for runtime texture residency, upload scheduling, GL storage safety, VRAM telemetry, and dedicated texture logging. |
 | OpenVR VRClient GPU handoff | Active | [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md) | Zero-readback cross-process eye-texture handoff from the engine app to the legacy OpenVR companion process. |
 | GPU-driven animation | Active | [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md) | Phased execution tracker for the [GPU-driven animation architecture](design/gpu-driven-animation.md). |
 | GPU skinning buffer compression | Active | [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md) | XRMesh and XRMeshRenderer influence/palette compression plan for direct and compute skinning. |
@@ -66,6 +66,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
 - [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md)
 - [todo/texture-management-runtime-todo.md](todo/texture-management-runtime-todo.md)
+- [todo/texture-streaming-cooked-cache-todo.md](todo/texture-streaming-cooked-cache-todo.md)
 - [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md)
 - [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md)
 - [todo/vulkan.md](todo/vulkan.md)
@@ -111,6 +112,7 @@ Generated audit outputs should be treated as disposable report artifacts rather 
 - [testing/gltf-import.md](testing/gltf-import.md)
 - [testing/physics-chain-performance.md](testing/physics-chain-performance.md)
 - [testing/texture-management-runtime-baseline-2026-05-01.md](testing/texture-management-runtime-baseline-2026-05-01.md)
+- [testing/texture-streaming-run-analysis-2026-05-01-180642.md](testing/texture-streaming-run-analysis-2026-05-01-180642.md)
 
 ## Notes
 

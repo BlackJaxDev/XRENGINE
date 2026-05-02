@@ -598,6 +598,7 @@ namespace XREngine.Rendering
             int lockMipLevel = texture.StreamingLockMipLevel;
             bool hasLock = lockMipLevel >= 0 && lockMipLevel < smallestResidentMip;
             bool seedUploaded = !hasLock;
+            double activeUploadMilliseconds = 0.0;
 
             bool UploadProgressive()
             {
@@ -649,6 +650,7 @@ namespace XREngine.Rendering
                                 workItem.EstimatedBytes,
                                 queueWaitMilliseconds,
                                 0.0,
+                                queueWaitMilliseconds,
                                 RuntimeGraphicsApiKind.OpenGL.ToString());
                         }
                         //RuntimeRenderingHostServices.Current.LogOutput(
@@ -672,6 +674,7 @@ namespace XREngine.Rendering
                         long seedUploadStart = TextureRuntimeDiagnostics.StartTiming();
                         bool lockMipCompleted = texture.PushMipLevel(lockMipLevel);
                         double seedUploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(seedUploadStart);
+                        activeUploadMilliseconds += seedUploadMilliseconds;
                         texture.RecordTextureUploadDuration(seedUploadMilliseconds);
                         TextureRuntimeDiagnostics.RecordUploadDuration(seedUploadMilliseconds);
                         RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, seedUploadMilliseconds);
@@ -699,6 +702,7 @@ namespace XREngine.Rendering
                             Math.Max(texture.Width, texture.Height),
                             workItem.EstimatedBytes,
                             texture.LastTextureQueueWaitMilliseconds,
+                            activeUploadMilliseconds,
                             TextureRuntimeDiagnostics.ElapsedMilliseconds(workItem.QueueTimestamp),
                             RuntimeGraphicsApiKind.OpenGL.ToString());
                         //RuntimeRenderingHostServices.Current.LogOutput(
@@ -752,6 +756,7 @@ namespace XREngine.Rendering
                     long uploadStart = TextureRuntimeDiagnostics.StartTiming();
                     bool mipCompleted = texture.PushMipLevel(nextMipToUpload);
                     double uploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart);
+                    activeUploadMilliseconds += uploadMilliseconds;
                     texture.RecordTextureUploadDuration(uploadMilliseconds);
                     TextureRuntimeDiagnostics.RecordUploadDuration(uploadMilliseconds);
                     RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, uploadMilliseconds);
@@ -1111,6 +1116,41 @@ namespace XREngine.Rendering
             // Flat tangent-space normal: (0.5, 0.5, 1.0) in [0,1] = (0, 0, 1) in [-1,1]
             var flatNormal = new MagickColor(128 * 257, 128 * 257, 255 * 257); // MagickColor uses 16-bit channels
             return new MagickImage(flatNormal, 1, 1);
+        }
+
+        private static XRTexture2D? _fallbackAlbedoTexture;
+        private static XRTexture2D? _fallbackNormalTexture;
+        private static XRTexture2D? _fallbackScalarTexture;
+        private static XRTexture2D? _fallbackZeroTexture;
+
+        public static XRTexture2D GetRoleAwareFallbackTexture(string? samplerName)
+        {
+            string normalized = samplerName?.Trim().ToLowerInvariant() ?? string.Empty;
+            if (normalized.Contains("normal") || normalized.Contains("bump") || normalized.Contains("height") || normalized.Contains("parallax"))
+                return _fallbackNormalTexture ??= CreateRoleFallbackTexture("TextureFallback_FlatNormal", new ColorF4(0.5f, 0.5f, 1.0f, 1.0f));
+
+            if (normalized.Contains("rough") || normalized.Contains("occlusion") || normalized.Contains("ao"))
+                return _fallbackScalarTexture ??= CreateRoleFallbackTexture("TextureFallback_NeutralScalar", new ColorF4(1.0f, 1.0f, 1.0f, 1.0f));
+
+            if (normalized.Contains("metal") || normalized.Contains("specular") || normalized.Contains("emissive"))
+                return _fallbackZeroTexture ??= CreateRoleFallbackTexture("TextureFallback_ZeroScalar", new ColorF4(0.0f, 0.0f, 0.0f, 1.0f));
+
+            return _fallbackAlbedoTexture ??= CreateRoleFallbackTexture("TextureFallback_AlbedoVisible", new ColorF4(0.85f, 0.2f, 0.85f, 1.0f));
+        }
+
+        private static XRTexture2D CreateRoleFallbackTexture(string name, ColorF4 color)
+        {
+            XRTexture2D texture = new(1u, 1u, color)
+            {
+                Name = name,
+                AutoGenerateMipmaps = false,
+                Resizable = false,
+                MagFilter = ETexMagFilter.Nearest,
+                MinFilter = ETexMinFilter.Nearest,
+                UWrap = ETexWrapMode.Repeat,
+                VWrap = ETexWrapMode.Repeat,
+            };
+            return texture;
         }
 
         private static MagickImage GetFillerBitmap()

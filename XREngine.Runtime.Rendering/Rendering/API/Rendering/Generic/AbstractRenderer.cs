@@ -489,6 +489,11 @@ namespace XREngine.Rendering
             int layerIndex,
             out Vector4 rgba,
             out string failure);
+
+        public virtual void TryBuildTexture2DMipChainRgba8Async(
+            XRTexture2D texture,
+            Action<bool, Mipmap2D[]?, string> callback)
+            => callback(false, null, "GPU RGBA8 texture mip-chain cooking is not supported by this renderer.");
         #endregion
 
         #region Blitting

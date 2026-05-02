@@ -2,6 +2,7 @@ using ImageMagick;
 using System;
 using System.IO;
 using System.Text;
+using System.Threading;
 using NUnit.Framework;
 using Shouldly;
 using XREngine;
@@ -36,6 +37,94 @@ public sealed class ImportedTextureStreamingPhaseTests
     }
 
     [Test]
+    public void DetermineDesiredResidentSize_WhenVisibleProjectedSpanIsTiny_ReturnsPreviewResidentSize()
+    {
+        uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                SourceWidth: 4096u,
+                SourceHeight: 4096u,
+                ResidentMaxDimension: 64u,
+                PreviewReady: true,
+                LastVisibleFrameId: 12L,
+                MinVisibleDistance: 500.0f,
+                MaxProjectedPixelSpan: 0.25f,
+                MaxScreenCoverage: 0.0f,
+                UvDensityHint: 1.0f,
+                SamplerName: "diffuseTexture"),
+            frameId: 12L,
+            allowPromotions: true,
+            previewMaxDimension: 64u);
+
+        desired.ShouldBe(64u);
+    }
+
+    [Test]
+    public void DetermineDesiredResidentSize_WhenVisibleMetricsAreMissing_ReturnsPreviewResidentSize()
+    {
+        uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                SourceWidth: 4096u,
+                SourceHeight: 4096u,
+                ResidentMaxDimension: 1u,
+                PreviewReady: true,
+                LastVisibleFrameId: 12L,
+                MinVisibleDistance: 3.0f,
+                MaxProjectedPixelSpan: 0.0f,
+                MaxScreenCoverage: 0.0f,
+                UvDensityHint: 1.0f,
+                SamplerName: "diffuseTexture"),
+            frameId: 12L,
+            allowPromotions: true,
+            previewMaxDimension: 64u);
+
+        desired.ShouldBe(64u);
+    }
+
+    [Test]
+    public void DetermineDesiredResidentSize_WhenVisibleNormalMapProjectedSpanIsTiny_ReturnsPreviewResidentSize()
+    {
+        uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                SourceWidth: 4096u,
+                SourceHeight: 4096u,
+                ResidentMaxDimension: 1u,
+                PreviewReady: true,
+                LastVisibleFrameId: 12L,
+                MinVisibleDistance: 500.0f,
+                MaxProjectedPixelSpan: 0.25f,
+                MaxScreenCoverage: 0.0f,
+                UvDensityHint: 1.0f,
+                SamplerName: "normalTexture"),
+            frameId: 12L,
+            allowPromotions: true,
+            previewMaxDimension: 64u);
+
+        desired.ShouldBe(64u);
+    }
+
+    [Test]
+    public void DetermineDesiredResidentSize_WhenNotVisibleForManyFrames_ReturnsPreviewResidentSize()
+    {
+        uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                SourceWidth: 4096u,
+                SourceHeight: 4096u,
+                ResidentMaxDimension: 64u,
+                PreviewReady: true,
+                LastVisibleFrameId: 12L,
+                MinVisibleDistance: 500.0f,
+                MaxProjectedPixelSpan: 0.0f,
+                MaxScreenCoverage: 0.0f,
+                UvDensityHint: 1.0f,
+                SamplerName: "diffuseTexture"),
+            frameId: 60L,
+            allowPromotions: true,
+            previewMaxDimension: 64u);
+
+        desired.ShouldBe(64u);
+    }
+
+    [Test]
     public void FitResidentSizeToBudget_DemotesUntilResidentBytesFit()
     {
         long justUnder512Budget = XRTexture2D.EstimateResidentBytes(1024u, 1024u, 512u) - 1L;
@@ -51,6 +140,22 @@ public sealed class ImportedTextureStreamingPhaseTests
             availableManagedBytes: justUnder512Budget);
 
         fitted.ShouldBe(256u);
+    }
+
+    [Test]
+    public void FitResidentSizeToBudget_WhenBudgetIsTooSmall_KeepsOnePixelResidentFloor()
+    {
+        uint fitted = ImportedTextureStreamingManager.Instance.FitResidentSizeToBudget(
+            new ImportedTextureStreamingBudgetInput(
+                SourceWidth: 1024u,
+                SourceHeight: 1024u,
+                ResidentMaxDimension: 64u,
+                PreviewMaxDimension: 64u,
+                PageSelection: SparseTextureStreamingPageSelection.Full),
+            desiredResidentSize: 1024u,
+            availableManagedBytes: 0L);
+
+        fitted.ShouldBe(1u);
     }
 
     [Test]
@@ -190,6 +295,96 @@ public sealed class ImportedTextureStreamingPhaseTests
     }
 
     [Test]
+    public void TextureStreamingAssetUsable_RejectsSingleFullMipCachePayload()
+    {
+        string tempDirectory = Path.Combine(Path.GetTempPath(), $"ImportedTextureStreamingPhaseTests_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            string sourcePath = Path.Combine(tempDirectory, "single-full-mip.png");
+            string assetPath = Path.Combine(tempDirectory, "single-full-mip.png.XREngine.Rendering.XRTexture2D.asset");
+            using MagickImage source = new(MagickColors.Gold, 128, 64);
+            XRTexture2D texture = new()
+            {
+                Name = "SingleFullMip",
+                FilePath = assetPath,
+                OriginalPath = sourcePath,
+                AutoGenerateMipmaps = true,
+                Resizable = false,
+                Mipmaps = [new Mipmap2D(source)]
+            };
+
+            File.WriteAllText(assetPath, AssetManager.Serializer.Serialize(texture));
+
+            byte[] assetBytes = File.ReadAllBytes(assetPath);
+            XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(
+                assetBytes,
+                maxResidentDimension: 64u,
+                includeMipChain: true,
+                out TextureStreamingResidentData residentData).ShouldBeTrue();
+            residentData.ResidentMaxDimension.ShouldBe(128u);
+            residentData.Mipmaps.Length.ShouldBe(1);
+
+            XRTexture2D.IsTextureStreamingAssetUsable(assetPath).ShouldBeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(tempDirectory))
+                Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void TextureStreamingCacheAsset_CreatesPreviewResidentMipChain()
+    {
+        string tempDirectory = Path.Combine(Path.GetTempPath(), $"ImportedTextureStreamingPhaseTests_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            string sourcePath = Path.Combine(tempDirectory, "streamable-source.png");
+            string assetPath = Path.Combine(tempDirectory, "streamable-source.png.XREngine.Rendering.XRTexture2D.asset");
+            using (MagickImage source = new(MagickColors.Orange, 128, 64))
+                source.Write(sourcePath);
+
+            DateTime sourceTimestampUtc = File.GetLastWriteTimeUtc(sourcePath);
+            XRTexture2D.TryCreateTextureStreamingCacheAsset(
+                sourcePath,
+                assetPath,
+                sourceTimestampUtc,
+                out XRTexture2D texture).ShouldBeTrue();
+
+            texture.OriginalPath.ShouldBe(sourcePath);
+            texture.OriginalLastWriteTimeUtc.ShouldBe(sourceTimestampUtc);
+            texture.Mipmaps.Length.ShouldBeGreaterThan(1);
+
+            File.WriteAllText(assetPath, AssetManager.Serializer.Serialize(texture));
+
+            XRTexture2D.IsTextureStreamingAssetUsable(assetPath).ShouldBeTrue();
+
+            byte[] assetBytes = File.ReadAllBytes(assetPath);
+            XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(
+                assetBytes,
+                maxResidentDimension: 64u,
+                includeMipChain: true,
+                out TextureStreamingResidentData residentData).ShouldBeTrue();
+
+            residentData.SourceWidth.ShouldBe(128u);
+            residentData.SourceHeight.ShouldBe(64u);
+            residentData.ResidentMaxDimension.ShouldBe(64u);
+            residentData.Mipmaps.Length.ShouldBeGreaterThan(1);
+            residentData.Mipmaps[0].Width.ShouldBe(64u);
+            residentData.Mipmaps[0].Height.ShouldBe(32u);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDirectory))
+                Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
     public void TextureYamlAsset_InvalidCookedPayload_ReturnsFalse()
     {
         const string yaml = """
@@ -234,7 +429,7 @@ Payload:
             XRTexture2D.IsTextureStreamingAssetUsable(assetPath).ShouldBeFalse();
 
             AssetTextureStreamingSource streamingSource = new(assetPath, sourcePath);
-            TextureStreamingResidentData residentData = streamingSource.LoadResidentData(maxResidentDimension: 4u, includeMipChain: true);
+            TextureStreamingResidentData residentData = streamingSource.LoadResidentData(maxResidentDimension: 4u, includeMipChain: true, CancellationToken.None);
 
             residentData.SourceWidth.ShouldBe(8u);
             residentData.SourceHeight.ShouldBe(4u);
@@ -245,7 +440,7 @@ Payload:
 
             File.Delete(assetPath);
 
-            TextureStreamingResidentData secondResidentData = streamingSource.LoadResidentData(maxResidentDimension: 4u, includeMipChain: false);
+            TextureStreamingResidentData secondResidentData = streamingSource.LoadResidentData(maxResidentDimension: 4u, includeMipChain: false, CancellationToken.None);
             secondResidentData.SourceWidth.ShouldBe(8u);
             secondResidentData.SourceHeight.ShouldBe(4u);
             secondResidentData.Mipmaps.Length.ShouldBe(1);

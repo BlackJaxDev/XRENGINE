@@ -14,6 +14,7 @@ namespace XREngine.Components.Capture.Lights
         #region Preview Methods
 
         private const uint PreviewSpherePrecision = 48u;
+        private bool _previewSphereFallbackLogged;
 
         private static XRMesh SharedPreviewSphereMesh
             => s_previewSphereMesh ??= XRMesh.Shapes.SolidSphere(Vector3.Zero, 0.5f, PreviewSpherePrecision);
@@ -85,7 +86,18 @@ namespace XREngine.Components.Capture.Lights
         {
             XRTexture? previewTexture = _previewSphereTexture;
             if (previewTexture is null)
-                return;
+            {
+                previewTexture = XRTexture2D.GetRoleAwareFallbackTexture("Texture0");
+                if (!_previewSphereFallbackLogged)
+                {
+                    _previewSphereFallbackLogged = true;
+                    TextureRuntimeDiagnostics.LogFallbackTextureBound(
+                        RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                        nameof(LightProbeComponent),
+                        "Texture0",
+                        "light probe preview has no materialized environment texture");
+                }
+            }
 
             program.Sampler("Texture0", previewTexture, 0);
         }
@@ -94,7 +106,7 @@ namespace XREngine.Components.Capture.Lights
         {
             material.SettingUniforms -= BindPreviewTextureUniform;
             material.SettingUniforms += BindPreviewTextureUniform;
-            material.Textures = [previewTexture];
+            material.Textures = [previewTexture ?? XRTexture2D.GetRoleAwareFallbackTexture("Texture0")];
             material.Shaders = [previewShader];
             material.RenderPass = pass;
         }
@@ -127,6 +139,8 @@ namespace XREngine.Components.Capture.Lights
             int pass = (int)EDefaultRenderPass.OpaqueForward;
             XRShader previewShader = XRShader.EngineShader(previewShaderPath, EShaderType.Fragment);
             _previewSphereTexture = previewTexture;
+            if (previewTexture is not null)
+                _previewSphereFallbackLogged = false;
 
             if (PreviewSphere is null)
             {
