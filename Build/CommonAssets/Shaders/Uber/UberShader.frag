@@ -556,6 +556,7 @@ vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseCo
 
     for (int i = startIndex; i < DirLightCount; ++i) {
         totalLight += XRENGINE_CalcDirLight(
+            i,
             DirectionalLights[i],
             normal,
             mesh.worldPos,
@@ -819,7 +820,7 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
 float sampleShadowMap(vec3 worldPos, vec3 normal, float nDotL) {
     if (DirLightCount <= 0)
         return 1.0;
-    return XRENGINE_ReadShadowMapDir(worldPos, normal, max(nDotL, 0.0));
+    return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], worldPos, normal, max(nDotL, 0.0));
 }
 
 // ============================================

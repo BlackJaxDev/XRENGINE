@@ -66,7 +66,7 @@ namespace XREngine.Networking
 
         private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
         {
-            FbxTrace.LogSink = static message => Debug.Assets(message);
+            FbxTrace.LogSink = static message => Debug.Meshes(message);
             FbxTrace.ProfilerScopeFactory = static scopeName => Engine.Profiler.Start(scopeName);
 
             if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
@@ -84,7 +84,7 @@ namespace XREngine.Networking
                 };
             }
 
-            Debug.Assets($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.");
+            Debug.Meshes($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Meshes}.");
         }
 
         private static ServerJoinAdmissionResult? ResolveServerJoin(PlayerJoinRequest request)

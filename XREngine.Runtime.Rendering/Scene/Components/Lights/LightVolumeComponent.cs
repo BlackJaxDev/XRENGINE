@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Numerics;
 using System.ComponentModel;
+using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
@@ -23,9 +23,15 @@ namespace XREngine.Components.Lights
 
         private IRuntimeRenderWorld? _registeredWorld;
 
+        /// <summary>
+        /// True when this component can contribute a sampled irradiance volume to its world.
+        /// </summary>
         [Browsable(false)]
         public bool HasValidVolume => _volumeEnabled && _volumeTexture is not null && IsActiveInHierarchy;
 
+        /// <summary>
+        /// Baked 3D irradiance data sampled by GI/light-volume render passes.
+        /// </summary>
         [Category("Light Volumes")]
         public XRTexture3D? VolumeTexture
         {
@@ -43,6 +49,9 @@ namespace XREngine.Components.Lights
             set => SetField(ref _halfExtents, value);
         }
 
+        /// <summary>
+        /// Multiplicative color applied while sampling the volume texture.
+        /// </summary>
         [Category("Light Volumes")]
         public ColorF4 Tint
         {
@@ -50,6 +59,9 @@ namespace XREngine.Components.Lights
             set => SetField(ref _tint, value);
         }
 
+        /// <summary>
+        /// Scalar brightness multiplier applied after tinting.
+        /// </summary>
         [Category("Light Volumes")]
         public float Intensity
         {
@@ -57,6 +69,9 @@ namespace XREngine.Components.Lights
             set => SetField(ref _intensity, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Enables this volume without clearing the assigned texture or bounds.
+        /// </summary>
         [Category("Light Volumes")]
         public bool VolumeEnabled
         {
@@ -92,7 +107,7 @@ namespace XREngine.Components.Lights
 
         private void RefreshRegistration()
         {
-            var world = WorldAs<IRuntimeRenderWorld>();
+            IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
             bool shouldRegister = world is not null && IsActiveInHierarchy && _volumeEnabled;
 
             if (_registeredWorld is not null && (!shouldRegister || _registeredWorld != world))
@@ -126,9 +141,9 @@ namespace XREngine.Components.Lights
             {
                 lock (s_lock)
                 {
-                    if (!s_perWorld.TryGetValue(world, out var list))
+                    if (!s_perWorld.TryGetValue(world, out List<LightVolumeComponent>? list))
                     {
-                        list = new List<LightVolumeComponent>();
+                        list = [];
                         s_perWorld[world] = list;
                     }
 
@@ -154,11 +169,11 @@ namespace XREngine.Components.Lights
             {
                 lock (s_lock)
                 {
-                    if (s_perWorld.TryGetValue(world, out var list))
+                    if (s_perWorld.TryGetValue(world, out List<LightVolumeComponent>? list))
                     {
                         for (int i = 0; i < list.Count; i++)
                         {
-                            var candidate = list[i];
+                            LightVolumeComponent candidate = list[i];
                             if (candidate.HasValidVolume)
                             {
                                 component = candidate;

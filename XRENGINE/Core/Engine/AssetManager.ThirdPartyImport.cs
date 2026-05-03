@@ -422,12 +422,12 @@ namespace XREngine
         {
             ArgumentNullException.ThrowIfNull(rootAsset);
 
-            Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Starting externalization for '{0}' (root type: {1})", rootAssetPath, rootAsset.GetType().Name);
+            Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Starting externalization for '{0}' (root type: {1})", rootAssetPath, rootAsset.GetType().Name);
 
             string? directory = Path.GetDirectoryName(rootAssetPath);
             if (string.IsNullOrWhiteSpace(directory))
             {
-                Debug.LogWarning($"[ExternalizeEmbedded] Cannot externalize: directory is null/empty for path '{rootAssetPath}'");
+                Debug.MeshesWarning($"[ExternalizeEmbedded] Cannot externalize: directory is null/empty for path '{rootAssetPath}'");
                 return;
             }
 
@@ -461,7 +461,7 @@ namespace XREngine
 
                 // ── Phase A: Discovery ───────────────────────────────────────
                 List<XRAsset> discovered = DiscoverRelevantSubAssets(rootAsset);
-                Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Discovered {0} relevant sub-assets", discovered.Count);
+                Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Discovered {0} relevant sub-assets", discovered.Count);
                 {
                     int textures = discovered.Count(IsExternalizableTexture);
                     int materials = discovered.Count(IsExternalizableMaterial);
@@ -469,7 +469,7 @@ namespace XREngine
                     int meshes = discovered.Count(IsExternalizableMesh);
                     int models = discovered.Count(IsExternalizableModel);
                     int animations = discovered.Count(IsExternalizableAnimationClip);
-                    Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Breakdown: Texture={0}, Material={1}, SubMesh={2}, Mesh={3}, Model={4}, AnimationClip={5}", textures, materials, subMeshes, meshes, models, animations);
+                    Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Breakdown: Texture={0}, Material={1}, SubMesh={2}, Mesh={3}, Model={4}, AnimationClip={5}", textures, materials, subMeshes, meshes, models, animations);
                 }
 
                 // ── Phase B: Pre-assign paths + write placeholder files ──────
@@ -480,7 +480,7 @@ namespace XREngine
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogException(ex, "[ExternalizeEmbedded] Phase B (pre-assign) failed; rolling back placeholders.");
+                    Debug.MeshesException(ex, "[ExternalizeEmbedded] Phase B (pre-assign) failed; rolling back placeholders.");
                     DeletePlaceholders(createdPlaceholders);
                     throw;
                 }
@@ -504,7 +504,7 @@ namespace XREngine
 
                         try
                         {
-                            Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Exporting {0} '{1}' -> '{2}'", subAsset.GetType().Name, subAsset.Name ?? string.Empty, targetPath);
+                            Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Exporting {0} '{1}' -> '{2}'", subAsset.GetType().Name, subAsset.Name ?? string.Empty, targetPath);
                             SaveAssetToPathCore(subAsset, targetPath);
                             EnsureMetadataForAssetPath(targetPath, isDirectory: false);
                             overwrittenPaths.Add(targetPath);
@@ -513,7 +513,7 @@ namespace XREngine
                         catch (Exception ex)
                         {
                             failedCount++;
-                            Debug.LogException(ex, $"[ExternalizeEmbedded] Failed exporting {subAsset.GetType().Name} '{subAsset.Name}' -> '{targetPath}'");
+                            Debug.MeshesException(ex, $"[ExternalizeEmbedded] Failed exporting {subAsset.GetType().Name} '{subAsset.Name}' -> '{targetPath}'");
                         }
                     }
                 }
@@ -523,12 +523,12 @@ namespace XREngine
                     List<string> orphans = createdPlaceholders.Where(p => !overwrittenPaths.Contains(p)).ToList();
                     if (orphans.Count > 0)
                     {
-                        Debug.LogWarning($"[ExternalizeEmbedded] Cleaning up {orphans.Count} placeholder file(s) that were never written.");
+                        Debug.MeshesWarning($"[ExternalizeEmbedded] Cleaning up {orphans.Count} placeholder file(s) that were never written.");
                         DeletePlaceholders(orphans);
                     }
                 }
 
-                Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Externalization complete: {0} exported, {1} skipped, {2} failed", exportedCount, skippedCount, failedCount);
+                Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Externalization complete: {0} exported, {1} skipped, {2} failed", exportedCount, skippedCount, failedCount);
 
                 // Recompute to ensure the root no longer treats these as embedded.
                 XRAssetGraphUtility.RefreshAssetGraph(rootAsset);
@@ -662,7 +662,7 @@ namespace XREngine
                     subAsset.SourceAsset = subAsset;
 
                 if (subAsset.ID == Guid.Empty)
-                    Debug.LogWarning($"[ExternalizeEmbedded] Sub-asset {subAsset.GetType().Name} has empty ID; references to it may fail to resolve.");
+                    Debug.MeshesWarning($"[ExternalizeEmbedded] Sub-asset {subAsset.GetType().Name} has empty ID; references to it may fail to resolve.");
 
                 // Shared-asset case: asset already has a valid on-disk .asset file under our control.
                 if (HasValidExistingAssetFile(subAsset))
@@ -700,7 +700,7 @@ namespace XREngine
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogException(ex, $"[ExternalizeEmbedded] Failed creating placeholder '{targetPath}' for {subAsset.GetType().Name} '{displayName}'.");
+                    Debug.MeshesException(ex, $"[ExternalizeEmbedded] Failed creating placeholder '{targetPath}' for {subAsset.GetType().Name} '{displayName}'.");
                     throw;
                 }
             }
@@ -750,7 +750,7 @@ namespace XREngine
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogException(ex, $"[ExternalizeEmbedded] Failed to clean up placeholder '{path}'.");
+                    Debug.MeshesException(ex, $"[ExternalizeEmbedded] Failed to clean up placeholder '{path}'.");
                 }
             }
         }

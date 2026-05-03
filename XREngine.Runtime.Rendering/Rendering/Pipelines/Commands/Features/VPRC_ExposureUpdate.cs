@@ -46,7 +46,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<ColorGradingSettings>();
             if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true || grading is null)
             {
-                Debug.Out("[ExposureUpdate] No ColorGradingSettings stage found on camera");
+                Debug.Rendering("[ExposureUpdate] No ColorGradingSettings stage found on camera");
                 return;
             }
 
@@ -68,7 +68,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             var sourceTexture = ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName);
             if (sourceTexture is null)
             {
-                Debug.Out($"[ExposureUpdate] Source texture '{HDRSceneTextureName}' not found");
+                Debug.Rendering($"[ExposureUpdate] Source texture '{HDRSceneTextureName}' not found");
                 return;
             }
 
@@ -82,11 +82,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                     if (grading.UseGpuAutoExposureThisFrame)
                         return;
 
-                    Debug.Out("[ExposureUpdate] GPU exposure update failed, falling back to CPU");
+                    Debug.Rendering("[ExposureUpdate] GPU exposure update failed, falling back to CPU");
                 }
                 else
                 {
-                    Debug.Out($"[ExposureUpdate] Exposure texture '{AutoExposureTextureName}' not found, falling back to CPU");
+                    Debug.Rendering($"[ExposureUpdate] Exposure texture '{AutoExposureTextureName}' not found, falling back to CPU");
                 }
             }
             else

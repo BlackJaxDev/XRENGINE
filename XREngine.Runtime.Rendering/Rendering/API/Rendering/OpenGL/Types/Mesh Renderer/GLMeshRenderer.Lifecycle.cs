@@ -141,6 +141,9 @@ namespace XREngine.Rendering.OpenGL
                 PointIndicesBuffer?.Dispose();
                 PointIndicesBuffer = null;
 
+                _batchedTextSamplesQuery?.Destroy(true);
+                _batchedTextSamplesQuery = null;
+
                 _pipeline?.Destroy();
                 _pipeline = null;
 

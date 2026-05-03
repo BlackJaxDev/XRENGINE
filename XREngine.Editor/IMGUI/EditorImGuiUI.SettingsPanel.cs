@@ -51,9 +51,9 @@ public static partial class EditorImGuiUI
             }
 
             if (rebuilt == 0)
-                Debug.LogWarning("No OpenGL renderer windows were available to rebuild ImGui font atlas.");
+                Debug.TexturesWarning("No OpenGL renderer windows were available to rebuild ImGui font atlas.");
             else
-                Debug.Out($"Rebuilt ImGui font atlas for {rebuilt} OpenGL renderer window(s).");
+                Debug.Textures($"Rebuilt ImGui font atlas for {rebuilt} OpenGL renderer window(s).");
         }
 
         private static void DrawEditorPreferencesOverridesPanel()
@@ -113,7 +113,7 @@ public static partial class EditorImGuiUI
             if (Engine.CurrentProject is not null)
             {
                 if (ImGui.Button("Save User Settings"))
-                    Engine.SaveProjectUserSettings();
+                    QueueProjectUserSettingsSave();
                 ImGui.SameLine();
                 ImGui.TextDisabled($"(Project: {Engine.CurrentProject.ProjectName})");
                 ImGui.Separator();

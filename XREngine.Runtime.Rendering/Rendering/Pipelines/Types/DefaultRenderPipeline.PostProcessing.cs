@@ -1754,7 +1754,7 @@ public partial class DefaultRenderPipeline
             if (key != _lastVolumetricFogScatterLightsKey)
             {
                 _lastVolumetricFogScatterLightsKey = key;
-                Debug.Out($"[VolumetricFog.Scatter] Lights upload: DirLights={dirCount} CastsShadows={casts} HasShadowTex={hasShadowTex} TexCount={texCount}");
+                Debug.Lighting($"[VolumetricFog.Scatter] Lights upload: DirLights={dirCount} CastsShadows={casts} HasShadowTex={hasShadowTex} TexCount={texCount}");
             }
 
             // One-shot diagnostic: dump the published cascade state of the primary directional
@@ -1767,7 +1767,7 @@ public partial class DefaultRenderPipeline
                 _loggedVolumetricFogScatterCascadeOnce = true;
                 var first = lights.DynamicDirectionalLights[0];
                 int activeCascades = first.ActiveCascadeCount;
-                Debug.Out(
+                Debug.Lighting(
                     $"[VolumetricFog.Scatter] DirLight[0] EnableCascadedShadows={first.EnableCascadedShadows} " +
                     $"ActiveCascadeCount={activeCascades} CascadedShadowMapTexture={(first.CascadedShadowMapTexture != null ? "present" : "null")} " +
                     $"WorldForward=({first.Transform.WorldForward.X:F3},{first.Transform.WorldForward.Y:F3},{first.Transform.WorldForward.Z:F3})");
@@ -1776,7 +1776,7 @@ public partial class DefaultRenderPipeline
         else if (!_loggedVolumetricFogScatterLightsOnce)
         {
             _loggedVolumetricFogScatterLightsOnce = true;
-            Debug.Out("[VolumetricFog.Scatter] Lights upload skipped: RenderingWorld is null at scatter pass.");
+            Debug.Lighting("[VolumetricFog.Scatter] Lights upload skipped: RenderingWorld is null at scatter pass.");
         }
     }
 
@@ -1849,7 +1849,8 @@ public partial class DefaultRenderPipeline
         Vector2 previousJitterUv = Vector2.Zero;
         if (!DisableHistoryBasedVrEffects() && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
         {
-            historyReady = temporalData.HistoryReady && temporalData.HistoryExposureReady;
+            // TSR owns a full-resolution color history; the exposure-variance history is only produced by the TAA resolve.
+            historyReady = temporalData.HistoryReady;
             currentJitterUv = new Vector2(temporalData.CurrentJitter.X / Math.Max(1u, InternalWidth), temporalData.CurrentJitter.Y / Math.Max(1u, InternalHeight));
             previousJitterUv = new Vector2(temporalData.PreviousJitter.X / Math.Max(1u, InternalWidth), temporalData.PreviousJitter.Y / Math.Max(1u, InternalHeight));
         }

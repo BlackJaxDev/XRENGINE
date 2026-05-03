@@ -248,6 +248,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                _renderer._imguiMultiViewportController?.ClearQueuedMainMouseWheelEvents();
                 _controller.Update(deltaSeconds);
             }
 
@@ -329,12 +330,12 @@ namespace XREngine.Rendering.OpenGL
                 if (texId != 0 && Api.IsTexture(texId))
                     return;
 
-                Debug.LogWarning($"ImGui font atlas texture became invalid (texId={texId}); rebuilding font device texture.");
+                Debug.TexturesWarning($"ImGui font atlas texture became invalid (texId={texId}); rebuilding font device texture.");
                 ImGuiControllerUtilities.TryUseDefaultEditorFont(controller, 18.0f, forceReload: true);
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed validating/rebuilding ImGui font atlas texture: {ex.Message}");
+                Debug.TexturesWarning($"Failed validating/rebuilding ImGui font atlas texture: {ex.Message}");
             }
         }
 

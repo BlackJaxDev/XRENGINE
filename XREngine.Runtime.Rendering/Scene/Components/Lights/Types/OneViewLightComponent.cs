@@ -1,15 +1,15 @@
 using XREngine.Components.Lights;
-using XREngine.Data.Colors;
 using XREngine.Components.Scene.Transforms;
+using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
-using XREngine.Data.Geometry;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
     /// <summary>
-    /// Base class to handle shadow mapping for a light that only has one view.
+    /// Base class for lights that render shadows from one camera, such as spot and primary directional shadows.
     /// </summary>
     public abstract class OneViewLightComponent : LightComponent
     {
@@ -19,6 +19,9 @@ namespace XREngine.Components.Capture.Lights.Types
         // or deserialized in headless contexts without pulling in render pipelines.
         private XRViewport? _primaryShadowViewport;
 
+        /// <summary>
+        /// Lazily-created viewport that owns the shadow camera and shadow render pipeline.
+        /// </summary>
         protected XRViewport PrimaryShadowViewport => _primaryShadowViewport ??= CreateShadowViewport();
 
         protected XRViewport? PrimaryShadowViewportOrNull => _primaryShadowViewport;
@@ -55,6 +58,9 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected abstract XRCameraParameters GetCameraParameters();
 
+        /// <summary>
+        /// Camera used by the primary one-view shadow pass, when the component is active.
+        /// </summary>
         public XRCamera? ShadowCamera => _primaryShadowViewport?.Camera;
 
         protected override void OnComponentActivated()
@@ -63,8 +69,10 @@ namespace XREngine.Components.Capture.Lights.Types
 
             XRViewport viewport = PrimaryShadowViewport;
             viewport.WorldInstanceOverride = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
-            XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters());
-            cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
+            XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters())
+            {
+                CullingMask = DefaultLayers.EverythingExceptGizmos
+            };
             var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
             if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
             {
@@ -101,6 +109,9 @@ namespace XREngine.Components.Capture.Lights.Types
         private bool ShouldProcessShadowViewport()
             => CastsShadows && (ShadowMap is not null || UsesAtlasShadowViewport);
 
+        /// <summary>
+        /// Swaps the one-view shadow viewport buffers after visible shadow casters have been collected.
+        /// </summary>
         public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
         {
             if (!ShouldProcessShadowViewport())
@@ -109,6 +120,10 @@ namespace XREngine.Components.Capture.Lights.Types
             PrimaryShadowViewport.SwapBuffers();
             lightmapBaker?.ProcessDynamicCachedAutoBake(this);
         }
+
+        /// <summary>
+        /// Collects visible shadow casters for the one-view shadow camera.
+        /// </summary>
         public override void CollectVisibleItems()
         {
             if (!ShouldProcessShadowViewport())
@@ -119,6 +134,9 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private static bool _loggedShadowRenderOnce = false;
 
+        /// <summary>
+        /// Renders the primary shadow camera into this light's standalone shadow map.
+        /// </summary>
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {
             if (!CastsShadows || ShadowMap is null)

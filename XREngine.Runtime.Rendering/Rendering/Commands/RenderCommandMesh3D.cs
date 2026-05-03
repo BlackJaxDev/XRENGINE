@@ -110,7 +110,7 @@ namespace XREngine.Rendering.Commands
             {
                 if (!_renderHasPrevWorldMatrix && s_MotionVectorLogBudget-- > 0)
                 {
-                    RuntimeRenderingHostServices.Current.LogOutput($"[MotionVectors] Missing prev model; treating as static. WorldIsModel={_renderWorldMatrixIsModelMatrix}, Instances={_renderInstances}");
+                    Debug.Rendering($"[MotionVectors] Missing prev model; treating as static. WorldIsModel={_renderWorldMatrixIsModelMatrix}, Instances={_renderInstances}");
                 }
 
                 using var _ = RuntimeRenderingHostServices.Current.PushTransformId(_renderGpuCommandIndex == uint.MaxValue ? 0u : _renderGpuCommandIndex);

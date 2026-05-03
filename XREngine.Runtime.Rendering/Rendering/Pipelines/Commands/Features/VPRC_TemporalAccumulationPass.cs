@@ -136,7 +136,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         var renderer = AbstractRenderer.Current;
         if (renderer is null)
         {
-            Debug.Out("[Temporal] Accumulate skipped: renderer unavailable.");
+            Debug.Rendering("[Temporal] Accumulate skipped: renderer unavailable.");
             return;
         }
 
@@ -148,7 +148,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         if (forwardFBO is null || temporalInputFBO is null || accumulationFBO is null || historyColorFBO is null || historyExposureFBO is null)
         {
-            Debug.Out("[Temporal] Accumulate skipped: missing FBO(s)." +
+            Debug.Rendering("[Temporal] Accumulate skipped: missing FBO(s)." +
                 $" forward={(forwardFBO!=null)} temporalInput={(temporalInputFBO!=null)} accumulation={(accumulationFBO!=null)}" +
                 $" historyColor={(historyColorFBO!=null)} historyExposure={(historyExposureFBO!=null)}");
             return;
@@ -321,7 +321,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     {
         if (!TryGetActiveState(out var instance, out var state))
         {
-            Debug.Out("[Temporal] Begin skipped: no active state.");
+            Debug.Rendering("[Temporal] Begin skipped: no active state.");
             return;
         }
 
@@ -364,7 +364,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.CurrViewProjectionUnjittered = Matrix4x4.Identity;
             state.CurrInverseViewProjection = Matrix4x4.Identity;
             state.HistoryReady = false;
-            Debug.Out("[Temporal] Begin: no camera; resetting state.");
+            Debug.Rendering("[Temporal] Begin: no camera; resetting state.");
             return;
         }
 
@@ -411,13 +411,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     {
         if (!TryGetActiveState(out var instance, out var state))
         {
-            Debug.Out("[Temporal] FlagHistoryCaptured skipped: no active state.");
+            Debug.Rendering("[Temporal] FlagHistoryCaptured skipped: no active state.");
             return;
         }
 
         if (instance.RenderState.SceneCamera is null)
         {
-            Debug.Out("[Temporal] FlagHistoryCaptured skipped: no camera.");
+            Debug.Rendering("[Temporal] FlagHistoryCaptured skipped: no camera.");
             return;
         }
 
@@ -441,7 +441,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     {
         if (!TryGetActiveState(out var instance, out var state))
         {
-            Debug.Out("[Temporal] Commit skipped: no active state.");
+            Debug.Rendering("[Temporal] Commit skipped: no active state.");
             return;
         }
 
@@ -452,7 +452,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         // Only skip if no history was captured this frame at all.
         if (!state.PendingHistoryReady)
         {
-            Debug.Out("[Temporal] Commit skipped: no pending history.");
+            Debug.Rendering("[Temporal] Commit skipped: no pending history.");
             return;
         }
 

@@ -46,7 +46,7 @@ uniform bool SpotShadowAtlasEnabled = false;
 uniform int SpotShadowAtlasRecordIndex = -1;
 uniform int SpotShadowAtlasFallbackMode = 1;
 uniform vec4 SpotShadowAtlasUvScaleBias = vec4(1.0f, 1.0f, 0.0f, 0.0f);
-uniform vec4 SpotShadowAtlasDepthParams = vec4(0.1f, 1.0f, 0.0f, 1.0f); // near, far, local texel size, fallback
+uniform vec4 SpotShadowAtlasDepthParams = vec4(0.1f, 1.0f, 0.0f, 1.0f); // near, far, local texel size, requested/allocated scale
 uniform int ShadowSamples = 8;
 uniform int ShadowBlockerSamples = 8;
 uniform int ShadowFilterSamples = 8;
@@ -356,7 +356,9 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 	float localTexelSize = SpotShadowAtlasEnabled && SpotShadowAtlasDepthParams.z > 0.0f
 		? SpotShadowAtlasDepthParams.z
 		: 1.0f / max(float(textureSize(ShadowMap, 0).x), 1.0f);
-	float worldTexelSize = GetSpotShadowWorldTexelSize(fragPosWS, localTexelSize);
+	float atlasResolutionScale = SpotShadowAtlasEnabled ? max(SpotShadowAtlasDepthParams.w, 1.0f) : 1.0f;
+	float authoredTexelSize = SpotShadowAtlasEnabled ? max(localTexelSize / atlasResolutionScale, 1e-7f) : localTexelSize;
+	float worldTexelSize = GetSpotShadowWorldTexelSize(fragPosWS, authoredTexelSize);
 	float receiverOffset = worldTexelSize * max(ShadowBiasParams.z, 0.0f);
 	float constantBias = XRENGINE_PerspectiveDepthBiasForWorldOffset(
 		worldTexelSize * max(ShadowBiasParams.x, 0.0f),
@@ -387,7 +389,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 
 	float bias = XRENGINE_ComputeShadowDepthBias(
 		fragCoord,
-		vec2(localTexelSize),
+		vec2(authoredTexelSize),
 		ShadowFilterRadius,
 		constantBias,
 		max(ShadowBiasParams.y, 0.0f));
@@ -399,35 +401,34 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 	if (SpotShadowAtlasEnabled)
 	{
 		vec2 atlasUv = fragCoord.xy * SpotShadowAtlasUvScaleBias.xy + SpotShadowAtlasUvScaleBias.zw;
-		float atlasRadiusScale = max(SpotShadowAtlasUvScaleBias.x, SpotShadowAtlasUvScaleBias.y);
 		float atlasNearZ = SpotShadowAtlasDepthParams.x;
 		float atlasFarZ = SpotShadowAtlasDepthParams.y;
 		float atlasDepth = LinearizeSpotShadowDepth01(
 			fragCoord.z,
 			atlasNearZ,
 			atlasFarZ);
-		float atlasFilterRadius = ShadowFilterRadius * atlasRadiusScale;
-		float atlasBlockerRadius = ShadowBlockerSearchRadius * atlasRadiusScale;
-		vec2 atlasTexelSize = max(vec2(SpotShadowAtlasDepthParams.z) * SpotShadowAtlasUvScaleBias.xy, vec2(1e-7f));
+		float atlasLocalTexelSize = max(authoredTexelSize, 1e-7f);
 		float atlasBias = XRENGINE_ComputeShadowDepthBias(
-			vec3(atlasUv, fragCoord.z),
-			atlasTexelSize,
-			atlasFilterRadius,
+			fragCoord,
+			vec2(atlasLocalTexelSize),
+			ShadowFilterRadius,
 			constantBias,
 			max(ShadowBiasParams.y, 0.0f));
-		lit = XRENGINE_SampleLinearDepthShadowMapFilteredAsPerspective(
+		lit = XRENGINE_SampleLinearDepthShadowAtlasFilteredAsPerspective(
 			SpotShadowAtlas,
-			vec3(atlasUv, atlasDepth),
+			vec3(fragCoord.xy, atlasDepth),
 			fragCoord.z,
+			SpotShadowAtlasUvScaleBias,
+			atlasLocalTexelSize,
 			atlasBias,
 			ShadowBlockerSamples,
 			ShadowFilterSamples,
-			atlasFilterRadius,
-			atlasBlockerRadius,
+			ShadowFilterRadius,
+			ShadowBlockerSearchRadius,
 			SoftShadowMode,
-			LightSourceRadius * atlasRadiusScale,
-			ShadowMinPenumbra * atlasRadiusScale,
-			ShadowMaxPenumbra * atlasRadiusScale,
+			LightSourceRadius,
+			ShadowMinPenumbra,
+			ShadowMaxPenumbra,
 			ShadowVogelTapCount,
 			atlasNearZ,
 			atlasFarZ) * contact;

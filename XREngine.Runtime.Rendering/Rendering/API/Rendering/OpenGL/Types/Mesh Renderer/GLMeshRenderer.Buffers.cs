@@ -189,6 +189,7 @@ namespace XREngine.Rendering.OpenGL
                     _allBuffersList.Remove(glBuffer);
                     if (value.Target == EBufferTarget.ShaderStorageBuffer)
                         _ssboBufferCache.Remove(glBuffer);
+                    BuffersBound = false;
                 }
             }
 
@@ -199,6 +200,7 @@ namespace XREngine.Rendering.OpenGL
                 _allBuffersList.Add(glBuffer);
                 if (value.Target == EBufferTarget.ShaderStorageBuffer)
                     _ssboBufferCache.Add(glBuffer);
+                BuffersBound = false;
             }
 
             /// <summary>
@@ -210,6 +212,15 @@ namespace XREngine.Rendering.OpenGL
                 int count = _ssboBufferCache.Count;
                 for (int i = 0; i < count; i++)
                     _ssboBufferCache[i].BindSSBO(program);
+
+                if (IsBatchedTextDiagnosticMesh() && s_batchedTextSsboBindDiagCount++ < 40)
+                {
+                    Debug.Out(
+                        "[FpsTextDiag] GLMeshRenderer.BindSSBOs #{0}: program='{1}' ssbos=[{2}]",
+                        s_batchedTextSsboBindDiagCount,
+                        program.Data?.Name ?? program.BindingId.ToString(),
+                        GetShaderStorageBindingSummary());
+                }
 
                 if (count > 0)
                     Dbg($"BindSSBOs bound {count} SSBO(s)", "Buffers");
@@ -399,8 +410,14 @@ namespace XREngine.Rendering.OpenGL
                 var mesh = Mesh;
                 if (BuffersBound)
                 {
-                    Dbg("BindBuffers early-out: already bound", "Buffers");
-                    return;
+                    if (!VertexArrayBindingsStale())
+                    {
+                        Dbg("BindBuffers early-out: already bound", "Buffers");
+                        return;
+                    }
+
+                    Dbg("BindBuffers: VAO bindings stale, rebinding", "Buffers");
+                    BuffersBound = false;
                 }
 
                 if (!program.IsLinked)
@@ -451,6 +468,7 @@ namespace XREngine.Rendering.OpenGL
                     if (PointIndicesBuffer is not null)
                         Api.VertexArrayElementBuffer(BindingId, PointIndicesBuffer.BindingId);
                 }
+                CaptureVertexArrayBindingSnapshot();
 
                 using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.UnbindVAO"))
                 {
@@ -459,6 +477,44 @@ namespace XREngine.Rendering.OpenGL
 
                 BuffersBound = true;
                 Dbg("BindBuffers: complete", "Buffers");
+            }
+
+            private void CaptureVertexArrayBindingSnapshot()
+            {
+                _boundVertexArrayBuffers.Clear();
+                _boundVertexArrayBufferIds.Clear();
+
+                foreach (GLDataBuffer buffer in _bufferCache.Values)
+                {
+                    if (buffer.Data.Target != EBufferTarget.ArrayBuffer)
+                        continue;
+
+                    _boundVertexArrayBuffers.Add(buffer);
+                    _boundVertexArrayBufferIds.Add(GetBufferBindingId(buffer));
+                }
+
+                _boundTriangleIndicesBufferId = GetBufferBindingId(TriangleIndicesBuffer);
+                _boundLineIndicesBufferId = GetBufferBindingId(LineIndicesBuffer);
+                _boundPointIndicesBufferId = GetBufferBindingId(PointIndicesBuffer);
+            }
+
+            private bool VertexArrayBindingsStale()
+            {
+                if (!BuffersBound)
+                    return false;
+
+                if (_boundVertexArrayBuffers.Count != _boundVertexArrayBufferIds.Count)
+                    return true;
+
+                for (int i = 0; i < _boundVertexArrayBuffers.Count; i++)
+                {
+                    if (GetBufferBindingId(_boundVertexArrayBuffers[i]) != _boundVertexArrayBufferIds[i])
+                        return true;
+                }
+
+                return _boundTriangleIndicesBufferId != GetBufferBindingId(TriangleIndicesBuffer) ||
+                    _boundLineIndicesBufferId != GetBufferBindingId(LineIndicesBuffer) ||
+                    _boundPointIndicesBufferId != GetBufferBindingId(PointIndicesBuffer);
             }
         }
     }

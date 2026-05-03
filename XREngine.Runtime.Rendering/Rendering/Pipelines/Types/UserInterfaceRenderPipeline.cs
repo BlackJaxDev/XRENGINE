@@ -105,12 +105,9 @@ public class UserInterfaceRenderPipeline : RenderPipeline
                 //c.Add<VPRC_StencilMask>().Set(~0u);
                 //c.Add<VPRC_ClearByBoundFBO>();
 
-                c.Add<VPRC_DepthFunc>().Comp = EComparison.Less;
-                c.Add<VPRC_DepthWrite>().Allow = true;
-
+                c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_DepthTest>().Enable = false;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.Background;
-                c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.TransparentForward;

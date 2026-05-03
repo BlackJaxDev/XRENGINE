@@ -921,7 +921,10 @@ namespace XREngine
         // Console log category colors
         private ColorF4 _consoleGeneralColor = new ColorF4(0.9f, 0.9f, 0.9f, 1.0f);    // White/Gray
         private ColorF4 _consoleAssetsColor = new ColorF4(0.95f, 0.72f, 0.35f, 1.0f);   // Amber
+        private ColorF4 _consoleMeshesColor = new ColorF4(0.55f, 0.9f, 0.75f, 1.0f);    // Soft Green
+        private ColorF4 _consoleTexturesColor = new ColorF4(0.45f, 0.9f, 0.95f, 1.0f);  // Cyan
         private ColorF4 _consoleRenderingColor = new ColorF4(0.4f, 0.8f, 1.0f, 1.0f);  // Light Blue
+        private ColorF4 _consoleLightingColor = new ColorF4(1.0f, 0.92f, 0.45f, 1.0f); // Light Yellow
         private ColorF4 _consoleOpenGLColor = new ColorF4(0.4f, 1.0f, 0.4f, 1.0f);     // Light Green
         private ColorF4 _consolePhysicsColor = new ColorF4(1.0f, 0.8f, 0.4f, 1.0f);    // Orange
         private ColorF4 _consoleAnimationColor = new ColorF4(1.0f, 0.6f, 0.8f, 1.0f);  // Pink
@@ -1063,12 +1066,39 @@ namespace XREngine
         }
 
         [Category("Console Colors")]
+        [DisplayName("Console Meshes Color")]
+        [Description("The color used for Meshes log entries in the console.")]
+        public ColorF4 ConsoleMeshesColor
+        {
+            get => _consoleMeshesColor;
+            set => SetField(ref _consoleMeshesColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Textures Color")]
+        [Description("The color used for Textures log entries in the console.")]
+        public ColorF4 ConsoleTexturesColor
+        {
+            get => _consoleTexturesColor;
+            set => SetField(ref _consoleTexturesColor, value);
+        }
+
+        [Category("Console Colors")]
         [DisplayName("Console Rendering Color")]
         [Description("The color used for Rendering log entries in the console.")]
         public ColorF4 ConsoleRenderingColor
         {
             get => _consoleRenderingColor;
             set => SetField(ref _consoleRenderingColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Lighting Color")]
+        [Description("The color used for Lighting log entries in the console.")]
+        public ColorF4 ConsoleLightingColor
+        {
+            get => _consoleLightingColor;
+            set => SetField(ref _consoleLightingColor, value);
         }
 
         [Category("Console Colors")]
@@ -1127,7 +1157,10 @@ namespace XREngine
             TransformCapsuleColor = source.TransformCapsuleColor;
             ConsoleGeneralColor = source.ConsoleGeneralColor;
             ConsoleAssetsColor = source.ConsoleAssetsColor;
+            ConsoleMeshesColor = source.ConsoleMeshesColor;
+            ConsoleTexturesColor = source.ConsoleTexturesColor;
             ConsoleRenderingColor = source.ConsoleRenderingColor;
+            ConsoleLightingColor = source.ConsoleLightingColor;
             ConsoleOpenGLColor = source.ConsoleOpenGLColor;
             ConsolePhysicsColor = source.ConsolePhysicsColor;
             ConsoleAnimationColor = source.ConsoleAnimationColor;
@@ -1184,8 +1217,17 @@ namespace XREngine
             if (overrides.ConsoleAssetsColorOverride is { HasOverride: true } casOverride)
                 ConsoleAssetsColor = casOverride.Value;
 
+            if (overrides.ConsoleMeshesColorOverride is { HasOverride: true } cmOverride)
+                ConsoleMeshesColor = cmOverride.Value;
+
+            if (overrides.ConsoleTexturesColorOverride is { HasOverride: true } ctOverride)
+                ConsoleTexturesColor = ctOverride.Value;
+
             if (overrides.ConsoleRenderingColorOverride is { HasOverride: true } crOverride)
                 ConsoleRenderingColor = crOverride.Value;
+
+            if (overrides.ConsoleLightingColorOverride is { HasOverride: true } clOverride)
+                ConsoleLightingColor = clOverride.Value;
 
             if (overrides.ConsoleOpenGLColorOverride is { HasOverride: true } coOverride)
                 ConsoleOpenGLColor = coOverride.Value;

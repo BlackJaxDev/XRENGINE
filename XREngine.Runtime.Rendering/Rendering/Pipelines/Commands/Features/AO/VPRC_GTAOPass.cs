@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_GTAOPass : ViewportRenderCommand
     {
         private static void Log(string message)
-            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][GTAO] {0}", message);
+            => Debug.Rendering(EOutputVerbosity.Normal, false, "[AO][GTAO] {0}", message);
 
         private string GTAOGenShaderName()
             => Stereo ? "GTAOGenStereo.fs" : "GTAOGen.fs";

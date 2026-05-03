@@ -7,6 +7,7 @@ using System.IO;
 using EngineDebug = XREngine.Debug;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -39,6 +40,8 @@ internal class Program
 {
     private static readonly object s_startupTimerLock = new();
     private static readonly object s_bootstrapTraceLock = new();
+    private static readonly Dictionary<string, DateTimeOffset> s_silkWindowingFirstChanceTraceTimes = new(StringComparer.Ordinal);
+    private static readonly TimeSpan SilkWindowingFirstChanceTraceThrottle = TimeSpan.FromSeconds(5);
     private static Stopwatch? s_startupStopwatch;
     private static XRWindow? s_startupWindow;
     private static int s_startupWindowHooked;
@@ -48,6 +51,7 @@ internal class Program
     private static int s_fontPrewarmStarted;
     private static int s_textShaderPrewarmStarted;
     private static int s_startupTimerStopped;
+    private static int s_globalCrashDiagnosticsInstalled;
     private static string? s_bootstrapTracePath;
     private const double StartupMeshGenerationBudgetMs = 18.0;
     private const int StartupMeshGenerationNormalRendererCap = 8;
@@ -78,6 +82,7 @@ internal class Program
     private static void Main(string[] args)
     {
         WriteBootstrapTrace("Editor process entry.");
+        InstallGlobalCrashDiagnostics();
 
         if (TryRunCookCommonAssetsCommand(args))
             return;
@@ -230,14 +235,14 @@ internal class Program
         }
         XREngine.TraceListener.GlobalMessageCallback = PrintTraceToGeneralLog;
         XREngine.TraceListener.InstallGlobalListener();
-        FbxTrace.LogSink = static message => EngineDebug.Assets(message);
+        FbxTrace.LogSink = static message => EngineDebug.Meshes(message);
         SyncBootstrapTracePathToCurrentRunDirectory();
         //ConsoleHelper.EnsureConsoleAttached();
     }
 
     private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
     {
-        FbxTrace.LogSink = static message => EngineDebug.Assets(message);
+        FbxTrace.LogSink = static message => EngineDebug.Meshes(message);
         FbxTrace.ProfilerScopeFactory = static scopeName => Engine.Profiler.Start(scopeName);
 
         if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
@@ -255,8 +260,8 @@ internal class Program
             };
         }
 
-        string message = $"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.";
-        EngineDebug.Assets(message);
+        string message = $"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Meshes}.";
+        EngineDebug.Meshes(message);
         WriteBootstrapTrace(message);
     }
 
@@ -276,6 +281,107 @@ internal class Program
         catch
         {
             // Bootstrap tracing must never block startup.
+        }
+    }
+
+    private static void InstallGlobalCrashDiagnostics()
+    {
+        if (Interlocked.Exchange(ref s_globalCrashDiagnosticsInstalled, 1) != 0)
+            return;
+
+        AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+        TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
+        AppDomain.CurrentDomain.ProcessExit += CurrentDomain_ProcessExit;
+        AppDomain.CurrentDomain.FirstChanceException += CurrentDomain_FirstChanceException;
+        WriteBootstrapTrace("Global crash diagnostics installed.");
+    }
+
+    private static void CurrentDomain_FirstChanceException(object? sender, FirstChanceExceptionEventArgs args)
+    {
+        Exception ex = args.Exception;
+        if (!ShouldTraceSilkWindowingFirstChance(ex) || !ShouldWriteSilkWindowingFirstChance(ex))
+            return;
+
+        WriteBootstrapTrace(
+            $"Silk.NET.Windowing first-chance {ex.GetType().FullName} at {FormatExceptionTargetSite(ex)}: {ex.Message}{Environment.NewLine}{ex.StackTrace}");
+    }
+
+    private static bool ShouldTraceSilkWindowingFirstChance(Exception ex)
+    {
+        if (ex is not InvalidOperationException)
+            return false;
+
+        string? targetAssemblyName = ex.TargetSite?.DeclaringType?.Assembly.GetName().Name;
+        if (targetAssemblyName?.StartsWith("Silk.NET.Windowing", StringComparison.Ordinal) == true)
+            return true;
+
+        string stackTrace = ex.StackTrace ?? string.Empty;
+        return stackTrace.Contains("Silk.NET.Windowing", StringComparison.Ordinal)
+            || stackTrace.Contains("Silk.NET.GLFW", StringComparison.Ordinal);
+    }
+
+    private static bool ShouldWriteSilkWindowingFirstChance(Exception ex)
+    {
+        DateTimeOffset now = DateTimeOffset.Now;
+        string key = $"{ex.GetType().FullName}|{ex.Message}|{FormatExceptionTargetSite(ex)}";
+
+        lock (s_silkWindowingFirstChanceTraceTimes)
+        {
+            if (s_silkWindowingFirstChanceTraceTimes.TryGetValue(key, out DateTimeOffset lastTraceTime)
+                && now - lastTraceTime < SilkWindowingFirstChanceTraceThrottle)
+                return false;
+
+            if (s_silkWindowingFirstChanceTraceTimes.Count > 128)
+                s_silkWindowingFirstChanceTraceTimes.Clear();
+
+            s_silkWindowingFirstChanceTraceTimes[key] = now;
+            return true;
+        }
+    }
+
+    private static string FormatExceptionTargetSite(Exception ex)
+    {
+        Type? declaringType = ex.TargetSite?.DeclaringType;
+        if (declaringType is null || ex.TargetSite is null)
+            return "<unknown>";
+
+        return $"{declaringType.FullName}.{ex.TargetSite.Name}";
+    }
+
+    private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs args)
+    {
+        WriteBootstrapTrace(
+            $"Unhandled exception (terminating={args.IsTerminating}): {FormatUnhandledExceptionObject(args.ExceptionObject)}");
+        TryLogExceptionToEngine(args.ExceptionObject, "[EditorBootstrap] Unhandled exception.");
+    }
+
+    private static void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs args)
+    {
+        WriteBootstrapTrace($"Unobserved task exception: {args.Exception}");
+        TryLogExceptionToEngine(args.Exception, "[EditorBootstrap] Unobserved task exception.");
+    }
+
+    private static void CurrentDomain_ProcessExit(object? sender, EventArgs args)
+        => WriteBootstrapTrace("ProcessExit fired.");
+
+    private static string FormatUnhandledExceptionObject(object? exceptionObject)
+        => exceptionObject switch
+        {
+            Exception ex => ex.ToString(),
+            null => "<null>",
+            _ => exceptionObject.ToString() ?? exceptionObject.GetType().FullName ?? "<unknown>",
+        };
+
+    private static void TryLogExceptionToEngine(object? exceptionObject, string message)
+    {
+        try
+        {
+            if (exceptionObject is Exception ex)
+                EngineDebug.LogException(ex, message);
+        }
+        catch
+        {
+            // Crash diagnostics must never introduce a second failure.
         }
     }
 
@@ -389,7 +495,7 @@ internal class Program
         UnitTest_VerifyPlayModeStart();
 
         Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
-        EngineDebug.Out($"[DebugPipeline] Re-applied before window creation: {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
+        EngineDebug.Rendering($"[DebugPipeline] Re-applied before window creation: {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
 
         GPURenderPassCollection.ConfigureIndirectDebug(opts =>
         {
@@ -624,11 +730,30 @@ internal class Program
             return;
 
         WriteBootstrapTrace("Flushing deferred startup work.");
-        _ = Engine.InvokeOnMainThread(() =>
+        bool queued = Engine.InvokeOnMainThread(
+            FlushDeferredStartupWorkNow,
+            "Program.FlushDeferredStartupWork",
+            executeNowIfAlreadyMainThread: true);
+
+        if (queued)
+            WriteBootstrapTrace("Deferred startup work flush queued to render thread.");
+    }
+
+    private static void FlushDeferredStartupWorkNow()
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        try
         {
             BootstrapStartupWork.FlushDeferredWork();
-            WriteBootstrapTrace("Deferred startup work flushed.");
-        }, "Program.FlushDeferredStartupWork", executeNowIfAlreadyMainThread: false);
+            stopwatch.Stop();
+            WriteBootstrapTrace($"Deferred startup work flushed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms.");
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            WriteBootstrapTrace($"Deferred startup work flush threw {ex.GetType().Name} after {stopwatch.Elapsed.TotalMilliseconds:F0} ms: {ex.Message}");
+            throw;
+        }
     }
 
     /// <summary>
@@ -881,7 +1006,7 @@ internal class Program
                 string.Equals(forceDebugEnv, "true", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(forceDebugEnv, "yes", StringComparison.OrdinalIgnoreCase);
 
-            EngineDebug.Out($"[DebugPipeline] XRE_FORCE_DEBUG_OPAQUE_PIPELINE={forceDebugEnv} => UseDebugOpaquePipeline={forceDebug}");
+            EngineDebug.Rendering($"[DebugPipeline] XRE_FORCE_DEBUG_OPAQUE_PIPELINE={forceDebugEnv} => UseDebugOpaquePipeline={forceDebug}");
             if (forceDebug)
                 return true;
         }
@@ -893,7 +1018,7 @@ internal class Program
             (model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Deferred ||
                model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Forward ||
                model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Uber)) ?? false;
-        EngineDebug.Out($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={EditorUnitTests.Toggles.HasStaticModelsToImport}, HasModelsRequiringDefaultPipeline={hasModelsRequiringDefaultPipeline}");
+        EngineDebug.Rendering($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={EditorUnitTests.Toggles.HasStaticModelsToImport}, HasModelsRequiringDefaultPipeline={hasModelsRequiringDefaultPipeline}");
 
         // The debug opaque pipeline is forward-only and does not execute the default deferred/forward+ pass chain.
         // If the unit test is requesting static model material modes that rely on DefaultRenderPipeline passes,

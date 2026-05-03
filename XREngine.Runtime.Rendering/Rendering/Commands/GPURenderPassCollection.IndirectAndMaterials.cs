@@ -126,7 +126,7 @@ namespace XREngine.Rendering.Commands
                 {
                     if (scene.TotalCommandCount > 0)
                     {
-                        Debug.LogWarning($"{FormatDebugPrefix("Materials")} GPU batching produced no batch ranges. " +
+                        Debug.MeshesWarning($"{FormatDebugPrefix("Materials")} GPU batching produced no batch ranges. " +
                                          "Enable IndirectDebug.EnableCpuBatching for emergency fallback diagnostics.");
                     }
                     ClearPassPolicySnapshot();
@@ -802,7 +802,7 @@ namespace XREngine.Rendering.Commands
                 _skipGpuSubmissionReason = "Material residency guarantee failed before indirect draw submission.";
                 if (_materialResidencyLogBudget > 0)
                 {
-                    Debug.LogWarning($"{FormatDebugPrefix("Materials")} {_skipGpuSubmissionReason}");
+                    Debug.MeshesWarning($"{FormatDebugPrefix("Materials")} {_skipGpuSubmissionReason}");
                     _materialResidencyLogBudget--;
                 }
 
@@ -811,7 +811,7 @@ namespace XREngine.Rendering.Commands
 
             if (VulkanFeatureProfile.ActiveGeometryFetchMode == EVulkanGeometryFetchMode.BufferDeviceAddressPrototype && _materialResidencyLogBudget > 0)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Materials")} Vulkan geometry fetch prototype is selected but atlas path remains active pending benchmark sign-off.");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Materials")} Vulkan geometry fetch prototype is selected but atlas path remains active pending benchmark sign-off.");
                 _materialResidencyLogBudget--;
             }
 
@@ -1279,7 +1279,7 @@ namespace XREngine.Rendering.Commands
 
             if (cullOv != 0 || indOv != 0 || trunc != 0)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Stats")} GPU Render Overflow: Culling={cullOv} Indirect={indOv} Trunc={trunc}");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Stats")} GPU Render Overflow: Culling={cullOv} Indirect={indOv} Trunc={trunc}");
                 Dbg($"Overflow flags cull={cullOv} indirect={indOv} trunc={trunc}", "Stats");
 
                 uint currentCapacity = scene.AllocatedMaxCommandCount;
@@ -1289,7 +1289,7 @@ namespace XREngine.Rendering.Commands
                 if (requestedCapacity > currentCapacity)
                 {
                     uint finalCapacity = scene.EnsureCommandCapacity(requestedCapacity);
-                    Debug.LogWarning($"{FormatDebugPrefix("Stats")} Overflow growth policy requested capacity increase {currentCapacity} -> {finalCapacity} (required={minimumRequired}).");
+                    Debug.MeshesWarning($"{FormatDebugPrefix("Stats")} Overflow growth policy requested capacity increase {currentCapacity} -> {finalCapacity} (required={minimumRequired}).");
                 }
             }
 
@@ -1304,7 +1304,7 @@ namespace XREngine.Rendering.Commands
 
             if (cullOv > 0 && IsDebugLoggingEnabledForPass())
             {
-                Debug.Out($"{FormatDebugPrefix("Validation")} Culling overflow count={cullOv} " +
+                Debug.Meshes($"{FormatDebugPrefix("Validation")} Culling overflow count={cullOv} " +
                          $"(capacity={_culledSceneToRenderBuffer.ElementCount}, visible={VisibleCommandCount})");
             }
 
@@ -1315,7 +1315,7 @@ namespace XREngine.Rendering.Commands
                     
                 if (tail.MeshID == uint.MaxValue || tail.MaterialID == uint.MaxValue)
                 {
-                    Debug.Out($"{FormatDebugPrefix("Validation")} Overflow sentinel at tail (mesh={tail.MeshID} material={tail.MaterialID})");
+                    Debug.Meshes($"{FormatDebugPrefix("Validation")} Overflow sentinel at tail (mesh={tail.MeshID} material={tail.MaterialID})");
                 }
             }
         }
@@ -1344,24 +1344,24 @@ namespace XREngine.Rendering.Commands
 
             if (IsDebugLoggingEnabledForPass())
             {
-                Debug.Out($"{FormatDebugPrefix("Stats")} [GPU Stats] In={stats.Input} CulledOut={stats.Culled} " +
+                Debug.Meshes($"{FormatDebugPrefix("Stats")} [GPU Stats] In={stats.Input} CulledOut={stats.Culled} " +
                          $"Draws={stats.Drawn} RejFrustum={stats.FrustumRejected} RejDist={stats.DistanceRejected} " +
                          $"CpuFallbackEvents={cpuFallbackEvents} CpuRecovered={cpuFallbackRecovered}");
 
-                Debug.Out($"{FormatDebugPrefix("Stats")} [Transparency] Masked={MaskedVisibleCommandCount} " +
+                Debug.Meshes($"{FormatDebugPrefix("Stats")} [Transparency] Masked={MaskedVisibleCommandCount} " +
                          $"Approximate={ApproximateTransparentVisibleCommandCount} Exact={ExactTransparentVisibleCommandCount}");
 
                 EOcclusionCullingMode occlusionMode = ActiveOcclusionMode;
                 if (occlusionMode != EOcclusionCullingMode.Disabled)
                 {
-                    Debug.Out($"{FormatDebugPrefix("Stats")} [Occlusion] Mode={occlusionMode} " +
+                    Debug.Meshes($"{FormatDebugPrefix("Stats")} [Occlusion] Mode={occlusionMode} " +
                              $"Candidates={OcclusionCandidatesTested} Occluded={OcclusionAccepted} " +
                              $"Recoveries={OcclusionFalsePositiveRecoveries} TemporalOverrides={OcclusionTemporalOverrides}");
                 }
 
                 if (stats.HasBvhActivity)
                 {
-                    Debug.Out($"{FormatDebugPrefix("Stats")} [BVH] Build={stats.BvhBuildCount} ({stats.BvhBuildMs:F3} ms) " +
+                    Debug.Meshes($"{FormatDebugPrefix("Stats")} [BVH] Build={stats.BvhBuildCount} ({stats.BvhBuildMs:F3} ms) " +
                              $"Refit={stats.BvhRefitCount} ({stats.BvhRefitMs:F3} ms) " +
                              $"Cull={stats.BvhCullCount} ({stats.BvhCullMs:F3} ms) " +
                              $"Ray={stats.BvhRayCount} ({stats.BvhRayMs:F3} ms)");
@@ -1404,7 +1404,7 @@ namespace XREngine.Rendering.Commands
             uint sampleCount = Math.Min(drawReported == 0 ? VisibleCommandCount : drawReported, 8u);
             string prefix = FormatDebugPrefix("Indirect");
 
-            Debug.Out($"{prefix} [Indirect/Dump] drawReported={drawReported} visible={VisibleCommandCount} batches={CurrentBatches?.Count ?? 0}\n" +
+            Debug.Meshes($"{prefix} [Indirect/Dump] drawReported={drawReported} visible={VisibleCommandCount} batches={CurrentBatches?.Count ?? 0}\n" +
                      $"  CountBufferMapped={_drawCountBuffer?.ActivelyMapping.Count > 0} CulledBufferMapped={_culledCountBuffer?.ActivelyMapping.Count > 0}\n" +
                      $"  SampleCount={sampleCount}");
         }

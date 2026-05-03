@@ -11,6 +11,7 @@ using XREngine.Components.Scripting;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
+using XREngine.Data.Rendering;
 using XREngine.Editor.UI;
 using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
@@ -49,7 +50,7 @@ public static partial class EditorUnitTests
             if (_tickFpsDiagCount < 5)
             {
                 _tickFpsDiagCount++;
-                XREngine.Debug.Out($"[FpsTextDiag] TickFPS fired #{_tickFpsDiagCount} on '{t.SceneNode?.Name}' textLen={t.Text?.Length ?? -1} instances2D={t.RenderCommand2D.Instances} mesh={(t.Mesh is not null)} disableBatching={t.DisableBatching} parentCanvasActive={(t.BoundableTransform.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false)}");
+                XREngine.Debug.Rendering($"[FpsTextDiag] TickFPS fired #{_tickFpsDiagCount} on '{t.SceneNode?.Name}' textLen={t.Text?.Length ?? -1} instances2D={t.RenderCommand2D.Instances} mesh={(t.Mesh is not null)} disableBatching={t.DisableBatching} parentCanvasActive={(t.BoundableTransform.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false)}");
             }
             // Only sample once per actual render frame to avoid duplicate stale samples
             long renderTimestampTicks = Engine.Time.Timer.Render.LastTimestampTicks;
@@ -172,7 +173,9 @@ public static partial class EditorUnitTests
         {
             SceneNode textNode = new(parentNode) { Name = "TestTextNode" };
             UITextComponent text = textNode.AddComponent<UITextComponent>()!;
-            text.DisableBatching = true;
+            text.DisableBatching = false;
+            text.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+            text.RenderCommand2D.ZIndex = int.MaxValue;
             text.Font = font;
             text.FontSize = 22;
             text.HorizontalAlignment = EHorizontalAlignment.Center;
@@ -194,6 +197,52 @@ public static partial class EditorUnitTests
             }
             textTransform.Margins = new Vector4(0.0f, 10.0f, 0.0f, 10.0f);
             textTransform.Scale = new Vector3(1.0f);
+
+            int preRenderDiagCount = 0;
+            int postRenderDiagCount = 0;
+            text.RenderCommand2D.PreRender += () =>
+            {
+                if (preRenderDiagCount++ >= 20)
+                    return;
+
+                var world = text.RenderCommand2D.WorldMatrix;
+                var atlas = text.Font?.Atlas;
+                Debug.Out(
+                    "[FpsTextDiag] RenderCommand2D.PreRender #{0} instances={1} renderPass={2} zIndex={3} renderEnabled={4} mesh={5} material={6} actual=({7:F1},{8:F1}) bottomLeft=({9:F1},{10:F1}) worldT=({11:F1},{12:F1},{13:F1}) worldScale=({14:F2},{15:F2}) textLen={16} atlas=({17}x{18}, mips={19}, min={20}, autoMip={21})",
+                    preRenderDiagCount,
+                    text.RenderCommand2D.Instances,
+                    text.RenderCommand2D.RenderPass,
+                    text.RenderCommand2D.ZIndex,
+                    text.RenderCommand2D.RenderEnabled,
+                    text.RenderCommand2D.Mesh is not null,
+                    text.RenderCommand2D.Mesh?.Material is not null,
+                    textTransform.ActualWidth,
+                    textTransform.ActualHeight,
+                    textTransform.ActualLocalBottomLeftTranslation.X,
+                    textTransform.ActualLocalBottomLeftTranslation.Y,
+                    world.M41,
+                    world.M42,
+                    world.M43,
+                    world.M11,
+                    world.M22,
+                    text.Text?.Length ?? -1,
+                    atlas?.Width ?? 0,
+                    atlas?.Height ?? 0,
+                    atlas?.Mipmaps?.Length ?? 0,
+                    atlas?.MinFilter.ToString() ?? "<null>",
+                    atlas?.AutoGenerateMipmaps.ToString() ?? "<null>");
+            };
+            text.RenderCommand2D.PostRender += () =>
+            {
+                if (postRenderDiagCount++ >= 20)
+                    return;
+
+                Debug.Out(
+                    "[FpsTextDiag] RenderCommand2D.PostRender #{0} instances={1} renderPass={2}",
+                    postRenderDiagCount,
+                    text.RenderCommand2D.Instances,
+                    text.RenderCommand2D.RenderPass);
+            };
             return text;
         }
 
@@ -210,7 +259,7 @@ public static partial class EditorUnitTests
         {
             using var profilerScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI");
             var createUiStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            Debug.Out(
+            Debug.Rendering(
                 "[StartupUI] CreateEditorUI begin: DrawSpace={0}, EditorType={1}, Rive={2}",
                 Toggles.CameraUIDrawSpaceOnInit,
                 Toggles.EditorType,
@@ -360,7 +409,7 @@ public static partial class EditorUnitTests
                 var dearImGuiComponent = dearImGuiNode.AddComponent<DearImGuiComponent>();
                 dearImGuiComponent?.Draw += EditorImGuiUI.RenderEditor;
                 imGuiStopwatch.Stop();
-                Debug.Out("[StartupUI] DearImGui node ready in {0:F1} ms.", imGuiStopwatch.Elapsed.TotalMilliseconds);
+                Debug.Rendering("[StartupUI] DearImGui node ready in {0:F1} ms.", imGuiStopwatch.Elapsed.TotalMilliseconds);
             }
             
             if (Toggles.EditorType == UnitTestEditorType.Native)
@@ -385,7 +434,7 @@ public static partial class EditorUnitTests
                 GameCSProjLoader.OnAssemblyLoaded += GameCSProjLoader_OnAssemblyLoaded;
                 GameCSProjLoader.OnAssemblyUnloaded += GameCSProjLoader_OnAssemblyUnloaded;
                 nativeUiStopwatch.Stop();
-                Debug.Out("[StartupUI] Native editor UI ready in {0:F1} ms.", nativeUiStopwatch.Elapsed.TotalMilliseconds);
+                Debug.Rendering("[StartupUI] Native editor UI ready in {0:F1} ms.", nativeUiStopwatch.Elapsed.TotalMilliseconds);
             }
 
             AddFPSText(null, rootCanvasNode);
@@ -394,7 +443,7 @@ public static partial class EditorUnitTests
                 CreateVRStereoPreviewOverlay(rootCanvasNode);
 
             createUiStopwatch.Stop();
-            Debug.Out("[StartupUI] CreateEditorUI complete in {0:F1} ms.", createUiStopwatch.Elapsed.TotalMilliseconds);
+            Debug.Rendering("[StartupUI] CreateEditorUI complete in {0:F1} ms.", createUiStopwatch.Elapsed.TotalMilliseconds);
 
             return canvas;
         }

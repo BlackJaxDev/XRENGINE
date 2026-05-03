@@ -517,7 +517,7 @@ internal static partial class UnitySceneImporter
         string? assetPath = ResolveAssetPath(state, meshReference.Guid);
         if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
         {
-            Debug.LogWarning($"Unity mesh reference '{meshReference.Guid ?? meshReference.FileId.ToString(CultureInfo.InvariantCulture)}' on '{node.Name}' could not be resolved.");
+            Debug.MeshesWarning($"Unity mesh reference '{meshReference.Guid ?? meshReference.FileId.ToString(CultureInfo.InvariantCulture)}' on '{node.Name}' could not be resolved.");
             return null;
         }
 
@@ -549,7 +549,7 @@ internal static partial class UnitySceneImporter
 
         if (mesh is null)
         {
-            Debug.LogWarning($"Unity built-in mesh '{meshReference.FileId}' is not supported yet.");
+            Debug.MeshesWarning($"Unity built-in mesh '{meshReference.FileId}' is not supported yet.");
             return false;
         }
 
@@ -1102,7 +1102,7 @@ internal static partial class UnitySceneImporter
             int adjustedIndex = checked((int)rawIndex + baseVertex);
             if (adjustedIndex < 0 || adjustedIndex > ushort.MaxValue)
             {
-                Debug.LogWarning($"Unity sub-mesh index '{adjustedIndex}' exceeds the XRMesh ushort index limit.");
+                Debug.MeshesWarning($"Unity sub-mesh index '{adjustedIndex}' exceeds the XRMesh ushort index limit.");
                 return null;
             }
 

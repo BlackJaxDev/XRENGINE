@@ -148,10 +148,10 @@ namespace XREngine.Rendering
                     }
 
                     if (count > 0 && activeCount == 0)
-                        Debug.LogWarning("[VolumetricFog] Registry returned volumes but none had a valid world-to-local matrix.");
+                        Debug.RenderingWarning("[VolumetricFog] Registry returned volumes but none had a valid world-to-local matrix.");
                 }
                 else
-                    Debug.LogWarning("[VolumetricFog] Enabled but RenderingWorld is null — cannot query volumes.");
+                    Debug.RenderingWarning("[VolumetricFog] Enabled but RenderingWorld is null - cannot query volumes.");
             }
 
             bool shaderEnabled = activeCount > 0;

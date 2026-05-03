@@ -90,6 +90,9 @@ namespace XREngine.Rendering
         private bool _isDisposing;
         private bool _isDisposed;
         private int _pendingCloseRequested;
+        private int _pendingFramebufferResize;
+        private int _pendingFramebufferResizeWidth;
+        private int _pendingFramebufferResizeHeight;
 
         private Exception? _lastRenderException;
         private int _consecutiveRenderFailures;
@@ -328,7 +331,7 @@ namespace XREngine.Rendering
             _viewports.CollectionChanged += ViewportsChanged;
             _scenePanelAdapter = RuntimeRenderingHostServices.Current.CreateWindowScenePanelAdapter();
 
-            Debug.Out(
+            Debug.Rendering(
                 "[XRWindow] Constructing window title='{0}' size={1}x{2} pos=({3},{4}) api={5}",
                 options.Title,
                 options.Size.X,
@@ -345,7 +348,7 @@ namespace XREngine.Rendering
             StartWindowInitializationWatchdog(_windowInitializationProbe);
 
             LinkWindow();
-            Debug.Out("[XRWindow] Calling Window.Initialize for hash={0}.", GetHashCode());
+            Debug.Rendering("[XRWindow] Calling Window.Initialize for hash={0}.", GetHashCode());
             try
             {
                 Window.Initialize();
@@ -360,7 +363,7 @@ namespace XREngine.Rendering
             // on Windows, so we force the requested position after initialization.
             if (Window.Position != options.Position)
             {
-                Debug.Out(
+                Debug.Rendering(
                     "[XRWindow] Forcing position from ({0},{1}) to requested ({2},{3}) for hash={4}.",
                     Window.Position.X,
                     Window.Position.Y,
@@ -370,14 +373,14 @@ namespace XREngine.Rendering
                 Window.Position = options.Position;
             }
 
-            Debug.Out(
+            Debug.Rendering(
                 "[XRWindow] Window.Initialize completed for hash={0}. Framebuffer={1}x{2}",
                 GetHashCode(),
                 Window.FramebufferSize.X,
                 Window.FramebufferSize.Y);
 
             Renderer = (AbstractRenderer)RuntimeRenderingHostServices.Current.CreateRenderer(this, ToRuntimeGraphicsApiKind(Window.API.API));
-            Debug.Out("[XRWindow] Renderer created for hash={0}. RendererType={1}", GetHashCode(), Renderer.GetType().Name);
+            Debug.Rendering("[XRWindow] Renderer created for hash={0}. RendererType={1}", GetHashCode(), Renderer.GetType().Name);
         }
 
         #endregion
@@ -540,7 +543,7 @@ namespace XREngine.Rendering
             if (_windowInitializationProbe is not null)
                 Volatile.Write(ref _windowInitializationProbe.Stage, 1);
 
-            Debug.Out("[XRWindow] Load event for hash={0}.", GetHashCode());
+            Debug.Rendering("[XRWindow] Load event for hash={0}.", GetHashCode());
 
             //Task.Run(() =>
             //{
@@ -551,7 +554,7 @@ namespace XREngine.Rendering
             if (_windowInitializationProbe is not null)
                 Volatile.Write(ref _windowInitializationProbe.Stage, 2);
 
-            Debug.Out("[XRWindow] Input created for hash={0}.", GetHashCode());
+            Debug.Rendering("[XRWindow] Input created for hash={0}.", GetHashCode());
         }
 
         private void StartWindowInitializationWatchdog(WindowInitializationProbe probe)
@@ -564,7 +567,7 @@ namespace XREngine.Rendering
 
                     while (!probe.CancellationSource.IsCancellationRequested)
                     {
-                        Debug.LogWarning($"[XRWindow] Window.Initialize still running after {probe.Elapsed.TotalMilliseconds:F0} ms. stage={DescribeWindowInitializationStage(Volatile.Read(ref probe.Stage))} title='{probe.Title}' api={probe.API} nativeTitleBar={probe.UseNativeTitleBar}");
+                        Debug.RenderingWarning($"[XRWindow] Window.Initialize still running after {probe.Elapsed.TotalMilliseconds:F0} ms. stage={DescribeWindowInitializationStage(Volatile.Read(ref probe.Stage))} title='{probe.Title}' api={probe.API} nativeTitleBar={probe.UseNativeTitleBar}");
 
                         await Task.Delay(TimeSpan.FromSeconds(5), probe.CancellationSource.Token);
                     }
@@ -574,7 +577,7 @@ namespace XREngine.Rendering
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[XRWindow] Window init watchdog failed: {ex.Message}");
+                    Debug.RenderingWarning($"[XRWindow] Window init watchdog failed: {ex.Message}");
                 }
             });
         }
@@ -590,13 +593,26 @@ namespace XREngine.Rendering
 
         private void Window_Closing()
         {
+            Debug.Out(
+                "[XRWindow] Closing requested hash={0} disposing={1} disposed={2} viewports={3}",
+                GetHashCode(),
+                _isDisposing,
+                _isDisposed,
+                Viewports.Count);
+
             if (!_isDisposing && !_isDisposed)
             {
                 bool allowClose = RuntimeRenderingHostServices.Current.AllowWindowClose(this);
+                Debug.Out("[XRWindow] Closing policy hash={0} allow={1}", GetHashCode(), allowClose);
                 if (!allowClose)
                 {
                     if (TryCancelCloseRequest())
+                    {
+                        Debug.Out("[XRWindow] Closing canceled hash={0}.", GetHashCode());
                         return;
+                    }
+
+                    Debug.Out("[XRWindow] Closing could not be canceled hash={0}.", GetHashCode());
                 }
             }
 
@@ -740,23 +756,74 @@ namespace XREngine.Rendering
 
         private void FramebufferResizeCallback(Vector2D<int> obj)
         {
+            Volatile.Write(ref _pendingFramebufferResizeWidth, obj.X);
+            Volatile.Write(ref _pendingFramebufferResizeHeight, obj.Y);
+            Interlocked.Exchange(ref _pendingFramebufferResize, 1);
+
+            Debug.RenderingEvery(
+                $"XRWindow.FramebufferResize.Queued.{GetHashCode()}",
+                TimeSpan.FromMilliseconds(250),
+                "[XRWindow] Queued framebuffer resize hash={0} size={1}x{2}.",
+                GetHashCode(),
+                obj.X,
+                obj.Y);
+        }
+
+        private void ProcessPendingFramebufferResize()
+        {
+            if (Interlocked.Exchange(ref _pendingFramebufferResize, 0) == 0)
+                return;
+
+            int width = Volatile.Read(ref _pendingFramebufferResizeWidth);
+            int height = Volatile.Read(ref _pendingFramebufferResizeHeight);
+
+            if (width <= 0 || height <= 0)
+            {
+                Debug.RenderingEvery(
+                    $"XRWindow.FramebufferResize.Invalid.{GetHashCode()}",
+                    TimeSpan.FromMilliseconds(250),
+                    "[XRWindow] Ignoring invalid framebuffer resize hash={0} size={1}x{2}.",
+                    GetHashCode(),
+                    width,
+                    height);
+                return;
+            }
+
+            ApplyFramebufferResize(new Vector2D<int>(width, height));
+        }
+
+        private void ApplyFramebufferResize(Vector2D<int> obj)
+        {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.FramebufferResize");
 
-            //Debug.Out("Window resized to {0}x{1}", obj.X, obj.Y);
-            Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, true));
+            try
+            {
+                if (Window.API.API == ContextAPI.OpenGL)
+                    Window.MakeCurrent();
 
-            _scenePanelAdapter.OnFramebufferResized(this, obj.X, obj.Y);
+                Debug.RenderingEvery(
+                    $"XRWindow.FramebufferResize.Apply.{GetHashCode()}",
+                    TimeSpan.FromMilliseconds(250),
+                    "[XRWindow] Applying framebuffer resize hash={0} size={1}x{2} viewports={3}.",
+                    GetHashCode(),
+                    obj.X,
+                    obj.Y,
+                    Viewports.Count);
 
-            Renderer.FrameBufferInvalidated();
+                Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, true));
 
-            // Clear any circuit breaker backoff so the next frame renders immediately
-            // with freshly recreated resources instead of waiting out old failures.
-            ResetRenderCircuitBreaker();
+                _scenePanelAdapter.OnFramebufferResized(this, obj.X, obj.Y);
 
-            //var timer = Engine.Time.Timer;
-            //await timer.DispatchCollectVisible();
-            //await timer.DispatchSwapBuffers();
-            //timer.DispatchRender();
+                Renderer.FrameBufferInvalidated();
+
+                // Clear any circuit breaker backoff so the next frame renders immediately
+                // with freshly recreated resources instead of waiting out old failures.
+                ResetRenderCircuitBreaker();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"[XRWindow] Framebuffer resize failed for window {GetHashCode()} size={obj.X}x{obj.Y}.");
+            }
         }
 
         private void Input_ConnectionChanged(IInputDevice device, bool connected)
@@ -815,7 +882,7 @@ namespace XREngine.Rendering
         private void OnPlayModeTransition()
         {
             bool isTransitioning = Engine.PlayMode.IsTransitioning;
-            Debug.Out($"[XRWindow] OnPlayModeTransition called. PlayModeState={Engine.PlayMode.State} Viewports={Viewports.Count} Transitioning={isTransitioning}");
+            Debug.Rendering($"[XRWindow] OnPlayModeTransition called. PlayModeState={Engine.PlayMode.State} Viewports={Viewports.Count} Transitioning={isTransitioning}");
             
             // Invalidate scene panel resources IMMEDIATELY so stale textures don't persist.
             // Using immediate destruction ensures the GL texture handle is invalidated before
@@ -829,14 +896,14 @@ namespace XREngine.Rendering
             // on the next frame without losing registry structure.
             foreach (var viewport in Viewports)
             {
-                Debug.Out($"[XRWindow] Invalidating pipeline resources for VP[{viewport.Index}] CameraComponent={viewport.CameraComponent?.Name ?? "<null>"} ActiveCamera={viewport.ActiveCamera?.GetHashCode().ToString() ?? "null"}");
+                Debug.Rendering($"[XRWindow] Invalidating pipeline resources for VP[{viewport.Index}] CameraComponent={viewport.CameraComponent?.Name ?? "<null>"} ActiveCamera={viewport.ActiveCamera?.GetHashCode().ToString() ?? "null"}");
                 viewport.RenderPipelineInstance.InvalidatePhysicalResources();
             }
 
             if (isTransitioning)
-                Debug.Out("[XRWindow] Play-mode transition is active; viewport pipelines are torn down until the state stabilizes.");
+                Debug.Rendering("[XRWindow] Play-mode transition is active; viewport pipelines are torn down until the state stabilizes.");
             else
-                Debug.Out("[XRWindow] Play-mode transition settled; viewport pipelines will rebuild from retained descriptors on the next stable frame.");
+                Debug.Rendering("[XRWindow] Play-mode transition settled; viewport pipelines will rebuild from retained descriptors on the next stable frame.");
 
             // Some rendering state (viewport size/internal resolution/aspect ratio) is only recomputed
             // on resize events. Play mode transitions can invalidate cached GPU resources without
@@ -888,13 +955,13 @@ namespace XREngine.Rendering
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.BeginTick");
 
-            Debug.Out("[XRWindow] BeginTick hash={0} viewports={1} targetWorld={2}", GetHashCode(), Viewports.Count, TargetWorldInstance?.TargetWorldName ?? "<null>");
+            Debug.Rendering("[XRWindow] BeginTick hash={0} viewports={1} targetWorld={2}", GetHashCode(), Viewports.Count, TargetWorldInstance?.TargetWorldName ?? "<null>");
 
             Renderer.Initialize();
             _rendererInitialized = true;
             RuntimeRenderingHostServices.Current.SubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
 
-            Debug.Out("[XRWindow] Tick callbacks subscribed hash={0}.", GetHashCode());
+            Debug.Rendering("[XRWindow] Tick callbacks subscribed hash={0}.", GetHashCode());
         }
 
         private void EndTick()
@@ -935,6 +1002,11 @@ namespace XREngine.Rendering
             }
 
             // Re-check after DoEvents in case window was closed
+            if (_isDisposed || _isDisposing)
+                return;
+
+            ProcessPendingFramebufferResize();
+
             if (_isDisposed || _isDisposing)
                 return;
 
@@ -1349,9 +1421,9 @@ namespace XREngine.Rendering
             newViewport.AssociatedPlayer = controller;
             Viewports.Add(newViewport);
 
-            Debug.Out("Added new viewport to {0}: {1}", GetType().GetFriendlyName(), newViewport.Index);
+            Debug.Rendering("Added new viewport to {0}: {1}", GetType().GetFriendlyName(), newViewport.Index);
 
-            Debug.Out(
+            Debug.Rendering(
                 "[ViewportDiag] XRWindow.AddViewportForPlayer: WinHash={0} VP[{1}] VPHash={2} AssocCtrlHash={3} AssocIndex={4} Ctrl.ViewportHash={5}",
                 GetHashCode(),
                 newViewport.Index,

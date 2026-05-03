@@ -1431,7 +1431,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
                 (uint)index2 >= probeCount ||
                 (uint)index3 >= probeCount)
             {
-                Debug.LogWarning($"Skipping stale probe tetrahedron {i}: indices=({index0}, {index1}, {index2}, {index3}) probeCount={probeCount}.");
+                Debug.LightingWarning($"Skipping stale probe tetrahedron {i}: indices=({index0}, {index1}, {index2}, {index3}) probeCount={probeCount}.");
                 continue;
             }
 
@@ -1893,7 +1893,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             _pendingProbeRefresh = false;
             stopwatch.Stop();
             if (deferredByBatchCapture)
-                Debug.Out("[ProbeGI] Batch completed but no usable probe resources were built. Ready=0");
+                Debug.Lighting("[ProbeGI] Batch completed but no usable probe resources were built. Ready=0");
             return;
         }
 
@@ -2006,7 +2006,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             return;
 
         string refreshKind = structuralRefresh ? "structural" : "content";
-        Debug.Out($"[ProbeGI] {refreshKind} refresh ready={readyProbeCount} elapsedMs={elapsed.TotalMilliseconds:F2} deferredByBatchCapture={deferredByBatchCapture}");
+        Debug.Lighting($"[ProbeGI] {refreshKind} refresh ready={readyProbeCount} elapsedMs={elapsed.TotalMilliseconds:F2} deferredByBatchCapture={deferredByBatchCapture}");
     }
 
     private static void ReportNoReadyProbeResources(IReadOnlyList<LightProbeComponent> probes, bool batchCompletedSinceLastSync)
@@ -2016,7 +2016,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
         if (!batchCompletedSinceLastSync)
         {
-            Debug.RenderingEvery(
+            Debug.LightingEvery(
                 "ProbeGI.NoReady.V2",
                 TimeSpan.FromSeconds(5),
                 "[ProbeGI] No usable probes. Total={0}, Ready=0 (need valid irradiance+prefilter textures and CaptureVersion>0)",
@@ -2041,7 +2041,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
                 captured++;
         }
 
-        Debug.Out(
+        Debug.Lighting(
             $"[ProbeGI] Batch completed but no usable probes are available. Total={probes.Count}, WithIrradiance={withIrradiance}, WithPrefilter={withPrefilter}, ValidIbl={validIbl}, Captured={captured}");
     }
 
@@ -2068,14 +2068,14 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
         if (!Lights3DCollection.TryCreateDelaunay(probes, out var triangulation))
         {
-            Debug.LogWarning("Probe tetrahedralization failed; skipping tetra buffer upload.");
+            Debug.LightingWarning("Probe tetrahedralization failed; skipping tetra buffer upload.");
             UploadTetrahedralization([], generation, probeCount);
             yield break;
         }
 
         if (triangulation is null)
         {
-            Debug.LogWarning("Probe tetrahedralization returned null data; skipping tetra buffer upload.");
+            Debug.LightingWarning("Probe tetrahedralization returned null data; skipping tetra buffer upload.");
             UploadTetrahedralization([], generation, probeCount);
             yield break;
         }
@@ -2083,7 +2083,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         var cells = triangulation.Cells?.ToList();
         if (cells is null || cells.Count == 0)
         {
-            Debug.LogWarning("Probe tetrahedralization produced no cells; skipping tetra buffer upload.");
+            Debug.LightingWarning("Probe tetrahedralization produced no cells; skipping tetra buffer upload.");
             UploadTetrahedralization([], generation, probeCount);
             yield break;
         }

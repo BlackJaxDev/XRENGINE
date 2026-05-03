@@ -25,6 +25,9 @@ public partial class GLTexture2D
     private int AdvanceStorageGeneration()
         => System.Threading.Interlocked.Increment(ref _storageGeneration);
 
+    private bool IsStorageGenerationCurrent(int storageGeneration)
+        => CurrentStorageGeneration == storageGeneration;
+
     private EPixelInternalFormat? EnsureStorageAllocated()
     {
         EPixelInternalFormat? internalFormatForce = null;

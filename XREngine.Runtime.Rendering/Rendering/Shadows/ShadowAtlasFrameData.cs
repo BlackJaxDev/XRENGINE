@@ -133,7 +133,7 @@ public sealed class ShadowAtlasPageResource
             descriptor.PixelType,
             allocateData: false)
         {
-            SamplerName = $"ShadowAtlas_{descriptor.Encoding}_{descriptor.PageIndex}",
+            SamplerName = $"ShadowAtlas_{descriptor.AtlasKind}_{descriptor.Encoding}_{descriptor.PageIndex}",
             UWrap = ETexWrapMode.ClampToEdge,
             VWrap = ETexWrapMode.ClampToEdge,
             MinFilter = ETexMinFilter.Nearest,
@@ -147,7 +147,7 @@ public sealed class ShadowAtlasPageResource
             EPixelType.UnsignedInt,
             allocateData: false)
         {
-            SamplerName = $"ShadowAtlasDepth_{descriptor.Encoding}_{descriptor.PageIndex}",
+            SamplerName = $"ShadowAtlasDepth_{descriptor.AtlasKind}_{descriptor.Encoding}_{descriptor.PageIndex}",
             UWrap = ETexWrapMode.ClampToEdge,
             VWrap = ETexWrapMode.ClampToEdge,
             MinFilter = ETexMinFilter.Nearest,

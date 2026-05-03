@@ -32,6 +32,17 @@ namespace XREngine.Rendering.UI
     }
 
     /// <summary>
+    /// Optional fragment-shader probes for isolating batched text rendering failures.
+    /// </summary>
+    public enum EBatchedTextDebugMode
+    {
+        None = 0,
+        SolidGlyphQuads = 1,
+        AtlasUv = 2,
+        HardClipSpaceQuad = 3,
+    }
+
+    /// <summary>
     /// Renders 2D UI text by generating instanced quad glyphs from a <see cref="FontGlyphSet"/> atlas.
     /// </summary>
     /// <remarks>
@@ -79,6 +90,8 @@ namespace XREngine.Rendering.UI
         /// </summary>
         private bool _dataChanged = false;
         private uint _allocatedGlyphCount = 20;
+        private int _fpsTextRenderHookDiagCount = 0;
+        private int _fpsTextWriteDiagCount = 0;
 
         #endregion
 
@@ -152,6 +165,16 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _disableBatching, value);
         }
 
+        private EBatchedTextDebugMode _batchedDebugMode = EBatchedTextDebugMode.None;
+        /// <summary>
+        /// Diagnostic mode used only by the batched UI text shader.
+        /// </summary>
+        public EBatchedTextDebugMode BatchedDebugMode
+        {
+            get => _batchedDebugMode;
+            set => SetField(ref _batchedDebugMode, value);
+        }
+
         private FontGlyphSet.EWrapMode _wordWrap = FontGlyphSet.EWrapMode.None;
         /// <summary>
         /// Controls how glyphs wrap when reaching the available bounds.
@@ -198,6 +221,10 @@ namespace XREngine.Rendering.UI
             {
                 Enabled = ERenderParamUsage.Disabled,
                 Function = EComparison.Always
+            },
+            StencilTest = new()
+            {
+                Enabled = ERenderParamUsage.Disabled
             },
             BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
         };
@@ -634,25 +661,77 @@ namespace XREngine.Rendering.UI
         /// <param name="vertexProgram"></param>
         /// <param name="materialProgram"></param>
         private void MeshRend_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-            => PushGlyphDataIfNeeded();
+        {
+            LogFpsTextRenderHook("SettingUniforms");
+            PushGlyphDataIfNeeded();
+        }
 
         private void MeshRend_PreparingRenderData()
-            => PushGlyphDataIfNeeded();
+        {
+            LogFpsTextRenderHook("PreparingRenderData");
+            PushGlyphDataIfNeeded();
+        }
 
         private void PushGlyphDataIfNeeded()
         {
             if (!_dataChanged)
+            {
+                LogFpsTextRenderHook("PushGlyphDataIfNeeded skipped unchanged");
                 return;
+            }
 
             _dataChanged = false;
 
             if (_pushFull)
             {
+                LogFpsTextRenderHook("PushGlyphDataIfNeeded full");
                 _pushFull = false;
                 PushBuffers();
             }
             else
+            {
+                LogFpsTextRenderHook("PushGlyphDataIfNeeded sub");
                 PushSubBuffers();
+            }
+        }
+
+        private bool IsFpsTextDiagnosticTarget()
+            => SceneNode?.Name == "TestTextNode";
+
+        private void LogFpsTextRenderHook(string hook)
+        {
+            if (!IsFpsTextDiagnosticTarget() || _fpsTextRenderHookDiagCount++ >= 40)
+                return;
+
+            var tfm = BoundableTransform;
+            var world = RenderCommand2D.WorldMatrix;
+            var atlas = Font?.Atlas;
+            Debug.Out(
+                "[FpsTextDiag] UITextComponent.{0} #{1} node='{2}' instances2D={3} instances3D={4} dataChanged={5} pushFull={6} glyphs={7} alloc={8} renderPass={9} actual=({10:F1},{11:F1}) bottomLeft=({12:F1},{13:F1}) worldT=({14:F1},{15:F1},{16:F1}) atlas=({17}x{18}, mips={19}, min={20}, autoMip={21}, largest={22}, smallest={23})",
+                hook,
+                _fpsTextRenderHookDiagCount,
+                SceneNode?.Name ?? "<null>",
+                RenderCommand2D.Instances,
+                RenderCommand3D.Instances,
+                _dataChanged,
+                _pushFull,
+                _glyphs.Count,
+                _allocatedGlyphCount,
+                RenderPass,
+                tfm.ActualWidth,
+                tfm.ActualHeight,
+                tfm.ActualLocalBottomLeftTranslation.X,
+                tfm.ActualLocalBottomLeftTranslation.Y,
+                world.M41,
+                world.M42,
+                world.M43,
+                atlas?.Width ?? 0,
+                atlas?.Height ?? 0,
+                atlas?.Mipmaps?.Length ?? 0,
+                atlas?.MinFilter.ToString() ?? "<null>",
+                atlas?.AutoGenerateMipmaps.ToString() ?? "<null>",
+                atlas?.LargestMipmapLevel ?? -1,
+                atlas?.SmallestAllowedMipmapLevel ?? -1);
         }
 
         /// <summary>
@@ -665,7 +744,7 @@ namespace XREngine.Rendering.UI
             if (_resizeGlyphDiagCount < 10)
             {
                 _resizeGlyphDiagCount++;
-                Debug.Out($"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
+                Debug.Rendering($"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
             }
             RenderCommand3D.Instances = count;
             RenderCommand2D.Instances = count;
@@ -758,6 +837,7 @@ namespace XREngine.Rendering.UI
 
             _dataChanged = true;
             _pushFull = true;
+            LogFpsTextRenderHook("CreateSSBOs");
         }
 
         /// <summary>
@@ -782,6 +862,34 @@ namespace XREngine.Rendering.UI
             (Vector4 transform, Vector4 uvs)[] glyphsCopy;
             using (_glyphLock.EnterScope())
                 glyphsCopy = [.. _glyphs];
+
+            if (IsFpsTextDiagnosticTarget() && _fpsTextWriteDiagCount++ < 40)
+            {
+                var firstTransform = glyphsCopy.Length > 0 ? glyphsCopy[0].transform : Vector4.Zero;
+                var firstUvs = glyphsCopy.Length > 0 ? glyphsCopy[0].uvs : Vector4.Zero;
+                var lastTransform = glyphsCopy.Length > 0 ? glyphsCopy[^1].transform : Vector4.Zero;
+                Debug.Out(
+                    "[FpsTextDiag] UITextComponent.WriteData #{0} node='{1}' glyphs={2} firstTfm=({3:F2},{4:F2},{5:F2},{6:F2}) firstUv=({7:F5},{8:F5},{9:F5},{10:F5}) lastTfm=({11:F2},{12:F2},{13:F2},{14:F2}) color=({15:F2},{16:F2},{17:F2},{18:F2})",
+                    _fpsTextWriteDiagCount,
+                    SceneNode?.Name ?? "<null>",
+                    glyphsCopy.Length,
+                    firstTransform.X,
+                    firstTransform.Y,
+                    firstTransform.Z,
+                    firstTransform.W,
+                    firstUvs.X,
+                    firstUvs.Y,
+                    firstUvs.Z,
+                    firstUvs.W,
+                    lastTransform.X,
+                    lastTransform.Y,
+                    lastTransform.Z,
+                    lastTransform.W,
+                    Color.R,
+                    Color.G,
+                    Color.B,
+                    Color.A);
+            }
 
             float* tfmPtr = (float*)_transformsBuffer.ClientSideSource!.Address.Pointer;
             float* uvsPtr = (float*)_uvsBuffer.ClientSideSource!.Address.Pointer;
@@ -846,13 +954,15 @@ namespace XREngine.Rendering.UI
         /// use animatable (per-glyph rotation) transforms, or have no glyphs to render.
         /// </summary>
         public override bool SupportsBatchedRendering
-            => !DisableBatching && !ClipToBounds && !AnimatableTransforms;
+            => !DisableBatching &&
+               !ClipToBounds &&
+               !AnimatableTransforms &&
+               (OutlineThickness <= 0.0f || OutlineColor.A <= 0.0f);
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
             var font = Font;
-            var atlas = font?.Atlas;
-            if (atlas is null)
+            if (font is null || font.Atlas is not { } atlas)
                 return false; // Font not loaded yet — fall back to individual rendering
 
             (Vector4 transform, Vector4 uvs)[] glyphsCopy;
@@ -869,7 +979,20 @@ namespace XREngine.Rendering.UI
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
             var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
 
-            collector.AddTextQuad(RenderPass, RenderCommand2D.ZIndex, passes, atlas, in worldMatrix, in textColor, in bounds, glyphsCopy);
+            collector.AddTextQuad(
+                RenderPass,
+                RenderCommand2D.ZIndex,
+                passes,
+                atlas,
+                in worldMatrix,
+                in textColor,
+                in bounds,
+                (int)font.AtlasType,
+                font.DistanceRange,
+                font.DistanceRangeMiddle,
+                MsdfFillBias,
+                (int)BatchedDebugMode,
+                glyphsCopy);
             return true;
         }
 

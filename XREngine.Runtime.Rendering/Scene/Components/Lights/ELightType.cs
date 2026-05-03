@@ -5,11 +5,19 @@
     /// </summary>
     public enum ELightType
     {
-        //Movable. Always calculates light for everything per-frame.
+        /// <summary>
+        /// Movable light that is evaluated every frame.
+        /// </summary>
         Dynamic,
-        //Moveable. Bakes into shadow maps when not moving.
+
+        /// <summary>
+        /// Movable light that can reuse cached shadow data while stationary.
+        /// </summary>
         DynamicCached,
-        //Does not move. Allows baking light into shadow maps.
+
+        /// <summary>
+        /// Immovable light intended for baked lighting or cached shadow data.
+        /// </summary>
         Static,
     }
 }

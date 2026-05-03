@@ -70,6 +70,18 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
 
         ImGui.SeparatorText("Cascade Layout");
 
+        if (light.EnableCascadedShadows)
+        {
+            int renderMode = (int)light.CascadeShadowRenderMode;
+            if (ImGui.Combo("Cascade Render Mode", ref renderMode, "Sequential\0Instanced / Layered\0Geometry Shader\0"))
+                light.CascadeShadowRenderMode = (EDirectionalCascadeShadowRenderMode)Math.Clamp(
+                    renderMode,
+                    (int)EDirectionalCascadeShadowRenderMode.Sequential,
+                    (int)EDirectionalCascadeShadowRenderMode.GeometryShader);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Sequential renders one cascade layer at a time.\nGeometry Shader renders all cascades into the texture array in one layered pass.\nInstanced / Layered is exposed for the upcoming vertex-layered path and currently falls back to sequential.");
+        }
+
         int cascades = light.CascadeCount;
         if (ImGui.SliderInt("Cascade Count", ref cascades, 1, 8))
             light.CascadeCount = cascades;
