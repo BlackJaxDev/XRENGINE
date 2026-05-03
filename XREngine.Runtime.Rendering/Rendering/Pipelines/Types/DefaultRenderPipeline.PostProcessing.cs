@@ -1849,7 +1849,8 @@ public partial class DefaultRenderPipeline
         Vector2 previousJitterUv = Vector2.Zero;
         if (!DisableHistoryBasedVrEffects() && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
         {
-            historyReady = temporalData.HistoryReady && temporalData.HistoryExposureReady;
+            // TSR owns a full-resolution color history; the exposure-variance history is only produced by the TAA resolve.
+            historyReady = temporalData.HistoryReady;
             currentJitterUv = new Vector2(temporalData.CurrentJitter.X / Math.Max(1u, InternalWidth), temporalData.CurrentJitter.Y / Math.Max(1u, InternalHeight));
             previousJitterUv = new Vector2(temporalData.PreviousJitter.X / Math.Max(1u, InternalWidth), temporalData.PreviousJitter.Y / Math.Max(1u, InternalHeight));
         }

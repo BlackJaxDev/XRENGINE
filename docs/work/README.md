@@ -18,6 +18,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
 | Default render pipeline V2 | Active | [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
+| Atmospheric scattering | Active | [todo/atmospheric-scattering-component-todo.md](todo/atmospheric-scattering-component-todo.md), [design/atmospheric-scattering-component-design.md](design/atmospheric-scattering-component-design.md) | Phased implementation tracker for the new world-scoped atmosphere component and aerial perspective pipeline. |
 | Forward depth-normal TransformId | Active | [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md) | Shared forward prepass follow-up so depth, normal, and transform ID describe the same surface. |
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
 | Physics-chain performance | Stable doc + testing | [../features/physics-chain-performance.md](../features/physics-chain-performance.md) | Remaining validation lives in [testing/physics-chain-performance.md](testing/physics-chain-performance.md). |
@@ -28,6 +29,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
 | GPU rendering roadmap | Active | [todo/gpu-rendering.md](todo/gpu-rendering.md) | Broad GPU-driven rendering work remains active. |
 | Shadow filtering and atlas allocation | Active | [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md), [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md), [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md), [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md) | VSM/EVSM filtering, dynamic atlas LOD allocation, and post-v1 advanced shadow follow-ups for directional, spot, and point lights. |
+| Texture management runtime | Active | [todo/texture-management-runtime-todo.md](todo/texture-management-runtime-todo.md), [todo/texture-streaming-cooked-cache-todo.md](todo/texture-streaming-cooked-cache-todo.md), [todo/texture-streaming-consolidation-todo.md](todo/texture-streaming-consolidation-todo.md), [design/texture-management-runtime-design.md](design/texture-management-runtime-design.md) | Phased implementation tracker plus focused cooked-cache and consolidation follow-ups for runtime texture residency, upload scheduling, GL storage safety, VRAM telemetry, and dedicated texture logging. |
 | OpenVR VRClient GPU handoff | Active | [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md) | Zero-readback cross-process eye-texture handoff from the engine app to the legacy OpenVR companion process. |
 | GPU-driven animation | Active | [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md) | Phased execution tracker for the [GPU-driven animation architecture](design/gpu-driven-animation.md). |
 | GPU skinning buffer compression | Active | [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md) | XRMesh and XRMeshRenderer influence/palette compression plan for direct and compute skinning. |
@@ -49,6 +51,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 ## Active TODOs
 
 - [todo/aot-final-game-builds.md](todo/aot-final-game-builds.md)
+- [todo/atmospheric-scattering-component-todo.md](todo/atmospheric-scattering-component-todo.md)
 - [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md)
 - [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md)
 - [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md)
@@ -62,6 +65,9 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md)
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
 - [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md)
+- [todo/texture-management-runtime-todo.md](todo/texture-management-runtime-todo.md)
+- [todo/texture-streaming-cooked-cache-todo.md](todo/texture-streaming-cooked-cache-todo.md)
+- [todo/texture-streaming-consolidation-todo.md](todo/texture-streaming-consolidation-todo.md)
 - [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md)
 - [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md)
 - [todo/vulkan.md](todo/vulkan.md)
@@ -70,6 +76,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 ## Active Design Docs
 
 - [design/affine-matrix-integration-plan.md](design/affine-matrix-integration-plan.md)
+- [design/atmospheric-scattering-component-design.md](design/atmospheric-scattering-component-design.md)
 - [design/bindless-deferred-texturing-plan.md](design/bindless-deferred-texturing-plan.md)
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)
 - [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md)

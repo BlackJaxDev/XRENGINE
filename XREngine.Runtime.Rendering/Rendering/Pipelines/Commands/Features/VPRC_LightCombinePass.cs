@@ -297,8 +297,12 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             bool useCascadedDirectionalShadows = false;
             bool directionalAtlasSampleable = false;
+            bool useDirectionalShadowAtlas = false;
             if (_currentLightComponent is DirectionalLightComponent directionalLight)
             {
+                useDirectionalShadowAtlas =
+                    Engine.Rendering.Settings.UseDirectionalShadowAtlas &&
+                    directionalLight.CastsShadows;
                 var cameraComponent = ActivePipelineInstance.RenderState.WindowViewport?.CameraComponent;
                 useCascadedDirectionalShadows =
                     cameraComponent?.DirectionalShadowRenderingMode == global::XREngine.Components.EDirectionalShadowRenderingMode.Cascaded &&
@@ -306,7 +310,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     directionalLight.CascadedShadowMapTexture is not null &&
                     directionalLight.ActiveCascadeCount > 0;
 
-                if (useCascadedDirectionalShadows)
+                if (useCascadedDirectionalShadows && !useDirectionalShadowAtlas)
                     materialProgram.Sampler("ShadowMapArray", directionalLight.CascadedShadowMapTexture!, 5);
                 else
                     materialProgram.Sampler("ShadowMapArray", DummyShadowMapArray, 5);
@@ -346,9 +350,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             bool hasShadowMap = _currentLightComponent.CastsShadows && selectedShadowMap is not null;
-            bool directionalHasShadowMap = useCascadedDirectionalShadows || directionalAtlasSampleable;
-            if (_currentLightComponent is DirectionalLightComponent directionalLightComponent)
-                directionalHasShadowMap |= hasShadowMap;
+            bool directionalHasShadowMap = directionalAtlasSampleable ||
+                (!useDirectionalShadowAtlas && useCascadedDirectionalShadows);
+            if (_currentLightComponent is DirectionalLightComponent)
+                directionalHasShadowMap |= !useDirectionalShadowAtlas && hasShadowMap;
 
             if (_currentLightComponent is PointLightComponent)
             {
@@ -369,7 +374,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
                 else
                 {
-                    BindDisabledSpotAtlas(materialProgram, ShadowFallbackMode.Lit);
+                    BindDisabledSpotAtlas(materialProgram);
                 }
 
                 ShadowMapFormatSelection shadowFormat = spotLight.ResolveShadowMapFormat(preferredStorageFormat: spotLight.ShadowMapStorageFormat);
@@ -396,8 +401,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             else if (_currentLightComponent is DirectionalLightComponent)
             {
                 materialProgram.Uniform("LightHasShadowMap", directionalHasShadowMap);
-                // Directional lights fall back to the single shadow map when cascades are unavailable.
-                materialProgram.Sampler("ShadowMap", selectedShadowMap as XRTexture2D ?? DummyShadowMap, 4);
+                materialProgram.Sampler("ShadowMap", !useDirectionalShadowAtlas && selectedShadowMap is XRTexture2D shadow2D ? shadow2D : DummyShadowMap, 4);
             }
         }
 
@@ -413,7 +417,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (lights is null ||
                 !lights.TryGetSpotShadowAtlasAllocation(spotLight, out ShadowAtlasAllocation allocation, out int recordIndex))
             {
-                BindDisabledSpotAtlas(materialProgram, fallback);
+                BindDisabledSpotAtlas(materialProgram);
                 return false;
             }
 
@@ -425,28 +429,30 @@ namespace XREngine.Rendering.Pipelines.Commands
             bool resident = allocation.IsResident &&
                 allocation.LastRenderedFrame != 0u &&
                 allocation.ActiveFallback == ShadowFallbackMode.None &&
-                lights.ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, allocation.PageIndex, out atlasTexture);
+                lights.ShadowAtlas.TryGetPageTexture(allocation.AtlasKind, EShadowMapEncoding.Depth, allocation.PageIndex, out atlasTexture);
 
             float nearPlane = spotLight.ShadowCamera?.NearZ ?? 0.1f;
             float farPlane = spotLight.ShadowCamera?.FarZ ?? MathF.Max(nearPlane + 0.001f, spotLight.Distance);
-            float texelSize = allocation.Resolution > 0u ? 1.0f / allocation.Resolution : 0.0f;
+            uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
+            float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
+            float resolutionScale = spotLight.GetShadowAtlasResolutionScale(sampleResolution);
 
             materialProgram.Uniform("SpotShadowAtlasEnabled", resident);
             materialProgram.Uniform("SpotShadowAtlasRecordIndex", recordIndex);
             materialProgram.Uniform("SpotShadowAtlasUvScaleBias", allocation.UvScaleBias);
-            materialProgram.Uniform("SpotShadowAtlasDepthParams", new Vector4(nearPlane, farPlane, texelSize, (float)fallback));
+            materialProgram.Uniform("SpotShadowAtlasDepthParams", new Vector4(nearPlane, farPlane, texelSize, resolutionScale));
             materialProgram.Sampler("SpotShadowAtlas", resident && atlasTexture is not null ? atlasTexture : DummyShadowMap, spotAtlasUnit);
 
             return resident;
         }
 
-        private static void BindDisabledSpotAtlas(XRRenderProgram materialProgram, ShadowFallbackMode fallback)
+        private static void BindDisabledSpotAtlas(XRRenderProgram materialProgram)
         {
             const int spotAtlasUnit = 30;
             materialProgram.Uniform("SpotShadowAtlasEnabled", false);
             materialProgram.Uniform("SpotShadowAtlasRecordIndex", -1);
             materialProgram.Uniform("SpotShadowAtlasUvScaleBias", Vector4.Zero);
-            materialProgram.Uniform("SpotShadowAtlasDepthParams", new Vector4(0.1f, 1.0f, 0.0f, (float)fallback));
+            materialProgram.Uniform("SpotShadowAtlasDepthParams", new Vector4(0.1f, 1.0f, 0.0f, 1.0f));
             materialProgram.Sampler("SpotShadowAtlas", DummyShadowMap, spotAtlasUnit);
         }
 
@@ -484,7 +490,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     _directionalShadowAtlasPacked0,
                     _directionalShadowAtlasUvScaleBias,
                     _directionalShadowAtlasDepthParams);
-                hasSampleableAtlasTile = AreRequiredDirectionalAtlasTilesSampleable(
+                hasSampleableAtlasTile = HasAnyDirectionalAtlasTileSampleable(
                     _directionalShadowAtlasPacked0,
                     useCascadedDirectionalShadows ? directionalLight.ActiveCascadeCount : 1);
             }
@@ -492,7 +498,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             for (int pageIndex = 0; pageIndex < maxDeferredDirectionalAtlasPages; pageIndex++)
             {
                 XRTexture2D atlasTexture = hasSampleableAtlasTile &&
-                    lights!.ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
+                    lights!.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
                         ? pageTexture
                         : DummyShadowMap;
                 materialProgram.Sampler(_directionalShadowAtlasPageNames[pageIndex], atlasTexture, directionalAtlasStartUnit + pageIndex);
@@ -512,17 +518,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             return hasSampleableAtlasTile;
         }
 
-        private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int count)
+        private static bool HasAnyDirectionalAtlasTileSampleable(IVector4[] packed0, int count)
         {
             int clampedCount = Math.Min(Math.Max(count, 0), packed0.Length);
             if (clampedCount <= 0)
                 return false;
 
             for (int i = 0; i < clampedCount; i++)
-                if (packed0[i].X == 0)
-                    return false;
+                if (packed0[i].X != 0)
+                    return true;
 
-            return true;
+            return false;
         }
 
         private static void LogDeferredDirectionalShadowBinding(

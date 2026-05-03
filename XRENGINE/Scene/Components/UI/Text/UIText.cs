@@ -326,6 +326,10 @@ namespace XREngine.Rendering.UI
                 Function = EComparison.Lequal,
                 UpdateDepth = false
             },
+            StencilTest = new()
+            {
+                Enabled = ERenderParamUsage.Disabled
+            },
             BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
         };
         public RenderingParameters RenderParameters

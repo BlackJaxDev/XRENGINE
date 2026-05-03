@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections;
 using System.ComponentModel;
 using System.Numerics;
+using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -121,6 +122,7 @@ namespace XREngine.Components.Lights
             float NearPlane,
             float FarPlane,
             float TexelSize,
+            float ResolutionScale,
             uint Resolution,
             ShadowFallbackMode Fallback,
             BoundingRectangle PixelRect,
@@ -623,9 +625,14 @@ namespace XREngine.Components.Lights
             ShadowAtlasAllocation allocation,
             int recordIndex,
             float nearPlane,
-            float farPlane)
+            float farPlane,
+            uint desiredResolution)
         {
-            float texelSize = allocation.Resolution > 0u ? 1.0f / allocation.Resolution : 0.0f;
+            uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
+            float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
+            float resolutionScale = sampleResolution > 0u
+                ? MathF.Max(1.0f, Math.Max(1u, desiredResolution) / (float)sampleResolution)
+                : 1.0f;
 
             return new DirectionalCascadeAtlasSlot(
                 HasAllocation: true,
@@ -636,6 +643,7 @@ namespace XREngine.Components.Lights
                 NearPlane: nearPlane,
                 FarPlane: farPlane,
                 TexelSize: texelSize,
+                ResolutionScale: resolutionScale,
                 Resolution: allocation.Resolution,
                 Fallback: allocation.ActiveFallback,
                 PixelRect: allocation.PixelRect,
@@ -648,23 +656,25 @@ namespace XREngine.Components.Lights
             ShadowAtlasAllocation allocation,
             int recordIndex,
             float nearPlane,
-            float farPlane)
+            float farPlane,
+            uint desiredResolution)
         {
             if ((uint)index >= (uint)MaxCascadeRenderCount)
                 return;
 
             lock (_cascadeDataLock)
-                _cascadeAtlasSlots[index] = CreateAtlasSlot(allocation, recordIndex, nearPlane, farPlane);
+                _cascadeAtlasSlots[index] = CreateAtlasSlot(allocation, recordIndex, nearPlane, farPlane, desiredResolution);
         }
 
         internal void SetPrimaryAtlasSlot(
             ShadowAtlasAllocation allocation,
             int recordIndex,
             float nearPlane,
-            float farPlane)
+            float farPlane,
+            uint desiredResolution)
         {
             lock (_cascadeDataLock)
-                _primaryAtlasSlot = CreateAtlasSlot(allocation, recordIndex, nearPlane, farPlane);
+                _primaryAtlasSlot = CreateAtlasSlot(allocation, recordIndex, nearPlane, farPlane, desiredResolution);
         }
 
         /// <summary>
@@ -721,9 +731,11 @@ namespace XREngine.Components.Lights
                     DirectionalCascadeAtlasSlot slot = i < _cascadeShadowSlices.Count ? _cascadeAtlasSlots[i] : default;
                     bool enabled = IsDirectionalAtlasSlotSampleable(slot);
 
-                    ShadowFallbackMode fallback = slot.Fallback != ShadowFallbackMode.None
-                        ? slot.Fallback
-                        : ShadowFallbackMode.Lit;
+                    ShadowFallbackMode fallback = enabled
+                        ? ShadowFallbackMode.None
+                        : slot.Fallback != ShadowFallbackMode.None
+                            ? slot.Fallback
+                            : ShadowFallbackMode.Lit;
                     int pageIndex = slot.HasAllocation ? slot.PageIndex : -1;
                     int recordIndex = slot.HasAllocation ? slot.RecordIndex : -1;
                     float nearPlane = slot.HasAllocation ? slot.NearPlane : NearZ;
@@ -731,7 +743,7 @@ namespace XREngine.Components.Lights
 
                     packed0[i] = new IVector4(enabled ? 1 : 0, pageIndex, (int)fallback, recordIndex);
                     uvScaleBias[i] = enabled ? slot.UvScaleBias : Vector4.Zero;
-                    depthParams[i] = new Vector4(nearPlane, MathF.Max(farPlane, nearPlane + 0.001f), slot.TexelSize, 0.0f);
+                    depthParams[i] = new Vector4(nearPlane, MathF.Max(farPlane, nearPlane + 0.001f), slot.TexelSize, slot.ResolutionScale);
                 }
             }
         }
@@ -760,9 +772,11 @@ namespace XREngine.Components.Lights
                     DirectionalCascadeAtlasSlot slot = i == 0 ? _primaryAtlasSlot : default;
                     bool enabled = IsDirectionalAtlasSlotSampleable(slot);
 
-                    ShadowFallbackMode fallback = slot.HasAllocation
-                        ? (slot.Fallback != ShadowFallbackMode.None ? slot.Fallback : ShadowFallbackMode.Lit)
-                        : ShadowFallbackMode.Legacy;
+                    ShadowFallbackMode fallback = enabled
+                        ? ShadowFallbackMode.None
+                        : slot.HasAllocation
+                            ? slot.Fallback != ShadowFallbackMode.None ? slot.Fallback : ShadowFallbackMode.Lit
+                            : ShadowFallbackMode.Legacy;
                     int pageIndex = slot.HasAllocation ? slot.PageIndex : -1;
                     int recordIndex = slot.HasAllocation ? slot.RecordIndex : -1;
                     float nearPlane = slot.HasAllocation ? slot.NearPlane : NearZ;
@@ -770,7 +784,7 @@ namespace XREngine.Components.Lights
 
                     packed0[i] = new IVector4(enabled ? 1 : 0, pageIndex, (int)fallback, recordIndex);
                     uvScaleBias[i] = enabled ? slot.UvScaleBias : Vector4.Zero;
-                    depthParams[i] = new Vector4(nearPlane, MathF.Max(farPlane, nearPlane + 0.001f), slot.TexelSize, 0.0f);
+                    depthParams[i] = new Vector4(nearPlane, MathF.Max(farPlane, nearPlane + 0.001f), slot.TexelSize, slot.ResolutionScale);
                 }
             }
         }
@@ -1091,9 +1105,11 @@ namespace XREngine.Components.Lights
             lock (_cascadeDataLock)
             {
                 if ((uint)cascadeIndex < (uint)_cascadeAtlasSlots.Length &&
-                    _cascadeAtlasSlots[cascadeIndex].Resolution > 0u)
+                    _cascadeAtlasSlots[cascadeIndex].InnerPixelRect.Width > 0 &&
+                    _cascadeAtlasSlots[cascadeIndex].InnerPixelRect.Height > 0)
                 {
-                    return _cascadeAtlasSlots[cascadeIndex].Resolution;
+                    DirectionalCascadeAtlasSlot slot = _cascadeAtlasSlots[cascadeIndex];
+                    return (uint)Math.Max(1, Math.Max(slot.InnerPixelRect.Width, slot.InnerPixelRect.Height));
                 }
             }
 
@@ -1218,6 +1234,9 @@ namespace XREngine.Components.Lights
                     Vector3 halfExtents = Vector3.Max((max - min) * 0.5f, new Vector3(1e-3f, 1e-3f, NearZ + 1e-3f));
                     Vector3 centerLS = (min + max) * 0.5f;
                     uint fitResolution = GetCascadeFitResolution(resourceSlot, cascadeTexture);
+                    uint biasResolution = Engine.Rendering.Settings.UseDirectionalShadowAtlas
+                        ? GetDesiredShadowAtlasResolution()
+                        : fitResolution;
                     SnapCascadeCenterToTexels(ref centerLS, halfExtents, fitResolution);
                     Vector3 centerWS = Vector3.Transform(centerLS, lightToWorld);
 
@@ -1229,8 +1248,8 @@ namespace XREngine.Components.Lights
                     CascadeShadowBiasSettings biasSettings = ResolveCascadeBiasSettings(
                         cascadeIndex,
                         halfExtents,
-                        fitResolution,
-                        fitResolution,
+                        biasResolution,
+                        biasResolution,
                         biasOverrideSnapshot);
 
                     nextShadowSlices[resourceSlot] = new CascadeShadowSlice
@@ -1369,8 +1388,9 @@ namespace XREngine.Components.Lights
 
         private static XRMaterial CreateShadowAtlasMaterial()
         {
-            // Cascade cameras are orthographic, so gl_FragCoord.z is already linear in cascade clip space.
-            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_DepthOutput));
+            // Directional atlas receivers sample the page raster depth attachment, matching the legacy
+            // directional shadow-map path instead of a color-packed depth copy with different precision.
+            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             return mat;

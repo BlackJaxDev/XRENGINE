@@ -13,6 +13,13 @@ public enum EShadowProjectionType
     PointFace = 3,
 }
 
+public enum EShadowAtlasKind
+{
+    Directional = 0,
+    Point = 1,
+    Spot = 2,
+}
+
 public enum ShadowRequestDomain
 {
     Live = 0,
@@ -123,6 +130,7 @@ public readonly record struct ShadowMapRequest(
 
 public readonly record struct ShadowAtlasAllocation(
     ShadowRequestKey Key,
+    EShadowAtlasKind AtlasKind,
     int AtlasId,
     int PageIndex,
     BoundingRectangle PixelRect,
@@ -138,6 +146,7 @@ public readonly record struct ShadowAtlasAllocation(
     SkipReason SkipReason);
 
 public readonly record struct ShadowAtlasPageDescriptor(
+    EShadowAtlasKind AtlasKind,
     EShadowMapEncoding Encoding,
     int PageIndex,
     uint PageSize,
@@ -186,7 +195,7 @@ public readonly record struct ShadowAtlasManagerSettings(
 {
     public static ShadowAtlasManagerSettings Default => new(
         PageSize: 4096u,
-        MaxPages: 2,
+        MaxPages: 1,
         MaxMemoryBytes: 0L,
         MaxTilesRenderedPerFrame: 16,
         MaxRenderMilliseconds: 2.0f,

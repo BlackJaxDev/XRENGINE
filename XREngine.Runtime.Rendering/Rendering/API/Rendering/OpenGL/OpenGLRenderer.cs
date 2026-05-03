@@ -248,6 +248,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                _renderer._imguiMultiViewportController?.ClearQueuedMainMouseWheelEvents();
                 _controller.Update(deltaSeconds);
             }
 

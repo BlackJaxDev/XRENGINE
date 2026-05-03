@@ -4,19 +4,19 @@ layout (location = 0) in vec3 Position;
 layout (location = 1) in vec3 Normal;
 layout (location = 2) in vec2 TexCoord0;
 
-// Per-instance data stored in SSBOs (explicit set = 0 for Vulkan correctness)
+// Per-instance data stored in SSBOs.
 // Model matrices stored as 4 consecutive vec4 rows per instance
-layout(std430, set = 0, binding = 0) buffer QuadTransformBuffer
+layout(std430, binding = 0) buffer QuadTransformBuffer
 {
     vec4 QuadTransforms[]; // 4 vec4s per instance (row-major mat4)
 };
 
-layout(std430, set = 0, binding = 1) buffer QuadColorBuffer
+layout(std430, binding = 1) buffer QuadColorBuffer
 {
     vec4 QuadColors[];
 };
 
-layout(std430, set = 0, binding = 2) buffer QuadBoundsBuffer
+layout(std430, binding = 2) buffer QuadBoundsBuffer
 {
     vec4 QuadBounds[]; // (x, y, w, h) per instance
 };

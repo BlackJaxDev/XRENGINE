@@ -153,10 +153,12 @@ namespace XREngine.Rendering.OpenGL
                 EMeshBillboardMode billboardMode)
             {
                 Dbg($"Render request (instances={instances}, billboard={billboardMode})", "Render");
+                LogBatchedTextDraw("Render request", instances, $"billboard={billboardMode}");
 
                 if (Data is null || !Renderer.Active)
                 {
                     Dbg("Render early-out: Data null or renderer inactive", "Render");
+                    LogBatchedTextDraw("Render inactive", instances, $"dataNull={Data is null}, rendererActive={Renderer.Active}");
                     return;
                 }
 
@@ -181,6 +183,7 @@ namespace XREngine.Rendering.OpenGL
                             : throttleRenderPipelineGeneration
                                 ? "Not generated yet - startup throttling queued render-pipeline generation"
                                 : "Not generated yet - queued for deferred generation", "Render");
+                        LogBatchedTextDraw("Render queued-generation", instances, $"shadow={shadowPass}, priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
                         return; // Skip rendering until generated
                     }
 
@@ -212,6 +215,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                         Dbg("Generated but not render-ready - queued for deferred preparation", "Render");
+                        LogBatchedTextDraw("Render queued-preparation", instances, $"priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
                         return;
                     }
                 }
@@ -219,6 +223,7 @@ namespace XREngine.Rendering.OpenGL
                 using (Engine.Profiler.Start("GLMeshRenderer.Render.ProgramSetup"))
                 {
                     EnsureProgramsMatchRenderSettings();
+                    EnsureProgramsMatchMaterialShaderState();
                 }
 
                 GLMaterial material = GetRenderMaterial(materialOverride);
@@ -228,12 +233,19 @@ namespace XREngine.Rendering.OpenGL
                     Dbg("Programs ready - binding SSBOs and uniforms", "Render");
                     ConfigureDrawTopology(vtx!, mat);
 
+                    if (BuffersBound && VertexArrayBindingsStale())
+                    {
+                        BuffersBound = false;
+                        LogBatchedTextDraw("Render vao-stale-rebind", instances);
+                    }
+
                     if (!BuffersBound)
                         BindBuffers(vtx!);
 
                     if (!BuffersBound)
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
+                        LogBatchedTextDraw("Render buffers-not-bound", instances);
                         return;
                     }
 
@@ -267,6 +279,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw"))
                         {
+                            LogBatchedTextDraw("Render draw-submit", instances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
                             Renderer.RenderMesh(this, false, instances);
                         }
                     }
@@ -280,6 +293,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                     Dbg("GetPrograms failed - render skipped", "Render");
+                    LogBatchedTextDraw("Render programs-missing", instances);
                 }
             }
 

@@ -26,6 +26,15 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+        private sealed record CachedStructEditableProperty(
+            PropertyInfo Property,
+            string DisplayName,
+            string? Description,
+            Type EffectiveType,
+            bool CanWrite);
+
+        private static readonly Dictionary<Type, CachedStructEditableProperty[]> _structEditablePropertyCache = new();
+
         public sealed class InspectorTargetSet
         {
             public InspectorTargetSet(IReadOnlyList<object> targets, Type commonType)
@@ -918,16 +927,9 @@ public static partial class EditorImGuiUI
             using var profilerScope = Engine.Profiler.Start("UI.DrawStructPropertyEditor");
             Type structType = currentBoxed.GetType();
 
-            var subProperties = structType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-                .Where(p =>
-                {
-                    var browsable = p.GetCustomAttribute<BrowsableAttribute>();
-                    return browsable is null || browsable.Browsable;
-                })
-                .ToList();
+            CachedStructEditableProperty[] subProperties = GetCachedStructEditableProperties(structType);
 
-            if (subProperties.Count == 0)
+            if (subProperties.Length == 0)
             {
                 ImGui.TextDisabled("No editable properties.");
                 return;
@@ -942,40 +944,30 @@ public static partial class EditorImGuiUI
 
             foreach (var subProp in subProperties)
             {
-                bool canWriteSub = subProp.CanWrite && subProp.SetMethod?.IsPublic == true;
-                Type subType = subProp.PropertyType;
-                Type subEffective = Nullable.GetUnderlyingType(subType) ?? subType;
-                if (!IsSimpleSettingType(subEffective))
-                    continue;
-
                 object? subValue;
                 try
                 {
-                    subValue = subProp.GetValue(currentBoxed);
+                    subValue = subProp.Property.GetValue(currentBoxed);
                 }
                 catch
                 {
                     continue;
                 }
 
-                string displayName = subProp.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName
-                    ?? subProp.Name.SplitCamelCase();
-                string? desc = subProp.GetCustomAttribute<DescriptionAttribute>()?.Description;
-
                 ImGui.TableNextRow();
                 ImGui.TableSetColumnIndex(0);
-                ImGui.TextUnformatted(displayName);
-                if (!string.IsNullOrEmpty(desc) && ImGui.IsItemHovered())
-                    ImGui.SetTooltip(desc);
+                ImGui.TextUnformatted(subProp.DisplayName);
+                if (!string.IsNullOrEmpty(subProp.Description) && ImGui.IsItemHovered())
+                    ImGui.SetTooltip(subProp.Description);
                 ImGui.TableSetColumnIndex(1);
-                ImGui.PushID(subProp.Name);
+                ImGui.PushID(subProp.Property.Name);
 
                 bool isNull = subValue is null;
-                bool handled = DrawInlineValueEditor(subEffective, canWriteSub, ref subValue, ref isNull, newSubValue =>
+                bool handled = DrawInlineValueEditor(subProp.EffectiveType, subProp.CanWrite, ref subValue, ref isNull, newSubValue =>
                 {
                     // Copy the struct, set the sub-property, then re-set the whole struct on the parent.
                     object boxedCopy = parentProperty.GetValue(owner)!;
-                    subProp.SetValue(boxedCopy, newSubValue);
+                    subProp.Property.SetValue(boxedCopy, newSubValue);
                     parentProperty.SetValue(owner, boxedCopy);
                     NotifyInspectorValueEdited(owner);
 
@@ -985,7 +977,7 @@ public static partial class EditorImGuiUI
                 }, "##Value");
 
                 if (handled)
-                    ImGuiUndoHelper.TrackDragUndo($"Edit {parentProperty.Name}.{subProp.Name}", owner as XRBase);
+                    ImGuiUndoHelper.TrackDragUndo($"Edit {parentProperty.Name}.{subProp.Property.Name}", owner as XRBase);
 
                 if (!handled)
                 {
@@ -1011,16 +1003,9 @@ public static partial class EditorImGuiUI
             using var profilerScope = Engine.Profiler.Start("UI.DrawStructFieldEditor");
             Type structType = currentBoxed.GetType();
 
-            var subProperties = structType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-                .Where(p =>
-                {
-                    var browsable = p.GetCustomAttribute<BrowsableAttribute>();
-                    return browsable is null || browsable.Browsable;
-                })
-                .ToList();
+            CachedStructEditableProperty[] subProperties = GetCachedStructEditableProperties(structType);
 
-            if (subProperties.Count == 0)
+            if (subProperties.Length == 0)
             {
                 ImGui.TextDisabled("No editable properties.");
                 return;
@@ -1035,40 +1020,30 @@ public static partial class EditorImGuiUI
 
             foreach (var subProp in subProperties)
             {
-                bool canWriteSub = subProp.CanWrite && subProp.SetMethod?.IsPublic == true;
-                Type subType = subProp.PropertyType;
-                Type subEffective = Nullable.GetUnderlyingType(subType) ?? subType;
-                if (!IsSimpleSettingType(subEffective))
-                    continue;
-
                 object? subValue;
                 try
                 {
-                    subValue = subProp.GetValue(currentBoxed);
+                    subValue = subProp.Property.GetValue(currentBoxed);
                 }
                 catch
                 {
                     continue;
                 }
 
-                string displayName = subProp.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName
-                    ?? subProp.Name.SplitCamelCase();
-                string? desc = subProp.GetCustomAttribute<DescriptionAttribute>()?.Description;
-
                 ImGui.TableNextRow();
                 ImGui.TableSetColumnIndex(0);
-                ImGui.TextUnformatted(displayName);
-                if (!string.IsNullOrEmpty(desc) && ImGui.IsItemHovered())
-                    ImGui.SetTooltip(desc);
+                ImGui.TextUnformatted(subProp.DisplayName);
+                if (!string.IsNullOrEmpty(subProp.Description) && ImGui.IsItemHovered())
+                    ImGui.SetTooltip(subProp.Description);
                 ImGui.TableSetColumnIndex(1);
-                ImGui.PushID(subProp.Name);
+                ImGui.PushID(subProp.Property.Name);
 
                 bool isNull = subValue is null;
-                bool handled = DrawInlineValueEditor(subEffective, canWriteSub, ref subValue, ref isNull, newSubValue =>
+                bool handled = DrawInlineValueEditor(subProp.EffectiveType, subProp.CanWrite, ref subValue, ref isNull, newSubValue =>
                 {
                     // Copy the struct, set the sub-property, then re-set the whole struct on the parent.
                     object boxedCopy = parentField.GetValue(owner)!;
-                    subProp.SetValue(boxedCopy, newSubValue);
+                    subProp.Property.SetValue(boxedCopy, newSubValue);
                     parentField.SetValue(owner, boxedCopy);
                     NotifyInspectorValueEdited(owner);
 
@@ -1078,7 +1053,7 @@ public static partial class EditorImGuiUI
                 }, "##Value");
 
                 if (handled)
-                    ImGuiUndoHelper.TrackDragUndo($"Edit {parentField.Name}.{subProp.Name}", owner as XRBase);
+                    ImGuiUndoHelper.TrackDragUndo($"Edit {parentField.Name}.{subProp.Property.Name}", owner as XRBase);
 
                 if (!handled)
                 {
@@ -1092,6 +1067,39 @@ public static partial class EditorImGuiUI
             }
 
             ImGui.EndTable();
+        }
+
+        private static CachedStructEditableProperty[] GetCachedStructEditableProperties(Type structType)
+        {
+            if (_structEditablePropertyCache.TryGetValue(structType, out var cached))
+                return cached;
+
+            var properties = structType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            List<CachedStructEditableProperty> editable = [];
+            foreach (PropertyInfo property in properties)
+            {
+                if (!property.CanRead || property.GetIndexParameters().Length != 0)
+                    continue;
+
+                var browsable = property.GetCustomAttribute<BrowsableAttribute>();
+                if (browsable is not null && !browsable.Browsable)
+                    continue;
+
+                Type propertyType = property.PropertyType;
+                Type effectiveType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+                if (!IsSimpleSettingType(effectiveType))
+                    continue;
+
+                string displayName = property.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName
+                    ?? property.Name.SplitCamelCase();
+                string? description = property.GetCustomAttribute<DescriptionAttribute>()?.Description;
+                bool canWrite = property.CanWrite && property.SetMethod?.IsPublic == true;
+                editable.Add(new CachedStructEditableProperty(property, displayName, description, effectiveType, canWrite));
+            }
+
+            cached = [.. editable];
+            _structEditablePropertyCache[structType] = cached;
+            return cached;
         }
 
         /// <summary>
@@ -4553,10 +4561,21 @@ public static partial class EditorImGuiUI
             public required string GroupLabel { get; init; }
             public required MethodInfo Method { get; init; }
             public required EventSignatureOption Signature { get; init; }
+            public required string[] ParameterTypeNames { get; init; }
 
             public string DisplayLabel
                 => FormatMethodLabel(Method);
         }
+
+        private readonly record struct EventMethodCacheKey(Type TargetType, int SignatureHash);
+
+        private sealed record CachedEventMethodOption(
+            MethodInfo Method,
+            EventSignatureOption Signature,
+            string[] ParameterTypeNames);
+
+        private static readonly Dictionary<Type, EventSignatureOption[]> _eventSignatureOptionsCache = new();
+        private static readonly Dictionary<EventMethodCacheKey, CachedEventMethodOption[]> _eventMethodOptionsCache = new();
 
         private static void DrawXREventInspector(object owner, object eventInstance, Type declaredEventType)
         {
@@ -4666,19 +4685,30 @@ public static partial class EditorImGuiUI
 
         private static EventSignatureOption[] GetEventSignatureOptions(Type declaredEventType)
         {
+            if (_eventSignatureOptionsCache.TryGetValue(declaredEventType, out var cached))
+                return cached;
+
+            EventSignatureOption[] options;
             if (declaredEventType == typeof(XREvent))
-                return [new EventSignatureOption(Array.Empty<Type>(), tupleExpanded: false)];
-
-            Type payloadType = declaredEventType.GetGenericArguments()[0];
-            var options = new List<EventSignatureOption>
             {
-                new EventSignatureOption([payloadType], tupleExpanded: false)
-            };
+                options = [new EventSignatureOption(Array.Empty<Type>(), tupleExpanded: false)];
+            }
+            else
+            {
+                Type payloadType = declaredEventType.GetGenericArguments()[0];
+                var optionList = new List<EventSignatureOption>
+                {
+                    new EventSignatureOption([payloadType], tupleExpanded: false)
+                };
 
-            if (TryGetValueTupleElementTypes(payloadType, out var tupleTypes) && tupleTypes.Length > 0)
-                options.Add(new EventSignatureOption(tupleTypes, tupleExpanded: true));
+                if (TryGetValueTupleElementTypes(payloadType, out var tupleTypes) && tupleTypes.Length > 0)
+                    optionList.Add(new EventSignatureOption(tupleTypes, tupleExpanded: true));
 
-            return options.ToArray();
+                options = [.. optionList];
+            }
+
+            _eventSignatureOptionsCache[declaredEventType] = options;
+            return options;
         }
 
         private static void DrawPersistentCallNodePickerButton(object owner, XRPersistentCall call, XRWorldInstance? world)
@@ -4759,7 +4789,7 @@ public static partial class EditorImGuiUI
                                 if (undoTarget is not null) { using var _undo = Undo.TrackChange("Set Callback Method", undoTarget); }
                                 call.TargetObjectId = opt.TargetObject.ID;
                                 call.MethodName = opt.Method.Name;
-                                call.ParameterTypeNames = opt.Method.GetParameters().Select(p => p.ParameterType.AssemblyQualifiedName ?? p.ParameterType.FullName ?? p.ParameterType.Name).ToArray();
+                                call.ParameterTypeNames = opt.ParameterTypeNames;
                                 call.UseTupleExpansion = opt.Signature.TupleExpanded;
                                 NotifyInspectorValueEdited(owner);
                             }
@@ -4874,44 +4904,100 @@ public static partial class EditorImGuiUI
 
         private static IEnumerable<EventMethodOption> GetCompatibleMethods(XRObjectBase target, string groupLabel, EventSignatureOption[] signatureOptions)
         {
-            const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
-            var methods = target.GetType().GetMethods(flags)
-                .Where(m => m.ReturnType == typeof(void))
-                .Where(m => !m.IsSpecialName)
-                .Where(m => !m.ContainsGenericParameters)
-                .Where(m => m.GetParameters().All(p => !p.IsOut && !p.ParameterType.IsByRef))
-                .ToArray();
-
-            foreach (var method in methods)
+            foreach (var cached in GetCachedCompatibleEventMethods(target.GetType(), signatureOptions))
             {
-                var ps = method.GetParameters();
-                foreach (var sig in signatureOptions)
+                yield return new EventMethodOption
                 {
-                    if (ps.Length != sig.ParamTypes.Length)
-                        continue;
+                    TargetObject = target,
+                    GroupLabel = groupLabel,
+                    Method = cached.Method,
+                    Signature = cached.Signature,
+                    ParameterTypeNames = cached.ParameterTypeNames,
+                };
+            }
+        }
 
-                    bool match = true;
-                    for (int i = 0; i < ps.Length; i++)
-                    {
-                        if (!ps[i].ParameterType.IsAssignableFrom(sig.ParamTypes[i]))
-                        {
-                            match = false;
-                            break;
-                        }
-                    }
+        private static CachedEventMethodOption[] GetCachedCompatibleEventMethods(Type targetType, EventSignatureOption[] signatureOptions)
+        {
+            var key = new EventMethodCacheKey(targetType, GetEventSignatureOptionsHash(signatureOptions));
+            if (_eventMethodOptionsCache.TryGetValue(key, out var cached))
+                return cached;
 
-                    if (match)
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
+            var methods = targetType.GetMethods(flags);
+            List<CachedEventMethodOption> results = [];
+
+            foreach (MethodInfo method in methods)
+            {
+                if (method.ReturnType != typeof(void)
+                    || method.IsSpecialName
+                    || method.ContainsGenericParameters)
+                {
+                    continue;
+                }
+
+                ParameterInfo[] parameters = method.GetParameters();
+                bool hasUnsupportedParameter = false;
+                for (int i = 0; i < parameters.Length; i++)
+                {
+                    ParameterInfo parameter = parameters[i];
+                    if (parameter.IsOut || parameter.ParameterType.IsByRef)
                     {
-                        yield return new EventMethodOption
-                        {
-                            TargetObject = target,
-                            GroupLabel = groupLabel,
-                            Method = method,
-                            Signature = sig
-                        };
+                        hasUnsupportedParameter = true;
+                        break;
                     }
                 }
+
+                if (hasUnsupportedParameter)
+                    continue;
+
+                foreach (EventSignatureOption signature in signatureOptions)
+                {
+                    if (!EventMethodMatchesSignature(parameters, signature))
+                        continue;
+
+                    string[] parameterTypeNames = new string[parameters.Length];
+                    for (int i = 0; i < parameters.Length; i++)
+                    {
+                        Type parameterType = parameters[i].ParameterType;
+                        parameterTypeNames[i] = parameterType.AssemblyQualifiedName ?? parameterType.FullName ?? parameterType.Name;
+                    }
+
+                    results.Add(new CachedEventMethodOption(method, signature, parameterTypeNames));
+                }
             }
+
+            cached = [.. results];
+            _eventMethodOptionsCache[key] = cached;
+            return cached;
+        }
+
+        private static bool EventMethodMatchesSignature(ParameterInfo[] parameters, EventSignatureOption signature)
+        {
+            if (parameters.Length != signature.ParamTypes.Length)
+                return false;
+
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (!parameters[i].ParameterType.IsAssignableFrom(signature.ParamTypes[i]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static int GetEventSignatureOptionsHash(EventSignatureOption[] signatureOptions)
+        {
+            HashCode hash = new();
+            for (int i = 0; i < signatureOptions.Length; i++)
+            {
+                EventSignatureOption signature = signatureOptions[i];
+                hash.Add(signature.TupleExpanded);
+                for (int j = 0; j < signature.ParamTypes.Length; j++)
+                    hash.Add(signature.ParamTypes[j]);
+            }
+
+            return hash.ToHashCode();
         }
 
         private static bool TryGetValueTupleElementTypes(Type t, out Type[] elementTypes)

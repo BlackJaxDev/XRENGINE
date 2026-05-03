@@ -90,6 +90,9 @@ namespace XREngine.Rendering
         private bool _isDisposing;
         private bool _isDisposed;
         private int _pendingCloseRequested;
+        private int _pendingFramebufferResize;
+        private int _pendingFramebufferResizeWidth;
+        private int _pendingFramebufferResizeHeight;
 
         private Exception? _lastRenderException;
         private int _consecutiveRenderFailures;
@@ -590,13 +593,26 @@ namespace XREngine.Rendering
 
         private void Window_Closing()
         {
+            Debug.Out(
+                "[XRWindow] Closing requested hash={0} disposing={1} disposed={2} viewports={3}",
+                GetHashCode(),
+                _isDisposing,
+                _isDisposed,
+                Viewports.Count);
+
             if (!_isDisposing && !_isDisposed)
             {
                 bool allowClose = RuntimeRenderingHostServices.Current.AllowWindowClose(this);
+                Debug.Out("[XRWindow] Closing policy hash={0} allow={1}", GetHashCode(), allowClose);
                 if (!allowClose)
                 {
                     if (TryCancelCloseRequest())
+                    {
+                        Debug.Out("[XRWindow] Closing canceled hash={0}.", GetHashCode());
                         return;
+                    }
+
+                    Debug.Out("[XRWindow] Closing could not be canceled hash={0}.", GetHashCode());
                 }
             }
 
@@ -740,23 +756,74 @@ namespace XREngine.Rendering
 
         private void FramebufferResizeCallback(Vector2D<int> obj)
         {
+            Volatile.Write(ref _pendingFramebufferResizeWidth, obj.X);
+            Volatile.Write(ref _pendingFramebufferResizeHeight, obj.Y);
+            Interlocked.Exchange(ref _pendingFramebufferResize, 1);
+
+            Debug.RenderingEvery(
+                $"XRWindow.FramebufferResize.Queued.{GetHashCode()}",
+                TimeSpan.FromMilliseconds(250),
+                "[XRWindow] Queued framebuffer resize hash={0} size={1}x{2}.",
+                GetHashCode(),
+                obj.X,
+                obj.Y);
+        }
+
+        private void ProcessPendingFramebufferResize()
+        {
+            if (Interlocked.Exchange(ref _pendingFramebufferResize, 0) == 0)
+                return;
+
+            int width = Volatile.Read(ref _pendingFramebufferResizeWidth);
+            int height = Volatile.Read(ref _pendingFramebufferResizeHeight);
+
+            if (width <= 0 || height <= 0)
+            {
+                Debug.RenderingEvery(
+                    $"XRWindow.FramebufferResize.Invalid.{GetHashCode()}",
+                    TimeSpan.FromMilliseconds(250),
+                    "[XRWindow] Ignoring invalid framebuffer resize hash={0} size={1}x{2}.",
+                    GetHashCode(),
+                    width,
+                    height);
+                return;
+            }
+
+            ApplyFramebufferResize(new Vector2D<int>(width, height));
+        }
+
+        private void ApplyFramebufferResize(Vector2D<int> obj)
+        {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.FramebufferResize");
 
-            //Debug.Out("Window resized to {0}x{1}", obj.X, obj.Y);
-            Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, true));
+            try
+            {
+                if (Window.API.API == ContextAPI.OpenGL)
+                    Window.MakeCurrent();
 
-            _scenePanelAdapter.OnFramebufferResized(this, obj.X, obj.Y);
+                Debug.RenderingEvery(
+                    $"XRWindow.FramebufferResize.Apply.{GetHashCode()}",
+                    TimeSpan.FromMilliseconds(250),
+                    "[XRWindow] Applying framebuffer resize hash={0} size={1}x{2} viewports={3}.",
+                    GetHashCode(),
+                    obj.X,
+                    obj.Y,
+                    Viewports.Count);
 
-            Renderer.FrameBufferInvalidated();
+                Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, true));
 
-            // Clear any circuit breaker backoff so the next frame renders immediately
-            // with freshly recreated resources instead of waiting out old failures.
-            ResetRenderCircuitBreaker();
+                _scenePanelAdapter.OnFramebufferResized(this, obj.X, obj.Y);
 
-            //var timer = Engine.Time.Timer;
-            //await timer.DispatchCollectVisible();
-            //await timer.DispatchSwapBuffers();
-            //timer.DispatchRender();
+                Renderer.FrameBufferInvalidated();
+
+                // Clear any circuit breaker backoff so the next frame renders immediately
+                // with freshly recreated resources instead of waiting out old failures.
+                ResetRenderCircuitBreaker();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"[XRWindow] Framebuffer resize failed for window {GetHashCode()} size={obj.X}x{obj.Y}.");
+            }
         }
 
         private void Input_ConnectionChanged(IInputDevice device, bool connected)
@@ -935,6 +1002,11 @@ namespace XREngine.Rendering
             }
 
             // Re-check after DoEvents in case window was closed
+            if (_isDisposed || _isDisposing)
+                return;
+
+            ProcessPendingFramebufferResize();
+
             if (_isDisposed || _isDisposing)
                 return;
 

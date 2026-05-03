@@ -36,7 +36,7 @@ uniform bool DebugCascadeColors = false;
 uniform bool DirectionalShadowAtlasEnabled = false;
 uniform ivec4 DirectionalShadowAtlasPacked0[MAX_CASCADES]; // enabled, page, fallback, record index
 uniform vec4 DirectionalShadowAtlasUvScaleBias[MAX_CASCADES];
-uniform vec4 DirectionalShadowAtlasDepthParams[MAX_CASCADES]; // near, far, local texel size, reserved
+uniform vec4 DirectionalShadowAtlasDepthParams[MAX_CASCADES]; // near, far, local texel size, requested/allocated scale
 
 // Distinct debug colors per cascade index
 const vec3 CascadeDebugColorTable[MAX_CASCADES] = vec3[](
@@ -457,7 +457,9 @@ float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDir
 
 float SampleDirectionalAtlasPage(
 	in int pageIndex,
-	in vec3 atlasCoord,
+	in vec3 localCoord,
+	in vec4 uvScaleBias,
+	in float localTexelSize,
 	in float bias,
 	in int blockerSamples,
 	in int filterSamples,
@@ -475,6 +477,16 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewD
 		if (!LightHasShadowMap)
 			return 1.0f;
 
+		float atlasResolutionScale = 1.0f;
+		bool atlasMetadataEnabled = false;
+		if (DirectionalShadowAtlasEnabled)
+		{
+			ivec4 atlasState = DirectionalShadowAtlasPacked0[0];
+			atlasMetadataEnabled = atlasState.x != 0;
+			if (atlasMetadataEnabled)
+				atlasResolutionScale = max(DirectionalShadowAtlasDepthParams[0].w, 1.0f);
+		}
+
 		float receiverOffset = max(ShadowBiasProjectionParams.y, 0.0f);
 		vec3 offsetPosWS = fragPosWS + N * receiverOffset;
 		vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
@@ -486,7 +498,9 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewD
 			fragCoord.z < 0.0f || fragCoord.z > 1.0f)
 			return 1.0f;
 
-		vec2 shadowTexelSize = 1.0f / vec2(textureSize(ShadowMap, 0));
+		vec2 shadowTexelSize = atlasMetadataEnabled && DirectionalShadowAtlasDepthParams[0].z > 0.0f
+			? vec2(max(DirectionalShadowAtlasDepthParams[0].z / atlasResolutionScale, 1e-7f))
+			: 1.0f / vec2(textureSize(ShadowMap, 0));
 		float bias = XRENGINE_ComputeShadowDepthBias(
 			fragCoord,
 			shadowTexelSize,
@@ -501,36 +515,34 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewD
 		{
 			ivec4 atlasI0 = DirectionalShadowAtlasPacked0[0];
 			bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < 2;
-			int fallbackMode = atlasI0.z;
 			if (atlasEnabled)
 			{
 				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[0];
-				vec2 atlasUv = fragCoord.xy * atlasUvScaleBias.xy + atlasUvScaleBias.zw;
-				float atlasRadiusScale = max(atlasUvScaleBias.x, atlasUvScaleBias.y);
-				vec2 atlasTexelSize = max(vec2(DirectionalShadowAtlasDepthParams[0].z) * atlasUvScaleBias.xy, vec2(1e-7f));
+				float atlasLocalTexelSize = max(DirectionalShadowAtlasDepthParams[0].z / atlasResolutionScale, 1e-7f);
 				float atlasBias = XRENGINE_ComputeShadowDepthBias(
-					vec3(atlasUv, fragCoord.z),
-					atlasTexelSize,
-					ShadowFilterRadius * atlasRadiusScale,
+					fragCoord,
+					vec2(atlasLocalTexelSize),
+					ShadowFilterRadius,
 					ShadowBiasProjectionParams.x,
 					max(ShadowBiasParams.y, 0.0f));
 				return SampleDirectionalAtlasPage(
 					atlasI0.y,
-					vec3(atlasUv, fragCoord.z),
+					fragCoord,
+					atlasUvScaleBias,
+					atlasLocalTexelSize,
 					atlasBias,
 					ShadowBlockerSamples,
 					ShadowFilterSamples,
-					ShadowFilterRadius * atlasRadiusScale,
-					ShadowBlockerSearchRadius * atlasRadiusScale,
+					ShadowFilterRadius,
+					ShadowBlockerSearchRadius,
 					SoftShadowMode,
-					LightSourceRadius * atlasRadiusScale,
-					ShadowMinPenumbra * atlasRadiusScale,
-					ShadowMaxPenumbra * atlasRadiusScale,
+					LightSourceRadius,
+					ShadowMinPenumbra,
+					ShadowMaxPenumbra,
 					ShadowVogelTapCount) * contact;
 			}
 
-			if (fallbackMode == 1 || fallbackMode == 2 || fallbackMode == 4)
-				return contact;
+			return contact;
 		}
 
 		return SampleShadowMapFilteredLocal(
@@ -550,7 +562,9 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewD
 
 float SampleDirectionalAtlasPage(
 	in int pageIndex,
-	in vec3 atlasCoord,
+	in vec3 localCoord,
+	in vec4 uvScaleBias,
+	in float localTexelSize,
 	in float bias,
 	in int blockerSamples,
 	in int filterSamples,
@@ -564,9 +578,11 @@ float SampleDirectionalAtlasPage(
 {
 	if (pageIndex == 0)
 	{
-		return XRENGINE_SampleShadowMapFiltered(
+		return XRENGINE_SampleShadowAtlasFiltered(
 			DirectionalShadowAtlasPages[0],
-			atlasCoord,
+			localCoord,
+			uvScaleBias,
+			localTexelSize,
 			bias,
 			blockerSamples,
 			filterSamples,
@@ -581,9 +597,11 @@ float SampleDirectionalAtlasPage(
 
 	if (pageIndex == 1)
 	{
-		return XRENGINE_SampleShadowMapFiltered(
+		return XRENGINE_SampleShadowAtlasFiltered(
 			DirectionalShadowAtlasPages[1],
-			atlasCoord,
+			localCoord,
+			uvScaleBias,
+			localTexelSize,
 			bias,
 			blockerSamples,
 			filterSamples,
@@ -614,6 +632,16 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 			return 1.0f;
 
 		mat4 lightMatrix = LightData.CascadeMatrices[cascadeIndex];
+		float atlasResolutionScale = 1.0f;
+		bool atlasMetadataEnabled = false;
+		if (DirectionalShadowAtlasEnabled)
+		{
+			ivec4 atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
+			atlasMetadataEnabled = atlasState.x != 0;
+			if (atlasMetadataEnabled)
+				atlasResolutionScale = max(DirectionalShadowAtlasDepthParams[cascadeIndex].w, 1.0f);
+		}
+
 		float receiverOffset = LightData.CascadeReceiverOffsets[cascadeIndex];
 		vec3 offsetPosWS = fragPosWS + N * receiverOffset;
 		vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
@@ -627,12 +655,16 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 
 		float cascadeScale = 1.0f + float(cascadeIndex) * 0.35f;
 		float filterRadius = ShadowFilterRadius * cascadeScale;
-		vec2 shadowTexelSize = 1.0f / vec2(textureSize(ShadowMapArray, 0).xy);
+		float atlasAuthoredTexelSize = DirectionalShadowAtlasDepthParams[cascadeIndex].z / atlasResolutionScale;
+		float constantBias = LightData.CascadeBiasMin[cascadeIndex];
+		vec2 shadowTexelSize = atlasMetadataEnabled && DirectionalShadowAtlasDepthParams[cascadeIndex].z > 0.0f
+			? vec2(max(atlasAuthoredTexelSize, 1e-7f))
+			: 1.0f / vec2(textureSize(ShadowMapArray, 0).xy);
 		float bias = XRENGINE_ComputeShadowDepthBias(
 			fragCoord,
 			shadowTexelSize,
 			filterRadius,
-			LightData.CascadeBiasMin[cascadeIndex],
+			constantBias,
 			LightData.CascadeBiasMax[cascadeIndex]);
 		float contact = EnableContactShadows
 			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)
@@ -642,50 +674,34 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 		{
 			ivec4 atlasI0 = DirectionalShadowAtlasPacked0[cascadeIndex];
 			bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < 2;
-			int fallbackMode = atlasI0.z;
 			if (atlasEnabled)
 			{
 				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[cascadeIndex];
-				vec2 atlasUv = fragCoord.xy * atlasUvScaleBias.xy + atlasUvScaleBias.zw;
-				float atlasRadiusScale = max(atlasUvScaleBias.x, atlasUvScaleBias.y);
-				vec2 atlasTexelSize = max(vec2(DirectionalShadowAtlasDepthParams[cascadeIndex].z) * atlasUvScaleBias.xy, vec2(1e-7f));
+				float atlasLocalTexelSize = max(atlasAuthoredTexelSize, 1e-7f);
 				float atlasBias = XRENGINE_ComputeShadowDepthBias(
-					vec3(atlasUv, fragCoord.z),
-					atlasTexelSize,
-					filterRadius * atlasRadiusScale,
-					LightData.CascadeBiasMin[cascadeIndex],
+					fragCoord,
+					vec2(atlasLocalTexelSize),
+					filterRadius,
+					constantBias,
 					LightData.CascadeBiasMax[cascadeIndex]);
 				return SampleDirectionalAtlasPage(
 					atlasI0.y,
-					vec3(atlasUv, fragCoord.z),
+					fragCoord,
+					atlasUvScaleBias,
+					atlasLocalTexelSize,
 					atlasBias,
 					ShadowBlockerSamples,
 					ShadowFilterSamples,
-					filterRadius * atlasRadiusScale,
-					ShadowBlockerSearchRadius * cascadeScale * atlasRadiusScale,
+					filterRadius,
+					ShadowBlockerSearchRadius * cascadeScale,
 					SoftShadowMode,
-					LightSourceRadius * atlasRadiusScale,
-					ShadowMinPenumbra * cascadeScale * atlasRadiusScale,
-					ShadowMaxPenumbra * cascadeScale * atlasRadiusScale,
+					LightSourceRadius,
+					ShadowMinPenumbra * cascadeScale,
+					ShadowMaxPenumbra * cascadeScale,
 					ShadowVogelTapCount) * contact;
 			}
 
-			if (fallbackMode == 2)
-				return contact;
-			return SampleShadowMapArrayFilteredLocal(
-				ShadowMapArray,
-				fragCoord,
-				float(cascadeIndex),
-				bias,
-				ShadowBlockerSamples,
-				ShadowFilterSamples,
-				filterRadius,
-				ShadowBlockerSearchRadius * cascadeScale,
-				SoftShadowMode,
-				LightSourceRadius,
-				ShadowMinPenumbra * cascadeScale,
-				ShadowMaxPenumbra * cascadeScale,
-				ShadowVogelTapCount) * contact;
+			return contact;
 		}
 
 		return SampleShadowMapArrayFilteredLocal(
