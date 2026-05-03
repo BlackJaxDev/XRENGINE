@@ -265,26 +265,7 @@ public static partial class EditorImGuiUI
                 string? path = ImGuiAssetUtilities.GetPathFromPayload(payload);
                 if (!string.IsNullOrWhiteSpace(path))
                 {
-                    if (TryLoadMaterialAsset(path, out var material))
-                    {
-                        // Clear preview state before permanent apply (don't revert, just clear tracking)
-                        if (_prefabPreviewActive)
-                            RevertPrefabPreview();
-                        ClearMaterialPreviewState();
-                        EnqueueSceneEdit(() => TryApplyMaterialDropToHoveredSubmesh(world, material!));
-                    }
-                    else if (TryLoadPrefabAsset(path, out var prefab))
-                    {
-                        _ = TryHandleDroppedSpawnableAsset(world, parent: null, path, GetViewportDropWorldPosition());
-                    }
-                    else if (TryLoadModelAsset(path, out var model))
-                    {
-                        _ = TryHandleDroppedSpawnableAsset(world, parent: null, path, GetViewportDropWorldPosition());
-                    }
-                    else
-                    {
-                        _ = TryHandleDroppedSpawnableAsset(world, parent: null, path, GetViewportDropWorldPosition());
-                    }
+                    _ = TryHandleDroppedAsset(world, parent: null, path, GetViewportDropWorldPosition());
                 }
             }
         }

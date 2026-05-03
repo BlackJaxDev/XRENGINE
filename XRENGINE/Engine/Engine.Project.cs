@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using XREngine.Core.Files;
 using XREngine.Diagnostics;
 using static XREngine.Engine.Rendering;
@@ -71,21 +72,24 @@ namespace XREngine
             ConfigureProjectDirectories(project);
             Assets.SyncMetadataWithAssets();
 
-            // Load global editor preferences + project overrides
-            LoadGlobalEditorPreferences();
-            LoadProjectEditorPreferencesOverrides();
+            using (SuppressSettingsCascades())
+            {
+                // Load global editor preferences + project overrides
+                LoadGlobalEditorPreferences();
+                LoadProjectEditorPreferencesOverrides();
 
-            // Load project-specific game settings before user/build layers that further specialize them.
-            LoadProjectGameSettings();
+                // Load project-specific game settings before user/build layers that further specialize them.
+                LoadProjectGameSettings();
 
-            // Load project-specific user settings
-            LoadProjectUserSettings();
+                // Load project-specific user settings
+                LoadProjectUserSettings();
 
-            // Load project-specific build settings
-            LoadProjectBuildSettings();
+                // Load project-specific build settings
+                LoadProjectBuildSettings();
 
-            // Clear any dirty state that accumulated during loading
-            ClearSettingsDirtyState();
+                // Clear any dirty state that accumulated during loading
+                ClearSettingsDirtyState();
+            }
 
             Debug.Out($"Project loaded: {project.ProjectName}");
             ProjectLoaded?.Invoke(project);
@@ -113,16 +117,19 @@ namespace XREngine
             if (Assets is null)
                 return;
 
-            LoadGlobalEditorPreferences();
-            LoadSandboxEditorPreferencesOverrides();
-            LoadSandboxGameSettings();
-            LoadSandboxUserSettings();
-            LoadSandboxBuildSettings();
+            using (SuppressSettingsCascades())
+            {
+                LoadGlobalEditorPreferences();
+                LoadSandboxEditorPreferencesOverrides();
+                LoadSandboxGameSettings();
+                LoadSandboxUserSettings();
+                LoadSandboxBuildSettings();
 
-            // Clear any dirty state that accumulated during initialization.
-            // Settings created during startup (e.g., VRGameStartupSettings with DefaultUserSettings)
-            // may have been marked dirty before the actual saved settings were loaded.
-            ClearSettingsDirtyState();
+                // Clear any dirty state that accumulated during initialization.
+                // Settings created during startup (e.g., VRGameStartupSettings with DefaultUserSettings)
+                // may have been marked dirty before the actual saved settings were loaded.
+                ClearSettingsDirtyState();
+            }
         }
 
         /// <summary>
@@ -193,7 +200,9 @@ namespace XREngine
 
             try
             {
-                return Assets.Load<T>(settingsPath);
+                // Settings load during Engine.Initialize, before the startup JobManager is
+                // configured. Run inline so startup does not block on an implicit worker pool.
+                return Assets.LoadImmediate<T>(settingsPath);
             }
             catch (Exception ex)
             {
@@ -647,13 +656,19 @@ namespace XREngine
         /// Saves the user settings to the current project directory.
         /// </summary>
         public static void SaveProjectUserSettings()
+            => SaveProjectUserSettingsAsync().GetAwaiter().GetResult();
+
+        /// <summary>
+        /// Saves the user settings to the current project directory without blocking the caller.
+        /// </summary>
+        public static async Task SaveProjectUserSettingsAsync()
         {
             if (Assets is null)
                 return;
 
             if (CurrentProject?.ProjectDirectory is null)
             {
-                SaveSandboxUserSettings();
+                await SaveSandboxUserSettingsAsync().ConfigureAwait(false);
                 return;
             }
 
@@ -665,16 +680,15 @@ namespace XREngine
             UserSettings.FilePath = userSettingsPath;
             UserSettings.Name = "User Settings";
             Assets.EnsureTracked(UserSettings);
-
-            string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
-            if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
             
-            Assets.Save(UserSettings);
+            await Assets.SaveAsync(UserSettings).ConfigureAwait(false);
             Debug.Out("Saved project user settings.");
         }
 
         public static void SaveSandboxUserSettings()
+            => SaveSandboxUserSettingsAsync().GetAwaiter().GetResult();
+
+        public static async Task SaveSandboxUserSettingsAsync()
         {
             if (Assets is null)
                 return;
@@ -687,11 +701,7 @@ namespace XREngine
             UserSettings.Name = "User Settings";
             Assets.EnsureTracked(UserSettings);
 
-            string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
-            if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
-
-            Assets.Save(UserSettings);
+            await Assets.SaveAsync(UserSettings).ConfigureAwait(false);
             Debug.Out("Saved sandbox user settings.");
         }
 

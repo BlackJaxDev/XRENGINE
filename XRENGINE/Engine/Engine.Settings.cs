@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using XREngine.Audio;
+using XREngine.Core.Files;
 using XREngine.Data.Core;
 
 namespace XREngine
@@ -177,6 +178,9 @@ namespace XREngine
         /// </summary>
         private static void HandleUserSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
+            if (IsSettingsMetadataProperty(e.PropertyName))
+                return;
+
             TrackOverrideableSettings(_userSettings, _trackedUserOverrideableSettings);
             ApplyEffectiveSettingsForProperty(e.PropertyName);
         }
@@ -194,6 +198,9 @@ namespace XREngine
         /// </summary>
         private static void HandleGameSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
+            if (IsSettingsMetadataProperty(e.PropertyName))
+                return;
+
             TrackOverrideableSettings(_gameSettings, _trackedGameOverrideableSettings);
             ApplyEffectiveSettingsForProperty(e.PropertyName);
         }
@@ -203,6 +210,9 @@ namespace XREngine
         /// </summary>
         private static void HandleGlobalEditorPreferencesChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
+            if (IsSettingsMetadataProperty(e.PropertyName))
+                return;
+
             if (e.PropertyName == nameof(EditorPreferences.Theme))
             {
                 if (e.PreviousValue is EditorThemeSettings previous)
@@ -229,6 +239,9 @@ namespace XREngine
         /// </summary>
         private static void HandleEditorPreferencesOverridesChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
+            if (IsSettingsMetadataProperty(e.PropertyName))
+                return;
+
             if (e.PropertyName == nameof(EditorPreferencesOverrides.Theme))
             {
                 if (e.PreviousValue is EditorThemeOverrides previous)
@@ -271,9 +284,77 @@ namespace XREngine
                 ApplyEffectiveSettingsForProperty(propertyName);
         }
 
+        private static bool IsSettingsMetadataProperty(string? propertyName)
+            => propertyName is nameof(XRObjectBase.Name)
+                or nameof(XRAsset.FilePath)
+                or nameof(XRAsset.IsDirty)
+                or nameof(XRAsset.OriginalPath)
+                or nameof(XRAsset.OriginalLastWriteTimeUtc);
+
         #endregion
 
         #region Settings Application
+
+        private readonly struct SettingsCascadeSuppressionScope(bool applyOnDispose) : IDisposable
+        {
+            public void Dispose()
+                => EndSettingsCascadeSuppression(applyOnDispose);
+        }
+
+        private static SettingsCascadeSuppressionScope SuppressSettingsCascades(bool applyOnDispose = true)
+        {
+            _settingsCascadeSuppressionDepth++;
+            _suppressSettingsCascades = true;
+            return new SettingsCascadeSuppressionScope(applyOnDispose);
+        }
+
+        private static void EndSettingsCascadeSuppression(bool applyPending)
+        {
+            if (_settingsCascadeSuppressionDepth <= 0)
+                return;
+
+            _settingsCascadeSuppressionDepth--;
+            if (_settingsCascadeSuppressionDepth > 0)
+                return;
+
+            _suppressSettingsCascades = false;
+
+            if (applyPending)
+            {
+                FlushSuppressedSettingsCascades();
+                return;
+            }
+
+            ClearPendingSettingsCascades();
+        }
+
+        private static void MarkRuntimeSettingsApplyPending()
+            => _runtimeSettingsApplyPending = true;
+
+        private static void MarkEditorPreferencesApplyPending()
+        {
+            _editorPreferencesApplyPending = true;
+            _runtimeSettingsApplyPending = true;
+        }
+
+        private static void FlushSuppressedSettingsCascades()
+        {
+            bool applyEditorPreferences = _editorPreferencesApplyPending;
+            bool applyRuntimeSettings = _runtimeSettingsApplyPending;
+            ClearPendingSettingsCascades();
+
+            if (applyEditorPreferences)
+                Rendering.ApplyEditorPreferencesChange(null);
+
+            if (applyRuntimeSettings)
+                ApplyEffectiveSettingsRuntime();
+        }
+
+        private static void ClearPendingSettingsCascades()
+        {
+            _editorPreferencesApplyPending = false;
+            _runtimeSettingsApplyPending = false;
+        }
 
         /// <summary>
         /// Maps property names from UserSettings, GameStartupSettings, and EditorPreferencesOverrides
@@ -393,7 +474,10 @@ namespace XREngine
         private static void ApplyEffectiveSettingsForProperty(string? propertyName)
         {
             if (_suppressSettingsCascades)
+            {
+                MarkRuntimeSettingsApplyPending();
                 return;
+            }
 
             if (string.IsNullOrWhiteSpace(propertyName))
             {
@@ -427,8 +511,10 @@ namespace XREngine
         /// <summary>
         /// Applies audio preferences from the cascading settings system to the audio subsystem.
         /// Cascade: Editor Prefs Override > Game Override > User Preference.
-        /// Skips the apply if all values are already current (avoids redundant log spam on startup).
+        /// Emits an audio warning with a stack trace for startup call-site diagnostics.
         /// </summary>
+        private static int _applyAudioPreferencesCallCount;
+
         private static void ApplyAudioPreferences()
         {
             bool v2 = EffectiveSettings.AudioArchitectureV2;
@@ -436,10 +522,28 @@ namespace XREngine
             var effects = EffectiveSettings.AudioEffects;
             int sampleRate = EffectiveSettings.AudioSampleRate;
 
-            if (AudioSettings.AudioArchitectureV2 == v2
-                && AudioSettings.DefaultTransport == transport
-                && AudioSettings.DefaultEffects == effects
-                && AudioSettings.SampleRate == sampleRate)
+            bool currentV2 = AudioSettings.AudioArchitectureV2;
+            var currentTransport = AudioSettings.DefaultTransport;
+            var currentEffects = AudioSettings.DefaultEffects;
+            int currentSampleRate = AudioSettings.SampleRate;
+            bool alreadyApplied =
+                currentV2 == v2
+                && currentTransport == transport
+                && currentEffects == effects
+                && currentSampleRate == sampleRate;
+
+            LogApplyAudioPreferencesCall(
+                v2,
+                transport,
+                effects,
+                sampleRate,
+                currentV2,
+                currentTransport,
+                currentEffects,
+                currentSampleRate,
+                !alreadyApplied);
+
+            if (alreadyApplied)
                 return; // Nothing changed.
 
             AudioSettings.AudioArchitectureV2 = v2;
@@ -447,6 +551,37 @@ namespace XREngine
             AudioSettings.DefaultEffects = effects;
             AudioSettings.SampleRate = sampleRate;
             AudioSettings.ApplyTo(Audio);
+        }
+
+        private static void LogApplyAudioPreferencesCall(
+            bool effectiveV2,
+            EAudioTransport effectiveTransport,
+            EAudioEffects effectiveEffects,
+            int effectiveSampleRate,
+            bool currentV2,
+            EAudioTransport currentTransport,
+            EAudioEffects currentEffects,
+            int currentSampleRate,
+            bool willApply)
+        {
+            int callCount = System.Threading.Interlocked.Increment(ref _applyAudioPreferencesCallCount);
+            string action = willApply ? "applying audio settings" : "audio settings already current";
+            Debug.LogWarning(
+                ELogCategory.Audio,
+                0,
+                32,
+                "ApplyAudioPreferences call #{0} on thread {1}: {2}. Effective(V2={3}, Transport={4}, Effects={5}, SampleRate={6}); Current(V2={7}, Transport={8}, Effects={9}, SampleRate={10}).",
+                callCount,
+                Environment.CurrentManagedThreadId,
+                action,
+                effectiveV2,
+                effectiveTransport,
+                effectiveEffects,
+                effectiveSampleRate,
+                currentV2,
+                currentTransport,
+                currentEffects,
+                currentSampleRate);
         }
 
         #endregion
@@ -591,7 +726,11 @@ namespace XREngine
             _editorPreferences.CopyFrom(_globalEditorPreferences);
             _editorPreferences.ApplyOverrides(_editorPreferencesOverrides);
 
-            if (!_suppressSettingsCascades)
+            if (_suppressSettingsCascades)
+            {
+                MarkEditorPreferencesApplyPending();
+            }
+            else
             {
                 Rendering.ApplyEditorPreferencesChange(null);
                 ApplyAudioPreferences();

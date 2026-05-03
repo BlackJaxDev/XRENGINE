@@ -241,7 +241,8 @@ public static partial class EditorImGuiUI
             bool AnimationClipEditor,
             bool ShaderGraph,
             bool ArchiveInspector,
-            bool TextureStreaming);
+            bool TextureStreaming,
+            bool ExternalTextureBrowser);
 
 
 
@@ -263,6 +264,12 @@ public static partial class EditorImGuiUI
                 _collectionTypeDescriptorCache.Clear();
                 _collectionTypePickerSearch.Clear();
                 _transformEditorCache.Clear();
+                _structEditablePropertyCache.Clear();
+                _eventSignatureOptionsCache.Clear();
+                _eventMethodOptionsCache.Clear();
+                _hierarchyTraversalMembersCache.Clear();
+                ClearDroppedAssetLoadCache();
+                ClearThirdPartyImportSettingsCache();
             };
             Engine.Time.Timer.UpdateFrame += ProcessQueuedSceneEdits;
             Engine.Time.Timer.UpdateFrame += EnsureScenePanelWindowHooked;
@@ -636,6 +643,7 @@ public static partial class EditorImGuiUI
                 DrawScenePanel();
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
+            DrawExternalTextureBrowserPanel();
             DrawArchiveInspectorPanel();
             using (Engine.Profiler.Start("UI.DrawTextureStreamingPanel"))
                 DrawTextureStreamingPanel();
@@ -711,26 +719,7 @@ public static partial class EditorImGuiUI
                             if (world is not null)
                             {
                                 string path = _assetDragPath;
-                                if (TryLoadMaterialAsset(path, out var material))
-                                {
-                                    // Clear preview state before permanent apply
-                                    if (_prefabPreviewActive)
-                                        RevertPrefabPreview();
-                                    ClearMaterialPreviewState();
-                                    EnqueueSceneEdit(() => TryApplyMaterialDropToHoveredSubmesh(world, material!));
-                                }
-                                else if (TryLoadPrefabAsset(path, out var prefab))
-                                {
-                                    _ = TryHandleDroppedSpawnableAsset(world, parent: null, path, GetViewportDropWorldPosition());
-                                }
-                                else if (TryLoadModelAsset(path, out var model))
-                                {
-                                    _ = TryHandleDroppedSpawnableAsset(world, parent: null, path, GetViewportDropWorldPosition());
-                                }
-                                else
-                                {
-                                    _ = TryHandleDroppedSpawnableAsset(world, parent: null, path, GetViewportDropWorldPosition());
-                                }
+                                _ = TryHandleDroppedAsset(world, parent: null, path, GetViewportDropWorldPosition());
                             }
                         }
                     }
@@ -1300,6 +1289,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.MenuItem("Networking", null, ref _showNetworking);
                 ImGui.MenuItem("Animation Clip Editor", null, ref _showAnimationClipEditor);
+                ImGui.MenuItem("External Texture Browser", null, ref _showExternalTextureBrowser);
                 ImGui.MenuItem("Texture Streaming", null, ref _showTextureStreaming);
                 ImGui.Separator();
                 if (ImGui.MenuItem("Reset Layout"))
@@ -1321,6 +1311,9 @@ public static partial class EditorImGuiUI
 
                 if (ImGui.MenuItem("Archive Inspector"))
                     _showArchiveInspector = true;
+
+                if (ImGui.MenuItem("External Texture Browser"))
+                    _showExternalTextureBrowser = true;
 
                 if (ImGui.MenuItem("Shader Editor"))
                     ShaderEditorWindow.Instance.Open();
@@ -1901,7 +1894,22 @@ public static partial class EditorImGuiUI
             }
 
             if (changed)
-                Engine.SaveProjectUserSettings();
+                QueueProjectUserSettingsSave();
+        }
+
+        private static void QueueProjectUserSettingsSave()
+            => _ = SaveProjectUserSettingsFromImGuiAsync();
+
+        private static async Task SaveProjectUserSettingsFromImGuiAsync()
+        {
+            try
+            {
+                await Engine.SaveProjectUserSettingsAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, "Failed to save project user settings.");
+            }
         }
 
         private static void LoadPanelVisibilityFromImGuiIniIfNeeded()
@@ -2085,7 +2093,8 @@ public static partial class EditorImGuiUI
                 AnimationClipEditor: _showAnimationClipEditor,
                 ShaderGraph: _showShaderGraphPanel,
                 ArchiveInspector: _showArchiveInspector,
-                TextureStreaming: _showTextureStreaming);
+                TextureStreaming: _showTextureStreaming,
+                ExternalTextureBrowser: _showExternalTextureBrowser);
 
         private static bool TryParseIniBoolean(string valueText, out bool value)
         {
@@ -2158,6 +2167,9 @@ public static partial class EditorImGuiUI
                 case "TextureStreaming":
                     _showTextureStreaming = value;
                     break;
+                case "ExternalTextureBrowser":
+                    _showExternalTextureBrowser = value;
+                    break;
             }
         }
 
@@ -2184,6 +2196,7 @@ public static partial class EditorImGuiUI
             builder.AppendLine($"ShaderGraph={FormatIniBoolean(state.ShaderGraph)}");
             builder.AppendLine($"ArchiveInspector={FormatIniBoolean(state.ArchiveInspector)}");
             builder.AppendLine($"TextureStreaming={FormatIniBoolean(state.TextureStreaming)}");
+            builder.AppendLine($"ExternalTextureBrowser={FormatIniBoolean(state.ExternalTextureBrowser)}");
             return builder.ToString();
         }
 

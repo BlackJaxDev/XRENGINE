@@ -457,6 +457,20 @@ PBRData buildSurfacePbrData(vec2 uv, vec3 baseColor) {
     pbr.F0 = vec3(0.04);             // generic dielectric Fresnel at normal incidence
     pbr.diffuseColor = baseColor;
     pbr.specularColor = vec3(1.0);
+
+#ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
+    vec4 specTex = texture(_SpecularMap, transformUV(uv, _SpecularMap_ST));
+    float specMask = saturate(max(max(specTex.r, specTex.g), max(specTex.b, specTex.a)));
+    pbr.specularMask *= specMask;
+    pbr.specularColor = max(specTex.rgb * _SpecularTint.rgb, vec3(0.0));
+    pbr.F0 = clamp(vec3(0.04) * pbr.specularColor * max(_SpecularTint.a, 0.0), vec3(0.0), vec3(1.0));
+
+    if (_SpecularType == 2) {
+        pbr.perceptualRoughness = clamp(pbr.perceptualRoughness * 0.75, 0.04, 1.0);
+        pbr.roughness = pbr.perceptualRoughness * pbr.perceptualRoughness;
+    }
+#endif
+
     return pbr;
 }
 
@@ -487,6 +501,36 @@ float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
     aoUV = panUV(aoUV, _LightingAOMapsPan, u_Time);
     float aoSample = texture(_LightingAOMaps, aoUV).r;
     return mix(1.0, aoSample, saturate(_LightDataAOStrengthR));
+#endif
+}
+
+float sampleLightingShadowMask(ToonMesh mesh) {
+#ifdef XRENGINE_UBER_DISABLE_SHADOW_MASKS
+    return 1.0;
+#else
+    if (_LightingShadowMaskStrengthR <= 0.0) {
+        return 1.0;
+    }
+
+    vec2 maskUV = transformUV(mesh.uv[0], _LightingShadowMasks_ST);
+    float mask = texture(_LightingShadowMasks, maskUV).r;
+    return mix(1.0, mask, saturate(_LightingShadowMaskStrengthR));
+#endif
+}
+
+vec3 applyDetailNormal(ToonMesh mesh, vec3 normal) {
+#ifdef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
+    return normal;
+#else
+    if (abs(_DetailNormalMapScale) <= EPSILON) {
+        return normal;
+    }
+
+    vec2 detailNormalUV = transformUV(mesh.uv[0], _DetailNormalMap_ST);
+    detailNormalUV = panUV(detailNormalUV, _DetailNormalMapPan, u_Time);
+    vec3 detailTangentNormal = unpackNormal(texture(_DetailNormalMap, detailNormalUV), _DetailNormalMapScale);
+    vec3 detailWorldNormal = normalize(mesh.TBN * detailTangentNormal);
+    return normalize(mix(normal, detailWorldNormal, saturate(_DetailNormalMapScale)));
 #endif
 }
 
@@ -646,7 +690,7 @@ float calculateStylizedLightMap(float nDotL) {
     float lightMap = nDotL;
     switch(_LightingMapMode) {
         case 0: lightMap = nDotL * 0.5 + 0.5; break;
-        case 1: lightMap = nDotL * 0.5 + 0.5; break;
+        case 1: lightMap = saturate(nDotL * 0.5 + 0.5); break;
         case 2: lightMap = saturate(nDotL); break;
         case 3: lightMap = 1.0; break;
     }
@@ -655,15 +699,51 @@ float calculateStylizedLightMap(float nDotL) {
 #endif
 }
 
+vec3 resolveStylizedLightingDirection(ToonMesh mesh, vec3 normal, vec3 lightDirection) {
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    return lightDirection;
+#else
+    switch (_LightingDirectionMode) {
+        case 1:
+            return normal;
+        case 2:
+            return mesh.viewDir;
+        case 3:
+            return vec3(0.0, 1.0, 0.0);
+        default:
+            return lightDirection;
+    }
+#endif
+}
+
+vec3 resolveStylizedLightingColor(vec3 lightColor) {
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    return lightColor;
+#else
+    float maxChannel = max(max(lightColor.r, lightColor.g), lightColor.b);
+    switch (_LightingColorMode) {
+        case 1:
+            return vec3(luminance(lightColor));
+        case 2:
+            return vec3(maxChannel);
+        case 3:
+            return maxChannel > EPSILON ? lightColor / maxChannel : vec3(0.0);
+        default:
+            return lightColor;
+    }
+#endif
+}
+
 ToonLight createToonLight(ToonMesh mesh, vec3 normal, vec3 lightDirection, vec3 lightColor, float attenuation, vec3 indirectColor) {
     ToonLight light;
 
-    vec3 safeDirection = dot(lightDirection, lightDirection) > EPSILON
-        ? normalize(lightDirection)
+    vec3 resolvedDirection = resolveStylizedLightingDirection(mesh, normal, lightDirection);
+    vec3 safeDirection = dot(resolvedDirection, resolvedDirection) > EPSILON
+        ? normalize(resolvedDirection)
         : vec3(0.0, 1.0, 0.0);
 
     light.direction = safeDirection;
-    light.color = lightColor * attenuation;
+    light.color = resolveStylizedLightingColor(lightColor) * attenuation;
     light.attenuation = attenuation;
     light.indirectColor = indirectColor;
 
@@ -676,6 +756,11 @@ ToonLight createToonLight(ToonMesh mesh, vec3 normal, vec3 lightDirection, vec3 
     return light;
 #else
     // Stylized path: optional hemisphere ambient tint + ramp-driven remap.
+    if (_LightingIgnoreAmbientColor > 0.0) {
+        vec3 neutralAmbient = vec3(luminance(light.indirectColor));
+        light.indirectColor = mix(light.indirectColor, neutralAmbient, saturate(_LightingIgnoreAmbientColor));
+    }
+
     if (_LightingIndirectUsesNormals > 0.0) {
         // Simple hemisphere lighting: upward-facing surfaces brighten,
         // downward-facing surfaces darken.
@@ -768,7 +853,8 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
             float blur = _ShadowBlur;
             shadow = smoothstep(border - blur, border + blur, light.lightMap);
             
-            vec3 shadowColor = _ShadowColor.rgb * _ShadowColor.a;
+            vec4 shadowTex = texture(_ShadowColorTex, mesh.uv[0]);
+            vec3 shadowColor = _ShadowColor.rgb * _ShadowColor.a * shadowTex.rgb;
             finalLight = mix(light.color * shadowColor, light.color, shadow);
             break;
         }
@@ -776,11 +862,33 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
         case 2: // Wrapped
         {
             float wrap = _LightingWrappedWrap;
-            float wrappedNDotL = (light.nDotL + wrap) / (1.0 + wrap);
-            shadow = smoothstep(_LightingGradientStart, _LightingGradientEnd, wrappedNDotL);
+            float wrappedNDotL = light.nDotL + wrap;
+            if (_LightingWrappedNormalization > 0.5) {
+                wrappedNDotL /= max(1.0 + wrap, EPSILON);
+            }
+            shadow = smoothstep(_LightingGradientStart, _LightingGradientEnd, saturate(wrappedNDotL));
             
             vec3 shadowColor = _LightingShadowColor;
             finalLight = mix(light.color * shadowColor, light.color, shadow);
+            break;
+        }
+
+        case 3: // Skin
+        {
+            float wrap = max(_LightingWrappedWrap, 0.35);
+            float skinLight = saturate((light.nDotL + wrap) / (1.0 + wrap));
+            shadow = smoothstep(_LightingGradientStart, _LightingGradientEnd, skinLight);
+            vec3 skinShadow = mix(_LightingShadowColor, vec3(1.0, 0.72, 0.58), 0.35);
+            finalLight = mix(light.color * skinShadow, light.color, shadow);
+            break;
+        }
+
+        case 4: // ShadeMap
+        {
+            vec4 shadeMap = texture(_ShadowColorTex, mesh.uv[0]);
+            shadow = smoothstep(_ShadowBorder - _ShadowBlur, _ShadowBorder + _ShadowBlur, light.lightMap);
+            vec3 shadeColor = mix(_LightingShadowColor, shadeMap.rgb, shadeMap.a);
+            finalLight = mix(light.color * shadeColor, light.color, shadow);
             break;
         }
         
@@ -789,8 +897,8 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
             // Flat mode intentionally ignores NdotL. Each direct light
             // contributes a constant band, with only attenuation / explicit
             // shadowing allowed to reduce it.
-            shadow = 1.0;
-            finalLight = light.color;
+            shadow = _ForceFlatRampedLightmap > 0.5 ? step(0.5, light.lightMap) : 1.0;
+            finalLight = light.color * shadow;
             break;
         }
 
@@ -798,6 +906,24 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
         {
             shadow = saturate(light.nDotL);
             finalLight = light.color * shadow;
+            break;
+        }
+
+        case 7: // Cloth
+        {
+            float clothLight = saturate(light.lightMap);
+            shadow = smoothstep(_ShadowBorder - _ShadowBlur, _ShadowBorder + _ShadowBlur, clothLight);
+            float grazingFiber = 0.85 + 0.15 * pow(1.0 - saturate(abs(light.nDotV)), 2.0);
+            finalLight = mix(light.color * _LightingShadowColor, light.color, shadow) * grazingFiber;
+            break;
+        }
+
+        case 8: // SDF
+        {
+            vec3 localDir = normalize(mesh.localPos + normal * 0.25);
+            float sdfLight = saturate(dot(localDir, light.direction) * 0.5 + 0.5);
+            shadow = smoothstep(_ShadowBorder - _ShadowBlur, _ShadowBorder + _ShadowBlur, min(light.lightMap, sdfLight));
+            finalLight = mix(light.color * _LightingShadowColor, light.color, shadow);
             break;
         }
         
@@ -809,10 +935,12 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
         }
     }
 
-    float combinedShadow = saturate(shadow * shadowMapFactor);
+    float materialShadowMask = sampleLightingShadowMask(mesh);
+    float engineShadow = saturate(shadowMapFactor * materialShadowMask);
+    float combinedShadow = saturate(shadow * engineShadow);
 
     // Artist-friendly softening toward fully lit.
-    float directVisibility = mix(1.0, saturate(shadowMapFactor), _ShadowStrength);
+    float directVisibility = mix(1.0, engineShadow, _ShadowStrength);
     float tintVisibility = mix(1.0, combinedShadow, _ShadowStrength);
 
     // Colored tint in shadowed regions (e.g. cool blue shadows).
@@ -1009,6 +1137,7 @@ vec3 calculateEmission(ToonMesh mesh, ToonLight light) {
     // Scrolling emission
     if (_EmissionScrollingEnabled > 0.5) {
         emissionUV += _EmissionScrollingSpeed * u_Time;
+        emissionUV += mesh.vertexColor.rg * _EmissionScrollingVertexColor;
     }
     
     vec4 emissionTex = texture(_EmissionMap, emissionUV);
@@ -1029,7 +1158,8 @@ vec3 calculateMatcap(ToonMesh mesh, vec3 normal, ToonLight light, inout vec3 emi
     return vec3(0.0);
 #else
     // Calculate matcap UV based on view-space normal
-    vec3 viewNormal = normalize(mat3(u_ViewMatrix) * normal);
+    vec3 matcapNormal = normalize(mix(mesh.vertexNormal, normal, saturate(_MatcapNormal)));
+    vec3 viewNormal = normalize(mat3(u_ViewMatrix) * matcapNormal);
     
     vec2 matcapUV;
     switch(_MatcapUVMode) {
@@ -1110,12 +1240,58 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
     rim *= mix(1.0, light.lightMap, _RimHideInShadow);
     
     // Apply color
-    vec3 rimColor = _RimLightColor.rgb * rim * _RimBlendStrength;
+    vec3 rimColor = _RimLightColor.rgb * rim;
     
     // Mix with light color
     rimColor = mix(rimColor, rimColor * light.color, _RimLightColorBias);
     
     return rimColor;
+#endif
+}
+
+vec3 calculateAdvancedSpecular(ToonMesh mesh, vec3 normal, ToonLight light, PBRData pbr) {
+#ifdef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
+    return vec3(0.0);
+#else
+    if (_SpecularStrength <= 0.0) {
+        return vec3(0.0);
+    }
+
+    vec2 specUV = transformUV(mesh.uv[0], _SpecularMap_ST);
+    vec4 specTex = texture(_SpecularMap, specUV);
+    float specMask = saturate(max(max(specTex.r, specTex.g), max(specTex.b, specTex.a)));
+    vec3 specTint = max(specTex.rgb * _SpecularTint.rgb, vec3(0.0));
+    float strength = _SpecularStrength * specMask * pbr.specularMask * mix(0.5, 2.0, saturate(_StylizedSpecular));
+
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    if (_SpecularType == 0) {
+        return vec3(0.0);
+    }
+#else
+    if (_SpecularType == 0 && _LightingMode == 6) {
+        return vec3(0.0);
+    }
+#endif
+
+    if (_SpecularType == 0) {
+        float exponent = mix(8.0, 256.0, saturate(_SpecularSmoothness));
+        float highlight = pow(saturate(light.nDotH), exponent) * saturate(light.nDotL);
+        return specTint * light.color * highlight * strength;
+    }
+
+    if (_SpecularType == 1) {
+        float toonSize = mix(0.35, 0.98, saturate(_SpecularSmoothness));
+        float toonFeather = mix(0.08, 0.005, saturate(_SpecularSmoothness));
+        float highlight = smoothstep(toonSize - toonFeather, toonSize + toonFeather, saturate(light.nDotH));
+        return specTint * light.color * highlight * strength * saturate(light.nDotL);
+    }
+
+    vec3 tangent = normalize(mesh.TBN[0]);
+    float tDotH = dot(tangent, light.halfDir);
+    float anisoBand = sqrt(max(0.0, 1.0 - tDotH * tDotH));
+    float exponent = mix(8.0, 128.0, saturate(_SpecularSmoothness));
+    float highlight = pow(anisoBand, exponent) * saturate(light.nDotL);
+    return specTint * light.color * highlight * strength;
 #endif
 }
 
@@ -1192,6 +1368,7 @@ void main() {
 
     // Normal map sampling uses the (possibly parallax-warped) UV0.
     mesh.worldNormal = calculateNormal(mesh);
+    mesh.worldNormal = applyDetailNormal(mesh, mesh.worldNormal);
 
     // ---- 4. Base color, color adjustments, alpha ----------------------------
     FragmentData fragData;
@@ -1289,14 +1466,19 @@ void main() {
         fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
     }
 #endif
+
+#ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
+    fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr);
+#endif
     
     // Subsurface scattering (wrap-lighting approximation): backlit direction
     // times a view-aligned falloff, modulated by a thickness map. Produces
     // the classic "glow through ears / leaves" look.
 #ifndef XRENGINE_UBER_DISABLE_SUBSURFACE
     {
+        vec3 distortedLight = normalize(-light.direction + mesh.worldNormal * _SSSDistortion);
         float backLight = max(0.0, dot(-mesh.worldNormal, light.direction));
-        float viewWrap = pow(max(0.0, dot(mesh.viewDir, -light.direction)), max(_SSSPower, 0.001));
+        float viewWrap = pow(max(0.0, dot(mesh.viewDir, distortedLight)), max(_SSSPower, 0.001));
         float thickness = texture(_SSSThicknessMap, mesh.uv[0]).r;
         float sssStrength = backLight * viewWrap * _SSSScale * mix(1.0, thickness, 0.5);
         vec3 sss = _SSSColor.rgb * (light.color + light.indirectColor * _SSSAmbient) * sssStrength;
@@ -1317,8 +1499,15 @@ void main() {
     // Rim light. Also contributes to emission so it survives bloom.
 #ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
     vec3 rimColor = calculateRimLight(mesh, mesh.worldNormal, light);
-    fragData.finalColor += rimColor;
-    fragData.emission += rimColor * _RimEmission;
+    float rimStrength = saturate(_RimBlendStrength);
+    if (_RimBlendMode == 0) {
+        fragData.finalColor = mix(fragData.finalColor, rimColor, rimStrength);
+    } else if (_RimBlendMode == 2) {
+        fragData.finalColor = mix(fragData.finalColor, fragData.finalColor * max(rimColor, vec3(0.0)), rimStrength);
+    } else {
+        fragData.finalColor += rimColor * rimStrength;
+    }
+    fragData.emission += rimColor * _RimEmission * rimStrength;
 #endif
 
     // Sparkle: hashed noise gated by view angle and an optional mask,
@@ -1331,7 +1520,9 @@ void main() {
         float angleMask = smoothstep(_GlitterMinAngle, _GlitterMaxAngle, 1.0 - nDotV);
         float glitterMask = texture(_GlitterMask, mesh.uv[0]).r;
         float glitterStrength = pow(glitterNoise, max(_GlitterSize, 0.001)) * _GlitterBrightness * angleMask * glitterMask;
-        vec3 glitter = _GlitterColor.rgb * glitterStrength;
+        vec3 rainbow = hsvToRgb(vec3(fract(glitterNoise + u_Time * 0.05), 0.85, 1.0));
+        vec3 glitterColor = mix(_GlitterColor.rgb, rainbow, saturate(_GlitterRainbow));
+        vec3 glitter = glitterColor * glitterStrength;
         fragData.finalColor += glitter;
         fragData.emission += glitter; // Glitter is emissive
     }
@@ -1339,14 +1530,18 @@ void main() {
     
     // Flipbook (sprite-sheet) additive overlay.
 #ifndef XRENGINE_UBER_DISABLE_FLIPBOOK
-    if (_FlipbookBlendMode > 0.5) {
+    {
         vec4 flipbookColor = simpleFlipbook(
             _FlipbookTexture,
             mesh.uv[0],
             int(max(_FlipbookColumns, 1.0)),
             int(max(_FlipbookRows, 1.0)),
             _FlipbookFrameRate,
-            u_Time
+            u_Time,
+            _FlipbookFrame,
+            _FlipbookManualFrame,
+            _FlipbookBlendMode > 0.5,
+            _FlipbookCrossfade
         );
         fragData.finalColor += flipbookColor.rgb * flipbookColor.a;
     }

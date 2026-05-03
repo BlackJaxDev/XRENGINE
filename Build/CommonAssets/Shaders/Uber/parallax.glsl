@@ -6,7 +6,6 @@
 // ============================================
 // Parallax Uniforms (defined in uniforms.glsl)
 // ============================================
-// uniform float _EnableParallax;
 // uniform sampler2D _ParallaxMap;        // Height map (usually R channel)
 // uniform vec4 _ParallaxMap_ST;
 // uniform float _ParallaxStrength;       // Height scale (0.01-0.1 typical)
@@ -17,11 +16,11 @@
 
 // Parallax mode constants
 const int PARALLAX_SIMPLE = 0;
-const int PARALLAX_STEEP = 1;
-const int PARALLAX_OCCLUSION = 2;
-const int PARALLAX_RELIEF = 3;
+const int PARALLAX_OCCLUSION = 1;
 // Silhouette Parallax Occlusion Mapping (SPOM): like POM but can discard when ray exits UV bounds
-const int PARALLAX_SILHOUETTE_OCCLUSION = 4;
+const int PARALLAX_SILHOUETTE_OCCLUSION = 2;
+const int PARALLAX_STEEP = 3;
+const int PARALLAX_RELIEF = 4;
 
 bool isUvIn01(vec2 uv) {
     return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
@@ -250,10 +249,6 @@ vec2 calculateReliefParallax(vec2 uv, vec3 viewDirTangent, float heightScale, in
 // Main Parallax Function
 // ============================================
 vec2 applyParallax(vec2 uv, vec3 worldPos, vec3 viewDir, mat3 TBN, int parallaxMode) {
-    if (_EnableParallax < 0.5) {
-        return uv;
-    }
-    
     // Transform view direction to tangent space
     mat3 TBN_T = transpose(TBN);
     vec3 viewDirTangent = normalize(TBN_T * viewDir);
@@ -298,10 +293,6 @@ vec2 applyParallax(vec2 uv, vec3 worldPos, vec3 viewDir, mat3 TBN, int parallaxM
 // Returns UVs in base mesh UV space.
 vec2 applyParallaxWithValidity(vec2 uv, vec3 worldPos, vec3 viewDir, mat3 TBN, int parallaxMode, out float valid) {
     valid = 1.0;
-
-    if (_EnableParallax < 0.5) {
-        return uv;
-    }
 
     // Transform view direction to tangent space
     mat3 TBN_T = transpose(TBN);
@@ -375,9 +366,6 @@ float calculateParallaxShadow(vec2 uv, vec3 lightDirTangent, float heightScale, 
 // Get Parallax Height at UV (for depth effects)
 // ============================================
 float getParallaxHeight(vec2 uv) {
-    if (_EnableParallax < 0.5) {
-        return 0.5;
-    }
     return sampleHeightMap(uv * _ParallaxMap_ST.xy + _ParallaxMap_ST.zw);
 }
 

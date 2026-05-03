@@ -70,11 +70,15 @@ namespace XREngine
                 StartingUp = true;
                 ShuttingDown = false;
                 RenderThreadId = Environment.CurrentManagedThreadId;
-                GameSettings = startupSettings;
-                UserSettings = GameSettings.DefaultUserSettings?.DeepClone() ?? new UserSettings();
 
-                if (CurrentProject is null)
-                    LoadSandboxSettings();
+                using (SuppressSettingsCascades())
+                {
+                    GameSettings = startupSettings;
+                    UserSettings = GameSettings.DefaultUserSettings?.DeepClone() ?? new UserSettings();
+
+                    if (CurrentProject is null)
+                        LoadSandboxSettings();
+                }
 
                 ValidateGpuRenderingStartupConfiguration();
                 ConfigureJobManager(GameSettings);

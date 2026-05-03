@@ -122,6 +122,33 @@ public sealed class UberMaterialVariantTests
     }
 
     [Test]
+    public void EnsureUberVariantPreparedForRendering_ActivatesAuthoredFeatureFromCanonicalFallback()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            #define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1
+            //@feature(id="stylized-shading", name="Stylized Lighting", default=off)
+            #ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+            //@property(name="_LightingMode", display="Lighting Mode", mode=static)
+            uniform int _LightingMode;
+            #endif
+            """,
+            new ShaderInt(5, "_LightingMode"));
+
+        material.EnsureUberStateInitialized();
+        material.SetUberFeatureEnabled("stylized-shading", true).ShouldBeTrue();
+
+        material.EnsureUberVariantPreparedForRendering().ShouldBeTrue(material.UberVariantStatus.FailureReason);
+
+        string generatedSource = GetFragmentSource(material);
+        generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
+        generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1");
+        generatedSource.ShouldContain("#define _LightingMode 5");
+        material.ActiveUberVariant.EnabledFeatures.ShouldContain("stylized-shading");
+    }
+
+    [Test]
     public void DefaultForwardPlusUberParameters_DoNotEmitWithoutAuthoredStrength()
     {
         ShaderVar[] parameters = global::XREngine.ModelImporter.CreateDefaultForwardPlusUberShaderParameters();

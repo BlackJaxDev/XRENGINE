@@ -6,6 +6,7 @@ using SixLabors.ImageSharp.PixelFormats;
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Numerics;
@@ -36,7 +37,7 @@ namespace XREngine.Rendering
         private const long ProgressiveOpenGlUploadBytesPerFrame = 4L * 1024L * 1024L;
         private const long CaptureDeferralBacklogBytesPerFrame = 24L * 1024L * 1024L;
 
-        private static readonly ConcurrentDictionary<XRTexture2D, byte> _progressiveUploads = [];
+        private static readonly ConcurrentDictionary<XRTexture2D, TextureUploadWorkItem> _progressiveUploads = [];
         private static int _activeProgressiveUploadCount;
         private static long _progressiveUploadBytesScheduledThisFrame;
         private static long _progressiveUploadBytesFrameTicks = -1;
@@ -360,11 +361,15 @@ namespace XREngine.Rendering
             return $"{operation}[{textureName}]";
         }
 
-        private static void ScheduleGpuUpload(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted = null)
+        private static void ScheduleGpuUpload(
+            XRTexture2D texture,
+            CancellationToken cancellationToken,
+            Action? onCompleted = null,
+            TextureUploadPriorityClass priorityClass = TextureUploadPriorityClass.Background)
         {
             if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
             {
-                ScheduleProgressiveOpenGlUpload(texture, cancellationToken, onCompleted);
+                ScheduleProgressiveOpenGlUpload(texture, cancellationToken, onCompleted, priorityClass);
                 return;
             }
 
@@ -442,7 +447,11 @@ namespace XREngine.Rendering
             }
         }
 
-        private static void ScheduleProgressiveOpenGlUpload(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted)
+        private static void ScheduleProgressiveOpenGlUpload(
+            XRTexture2D texture,
+            CancellationToken cancellationToken,
+            Action? onCompleted,
+            TextureUploadPriorityClass priorityClass)
         {
             texture.RuntimeManagedProgressiveUploadActive = true;
             texture.RuntimeManagedProgressiveFinalizePending = false;
@@ -460,14 +469,14 @@ namespace XREngine.Rendering
                 MipLevelCount: texture.Mipmaps?.Length ?? 0,
                 EstimatedBytes: estimatedBytes,
                 CapturedStorageGeneration: 0,
-                TextureUploadPriorityClass.Background,
+                priorityClass,
                 queueTimestamp);
 
             // Increment the upload token before TryAdd so that any existing coroutine
             // detects the supersede on its next tick and cleans up.
             int uploadToken = Interlocked.Increment(ref texture._progressiveUploadToken);
 
-            if (!_progressiveUploads.TryAdd(texture, 0))
+            if (!_progressiveUploads.TryAdd(texture, workItem))
             {
                 // An existing progressive upload is still registered for this texture.
                 // It will detect the token mismatch on its next coroutine tick and clean up.
@@ -509,7 +518,7 @@ namespace XREngine.Rendering
                         // Force-evict the stale entry (the old coroutine should have cleaned up by now).
                         _progressiveUploads.TryRemove(texture, out _);
 
-                        if (!_progressiveUploads.TryAdd(texture, 0))
+                        if (!_progressiveUploads.TryAdd(texture, workItem))
                         {
                             // Still can't register — another upload is active. Let the caller know
                             // so ClearPendingTransition runs and the next Evaluate cycle re-queues.
@@ -541,11 +550,60 @@ namespace XREngine.Rendering
                     GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ProgressiveUploadStart"));
         }
 
+        private static bool HasHigherPriorityProgressiveUpload(XRTexture2D currentTexture, TextureUploadWorkItem current)
+        {
+            foreach (KeyValuePair<XRTexture2D, TextureUploadWorkItem> pair in _progressiveUploads)
+            {
+                if (ReferenceEquals(pair.Key, currentTexture))
+                    continue;
+
+                if (!pair.Key.RuntimeManagedProgressiveUploadActive)
+                    continue;
+
+                if (IsProgressiveUploadHigherPriority(pair.Value, current))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsProgressiveUploadHigherPriority(TextureUploadWorkItem candidate, TextureUploadWorkItem current)
+        {
+            int candidateRank = GetProgressiveUploadPriorityRank(candidate.PriorityClass);
+            int currentRank = GetProgressiveUploadPriorityRank(current.PriorityClass);
+            if (candidateRank != currentRank)
+                return candidateRank > currentRank;
+
+            return candidate.QueueTimestamp < current.QueueTimestamp;
+        }
+
+        private static int GetProgressiveUploadPriorityRank(TextureUploadPriorityClass priorityClass)
+            => priorityClass switch
+            {
+                TextureUploadPriorityClass.VisibleNow => 3,
+                TextureUploadPriorityClass.NearVisible => 2,
+                TextureUploadPriorityClass.Background => 1,
+                _ => 0,
+            };
+
+        private static bool TryRemoveProgressiveUpload(XRTexture2D texture, TextureUploadWorkItem workItem)
+            => ((ICollection<KeyValuePair<XRTexture2D, TextureUploadWorkItem>>)_progressiveUploads).Remove(
+                new KeyValuePair<XRTexture2D, TextureUploadWorkItem>(texture, workItem));
+
         private static void StartProgressiveCoroutine(XRTexture2D texture, int uploadToken, TextureUploadWorkItem workItem, CancellationToken cancellationToken, Action? onCompleted)
         {
             bool slotAcquired = false;
             bool waitLogged = false;
             bool budgetWaitLogged = false;
+
+            void ReleaseProgressiveUploadSlot()
+            {
+                if (!slotAcquired)
+                    return;
+
+                slotAcquired = false;
+                Interlocked.Decrement(ref _activeProgressiveUploadCount);
+            }
 
             void CleanupProgressiveUpload(bool releaseRuntimeOwnership = true)
             {
@@ -557,13 +615,9 @@ namespace XREngine.Rendering
                     texture.RuntimeManagedProgressiveFinalizePending = false;
                 }
 
-                if (slotAcquired)
-                {
-                    slotAcquired = false;
-                    Interlocked.Decrement(ref _activeProgressiveUploadCount);
-                }
+                ReleaseProgressiveUploadSlot();
 
-                _progressiveUploads.TryRemove(texture, out _);
+                TryRemoveProgressiveUpload(texture, workItem);
 
                 var mips = texture.Mipmaps;
                 if (mips is null)
@@ -583,7 +637,7 @@ namespace XREngine.Rendering
             if (mipmaps is null || mipmaps.Length == 0)
             {
                 texture.RuntimeManagedProgressiveUploadActive = false;
-                _progressiveUploads.TryRemove(texture, out _);
+                TryRemoveProgressiveUpload(texture, workItem);
                 onCompleted?.Invoke();
                 return;
             }
@@ -621,6 +675,9 @@ namespace XREngine.Rendering
 
                     if (!slotAcquired)
                     {
+                        if (HasHigherPriorityProgressiveUpload(texture, workItem))
+                            return false;
+
                         int active = Interlocked.Increment(ref _activeProgressiveUploadCount);
                         if (active > MaxConcurrentProgressiveOpenGlUploads)
                         {
@@ -683,6 +740,9 @@ namespace XREngine.Rendering
 
                         mipmaps[lockMipLevel].StreamingPBO = null;
                         seedUploaded = true;
+                        if (HasHigherPriorityProgressiveUpload(texture, workItem))
+                            ReleaseProgressiveUploadSlot();
+
                         return false;
                     }
 
@@ -764,6 +824,8 @@ namespace XREngine.Rendering
                     {
                         mipmaps[nextMipToUpload].StreamingPBO = null;
                         nextMipToUpload--;
+                        if (HasHigherPriorityProgressiveUpload(texture, workItem))
+                            ReleaseProgressiveUploadSlot();
                     }
 
                     return false;

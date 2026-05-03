@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
+using System.Threading.Tasks;
 using XREngine;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
@@ -19,46 +21,248 @@ public static partial class EditorImGuiUI
     private static SceneNode? _prefabPreviewParent;
     private static bool _prefabPreviewActive;
     private static bool _prefabPreviewHoveredThisFrame;
+    private static readonly Dictionary<string, DroppedAssetLoadCacheEntry> _droppedAssetLoadCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object _droppedAssetLoadCacheLock = new();
 
-    private static bool TryLoadNativeAsset<TAsset>(string path, out TAsset? asset)
-        where TAsset : XRAsset
+    private sealed class DroppedAssetLoadCacheEntry
     {
-        asset = null;
+        public bool ImportAttempted { get; set; }
+        public bool IsLoading { get; set; }
+        public bool IsLoaded { get; set; }
+        public string? ErrorMessage { get; set; }
+        public Task? LoadTask { get; set; }
+        public XRPrefabSource? Prefab { get; set; }
+        public Model? Model { get; set; }
+        public XRMaterial? Material { get; set; }
+    }
 
-        if (string.IsNullOrWhiteSpace(path))
-            return false;
+    private readonly record struct DroppedAssetLoadResult(
+        XRPrefabSource? Prefab,
+        Model? Model,
+        XRMaterial? Material,
+        string? ErrorMessage);
 
+    private static void ClearDroppedAssetLoadCache()
+    {
+        lock (_droppedAssetLoadCacheLock)
+            _droppedAssetLoadCache.Clear();
+    }
+
+    private static void TrimDroppedAssetLoadCache()
+    {
+        if (_droppedAssetLoadCache.Count <= 256)
+            return;
+
+        List<string> completedKeys = [];
+        foreach (var pair in _droppedAssetLoadCache)
+        {
+            if (!pair.Value.IsLoading)
+                completedKeys.Add(pair.Key);
+        }
+
+        for (int i = 0; i < completedKeys.Count && _droppedAssetLoadCache.Count > 128; i++)
+            _droppedAssetLoadCache.Remove(completedKeys[i]);
+    }
+
+    private static Task RequestDroppedAssetLoad(string path, bool allowImport)
+    {
+        string normalized = NormalizeDroppedAssetPath(path);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return Task.CompletedTask;
+
+        lock (_droppedAssetLoadCacheLock)
+        {
+            TrimDroppedAssetLoadCache();
+
+            if (!_droppedAssetLoadCache.TryGetValue(normalized, out var entry))
+            {
+                entry = new DroppedAssetLoadCacheEntry();
+                _droppedAssetLoadCache[normalized] = entry;
+            }
+
+            if (entry.IsLoading && entry.LoadTask is not null)
+            {
+                if (allowImport && !entry.ImportAttempted)
+                {
+                    entry.ImportAttempted = true;
+                    Task importTask = entry.LoadTask.ContinueWith(
+                        _ => LoadDroppedAssetCacheEntryIfUnresolvedAsync(normalized),
+                        TaskScheduler.Default).Unwrap();
+                    entry.LoadTask = importTask;
+                    return importTask;
+                }
+
+                return entry.LoadTask;
+            }
+
+            if (entry.IsLoaded && (!allowImport || entry.ImportAttempted || HasResolvedDroppedAsset(entry)))
+                return Task.CompletedTask;
+
+            entry.IsLoading = true;
+            entry.IsLoaded = false;
+            entry.ErrorMessage = null;
+            entry.ImportAttempted |= allowImport;
+            Task task = LoadDroppedAssetCacheEntryAsync(normalized, allowImport);
+            entry.LoadTask = task;
+
+            return task;
+        }
+    }
+
+    private static Task LoadDroppedAssetCacheEntryIfUnresolvedAsync(string normalizedPath)
+    {
+        lock (_droppedAssetLoadCacheLock)
+        {
+            if (!_droppedAssetLoadCache.TryGetValue(normalizedPath, out var entry))
+                return Task.CompletedTask;
+
+            if (HasResolvedDroppedAsset(entry))
+                return Task.CompletedTask;
+
+            entry.IsLoading = true;
+            entry.IsLoaded = false;
+            entry.ErrorMessage = null;
+        }
+
+        return LoadDroppedAssetCacheEntryAsync(normalizedPath, allowImport: true);
+    }
+
+    private static async Task LoadDroppedAssetCacheEntryAsync(string normalizedPath, bool allowImport)
+    {
+        DroppedAssetLoadResult result;
+        try
+        {
+            result = await LoadDroppedAssetResultAsync(normalizedPath, allowImport).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            result = new DroppedAssetLoadResult(null, null, null, ex.Message);
+            Debug.LogException(ex, $"Failed to load dropped asset '{normalizedPath}'.");
+        }
+
+        lock (_droppedAssetLoadCacheLock)
+        {
+            if (!_droppedAssetLoadCache.TryGetValue(normalizedPath, out var entry))
+                return;
+
+            entry.Prefab = result.Prefab;
+            entry.Model = result.Model;
+            entry.Material = result.Material;
+            entry.ErrorMessage = result.ErrorMessage;
+            entry.IsLoading = false;
+            entry.IsLoaded = true;
+        }
+    }
+
+    private static async Task<DroppedAssetLoadResult> LoadDroppedAssetResultAsync(string normalizedPath, bool allowImport)
+    {
         var assets = Engine.Assets;
         if (assets is null)
-            return false;
+            return new DroppedAssetLoadResult(null, null, null, "Asset manager is not available.");
 
-        if (!string.Equals(Path.GetExtension(path), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
-            return false;
+        XRAsset? asset = await TryLoadDroppedNativeAssetAsync(assets, normalizedPath).ConfigureAwait(false);
+        if (asset is null && TryResolveGeneratedThirdPartyAssetPath(normalizedPath, out string generatedAssetPath))
+        {
+            asset = ResolveCachedGeneratedThirdPartyAsset(assets, normalizedPath, generatedAssetPath);
+
+            if (asset is null && allowImport)
+            {
+                bool imported = await assets.ReimportThirdPartyFileAsync(normalizedPath).ConfigureAwait(false);
+                if (!imported)
+                    return new DroppedAssetLoadResult(null, null, null, $"Failed to import {Path.GetFileName(normalizedPath)}.");
+
+                asset = ResolveCachedGeneratedThirdPartyAsset(assets, normalizedPath, generatedAssetPath);
+            }
+
+            asset ??= await TryLoadDroppedNativeAssetAsync(assets, generatedAssetPath).ConfigureAwait(false);
+
+            if (asset is not null && !IsLinkedGeneratedThirdPartyAsset(asset, normalizedPath, generatedAssetPath))
+                asset = null;
+        }
+
+        return CreateDroppedAssetLoadResult(asset);
+    }
+
+    private static XRAsset? ResolveCachedGeneratedThirdPartyAsset(AssetManager assets, string sourcePath, string generatedAssetPath)
+    {
+        if (assets.GetAssetByOriginalPath(sourcePath) is XRAsset byOriginal
+            && IsLinkedGeneratedThirdPartyAsset(byOriginal, sourcePath, generatedAssetPath))
+        {
+            return byOriginal;
+        }
+
+        if (assets.GetAssetByPath(generatedAssetPath) is XRAsset byPath
+            && IsLinkedGeneratedThirdPartyAsset(byPath, sourcePath, generatedAssetPath))
+        {
+            return byPath;
+        }
+
+        return null;
+    }
+
+    private static async Task<XRAsset?> TryLoadDroppedNativeAssetAsync(AssetManager assets, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)
+            || !string.Equals(Path.GetExtension(path), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (assets.GetAssetByPath(path) is XRAsset cached)
+            return cached;
+
+        Type loadType = TryResolveConcreteAssetTypeFromHeader(path, out Type concreteType)
+            ? concreteType
+            : typeof(XRAsset);
+
+        return await assets.LoadAsync(path, loadType).ConfigureAwait(false);
+    }
+
+    private static DroppedAssetLoadResult CreateDroppedAssetLoadResult(XRAsset? asset)
+    {
+        if (asset is XRPrefabSource prefab && prefab.RootNode is not null)
+            return new DroppedAssetLoadResult(prefab, null, null, null);
+
+        if (asset is Model model)
+            return new DroppedAssetLoadResult(null, model, null, null);
+
+        if (asset is XRMaterial material)
+            return new DroppedAssetLoadResult(null, null, material, null);
+
+        return new DroppedAssetLoadResult(null, null, null, asset is null ? "No spawnable asset was found." : null);
+    }
+
+    private static bool TryGetDroppedAssetLoadResult(string path, out DroppedAssetLoadResult result)
+    {
+        string normalized = NormalizeDroppedAssetPath(path);
+        lock (_droppedAssetLoadCacheLock)
+        {
+            if (_droppedAssetLoadCache.TryGetValue(normalized, out var entry) && entry.IsLoaded)
+            {
+                result = new DroppedAssetLoadResult(entry.Prefab, entry.Model, entry.Material, entry.ErrorMessage);
+                return true;
+            }
+        }
+
+        result = default;
+        return false;
+    }
+
+    private static bool HasResolvedDroppedAsset(DroppedAssetLoadCacheEntry entry)
+        => entry.Prefab is not null || entry.Model is not null || entry.Material is not null;
+
+    private static string NormalizeDroppedAssetPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
 
         try
         {
-            asset = assets.Load(path, typeof(TAsset)) as TAsset;
-            if (asset is not null)
-                return true;
-
-            if (!TryResolveConcreteAssetTypeFromHeader(path, out var concreteType))
-                return false;
-
-            if (!typeof(TAsset).IsAssignableFrom(concreteType))
-                return false;
-
-            if (assets.Load(path, concreteType) is TAsset concreteAsset)
-            {
-                asset = concreteAsset;
-                return true;
-            }
-
-            return false;
+            return Path.GetFullPath(path);
         }
         catch
         {
-            asset = null;
-            return false;
+            return path;
         }
     }
 
@@ -108,65 +312,14 @@ public static partial class EditorImGuiUI
             && string.Equals(normalizedAssetPath, normalizedGeneratedAssetPath, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool TryLoadGeneratedThirdPartyAsset(string sourcePath, out XRAsset? asset)
-    {
-        asset = null;
-
-        var assets = Engine.Assets;
-        if (assets is null || !TryResolveGeneratedThirdPartyAssetPath(sourcePath, out string generatedAssetPath))
-            return false;
-
-        try
-        {
-            if (assets.GetAssetByOriginalPath(sourcePath) is XRAsset byOriginal
-                && IsLinkedGeneratedThirdPartyAsset(byOriginal, sourcePath, generatedAssetPath))
-            {
-                asset = byOriginal;
-                return true;
-            }
-
-            if (assets.GetAssetByPath(generatedAssetPath) is XRAsset byPath
-                && IsLinkedGeneratedThirdPartyAsset(byPath, sourcePath, generatedAssetPath))
-            {
-                asset = byPath;
-                return true;
-            }
-
-            if (!File.Exists(generatedAssetPath))
-                return false;
-
-            Type loadType = TryResolveConcreteAssetTypeFromHeader(generatedAssetPath, out var concreteType)
-                ? concreteType
-                : typeof(XRAsset);
-
-            if (assets.Load(generatedAssetPath, loadType) is XRAsset loaded
-                && IsLinkedGeneratedThirdPartyAsset(loaded, sourcePath, generatedAssetPath))
-            {
-                asset = loaded;
-                return true;
-            }
-
-            return false;
-        }
-        catch
-        {
-            asset = null;
-            return false;
-        }
-    }
-
     private static bool TryLoadPrefabAsset(string path, out XRPrefabSource? prefab)
     {
         prefab = null;
 
-        if (TryLoadNativeAsset(path, out prefab))
-            return prefab is not null && prefab.RootNode is not null;
-
-        if (TryLoadGeneratedThirdPartyAsset(path, out XRAsset? generatedAsset)
-            && generatedAsset is XRPrefabSource generatedPrefab
-            && generatedPrefab.RootNode is not null)
+        _ = RequestDroppedAssetLoad(path, allowImport: false);
+        if (TryGetDroppedAssetLoadResult(path, out var result) && result.Prefab is not null)
         {
-            prefab = generatedPrefab;
+            prefab = result.Prefab;
             return true;
         }
 
@@ -177,13 +330,10 @@ public static partial class EditorImGuiUI
     {
         model = null;
 
-        if (TryLoadNativeAsset(path, out model))
-            return model is not null;
-
-        if (TryLoadGeneratedThirdPartyAsset(path, out XRAsset? generatedAsset)
-            && generatedAsset is Model generatedModel)
+        _ = RequestDroppedAssetLoad(path, allowImport: false);
+        if (TryGetDroppedAssetLoadResult(path, out var result) && result.Model is not null)
         {
-            model = generatedModel;
+            model = result.Model;
             return true;
         }
 
@@ -192,7 +342,16 @@ public static partial class EditorImGuiUI
 
     private static bool TryLoadMaterialAsset(string path, out XRMaterial? material)
     {
-        return TryLoadNativeAsset(path, out material);
+        material = null;
+
+        _ = RequestDroppedAssetLoad(path, allowImport: false);
+        if (TryGetDroppedAssetLoadResult(path, out var result) && result.Material is not null)
+        {
+            material = result.Material;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryResolveConcreteAssetTypeFromHeader(string assetPath, out Type type)
@@ -244,31 +403,6 @@ public static partial class EditorImGuiUI
         return false;
     }
 
-    private static bool TryImportAndLoadSpawnableAsset(string path, out XRPrefabSource? prefab, out Model? model)
-    {
-        prefab = null;
-        model = null;
-
-        if (TryLoadPrefabAsset(path, out prefab) || TryLoadModelAsset(path, out model))
-            return true;
-
-        var assets = Engine.Assets;
-        if (assets is null || !TryResolveGeneratedThirdPartyAssetPath(path, out _))
-            return false;
-
-        try
-        {
-            if (!assets.ReimportThirdPartyFile(path))
-                return false;
-        }
-        catch
-        {
-            return false;
-        }
-
-        return TryLoadPrefabAsset(path, out prefab) || TryLoadModelAsset(path, out model);
-    }
-
     private static Vector3? GetViewportDropWorldPosition()
     {
         if (Engine.State.MainPlayer?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
@@ -292,50 +426,192 @@ public static partial class EditorImGuiUI
         if (world is null || string.IsNullOrWhiteSpace(path))
             return false;
 
-        if (TryLoadPrefabAsset(path, out var prefab))
+        if (TryGetDroppedAssetLoadResult(path, out var cached))
         {
-            if (!TryFinalizePrefabPreview(world, parent, prefab!))
-            {
-                if (_prefabPreviewActive)
-                    RevertPrefabPreview();
+            if (cached.Prefab is not null)
+                return SpawnDroppedPrefab(world, parent, cached.Prefab, worldPosition, enqueueSceneEdit: true);
 
-                EnqueueSceneEdit(() => SpawnPrefabNode(world, parent, prefab!, worldPosition));
-            }
-
-            return true;
+            if (cached.Model is not null)
+                return SpawnDroppedModel(world, parent, cached.Model, path, worldPosition, enqueueSceneEdit: true);
         }
 
-        if (TryLoadModelAsset(path, out var model))
-        {
-            if (_prefabPreviewActive)
-                RevertPrefabPreview();
+        QueueDroppedSpawnableAssetSpawn(world, parent, path, worldPosition);
+        return true;
+    }
 
-            EnqueueSceneEdit(() => SpawnModelNode(world, parent, model!, path, worldPosition));
-            return true;
-        }
-
-        if (!TryImportAndLoadSpawnableAsset(path, out prefab, out model))
+    private static bool TryHandleDroppedAsset(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition = null)
+    {
+        if (world is null || string.IsNullOrWhiteSpace(path))
             return false;
 
-        if (prefab is not null)
+        if (TryGetDroppedAssetLoadResult(path, out var cached))
+        {
+            if (cached.Material is not null)
+            {
+                EnqueueSceneEdit(() =>
+                {
+                    if (_prefabPreviewActive)
+                        RevertPrefabPreview();
+                    ClearMaterialPreviewState();
+                    TryApplyMaterialDropToHoveredSubmesh(world, cached.Material);
+                });
+                return true;
+            }
+
+            if (cached.Prefab is not null)
+                return SpawnDroppedPrefab(world, parent, cached.Prefab, worldPosition, enqueueSceneEdit: true);
+
+            if (cached.Model is not null)
+                return SpawnDroppedModel(world, parent, cached.Model, path, worldPosition, enqueueSceneEdit: true);
+        }
+
+        QueueDroppedAssetApply(world, parent, path, worldPosition);
+        return true;
+    }
+
+    private static bool SpawnDroppedPrefab(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition, bool enqueueSceneEdit)
+    {
+        if (prefab is null)
+            return false;
+
+        if (enqueueSceneEdit)
+        {
+            EnqueueSceneEdit(() => SpawnDroppedPrefab(world, parent, prefab, worldPosition, enqueueSceneEdit: false));
+            return true;
+        }
+
+        if (!TryFinalizePrefabPreview(world, parent, prefab))
         {
             if (_prefabPreviewActive)
                 RevertPrefabPreview();
 
-            EnqueueSceneEdit(() => SpawnPrefabNode(world, parent, prefab, worldPosition));
-            return true;
+            SpawnPrefabNode(world, parent, prefab, worldPosition);
         }
 
-        if (model is not null)
+        return true;
+    }
+
+    private static bool SpawnDroppedModel(XRWorldInstance world, SceneNode? parent, Model model, string path, Vector3? worldPosition, bool enqueueSceneEdit)
+    {
+        if (model is null)
+            return false;
+
+        if (enqueueSceneEdit)
         {
-            if (_prefabPreviewActive)
-                RevertPrefabPreview();
-
-            EnqueueSceneEdit(() => SpawnModelNode(world, parent, model, path, worldPosition));
+            EnqueueSceneEdit(() => SpawnDroppedModel(world, parent, model, path, worldPosition, enqueueSceneEdit: false));
             return true;
         }
 
-        return false;
+        if (_prefabPreviewActive)
+            RevertPrefabPreview();
+
+        SpawnModelNode(world, parent, model, path, worldPosition);
+        return true;
+    }
+
+    private static void QueueDroppedSpawnableAssetSpawn(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition)
+    {
+        Guid trackingId = EditorJobTracker.TrackOperation($"Spawn {Path.GetFileName(path)}", "Loading dropped asset...");
+        _ = SpawnDroppedAssetWhenReadyAsync(world, parent, path, worldPosition, trackingId);
+    }
+
+    private static async Task SpawnDroppedAssetWhenReadyAsync(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition, Guid trackingId)
+    {
+        try
+        {
+            await RequestDroppedAssetLoad(path, allowImport: true).ConfigureAwait(false);
+            if (!TryGetDroppedAssetLoadResult(path, out var result))
+            {
+                EditorJobTracker.Fault(trackingId, $"Unable to resolve {Path.GetFileName(path)}.");
+                return;
+            }
+
+            if (result.Prefab is not null)
+            {
+                EnqueueSceneEdit(() =>
+                {
+                    SpawnDroppedPrefab(world, parent, result.Prefab, worldPosition, enqueueSceneEdit: false);
+                    EditorJobTracker.Complete(trackingId, $"Spawned {Path.GetFileName(path)}");
+                });
+                return;
+            }
+
+            if (result.Model is not null)
+            {
+                EnqueueSceneEdit(() =>
+                {
+                    SpawnDroppedModel(world, parent, result.Model, path, worldPosition, enqueueSceneEdit: false);
+                    EditorJobTracker.Complete(trackingId, $"Spawned {Path.GetFileName(path)}");
+                });
+                return;
+            }
+
+            EditorJobTracker.Fault(trackingId, result.ErrorMessage ?? $"No spawnable asset found for {Path.GetFileName(path)}.");
+        }
+        catch (Exception ex)
+        {
+            EditorJobTracker.Fault(trackingId, ex.Message);
+            Debug.LogException(ex, $"Failed to spawn dropped asset '{path}'.");
+        }
+    }
+
+    private static void QueueDroppedAssetApply(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition)
+    {
+        Guid trackingId = EditorJobTracker.TrackOperation($"Drop {Path.GetFileName(path)}", "Loading dropped asset...");
+        _ = ApplyDroppedAssetWhenReadyAsync(world, parent, path, worldPosition, trackingId);
+    }
+
+    private static async Task ApplyDroppedAssetWhenReadyAsync(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition, Guid trackingId)
+    {
+        try
+        {
+            await RequestDroppedAssetLoad(path, allowImport: true).ConfigureAwait(false);
+            if (!TryGetDroppedAssetLoadResult(path, out var result))
+            {
+                EditorJobTracker.Fault(trackingId, $"Unable to resolve {Path.GetFileName(path)}.");
+                return;
+            }
+
+            if (result.Material is not null)
+            {
+                EnqueueSceneEdit(() =>
+                {
+                    if (_prefabPreviewActive)
+                        RevertPrefabPreview();
+                    ClearMaterialPreviewState();
+                    TryApplyMaterialDropToHoveredSubmesh(world, result.Material);
+                    EditorJobTracker.Complete(trackingId, $"Applied {Path.GetFileName(path)}");
+                });
+                return;
+            }
+
+            if (result.Prefab is not null)
+            {
+                EnqueueSceneEdit(() =>
+                {
+                    SpawnDroppedPrefab(world, parent, result.Prefab, worldPosition, enqueueSceneEdit: false);
+                    EditorJobTracker.Complete(trackingId, $"Spawned {Path.GetFileName(path)}");
+                });
+                return;
+            }
+
+            if (result.Model is not null)
+            {
+                EnqueueSceneEdit(() =>
+                {
+                    SpawnDroppedModel(world, parent, result.Model, path, worldPosition, enqueueSceneEdit: false);
+                    EditorJobTracker.Complete(trackingId, $"Spawned {Path.GetFileName(path)}");
+                });
+                return;
+            }
+
+            EditorJobTracker.Fault(trackingId, result.ErrorMessage ?? $"No supported drop action found for {Path.GetFileName(path)}.");
+        }
+        catch (Exception ex)
+        {
+            EditorJobTracker.Fault(trackingId, ex.Message);
+            Debug.LogException(ex, $"Failed to apply dropped asset '{path}'.");
+        }
     }
 
     private static void SpawnPrefabNode(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition = null)

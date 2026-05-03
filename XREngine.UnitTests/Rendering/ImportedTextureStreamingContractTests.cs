@@ -138,6 +138,32 @@ public sealed class ImportedTextureStreamingContractTests
     }
 
     [Test]
+    public void ImportedTextureStreaming_PrioritizesVisibleLargeScreenTransitions()
+    {
+        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+
+        managerSource.ShouldContain("internal sealed class PriorityAsyncSemaphore");
+        managerSource.ShouldContain("await DecodeGate.WaitAsync(priority, cancellationToken)");
+        managerSource.ShouldContain("ResolveTransitionJobPriority(");
+        managerSource.ShouldContain("snapshot.MaxProjectedPixelSpan >= UrgentVisibleProjectedPixelSpan");
+        managerSource.ShouldContain("snapshot.MaxScreenCoverage >= UrgentVisibleScreenCoverage");
+        managerSource.ShouldContain("priority: transitionPriority");
+    }
+
+    [Test]
+    public void ImportedTextureStreaming_ProgressiveUploadsYieldToVisibleWork()
+    {
+        string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.cs");
+        string importedStreamingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.ImportedStreaming.cs");
+
+        textureSource.ShouldContain("ConcurrentDictionary<XRTexture2D, TextureUploadWorkItem>");
+        textureSource.ShouldContain("HasHigherPriorityProgressiveUpload(texture, workItem)");
+        textureSource.ShouldContain("ReleaseProgressiveUploadSlot();");
+        textureSource.ShouldContain("TextureUploadPriorityClass.VisibleNow => 3");
+        importedStreamingSource.ShouldContain("TextureUploadPriorityClass priorityClass = TextureUploadPriorityClass.Background");
+    }
+
+    [Test]
     public void ImportedTextureStreaming_SparseDemotionRefreshesTargetMipsBeforeSamplingThem()
     {
         string sparseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.SparseStreaming.cs");

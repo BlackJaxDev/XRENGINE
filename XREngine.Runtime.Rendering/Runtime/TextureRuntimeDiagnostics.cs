@@ -159,7 +159,13 @@ internal static class TextureRuntimeDiagnostics
         long currentBytes,
         long targetBytes,
         string backendName,
-        string reason)
+        string reason,
+        JobPriority priority = JobPriority.Normal,
+        TextureUploadPriorityClass uploadPriority = TextureUploadPriorityClass.Background,
+        float projectedPixelSpan = 0.0f,
+        float screenCoverage = 0.0f,
+        bool visibleThisFrame = false,
+        bool recentlyBound = false)
     {
         Interlocked.Increment(ref s_transitionQueuedCount);
         if (!ShouldLog(TextureRuntimeEventImportance.Verbose))
@@ -174,6 +180,12 @@ internal static class TextureRuntimeDiagnostics
             .Append(" committedBytes=").Append(currentBytes)
             .Append(" targetBytes=").Append(targetBytes)
             .Append(" backend=").Append(backendName)
+            .Append(" priority=").Append(priority)
+            .Append(" uploadPriority=").Append(uploadPriority)
+            .Append(" projectedPx=").Append(projectedPixelSpan)
+            .Append(" coverage=").Append(screenCoverage)
+            .Append(" visibleNow=").Append(visibleThisFrame)
+            .Append(" recentlyBound=").Append(recentlyBound)
             .Append(" reason='").AppendLabel(reason).Append('\'');
         LogPooled("Texture.TransitionQueued", builder);
     }
@@ -220,7 +232,9 @@ internal static class TextureRuntimeDiagnostics
         double queueWaitMilliseconds,
         double activeUploadMilliseconds,
         double lifecycleMilliseconds,
-        string backendName)
+        string backendName,
+        JobPriority priority = JobPriority.Normal,
+        TextureUploadPriorityClass uploadPriority = TextureUploadPriorityClass.Background)
     {
         Interlocked.Increment(ref s_transitionAppliedCount);
         RecordQueueWait(queueWaitMilliseconds);
@@ -235,7 +249,7 @@ internal static class TextureRuntimeDiagnostics
             return;
 
         Log(slow ? "Texture.UploadSlow" : "Texture.TransitionApplied",
-            $"frame={frameId} texture='{Label(textureName)}' source='{Label(sourcePath)}' previous={previousResident} resident={completedResident} committedBytes={committedBytes} queueWaitMs={queueWaitMilliseconds:F2} activeUploadMs={activeUploadMilliseconds:F2} lifecycleMs={lifecycleMilliseconds:F2} backend={backendName}");
+            $"frame={frameId} texture='{Label(textureName)}' source='{Label(sourcePath)}' previous={previousResident} resident={completedResident} committedBytes={committedBytes} queueWaitMs={queueWaitMilliseconds:F2} activeUploadMs={activeUploadMilliseconds:F2} lifecycleMs={lifecycleMilliseconds:F2} backend={backendName} priority={priority} uploadPriority={uploadPriority}");
     }
 
     public static void LogCacheRead(

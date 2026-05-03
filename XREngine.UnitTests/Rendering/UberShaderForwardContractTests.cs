@@ -101,7 +101,65 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("fragData.finalColor += calculateStylizedAdditionalLighting(mesh, fragData.baseColor, mesh.worldNormal);");
         source.ShouldNotContain("fragData.finalColor += calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, true);");
         source.ShouldContain("case 5: // Flat");
-        source.ShouldContain("finalLight = light.color;");
+        source.ShouldContain("finalLight = light.color * shadow;");
+    }
+
+    [Test]
+    public void UberShaderFragment_StylizedModesUseImportedControls()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+
+        source.ShouldContain("switch (_LightingDirectionMode)");
+        source.ShouldContain("switch (_LightingColorMode)");
+        source.ShouldContain("light.indirectColor = mix(light.indirectColor, neutralAmbient, saturate(_LightingIgnoreAmbientColor));");
+        source.ShouldContain("vec4 shadowTex = texture(_ShadowColorTex, mesh.uv[0]);");
+        source.ShouldContain("if (_LightingWrappedNormalization > 0.5)");
+        source.ShouldContain("case 3: // Skin");
+        source.ShouldContain("case 4: // ShadeMap");
+        source.ShouldContain("case 7: // Cloth");
+        source.ShouldContain("case 8: // SDF");
+        source.ShouldContain("shadow = _ForceFlatRampedLightmap > 0.5 ? step(0.5, light.lightMap) : 1.0;");
+        source.ShouldContain("float materialShadowMask = sampleLightingShadowMask(mesh);");
+    }
+
+    [Test]
+    public void UberShaderFragment_EffectControlsReachFinalOutput()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+        string flipbook = LoadShaderSource(Path.Combine("Uber", "flipbook.glsl"));
+
+        source.ShouldContain("pbr.specularColor = max(specTex.rgb * _SpecularTint.rgb, vec3(0.0));");
+        source.ShouldContain("fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr);");
+        source.ShouldContain("mesh.worldNormal = applyDetailNormal(mesh, mesh.worldNormal);");
+        source.ShouldContain("emissionUV += mesh.vertexColor.rg * _EmissionScrollingVertexColor;");
+        source.ShouldContain("vec3 matcapNormal = normalize(mix(mesh.vertexNormal, normal, saturate(_MatcapNormal)));");
+        source.ShouldContain("if (_RimBlendMode == 0)");
+        source.ShouldContain("vec3 glitterColor = mix(_GlitterColor.rgb, rainbow, saturate(_GlitterRainbow));");
+        source.ShouldContain("vec3 distortedLight = normalize(-light.direction + mesh.worldNormal * _SSSDistortion);");
+        source.ShouldContain("_FlipbookManualFrame");
+        source.ShouldContain("_FlipbookCrossfade");
+
+        flipbook.ShouldContain("float frameFloat = fps > 0.0 ? time * fps : manualFrame;");
+        flipbook.ShouldContain("return mix(color1, color2, fract(frameFloat) * clamp(crossfadeStrength, 0.0, 1.0));");
+    }
+
+    [Test]
+    public void UberShaderFeatureModules_DoNotUseRemovedRuntimeFeatureToggles()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+        string parallax = LoadShaderSource(Path.Combine("Uber", "parallax.glsl"));
+        string dissolve = LoadShaderSource(Path.Combine("Uber", "dissolve.glsl"));
+
+        foreach (string shaderSource in new[] { source, parallax, dissolve })
+        {
+            shaderSource.ShouldNotContain("_EnableParallax");
+            shaderSource.ShouldNotContain("_EnableDissolve");
+        }
+
+        parallax.ShouldContain("const int PARALLAX_OCCLUSION = 1;");
+        parallax.ShouldContain("const int PARALLAX_SILHOUETTE_OCCLUSION = 2;");
+        dissolve.ShouldContain("const int DISSOLVE_SPHERICAL = 1;");
+        dissolve.ShouldContain("const int DISSOLVE_DIRECTIONAL = 2;");
     }
 
     [Test]
@@ -217,6 +275,58 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             string resolvedSource = fragment.GetResolvedSource();
 
             uint shader = CompileShader(gl, ShaderType.FragmentShader, resolvedSource);
+            gl.DeleteShader(shader);
+        });
+    }
+
+    [Test]
+    public void UberFragmentVariant_AllAuthorableFeaturesCompileOnOpenGl()
+    {
+        XRShader fragment = ShaderHelper.UberFragForward();
+        var material = new XRMaterial
+        {
+            Parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters(),
+            RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+        };
+        material.Shaders.Clear();
+        material.Shaders.Add(fragment);
+        material.EnsureUberStateInitialized();
+
+        foreach (string featureId in new[]
+        {
+            "alpha-masks",
+            "color-adjustments",
+            "stylized-shading",
+            "material-ao",
+            "shadow-masks",
+            "emission",
+            "matcap",
+            "rim-lighting",
+            "advanced-specular",
+            "detail-textures",
+            "outline",
+            "backface",
+            "glitter",
+            "flipbook",
+            "subsurface",
+            "dissolve",
+            "parallax",
+        })
+        {
+            material.SetUberFeatureEnabled(featureId, true);
+            material.IsUberFeatureEnabled(featureId, defaultEnabled: false).ShouldBeTrue(featureId);
+        }
+
+        material.PrepareUberVariantImmediately().ShouldBeTrue(material.UberVariantStatus.FailureReason);
+        string generatedSource = material.GetShader(EShaderType.Fragment)!.GetResolvedSource();
+        generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
+        generatedSource.ShouldNotContain("_EnableParallax");
+        generatedSource.ShouldNotContain("_EnableDissolve");
+
+        RunWithGLContext(gl =>
+        {
+            uint shader = CompileShader(gl, ShaderType.FragmentShader, generatedSource);
             gl.DeleteShader(shader);
         });
     }

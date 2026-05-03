@@ -113,6 +113,9 @@ namespace XREngine
         /// or windows for the cascades to act on.
         /// </summary>
         private static bool _suppressSettingsCascades;
+        private static int _settingsCascadeSuppressionDepth;
+        private static bool _runtimeSettingsApplyPending;
+        private static bool _editorPreferencesApplyPending;
 
         // ═══════════════════════════════════════════════════════════════════════════════════════════
         // OVERRIDEABLE SETTINGS TRACKING
@@ -214,18 +217,17 @@ namespace XREngine
             // system, spawn worker threads, or probe audio hardware—any of which
             // risk a type-initializer deadlock.  Initialize() will set the real
             // settings through the property setters and cascade properly.
-            _suppressSettingsCascades = true;
-
-            // Initialize default settings objects
-            UserSettings = new UserSettings();
-            GameSettings = new GameStartupSettings();
-            BuildSettings = new BuildSettings();
-            GlobalEditorPreferences = new EditorPreferences();
-            EditorPreferencesOverrides = new EditorPreferencesOverrides();
-            _editorPreferences = new EditorPreferences();
-            UpdateEffectiveEditorPreferences();
-
-            _suppressSettingsCascades = false;
+            using (SuppressSettingsCascades(applyOnDispose: false))
+            {
+                // Initialize default settings objects
+                UserSettings = new UserSettings();
+                GameSettings = new GameStartupSettings();
+                BuildSettings = new BuildSettings();
+                GlobalEditorPreferences = new EditorPreferences();
+                EditorPreferencesOverrides = new EditorPreferencesOverrides();
+                _editorPreferences = new EditorPreferences();
+                UpdateEffectiveEditorPreferences();
+            }
 
             Debug.InitializeExceptionTracing();
 
