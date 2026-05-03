@@ -205,7 +205,10 @@ public partial class GLTexture2D
         _sparseLogicalHeight = request.LogicalHeight;
         _sparseLogicalMipCount = request.LogicalMipCount;
         _sparseNumSparseLevels = numSparseLevels;
-        Data.SparseTextureStreamingEnabled = true;
+
+        // Keep the public sparse state private until UpdateSparseTextureState can
+        // publish a complete logical/resident/committed snapshot. The async
+        // promotion preparer may allocate storage before pages are exposed.
         int storageGeneration = AdvanceStorageGeneration();
         TextureRuntimeDiagnostics.LogStorageAllocated(
             RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,

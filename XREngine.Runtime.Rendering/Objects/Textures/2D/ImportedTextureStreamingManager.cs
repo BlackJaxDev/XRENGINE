@@ -457,6 +457,130 @@ internal static class TextureStreamingResidentDataReuseCache
     }
 }
 
+internal sealed class PriorityAsyncSemaphore
+{
+    private sealed class Waiter(JobPriority priority, CancellationToken cancellationToken)
+    {
+        private int _canceled;
+
+        public readonly JobPriority Priority = priority;
+        public readonly TaskCompletionSource Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public CancellationTokenRegistration CancellationRegistration;
+
+        public bool IsCanceled => Volatile.Read(ref _canceled) != 0;
+
+        public void Cancel()
+        {
+            if (Interlocked.Exchange(ref _canceled, 1) == 0)
+                Completion.TrySetCanceled(cancellationToken);
+        }
+
+        public bool TryGrant()
+        {
+            if (IsCanceled)
+                return false;
+
+            CancellationRegistration.Dispose();
+            return Completion.TrySetResult();
+        }
+    }
+
+    private readonly Queue<Waiter>[] _queues;
+    private readonly object _sync = new();
+    private int _availableCount;
+
+    public PriorityAsyncSemaphore(int initialCount)
+    {
+        if (initialCount <= 0)
+            throw new ArgumentOutOfRangeException(nameof(initialCount), "Initial count must be positive.");
+
+        _availableCount = initialCount;
+        _queues = new Queue<Waiter>[(int)JobPriority.Highest + 1];
+        for (int i = 0; i < _queues.Length; i++)
+            _queues[i] = new Queue<Waiter>();
+    }
+
+    public Task WaitAsync(JobPriority priority, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled(cancellationToken);
+
+        lock (_sync)
+        {
+            if (_availableCount > 0 && !HasWaiters())
+            {
+                _availableCount--;
+                return Task.CompletedTask;
+            }
+
+            Waiter waiter = new(NormalizePriority(priority), cancellationToken);
+            waiter.CancellationRegistration = cancellationToken.Register(static state => ((Waiter)state!).Cancel(), waiter);
+            _queues[(int)waiter.Priority].Enqueue(waiter);
+            return waiter.Completion.Task;
+        }
+    }
+
+    public void Release()
+    {
+        lock (_sync)
+        {
+            while (TryDequeueNextWaiter(out Waiter? waiter))
+            {
+                if (waiter is null)
+                    continue;
+
+                if (waiter.TryGrant())
+                    return;
+
+                waiter.CancellationRegistration.Dispose();
+            }
+
+            _availableCount++;
+        }
+    }
+
+    private bool HasWaiters()
+    {
+        for (int i = _queues.Length - 1; i >= 0; i--)
+        {
+            if (_queues[i].Count > 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool TryDequeueNextWaiter(out Waiter? waiter)
+    {
+        for (int i = _queues.Length - 1; i >= 0; i--)
+        {
+            Queue<Waiter> queue = _queues[i];
+            while (queue.Count > 0)
+            {
+                Waiter candidate = queue.Dequeue();
+                if (candidate.IsCanceled)
+                {
+                    candidate.CancellationRegistration.Dispose();
+                    continue;
+                }
+
+                waiter = candidate;
+                return true;
+            }
+        }
+
+        waiter = null;
+        return false;
+    }
+
+    private static JobPriority NormalizePriority(JobPriority priority)
+        => priority < JobPriority.Lowest
+            ? JobPriority.Lowest
+            : priority > JobPriority.Highest
+                ? JobPriority.Highest
+                : priority;
+}
+
 internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
 {
     private const int MaxConcurrentStreamingDecodes = 2;
@@ -480,7 +604,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         8192u,
     ];
 
-    private static readonly SemaphoreSlim DecodeGate = new(MaxConcurrentStreamingDecodes, MaxConcurrentStreamingDecodes);
+    private static readonly PriorityAsyncSemaphore DecodeGate = new(MaxConcurrentStreamingDecodes);
 
     private static int s_activeDecodeCount;
     private static int s_queuedDecodeCount;
@@ -619,7 +743,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     return;
                 }
 
-                await DecodeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
                 Interlocked.Decrement(ref s_queuedDecodeCount);
                 Interlocked.Increment(ref s_activeDecodeCount);
                 decodeActivated = true;
@@ -698,7 +822,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
 
                         onProgress?.Invoke(1.0f);
                         onFinished?.Invoke(target);
-                    });
+                    }, ImportedTextureStreamingManager.ResolveUploadPriorityClass(priority));
                 }
 
                 bool ApplyResidentDataOnRenderThreadBudgeted()
@@ -734,7 +858,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                         Interlocked.Exchange(ref s_queuedDecodeCount, 0);
                 }
             }
-        }, cancellationToken);
+        });
 
         IEnumerable Routine()
         {
@@ -813,7 +937,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         8192u,
     ];
 
-    private static readonly SemaphoreSlim DecodeGate = new(MaxConcurrentStreamingDecodes, MaxConcurrentStreamingDecodes);
+    private static readonly PriorityAsyncSemaphore DecodeGate = new(MaxConcurrentStreamingDecodes);
 
     private static int s_activeDecodeCount;
     private static int s_queuedDecodeCount;
@@ -978,7 +1102,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     return;
                 }
 
-                await DecodeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
                 Interlocked.Decrement(ref s_queuedDecodeCount);
                 Interlocked.Increment(ref s_activeDecodeCount);
                 decodeActivated = true;
@@ -1070,7 +1194,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
 
                                 onProgress?.Invoke(1.0f);
                                 onFinished?.Invoke(target);
-                            });
+                            }, ImportedTextureStreamingManager.ResolveUploadPriorityClass(priority));
                             return;
                         }
 
@@ -1079,9 +1203,10 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     }
 
                     // A promotion (requesting a finer mip than what is currently resident) can use
-                    // the async upload path. SparseTextureStreamingResidentBaseMipLevel defaults to
-                    // int.MaxValue ("nothing resident"), so this correctly evaluates to true for every
-                    // initial load and avoids blocking a thread-pool thread on the render thread.
+                    // the async upload path only when the OpenGL wrapper already has a complete,
+                    // published sparse state. Initial loads and storage recreates fall back to the
+                    // synchronous render-thread path so sampling never sees an uncommitted sparse
+                    // texture while the shared-context upload is in flight.
                     bool allowAsyncUpload = transitionRequest.RequestedBaseMipLevel < target.SparseTextureStreamingResidentBaseMipLevel && TryEnterSharedUpload();
                     if (allowAsyncUpload)
                     {
@@ -1160,7 +1285,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                         Interlocked.Exchange(ref s_queuedDecodeCount, 0);
                 }
             }
-        }, cancellationToken);
+        });
 
         IEnumerable Routine()
         {
@@ -1269,6 +1394,8 @@ internal sealed class ImportedTextureStreamingManager
     private const uint BoundMaterialRelatedMinResidentMaxDimension = 512u;
     private const float BoundMaterialFallbackProjectedPixelSpan = 384.0f;
     private const float BoundMaterialFallbackScreenCoverage = 0.12f;
+    private const float UrgentVisibleProjectedPixelSpan = 512.0f;
+    private const float UrgentVisibleScreenCoverage = 0.08f;
     private const int RecordRefCompactionIntervalFrames = 600;
     private const int TextureSummaryIntervalFrames = 60;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
@@ -1384,6 +1511,8 @@ internal sealed class ImportedTextureStreamingManager
         public long PendingTransitionTargetCommittedBytes;
         public string PendingTransitionBackendName = string.Empty;
         public string PendingTransitionReason = string.Empty;
+        public JobPriority PendingTransitionPriority = JobPriority.Low;
+        public TextureUploadPriorityClass PendingTransitionUploadPriorityClass = TextureUploadPriorityClass.Background;
         public float BaseLodBias;
         public float CurrentStreamingLodBias;
         public float PromotionFadeStartBias;
@@ -2754,6 +2883,49 @@ internal sealed class ImportedTextureStreamingManager
             * NormalizeUvDensityHint(snapshot.UvDensityHint);
     }
 
+    internal static TextureUploadPriorityClass ResolveUploadPriorityClass(JobPriority priority)
+        => priority >= JobPriority.Highest
+            ? TextureUploadPriorityClass.VisibleNow
+            : priority >= JobPriority.High
+                ? TextureUploadPriorityClass.NearVisible
+                : priority <= JobPriority.Lowest
+                    ? TextureUploadPriorityClass.Demotion
+                    : TextureUploadPriorityClass.Background;
+
+    private static JobPriority ResolveTransitionJobPriority(
+        ImportedTextureStreamingSnapshot snapshot,
+        long frameId,
+        uint targetResidentSize,
+        uint currentResidentSize,
+        long currentCommittedBytes,
+        long targetCommittedBytes,
+        bool pressureDemotion)
+    {
+        if (pressureDemotion)
+            return JobPriority.Low;
+
+        bool isPromotion = targetResidentSize > currentResidentSize || targetCommittedBytes > currentCommittedBytes;
+        bool visibleThisFrame = snapshot.LastVisibleFrameId == frameId;
+        bool recentlyBound = IsRecentlyBound(snapshot, frameId);
+        if (visibleThisFrame)
+        {
+            if (isPromotion
+                && (snapshot.MaxProjectedPixelSpan >= UrgentVisibleProjectedPixelSpan
+                    || snapshot.MaxScreenCoverage >= UrgentVisibleScreenCoverage
+                    || targetResidentSize > snapshot.Backend.PreviewMaxDimension))
+            {
+                return JobPriority.Highest;
+            }
+
+            return JobPriority.High;
+        }
+
+        if (isPromotion && recentlyBound)
+            return JobPriority.High;
+
+        return isPromotion ? JobPriority.Normal : JobPriority.Low;
+    }
+
     private static bool IsRecentlyBound(ImportedTextureStreamingSnapshot snapshot, long frameId)
         => snapshot.LastBoundFrameId != long.MinValue
             && frameId >= snapshot.LastBoundFrameId
@@ -2880,6 +3052,8 @@ internal sealed class ImportedTextureStreamingManager
         CancellationTokenSource? previousPendingLoadCts;
         bool includeMipChain;
         uint previousResidentSize;
+        JobPriority transitionPriority = JobPriority.Low;
+        TextureUploadPriorityClass uploadPriorityClass = TextureUploadPriorityClass.Background;
         if (!Monitor.TryEnter(record.Sync))
         {
             cts.Dispose();
@@ -2896,6 +3070,15 @@ internal sealed class ImportedTextureStreamingManager
             previousResidentSize = record.PendingMaxDimension != 0
                 ? record.PendingMaxDimension
                 : record.ResidentMaxDimension;
+            transitionPriority = ResolveTransitionJobPriority(
+                snapshot,
+                frameId,
+                normalizedTarget,
+                previousResidentSize,
+                currentCommittedBytes,
+                targetCommittedBytes,
+                pressureDemotion);
+            uploadPriorityClass = ResolveUploadPriorityClass(transitionPriority);
             if (previousPendingLoadCts is not null)
             {
                 TextureRuntimeDiagnostics.LogTransitionCoalesced(
@@ -2917,6 +3100,8 @@ internal sealed class ImportedTextureStreamingManager
             record.PendingTransitionTargetCommittedBytes = targetCommittedBytes;
             record.PendingTransitionBackendName = backend.Name;
             record.PendingTransitionReason = reason;
+            record.PendingTransitionPriority = transitionPriority;
+            record.PendingTransitionUploadPriorityClass = uploadPriorityClass;
             record.PendingSparseTransitionRequest = default;
             record.PendingSparseTransitionResult = null;
             record.LastTransitionFrameId = frameId;
@@ -2956,7 +3141,13 @@ internal sealed class ImportedTextureStreamingManager
             currentCommittedBytes,
             targetCommittedBytes,
             backend.Name,
-            reason);
+            reason,
+            transitionPriority,
+            uploadPriorityClass,
+            snapshot.MaxProjectedPixelSpan,
+            snapshot.MaxScreenCoverage,
+            snapshot.LastVisibleFrameId == frameId,
+            IsRecentlyBound(snapshot, frameId));
 
         backend.ScheduleResidentLoad(
             source,
@@ -3003,7 +3194,8 @@ internal sealed class ImportedTextureStreamingManager
             },
             () => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId),
             shouldAcceptResult: IsCurrentTransition,
-            cancellationToken: cts.Token);
+            cancellationToken: cts.Token,
+            priority: transitionPriority);
 
         return true;
     }
@@ -3026,6 +3218,8 @@ internal sealed class ImportedTextureStreamingManager
         bool pressureDemotion = false;
         string backendName = string.Empty;
         string reason = string.Empty;
+        JobPriority transitionPriority = JobPriority.Low;
+        TextureUploadPriorityClass uploadPriorityClass = TextureUploadPriorityClass.Background;
         double queueWaitMilliseconds = 0.0;
         double lifecycleMilliseconds = 0.0;
         string? textureName = texture?.Name;
@@ -3048,6 +3242,8 @@ internal sealed class ImportedTextureStreamingManager
                 ? record.Backend?.Name ?? "Unknown"
                 : record.PendingTransitionBackendName;
             reason = record.PendingTransitionReason;
+            transitionPriority = record.PendingTransitionPriority;
+            uploadPriorityClass = record.PendingTransitionUploadPriorityClass;
             if (record.PendingTransitionQueuedTimestamp != 0L)
             {
                 queueWaitMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(record.PendingTransitionQueuedTimestamp);
@@ -3124,6 +3320,8 @@ internal sealed class ImportedTextureStreamingManager
             record.PendingTransitionTargetCommittedBytes = 0L;
             record.PendingTransitionBackendName = string.Empty;
             record.PendingTransitionReason = string.Empty;
+            record.PendingTransitionPriority = JobPriority.Low;
+            record.PendingTransitionUploadPriorityClass = TextureUploadPriorityClass.Background;
             record.LastTransitionFrameId = frameId;
         }
 
@@ -3149,7 +3347,9 @@ internal sealed class ImportedTextureStreamingManager
                 queueWaitMilliseconds,
                 texture is null ? 0.0 : Math.Max(0.0, texture.LastTextureUploadDurationMilliseconds),
                 lifecycleMilliseconds,
-                backendName);
+                backendName,
+                transitionPriority,
+                uploadPriorityClass);
 
             if (pressureDemotion && completedResidentSize < previousResidentSize)
             {

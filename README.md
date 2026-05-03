@@ -119,6 +119,8 @@ If you are working on the legacy OpenVR path, use `XREngine.VRClient` as the com
 
 The repo root has `ExecTool.bat`, an interactive menu for all the scripts under `Tools/` — build helpers, dependency installers, report generators, and more. Run it with no arguments for the menu, or `ExecTool --bootstrap` for full first-time setup.
 
+Texture sample downloaders are available there too. `pwsh Tools/Get-PixelFurnaceTextures.ps1` pulls Pixel-Furnace samples, and `pwsh Tools/Get-FreePbrTextures.ps1` pulls FreePBR `bl` texture ZIPs into `Build\CommonAssets\Textures\Samples\FreePBR`; review each source site's terms before redistributing downloaded assets. In the ImGui editor, open `Tools > External Texture Browser` or `View > External Texture Browser` to browse Pixel-Furnace and FreePBR preview tiles and download individual material packs into the game assets folder.
+
 ## Unit Testing World
 
 The editor's test world is configured through the generated local file `Assets/UnitTestingWorldSettings.jsonc`. Launch with `--unit-testing` (or set `XRE_WORLD_MODE=UnitTesting`) to boot into it. The file is intentionally ignored by Git for per-workstation tuning, and has a JSON schema wired up in VS Code for autocompletion and hover docs.

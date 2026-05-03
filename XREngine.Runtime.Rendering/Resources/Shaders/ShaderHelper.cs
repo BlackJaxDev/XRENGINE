@@ -57,19 +57,40 @@ public static class ShaderHelper
         DefinedVariantShaderCache.Clear();
     }
 
-    private static Task<XRShader> GetOrCreateEngineShaderTask(string relativePath, EShaderType shaderType)
+    private static EngineShaderCacheKey CreateEngineShaderCacheKey(string relativePath, EShaderType shaderType)
     {
         string normalizedPath = relativePath.Replace('\\', '/');
-        return EngineShaderLoadTasks.GetOrAdd(
-            new EngineShaderCacheKey(normalizedPath, shaderType),
-            static key => LoadAndWarmEngineShaderAsync(key));
+        return new EngineShaderCacheKey(normalizedPath, shaderType);
     }
 
-    private static async Task<XRShader> LoadAndWarmEngineShaderAsync(EngineShaderCacheKey key)
+    private static Task<XRShader> GetOrCreateEngineShaderTask(string relativePath, EShaderType shaderType)
     {
-        XRShader source = await Services.LoadEngineAssetAsync<XRShader>(JobPriority.Highest, bypassJobThread: false, "Shaders", key.RelativePath).ConfigureAwait(false);
+        EngineShaderCacheKey key = CreateEngineShaderCacheKey(relativePath, shaderType);
+        return EngineShaderLoadTasks.GetOrAdd(
+            key,
+            static key => LoadAndWarmEngineShaderAsync(key, bypassJobThread: false));
+    }
+
+    private static XRShader LoadAndWarmEngineShader(EngineShaderCacheKey key, bool bypassJobThread)
+    {
+        XRShader source = Services.LoadEngineAsset<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath);
         source._type = key.ShaderType;
         source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
+        return source;
+    }
+
+    private static async Task<XRShader> LoadAndWarmEngineShaderAsync(EngineShaderCacheKey key, bool bypassJobThread)
+    {
+        XRShader source = await Services.LoadEngineAssetAsync<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath).ConfigureAwait(false);
+        source._type = key.ShaderType;
+        source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
+        return source;
+    }
+
+    private static XRShader LoadAndCacheEngineShaderInline(EngineShaderCacheKey key)
+    {
+        XRShader source = LoadAndWarmEngineShader(key, bypassJobThread: true);
+        EngineShaderLoadTasks[key] = Task.FromResult(source);
         return source;
     }
 
@@ -87,7 +108,21 @@ public static class ShaderHelper
     public static XRShader LoadEngineShader(string relativePath, EShaderType? type = null)
     {
         EShaderType shaderType = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
-        XRShader source = GetOrCreateEngineShaderTask(relativePath, shaderType).GetAwaiter().GetResult();
+        EngineShaderCacheKey key = CreateEngineShaderCacheKey(relativePath, shaderType);
+        XRShader source;
+        if (EngineShaderLoadTasks.TryGetValue(key, out Task<XRShader>? existingTask))
+        {
+            source = !existingTask.IsCompleted && Engine.IsRenderThread
+                ? LoadAndCacheEngineShaderInline(key)
+                : existingTask.GetAwaiter().GetResult();
+        }
+        else
+        {
+            source = Engine.IsRenderThread
+                ? LoadAndCacheEngineShaderInline(key)
+                : GetOrCreateEngineShaderTask(relativePath, shaderType).GetAwaiter().GetResult();
+        }
+
         source._type = shaderType;
         return source;
     }

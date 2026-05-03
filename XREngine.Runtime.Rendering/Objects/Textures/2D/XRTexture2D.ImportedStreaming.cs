@@ -90,8 +90,12 @@ public partial class XRTexture2D
             texture.OriginalPath ??= originalSourcePath;
     }
 
-    internal static void ScheduleGpuUploadInternal(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted = null)
-        => ScheduleGpuUpload(texture, cancellationToken, onCompleted);
+    internal static void ScheduleGpuUploadInternal(
+        XRTexture2D texture,
+        CancellationToken cancellationToken,
+        Action? onCompleted = null,
+        TextureUploadPriorityClass priorityClass = TextureUploadPriorityClass.Background)
+        => ScheduleGpuUpload(texture, cancellationToken, onCompleted, priorityClass);
 
     internal static long StartImportedTextureTiming()
         => ShouldLogImportedTextureTiming ? Stopwatch.GetTimestamp() : 0L;

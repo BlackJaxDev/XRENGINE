@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using System.Text;
+using System.Threading.Tasks;
 using ImGuiNET;
 using XREngine;
 using XREngine.Animation;
@@ -34,8 +35,23 @@ public static partial class EditorImGuiUI
         private static readonly List<XRComponent> _componentsScratch = [];
         /// <summary>Reusable visited set for inspector draws, cleared each frame.</summary>
         private static readonly HashSet<object> _visitedScratch = new(ReferenceEqualityComparer.Instance);
+        private static readonly HashSet<object> _standaloneVisitedScratch = new(ReferenceEqualityComparer.Instance);
         /// <summary>Cached component header labels keyed by (componentHashCode, componentName, typeName).</summary>
         private static readonly Dictionary<(int Hash, string? Name, string TypeName), (string FullDisplay, string Header, string RenamePopup)> _componentLabelCache = [];
+        private static readonly Dictionary<ThirdPartyImportSettingsCacheKey, ThirdPartyImportSettingsCacheEntry> _thirdPartyImportSettingsCache = [];
+        private static readonly object _thirdPartyImportSettingsCacheLock = new();
+
+        private readonly record struct ThirdPartyImportSettingsCacheKey(string SourcePath, Type AssetType);
+
+        private sealed class ThirdPartyImportSettingsCacheEntry
+        {
+            public bool IsLoading { get; set; }
+            public bool IsLoaded { get; set; }
+            public string? ErrorMessage { get; set; }
+            public object? ImportOptions { get; set; }
+            public string OptionsPath { get; set; } = string.Empty;
+            public string GeneratedAssetPath { get; set; } = string.Empty;
+        }
 
         private static void BeginComponentRename(XRComponent component)
         {
@@ -590,51 +606,7 @@ public static partial class EditorImGuiUI
             if (string.Equals(Path.GetExtension(asset.FilePath), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
                 return;
 
-            var assets = Engine.Assets;
-            if (assets is null)
-                return;
-
-            if (!assets.TryGetThirdPartyImportContext(asset.FilePath, asset.GetType(), out var importOptions, out var optionsPath, out var generatedAssetPath))
-                return;
-
-            if (!ImGui.CollapsingHeader("Import Settings", ImGuiTreeNodeFlags.DefaultOpen))
-                return;
-
-            ImGui.PushID("ThirdPartyImportSettings");
-
-            ImGui.TextDisabled("Source");
-            ImGui.PushTextWrapPos();
-            ImGui.TextUnformatted(asset.FilePath);
-            ImGui.PopTextWrapPos();
-
-            ImGui.TextDisabled("Generated Asset");
-            ImGui.PushTextWrapPos();
-            ImGui.TextUnformatted(generatedAssetPath);
-            ImGui.PopTextWrapPos();
-
-            ImGui.TextDisabled("Options Cache");
-            ImGui.PushTextWrapPos();
-            ImGui.TextUnformatted(optionsPath);
-            ImGui.PopTextWrapPos();
-
-            ImGui.Separator();
-
-            DrawInspectableObject(new InspectorTargetSet(new[] { importOptions! }, importOptions!.GetType()), "ThirdPartyImportOptions", visited);
-
-            ImGui.Spacing();
-            if (ImGui.Button("Save & Reimport"))
-            {
-                bool saved = assets.SaveThirdPartyImportOptions(asset.FilePath, asset.GetType(), importOptions!);
-                _ = assets.ReimportThirdPartyFileAsync(asset.FilePath).ContinueWith(t =>
-                {
-                    bool reimported = t.Status == TaskStatus.RanToCompletion && t.Result;
-                    Debug.Out($"[ImportSettings] Saved={saved}, Reimported={reimported} for '{asset.FilePath}'.");
-                });
-            }
-
-            ImGui.PopID();
-
-            ImGui.Separator();
+            DrawThirdPartyImportSettingsCore(asset.FilePath, asset.GetType(), visited, "Save & Reimport");
         }
 
         private static void DrawThirdPartyImportSettings(string sourcePath, Type assetType, HashSet<object> visited)
@@ -646,11 +618,13 @@ public static partial class EditorImGuiUI
             if (string.Equals(Path.GetExtension(sourcePath), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
                 return;
 
-            var assets = Engine.Assets;
-            if (assets is null)
-                return;
+            DrawThirdPartyImportSettingsCore(sourcePath, assetType, visited, "Save && Reimport");
+        }
 
-            if (!assets.TryGetThirdPartyImportContext(sourcePath, assetType, out var importOptions, out var optionsPath, out var generatedAssetPath))
+        private static void DrawThirdPartyImportSettingsCore(string sourcePath, Type assetType, HashSet<object> visited, string saveButtonLabel)
+        {
+            ThirdPartyImportSettingsCacheEntry entry = GetOrQueueThirdPartyImportSettings(sourcePath, assetType);
+            if (!entry.IsLoading && !entry.IsLoaded && string.IsNullOrWhiteSpace(entry.ErrorMessage))
                 return;
 
             if (!ImGui.CollapsingHeader("Import Settings", ImGuiTreeNodeFlags.DefaultOpen))
@@ -663,34 +637,176 @@ public static partial class EditorImGuiUI
             ImGui.TextUnformatted(sourcePath);
             ImGui.PopTextWrapPos();
 
+            if (entry.IsLoading)
+            {
+                ImGui.TextDisabled("Loading import settings...");
+                ImGui.PopID();
+                ImGui.Separator();
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.ErrorMessage))
+            {
+                ImGui.PushTextWrapPos();
+                ImGui.TextDisabled(entry.ErrorMessage);
+                ImGui.PopTextWrapPos();
+                ImGui.PopID();
+                ImGui.Separator();
+                return;
+            }
+
+            object? importOptions = entry.ImportOptions;
+            if (importOptions is null)
+            {
+                ImGui.PopID();
+                ImGui.Separator();
+                return;
+            }
+
             ImGui.TextDisabled("Generated Asset");
             ImGui.PushTextWrapPos();
-            ImGui.TextUnformatted(generatedAssetPath);
+            ImGui.TextUnformatted(entry.GeneratedAssetPath);
             ImGui.PopTextWrapPos();
 
             ImGui.TextDisabled("Options Cache");
             ImGui.PushTextWrapPos();
-            ImGui.TextUnformatted(optionsPath);
+            ImGui.TextUnformatted(entry.OptionsPath);
             ImGui.PopTextWrapPos();
 
             ImGui.Separator();
 
-            DrawInspectableObject(new InspectorTargetSet(new[] { importOptions! }, importOptions!.GetType()), "ThirdPartyImportOptions", visited);
+            DrawInspectableObject(new InspectorTargetSet(new[] { importOptions }, importOptions.GetType()), "ThirdPartyImportOptions", visited);
 
             ImGui.Spacing();
-            if (ImGui.Button("Save && Reimport"))
-            {
-                bool saved = assets.SaveThirdPartyImportOptions(sourcePath, assetType, importOptions!);
-                _ = assets.ReimportThirdPartyFileAsync(sourcePath).ContinueWith(t =>
-                {
-                    bool reimported = t.Status == TaskStatus.RanToCompletion && t.Result;
-                    Debug.Out($"[ImportSettings] Saved={saved}, Reimported={reimported} for '{sourcePath}'.");
-                });
-            }
+            if (ImGui.Button(saveButtonLabel))
+                QueueSaveAndReimportThirdPartyAsset(sourcePath, assetType, importOptions);
 
             ImGui.PopID();
 
             ImGui.Separator();
+        }
+
+        private static ThirdPartyImportSettingsCacheEntry GetOrQueueThirdPartyImportSettings(string sourcePath, Type assetType)
+        {
+            var key = CreateThirdPartyImportSettingsCacheKey(sourcePath, assetType);
+            lock (_thirdPartyImportSettingsCacheLock)
+            {
+                if (_thirdPartyImportSettingsCache.TryGetValue(key, out var cached))
+                    return cached;
+
+                cached = new ThirdPartyImportSettingsCacheEntry { IsLoading = true };
+                _thirdPartyImportSettingsCache[key] = cached;
+                _ = LoadThirdPartyImportSettingsAsync(key);
+                return cached;
+            }
+        }
+
+        private static async Task LoadThirdPartyImportSettingsAsync(ThirdPartyImportSettingsCacheKey key)
+        {
+            object? importOptions = null;
+            string optionsPath = string.Empty;
+            string generatedAssetPath = string.Empty;
+            string? errorMessage = null;
+
+            try
+            {
+                await Task.Run(() =>
+                {
+                    var assets = Engine.Assets;
+                    if (assets is null)
+                    {
+                        errorMessage = "Asset manager is not available.";
+                        return;
+                    }
+
+                    if (!assets.TryGetThirdPartyImportContext(key.SourcePath, key.AssetType, out importOptions, out optionsPath, out generatedAssetPath))
+                        errorMessage = "No third-party import context is available for this asset.";
+                }).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+                Debug.LogException(ex, $"Failed to load import settings for '{key.SourcePath}'.");
+            }
+
+            lock (_thirdPartyImportSettingsCacheLock)
+            {
+                if (!_thirdPartyImportSettingsCache.TryGetValue(key, out var entry))
+                    return;
+
+                entry.IsLoading = false;
+                entry.IsLoaded = importOptions is not null && string.IsNullOrWhiteSpace(errorMessage);
+                entry.ImportOptions = importOptions;
+                entry.OptionsPath = optionsPath;
+                entry.GeneratedAssetPath = generatedAssetPath;
+                entry.ErrorMessage = errorMessage;
+            }
+        }
+
+        private static void QueueSaveAndReimportThirdPartyAsset(string sourcePath, Type assetType, object importOptions)
+        {
+            var assets = Engine.Assets;
+            if (assets is null)
+                return;
+
+            var key = CreateThirdPartyImportSettingsCacheKey(sourcePath, assetType);
+            Guid trackingId = EditorJobTracker.TrackOperation($"Reimport {System.IO.Path.GetFileName(sourcePath)}", "Saving import settings...");
+            _ = SaveAndReimportThirdPartyAssetAsync(assets, key, importOptions, trackingId);
+        }
+
+        private static async Task SaveAndReimportThirdPartyAssetAsync(AssetManager assets, ThirdPartyImportSettingsCacheKey key, object importOptions, Guid trackingId)
+        {
+            bool saved = false;
+            bool reimported = false;
+            try
+            {
+                saved = await Task.Run(() => assets.SaveThirdPartyImportOptions(key.SourcePath, key.AssetType, importOptions)).ConfigureAwait(false);
+                if (!saved)
+                {
+                    EditorJobTracker.Fault(trackingId, $"Failed to save import settings for {System.IO.Path.GetFileName(key.SourcePath)}.");
+                    return;
+                }
+
+                EditorJobTracker.SetStatus(trackingId, "Reimporting asset...");
+                reimported = await assets.ReimportThirdPartyFileAsync(key.SourcePath).ConfigureAwait(false);
+                if (!reimported)
+                {
+                    EditorJobTracker.Fault(trackingId, $"Failed to reimport {System.IO.Path.GetFileName(key.SourcePath)}.");
+                    return;
+                }
+
+                lock (_thirdPartyImportSettingsCacheLock)
+                    _thirdPartyImportSettingsCache.Remove(key);
+
+                EditorJobTracker.Complete(trackingId, $"Reimported {System.IO.Path.GetFileName(key.SourcePath)}");
+                Debug.Out($"[ImportSettings] Saved={saved}, Reimported={reimported} for '{key.SourcePath}'.");
+            }
+            catch (Exception ex)
+            {
+                EditorJobTracker.Fault(trackingId, ex.Message);
+                Debug.LogException(ex, $"Failed to save and reimport '{key.SourcePath}'.");
+            }
+        }
+
+        private static ThirdPartyImportSettingsCacheKey CreateThirdPartyImportSettingsCacheKey(string sourcePath, Type assetType)
+            => new(NormalizeThirdPartyImportSourcePath(sourcePath), assetType);
+
+        private static string NormalizeThirdPartyImportSourcePath(string sourcePath)
+        {
+            try
+            {
+                return System.IO.Path.GetFullPath(sourcePath);
+            }
+            catch
+            {
+                return sourcePath;
+            }
+        }
+
+        private static void ClearThirdPartyImportSettingsCache()
+        {
+            lock (_thirdPartyImportSettingsCacheLock)
+                _thirdPartyImportSettingsCache.Clear();
         }
 
         private static void DrawStandaloneInspectorTarget(object target)
@@ -719,7 +835,8 @@ public static partial class EditorImGuiUI
 
             ImGui.Separator();
 
-            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var visited = _standaloneVisitedScratch;
+            visited.Clear();
 
             // If we have an associated GL API object selected, show its custom editor first
             if (_selectedOpenGlApiObject is OpenGLRenderer.GLObjectBase glObject)

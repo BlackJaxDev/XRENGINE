@@ -6,8 +6,7 @@
 // ============================================
 // Dissolve Uniforms (defined in uniforms.glsl)
 // ============================================
-// uniform float _EnableDissolve;
-// uniform float _DissolveType;           // 0=Basic, 1=Point2Point, 2=Spherical
+// uniform float _DissolveType;           // 0=Linear, 1=Spherical, 2=Directional
 // uniform float _DissolveProgress;       // 0-1 dissolve amount
 // uniform vec4 _DissolveEdgeColor;
 // uniform float _DissolveEdgeWidth;
@@ -15,15 +14,15 @@
 // uniform sampler2D _DissolveNoiseTexture;
 // uniform vec4 _DissolveNoiseTexture_ST;
 // uniform float _DissolveNoiseStrength;
-// uniform vec3 _DissolveStartPoint;      // For point-to-point
+// uniform vec3 _DissolveStartPoint;      // For spherical/directional modes
 // uniform vec3 _DissolveEndPoint;
 // uniform float _DissolveInvert;
 // uniform float _DissolveCutoff;         // Alpha cutoff threshold
 
 // Dissolve type constants
-const int DISSOLVE_BASIC = 0;
-const int DISSOLVE_POINT2POINT = 1;
-const int DISSOLVE_SPHERICAL = 2;
+const int DISSOLVE_LINEAR = 0;
+const int DISSOLVE_SPHERICAL = 1;
+const int DISSOLVE_DIRECTIONAL = 2;
 
 // ============================================
 // Dissolve Noise Sampling
@@ -64,6 +63,8 @@ float calculateSphericalDissolve(vec3 worldPos, vec3 centerPoint, float maxRadiu
     return normalizedDist;
 }
 
+float calculateGradientDissolve(vec3 localPos, vec3 direction, float progress);
+
 // ============================================
 // Calculate Dissolve Value
 // ============================================
@@ -71,23 +72,16 @@ float calculateSphericalDissolve(vec3 worldPos, vec3 centerPoint, float maxRadiu
 //          y = edge factor (0-1, 1 at edge)
 //          z = raw dissolve value
 vec3 calculateDissolve(vec2 uv, vec3 worldPos, vec3 localPos) {
-    if (_EnableDissolve < 0.5) {
-        return vec3(1.0, 0.0, 0.0);
-    }
-    
     float dissolveValue = 0.0;
     int dissolveType = int(_DissolveType);
     
     // Calculate base dissolve value based on type
-    if (dissolveType == DISSOLVE_BASIC) {
-        // Basic UV-based dissolve with noise
-        dissolveValue = sampleDissolveNoise(uv, _DissolveNoiseTexture_ST);
-    }
-    else if (dissolveType == DISSOLVE_POINT2POINT) {
-        // Point-to-point dissolve
-        float p2p = calculatePoint2PointDissolve(worldPos, _DissolveStartPoint, _DissolveEndPoint, _DissolveProgress);
+    if (dissolveType == DISSOLVE_LINEAR) {
+        // Local directional gradient with optional noise detail.
+        vec3 direction = _DissolveEndPoint - _DissolveStartPoint;
+        float linear = calculateGradientDissolve(localPos, dot(direction, direction) > 0.001 ? direction : vec3(0.0, 1.0, 0.0), _DissolveProgress);
         float noise = sampleDissolveNoise(uv, _DissolveNoiseTexture_ST);
-        dissolveValue = mix(p2p, p2p + (noise - 0.5) * 2.0, _DissolveNoiseStrength);
+        dissolveValue = mix(linear, linear + (noise - 0.5) * 2.0, _DissolveNoiseStrength);
     }
     else if (dissolveType == DISSOLVE_SPHERICAL) {
         // Spherical dissolve from start point
@@ -95,6 +89,12 @@ vec3 calculateDissolve(vec2 uv, vec3 worldPos, vec3 localPos) {
         float spherical = calculateSphericalDissolve(worldPos, _DissolveStartPoint, maxRadius, _DissolveProgress);
         float noise = sampleDissolveNoise(uv, _DissolveNoiseTexture_ST);
         dissolveValue = mix(spherical, spherical + (noise - 0.5) * 2.0, _DissolveNoiseStrength);
+    }
+    else if (dissolveType == DISSOLVE_DIRECTIONAL) {
+        // World-space point-to-point dissolve.
+        float p2p = calculatePoint2PointDissolve(worldPos, _DissolveStartPoint, _DissolveEndPoint, _DissolveProgress);
+        float noise = sampleDissolveNoise(uv, _DissolveNoiseTexture_ST);
+        dissolveValue = mix(p2p, p2p + (noise - 0.5) * 2.0, _DissolveNoiseStrength);
     }
     
     // Invert if needed
@@ -127,10 +127,6 @@ vec3 calculateDissolve(vec2 uv, vec3 worldPos, vec3 localPos) {
 // ============================================
 // Modifies color and emission, returns true if fragment should be discarded
 bool applyDissolve(vec2 uv, vec3 worldPos, vec3 localPos, inout vec3 color, inout vec3 emission, inout float alpha) {
-    if (_EnableDissolve < 0.5) {
-        return false;
-    }
-    
     vec3 dissolveResult = calculateDissolve(uv, worldPos, localPos);
     float dissolveAlpha = dissolveResult.x;
     float edgeFactor = dissolveResult.y;

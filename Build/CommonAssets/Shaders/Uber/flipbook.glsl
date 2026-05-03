@@ -253,13 +253,32 @@ vec4 simpleFlipbook(
     int columns,
     int rows,
     float fps,
-    float time
+    float time,
+    float frameOffset,
+    float manualFrame,
+    bool crossfade,
+    float crossfadeStrength
 ) {
     int totalFrames = columns * rows;
-    int frame = int(floor(time * fps)) % totalFrames;
-    
-    vec2 frameUV = getFlipbookFrameUV(uv, frame, columns, rows);
-    return texture(tex, frameUV);
+    float frameFloat = fps > 0.0 ? time * fps : manualFrame;
+    frameFloat += frameOffset;
+
+    int frame1 = int(floor(frameFloat)) % totalFrames;
+    if (frame1 < 0) {
+        frame1 += totalFrames;
+    }
+
+    vec2 frameUV1 = getFlipbookFrameUV(uv, frame1, columns, rows);
+    vec4 color1 = texture(tex, frameUV1);
+
+    if (!crossfade || crossfadeStrength <= 0.0) {
+        return color1;
+    }
+
+    int frame2 = (frame1 + 1) % totalFrames;
+    vec2 frameUV2 = getFlipbookFrameUV(uv, frame2, columns, rows);
+    vec4 color2 = texture(tex, frameUV2);
+    return mix(color1, color2, fract(frameFloat) * clamp(crossfadeStrength, 0.0, 1.0));
 }
 
 #endif // TOON_FLIPBOOK_GLSL

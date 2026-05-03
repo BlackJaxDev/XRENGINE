@@ -149,11 +149,6 @@ public partial class GLTexture2D
             return false;
         }
 
-        int previousCommittedBaseMipLevel = Data.SparseTextureStreamingCommittedBaseMipLevel;
-        bool hasPreviousCommit = previousCommittedBaseMipLevel != int.MaxValue;
-        if (!hasPreviousCommit)
-            return false;
-
         Generate();
 
         IGLTexture? previousTexture = Renderer.BoundTexture;
@@ -169,9 +164,15 @@ public partial class GLTexture2D
             if (!support.IsAvailable || !support.IsPageAligned(request.LogicalWidth, request.LogicalHeight))
                 return false;
 
-            if (!EnsureSparseStorageAllocated(request, support, out int numSparseLevels, out _))
+            int previousCommittedBaseMipLevel = Data.SparseTextureStreamingCommittedBaseMipLevel;
+            bool hasPreviousCommit = previousCommittedBaseMipLevel != int.MaxValue;
+            if (!hasPreviousCommit)
                 return false;
 
+            if (!HasPublishedSparseStorageForAsyncPromotion(request))
+                return false;
+
+            int numSparseLevels = _sparseNumSparseLevels;
             int requestedBaseMipLevel = Math.Clamp(request.RequestedBaseMipLevel, 0, Math.Max(0, request.LogicalMipCount - 1));
             int committedBaseMipLevel = XRTexture2D.ResolveSparseCommittedBaseMipLevel(requestedBaseMipLevel, numSparseLevels, request.LogicalMipCount);
             bool isDemotion = hasPreviousCommit && committedBaseMipLevel > previousCommittedBaseMipLevel;
@@ -225,6 +226,24 @@ public partial class GLTexture2D
                 Api.BindTexture(ToGLEnum(TextureTarget), 0);
             }
         }
+    }
+
+    private bool HasPublishedSparseStorageForAsyncPromotion(SparseTextureStreamingTransitionRequest request)
+    {
+        return _sparseStorageAllocated
+            && StorageSet
+            && _sparseLogicalWidth == request.LogicalWidth
+            && _sparseLogicalHeight == request.LogicalHeight
+            && _sparseLogicalMipCount == request.LogicalMipCount
+            && _allocatedLevels >= (uint)Math.Max(1, request.LogicalMipCount)
+            && _allocatedInternalFormat == request.SizedInternalFormat
+            && Data.SparseTextureStreamingEnabled
+            && Data.SparseTextureStreamingLogicalWidth == request.LogicalWidth
+            && Data.SparseTextureStreamingLogicalHeight == request.LogicalHeight
+            && Data.SparseTextureStreamingLogicalMipCount == request.LogicalMipCount
+            && Data.SparseTextureStreamingResidentBaseMipLevel != int.MaxValue
+            && Data.SparseTextureStreamingCommittedBaseMipLevel != int.MaxValue
+            && Data.SparseTextureStreamingCommittedBytes > 0L;
     }
 
     private void ExecuteSparsePromotionOnSharedContext(

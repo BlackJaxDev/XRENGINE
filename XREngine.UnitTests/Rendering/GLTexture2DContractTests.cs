@@ -128,6 +128,20 @@ public sealed class GLTexture2DContractTests
     }
 
     [Test]
+    public void GLTexture2D_SparseAsyncPromotionRequiresPublishedResidentState()
+    {
+        string sparseSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.SparseStreaming.cs");
+        string asyncSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.SparseStreaming.Async.cs");
+
+        sparseSource.ShouldContain("Keep the public sparse state private until UpdateSparseTextureState");
+        asyncSource.ShouldContain("HasPublishedSparseStorageForAsyncPromotion(request)");
+        asyncSource.ShouldContain("Data.SparseTextureStreamingLogicalWidth == request.LogicalWidth");
+        asyncSource.ShouldContain("Data.SparseTextureStreamingResidentBaseMipLevel != int.MaxValue");
+        asyncSource.ShouldContain("Data.SparseTextureStreamingCommittedBytes > 0L");
+        asyncSource.ShouldNotContain("EnsureSparseStorageAllocated(request, support");
+    }
+
+    [Test]
     public void GLTexture2D_SparseResidentUploadsUseLogicalMipLevels()
     {
         string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");

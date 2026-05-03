@@ -413,6 +413,27 @@ public partial class XRMaterial
         }
     }
 
+    public bool EnsureUberVariantPreparedForRendering()
+    {
+        XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
+        if (!ActiveUberVariant.IsEmpty && UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
+            return false;
+
+        if (!TryGetUberMaterialState(out XRShader? fragmentShader, out ShaderUiManifest manifest) || fragmentShader is null)
+            return false;
+
+        EnsureUberStateInitialized(fragmentShader, manifest);
+
+        if (UberVariantStatus.Stage is EUberMaterialVariantStage.Requested or
+            EUberMaterialVariantStage.Preparing or
+            EUberMaterialVariantStage.Compiling)
+        {
+            return false;
+        }
+
+        return PrepareUberVariantImmediately();
+    }
+
     public void RequestUberVariantRebuildDebounced(int debounceMilliseconds = UberConstantPropertyEditDebounceMilliseconds)
     {
         if (debounceMilliseconds <= 0)
