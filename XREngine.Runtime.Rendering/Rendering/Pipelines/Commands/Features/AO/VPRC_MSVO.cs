@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_MSVO : ViewportRenderCommand
     {
         private static void Log(string message)
-            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][MSVO] {0}", message);
+            => Debug.Rendering(EOutputVerbosity.Normal, false, "[AO][MSVO] {0}", message);
 
         private string MSVOGenShaderName()
             => Stereo ? "MSVOGenStereo.fs" : "MSVOGen.fs";

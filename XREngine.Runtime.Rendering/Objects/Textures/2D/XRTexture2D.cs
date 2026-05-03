@@ -72,13 +72,13 @@ namespace XREngine.Rendering
                 if (TryLoadTextureAsset(filePath, this, deepCopy: true))
                     return true;
 
-                RuntimeRenderingHostServices.Current.LogWarning($"Failed to load texture asset '{filePath}'. Falling back to filler texture.");
+                Debug.TexturesWarning($"Failed to load texture asset '{filePath}'. Falling back to filler texture.");
                 return AssignFillerTexture(filePath);
             }
 
             if (!File.Exists(filePath))
             {
-                RuntimeRenderingHostServices.Current.LogWarning($"Texture file '{filePath}' does not exist. Falling back to filler texture.");
+                Debug.TexturesWarning($"Texture file '{filePath}' does not exist. Falling back to filler texture.");
                 return AssignFillerTexture(filePath);
             }
 
@@ -94,7 +94,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex)
             {
-                RuntimeRenderingHostServices.Current.LogWarning($"Failed to load texture from '{filePath}'. Falling back to filler texture. {ex.Message}");
+                Debug.TexturesWarning($"Failed to load texture from '{filePath}'. Falling back to filler texture. {ex.Message}");
                 return AssignFillerTexture(filePath);
             }
         }
@@ -131,7 +131,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex)
             {
-                RuntimeRenderingHostServices.Current.LogWarning($"Failed to load texture from pre-read data ({fileData.Length} bytes). {ex.Message}");
+                Debug.TexturesWarning($"Failed to load texture from pre-read data ({fileData.Length} bytes). {ex.Message}");
                 return false;
             }
         }
@@ -211,7 +211,7 @@ namespace XREngine.Rendering
 
                     bool loadSuccess = target.Load3rdParty(resolvedPath);
                     if (!loadSuccess)
-                        RuntimeRenderingHostServices.Current.LogWarning($"[TextureLoadJob] Failed to load texture from disk: {resolvedPath}");
+                        Debug.TexturesWarning($"[TextureLoadJob] Failed to load texture from disk: {resolvedPath}");
                     onProgress?.Invoke(0.5f);
 
                     if (cancellationToken.IsCancellationRequested)
@@ -396,7 +396,7 @@ namespace XREngine.Rendering
                 }
                 catch (Exception ex)
                 {
-                    RuntimeRenderingHostServices.Current.LogWarning($"[UploadMipmaps] Exception during upload for '{texture.Name}': {ex}");
+                    Debug.TexturesWarning($"[UploadMipmaps] Exception during upload for '{texture.Name}': {ex}");
 
                     try
                     {
@@ -414,13 +414,13 @@ namespace XREngine.Rendering
 
                         texture.Generate();
                         texture.PushData();
-                        RuntimeRenderingHostServices.Current.LogOutput($"[UploadMipmaps] Fallback upload (no PBO) completed for '{texture.Name}'");
+                        Debug.Textures($"[UploadMipmaps] Fallback upload (no PBO) completed for '{texture.Name}'");
 
                         onCompleted?.Invoke();
                     }
                     catch (Exception fallbackEx)
                     {
-                        RuntimeRenderingHostServices.Current.LogWarning($"[UploadMipmaps] Fallback upload failed for '{texture.Name}': {fallbackEx}");
+                        Debug.TexturesWarning($"[UploadMipmaps] Fallback upload failed for '{texture.Name}': {fallbackEx}");
                     }
                 }
             }
@@ -782,7 +782,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or YamlException)
             {
-                RuntimeRenderingHostServices.Current.LogOutput($"Failed to inspect asset file '{filePath}' while determining preview type. {ex.Message}");
+                Debug.Textures($"Failed to inspect asset file '{filePath}' while determining preview type. {ex.Message}");
             }
 
             return false;
@@ -850,7 +850,7 @@ namespace XREngine.Rendering
             }
             catch (MagickException ex)
             {
-                RuntimeRenderingHostServices.Current.LogWarning($"Failed to load preview image '{filePath}': {ex.Message}. Using placeholder preview instead.");
+                Debug.TexturesWarning($"Failed to load preview image '{filePath}': {ex.Message}. Using placeholder preview instead.");
                 AssignPlaceholderPreview(target);
             }
         }
@@ -868,7 +868,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                RuntimeRenderingHostServices.Current.LogOutput($"Failed to read preview resident data from texture asset '{filePath}'. {ex.Message}");
+                Debug.Textures($"Failed to read preview resident data from texture asset '{filePath}'. {ex.Message}");
             }
 
             return TryLoadTextureAsset(filePath, target, deepCopy: false)
@@ -888,7 +888,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex) when (IsTextureAssetLoadFailure(ex))
             {
-                RuntimeRenderingHostServices.Current.LogOutput($"Failed to load texture asset '{filePath}' while preparing texture data: {ex.Message}");
+                Debug.Textures($"Failed to load texture asset '{filePath}' while preparing texture data: {ex.Message}");
                 return false;
             }
         }
@@ -1231,7 +1231,7 @@ namespace XREngine.Rendering
                 }
                 catch (Exception e)
                 {
-                    RuntimeRenderingHostServices.Current.LogWarning($"Failed to load texture from path: {path}{Environment.NewLine}{e.Message}");
+                    Debug.TexturesWarning($"Failed to load texture from path: {path}{Environment.NewLine}{e.Message}");
                 }
             }
             Mipmaps = [.. mips];

@@ -516,20 +516,11 @@ namespace XREngine
 
         public string SourceFilePath => _path;
 
-        private static bool IsFbxPath(string? path)
-            => !string.IsNullOrWhiteSpace(path)
-                && Path.GetExtension(path).Equals(".fbx", StringComparison.OrdinalIgnoreCase);
-
         private static void LogImportDiagnostic(string message, params object[] args)
             => LogImportDiagnostic(_currentImportSourceFilePath.Value, message, args);
 
         private static void LogImportDiagnostic(string? sourceFilePath, string message, params object[] args)
-        {
-            if (IsFbxPath(sourceFilePath))
-                Debug.Assets(message, args);
-            else
-                Debug.Out(message, args);
-        }
+            => Debug.Meshes(message, args);
 
         private static void LogImportWarning(string message, params object[] args)
             => LogImportWarning(_currentImportSourceFilePath.Value, message, args);
@@ -538,35 +529,18 @@ namespace XREngine
             => LogImportExpectedWarning(_currentImportSourceFilePath.Value, message, args);
 
         private static void LogImportWarning(string? sourceFilePath, string message, params object[] args)
-        {
-            if (IsFbxPath(sourceFilePath))
-                Debug.AssetsWarning(message, args);
-            else
-            {
-                if (args.Length > 0)
-                    message = string.Format(message, args);
-                Debug.LogWarning(message);
-            }
-        }
+            => Debug.MeshesWarning(message, args);
 
         private static void LogImportExpectedWarning(string? sourceFilePath, string message, params object[] args)
         {
             if (args.Length > 0)
                 message = string.Format(message, args);
 
-            if (IsFbxPath(sourceFilePath))
-                Debug.Log(ELogCategory.Assets, EOutputVerbosity.Normal, false, $"[WARN] {message}");
-            else
-                Debug.Log(ELogCategory.General, EOutputVerbosity.Normal, false, $"[WARN] {message}");
+            Debug.Log(ELogCategory.Meshes, EOutputVerbosity.Normal, false, $"[WARN] {message}");
         }
 
         private static void LogImportException(Exception ex, string? message = null)
-        {
-            if (IsFbxPath(_currentImportSourceFilePath.Value))
-                Debug.AssetsException(ex, message);
-            else
-                Debug.LogException(ex, message);
-        }
+            => Debug.MeshesException(ex, message);
 
         private readonly AssimpContext _assimp;
         private readonly string _path;

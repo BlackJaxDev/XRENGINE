@@ -110,11 +110,86 @@ namespace XREngine
 
             if (_renderDispatchWarningLabels.TryAdd(label, 0))
             {
+                ELogCategory category = ClassifyJobLabel(label);
+                if (category == ELogCategory.General)
+                    category = ELogCategory.Rendering;
+
                 Debug.LogWarning(
+                    category,
                     $"[RenderThreadJobs] RenderFrame dispatched non-GPU-tagged render-thread job '{label}'. " +
                     "Move scene/editor/networking work to AppThread or UpdateThread unless it truly requires the graphics context.");
             }
 #endif
+        }
+
+        private static void LogJobManagerMessage(string message)
+        {
+            ELogCategory category = ClassifyJobManagerMessage(message);
+            Debug.Log(category, EOutputVerbosity.Normal, false, message);
+        }
+
+        private static ELogCategory ClassifyJobManagerMessage(string message)
+        {
+            ELogCategory category = ClassifyJobLabel(message);
+            if (category != ELogCategory.General)
+                return category;
+
+            if (message.Contains("[RenderThreadJobs]", StringComparison.Ordinal)
+                || message.Contains("[RenderThread/", StringComparison.Ordinal)
+                || message.Contains("RenderFrame", StringComparison.OrdinalIgnoreCase))
+            {
+                return ELogCategory.Rendering;
+            }
+
+            return ELogCategory.General;
+        }
+
+        private static ELogCategory ClassifyJobLabel(string label)
+        {
+            if (label.Contains("TextureStreaming", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("ApplyResidentData", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("GLTexture", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("XRTexture", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("ProgressiveMipUpload", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("StartProgressiveCoroutine", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("UploadProgressive", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("SparseTexture", StringComparison.OrdinalIgnoreCase))
+            {
+                return ELogCategory.Textures;
+            }
+
+            if (label.Contains("LightProbe", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("DirectionalShadow", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("ShadowAtlas", StringComparison.OrdinalIgnoreCase))
+            {
+                return ELogCategory.Lighting;
+            }
+
+            if (label.Contains("MeshRenderer", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("GLMesh", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("VkMesh", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("XRMesh", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("ImportModels", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("LOD", StringComparison.OrdinalIgnoreCase))
+            {
+                return ELogCategory.Meshes;
+            }
+
+            if (label.Contains("Renderer", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("Render", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("Viewport", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("Framebuffer", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("FBO", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("Shader", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("OpenGL", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("Vulkan", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("GPU", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("Buffer", StringComparison.OrdinalIgnoreCase))
+            {
+                return ELogCategory.Rendering;
+            }
+
+            return ELogCategory.General;
         }
 
         private static bool IsGpuTaggedRenderThreadJob(string label)

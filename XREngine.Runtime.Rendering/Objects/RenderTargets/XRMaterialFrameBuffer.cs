@@ -94,12 +94,12 @@ namespace XREngine.Rendering
                     if (w is null)
                         w = tw;
                     else if (w != tw)
-                        RuntimeRenderingHostServices.Current.LogWarning("FBO texture widths are not all the same.");
+                        Debug.RenderingWarning("FBO texture widths are not all the same.");
 
                     if (h is null)
                         h = th;
                     else if (h != th)
-                        RuntimeRenderingHostServices.Current.LogWarning("FBO texture heights are not all the same.");
+                        Debug.RenderingWarning("FBO texture heights are not all the same.");
                 }
             }
             if (w is not null && h is not null)

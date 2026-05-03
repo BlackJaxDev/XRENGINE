@@ -771,13 +771,13 @@ public partial class DefaultRenderPipeline
             Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
             Matrix4x4 projMatrix = camera.ProjectionMatrix;
             Matrix4x4 viewProj = viewMatrix * projMatrix;
-            Debug.Out("[Velocity] Temporal data unavailable; using current camera matrices for motion vectors.");
+            Debug.Rendering("[Velocity] Temporal data unavailable; using current camera matrices for motion vectors.");
             program.Uniform("CurrViewProjection", viewProj);
             program.Uniform("PrevViewProjection", viewProj);
         }
         else
         {
-            Debug.Out("[Velocity] No camera available; motion vectors will be zeroed.");
+            Debug.Rendering("[Velocity] No camera available; motion vectors will be zeroed.");
             program.Uniform("CurrViewProjection", Matrix4x4.Identity);
             program.Uniform("PrevViewProjection", Matrix4x4.Identity);
         }

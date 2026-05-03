@@ -46,20 +46,20 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (ParentPipeline is not DefaultRenderPipeline pipeline)
             {
-                Debug.Out("[Velocity] Motion vectors pass skipped: parent pipeline missing or wrong type.");
+                Debug.Rendering("[Velocity] Motion vectors pass skipped: parent pipeline missing or wrong type.");
                 return;
             }
 
             if (RenderPasses.Length == 0)
             {
-                Debug.Out("[Velocity] Motion vectors pass skipped: no render passes configured.");
+                Debug.Rendering("[Velocity] Motion vectors pass skipped: no render passes configured.");
                 return;
             }
 
             var material = pipeline.GetMotionVectorsMaterial();
             if (material is null)
             {
-                Debug.Out("[Velocity] Motion vectors pass skipped: motion vector material unavailable.");
+                Debug.Rendering("[Velocity] Motion vectors pass skipped: motion vector material unavailable.");
                 return;
             }
 
@@ -80,7 +80,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             var commands = ActivePipelineInstance.MeshRenderCommands;
             if (commands is null)
             {
-                Debug.Out("[Velocity] Motion vectors pass skipped: no mesh render commands available.");
+                Debug.Rendering("[Velocity] Motion vectors pass skipped: no mesh render commands available.");
                 return;
             }
 

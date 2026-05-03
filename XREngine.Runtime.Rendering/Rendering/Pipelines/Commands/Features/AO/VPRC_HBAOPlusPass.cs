@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_HBAOPlusPass : ViewportRenderCommand
     {
         private static void Log(string message)
-            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][HBAO+] {0}", message);
+            => Debug.Rendering(EOutputVerbosity.Normal, false, "[AO][HBAO+] {0}", message);
 
         private string HBAOPlusGenShaderName()
             => Stereo ? "HBAOPlusGenStereo.fs" : "HBAOPlusGen.fs";

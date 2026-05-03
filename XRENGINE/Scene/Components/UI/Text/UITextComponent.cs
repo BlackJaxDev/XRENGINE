@@ -665,7 +665,7 @@ namespace XREngine.Rendering.UI
             if (_resizeGlyphDiagCount < 10)
             {
                 _resizeGlyphDiagCount++;
-                Debug.Out($"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
+                Debug.Rendering($"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
             }
             RenderCommand3D.Instances = count;
             RenderCommand2D.Instances = count;

@@ -746,7 +746,7 @@ internal static class NativeGltfSceneImporter
                 break;
             }
             default:
-                Debug.LogWarning($"[NativeGltfImporter] Skipping unsupported primitive mode {primitive.Mode} for '{sourceFilePath}' primitive {primitiveIndex}. Only TRIANGLES, TRIANGLE_STRIP, and TRIANGLE_FAN are currently imported.");
+                Debug.MeshesWarning($"[NativeGltfImporter] Skipping unsupported primitive mode {primitive.Mode} for '{sourceFilePath}' primitive {primitiveIndex}. Only TRIANGLES, TRIANGLE_STRIP, and TRIANGLE_FAN are currently imported.");
                 break;
         }
 
@@ -992,7 +992,7 @@ internal static class NativeGltfSceneImporter
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[NativeGltfImporter] Failed to create texture '{key}' from '{state.sourceFilePath}'. {ex.Message}");
+                Debug.MeshesWarning($"[NativeGltfImporter] Failed to create texture '{key}' from '{state.sourceFilePath}'. {ex.Message}");
                 return CreateFallbackTexture(key, sampler);
             }
         }, (document, sourceFilePath, textureIndex, purpose));
@@ -1154,7 +1154,7 @@ internal static class NativeGltfSceneImporter
             || (transformExtension.TryGetProperty("rotation", out JsonElement rotation) && rotation.ValueKind == JsonValueKind.Number && Math.Abs(rotation.GetDouble()) > double.Epsilon);
 
         if (hasUnsupportedTransform && s_textureTransformWarnings.TryAdd(textureKey, 0))
-            Debug.LogWarning($"[NativeGltfImporter] KHR_texture_transform offset/scale/rotation is not yet applied for texture '{textureKey}'. The importer will still honor the texCoord override.");
+            Debug.MeshesWarning($"[NativeGltfImporter] KHR_texture_transform offset/scale/rotation is not yet applied for texture '{textureKey}'. The importer will still honor the texCoord override.");
 
         return uvIndex;
     }

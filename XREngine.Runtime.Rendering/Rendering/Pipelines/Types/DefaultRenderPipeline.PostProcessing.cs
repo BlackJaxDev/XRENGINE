@@ -1754,7 +1754,7 @@ public partial class DefaultRenderPipeline
             if (key != _lastVolumetricFogScatterLightsKey)
             {
                 _lastVolumetricFogScatterLightsKey = key;
-                Debug.Out($"[VolumetricFog.Scatter] Lights upload: DirLights={dirCount} CastsShadows={casts} HasShadowTex={hasShadowTex} TexCount={texCount}");
+                Debug.Lighting($"[VolumetricFog.Scatter] Lights upload: DirLights={dirCount} CastsShadows={casts} HasShadowTex={hasShadowTex} TexCount={texCount}");
             }
 
             // One-shot diagnostic: dump the published cascade state of the primary directional
@@ -1767,7 +1767,7 @@ public partial class DefaultRenderPipeline
                 _loggedVolumetricFogScatterCascadeOnce = true;
                 var first = lights.DynamicDirectionalLights[0];
                 int activeCascades = first.ActiveCascadeCount;
-                Debug.Out(
+                Debug.Lighting(
                     $"[VolumetricFog.Scatter] DirLight[0] EnableCascadedShadows={first.EnableCascadedShadows} " +
                     $"ActiveCascadeCount={activeCascades} CascadedShadowMapTexture={(first.CascadedShadowMapTexture != null ? "present" : "null")} " +
                     $"WorldForward=({first.Transform.WorldForward.X:F3},{first.Transform.WorldForward.Y:F3},{first.Transform.WorldForward.Z:F3})");
@@ -1776,7 +1776,7 @@ public partial class DefaultRenderPipeline
         else if (!_loggedVolumetricFogScatterLightsOnce)
         {
             _loggedVolumetricFogScatterLightsOnce = true;
-            Debug.Out("[VolumetricFog.Scatter] Lights upload skipped: RenderingWorld is null at scatter pass.");
+            Debug.Lighting("[VolumetricFog.Scatter] Lights upload skipped: RenderingWorld is null at scatter pass.");
         }
     }
 

@@ -556,7 +556,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
         IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
         world?.Lights.BeginLightProbeBatchCapture();
-        Debug.Out($"[LightProbeBatch] Starting sequential capture total={_spawnedProbes.Count} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0}");
+        Debug.Lighting($"[LightProbeBatch] Starting sequential capture total={_spawnedProbes.Count} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0}");
 
         RegisterTick(ETickGroup.Late, ETickOrder.Scene, TickSequentialCapture);
         QueueNextSequentialCapture();
@@ -670,7 +670,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, "[LightProbeGrid] Background grid placement failed.");
+                Debug.LightingException(ex, "[LightProbeGrid] Background grid placement failed.");
             }
 
             Engine.EnqueueAppThreadTask(
@@ -822,7 +822,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
         if (result.DeferredForPlacementBounds)
         {
             if (!string.IsNullOrEmpty(result.DiagnosticMessage))
-                Debug.Out(result.DiagnosticMessage);
+                Debug.Lighting(result.DiagnosticMessage);
 
             RefreshPlacementModelSubscriptions();
             _deferredSpawnPending = true;
@@ -842,12 +842,12 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
         if (result.AutoInfluenceOuterRadius is float autoOuterRadius && autoOuterRadius > InfluenceSphereOuterRadius)
         {
-            Debug.Out($"[LightProbeGrid] Auto-sizing influence outer radius: {InfluenceSphereOuterRadius:F2} -> {autoOuterRadius:F2} (cell diagonal).");
+            Debug.Lighting($"[LightProbeGrid] Auto-sizing influence outer radius: {InfluenceSphereOuterRadius:F2} -> {autoOuterRadius:F2} (cell diagonal).");
             SetField(ref _influenceSphereOuterRadius, autoOuterRadius);
         }
 
         if (!string.IsNullOrEmpty(result.DiagnosticMessage))
-            Debug.Out(result.DiagnosticMessage);
+            Debug.Lighting(result.DiagnosticMessage);
 
         int index = 0;
         for (int x = 0; x < request.CountX; ++x)
@@ -953,7 +953,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
             : Stopwatch.GetElapsedTime(_activeCaptureStartTimestamp).TotalMilliseconds;
 
         _sequentialCaptureCompletedCount++;
-        Debug.Out(
+        Debug.Lighting(
             $"[LightProbeBatch] Completed {_sequentialCaptureCompletedCount}/{_spawnedProbes.Count} probe={_activeCaptureProbe.SceneNode.Name} captureMs={captureMs:F2} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0} structuralRefreshMs={batchDiagnostics?.StructuralRefreshTime.TotalMilliseconds ?? 0.0:F2} structuralRefreshes={batchDiagnostics?.StructuralRefreshCount ?? 0} contentRefreshMs={batchDiagnostics?.ContentRefreshTime.TotalMilliseconds ?? 0.0:F2} contentRefreshes={batchDiagnostics?.ContentRefreshCount ?? 0}");
         _activeCaptureProbe = null;
         _activeCaptureStartTimestamp = 0;
@@ -975,7 +975,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
             _activeCaptureStartTimestamp = Stopwatch.GetTimestamp();
             _captureStatus = $"Capturing {_sequentialCaptureIndex + 1}/{_spawnedProbes.Count}: {probe.SceneNode.Name}";
             IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
-            Debug.Out($"[LightProbeBatch] Queueing {_sequentialCaptureIndex + 1}/{_spawnedProbes.Count} probe={probe.SceneNode.Name} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0}");
+            Debug.Lighting($"[LightProbeBatch] Queueing {_sequentialCaptureIndex + 1}/{_spawnedProbes.Count} probe={probe.SceneNode.Name} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0}");
             probe.QueueCapture();
             return true;
         }
@@ -1002,7 +1002,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
         if (wasRunning)
         {
-            Debug.Out(
+            Debug.Lighting(
                 $"[LightProbeBatch] {status} totalMs={totalMs:F2} avgProbeMs={(_sequentialCaptureCompletedCount > 0 ? totalMs / _sequentialCaptureCompletedCount : 0.0):F2} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0} structuralRefreshMs={batchDiagnostics?.StructuralRefreshTime.TotalMilliseconds ?? 0.0:F2} structuralRefreshes={batchDiagnostics?.StructuralRefreshCount ?? 0} contentRefreshMs={batchDiagnostics?.ContentRefreshTime.TotalMilliseconds ?? 0.0:F2} contentRefreshes={batchDiagnostics?.ContentRefreshCount ?? 0}");
             world?.Lights.EndLightProbeBatchCapture();
         }
@@ -1023,7 +1023,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[LightProbeGrid] Skipped occluder root during background placement: {ex.Message}");
+                Debug.LightingWarning($"[LightProbeGrid] Skipped occluder root during background placement: {ex.Message}");
                 continue;
             }
 
@@ -1115,7 +1115,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
     private void OnPlacementModelChanged()
     {
-        Debug.Out("[LightProbeGrid] Placement model meshes changed - scheduling coalesced background grid rebuild.");
+        Debug.Lighting("[LightProbeGrid] Placement model meshes changed - scheduling coalesced background grid rebuild.");
         SchedulePlacementModelRebuild(_spawnedNodes.Count > 0);
     }
 
@@ -1209,7 +1209,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
                 return;
         }
 
-        Debug.Out("[LightProbeGrid] Deferred placement retry - scheduling background bounds check.");
+        Debug.Lighting("[LightProbeGrid] Deferred placement retry - scheduling background bounds check.");
         RequestGridBuild(replaceExistingGrid: false, restartSequentialCapture: false);
     }
 
@@ -1219,7 +1219,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
         if (!request.UsePlacementBoundsModels || request.PlacementBoundsModels.Length == 0)
         {
             if (logDiagnostics)
-                Debug.Out($"[LightProbeGrid] TryGetPlacementBounds: skipped (enabled={request.UsePlacementBoundsModels}, models={request.PlacementBoundsModels.Length}).");
+                Debug.Lighting($"[LightProbeGrid] TryGetPlacementBounds: skipped (enabled={request.UsePlacementBoundsModels}, models={request.PlacementBoundsModels.Length}).");
             return false;
         }
 
@@ -1247,13 +1247,13 @@ public class LightProbeGridSpawnerComponent : XRComponent
         if (!found)
         {
             if (logDiagnostics)
-                Debug.Out($"[LightProbeGrid] TryGetPlacementBounds: no valid bounds (models={request.PlacementBoundsModels.Length}, meshes={totalMeshes}, validBounds={validBounds}).");
+                Debug.Lighting($"[LightProbeGrid] TryGetPlacementBounds: no valid bounds (models={request.PlacementBoundsModels.Length}, meshes={totalMeshes}, validBounds={validBounds}).");
             return false;
         }
 
         bounds = new AABB(bounds.Min - request.PlacementBoundsPadding, bounds.Max + request.PlacementBoundsPadding);
         if (logDiagnostics)
-            Debug.Out($"[LightProbeGrid] TryGetPlacementBounds: success (models={request.PlacementBoundsModels.Length}, meshes={totalMeshes}, validBounds={validBounds}, bounds={bounds}).");
+            Debug.Lighting($"[LightProbeGrid] TryGetPlacementBounds: success (models={request.PlacementBoundsModels.Length}, meshes={totalMeshes}, validBounds={validBounds}, bounds={bounds}).");
         return bounds.IsValid;
     }
 

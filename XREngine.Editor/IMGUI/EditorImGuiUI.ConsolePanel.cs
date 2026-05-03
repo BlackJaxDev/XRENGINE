@@ -58,7 +58,10 @@ public static partial class EditorImGuiUI
                 DrawConsoleTab("All", null);
                 DrawConsoleTab("General", ELogCategory.General);
                 DrawConsoleTab("Assets", ELogCategory.Assets);
+                DrawConsoleTab("Meshes", ELogCategory.Meshes);
+                DrawConsoleTab("Textures", ELogCategory.Textures);
                 DrawConsoleTab("Rendering", ELogCategory.Rendering);
+                DrawConsoleTab("Lighting", ELogCategory.Lighting);
                 DrawConsoleTab("OpenGL", ELogCategory.OpenGL);
                 DrawConsoleTab("Physics", ELogCategory.Physics);
                 DrawConsoleTab("Animation", ELogCategory.Animation);
@@ -185,7 +188,10 @@ public static partial class EditorImGuiUI
                 {
                     ELogCategory.General => new Vector4(0.9f, 0.9f, 0.9f, 1.0f),
                     ELogCategory.Assets => new Vector4(0.95f, 0.72f, 0.35f, 1.0f),
+                    ELogCategory.Meshes => new Vector4(0.55f, 0.9f, 0.75f, 1.0f),
+                    ELogCategory.Textures => new Vector4(0.45f, 0.9f, 0.95f, 1.0f),
                     ELogCategory.Rendering => new Vector4(0.4f, 0.8f, 1.0f, 1.0f),
+                    ELogCategory.Lighting => new Vector4(1.0f, 0.92f, 0.45f, 1.0f),
                     ELogCategory.OpenGL => new Vector4(0.4f, 1.0f, 0.4f, 1.0f),
                     ELogCategory.Physics => new Vector4(1.0f, 0.8f, 0.4f, 1.0f),
                     ELogCategory.Animation => new Vector4(1.0f, 0.6f, 0.8f, 1.0f),
@@ -199,7 +205,10 @@ public static partial class EditorImGuiUI
             {
                 ELogCategory.General => theme.ConsoleGeneralColor,
                 ELogCategory.Assets => theme.ConsoleAssetsColor,
+                ELogCategory.Meshes => theme.ConsoleMeshesColor,
+                ELogCategory.Textures => theme.ConsoleTexturesColor,
                 ELogCategory.Rendering => theme.ConsoleRenderingColor,
+                ELogCategory.Lighting => theme.ConsoleLightingColor,
                 ELogCategory.OpenGL => theme.ConsoleOpenGLColor,
                 ELogCategory.Physics => theme.ConsolePhysicsColor,
                 ELogCategory.Animation => theme.ConsoleAnimationColor,
@@ -216,7 +225,10 @@ public static partial class EditorImGuiUI
             {
                 ELogCategory.General => "[General]",
                 ELogCategory.Assets => "[Assets]",
+                ELogCategory.Meshes => "[Meshes]",
+                ELogCategory.Textures => "[Tex]",
                 ELogCategory.Rendering => "[Render]",
+                ELogCategory.Lighting => "[Light]",
                 ELogCategory.OpenGL => "[OpenGL]",
                 ELogCategory.Physics => "[Physics]",
                 ELogCategory.Animation => "[Anim]",

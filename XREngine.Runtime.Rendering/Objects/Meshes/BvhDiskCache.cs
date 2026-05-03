@@ -106,7 +106,7 @@ internal static class BvhDiskCache
         }
         catch (Exception ex)
         {
-            RuntimeRenderingHostServices.Current.LogWarning($"[BVH Cache] Failed to load cached BVH '{cachePath}'. {ex.Message}");
+            XREngine.Debug.MeshesWarning($"[BVH Cache] Failed to load cached BVH '{cachePath}'. {ex.Message}");
             bvh = null;
             triangleLookup = null;
             return false;
@@ -180,7 +180,7 @@ internal static class BvhDiskCache
         }
         catch (Exception ex)
         {
-            RuntimeRenderingHostServices.Current.LogWarning($"[BVH Cache] Failed to store BVH cache '{cachePath}'. {ex.Message}");
+            XREngine.Debug.MeshesWarning($"[BVH Cache] Failed to store BVH cache '{cachePath}'. {ex.Message}");
         }
     }
 

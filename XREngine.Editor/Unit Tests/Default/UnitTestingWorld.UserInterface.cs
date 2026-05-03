@@ -49,7 +49,7 @@ public static partial class EditorUnitTests
             if (_tickFpsDiagCount < 5)
             {
                 _tickFpsDiagCount++;
-                XREngine.Debug.Out($"[FpsTextDiag] TickFPS fired #{_tickFpsDiagCount} on '{t.SceneNode?.Name}' textLen={t.Text?.Length ?? -1} instances2D={t.RenderCommand2D.Instances} mesh={(t.Mesh is not null)} disableBatching={t.DisableBatching} parentCanvasActive={(t.BoundableTransform.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false)}");
+                XREngine.Debug.Rendering($"[FpsTextDiag] TickFPS fired #{_tickFpsDiagCount} on '{t.SceneNode?.Name}' textLen={t.Text?.Length ?? -1} instances2D={t.RenderCommand2D.Instances} mesh={(t.Mesh is not null)} disableBatching={t.DisableBatching} parentCanvasActive={(t.BoundableTransform.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false)}");
             }
             // Only sample once per actual render frame to avoid duplicate stale samples
             long renderTimestampTicks = Engine.Time.Timer.Render.LastTimestampTicks;
@@ -210,7 +210,7 @@ public static partial class EditorUnitTests
         {
             using var profilerScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI");
             var createUiStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            Debug.Out(
+            Debug.Rendering(
                 "[StartupUI] CreateEditorUI begin: DrawSpace={0}, EditorType={1}, Rive={2}",
                 Toggles.CameraUIDrawSpaceOnInit,
                 Toggles.EditorType,
@@ -360,7 +360,7 @@ public static partial class EditorUnitTests
                 var dearImGuiComponent = dearImGuiNode.AddComponent<DearImGuiComponent>();
                 dearImGuiComponent?.Draw += EditorImGuiUI.RenderEditor;
                 imGuiStopwatch.Stop();
-                Debug.Out("[StartupUI] DearImGui node ready in {0:F1} ms.", imGuiStopwatch.Elapsed.TotalMilliseconds);
+                Debug.Rendering("[StartupUI] DearImGui node ready in {0:F1} ms.", imGuiStopwatch.Elapsed.TotalMilliseconds);
             }
             
             if (Toggles.EditorType == UnitTestEditorType.Native)
@@ -385,7 +385,7 @@ public static partial class EditorUnitTests
                 GameCSProjLoader.OnAssemblyLoaded += GameCSProjLoader_OnAssemblyLoaded;
                 GameCSProjLoader.OnAssemblyUnloaded += GameCSProjLoader_OnAssemblyUnloaded;
                 nativeUiStopwatch.Stop();
-                Debug.Out("[StartupUI] Native editor UI ready in {0:F1} ms.", nativeUiStopwatch.Elapsed.TotalMilliseconds);
+                Debug.Rendering("[StartupUI] Native editor UI ready in {0:F1} ms.", nativeUiStopwatch.Elapsed.TotalMilliseconds);
             }
 
             AddFPSText(null, rootCanvasNode);
@@ -394,7 +394,7 @@ public static partial class EditorUnitTests
                 CreateVRStereoPreviewOverlay(rootCanvasNode);
 
             createUiStopwatch.Stop();
-            Debug.Out("[StartupUI] CreateEditorUI complete in {0:F1} ms.", createUiStopwatch.Elapsed.TotalMilliseconds);
+            Debug.Rendering("[StartupUI] CreateEditorUI complete in {0:F1} ms.", createUiStopwatch.Elapsed.TotalMilliseconds);
 
             return canvas;
         }

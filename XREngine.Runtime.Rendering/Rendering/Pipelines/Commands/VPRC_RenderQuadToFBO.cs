@@ -57,13 +57,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (sourceFBO is null)
             {
                 if (_diagEnabled)
-                    Debug.LogWarning($"[QuadBlitDiag] Source FBO '{SourceQuadFBOName}' not found as XRQuadFrameBuffer.");
+                    Debug.RenderingWarning($"[QuadBlitDiag] Source FBO '{SourceQuadFBOName}' not found as XRQuadFrameBuffer.");
                 return;
             }
 
             var destFBO = DestinationFBOName is null ? null : activeInstance.GetFBO<XRFrameBuffer>(DestinationFBOName);
             if (_diagEnabled && DestinationFBOName is not null && destFBO is null)
-                Debug.LogWarning($"[QuadBlitDiag] Dest FBO '{DestinationFBOName}' not found.");
+                Debug.RenderingWarning($"[QuadBlitDiag] Dest FBO '{DestinationFBOName}' not found.");
 
             if ((string.Equals(SourceQuadFBOName, DefaultRenderPipeline.PostProcessFBOName, StringComparison.Ordinal)
                     && string.Equals(DestinationFBOName, "PostProcessOutputFBO", StringComparison.Ordinal))

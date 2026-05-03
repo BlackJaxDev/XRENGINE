@@ -152,7 +152,7 @@ namespace XREngine
                                 var current = State.GetLocalPlayer(localPlayerIndex) ?? State.GetOrCreateLocalPlayer(localPlayerIndex);
                                 if (!ReferenceEquals(current, associated))
                                 {
-                                    Debug.Out(
+                                    Debug.Rendering(
                                         "[{0}] Rebind: viewport {1} had stale AssociatedPlayer. OldHash={2} NewHash={3} Index={4}",
                                         phase,
                                         viewport.Index,
@@ -169,7 +169,7 @@ namespace XREngine
                             var inferred = State.LocalPlayers.FirstOrDefault(p => p is not null && ReferenceEquals(p.Viewport, viewport));
                             if (inferred is not null)
                             {
-                                Debug.Out("[{0}] Rebind: inferred AssociatedPlayer for viewport {1} -> P{2}", phase, viewport.Index, (int)(inferred.LocalPlayerIndex ?? 0) + 1);
+                                Debug.Rendering("[{0}] Rebind: inferred AssociatedPlayer for viewport {1} -> P{2}", phase, viewport.Index, (int)(inferred.LocalPlayerIndex ?? 0) + 1);
                                 viewport.AssociatedPlayer = inferred;
                             }
                         }
@@ -192,7 +192,7 @@ namespace XREngine
                         }
                         else
                         {
-                            Debug.Out(
+                            Debug.Rendering(
                                 "[{0}] Rebind: skipping RefreshViewportCamera for VP[{1}] (player={2}) because ControlledPawn camera is null.",
                                 phase,
                                 viewport.Index,
@@ -230,9 +230,9 @@ namespace XREngine
 
                         // Only warn when we *expected* a camera/world to exist.
                         if (viewport.ActiveCamera is null && (viewport.AssociatedPlayer?.ControlledPawnComponent as PawnComponent)?.GetCamera() is not null)
-                            Debug.LogWarning($"[{phase}] Viewport {viewport.Index} has no ActiveCamera (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
+                            Debug.RenderingWarning($"[{phase}] Viewport {viewport.Index} has no ActiveCamera (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
                         if (viewport.World is null && (viewport.AssociatedPlayer?.ControlledPawnComponent as PawnComponent)?.GetCamera() is not null)
-                            Debug.LogWarning($"[{phase}] Viewport {viewport.Index} has no World (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
+                            Debug.RenderingWarning($"[{phase}] Viewport {viewport.Index} has no World (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
                     }
 
                     // If viewports exist but no players are associated, keep at least player one wired.
@@ -246,7 +246,7 @@ namespace XREngine
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, $"Failed runtime rendering rebind during {phase}");
+                Debug.RenderingException(ex, $"Failed runtime rendering rebind during {phase}");
             }
         }
 

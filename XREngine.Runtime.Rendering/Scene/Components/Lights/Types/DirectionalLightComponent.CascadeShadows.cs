@@ -1539,7 +1539,7 @@ namespace XREngine.Components.Lights
             if (_cascadeShadowRenderMode != EDirectionalCascadeShadowRenderMode.InstancedLayered || cascadeCount <= 0)
                 return;
 
-            Debug.RenderingWarningEvery(
+            Debug.LightingWarningEvery(
                 $"DirectionalCascadeRenderModeFallback.{GetHashCode()}",
                 TimeSpan.FromSeconds(2.0),
                 "[DirectionalShadowAudit] Instanced/layered directional cascades are not implemented yet; rendering '{0}' sequentially.",
@@ -1555,7 +1555,7 @@ namespace XREngine.Components.Lights
                 return;
             }
 
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][CascadeClear] frame={0} light='{1}' reason={2} casts={3} cascadesEnabled={4} shadowCamera={5} useDirAtlas={6}",
@@ -1584,7 +1584,7 @@ namespace XREngine.Components.Lights
             }
 
             Vector3 sourcePosition = sourceCamera.Transform.RenderTranslation;
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][CascadeUpdate] frame={0} light='{1}' sourceCamera={2} sourcePos={3} sourceNear={4:F3} sourceFar={5:F3} sourceShadowMax={6:F3} rangeNear={7:F3} rangeFar={8:F3} totalDepth={9:F3} activeCascades={10} requestedCascades={11} atlasSetting={12} cascadeTex={13}",
@@ -1607,7 +1607,7 @@ namespace XREngine.Components.Lights
             for (int i = 0; i < detailCount; i++)
             {
                 CascadeShadowSlice slice = slices[i];
-                Debug.Out(
+                Debug.Lighting(
                     EOutputVerbosity.Normal,
                     false,
                     "[DirectionalShadowAudit][CascadeSlice] frame={0} light='{1}' slot={2} cascadeIndex={3} splitFar={4:F3} blendWidth={5:F3} texelWorld={6:F6} center={7} halfExtents={8} biasMin={9:E3} biasMax={10:F3} receiverOffset={11:F6}",
@@ -1640,7 +1640,7 @@ namespace XREngine.Components.Lights
                 return;
             }
 
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][AtlasTileRender] frame={0} light='{1}' projection={2} cascadeOrFace={3} rect={4},{5},{6}x{7} collectVisibleNow={8} camera={9} splitFar={10:F3}",
@@ -1666,7 +1666,7 @@ namespace XREngine.Components.Lights
                 return;
             }
 
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][LegacyRender] frame={0} light='{1}' useDirAtlas={2} renderCascades={3} hasShadowMap={4} hasShadowMaterial={5} cascadeRenderCount={6} activeCascades={7} cascadeTex={8}",

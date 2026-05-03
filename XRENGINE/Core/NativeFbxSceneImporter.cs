@@ -196,7 +196,7 @@ internal static class NativeFbxSceneImporter
         ArgumentNullException.ThrowIfNull(importer);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFilePath);
 
-        XREngine.Fbx.FbxTrace.LogSink ??= static message => Debug.Assets(message);
+        XREngine.Fbx.FbxTrace.LogSink ??= static message => Debug.Meshes(message);
         XREngine.Fbx.FbxTrace.ProfilerScopeFactory ??= static scopeName => Engine.Profiler.Start(scopeName);
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
 

@@ -172,7 +172,7 @@ public sealed class BvhRaycastDispatcher
         while (_completedCallbacks.TryDequeue(out _)) { }
 
         if (!string.IsNullOrWhiteSpace(reason))
-            Debug.LogWarning($"[BvhRaycastDispatcher] Cleared GPU BVH raycasts ({reason}).");
+            Debug.MeshesWarning($"[BvhRaycastDispatcher] Cleared GPU BVH raycasts ({reason}).");
     }
 
     private static bool DependenciesReady(BvhRaycastRequest request, OpenGLRenderer? glRenderer)

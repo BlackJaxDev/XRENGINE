@@ -392,7 +392,10 @@ namespace XREngine
         private OverrideableSetting<ColorF4> _transformCapsuleColorOverride = new();
         private OverrideableSetting<ColorF4> _consoleGeneralColorOverride = new();
         private OverrideableSetting<ColorF4> _consoleAssetsColorOverride = new();
+        private OverrideableSetting<ColorF4> _consoleMeshesColorOverride = new();
+        private OverrideableSetting<ColorF4> _consoleTexturesColorOverride = new();
         private OverrideableSetting<ColorF4> _consoleRenderingColorOverride = new();
+        private OverrideableSetting<ColorF4> _consoleLightingColorOverride = new();
         private OverrideableSetting<ColorF4> _consoleOpenGLColorOverride = new();
         private OverrideableSetting<ColorF4> _consolePhysicsColorOverride = new();
         private OverrideableSetting<ColorF4> _consoleAnimationColorOverride = new();
@@ -490,10 +493,28 @@ namespace XREngine
             set => SetField(ref _consoleAssetsColorOverride, value ?? new());
         }
 
+        public OverrideableSetting<ColorF4> ConsoleMeshesColorOverride
+        {
+            get => _consoleMeshesColorOverride;
+            set => SetField(ref _consoleMeshesColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> ConsoleTexturesColorOverride
+        {
+            get => _consoleTexturesColorOverride;
+            set => SetField(ref _consoleTexturesColorOverride, value ?? new());
+        }
+
         public OverrideableSetting<ColorF4> ConsoleRenderingColorOverride
         {
             get => _consoleRenderingColorOverride;
             set => SetField(ref _consoleRenderingColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> ConsoleLightingColorOverride
+        {
+            get => _consoleLightingColorOverride;
+            set => SetField(ref _consoleLightingColorOverride, value ?? new());
         }
 
         public OverrideableSetting<ColorF4> ConsoleOpenGLColorOverride

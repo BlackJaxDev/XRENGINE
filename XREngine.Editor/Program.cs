@@ -230,14 +230,14 @@ internal class Program
         }
         XREngine.TraceListener.GlobalMessageCallback = PrintTraceToGeneralLog;
         XREngine.TraceListener.InstallGlobalListener();
-        FbxTrace.LogSink = static message => EngineDebug.Assets(message);
+        FbxTrace.LogSink = static message => EngineDebug.Meshes(message);
         SyncBootstrapTracePathToCurrentRunDirectory();
         //ConsoleHelper.EnsureConsoleAttached();
     }
 
     private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
     {
-        FbxTrace.LogSink = static message => EngineDebug.Assets(message);
+        FbxTrace.LogSink = static message => EngineDebug.Meshes(message);
         FbxTrace.ProfilerScopeFactory = static scopeName => Engine.Profiler.Start(scopeName);
 
         if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
@@ -255,8 +255,8 @@ internal class Program
             };
         }
 
-        string message = $"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Assets}.";
-        EngineDebug.Assets(message);
+        string message = $"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Meshes}.";
+        EngineDebug.Meshes(message);
         WriteBootstrapTrace(message);
     }
 
@@ -389,7 +389,7 @@ internal class Program
         UnitTest_VerifyPlayModeStart();
 
         Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
-        EngineDebug.Out($"[DebugPipeline] Re-applied before window creation: {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
+        EngineDebug.Rendering($"[DebugPipeline] Re-applied before window creation: {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
 
         GPURenderPassCollection.ConfigureIndirectDebug(opts =>
         {
@@ -881,7 +881,7 @@ internal class Program
                 string.Equals(forceDebugEnv, "true", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(forceDebugEnv, "yes", StringComparison.OrdinalIgnoreCase);
 
-            EngineDebug.Out($"[DebugPipeline] XRE_FORCE_DEBUG_OPAQUE_PIPELINE={forceDebugEnv} => UseDebugOpaquePipeline={forceDebug}");
+            EngineDebug.Rendering($"[DebugPipeline] XRE_FORCE_DEBUG_OPAQUE_PIPELINE={forceDebugEnv} => UseDebugOpaquePipeline={forceDebug}");
             if (forceDebug)
                 return true;
         }
@@ -893,7 +893,7 @@ internal class Program
             (model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Deferred ||
                model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Forward ||
                model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Uber)) ?? false;
-        EngineDebug.Out($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={EditorUnitTests.Toggles.HasStaticModelsToImport}, HasModelsRequiringDefaultPipeline={hasModelsRequiringDefaultPipeline}");
+        EngineDebug.Rendering($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={EditorUnitTests.Toggles.HasStaticModelsToImport}, HasModelsRequiringDefaultPipeline={hasModelsRequiringDefaultPipeline}");
 
         // The debug opaque pipeline is forward-only and does not execute the default deferred/forward+ pass chain.
         // If the unit test is requesting static model material modes that rely on DefaultRenderPipeline passes,

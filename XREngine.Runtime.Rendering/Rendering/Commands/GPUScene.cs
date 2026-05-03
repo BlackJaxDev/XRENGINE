@@ -486,7 +486,7 @@ namespace XREngine.Rendering.Commands
             if (!IsGpuSceneLoggingEnabled())
                 return;
 
-            Debug.Out(message, args);
+            Debug.Meshes(message, args);
         }
 
         /// <summary>Logs a formatted message if GPU scene logging is enabled.</summary>
@@ -495,7 +495,7 @@ namespace XREngine.Rendering.Commands
             if (!IsGpuSceneLoggingEnabled())
                 return;
 
-            Debug.Out(message.ToString());
+            Debug.Meshes(message.ToString());
         }
 
         #endregion
@@ -527,7 +527,7 @@ namespace XREngine.Rendering.Commands
                     return;
 
                 string path = value ? "GPU BVH" : "GPU octree";
-                Debug.Out($"[GPUScene] Active traversal path set to {path}.");
+                Debug.Meshes($"[GPUScene] Active traversal path set to {path}.");
             }
         }
 
@@ -1298,7 +1298,7 @@ namespace XREngine.Rendering.Commands
                 }
 
                 if (indices.Length % 3 != 0)
-                    Debug.LogWarning($"Mesh '{meshLabel}' triangle index count {indices.Length} is not divisible by 3; trailing vertices will be ignored.");
+                    Debug.MeshesWarning($"Mesh '{meshLabel}' triangle index count {indices.Length} is not divisible by 3; trailing vertices will be ignored.");
 
                 for (int i = 0; i + 2 < indices.Length; i += 3)
                 {
@@ -1697,7 +1697,7 @@ namespace XREngine.Rendering.Commands
             if (!migrated)
             {
                 if (!string.IsNullOrWhiteSpace(failureReason))
-                    Debug.LogWarning($"[GPUScene] Failed to migrate mesh '{meshLabel}' from {fromTier} to {toTier}: {failureReason}");
+                    Debug.MeshesWarning($"[GPUScene] Failed to migrate mesh '{meshLabel}' from {fromTier} to {toTier}: {failureReason}");
                 return false;
             }
 
@@ -1823,7 +1823,7 @@ namespace XREngine.Rendering.Commands
 
                     if (!TryPrepareAtlasIndexBuffer(state, requiredIndices))
                     {
-                        Debug.LogWarning($"[GPUScene] Failed to prepare {GetTierLabel(tier)} atlas index buffer; skipping atlas upload to avoid memory corruption.");
+                        Debug.MeshesWarning($"[GPUScene] Failed to prepare {GetTierLabel(tier)} atlas index buffer; skipping atlas upload to avoid memory corruption.");
                         return;
                     }
 
@@ -1834,7 +1834,7 @@ namespace XREngine.Rendering.Commands
                     {
                         if (writeIndex + 2 >= capacity)
                         {
-                            Debug.LogWarning($"[GPUScene] Atlas index buffer overflow when rebuilding atlas (capacity={capacity}, required={requiredIndices}).");
+                            Debug.MeshesWarning($"[GPUScene] Atlas index buffer overflow when rebuilding atlas (capacity={capacity}, required={requiredIndices}).");
                             break;
                         }
 
@@ -1871,7 +1871,7 @@ namespace XREngine.Rendering.Commands
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[GPUScene] AtlasRebuilt event handler failed: {ex.Message}");
+                Debug.MeshesWarning($"[GPUScene] AtlasRebuilt event handler failed: {ex.Message}");
             }
         }
 
@@ -2083,7 +2083,7 @@ namespace XREngine.Rendering.Commands
                         else
                         {
                             // Both buffers should always have client-side sources; if not, the copy cannot proceed.
-                            Debug.LogWarning("GPUScene: Command buffer TryGetAddress failed during swap — client-side source missing.");
+                            Debug.MeshesWarning("GPUScene: Command buffer TryGetAddress failed during swap — client-side source missing.");
                         }
                     }
                 }
@@ -2111,7 +2111,7 @@ namespace XREngine.Rendering.Commands
                         else
                         {
                             // Both buffers should always have client-side sources; if not, the copy cannot proceed.
-                            Debug.LogWarning("GPUScene: Transparency metadata buffer TryGetAddress failed during swap — client-side source missing.");
+                            Debug.MeshesWarning("GPUScene: Transparency metadata buffer TryGetAddress failed during swap — client-side source missing.");
                         }
                     }
                 }
@@ -2495,7 +2495,7 @@ namespace XREngine.Rendering.Commands
 
             if (UpdatingCommandCount == uint.MaxValue)
             {
-                Debug.LogWarning($"Command buffer full. Cannot add more commands.");
+                Debug.MeshesWarning($"Command buffer full. Cannot add more commands.");
                 return;
             }
 
@@ -2615,7 +2615,7 @@ namespace XREngine.Rendering.Commands
                             if (!matches)
                             {
                                 if (_commandRoundtripMismatchLogBudget > 0 && Interlocked.Decrement(ref _commandRoundtripMismatchLogBudget) >= 0)
-                                    Debug.LogWarning($"[GPUScene/RoundTrip] mismatch idx={index} mesh(write={commandValue.MeshID}/read={roundTrip.MeshID}) material(write={commandValue.MaterialID}/read={roundTrip.MaterialID}) pass(write={commandValue.RenderPass}/read={roundTrip.RenderPass})");
+                                    Debug.MeshesWarning($"[GPUScene/RoundTrip] mismatch idx={index} mesh(write={commandValue.MeshID}/read={roundTrip.MeshID}) material(write={commandValue.MaterialID}/read={roundTrip.MaterialID}) pass(write={commandValue.RenderPass}/read={roundTrip.RenderPass})");
                             }
                             else if (_commandRoundtripLogBudget > 0 && Interlocked.Decrement(ref _commandRoundtripLogBudget) >= 0)
                             {
@@ -2685,13 +2685,13 @@ namespace XREngine.Rendering.Commands
 
             if (indexCount % 3 != 0)
             {
-                Debug.LogWarning($"Mesh '{mesh.Name}' stored with a non-multiple-of-three index count ({indexCount}). Clamping removal to available triangles.");
+                Debug.MeshesWarning($"Mesh '{mesh.Name}' stored with a non-multiple-of-three index count ({indexCount}). Clamping removal to available triangles.");
                 triangleCount = System.Math.Min(triangleCount + 1, state.IndirectFaceIndices.Count - triangleOffset);
             }
 
             if (triangleOffset < 0 || triangleOffset >= state.IndirectFaceIndices.Count)
             {
-                Debug.LogWarning($"Atlas removal offset out of range for mesh '{mesh.Name}'. Offset={triangleOffset}, Count={triangleCount}, Total={state.IndirectFaceIndices.Count}.");
+                Debug.MeshesWarning($"Atlas removal offset out of range for mesh '{mesh.Name}'. Offset={triangleOffset}, Count={triangleCount}, Total={state.IndirectFaceIndices.Count}.");
                 triangleCount = 0;
             }
             else if (triangleOffset + triangleCount > state.IndirectFaceIndices.Count)
@@ -2843,7 +2843,7 @@ namespace XREngine.Rendering.Commands
             if (!_idToMesh.TryGetValue(meshID, out XRMesh? mesh) || mesh is null)
             {
                 if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
-                    Debug.LogWarning($"[GPUScene] {context}: unable to resolve MeshID={meshID} for atlas refcount increment.");
+                    Debug.MeshesWarning($"[GPUScene] {context}: unable to resolve MeshID={meshID} for atlas refcount increment.");
                 return;
             }
 
@@ -2861,14 +2861,14 @@ namespace XREngine.Rendering.Commands
             if (!_idToMesh.TryGetValue(meshID, out var mesh) || mesh is null)
             {
                 if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
-                    Debug.LogWarning($"[GPUScene] {context}: unable to resolve MeshID={meshID} for atlas refcount decrement.");
+                    Debug.MeshesWarning($"[GPUScene] {context}: unable to resolve MeshID={meshID} for atlas refcount decrement.");
                 return;
             }
 
             if (!_atlasMeshRefCounts.TryGetValue(mesh, out int count))
             {
                 if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
-                    Debug.LogWarning($"[GPUScene] {context}: atlas refcount missing for mesh '{mesh.Name ?? "<unnamed>"}' (MeshID={meshID}); treating as 0.");
+                    Debug.MeshesWarning($"[GPUScene] {context}: atlas refcount missing for mesh '{mesh.Name ?? "<unnamed>"}' (MeshID={meshID}); treating as 0.");
                 count = 0;
             }
 
@@ -3056,7 +3056,7 @@ namespace XREngine.Rendering.Commands
         {
             if (targetIndex >= UpdatingCommandCount)
             {
-                Debug.LogWarning($"Invalid command index {targetIndex} for removal. Total commands: {UpdatingCommandCount}");
+                Debug.MeshesWarning($"Invalid command index {targetIndex} for removal. Total commands: {UpdatingCommandCount}");
                 return;
             }
 
@@ -3097,7 +3097,7 @@ namespace XREngine.Rendering.Commands
                 else
                 {
                     if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
-                        Debug.LogWarning($"[GPUScene] RemoveCommandAtIndex: missing lookup for moved lastIndex={lastIndex} -> targetIndex={targetIndex}.");
+                        Debug.MeshesWarning($"[GPUScene] RemoveCommandAtIndex: missing lookup for moved lastIndex={lastIndex} -> targetIndex={targetIndex}.");
                 }
             }
             else
@@ -3356,7 +3356,7 @@ namespace XREngine.Rendering.Commands
                 if (meshCmd.ForceCpuRendering || topMaterial?.RenderOptions?.ExcludeFromGpuIndirect == true)
                 {
                     if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
-                        Debug.LogWarning($"[GPUScene] CPU fallback/ExcludeFromGpuIndirect became true; removing mesh command. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
+                        Debug.MeshesWarning($"[GPUScene] CPU fallback/ExcludeFromGpuIndirect became true; removing mesh command. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
 
                     RemoveMeshCommandIndices(meshCmd, indices);
                     return true;
@@ -3366,7 +3366,7 @@ namespace XREngine.Rendering.Commands
                 if (subMeshes is null || subMeshes.Length == 0)
                 {
                     if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
-                        Debug.LogWarning($"[GPUScene] Mesh command lost submeshes; removing. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
+                        Debug.MeshesWarning($"[GPUScene] Mesh command lost submeshes; removing. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
 
                     RemoveMeshCommandIndices(meshCmd, indices);
                     return true;
@@ -3514,7 +3514,7 @@ namespace XREngine.Rendering.Commands
             if (rebuildRenderable)
             {
                 if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
-                    Debug.LogWarning($"[GPUScene] Rebuilding renderable GPU commands due to structural mismatch. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
+                    Debug.MeshesWarning($"[GPUScene] Rebuilding renderable GPU commands due to structural mismatch. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
 
                 Remove(renderInfo);
                 Add(renderInfo);
@@ -3624,7 +3624,7 @@ namespace XREngine.Rendering.Commands
                 message += $" Source: {sourceHint}.";
 
             if (_unsupportedMeshMessages.TryAdd(mesh, message))
-                Debug.LogWarning(message);
+                Debug.MeshesWarning(message);
         }
 
         /// <summary>

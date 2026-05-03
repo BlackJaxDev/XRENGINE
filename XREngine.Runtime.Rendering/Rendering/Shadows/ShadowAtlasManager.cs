@@ -142,12 +142,12 @@ public sealed class ShadowAtlasManager
                 {
                     _requests[worstIndex] = request;
                     _frameAllocations.Add(CreateSkippedAllocation(dropped, SkipReason.QueueOverflow));
-                    XREngine.Debug.Rendering($"[ShadowAtlas] Dropped shadow request for {dropped.Key} because the per-frame request queue is full ({_settings.MaxRequestsPerFrame}).");
+                    XREngine.Debug.Lighting($"[ShadowAtlas] Dropped shadow request for {dropped.Key} because the per-frame request queue is full ({_settings.MaxRequestsPerFrame}).");
                     return true;
                 }
 
                 _frameAllocations.Add(CreateSkippedAllocation(request, SkipReason.QueueOverflow));
-                XREngine.Debug.Rendering($"[ShadowAtlas] Dropped shadow request for {request.Key} because the per-frame request queue is full ({_settings.MaxRequestsPerFrame}).");
+                XREngine.Debug.Lighting($"[ShadowAtlas] Dropped shadow request for {request.Key} because the per-frame request queue is full ({_settings.MaxRequestsPerFrame}).");
                 return false;
             }
 
@@ -262,7 +262,7 @@ public sealed class ShadowAtlasManager
         double elapsedMs = ElapsedMilliseconds(frameStart);
         if (deferredByBudget > 0)
         {
-            XREngine.Debug.RenderingEvery(
+            XREngine.Debug.LightingEvery(
                 "ShadowAtlas.RenderBudget.Deferred",
                 TimeSpan.FromSeconds(2.0),
                 "[ShadowAtlas] Deferred {0} shadow request(s) after rendering {1}/{2} tile(s) in {3:F2}ms (budget {4:F2}ms, firstDeferredIndex={5}).",
@@ -277,7 +277,7 @@ public sealed class ShadowAtlasManager
         double slowThresholdMs = Math.Max(16.0, _settings.MaxRenderMilliseconds * 4.0);
         if (scheduled > 0 && elapsedMs > slowThresholdMs)
         {
-            XREngine.Debug.RenderingWarningEvery(
+            XREngine.Debug.LightingWarningEvery(
                 "ShadowAtlas.RenderScheduledTiles.Slow",
                 TimeSpan.FromSeconds(2.0),
                 "[ShadowAtlas] Shadow tile rendering exceeded its frame budget: rendered={0}, checked={1}, skippedClean={2}, failed={3}, deferred={4}, elapsedMs={5:F2}, budgetMs={6:F2}.",
@@ -565,7 +565,7 @@ public sealed class ShadowAtlasManager
             double slowThresholdMs = Math.Max(16.0, _settings.MaxRenderMilliseconds * 4.0);
             if (elapsedMs > slowThresholdMs)
             {
-                XREngine.Debug.RenderingWarningEvery(
+                XREngine.Debug.LightingWarningEvery(
                     $"ShadowAtlas.Tile.Slow.{request.Key}",
                     TimeSpan.FromSeconds(2.0),
                     "[ShadowAtlas] Slow shadow tile render: key={0}, light='{1}', projection={2}, faceOrCascade={3}, elapsedMs={4:F2}, frameBudgetMs={5:F2}.",
@@ -598,7 +598,7 @@ public sealed class ShadowAtlasManager
             return;
         }
 
-        XREngine.Debug.Out(
+        XREngine.Debug.Lighting(
             XREngine.EOutputVerbosity.Normal,
             false,
             "[DirectionalShadowAudit][AtlasRenderSummary] frame={0} requests={1} scheduled={2} checked={3} skippedClean={4} failed={5} deferred={6} firstDeferredIndex={7} elapsedMs={8:F2} budgetTiles={9} budgetMs={10:F2} activeCameras={11}",
@@ -630,7 +630,7 @@ public sealed class ShadowAtlasManager
             return;
         }
 
-        XREngine.Debug.Out(
+        XREngine.Debug.Lighting(
             XREngine.EOutputVerbosity.Normal,
             false,
             "[DirectionalShadowAudit][AtlasRequestRender] frame={0} state={1} light='{2}' projection={3} cascadeOrFace={4} dirty={5} canReuse={6} requiresRender={7} fallbackRequest={8} allocationResident={9} allocationFallback={10} lastRenderedFrame={11} page={12} rect={13} content={14}",

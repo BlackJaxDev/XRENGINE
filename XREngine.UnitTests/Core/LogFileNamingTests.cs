@@ -26,6 +26,14 @@ public sealed class LogFileNamingTests
     }
 
     [Test]
+    public void BuildCategoryLogFileName_UsesDedicatedLightingAndMeshesNames()
+    {
+        XREngine.Debug.BuildCategoryLogFileName(XREngine.ELogCategory.Lighting).ShouldBe("log_lighting.txt");
+        XREngine.Debug.BuildCategoryLogFileName(XREngine.ELogCategory.Meshes).ShouldBe("log_meshes.txt");
+        XREngine.Debug.BuildCategoryLogFileName(XREngine.ELogCategory.Textures).ShouldBe("log_textures.txt");
+    }
+
+    [Test]
     public void NormalizeLogNameSegment_CollapsesPunctuationIntoSingleSeparators()
     {
         string normalized = XREngine.Debug.NormalizeLogNameSegment("  Editor Bootstrap / Trace  ");
