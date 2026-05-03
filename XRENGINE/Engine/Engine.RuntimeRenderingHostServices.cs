@@ -99,6 +99,16 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public float DefaultTsrRenderScale => Engine.Rendering.Settings.TsrRenderScale;
     public bool ForwardDepthPrePassEnabled => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
     public bool ForwardPrePassSharesGBufferTargets => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
+    public bool ProvidesShadowAtlasSettings => true;
+    public bool UseSpotShadowAtlas => Engine.Rendering.Settings.UseSpotShadowAtlas;
+    public bool UseDirectionalShadowAtlas => Engine.Rendering.Settings.UseDirectionalShadowAtlas;
+    public uint ShadowAtlasPageSize => Engine.Rendering.Settings.ShadowAtlasPageSize;
+    public int MaxShadowAtlasPages => Engine.Rendering.Settings.MaxShadowAtlasPages;
+    public long MaxShadowAtlasMemoryBytes => Engine.Rendering.Settings.MaxShadowAtlasMemoryBytes;
+    public int MaxShadowTilesRenderedPerFrame => Engine.Rendering.Settings.MaxShadowTilesRenderedPerFrame;
+    public float MaxShadowRenderMilliseconds => Engine.Rendering.Settings.MaxShadowRenderMilliseconds;
+    public uint MinShadowAtlasTileResolution => Engine.Rendering.Settings.MinShadowAtlasTileResolution;
+    public uint MaxShadowAtlasTileResolution => Engine.Rendering.Settings.MaxShadowAtlasTileResolution;
 
     public void LogOutput(string message)
         => Debug.Out(message);

@@ -77,7 +77,7 @@ public unsafe partial class VulkanRenderer
 				if (indexBuffer?.BufferHandle is not { } indexHandle)
 				{
 					if (verboseTrace)
-						Debug.RenderingWarning("[DrawTrace] {0}: no indexBuffer for {1}", Mesh?.Name ?? "?", topology);
+						Debug.MeshesWarning("[DrawTrace] {0}: no indexBuffer for {1}", Mesh?.Name ?? "?", topology);
 					return false;
 				}
 
@@ -91,14 +91,14 @@ public unsafe partial class VulkanRenderer
 				if (indexCount == 0)
 				{
 					if (verboseTrace)
-						Debug.RenderingWarning("[DrawTrace] {0}: indexCount=0 for {1}", Mesh?.Name ?? "?", topology);
+						Debug.MeshesWarning("[DrawTrace] {0}: indexCount=0 for {1}", Mesh?.Name ?? "?", topology);
 					return false;
 				}
 
 				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, pipelineName, out var pipeline))
 				{
 					if (verboseTrace)
-						Debug.RenderingWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colorFmt={3} depthFmt={4}",
+						Debug.MeshesWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colorFmt={3} depthFmt={4}",
 							Mesh?.Name ?? "?", topology, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat);
 					return false;
 				}
@@ -108,7 +108,7 @@ public unsafe partial class VulkanRenderer
 				if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
 				{
 					if (verboseTrace)
-						Debug.RenderingWarning("[DrawTrace] {0}: BindVertexBuffers FAILED", Mesh?.Name ?? "?");
+						Debug.MeshesWarning("[DrawTrace] {0}: BindVertexBuffers FAILED", Mesh?.Name ?? "?");
 					return false;
 				}
 
@@ -125,14 +125,14 @@ public unsafe partial class VulkanRenderer
 				if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy))
 				{
 					if (verboseTrace)
-						Debug.RenderingWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
+						Debug.MeshesWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
 					return false;
 				}
 
 				PushPerDrawConstants(commandBuffer, material, drawCopy);
 
 				if (verboseTrace)
-					Debug.RenderingWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pipeline=0x{2:X} topology={3} cull={4} blend={5} depthTest={6} depthWrite={7} depthCmp={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) prog={18}",
+					Debug.MeshesWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pipeline=0x{2:X} topology={3} cull={4} blend={5} depthTest={6} depthWrite={7} depthCmp={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) prog={18}",
 						Mesh?.Name ?? "?", indexCount, pipeline.Handle, topology,
 						drawCopy.CullMode, drawCopy.BlendEnabled, drawCopy.DepthTestEnabled, drawCopy.DepthWriteEnabled, drawCopy.DepthCompareOp, drawCopy.ColorWriteMask,
 						drawCopy.Viewport.X, drawCopy.Viewport.Y, drawCopy.Viewport.Width, drawCopy.Viewport.Height,

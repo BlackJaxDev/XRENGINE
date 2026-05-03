@@ -98,7 +98,7 @@ namespace XREngine
 
         private static void ConfigureJobManagerHooks()
         {
-            JobManager.LogMessage = message => Debug.Out(EOutputVerbosity.Normal, message);
+            JobManager.LogMessage = LogJobManagerMessage;
             JobManager.ProfilerScopeFactory = static name => Engine.Profiler.Start(name);
             JobManager.JobDispatchObserver = static (affinity, label) => ObserveJobDispatch(affinity, label);
         }

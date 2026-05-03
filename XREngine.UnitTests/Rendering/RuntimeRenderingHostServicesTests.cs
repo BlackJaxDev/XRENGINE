@@ -221,6 +221,16 @@ public sealed class RuntimeRenderingHostServicesTests
         public float DefaultTsrRenderScale => 1.0f;
         public bool ForwardDepthPrePassEnabled => true;
         public bool ForwardPrePassSharesGBufferTargets => true;
+        public bool ProvidesShadowAtlasSettings => false;
+        public bool UseSpotShadowAtlas => true;
+        public bool UseDirectionalShadowAtlas => true;
+        public uint ShadowAtlasPageSize => 4096u;
+        public int MaxShadowAtlasPages => 1;
+        public long MaxShadowAtlasMemoryBytes => 0L;
+        public int MaxShadowTilesRenderedPerFrame => 16;
+        public float MaxShadowRenderMilliseconds => 2.0f;
+        public uint MinShadowAtlasTileResolution => 128u;
+        public uint MaxShadowAtlasTileResolution => 4096u;
         public bool IsWindowScenePanelPresentationEnabled => false;
         public int ScenePanelResizeDebounceMs => 100;
         public bool ForceFullViewport => false;

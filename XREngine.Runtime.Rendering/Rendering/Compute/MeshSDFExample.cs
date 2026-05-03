@@ -35,7 +35,7 @@ namespace XREngine.Rendering.Compute
             }
             else
             {
-                Debug.LogWarning("Failed to generate SDF");
+                Debug.MeshesWarning("Failed to generate SDF");
             }
             
             return sdfTexture;
@@ -65,7 +65,7 @@ namespace XREngine.Rendering.Compute
             if (sdfTexture != null)
                 Debug.Out($"Successfully generated SDF with custom bounds and resolution {resolution}");
             else
-                Debug.LogWarning("Failed to generate SDF with custom bounds");
+                Debug.MeshesWarning("Failed to generate SDF with custom bounds");
                         
             return sdfTexture;
         }
@@ -92,7 +92,7 @@ namespace XREngine.Rendering.Compute
             if (sdfTexture != null)
                 Debug.Out($"Successfully generated high-resolution SDF with resolution {resolution}");
             else
-                Debug.LogWarning("Failed to generate high-resolution SDF");
+                Debug.MeshesWarning("Failed to generate high-resolution SDF");
                         
             return sdfTexture;
         }
@@ -132,7 +132,7 @@ namespace XREngine.Rendering.Compute
                     Debug.Out($"Generated SDF {i + 1} with resolution {resolution}");
                 }
                 else
-                    Debug.LogWarning($"Failed to generate SDF {i + 1} with resolution {resolution}");
+                    Debug.MeshesWarning($"Failed to generate SDF {i + 1} with resolution {resolution}");
             }
             
             return sdfTextures;
@@ -164,4 +164,4 @@ namespace XREngine.Rendering.Compute
             sdfGenerator.Cleanup();
         }
     }
-} 
+}

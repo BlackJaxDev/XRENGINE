@@ -6,16 +6,10 @@ namespace XREngine
     /// <summary>
     /// Simple job that executes a single action with a profiler-friendly label.
     /// </summary>
-    public sealed class LabeledActionJob : Job
+    public sealed class LabeledActionJob(Action action, string label) : Job
     {
-        private readonly Action _action;
-        private readonly string _label;
-
-        public LabeledActionJob(Action action, string label)
-        {
-            _action = action ?? throw new ArgumentNullException(nameof(action));
-            _label = string.IsNullOrWhiteSpace(label) ? "MainThreadInvoke" : label.Trim();
-        }
+        private readonly Action _action = action ?? throw new ArgumentNullException(nameof(action));
+        private readonly string _label = string.IsNullOrWhiteSpace(label) ? "MainThreadInvoke" : label.Trim();
 
         public override IEnumerable Process()
         {

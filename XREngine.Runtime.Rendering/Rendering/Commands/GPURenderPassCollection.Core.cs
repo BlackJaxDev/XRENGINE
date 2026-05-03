@@ -274,7 +274,7 @@ namespace XREngine.Rendering.Commands
             if (Interlocked.Decrement(ref _forbiddenFallbackLogBudget) < 0)
                 return;
 
-            Debug.LogWarning($"{FormatDebugPrefix("Validation")} Forbidden fallback blocked in profile {VulkanFeatureProfile.ActiveProfile}: {reason}");
+            Debug.MeshesWarning($"{FormatDebugPrefix("Validation")} Forbidden fallback blocked in profile {VulkanFeatureProfile.ActiveProfile}: {reason}");
         }
 
         private static uint ComputeBoundedDoublingCapacity(uint currentCapacity, uint minimumRequired)

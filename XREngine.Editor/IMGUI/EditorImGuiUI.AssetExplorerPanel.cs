@@ -319,8 +319,12 @@ public static partial class EditorImGuiUI
         {
             using var profilerScope = Engine.Profiler.Start($"UI.AssetExplorer.FileList.{state.Id}");
 
-            string directory = Directory.Exists(state.CurrentDirectory) ? state.CurrentDirectory : state.RootPath;
+            string directory = string.IsNullOrWhiteSpace(state.CurrentDirectory)
+                ? state.RootPath
+                : state.CurrentDirectory;
             directory = NormalizeAssetExplorerPath(directory);
+            if (!AssetPathWithinRoot(state, directory))
+                directory = state.RootPath;
             if (!string.Equals(state.CurrentDirectory, directory, StringComparison.OrdinalIgnoreCase))
                 state.CurrentDirectory = directory;
 
@@ -881,7 +885,7 @@ public static partial class EditorImGuiUI
             string path = _assetExplorerContextPath;
             bool isDirectory = _assetExplorerContextIsDirectory;
 
-            bool exists = isDirectory ? Directory.Exists(path) : File.Exists(path);
+            bool exists = AssetExplorerPathMayExistFromCache(state, path, isDirectory);
             if (!exists)
             {
                 ImGui.TextDisabled("Item no longer exists.");
@@ -1022,21 +1026,82 @@ public static partial class EditorImGuiUI
             return string.IsNullOrEmpty(directory) ? null : NormalizeAssetExplorerPath(directory);
         }
 
+        private static bool AssetExplorerPathMayExistFromCache(AssetExplorerTabState state, string path, bool isDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            string normalized = NormalizeAssetExplorerPath(path);
+            if (string.Equals(normalized, state.RootPath, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, state.CurrentDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (TryGetCachedAssetExplorerEntry(state, normalized, out var entry))
+                return entry.IsDirectory == isDirectory;
+
+            string? parent = Path.GetDirectoryName(normalized);
+            if (!string.IsNullOrEmpty(parent)
+                && state.DirectorySnapshots.TryGetValue(NormalizeAssetExplorerPath(parent), out _))
+            {
+                return false;
+            }
+
+            // Unknown just means the background snapshot has not arrived yet.
+            return true;
+        }
+
+        private static bool TryGetCachedAssetExplorerEntry(AssetExplorerTabState state, string path, out AssetExplorerEntry entry)
+        {
+            entry = default;
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            string normalized = NormalizeAssetExplorerPath(path);
+            string? parent = Path.GetDirectoryName(normalized);
+            if (string.IsNullOrEmpty(parent))
+                return false;
+
+            if (!state.DirectorySnapshots.TryGetValue(NormalizeAssetExplorerPath(parent), out var snapshot))
+                return false;
+
+            for (int i = 0; i < snapshot.Entries.Length; i++)
+            {
+                AssetExplorerEntry candidate = snapshot.Entries[i];
+                if (string.Equals(candidate.Path, normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    entry = candidate;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static void CreateAssetInDirectory(AssetExplorerTabState state, string directory, AssetTypeDescriptor descriptor)
         {
             if (string.IsNullOrEmpty(directory))
                 return;
 
+            ImGui.CloseCurrentPopup();
+            _ = CreateAssetInDirectoryAsync(state, directory, descriptor);
+        }
+
+        private static async Task CreateAssetInDirectoryAsync(AssetExplorerTabState state, string directory, AssetTypeDescriptor descriptor)
+        {
             var assets = Engine.Assets;
             if (assets is null)
                 return;
 
+            Guid trackingId = EditorJobTracker.TrackOperation($"Create {descriptor.DisplayName}", "Creating asset...");
             try
             {
                 XRAsset? asset = descriptor.CreateInstance();
                 if (asset is null)
                 {
                     Debug.LogWarning($"Failed to instantiate asset type '{descriptor.FullName}'.");
+                    EditorJobTracker.Fault(trackingId, $"Failed to instantiate {descriptor.DisplayName}.");
                     return;
                 }
 
@@ -1047,24 +1112,32 @@ public static partial class EditorImGuiUI
                 if (!AssetPathWithinRoot(state, normalizedDirectory))
                 {
                     Debug.LogWarning($"Cannot create assets outside of the root directory. ({directory})");
+                    EditorJobTracker.Fault(trackingId, "Target directory is outside the asset root.");
                     return;
                 }
 
-                assets.SaveTo(asset, normalizedDirectory);
+                await assets.SaveToAsync(asset, normalizedDirectory).ConfigureAwait(false);
                 string? savedPath = asset.FilePath;
                 if (string.IsNullOrEmpty(savedPath))
+                {
+                    EditorJobTracker.Fault(trackingId, $"Failed to save {descriptor.DisplayName}.");
                     return;
+                }
 
                 string normalizedPath = NormalizeAssetExplorerPath(savedPath);
-                _assetExplorerAssetTypeCache[normalizedPath] = descriptor;
-                _assetExplorerYamlKeyCache.Remove(normalizedPath);
-
-                UpdateAssetExplorerSelection(state, normalizedPath, true);
-                BeginAssetExplorerRename(state, normalizedPath, false);
-                ImGui.CloseCurrentPopup();
+                _ = Engine.InvokeOnMainThread(() =>
+                {
+                    _assetExplorerAssetTypeCache[normalizedPath] = descriptor;
+                    _assetExplorerYamlKeyCache.Remove(normalizedPath);
+                    InvalidateAssetExplorerSnapshots(state);
+                    UpdateAssetExplorerSelection(state, normalizedPath, true);
+                    BeginAssetExplorerRename(state, normalizedPath, false);
+                    EditorJobTracker.Complete(trackingId, $"Created {Path.GetFileName(normalizedPath)}");
+                }, $"Asset Explorer: Created {descriptor.DisplayName}");
             }
             catch (Exception ex)
             {
+                EditorJobTracker.Fault(trackingId, ex.Message);
                 Debug.LogException(ex, $"Failed to create asset of type '{descriptor.FullName}' in '{directory}'.");
             }
         }
@@ -1096,25 +1169,65 @@ public static partial class EditorImGuiUI
             if (entry.IsDirectory)
                 return;
 
-            if (TryOpenSceneAsset(entry.Path))
-                UpdateAssetExplorerSelection(state, entry.Path, true);
+            QueueOpenSceneAsset(entry.Path);
         }
 
-        private static bool TryOpenSceneAsset(string path)
+        private static void QueueOpenSceneAsset(string path)
         {
-            var descriptor = ResolveAssetTypeForPath(path);
-            if (descriptor?.Type is null || !typeof(XRScene).IsAssignableFrom(descriptor.Type))
-                return false;
-
             var assets = Engine.Assets;
             if (assets is null)
-                return false;
+                return;
 
-            XRScene? scene = assets.Load<XRScene>(path);
-            if (scene is null)
-                return false;
+            string normalized = NormalizeAssetExplorerPath(path);
+            if (_assetExplorerAssetTypeCache.TryGetValue(normalized, out var cachedDescriptor)
+                && (cachedDescriptor is null || !typeof(XRScene).IsAssignableFrom(cachedDescriptor.Type)))
+            {
+                return;
+            }
 
-            return TryAddSceneToActiveWorld(scene);
+            _ = OpenSceneAssetAsync(assets, path);
+        }
+
+        private static async Task OpenSceneAssetAsync(AssetManager assets, string path)
+        {
+            string normalized = NormalizeAssetExplorerPath(path);
+            if (!string.Equals(Path.GetExtension(normalized), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            Type sceneType = typeof(XRScene);
+            Guid trackingId = Guid.Empty;
+            try
+            {
+                if (TryResolveConcreteAssetTypeFromHeader(normalized, out Type concreteType))
+                {
+                    if (!typeof(XRScene).IsAssignableFrom(concreteType))
+                        return;
+
+                    sceneType = concreteType;
+                }
+
+                trackingId = EditorJobTracker.TrackOperation($"Open Scene {Path.GetFileName(normalized)}", "Loading scene...");
+                XRScene? scene = await assets.LoadAsync(normalized, sceneType).ConfigureAwait(false) as XRScene;
+                if (scene is null)
+                {
+                    EditorJobTracker.Fault(trackingId, $"Unable to load scene {Path.GetFileName(normalized)}.");
+                    return;
+                }
+
+                EnqueueSceneEdit(() =>
+                {
+                    if (TryAddSceneToActiveWorld(scene))
+                        EditorJobTracker.Complete(trackingId, $"Opened {Path.GetFileName(normalized)}");
+                    else
+                        EditorJobTracker.Fault(trackingId, $"Unable to add {Path.GetFileName(normalized)} to the active world.");
+                });
+            }
+            catch (Exception ex)
+            {
+                if (trackingId != Guid.Empty)
+                    EditorJobTracker.Fault(trackingId, ex.Message);
+                Debug.LogException(ex, $"Failed to open scene asset '{normalized}'.");
+            }
         }
 
         private static bool TryAddSceneToActiveWorld(XRScene scene)
@@ -2397,6 +2510,7 @@ public static partial class EditorImGuiUI
                 if (ImGui.Button("Delete"))
                 {
                     ExecuteAssetExplorerDeletion();
+                    ImGui.CloseCurrentPopup();
                     ImGui.EndPopup();
                     return;
                 }
@@ -2433,44 +2547,50 @@ public static partial class EditorImGuiUI
             bool isDirectory = _assetExplorerPendingDeleteIsDirectory;
 
             string normalizedPath = NormalizeAssetExplorerPath(path);
+            ClearAssetExplorerDeletionRequest();
+            Guid trackingId = EditorJobTracker.TrackOperation($"Delete {Path.GetFileName(normalizedPath)}", "Moving asset to Recycle Bin...");
+            _ = DeleteAssetExplorerPathAsync(state, normalizedPath, isDirectory, trackingId);
+        }
 
+        private static async Task DeleteAssetExplorerPathAsync(AssetExplorerTabState state, string normalizedPath, bool isDirectory, Guid trackingId)
+        {
             try
             {
-                if (isDirectory)
+                await Task.Run(() => DeleteAssetExplorerPathToRecycleBin(normalizedPath, isDirectory)).ConfigureAwait(false);
+
+                _ = Engine.InvokeOnMainThread(() =>
                 {
-                    DeleteAssetExplorerPathToRecycleBin(normalizedPath, isDirectory: true);
+                    if (isDirectory)
+                    {
+                        if (!string.IsNullOrEmpty(state.SelectedPath) && IsPathWithinAssetExplorerDirectory(state.SelectedPath, normalizedPath))
+                            ClearAssetExplorerSelection(state);
 
-                    if (!string.IsNullOrEmpty(state.SelectedPath) && IsPathWithinAssetExplorerDirectory(state.SelectedPath, normalizedPath))
-                        ClearAssetExplorerSelection(state);
+                        if (!string.IsNullOrEmpty(state.CurrentDirectory) && IsPathWithinAssetExplorerDirectory(state.CurrentDirectory, normalizedPath))
+                            state.CurrentDirectory = state.RootPath;
 
-                    if (!string.IsNullOrEmpty(state.CurrentDirectory) && IsPathWithinAssetExplorerDirectory(state.CurrentDirectory, normalizedPath))
-                        state.CurrentDirectory = state.RootPath;
+                        var keysToRemove = state.PreviewCache.Keys
+                            .Where(k => IsPathWithinAssetExplorerDirectory(k, normalizedPath))
+                            .ToList();
 
-                    var keysToRemove = state.PreviewCache.Keys
-                        .Where(k => IsPathWithinAssetExplorerDirectory(k, normalizedPath))
-                        .ToList();
+                        foreach (var key in keysToRemove)
+                            state.PreviewCache.Remove(key);
+                    }
+                    else
+                    {
+                        state.PreviewCache.Remove(normalizedPath);
+                        if (string.Equals(state.SelectedPath, normalizedPath, StringComparison.OrdinalIgnoreCase))
+                            ClearAssetExplorerSelection(state);
+                    }
 
-                    foreach (var key in keysToRemove)
-                        state.PreviewCache.Remove(key);
-                }
-                else
-                {
-                    DeleteAssetExplorerPathToRecycleBin(normalizedPath, isDirectory: false);
-                    state.PreviewCache.Remove(normalizedPath);
-                    if (string.Equals(state.SelectedPath, normalizedPath, StringComparison.OrdinalIgnoreCase))
-                        ClearAssetExplorerSelection(state);
-                }
-
-                RemoveAssetExplorerCachedData(normalizedPath, isDirectory);
-                InvalidateAssetExplorerSnapshots(state);
+                    RemoveAssetExplorerCachedData(normalizedPath, isDirectory);
+                    InvalidateAssetExplorerSnapshots(state);
+                    EditorJobTracker.Complete(trackingId, $"Deleted {Path.GetFileName(normalizedPath)}");
+                }, $"Asset Explorer: Deleted {Path.GetFileName(normalizedPath)}");
             }
             catch (Exception ex)
             {
+                EditorJobTracker.Fault(trackingId, ex.Message);
                 Debug.LogException(ex, $"Failed to delete '{normalizedPath}'.");
-            }
-            finally
-            {
-                ClearAssetExplorerDeletionRequest();
             }
         }
 
@@ -2668,57 +2788,75 @@ public static partial class EditorImGuiUI
                 return;
             }
 
+            CancelAssetExplorerRename(state);
+            Guid trackingId = EditorJobTracker.TrackOperation($"Rename {Path.GetFileName(oldPath)}", "Renaming asset...");
+            _ = RenameAssetExplorerPathAsync(state, oldPath, newPath, newName, isDirectory, trackingId);
+        }
+
+        private static async Task RenameAssetExplorerPathAsync(
+            AssetExplorerTabState state,
+            string oldPath,
+            string newPath,
+            string newName,
+            bool isDirectory,
+            Guid trackingId)
+        {
             try
             {
-                if (isDirectory)
+                await Task.Run(() =>
                 {
-                    if (Directory.Exists(newPath))
+                    if (isDirectory)
                     {
-                        Debug.LogWarning($"A folder named '{newName}' already exists.");
-                        return;
+                        if (Directory.Exists(newPath))
+                            throw new IOException($"A folder named '{newName}' already exists.");
+
+                        Directory.Move(oldPath, newPath);
                     }
-
-                    Directory.Move(oldPath, newPath);
-                    TransferAssetExplorerCachedData(oldPath, newPath, true);
-
-                    var affectedKeys = state.PreviewCache.Keys
-                        .Where(k => k.StartsWith(oldPath, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-
-                    foreach (var key in affectedKeys)
+                    else
                     {
-                        if (state.PreviewCache.TryGetValue(key, out var preview))
+                        if (File.Exists(newPath))
+                            throw new IOException($"A file named '{newName}' already exists.");
+
+                        File.Move(oldPath, newPath);
+                    }
+                }).ConfigureAwait(false);
+
+                _ = Engine.InvokeOnMainThread(() =>
+                {
+                    if (isDirectory)
+                    {
+                        TransferAssetExplorerCachedData(oldPath, newPath, true);
+
+                        var affectedKeys = state.PreviewCache.Keys
+                            .Where(k => k.StartsWith(oldPath, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+
+                        foreach (var key in affectedKeys)
                         {
-                            state.PreviewCache.Remove(key);
-                            string updated = newPath + key.Substring(oldPath.Length);
-                            preview.UpdatePath(updated);
-                            state.PreviewCache[updated] = preview;
+                            if (state.PreviewCache.TryGetValue(key, out var preview))
+                            {
+                                state.PreviewCache.Remove(key);
+                                string updated = newPath + key.Substring(oldPath.Length);
+                                preview.UpdatePath(updated);
+                                state.PreviewCache[updated] = preview;
+                            }
                         }
                     }
-                }
-                else
-                {
-                    if (File.Exists(newPath))
+                    else
                     {
-                        Debug.LogWarning($"A file named '{newName}' already exists.");
-                        return;
+                        TransferAssetExplorerPreview(state, oldPath, newPath);
+                        TransferAssetExplorerCachedData(oldPath, newPath, false);
+                        SetAssetExplorerSelection(state, newPath, true);
                     }
 
-                    File.Move(oldPath, newPath);
-                    TransferAssetExplorerPreview(state, oldPath, newPath);
-                    TransferAssetExplorerCachedData(oldPath, newPath, false);
-                    SetAssetExplorerSelection(state, newPath, true);
-                }
-
-                InvalidateAssetExplorerSnapshots(state);
+                    InvalidateAssetExplorerSnapshots(state);
+                    EditorJobTracker.Complete(trackingId, $"Renamed to {Path.GetFileName(newPath)}");
+                }, $"Asset Explorer: Renamed {Path.GetFileName(oldPath)}");
             }
             catch (Exception ex)
             {
+                EditorJobTracker.Fault(trackingId, ex.Message);
                 Debug.LogException(ex, $"Failed to rename '{oldPath}'.");
-            }
-            finally
-            {
-                CancelAssetExplorerRename(state);
             }
         }
 
@@ -3268,7 +3406,7 @@ public static partial class EditorImGuiUI
             ApplyPendingAssetExplorerSnapshotInvalidations(state);
 
             string normalizedRoot = NormalizeAssetExplorerPath(rootPath);
-            if (string.IsNullOrEmpty(normalizedRoot) || !Directory.Exists(normalizedRoot))
+            if (string.IsNullOrEmpty(normalizedRoot))
             {
                 DisposeAssetExplorerWatcher(state);
                 state.RootPath = string.Empty;
@@ -3299,7 +3437,6 @@ public static partial class EditorImGuiUI
             EnsureAssetExplorerWatcher(state);
 
             if (string.IsNullOrEmpty(state.CurrentDirectory)
-                || !Directory.Exists(state.CurrentDirectory)
                 || !state.CurrentDirectory.StartsWith(state.RootPath, StringComparison.OrdinalIgnoreCase))
             {
                 state.CurrentDirectory = state.RootPath;
@@ -3309,7 +3446,8 @@ public static partial class EditorImGuiUI
                 state.CurrentDirectory = NormalizeAssetExplorerPath(state.CurrentDirectory);
             }
 
-            if (!string.IsNullOrEmpty(state.SelectedPath) && !File.Exists(state.SelectedPath))
+            if (!string.IsNullOrEmpty(state.SelectedPath)
+                && !AssetExplorerPathMayExistFromCache(state, state.SelectedPath, isDirectory: false))
             {
                 RemoveAssetExplorerCachedData(state.SelectedPath, false);
                 ClearAssetExplorerSelection(state);
@@ -3317,11 +3455,7 @@ public static partial class EditorImGuiUI
 
             if (!string.IsNullOrEmpty(state.RenamingPath))
             {
-                bool exists = state.RenamingIsDirectory
-                    ? Directory.Exists(state.RenamingPath)
-                    : File.Exists(state.RenamingPath);
-
-                if (!exists)
+                if (!AssetExplorerPathMayExistFromCache(state, state.RenamingPath, state.RenamingIsDirectory))
                     CancelAssetExplorerRename(state);
             }
         }
@@ -3362,9 +3496,10 @@ public static partial class EditorImGuiUI
 
             DisposeAssetExplorerWatcher(state);
 
-            if (string.IsNullOrEmpty(state.RootPath) || !Directory.Exists(state.RootPath))
+            if (string.IsNullOrEmpty(state.RootPath))
                 return;
 
+            state.WatcherRootPath = state.RootPath;
             try
             {
                 var watcher = new FileSystemWatcher(state.RootPath)
@@ -3388,7 +3523,6 @@ public static partial class EditorImGuiUI
                 watcher.Error += invalidateError;
 
                 state.Watcher = watcher;
-                state.WatcherRootPath = state.RootPath;
             }
             catch (Exception ex)
             {

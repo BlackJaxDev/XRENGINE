@@ -109,7 +109,7 @@ namespace XREngine.Rendering.Compute
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to initialize MeshSDFGenerator: {ex.Message}");
+                Debug.MeshesWarning($"Failed to initialize MeshSDFGenerator: {ex.Message}");
                 throw;
             }
         }
@@ -167,7 +167,7 @@ namespace XREngine.Rendering.Compute
 
             if (mesh == null)
             {
-                Debug.LogWarning("Mesh cannot be null");
+                Debug.MeshesWarning("Mesh cannot be null");
                 return null;
             }
 
@@ -190,7 +190,7 @@ namespace XREngine.Rendering.Compute
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to generate SDF: {ex.Message}");
+                Debug.MeshesWarning($"Failed to generate SDF: {ex.Message}");
                 return null;
             }
         }
@@ -207,13 +207,13 @@ namespace XREngine.Rendering.Compute
         {
             if (!_isInitialized)
             {
-                Debug.LogWarning("MeshSDFGenerator must be initialized before generating SDF");
+                Debug.MeshesWarning("MeshSDFGenerator must be initialized before generating SDF");
                 return null;
             }
 
             if (mesh == null)
             {
-                Debug.LogWarning("Mesh cannot be null");
+                Debug.MeshesWarning("Mesh cannot be null");
                 return null;
             }
 
@@ -234,7 +234,7 @@ namespace XREngine.Rendering.Compute
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to generate SDF: {ex.Message}");
+                Debug.MeshesWarning($"Failed to generate SDF: {ex.Message}");
                 return null;
             }
         }
@@ -400,4 +400,4 @@ namespace XREngine.Rendering.Compute
 
         #endregion
     }
-} 
+}

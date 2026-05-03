@@ -37,7 +37,7 @@ namespace XREngine
         }
         private static void OnFileCreated(FileSystemEventArgs args)
         {
-            Debug.Out($"File '{args.FullPath}' was created.");
+            LogFileWatcherEvent(args.FullPath, $"File '{args.FullPath}' was created.");
         }
 
         async void OnEngineFileChanged(object sender, FileSystemEventArgs args)
@@ -63,7 +63,7 @@ namespace XREngine
             if (ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
             
-            Debug.Out($"File '{args.FullPath}' was changed.");
+            LogFileWatcherEvent(args.FullPath, $"File '{args.FullPath}' was changed.");
             var asset = GetAssetByPath(args.FullPath);
             if (asset is not null)
                 await asset.ReloadAsync(args.FullPath);
@@ -89,7 +89,7 @@ namespace XREngine
         }
         private static void OnFileDeleted(FileSystemEventArgs args)
         {
-            Debug.Out($"File '{args.FullPath}' was deleted.");
+            LogFileWatcherEvent(args.FullPath, $"File '{args.FullPath}' was deleted.");
             //Leave files intact
             //if (LoadedAssetsByPathInternal.TryGetValue(args.FullPath, out var list))
             //{
@@ -134,7 +134,7 @@ namespace XREngine
 
         private void OnFileRenamed(RenamedEventArgs args)
         {
-            Debug.Out($"File '{args.OldFullPath}' was renamed to '{args.FullPath}'.");
+            LogFileWatcherEvent(args.FullPath, $"File '{args.OldFullPath}' was renamed to '{args.FullPath}'.");
 
             if (LoadedAssetsByPathInternal.TryGetValue(args.OldFullPath, out var asset))
             {
@@ -151,6 +151,32 @@ namespace XREngine
                 asset.OriginalPath = args.FullPath;
                 asset.Reload();
             }
+        }
+
+        private static void LogFileWatcherEvent(string filePath, string message)
+        {
+            if (IsTextureFilePath(filePath))
+                Debug.Textures(message);
+            else
+                Debug.Out(message);
+        }
+
+        private static bool IsTextureFilePath(string filePath)
+        {
+            string extension = Path.GetExtension(filePath);
+            return extension.Equals(".png", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".tga", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".dds", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".ktx", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".ktx2", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".exr", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".hdr", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".webp", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".tif", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".tiff", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

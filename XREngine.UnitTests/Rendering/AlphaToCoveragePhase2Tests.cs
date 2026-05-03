@@ -634,13 +634,25 @@ public sealed class AlphaToCoveragePhase2Tests
     }
 
     [Test]
-    public void TsrUpscale_RequiresExposureReadyBeforeUsingHistory()
+    public void TsrUpscale_UsesColorHistoryWithoutTaaExposureHistory()
     {
         string postProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-        postProcessSource.ShouldContain("historyReady = temporalData.HistoryReady && temporalData.HistoryExposureReady;");
+        postProcessSource.ShouldContain("historyReady = temporalData.HistoryReady;");
 
         string postProcess2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
-        postProcess2Source.ShouldContain("historyReady = temporalData.HistoryReady && temporalData.HistoryExposureReady;");
+        postProcess2Source.ShouldContain("historyReady = temporalData.HistoryReady;");
+    }
+
+    [Test]
+    public void TemporalResolve_DoesNotDoubleApplyJitterWithUnjitteredMotionVectors()
+    {
+        string temporalSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalAccumulation.fs").Replace("\r\n", "\n");
+        temporalSource.ShouldContain("vec2 historyUV = uv - velocity * 0.5f;");
+        temporalSource.ShouldNotContain("historyUV = uv - velocity * 0.5f + (PreviousJitterUv - CurrentJitterUv);");
+
+        string tsrSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalSuperResolution.fs").Replace("\r\n", "\n");
+        tsrSource.ShouldContain("vec2 historyUV = uv - velocity * 0.5f;");
+        tsrSource.ShouldNotContain("historyUV = uv - velocity * 0.5f + (PreviousJitterUv - CurrentJitterUv);");
     }
 
     [Test]

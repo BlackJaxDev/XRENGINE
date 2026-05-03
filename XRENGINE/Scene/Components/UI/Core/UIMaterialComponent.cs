@@ -81,6 +81,10 @@ namespace XREngine.Rendering.UI
                 Enabled = ERenderParamUsage.Disabled,
                 Function = EComparison.Always
             },
+            StencilTest = new()
+            {
+                Enabled = ERenderParamUsage.Disabled
+            },
             BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
         };
 

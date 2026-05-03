@@ -20,7 +20,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_SpatialHashAOPass : ViewportRenderCommand
     {
         private static void Log(string message)
-            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][SpatialHash] {0}", message);
+            => Debug.Rendering(EOutputVerbosity.Normal, false, "[AO][SpatialHash] {0}", message);
 
         private const uint HashMapScale = 2u;
         private const uint LocalGroupSize = 8u;

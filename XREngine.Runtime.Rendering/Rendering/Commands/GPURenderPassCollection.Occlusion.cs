@@ -505,7 +505,7 @@ namespace XREngine.Rendering.Commands
 
             if (requireHotCommands && !useHotCommands)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Culling")} ShippingFast profile requires hot-command layout for Hi-Z occlusion refine; refine pass skipped.");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} ShippingFast profile requires hot-command layout for Hi-Z occlusion refine; refine pass skipped.");
                 return;
             }
 

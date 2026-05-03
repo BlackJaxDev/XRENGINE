@@ -105,6 +105,63 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
+    public void SolveAllocations_BalancesDirectionalCascadesIntoOneAtlasPage()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 4096u, maxPages: 1);
+        DirectionalLightComponent light = CreateDirectionalLight(4096u);
+        ShadowMapRequest[] requests =
+        [
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 0, 4096u, 128u, 10000.0f, 1u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 1, 4096u, 128u, 9900.0f, 2u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 2, 4096u, 128u, 9800.0f, 3u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 3, 4096u, 128u, 9700.0f, 4u),
+        ];
+
+        ShadowAtlasFrameData frameData = RunFrame(manager, 1u, requests);
+
+        frameData.Metrics.PageCount.ShouldBe(1);
+        frameData.Metrics.ResidentTileCount.ShouldBe(4);
+        frameData.Metrics.SkippedRequestCount.ShouldBe(0);
+        AssertNoResidentOverlaps(frameData);
+
+        for (int i = 0; i < requests.Length; i++)
+        {
+            frameData.TryGetAllocation(requests[i].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
+            allocation.AtlasKind.ShouldBe(EShadowAtlasKind.Directional);
+            allocation.PageIndex.ShouldBe(0);
+            allocation.Resolution.ShouldBe(2048u);
+            allocation.IsResident.ShouldBeTrue();
+            allocation.SkipReason.ShouldBe(SkipReason.None);
+        }
+    }
+
+    [Test]
+    public void SolveAllocations_UsesSeparateAtlasPagesPerLightFamily()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1);
+        DirectionalLightComponent directionalLight = CreateDirectionalLight(512u);
+        PointLightComponent pointLight = CreatePointLight(512u);
+        SpotLightComponent spotLight = CreateSpotLight(512u);
+        ShadowMapRequest directional = CreateRequest(directionalLight, EShadowProjectionType.DirectionalCascade, 0, 512u, 128u, 100.0f, 1u);
+        ShadowMapRequest point = CreateRequest(pointLight, EShadowProjectionType.PointFace, 0, 512u, 128u, 100.0f, 2u);
+        ShadowMapRequest spot = CreateRequest(spotLight, EShadowProjectionType.SpotPrimary, 0, 512u, 128u, 100.0f, 3u);
+
+        ShadowAtlasFrameData frameData = RunFrame(manager, 1u, directional, point, spot);
+
+        frameData.Metrics.PageCount.ShouldBe(3);
+        frameData.Metrics.ResidentTileCount.ShouldBe(3);
+        frameData.TryGetAllocation(directional.Key, out ShadowAtlasAllocation directionalAllocation).ShouldBeTrue();
+        frameData.TryGetAllocation(point.Key, out ShadowAtlasAllocation pointAllocation).ShouldBeTrue();
+        frameData.TryGetAllocation(spot.Key, out ShadowAtlasAllocation spotAllocation).ShouldBeTrue();
+        directionalAllocation.AtlasKind.ShouldBe(EShadowAtlasKind.Directional);
+        pointAllocation.AtlasKind.ShouldBe(EShadowAtlasKind.Point);
+        spotAllocation.AtlasKind.ShouldBe(EShadowAtlasKind.Spot);
+        directionalAllocation.AtlasId.ShouldNotBe(pointAllocation.AtlasId);
+        directionalAllocation.AtlasId.ShouldNotBe(spotAllocation.AtlasId);
+        pointAllocation.AtlasId.ShouldNotBe(spotAllocation.AtlasId);
+    }
+
+    [Test]
     public void Submit_WhenQueueIsFullPublishesQueueOverflowDiagnostic()
     {
         ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1, maxRequests: 1);
@@ -140,6 +197,20 @@ public sealed class ShadowAtlasManagerPhaseTests
     private static SpotLightComponent CreateSpotLight(uint resolution)
     {
         SpotLightComponent light = new();
+        light.SetShadowMapResolution(resolution, resolution);
+        return light;
+    }
+
+    private static PointLightComponent CreatePointLight(uint resolution)
+    {
+        PointLightComponent light = new();
+        light.SetShadowMapResolution(resolution, resolution);
+        return light;
+    }
+
+    private static DirectionalLightComponent CreateDirectionalLight(uint resolution)
+    {
+        DirectionalLightComponent light = new();
         light.SetShadowMapResolution(resolution, resolution);
         return light;
     }

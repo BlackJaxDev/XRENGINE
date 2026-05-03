@@ -80,4 +80,39 @@ public sealed class BoxContainmentTests
         Assert.That(closest.Y, Is.EqualTo(0.0f).Within(1e-5f));
         Assert.That(closest.Z, Is.EqualTo(0.0f).Within(1e-5f));
     }
+
+    [Test]
+    public void GetAabb_WhenRotated_ReturnsBoundsFromAllWorldCorners()
+    {
+        Box box = new(center: Vector3.Zero, size: new Vector3(2.0f, 10.0f, 2.0f))
+        {
+            Transform = Matrix4x4.CreateRotationZ(MathF.PI * 0.5f)
+        };
+
+        AABB bounds = box.GetAABB(transformed: true);
+
+        Assert.That(bounds.IsValid, Is.True);
+        Assert.That(bounds.Min.X, Is.EqualTo(-5.0f).Within(1e-5f));
+        Assert.That(bounds.Min.Y, Is.EqualTo(-1.0f).Within(1e-5f));
+        Assert.That(bounds.Min.Z, Is.EqualTo(-1.0f).Within(1e-5f));
+        Assert.That(bounds.Max.X, Is.EqualTo(5.0f).Within(1e-5f));
+        Assert.That(bounds.Max.Y, Is.EqualTo(1.0f).Within(1e-5f));
+        Assert.That(bounds.Max.Z, Is.EqualTo(1.0f).Within(1e-5f));
+    }
+
+    [Test]
+    public void WorldMinimumMaximum_WhenRotated_ReturnOrderedBounds()
+    {
+        Box box = new(center: Vector3.Zero, size: new Vector3(2.0f, 10.0f, 2.0f))
+        {
+            Transform = Matrix4x4.CreateRotationZ(MathF.PI * 0.5f)
+        };
+
+        Vector3 min = box.WorldMinimum;
+        Vector3 max = box.WorldMaximum;
+
+        Assert.That(min.X, Is.LessThanOrEqualTo(max.X));
+        Assert.That(min.Y, Is.LessThanOrEqualTo(max.Y));
+        Assert.That(min.Z, Is.LessThanOrEqualTo(max.Z));
+    }
 }

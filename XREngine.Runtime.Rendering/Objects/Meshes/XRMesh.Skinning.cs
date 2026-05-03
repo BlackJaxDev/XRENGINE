@@ -238,7 +238,7 @@ public partial class XRMesh
             string name = bone.Name;
             if (!TryGetTransform(nodeCache, name, out var transform) || transform is null)
             {
-                RuntimeRenderingHostServices.Current.LogOutput($"Bone {name} has no corresponding node in the heirarchy.");
+                Debug.Meshes($"Bone {name} has no corresponding node in the heirarchy.");
                 continue;
             }
 
@@ -266,7 +266,7 @@ public partial class XRMesh
                     else if (existing.weight != weight)
                     {
                         wpv[transform] = ((existing.weight + weight) * 0.5f, existing.invBindMatrix);
-                        RuntimeRenderingHostServices.Current.LogOutput($"Vertex {newId} has multiple weights for bone {name}.");
+                        Debug.Meshes($"Vertex {newId} has multiple weights for bone {name}.");
                     }
                     if (sourceList[newId].Weights == null)
                         sourceList[newId].Weights = wpv;
@@ -488,7 +488,7 @@ public partial class XRMesh
     {
         if (!nodeCache.TryGetValue(name, out var matches) || matches is null || matches.Count == 0)
         {
-            RuntimeRenderingHostServices.Current.LogOutput($"{name} has no corresponding node in the heirarchy.");
+            Debug.Meshes($"{name} has no corresponding node in the heirarchy.");
             transform = null;
             return false;
         }

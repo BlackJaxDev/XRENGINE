@@ -3,9 +3,12 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 using SimpleScene.Util.ssBVH;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
@@ -60,8 +63,13 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private sealed class ImpostorState
     {
         public uint SheetSize = 1024;
-        public bool CaptureDepth = true;
+        public bool CaptureDepth;
         public OctahedralImposterGenerator.Result? LastResult;
+        public Task<OctahedralImposterGenerator.Result?>? PendingTask;
+        public CancellationTokenSource? CaptureCancellation;
+        public OctahedralImposterGenerator.CaptureProgress? Progress;
+        public string? Status;
+        public bool LastResultSaved;
     }
 
     private sealed class BvhPreviewState
@@ -308,7 +316,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                     ImGui.TextDisabled("No submeshes matched the current filter.");
                 break;
             case 1:
-                DrawImpostorUtilities(modelComponent, model);
+                DrawImpostorUtilities(modelComponent, model, panelState);
                 DrawBvhPreviewUtilities(modelComponent);
                 break;
         }
@@ -590,67 +598,253 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private static AABB TransformAabb(AABB localBounds, Matrix4x4 transform)
         => localBounds.Transformed(point => Vector3.Transform(point, transform));
 
-    private static void DrawImpostorUtilities(ModelComponent modelComponent, Model model)
+    private static void DrawImpostorUtilities(ModelComponent modelComponent, Model model, SubmeshPanelState panelState)
     {
         if (!ImGui.CollapsingHeader("Impostor Utilities"))
             return;
 
         var state = s_impostorStates.GetValue(modelComponent, _ => new ImpostorState());
+        PollImpostorGeneration(state);
+        bool isCapturing = state.PendingTask is not null;
 
         int sheetSize = (int)state.SheetSize;
-        if (ImGui.InputInt("Sheet Size (px)", ref sheetSize))
-            state.SheetSize = (uint)Math.Max(128, sheetSize);
-
-        bool captureDepth = state.CaptureDepth;
-        if (ImGui.Checkbox("Capture Depth", ref captureDepth))
-            state.CaptureDepth = captureDepth;
-
-        ImGui.TextDisabled("26 directional captures (axes, edges, and diagonals) are blended into the sheet.");
-
-        if (ImGui.Button("Generate Octahedral Impostor", new Vector2(-1f, 0f)))
+        using (new ImGuiDisabledScope(isCapturing))
         {
-            state.LastResult = OctahedralImposterGenerator.Generate(modelComponent, new OctahedralImposterGenerator.Settings(state.SheetSize, 1.15f, state.CaptureDepth));
-            if (state.LastResult is null)
-                Debug.LogWarning("Impostor generation failed. See console for details.");
+            if (ImGui.InputInt("Sheet Size (px)", ref sheetSize))
+                state.SheetSize = (uint)Math.Max(128, sheetSize);
         }
 
-        if (state.LastResult is { } result)
-        {
-            Vector3 size = result.LocalBounds.Size;
-            ImGui.Separator();
-            ImGui.TextUnformatted("Last Generation:");
-            ImGui.TextDisabled($"Views: {result.Views.Width} x {result.Views.Height} x {result.Views.Depth}");
-            ImGui.TextDisabled($"Bounds: {size.X:0.##}, {size.Y:0.##}, {size.Z:0.##}");
-            ImGui.TextDisabled($"Views Captured: {result.Views.Depth} (dirs: {result.CaptureDirections.Count})");
+        bool captureDepth = false;
+        using (new ImGuiDisabledScope(true))
+            ImGui.Checkbox("Capture Depth", ref captureDepth);
+        ImGui.TextDisabled("Depth output is deferred for v1; captures still use a depth buffer for correct color rendering.");
 
-            ImGui.Spacing();
-            ImGui.TextUnformatted("View Previews:");
-            
-            // Display all 26 views in a grid
-            float availWidth = ImGui.GetContentRegionAvail().X;
-            int columns = Math.Max(1, (int)(availWidth / 110f)); // ~100px per thumbnail + spacing
-            
-            if (ImGui.BeginTable("ImpostorViewsGrid", columns, ImGuiTableFlags.None))
+        ImGui.TextDisabled("26 directional captures (axes, edges, and diagonals) are stored in a texture array.");
+
+        if (isCapturing)
+        {
+            var progress = state.Progress;
+            float progressValue = progress?.Normalized ?? 0.0f;
+            string overlay = progress is null
+                ? "Capturing..."
+                : $"{progress.CompletedViews.ToString(CultureInfo.InvariantCulture)} / {progress.TotalViews.ToString(CultureInfo.InvariantCulture)}";
+            ImGui.ProgressBar(progressValue, new Vector2(-1f, 0f), overlay);
+
+            if (ImGui.Button("Cancel Capture", new Vector2(-1f, 0f)))
+                state.CaptureCancellation?.Cancel();
+        }
+        else
+        {
+            if (ImGui.Button("Generate Model Billboard Capture", new Vector2(-1f, 0f)))
+                StartImpostorCapture(modelComponent, state, submeshIndices: null);
+
+            int selectedCount = panelState.SelectedSubmeshIndices.Count;
+            using (new ImGuiDisabledScope(selectedCount == 0))
             {
-                for (int i = 0; i < result.Views.Textures.Length; i++)
-                {
-                    ImGui.TableNextColumn();
-                    ImGui.PushID($"ImpostorView_{i}");
-                    ImGui.TextDisabled(GetImpostorViewLabel(i));
-                    DrawTexturePreviewCell(result.Views.Textures[i], 100f);
-                    ImGui.PopID();
-                }
-                ImGui.EndTable();
+                if (ImGui.Button("Generate Selected Submesh Capture", new Vector2(-1f, 0f)))
+                    StartImpostorCapture(modelComponent, state, GetValidSelectedSubmeshIndices(model, panelState.SelectedSubmeshIndices));
             }
 
-            if (ImGui.Button("Create Billboard Impostor", new Vector2(-1f, 0f)))
-                TryCreateBillboardFromImpostor(modelComponent, result);
-            
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Disable this ModelComponent and attach an octahedral billboard imposter using the generated captures.");
+            if (selectedCount > 0)
+                ImGui.TextDisabled($"Selected submeshes: {selectedCount.ToString(CultureInfo.InvariantCulture)}");
         }
 
+        if (!string.IsNullOrWhiteSpace(state.Status))
+            ImGui.TextDisabled(state.Status);
+
+        if (state.LastResult is { } result)
+            DrawImpostorResult(modelComponent, result, state);
+
         ImGui.Spacing();
+    }
+
+    private static void DrawSingleSubmeshImpostorControls(ModelComponent modelComponent, int submeshIndex)
+    {
+        var state = s_impostorStates.GetValue(modelComponent, _ => new ImpostorState());
+        PollImpostorGeneration(state);
+
+        bool isCapturing = state.PendingTask is not null;
+        using (new ImGuiDisabledScope(isCapturing))
+        {
+            if (ImGui.Button("Generate Billboard Capture For This Submesh", new Vector2(-1f, 0f)))
+                StartImpostorCapture(modelComponent, state, [submeshIndex]);
+        }
+
+        if (isCapturing)
+        {
+            var progress = state.Progress;
+            ImGui.ProgressBar(progress?.Normalized ?? 0.0f, new Vector2(-1f, 0f));
+        }
+
+        if (state.LastResult is { CaptureMode: EOctahedralImposterCaptureMode.SelectedSubmeshes } result &&
+            result.SourceSubmeshIndices.Count == 1 &&
+            result.SourceSubmeshIndices[0] == submeshIndex)
+        {
+            ImGui.TextDisabled($"Last capture for this submesh: {result.Views.Width} x {result.Views.Height} x {result.Views.Depth}");
+        }
+    }
+
+    private static int[] GetValidSelectedSubmeshIndices(Model model, IEnumerable<int> selected)
+    {
+        SortedSet<int> valid = [];
+        foreach (int index in selected)
+            if ((uint)index < (uint)model.Meshes.Count)
+                valid.Add(index);
+        return [.. valid];
+    }
+
+    private static void StartImpostorCapture(ModelComponent modelComponent, ImpostorState state, IReadOnlyCollection<int>? submeshIndices)
+    {
+        if (state.PendingTask is not null)
+            return;
+
+        state.CaptureDepth = false;
+        state.LastResultSaved = false;
+        state.Progress = new OctahedralImposterGenerator.CaptureProgress(0, OctahedralImposterGenerator.CaptureDirections.Count, "Queued octahedral capture.");
+        state.Status = "Queued octahedral capture.";
+        state.CaptureCancellation?.Dispose();
+        state.CaptureCancellation = new CancellationTokenSource();
+
+        int[]? normalizedIndices = submeshIndices is { Count: > 0 }
+            ? [.. submeshIndices]
+            : null;
+
+        var settings = new OctahedralImposterGenerator.Settings(state.SheetSize, 1.15f, CaptureDepth: false);
+        state.PendingTask = OctahedralImposterGenerator.GenerateAsync(
+            modelComponent,
+            settings,
+            normalizedIndices,
+            new ImpostorProgressSink(state),
+            state.CaptureCancellation.Token);
+    }
+
+    private static void PollImpostorGeneration(ImpostorState state)
+    {
+        Task<OctahedralImposterGenerator.Result?>? task = state.PendingTask;
+        if (task is null || !task.IsCompleted)
+            return;
+
+        try
+        {
+            OctahedralImposterGenerator.Result? result = task.GetAwaiter().GetResult();
+            state.LastResult = result;
+            if (result is null)
+            {
+                state.Status = "Impostor generation failed. See console for details.";
+                state.LastResultSaved = false;
+            }
+            else if (SaveImpostorAsset(result.Asset, out string status))
+            {
+                state.Status = status;
+                state.LastResultSaved = true;
+            }
+            else
+            {
+                state.Status = status;
+                state.LastResultSaved = false;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            state.Status = "Impostor capture canceled.";
+            state.LastResultSaved = false;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, "Impostor generation failed.");
+            state.Status = $"Impostor generation failed: {ex.Message}";
+            state.LastResultSaved = false;
+        }
+        finally
+        {
+            state.PendingTask = null;
+            state.Progress = null;
+            state.CaptureCancellation?.Dispose();
+            state.CaptureCancellation = null;
+        }
+    }
+
+    private static bool SaveImpostorAsset(OctahedralBillboardAsset asset, out string status)
+    {
+        try
+        {
+            string directory = Engine.Assets.ResolveGameAssetPath("Generated", "OctahedralBillboards");
+            if (string.IsNullOrWhiteSpace(asset.FilePath))
+                Engine.Assets.SaveToImmediate(asset, directory);
+            else
+                Engine.Assets.SaveImmediate(asset);
+
+            status = string.IsNullOrWhiteSpace(asset.FilePath)
+                ? "Saved octahedral billboard asset."
+                : $"Saved octahedral billboard asset: {Path.GetFileName(asset.FilePath)}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, "Failed to save octahedral billboard asset.");
+            status = $"Capture completed, but asset save failed: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static void DrawImpostorResult(ModelComponent modelComponent, OctahedralImposterGenerator.Result result, ImpostorState state)
+    {
+        Vector3 size = result.LocalBounds.Size;
+        ImGui.Separator();
+        ImGui.TextUnformatted("Last Generation:");
+        ImGui.TextDisabled($"Mode: {result.CaptureMode}");
+        ImGui.TextDisabled($"Views: {result.Views.Width} x {result.Views.Height} x {result.Views.Depth}");
+        ImGui.TextDisabled($"Bounds: {size.X:0.##}, {size.Y:0.##}, {size.Z:0.##}");
+        ImGui.TextDisabled($"Center Local: {result.CaptureCenterLocal.X:0.###}, {result.CaptureCenterLocal.Y:0.###}, {result.CaptureCenterLocal.Z:0.###}");
+        ImGui.TextDisabled($"Ortho Extent: {result.OrthographicExtent:0.###}");
+        if (result.SourceSubmeshIndices.Count > 0)
+            ImGui.TextDisabled($"Source Submeshes: {string.Join(", ", result.SourceSubmeshIndices)}");
+        if (!string.IsNullOrWhiteSpace(result.Asset.FilePath))
+            ImGui.TextDisabled($"Asset: {result.Asset.FilePath}");
+        if (!string.IsNullOrWhiteSpace(result.Warning))
+            ImGui.TextDisabled(result.Warning);
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted("View Previews:");
+
+        float availWidth = ImGui.GetContentRegionAvail().X;
+        int columns = Math.Max(1, (int)(availWidth / 110f));
+
+        if (ImGui.BeginTable("ImpostorViewsGrid", columns, ImGuiTableFlags.None))
+        {
+            for (int i = 0; i < result.PreviewTextures.Count; i++)
+            {
+                ImGui.TableNextColumn();
+                ImGui.PushID($"ImpostorView_{i}");
+                ImGui.TextDisabled(GetImpostorViewLabel(i));
+                DrawTexturePreviewCell(result.PreviewTextures[i], 100f);
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+        }
+
+        bool canCreate = state.LastResultSaved &&
+            result.Asset.ColorViews is not null &&
+            !string.IsNullOrWhiteSpace(result.Asset.FilePath);
+        using (new ImGuiDisabledScope(!canCreate))
+        {
+            if (ImGui.Button("Create Billboard Impostor", new Vector2(-1f, 0f)))
+                TryCreateBillboardFromImpostor(modelComponent, result);
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(canCreate
+                ? "Disable this ModelComponent and attach an octahedral billboard impostor using the saved capture asset."
+                : "Generate and save a valid capture before creating the billboard impostor.");
+    }
+
+    private sealed class ImpostorProgressSink(ImpostorState state) : IProgress<OctahedralImposterGenerator.CaptureProgress>
+    {
+        public void Report(OctahedralImposterGenerator.CaptureProgress value)
+        {
+            state.Progress = value;
+            state.Status = value.Message;
+        }
     }
 
     /// <summary>
@@ -702,10 +896,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return;
         }
 
-        billboard.ApplyCaptureResult(result, matchBounds: true);
+        using (Undo.TrackChange("Apply Impostor Billboard", billboard))
+            billboard.ApplyCaptureResult(result, matchBounds: true);
 
-        using var _ = Undo.TrackChange("Create Impostor", modelComponent);
-        modelComponent.IsActive = false;
+        using (Undo.TrackChange("Disable Source Model", modelComponent))
+            modelComponent.IsActive = false;
 
         if (wasAdded)
             Debug.Out("Created octahedral impostor billboard and disabled the original model component.");
@@ -765,6 +960,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 DrawLodSummaryTable(modelComponent, index, subMesh, lodEntries, runtimeMesh, editorState);
                 break;
             case 1:
+                DrawSingleSubmeshImpostorControls(modelComponent, index);
+                ImGui.Spacing();
                 DrawMeshOptimizerControls(modelComponent, subMesh);
                 break;
         }

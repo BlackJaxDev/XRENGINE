@@ -484,7 +484,7 @@ namespace XREngine
                 private bool _useSpotShadowAtlas = true;
                 private bool _useDirectionalShadowAtlas = true;
                 private uint _shadowAtlasPageSize = 4096u;
-                private int _maxShadowAtlasPages = 2;
+                private int _maxShadowAtlasPages = 1;
                 private long _maxShadowAtlasMemoryBytes = 0L;
                 private int _maxShadowTilesRenderedPerFrame = 16;
                 private float _maxShadowRenderMilliseconds = 2.0f;
@@ -557,21 +557,28 @@ namespace XREngine
                 [Description("If true, dynamic spot lights render and sample through the dynamic shadow atlas. Disable to use per-light spot shadow maps for debugging.")]
                 public bool UseSpotShadowAtlas
                 {
-                    get => _useSpotShadowAtlas;
-                    set => SetField(ref _useSpotShadowAtlas, value);
+                    get => Volatile.Read(ref _useSpotShadowAtlas);
+                    set
+                    {
+                        if (!SetField(ref _useSpotShadowAtlas, value))
+                            return;
+
+                        Volatile.Write(ref _useSpotShadowAtlas, value);
+                    }
                 }
 
                 [Category("Shadows")]
                 [Description("If true, directional cascades render and sample through the dynamic shadow atlas. Disable to use the legacy cascade texture array for debugging.")]
                 public bool UseDirectionalShadowAtlas
                 {
-                    get => _useDirectionalShadowAtlas;
+                    get => Volatile.Read(ref _useDirectionalShadowAtlas);
                     set
                     {
                         if (!SetField(ref _useDirectionalShadowAtlas, value))
                             return;
 
-                        XREngine.Debug.Out(
+                        Volatile.Write(ref _useDirectionalShadowAtlas, value);
+                        XREngine.Debug.Lighting(
                             EOutputVerbosity.Normal,
                             false,
                             "[DirectionalShadowAudit][Setting] frame={0} UseDirectionalShadowAtlas={1}",
@@ -589,11 +596,11 @@ namespace XREngine
                 }
 
                 [Category("Shadows")]
-                [Description("Maximum number of dynamic shadow atlas pages per encoding group.")]
+                [Description("Maximum number of dynamic shadow atlas pages per light-family atlas. Current runtime enforces one page each for directional, point, and spot atlases.")]
                 public int MaxShadowAtlasPages
                 {
                     get => _maxShadowAtlasPages;
-                    set => SetField(ref _maxShadowAtlasPages, Math.Clamp(value, 1, 64));
+                    set => SetField(ref _maxShadowAtlasPages, 1);
                 }
 
                 [Category("Shadows")]

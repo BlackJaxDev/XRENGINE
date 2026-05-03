@@ -43,7 +43,7 @@ namespace XREngine.Rendering.Commands
                     return;
 
                 string ownerName = _ownerPipeline?.DebugName ?? "<no-owner>";
-                System.Diagnostics.Debug.WriteLine($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
+                Debug.Rendering($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
 
                 _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
                 _passSorterTypes = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value?.GetType());
@@ -250,7 +250,7 @@ namespace XREngine.Rendering.Commands
                 if (s_addCpuMissingPassDiagCount < 30)
                 {
                     string ownerName = _ownerPipeline?.DebugName ?? "<no-owner>";
-                    Debug.Out($"[RenderCommandCollection:AddCPU] MISSING_PASS pass={pass} cmd={item.GetType().Name} enabled={item.Enabled} owner={ownerName} updatingPassKeys=[{string.Join(",", _updatingPasses.Keys.OrderBy(static x => x))}]");
+                    Debug.Rendering($"[RenderCommandCollection:AddCPU] MISSING_PASS pass={pass} cmd={item.GetType().Name} enabled={item.Enabled} owner={ownerName} updatingPassKeys=[{string.Join(",", _updatingPasses.Keys.OrderBy(static x => x))}]");
                     s_addCpuMissingPassDiagCount++;
                 }
                 return; // No CPU pass found for this render command

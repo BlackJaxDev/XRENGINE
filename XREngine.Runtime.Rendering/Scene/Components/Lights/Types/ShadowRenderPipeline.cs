@@ -7,12 +7,23 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Components.Lights
 {
+    /// <summary>
+    /// Minimal render pipeline used by shadow cameras to collect caster depth into a light-owned target.
+    /// </summary>
     public class ShadowRenderPipeline : RenderPipeline
     {
+        /// <summary>
+        /// Keeps an atlas tile render area intact instead of replacing it with the full output FBO area.
+        /// </summary>
         internal bool PreserveExistingRenderArea { get; set; }
+
+        /// <summary>
+        /// Clear color used by shadow targets that encode depth or moments in color attachments.
+        /// </summary>
         internal ColorF4 ClearColor { get; set; } = ColorF4.White;
 
         protected override Lazy<XRMaterial> InvalidMaterialFactory => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);
+
         private XRMaterial MakeInvalidMaterial()
             => XRMaterial.CreateColorMaterialDeferred();
 
@@ -25,12 +36,14 @@ namespace XREngine.Components.Lights
 
             using (c.AddUsing<VPRC_PushShadowOutputFBORenderArea>())
             {
+                // FBO clears honor depth/stencil write masks, so restore them before the bind auto-clear.
+                c.Add<VPRC_StencilMask>().Set(~0u);
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = true;
+
                 using (c.AddUsing<VPRC_BindOutputFBO>())
                 {
-                    c.Add<VPRC_StencilMask>().Set(~0u);
                     c.Add<VPRC_ClearByBoundFBO>();
-                    c.Add<VPRC_DepthTest>().Enable = true;
-                    c.Add<VPRC_DepthWrite>().Allow = true;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
@@ -94,6 +107,9 @@ namespace XREngine.Components.Lights
     [RenderPipelineScriptCommand]
     internal sealed class VPRC_SetShadowClears : ViewportRenderCommand
     {
+        /// <summary>
+        /// Applies the clear values requested by the active shadow pipeline before the shadow FBO is cleared.
+        /// </summary>
         protected override void Execute()
         {
             ColorF4 clearColor = ActivePipelineInstance.Pipeline is ShadowRenderPipeline shadowPipeline
@@ -109,6 +125,9 @@ namespace XREngine.Components.Lights
     [RenderPipelineScriptCommand]
     internal sealed class VPRC_PushShadowOutputFBORenderArea : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
+        /// <summary>
+        /// Pushes a full-FBO render area unless an atlas tile has already established a cropped region.
+        /// </summary>
         protected override void Execute()
         {
             XRRenderPipelineInstance instance = ActivePipelineInstance;

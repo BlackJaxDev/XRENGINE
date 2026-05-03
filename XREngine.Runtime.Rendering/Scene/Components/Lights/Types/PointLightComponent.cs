@@ -1,4 +1,3 @@
-using XREngine.Extensions;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components;
@@ -6,11 +5,15 @@ using XREngine.Components.Lights;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Extensions;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
+    /// <summary>
+    /// Local omnidirectional light backed by six cubemap shadow cameras.
+    /// </summary>
     [XRComponentEditor("XREngine.Editor.ComponentEditors.PointLightComponentEditor")]
     [Category("Lighting")]
     [DisplayName("Point Light")]
@@ -61,6 +64,9 @@ namespace XREngine.Components.Capture.Lights.Types
             }
         }
 
+        /// <summary>
+        /// Shadow cameras for the cubemap faces, ordered by the engine cubemap face convention.
+        /// </summary>
         public XRCamera[] ShadowCameras => _shadowCameras;
 
         private XRViewport CreateShadowViewport(uint resolution)
@@ -158,7 +164,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             if (_useGeometryShader)
             {
-                // GS renders all 6 cubemap faces per draw call � one viewport
+                // GS renders all 6 cubemap faces per draw call. One viewport
                 // with the influence sphere captures objects visible from any face.
                 _viewports[0].CollectVisible(
                     collectMirrors: false,
@@ -206,19 +212,6 @@ namespace XREngine.Components.Capture.Lights.Types
             if (_useGeometryShader)
             {
                 // Single draw: the GS writes to all 6 cubemap layers via gl_Layer.
-                int cmdCount = _viewports[0].RenderPipelineInstance.MeshRenderCommands.GetRenderingCommandCount();
-/*
-                Debug.RenderingEvery(
-                    $"PointLight.GSShadow.{GetHashCode()}",
-                    TimeSpan.FromSeconds(2),
-                    "[ShadowDiag] GS shadow pass. RenderingCmds={0} VP0.Camera={1} VP0.World={2} ShadowMapNull={3} InfluenceRadius={4:F1} InfluenceCenter={5}",
-                    cmdCount,
-                    _viewports[0].ActiveCamera is not null,
-                    _viewports[0].World is not null,
-                    ShadowMap is null,
-                    _influenceVolume.Radius,
-                    _influenceVolume.Center);
-*/
                 _viewports[0].Render(ShadowMap, null, null, true, ShadowMap!.Material);
             }
             else
@@ -318,8 +311,15 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override float ContactHardeningLightRadius => Radius;
 
+        /// <summary>
+        /// Creates a point light with the default radius and brightness.
+        /// </summary>
         public PointLightComponent()
             : this(100.0f, 1.0f) { }
+
+        /// <summary>
+        /// Creates a point light with the requested attenuation radius and brightness.
+        /// </summary>
         public PointLightComponent(float radius, float brightness)
             : base()
         {
@@ -420,7 +420,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 for (int i = 0; i < _shadowCameras.Length; ++i)
                 {
                     XRCamera cam = _shadowCameras[i];
-                    // Precompute VP on CPU � avoids per-vertex inverse() in the geometry shader.
+                    // Precompute VP on CPU to avoid per-vertex inverse() in the geometry shader.
                     Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
                     Matrix4x4 vp = viewMatrix * cam.ProjectionMatrix;
                     program.Uniform($"ViewProjectionMatrices[{i}]", vp);
@@ -470,7 +470,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 mat = new(refs, fragShader);
             }
 
-            //No culling so if a light exists inside of a mesh it will shadow everything.
+            // No culling so a light inside geometry still shadows everything around it.
             mat.RenderOptions.CullMode = ECullMode.None;
 
             return mat;

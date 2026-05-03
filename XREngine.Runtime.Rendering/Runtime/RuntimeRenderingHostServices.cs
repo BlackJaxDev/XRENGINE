@@ -187,6 +187,16 @@ public interface IRuntimeRenderingHostServices
     float DefaultTsrRenderScale { get; }
     bool ForwardDepthPrePassEnabled { get; }
     bool ForwardPrePassSharesGBufferTargets { get; }
+    bool ProvidesShadowAtlasSettings { get; }
+    bool UseSpotShadowAtlas { get; }
+    bool UseDirectionalShadowAtlas { get; }
+    uint ShadowAtlasPageSize { get; }
+    int MaxShadowAtlasPages { get; }
+    long MaxShadowAtlasMemoryBytes { get; }
+    int MaxShadowTilesRenderedPerFrame { get; }
+    float MaxShadowRenderMilliseconds { get; }
+    uint MinShadowAtlasTileResolution { get; }
+    uint MaxShadowAtlasTileResolution { get; }
     RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window);
     IEnumerable<IRuntimeViewportHost> EnumerateActiveViewports();
     IEnumerable<IPawnController> EnumerateLocalPlayers();
@@ -371,6 +381,16 @@ public static class RuntimeRenderingHostServices
         public float DefaultTsrRenderScale => 1.0f;
         public bool ForwardDepthPrePassEnabled => true;
         public bool ForwardPrePassSharesGBufferTargets => true;
+        public bool ProvidesShadowAtlasSettings => false;
+        public bool UseSpotShadowAtlas => true;
+        public bool UseDirectionalShadowAtlas => true;
+        public uint ShadowAtlasPageSize => 4096u;
+        public int MaxShadowAtlasPages => 1;
+        public long MaxShadowAtlasMemoryBytes => 0L;
+        public int MaxShadowTilesRenderedPerFrame => 16;
+        public float MaxShadowRenderMilliseconds => 2.0f;
+        public uint MinShadowAtlasTileResolution => 128u;
+        public uint MaxShadowAtlasTileResolution => 4096u;
 
         public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)
             => RuntimeGraphicsApiKind.Unknown;
