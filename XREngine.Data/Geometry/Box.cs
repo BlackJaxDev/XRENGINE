@@ -179,8 +179,8 @@ namespace XREngine.Data.Geometry
         }
 
         public readonly Vector3 WorldCenter => Vector3.Transform(_localCenter, _transform);
-        public readonly Vector3 WorldMinimum => Vector3.Transform(LocalMinimum, _transform);
-        public readonly Vector3 WorldMaximum => Vector3.Transform(LocalMaximum, _transform);
+        public readonly Vector3 WorldMinimum => GetTransformedAABB().Min;
+        public readonly Vector3 WorldMaximum => GetTransformedAABB().Max;
 
         public readonly Vector3 PointToLocalSpace(Vector3 worldPoint)
             => Matrix4x4.Invert(_transform, out var inv) ? Vector3.Transform(worldPoint, inv) : worldPoint;
@@ -417,9 +417,35 @@ namespace XREngine.Data.Geometry
         }
 
         public readonly AABB GetAABB(bool transformed)
-            => transformed 
-            ? new(WorldMinimum, WorldMaximum)
+            => transformed
+            ? GetTransformedAABB()
             : new(LocalMinimum, LocalMaximum);
+
+        private readonly AABB GetTransformedAABB()
+        {
+            Vector3 min = LocalMinimum;
+            Vector3 max = LocalMaximum;
+
+            Vector3 worldMin = Vector3.Transform(new Vector3(min.X, min.Y, min.Z), _transform);
+            Vector3 worldMax = worldMin;
+
+            IncludeTransformedCorner(new Vector3(max.X, min.Y, min.Z), ref worldMin, ref worldMax);
+            IncludeTransformedCorner(new Vector3(min.X, max.Y, min.Z), ref worldMin, ref worldMax);
+            IncludeTransformedCorner(new Vector3(max.X, max.Y, min.Z), ref worldMin, ref worldMax);
+            IncludeTransformedCorner(new Vector3(min.X, min.Y, max.Z), ref worldMin, ref worldMax);
+            IncludeTransformedCorner(new Vector3(max.X, min.Y, max.Z), ref worldMin, ref worldMax);
+            IncludeTransformedCorner(new Vector3(min.X, max.Y, max.Z), ref worldMin, ref worldMax);
+            IncludeTransformedCorner(new Vector3(max.X, max.Y, max.Z), ref worldMin, ref worldMax);
+
+            return new AABB(worldMin, worldMax);
+        }
+
+        private readonly void IncludeTransformedCorner(Vector3 localCorner, ref Vector3 worldMin, ref Vector3 worldMax)
+        {
+            Vector3 worldCorner = Vector3.Transform(localCorner, _transform);
+            worldMin = Vector3.Min(worldMin, worldCorner);
+            worldMax = Vector3.Max(worldMax, worldCorner);
+        }
 
         public readonly bool IntersectsSegment(Segment segment, out Vector3[] points)
         {

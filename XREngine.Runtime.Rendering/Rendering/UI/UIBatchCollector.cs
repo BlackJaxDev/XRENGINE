@@ -21,6 +21,18 @@ namespace XREngine.Rendering.UI;
 /// </summary>
 public sealed class UIBatchCollector : IDisposable
 {
+    private const string TextAtlasTypeUniformName = "TextAtlasType";
+    private const string MsdfDistanceRangeUniformName = "MsdfDistanceRange";
+    private const string MsdfDistanceRangeMiddleUniformName = "MsdfDistanceRangeMiddle";
+    private const string MsdfFillBiasUniformName = "MsdfFillBias";
+    private const string TextDebugModeUniformName = "TextDebugMode";
+    private const int TextAtlasBitmap = 0;
+    private static int s_textAddDiagCount;
+    private static int s_textMarkerDiagCount;
+    private static int s_textRenderDiagCount;
+    private static int s_textUploadDiagCount;
+    private static int s_textPrepareDiagCount;
+
     #region Batch Entry Types
 
     private enum EBatchMarkerKind
@@ -58,12 +70,22 @@ public sealed class UIBatchCollector : IDisposable
     private sealed class TextBatchData
     {
         public XRTexture2D? Atlas;
+        public int AtlasType;
+        public float DistanceRange;
+        public float DistanceRangeMiddle;
+        public float MsdfFillBias;
+        public int DebugMode;
         public readonly List<TextEntry> Entries = [];
         public int TotalGlyphs;
 
         public void Clear()
         {
             Atlas = null;
+            AtlasType = TextAtlasBitmap;
+            DistanceRange = 0.0f;
+            DistanceRangeMiddle = 0.5f;
+            MsdfFillBias = 0.5f;
+            DebugMode = 0;
             Entries.Clear();
             TotalGlyphs = 0;
         }
@@ -121,12 +143,22 @@ public sealed class UIBatchCollector : IDisposable
     {
         public EBatchMarkerKind? ActiveKind;
         public XRTexture2D? ActiveTextAtlas;
+        public int ActiveTextAtlasType;
+        public float ActiveTextDistanceRange;
+        public float ActiveTextDistanceRangeMiddle;
+        public float ActiveTextMsdfFillBias;
+        public int ActiveTextDebugMode;
         public int ActiveGroupIndex = -1;
 
         public void Reset()
         {
             ActiveKind = null;
             ActiveTextAtlas = null;
+            ActiveTextAtlasType = TextAtlasBitmap;
+            ActiveTextDistanceRange = 0.0f;
+            ActiveTextDistanceRangeMiddle = 0.5f;
+            ActiveTextMsdfFillBias = 0.5f;
+            ActiveTextDebugMode = 0;
             ActiveGroupIndex = -1;
         }
     }
@@ -182,6 +214,19 @@ public sealed class UIBatchCollector : IDisposable
         public override void Render()
         {
             OnPreRender();
+            if (_kind == EBatchMarkerKind.Text && s_textMarkerDiagCount++ < 40)
+            {
+                Debug.Out(
+                    "[FpsTextDiag] UIBatchMarker.Render #{0}: pass={1} kind={2} group={3} renderKind={4} renderGroup={5} zIndex={6}",
+                    s_textMarkerDiagCount,
+                    _renderPass,
+                    _kind,
+                    _groupIndex,
+                    _renderKind,
+                    _renderGroupIndex,
+                    ZIndex);
+            }
+
             _owner.RenderBatchMarker(_renderPass, _renderKind, _renderGroupIndex);
             OnPostRender();
         }
@@ -331,14 +376,18 @@ public sealed class UIBatchCollector : IDisposable
         in Matrix4x4 worldMatrix,
         in Vector4 textColor,
         in Vector4 uixywh,
+        int atlasType,
+        float distanceRange,
+        float distanceRangeMiddle,
+        float msdfFillBias,
+        int debugMode,
         (Vector4 transform, Vector4 uvs)[] glyphs)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectTextGroups, renderPass);
 
         TextBatchData batch;
-        if (state.ActiveKind == EBatchMarkerKind.Text &&
-            ReferenceEquals(state.ActiveTextAtlas, fontAtlas) &&
+        if (TextBatchMatches(state, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode) &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
@@ -348,8 +397,18 @@ public sealed class UIBatchCollector : IDisposable
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
             batch.Atlas = fontAtlas;
+            batch.AtlasType = atlasType;
+            batch.DistanceRange = distanceRange;
+            batch.DistanceRangeMiddle = distanceRangeMiddle;
+            batch.MsdfFillBias = msdfFillBias;
+            batch.DebugMode = debugMode;
             state.ActiveKind = EBatchMarkerKind.Text;
             state.ActiveTextAtlas = fontAtlas;
+            state.ActiveTextAtlasType = atlasType;
+            state.ActiveTextDistanceRange = distanceRange;
+            state.ActiveTextDistanceRangeMiddle = distanceRangeMiddle;
+            state.ActiveTextMsdfFillBias = msdfFillBias;
+            state.ActiveTextDebugMode = debugMode;
             state.ActiveGroupIndex = groupIndex;
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Text, groupIndex));
         }
@@ -363,6 +422,46 @@ public sealed class UIBatchCollector : IDisposable
             Glyphs = glyphs
         });
         batch.TotalGlyphs += glyphs.Length;
+
+        if (s_textAddDiagCount++ < 40)
+        {
+            var firstGlyph = glyphs.Length > 0 ? glyphs[0] : default;
+            Debug.Out(
+                "[FpsTextDiag] UIBatchCollector.AddTextQuad #{0}: pass={1} z={2} group={3} entries={4} totalGlyphs={5} glyphs={6} atlasType={7} range={8:F2} middle={9:F2} bias={10:F2} debugMode={11} color=({12:F2},{13:F2},{14:F2},{15:F2}) worldT=({16:F1},{17:F1},{18:F1}) bounds=({19:F1},{20:F1},{21:F1},{22:F1}) firstTfm=({23:F2},{24:F2},{25:F2},{26:F2}) firstUv=({27:F5},{28:F5},{29:F5},{30:F5}) atlas=({31}x{32})",
+                s_textAddDiagCount,
+                renderPass,
+                zIndex,
+                state.ActiveGroupIndex,
+                batch.Entries.Count,
+                batch.TotalGlyphs,
+                glyphs.Length,
+                atlasType,
+                distanceRange,
+                distanceRangeMiddle,
+                msdfFillBias,
+                debugMode,
+                textColor.X,
+                textColor.Y,
+                textColor.Z,
+                textColor.W,
+                worldMatrix.M41,
+                worldMatrix.M42,
+                worldMatrix.M43,
+                uixywh.X,
+                uixywh.Y,
+                uixywh.Z,
+                uixywh.W,
+                firstGlyph.transform.X,
+                firstGlyph.transform.Y,
+                firstGlyph.transform.Z,
+                firstGlyph.transform.W,
+                firstGlyph.uvs.X,
+                firstGlyph.uvs.Y,
+                firstGlyph.uvs.Z,
+                firstGlyph.uvs.W,
+                fontAtlas.Width,
+                fontAtlas.Height);
+        }
     }
 
     public void BreakBatchRun(int renderPass)
@@ -468,6 +567,10 @@ public sealed class UIBatchCollector : IDisposable
                 {
                     Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always
+                },
+                StencilTest = new StencilTest
+                {
+                    Enabled = ERenderParamUsage.Disabled
                 },
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
             }
@@ -599,8 +702,18 @@ public sealed class UIBatchCollector : IDisposable
         XRShader fragmentShader = XRShader.EngineShader(
             Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment);
 
-        var material = new XRMaterial(Array.Empty<ShaderVar>(), [fontAtlas], [vertexShader, stereoMv2VertexShader, stereoNvVertexShader, fragmentShader])
+        ShaderVar[] parameters =
+        [
+            new ShaderInt(0, TextAtlasTypeUniformName),
+            new ShaderFloat(0.0f, MsdfDistanceRangeUniformName),
+            new ShaderFloat(0.5f, MsdfDistanceRangeMiddleUniformName),
+            new ShaderFloat(0.5f, MsdfFillBiasUniformName),
+            new ShaderInt(0, TextDebugModeUniformName),
+        ];
+
+        var material = new XRMaterial(parameters, [fontAtlas], [vertexShader, stereoMv2VertexShader, stereoNvVertexShader, fragmentShader])
         {
+            Name = "UIBatchTextMaterial",
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
             RenderOptions = new RenderingParameters
             {
@@ -610,6 +723,10 @@ public sealed class UIBatchCollector : IDisposable
                     Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always
                 },
+                StencilTest = new StencilTest
+                {
+                    Enabled = ERenderParamUsage.Disabled
+                },
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
             }
         };
@@ -617,6 +734,9 @@ public sealed class UIBatchCollector : IDisposable
         gpu.Mesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
             material);
+        gpu.Mesh.Name = "UIBatchTextRenderer";
+        if (gpu.Mesh.Mesh is not null)
+            gpu.Mesh.Mesh.Name = "UIBatchTextQuadMesh";
         gpu.Mesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
         gpu.Mesh.EnsureRenderPipelineVersionsCreated();
 
@@ -771,6 +891,8 @@ public sealed class UIBatchCollector : IDisposable
 
         var version = GetImmediateRenderVersion(_matQuadMesh!);
         version.Generate();
+        if (!_matQuadMesh.TryPrepareForRendering())
+            return;
 
         Debug.UIEvery(
             "UIBatchCollector.RenderMaterialQuadBatch",
@@ -778,7 +900,18 @@ public sealed class UIBatchCollector : IDisposable
             "[UIBatch] RenderMaterialQuadBatch: pass={0}, entries={1}, capacity={2}",
             renderPass, batch.Entries.Count, _matQuadCapacity);
 
-        _matQuadMesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
+        if (_matQuadMesh!.Material is { } material && material.RenderPass != renderPass)
+            material.RenderPass = renderPass;
+
+        DisableBatchCropping();
+        try
+        {
+            _matQuadMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
+        }
+        finally
+        {
+            DisableBatchCropping();
+        }
     }
 
     private void RenderTextGroup(int renderPass, int groupIndex)
@@ -795,12 +928,88 @@ public sealed class UIBatchCollector : IDisposable
         using var sample = Engine.Profiler.Start();
 
         var gpu = EnsureTextGPUResources(batchData.Atlas);
+        var material = gpu.Mesh!.Material;
+        if (material is not null && material.RenderPass != renderPass)
+            material.RenderPass = renderPass;
+
+        material?.SetInt(TextAtlasTypeUniformName, batchData.AtlasType);
+        material?.SetFloat(MsdfDistanceRangeUniformName, batchData.DistanceRange);
+        material?.SetFloat(MsdfDistanceRangeMiddleUniformName, batchData.DistanceRangeMiddle);
+        material?.SetFloat(MsdfFillBiasUniformName, batchData.MsdfFillBias);
+        material?.SetInt(TextDebugModeUniformName, batchData.DebugMode);
+
+        if (s_textRenderDiagCount++ < 40)
+        {
+            var firstEntry = batchData.Entries[0];
+            var firstGlyph = firstEntry.GlyphCount > 0 ? firstEntry.Glyphs[0] : default;
+            string projectedGlyph = GetProjectedGlyphSummary(in firstEntry.WorldMatrix, in firstGlyph.transform);
+            Debug.Out(
+                "[FpsTextDiag] UIBatchCollector.RenderTextGroup #{0}: pass={1} group={2} entries={3} totalGlyphs={4} atlasType={5} range={6:F2} middle={7:F2} bias={8:F2} debugMode={9} glyphCap={10} textCap={11} material={12} mesh={13} color=({14:F2},{15:F2},{16:F2},{17:F2}) worldT=({18:F1},{19:F1},{20:F1}) bounds=({21:F1},{22:F1},{23:F1},{24:F1}) firstTfm=({25:F2},{26:F2},{27:F2},{28:F2}) firstUv=({29:F5},{30:F5},{31:F5},{32:F5}) projected={33}",
+                s_textRenderDiagCount,
+                renderPass,
+                groupIndex,
+                batchData.Entries.Count,
+                batchData.TotalGlyphs,
+                batchData.AtlasType,
+                batchData.DistanceRange,
+                batchData.DistanceRangeMiddle,
+                batchData.MsdfFillBias,
+                batchData.DebugMode,
+                gpu.GlyphCapacity,
+                gpu.TextCapacity,
+                material is not null,
+                gpu.Mesh is not null,
+                firstEntry.TextColor.X,
+                firstEntry.TextColor.Y,
+                firstEntry.TextColor.Z,
+                firstEntry.TextColor.W,
+                firstEntry.WorldMatrix.M41,
+                firstEntry.WorldMatrix.M42,
+                firstEntry.WorldMatrix.M43,
+                firstEntry.UIXYWH.X,
+                firstEntry.UIXYWH.Y,
+                firstEntry.UIXYWH.Z,
+                firstEntry.UIXYWH.W,
+                firstGlyph.transform.X,
+                firstGlyph.transform.Y,
+                firstGlyph.transform.Z,
+                firstGlyph.transform.W,
+                firstGlyph.uvs.X,
+                firstGlyph.uvs.Y,
+                firstGlyph.uvs.Z,
+                firstGlyph.uvs.W,
+                projectedGlyph);
+        }
+
         FinalizeAndUploadTextData(batchData, gpu, batchData.Atlas);
 
         var version = GetImmediateRenderVersion(gpu.Mesh!);
         version.Generate();
+        if (!gpu.Mesh.TryPrepareForRendering())
+        {
+            if (s_textPrepareDiagCount++ < 40)
+            {
+                Debug.Out(
+                    "[FpsTextDiag] UIBatchCollector.RenderTextGroup prepare pending #{0}: pass={1} group={2} totalGlyphs={3} debugMode={4}",
+                    s_textPrepareDiagCount,
+                    renderPass,
+                    groupIndex,
+                    batchData.TotalGlyphs,
+                    batchData.DebugMode);
+            }
 
-        gpu.Mesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
+            return;
+        }
+
+        DisableBatchCropping();
+        try
+        {
+            gpu.Mesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
+        }
+        finally
+        {
+            DisableBatchCropping();
+        }
     }
 
     private unsafe void FinalizeAndUploadTextData(TextBatchData batchData, TextGPUResources gpu, XRTexture2D atlas)
@@ -854,6 +1063,21 @@ public sealed class UIBatchCollector : IDisposable
             glyphOffset += (uint)entry.GlyphCount;
         }
 
+        if (s_textUploadDiagCount++ < 40)
+        {
+            Debug.Out(
+                "[FpsTextDiag] UIBatchCollector.FinalizeAndUploadTextData #{0}: entries={1} totalGlyphs={2} resized={3} needsPush={4} glyphCap={5} textCap={6} atlas=({7}x{8})",
+                s_textUploadDiagCount,
+                batchData.Entries.Count,
+                batchData.TotalGlyphs,
+                resized,
+                gpu.NeedsPush,
+                gpu.GlyphCapacity,
+                gpu.TextCapacity,
+                atlas.Width,
+                atlas.Height);
+        }
+
         // Push to GPU
         if (gpu.NeedsPush)
         {
@@ -875,6 +1099,55 @@ public sealed class UIBatchCollector : IDisposable
     #endregion
 
     #region Helpers
+
+    private static void DisableBatchCropping()
+        => AbstractRenderer.Current?.SetCroppingEnabled(false);
+
+    private static string GetProjectedGlyphSummary(in Matrix4x4 worldMatrix, in Vector4 glyphTransform)
+    {
+        var camera = Engine.Rendering.State.RenderingCamera;
+        if (camera is null)
+            return "camera=<null>";
+
+        Matrix4x4 worldViewProjection = worldMatrix * camera.ViewProjectionMatrix;
+        Vector4 p0 = ProjectGlyphCorner(new Vector2(glyphTransform.X, glyphTransform.Y), in worldViewProjection);
+        Vector4 p1 = ProjectGlyphCorner(new Vector2(glyphTransform.X + glyphTransform.Z, glyphTransform.Y), in worldViewProjection);
+        Vector4 p2 = ProjectGlyphCorner(new Vector2(glyphTransform.X, glyphTransform.Y + glyphTransform.W), in worldViewProjection);
+        Vector4 p3 = ProjectGlyphCorner(new Vector2(glyphTransform.X + glyphTransform.Z, glyphTransform.Y + glyphTransform.W), in worldViewProjection);
+
+        float minX = MathF.Min(MathF.Min(p0.X, p1.X), MathF.Min(p2.X, p3.X));
+        float minY = MathF.Min(MathF.Min(p0.Y, p1.Y), MathF.Min(p2.Y, p3.Y));
+        float maxX = MathF.Max(MathF.Max(p0.X, p1.X), MathF.Max(p2.X, p3.X));
+        float maxY = MathF.Max(MathF.Max(p0.Y, p1.Y), MathF.Max(p2.Y, p3.Y));
+        return $"camera='{camera.Transform.SceneNode?.Name ?? camera.GetType().Name}' ndc=({minX:F3},{minY:F3})-({maxX:F3},{maxY:F3}) w=({p0.W:F3},{p1.W:F3},{p2.W:F3},{p3.W:F3})";
+    }
+
+    private static Vector4 ProjectGlyphCorner(Vector2 local, in Matrix4x4 worldViewProjection)
+    {
+        Vector4 clip = Vector4.Transform(new Vector4(local, 0.0f, 1.0f), worldViewProjection);
+        if (MathF.Abs(clip.W) <= 1e-6f)
+            return clip;
+
+        float invW = 1.0f / clip.W;
+        return new Vector4(clip.X * invW, clip.Y * invW, clip.Z * invW, clip.W);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool TextBatchMatches(
+        CollectPassState state,
+        XRTexture2D fontAtlas,
+        int atlasType,
+        float distanceRange,
+        float distanceRangeMiddle,
+        float msdfFillBias,
+        int debugMode)
+        => state.ActiveKind == EBatchMarkerKind.Text &&
+           ReferenceEquals(state.ActiveTextAtlas, fontAtlas) &&
+           state.ActiveTextAtlasType == atlasType &&
+           state.ActiveTextDistanceRange.Equals(distanceRange) &&
+           state.ActiveTextDistanceRangeMiddle.Equals(distanceRangeMiddle) &&
+           state.ActiveTextMsdfFillBias.Equals(msdfFillBias) &&
+           state.ActiveTextDebugMode == debugMode;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static unsafe void WriteMatrix4x4(ref float* ptr, in Matrix4x4 m)

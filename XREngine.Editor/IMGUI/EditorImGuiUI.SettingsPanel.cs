@@ -113,7 +113,7 @@ public static partial class EditorImGuiUI
             if (Engine.CurrentProject is not null)
             {
                 if (ImGui.Button("Save User Settings"))
-                    Engine.SaveProjectUserSettings();
+                    QueueProjectUserSettingsSave();
                 ImGui.SameLine();
                 ImGui.TextDisabled($"(Project: {Engine.CurrentProject.ProjectName})");
                 ImGui.Separator();

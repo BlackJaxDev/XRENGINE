@@ -43,7 +43,7 @@ namespace XREngine.Rendering
         public FontGlyphSet() { }
 
         private const float DefaultBitmapFontDrawSize = 128.0f;
-        private const float DefaultBitmapMipmapFontDrawSize = 256.0f;
+        private const float DefaultBitmapMipmapFontDrawSize = DefaultBitmapFontDrawSize;
         private const float DefaultWorldMtsdfFontSize = 72.0f;
         private const float DefaultWorldMtsdfPixelRange = 10.0f;
         private const float DefaultUiMtsdfFontSize = 96.0f;
@@ -411,6 +411,7 @@ namespace XREngine.Rendering
                 ETexMinFilter.Linear,
                 ETexMagFilter.Linear,
                 autoGenerateMipmaps: false);
+            ConfigureDistanceFieldAtlasTexture(Atlas, atlasType, atlasPath);
 
             Glyphs = glyphs;
             AtlasType = atlasType;
@@ -708,9 +709,10 @@ namespace XREngine.Rendering
             Atlas = CreateAtlasTexture(
                 outputAtlasPath,
                 ESizedInternalFormat.R8,
-                ETexMinFilter.LinearMipmapLinear,
+                ETexMinFilter.Linear,
                 ETexMagFilter.Linear,
-                autoGenerateMipmaps: true);
+                autoGenerateMipmaps: false);
+            ConfigureBitmapAtlasTexture(Atlas, outputAtlasPath);
 
             Glyphs = glyphInfos.ToDictionary(g => g.character, g => g.info);
             AtlasType = EFontAtlasType.Bitmap;
@@ -1371,6 +1373,11 @@ namespace XREngine.Rendering
                     ?? throw new FileNotFoundException($"Unable to reimport engine font at {path}");
             }
 
+            if (font.AtlasType == EFontAtlasType.Bitmap)
+                ConfigureBitmapAtlasTexture(font.Atlas, font.Atlas?.OriginalPath ?? font.Atlas?.FilePath ?? path);
+            else
+                ConfigureDistanceFieldAtlasTexture(font.Atlas, font.AtlasType, font.Atlas?.OriginalPath ?? font.Atlas?.FilePath ?? path);
+
             font.Name ??= Path.GetFileNameWithoutExtension(path);
             font.FilePath = path;
             font.OriginalPath = path;
@@ -1385,6 +1392,64 @@ namespace XREngine.Rendering
             }
 
             return font;
+        }
+
+        private static void ConfigureBitmapAtlasTexture(XRTexture2D? atlas, string? diagnosticPath)
+        {
+            if (atlas is null)
+                return;
+
+            bool changed = atlas.SizedInternalFormat != ESizedInternalFormat.R8
+                || atlas.MinFilter != ETexMinFilter.Linear
+                || atlas.MagFilter != ETexMagFilter.Linear
+                || atlas.AutoGenerateMipmaps
+                || atlas.LargestMipmapLevel != 0
+                || atlas.SmallestAllowedMipmapLevel != 0;
+
+            atlas.SizedInternalFormat = ESizedInternalFormat.R8;
+            atlas.MinFilter = ETexMinFilter.Linear;
+            atlas.MagFilter = ETexMagFilter.Linear;
+            atlas.AutoGenerateMipmaps = false;
+            atlas.LargestMipmapLevel = 0;
+            atlas.SmallestAllowedMipmapLevel = 0;
+
+            if (changed)
+            {
+                Debug.WriteAuxiliaryLog(
+                    FontDiagnosticsLogName,
+                    $"Bitmap atlas texture normalized: path='{diagnosticPath ?? "<null>"}', size={atlas.Width}x{atlas.Height}, mips={atlas.Mipmaps?.Length ?? 0}, min={atlas.MinFilter}, autoMip={atlas.AutoGenerateMipmaps}, largest={atlas.LargestMipmapLevel}, smallest={atlas.SmallestAllowedMipmapLevel}");
+            }
+        }
+
+        private static void ConfigureDistanceFieldAtlasTexture(XRTexture2D? atlas, EFontAtlasType atlasType, string? diagnosticPath)
+        {
+            if (atlas is null)
+                return;
+
+            ESizedInternalFormat expectedFormat = atlasType == EFontAtlasType.Mtsdf
+                ? ESizedInternalFormat.Rgba8
+                : ESizedInternalFormat.Rgb8;
+
+            bool changed = atlas.SizedInternalFormat != expectedFormat
+                || atlas.MinFilter != ETexMinFilter.Linear
+                || atlas.MagFilter != ETexMagFilter.Linear
+                || atlas.AutoGenerateMipmaps
+                || atlas.LargestMipmapLevel != 0
+                || atlas.SmallestAllowedMipmapLevel != 0;
+
+            atlas.SizedInternalFormat = expectedFormat;
+            atlas.MinFilter = ETexMinFilter.Linear;
+            atlas.MagFilter = ETexMagFilter.Linear;
+            atlas.AutoGenerateMipmaps = false;
+            atlas.LargestMipmapLevel = 0;
+            atlas.SmallestAllowedMipmapLevel = 0;
+
+            if (changed)
+            {
+                Debug.WriteAuxiliaryLog(
+                    FontDiagnosticsLogName,
+                    $"Distance-field atlas texture normalized: path='{diagnosticPath ?? "<null>"}', type={atlasType}, size={atlas.Width}x{atlas.Height}, mips={atlas.Mipmaps?.Length ?? 0}, min={atlas.MinFilter}, autoMip={atlas.AutoGenerateMipmaps}, largest={atlas.LargestMipmapLevel}, smallest={atlas.SmallestAllowedMipmapLevel}");
+            }
         }
 
         private static string? ResolveEngineFontCacheDirectory(string sourcePath, string? importProfileKey = null)

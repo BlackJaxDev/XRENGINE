@@ -1620,6 +1620,555 @@ float XRENGINE_SampleLinearDepthShadowMapFilteredAsPerspective(
         farZ);
 }
 
+vec2 XRENGINE_ShadowAtlasUvFromLocal(vec2 localUv, vec4 uvScaleBias)
+{
+    vec2 clampedLocalUv = clamp(localUv, vec2(0.0), vec2(1.0));
+    return clampedLocalUv * uvScaleBias.xy + uvScaleBias.zw;
+}
+
+float XRENGINE_ReadShadowAtlasDepth(sampler2D shadowMap, vec2 localUv, vec4 uvScaleBias)
+{
+    return texture(shadowMap, XRENGINE_ShadowAtlasUvFromLocal(localUv, uvScaleBias)).r;
+}
+
+float XRENGINE_SampleShadowAtlasPCF(
+    sampler2D shadowMap,
+    vec3 localCoord,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int kernelSize)
+{
+    float shadow = 0.0;
+    vec2 texelSize = vec2(max(localTexelSize, 1e-7));
+    int halfKernel = kernelSize / 2;
+    float sampleCount = float(kernelSize * kernelSize);
+
+    for (int x = -halfKernel; x <= halfKernel; ++x)
+    {
+        for (int y = -halfKernel; y <= halfKernel; ++y)
+        {
+            float pcfDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(x, y) * texelSize, uvScaleBias);
+            shadow += (localCoord.z - bias) > pcfDepth ? 0.0 : 1.0;
+        }
+    }
+
+    return shadow / sampleCount;
+}
+
+float XRENGINE_SampleShadowAtlasSimple(
+    sampler2D shadowMap,
+    vec3 localCoord,
+    vec4 uvScaleBias,
+    float bias)
+{
+    float depth = XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy, uvScaleBias);
+    return (localCoord.z - bias) > depth ? 0.0 : 1.0;
+}
+
+float XRENGINE_SampleShadowAtlasSoft(
+    sampler2D shadowMap,
+    vec3 localCoord,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int sampleCount,
+    float filterRadius)
+{
+    int clampedSamples = clamp(sampleCount, 1, 16);
+    float radius = max(filterRadius, max(localTexelSize, 1e-7));
+    float lit = 0.0;
+
+    for (int i = 0; i < 16; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        vec2 sampleUv = localCoord.xy + XRENGINE_ShadowPoissonDisk[i] * radius;
+        float sampleDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, sampleUv, uvScaleBias);
+        lit += (localCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+    }
+
+    return lit / float(clampedSamples);
+}
+
+float XRENGINE_SampleShadowAtlasVogel(
+    sampler2D shadowMap,
+    vec3 localCoord,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int tapCount,
+    float filterRadius)
+{
+    int clampedTaps = clamp(tapCount, 1, XRENGINE_MaxVogelShadowTaps);
+    if (clampedTaps <= 1)
+        return XRENGINE_SampleShadowAtlasSimple(shadowMap, localCoord, uvScaleBias, bias);
+
+    float radius = max(filterRadius, max(localTexelSize, 1e-7));
+    float lit = 0.0;
+    float rotation = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy) * XRENGINE_ShadowPi * 2.0;
+
+    for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
+    {
+        if (i >= clampedTaps)
+            break;
+
+        vec2 sampleUv = localCoord.xy + XRENGINE_GetVogelDiskTapRotated(i, clampedTaps, rotation) * radius;
+        float sampleDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, sampleUv, uvScaleBias);
+        lit += (localCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+    }
+
+    return lit / float(clampedTaps);
+}
+
+float XRENGINE_SampleShadowAtlasTent4(
+    sampler2D shadowMap,
+    vec3 localCoord,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    float filterRadius)
+{
+    vec2 radius = max(vec2(max(filterRadius, 0.0)), vec2(max(localTexelSize, 1e-7)));
+    float lit = 0.0;
+
+    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, -0.5) * radius, uvScaleBias) ? 1.0 : 0.0;
+    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, -0.5) * radius, uvScaleBias) ? 1.0 : 0.0;
+    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, 0.5) * radius, uvScaleBias) ? 1.0 : 0.0;
+    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, 0.5) * radius, uvScaleBias) ? 1.0 : 0.0;
+
+    return lit * 0.25;
+}
+
+float XRENGINE_BlockerSearchShadowAtlas2D(
+    sampler2D shadowMap,
+    vec2 localUv,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float receiverDepth,
+    float searchRadius,
+    int sampleCount)
+{
+    float blockerSum = 0.0;
+    int blockerCount = 0;
+    int clampedSamples = clamp(sampleCount, 1, XRENGINE_MaxVogelShadowTaps);
+    float radius = max(searchRadius, max(localTexelSize, 1e-7));
+    float rotation = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy) * XRENGINE_ShadowPi * 2.0;
+
+    for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        vec2 sampleUv = localUv + XRENGINE_GetVogelDiskTapRotated(i, clampedSamples, rotation) * radius;
+        float sampleDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, sampleUv, uvScaleBias);
+        if (sampleDepth < receiverDepth)
+        {
+            blockerSum += sampleDepth;
+            blockerCount++;
+        }
+    }
+
+    return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0;
+}
+
+float XRENGINE_SampleShadowAtlasCHSS(
+    sampler2D shadowMap,
+    vec3 localCoord,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int blockerSamples,
+    int filterSamples,
+    float searchRadius,
+    float lightSourceRadius,
+    float minPenumbra,
+    float maxPenumbra)
+{
+    float receiverDepth = localCoord.z - bias;
+    float avgBlockerDepth = XRENGINE_BlockerSearchShadowAtlas2D(
+        shadowMap,
+        localCoord.xy,
+        uvScaleBias,
+        localTexelSize,
+        receiverDepth,
+        searchRadius,
+        blockerSamples);
+
+    if (avgBlockerDepth < 0.0)
+        return 1.0;
+
+    float minRadius = max(minPenumbra, max(localTexelSize, 1e-7));
+    float penumbra = XRENGINE_EstimatePenumbra(receiverDepth, avgBlockerDepth, lightSourceRadius, minRadius, max(maxPenumbra, minRadius));
+
+    return XRENGINE_SampleShadowAtlasVogel(shadowMap, localCoord, uvScaleBias, localTexelSize, bias, filterSamples, penumbra);
+}
+
+float XRENGINE_SampleShadowAtlasFiltered(
+    sampler2D shadowMap,
+    vec3 localCoord,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int blockerSamples,
+    int filterSamples,
+    float filterRadius,
+    float blockerSearchRadius,
+    int softShadowMode,
+    float lightSourceRadius,
+    float minPenumbra,
+    float maxPenumbra,
+    int vogelTapCount)
+{
+    if (softShadowMode == 3) // VogelDisk
+        return XRENGINE_SampleShadowAtlasVogel(shadowMap, localCoord, uvScaleBias, localTexelSize, bias, vogelTapCount, filterRadius);
+
+    int clampedFilterSamples = clamp(filterSamples, 1, XRENGINE_MaxVogelShadowTaps);
+    if (clampedFilterSamples <= 1)
+        return XRENGINE_SampleShadowAtlasSimple(shadowMap, localCoord, uvScaleBias, bias);
+
+    if (softShadowMode == 2) // ContactHardeningPcss
+        return XRENGINE_SampleShadowAtlasCHSS(
+            shadowMap,
+            localCoord,
+            uvScaleBias,
+            localTexelSize,
+            bias,
+            blockerSamples,
+            clampedFilterSamples,
+            blockerSearchRadius,
+            lightSourceRadius,
+            minPenumbra,
+            maxPenumbra);
+
+    if (softShadowMode == 1) // FixedPoisson
+        return XRENGINE_SampleShadowAtlasSoft(shadowMap, localCoord, uvScaleBias, localTexelSize, bias, clampedFilterSamples, filterRadius);
+
+    if (clampedFilterSamples <= 4)
+        return XRENGINE_SampleShadowAtlasTent4(shadowMap, localCoord, uvScaleBias, localTexelSize, bias, filterRadius);
+
+    return XRENGINE_SampleShadowAtlasPCF(shadowMap, localCoord, uvScaleBias, localTexelSize, bias, 3);
+}
+
+float XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(
+    sampler2D shadowMap,
+    vec2 localUv,
+    vec4 uvScaleBias,
+    float nearZ,
+    float farZ)
+{
+    return XRENGINE_LinearDepth01ToPerspectiveDepth(
+        XRENGINE_ReadShadowAtlasDepth(shadowMap, localUv, uvScaleBias),
+        nearZ,
+        farZ);
+}
+
+float XRENGINE_SampleLinearDepthShadowAtlasSimpleAsPerspective(
+    sampler2D shadowMap,
+    vec3 localCoordLinear,
+    float receiverPerspectiveDepth,
+    vec4 uvScaleBias,
+    float bias,
+    float nearZ,
+    float farZ)
+{
+    float depth = XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(shadowMap, localCoordLinear.xy, uvScaleBias, nearZ, farZ);
+    return (receiverPerspectiveDepth - bias) > depth ? 0.0 : 1.0;
+}
+
+float XRENGINE_SampleLinearDepthShadowAtlasPCFAsPerspective(
+    sampler2D shadowMap,
+    vec3 localCoordLinear,
+    float receiverPerspectiveDepth,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int kernelSize,
+    float nearZ,
+    float farZ)
+{
+    float lit = 0.0;
+    vec2 texelSize = vec2(max(localTexelSize, 1e-7));
+    int halfKernel = kernelSize / 2;
+    float sampleCount = float(kernelSize * kernelSize);
+
+    for (int x = -halfKernel; x <= halfKernel; ++x)
+    {
+        for (int y = -halfKernel; y <= halfKernel; ++y)
+        {
+            float sampleDepth = XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(
+                shadowMap,
+                localCoordLinear.xy + vec2(x, y) * texelSize,
+                uvScaleBias,
+                nearZ,
+                farZ);
+            lit += (receiverPerspectiveDepth - bias) <= sampleDepth ? 1.0 : 0.0;
+        }
+    }
+
+    return lit / sampleCount;
+}
+
+float XRENGINE_SampleLinearDepthShadowAtlasSoftAsPerspective(
+    sampler2D shadowMap,
+    vec3 localCoordLinear,
+    float receiverPerspectiveDepth,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int sampleCount,
+    float filterRadius,
+    float nearZ,
+    float farZ)
+{
+    int clampedSamples = clamp(sampleCount, 1, 16);
+    float radius = max(filterRadius, max(localTexelSize, 1e-7));
+    float lit = 0.0;
+
+    for (int i = 0; i < 16; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        vec2 sampleUv = localCoordLinear.xy + XRENGINE_ShadowPoissonDisk[i] * radius;
+        float sampleDepth = XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(shadowMap, sampleUv, uvScaleBias, nearZ, farZ);
+        lit += (receiverPerspectiveDepth - bias) <= sampleDepth ? 1.0 : 0.0;
+    }
+
+    return lit / float(clampedSamples);
+}
+
+float XRENGINE_SampleLinearDepthShadowAtlasVogelAsPerspective(
+    sampler2D shadowMap,
+    vec3 localCoordLinear,
+    float receiverPerspectiveDepth,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int tapCount,
+    float filterRadius,
+    float nearZ,
+    float farZ)
+{
+    int clampedTaps = clamp(tapCount, 1, XRENGINE_MaxVogelShadowTaps);
+    float radius = max(filterRadius, max(localTexelSize, 1e-7));
+    float rotation = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy) * XRENGINE_ShadowPi * 2.0;
+    float lit = 0.0;
+
+    for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
+    {
+        if (i >= clampedTaps)
+            break;
+
+        vec2 sampleUv = localCoordLinear.xy + XRENGINE_GetVogelDiskTapRotated(i, clampedTaps, rotation) * radius;
+        float sampleDepth = XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(shadowMap, sampleUv, uvScaleBias, nearZ, farZ);
+        lit += (receiverPerspectiveDepth - bias) <= sampleDepth ? 1.0 : 0.0;
+    }
+
+    return lit / float(clampedTaps);
+}
+
+float XRENGINE_SampleLinearDepthShadowAtlasTent4AsPerspective(
+    sampler2D shadowMap,
+    vec3 localCoordLinear,
+    float receiverPerspectiveDepth,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    float filterRadius,
+    float nearZ,
+    float farZ)
+{
+    vec2 radius = max(vec2(max(filterRadius, 0.0)), vec2(max(localTexelSize, 1e-7)));
+    float lit = 0.0;
+
+    lit += (receiverPerspectiveDepth - bias) <= XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(shadowMap, localCoordLinear.xy + vec2(-0.5, -0.5) * radius, uvScaleBias, nearZ, farZ) ? 1.0 : 0.0;
+    lit += (receiverPerspectiveDepth - bias) <= XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(shadowMap, localCoordLinear.xy + vec2(0.5, -0.5) * radius, uvScaleBias, nearZ, farZ) ? 1.0 : 0.0;
+    lit += (receiverPerspectiveDepth - bias) <= XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(shadowMap, localCoordLinear.xy + vec2(-0.5, 0.5) * radius, uvScaleBias, nearZ, farZ) ? 1.0 : 0.0;
+    lit += (receiverPerspectiveDepth - bias) <= XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(shadowMap, localCoordLinear.xy + vec2(0.5, 0.5) * radius, uvScaleBias, nearZ, farZ) ? 1.0 : 0.0;
+
+    return lit * 0.25;
+}
+
+float XRENGINE_BlockerSearchLinearDepthShadowAtlasAsPerspective(
+    sampler2D shadowMap,
+    vec2 localUv,
+    float receiverPerspectiveDepth,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float searchRadius,
+    int sampleCount,
+    float nearZ,
+    float farZ)
+{
+    float blockerSum = 0.0;
+    int blockerCount = 0;
+    int clampedSamples = clamp(sampleCount, 1, XRENGINE_MaxVogelShadowTaps);
+    float radius = max(searchRadius, max(localTexelSize, 1e-7));
+    float rotation = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy) * XRENGINE_ShadowPi * 2.0;
+
+    for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
+    {
+        if (i >= clampedSamples)
+            break;
+
+        vec2 sampleUv = localUv + XRENGINE_GetVogelDiskTapRotated(i, clampedSamples, rotation) * radius;
+        float sampleDepth = XRENGINE_ReadLinearDepthShadowAtlasAsPerspective(shadowMap, sampleUv, uvScaleBias, nearZ, farZ);
+        if (sampleDepth < receiverPerspectiveDepth)
+        {
+            blockerSum += sampleDepth;
+            blockerCount++;
+        }
+    }
+
+    return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0;
+}
+
+float XRENGINE_SampleLinearDepthShadowAtlasCHSSAsPerspective(
+    sampler2D shadowMap,
+    vec3 localCoordLinear,
+    float receiverPerspectiveDepth,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int blockerSamples,
+    int filterSamples,
+    float searchRadius,
+    float lightSourceRadius,
+    float minPenumbra,
+    float maxPenumbra,
+    float nearZ,
+    float farZ)
+{
+    float receiverDepth = receiverPerspectiveDepth - bias;
+    float avgBlockerDepth = XRENGINE_BlockerSearchLinearDepthShadowAtlasAsPerspective(
+        shadowMap,
+        localCoordLinear.xy,
+        receiverDepth,
+        uvScaleBias,
+        localTexelSize,
+        searchRadius,
+        blockerSamples,
+        nearZ,
+        farZ);
+
+    if (avgBlockerDepth < 0.0)
+        return 1.0;
+
+    float minRadius = max(minPenumbra, max(localTexelSize, 1e-7));
+    float penumbra = XRENGINE_EstimatePenumbra(receiverDepth, avgBlockerDepth, lightSourceRadius, minRadius, max(maxPenumbra, minRadius));
+
+    return XRENGINE_SampleLinearDepthShadowAtlasVogelAsPerspective(
+        shadowMap,
+        localCoordLinear,
+        receiverPerspectiveDepth,
+        uvScaleBias,
+        localTexelSize,
+        bias,
+        filterSamples,
+        penumbra,
+        nearZ,
+        farZ);
+}
+
+float XRENGINE_SampleLinearDepthShadowAtlasFilteredAsPerspective(
+    sampler2D shadowMap,
+    vec3 localCoordLinear,
+    float receiverPerspectiveDepth,
+    vec4 uvScaleBias,
+    float localTexelSize,
+    float bias,
+    int blockerSamples,
+    int filterSamples,
+    float filterRadius,
+    float blockerSearchRadius,
+    int softShadowMode,
+    float lightSourceRadius,
+    float minPenumbra,
+    float maxPenumbra,
+    int vogelTapCount,
+    float nearZ,
+    float farZ)
+{
+    if (softShadowMode == 3) // VogelDisk
+        return XRENGINE_SampleLinearDepthShadowAtlasVogelAsPerspective(
+            shadowMap,
+            localCoordLinear,
+            receiverPerspectiveDepth,
+            uvScaleBias,
+            localTexelSize,
+            bias,
+            vogelTapCount,
+            filterRadius,
+            nearZ,
+            farZ);
+
+    int clampedFilterSamples = clamp(filterSamples, 1, XRENGINE_MaxVogelShadowTaps);
+    if (clampedFilterSamples <= 1)
+        return XRENGINE_SampleLinearDepthShadowAtlasSimpleAsPerspective(
+            shadowMap,
+            localCoordLinear,
+            receiverPerspectiveDepth,
+            uvScaleBias,
+            bias,
+            nearZ,
+            farZ);
+
+    if (softShadowMode == 2) // ContactHardeningPcss
+        return XRENGINE_SampleLinearDepthShadowAtlasCHSSAsPerspective(
+            shadowMap,
+            localCoordLinear,
+            receiverPerspectiveDepth,
+            uvScaleBias,
+            localTexelSize,
+            bias,
+            blockerSamples,
+            clampedFilterSamples,
+            blockerSearchRadius,
+            lightSourceRadius,
+            minPenumbra,
+            maxPenumbra,
+            nearZ,
+            farZ);
+
+    if (softShadowMode == 1) // FixedPoisson
+        return XRENGINE_SampleLinearDepthShadowAtlasSoftAsPerspective(
+            shadowMap,
+            localCoordLinear,
+            receiverPerspectiveDepth,
+            uvScaleBias,
+            localTexelSize,
+            bias,
+            clampedFilterSamples,
+            filterRadius,
+            nearZ,
+            farZ);
+
+    if (clampedFilterSamples <= 4)
+        return XRENGINE_SampleLinearDepthShadowAtlasTent4AsPerspective(
+            shadowMap,
+            localCoordLinear,
+            receiverPerspectiveDepth,
+            uvScaleBias,
+            localTexelSize,
+            bias,
+            filterRadius,
+            nearZ,
+            farZ);
+
+    return XRENGINE_SampleLinearDepthShadowAtlasPCFAsPerspective(
+        shadowMap,
+        localCoordLinear,
+        receiverPerspectiveDepth,
+        uvScaleBias,
+        localTexelSize,
+        bias,
+        3,
+        nearZ,
+        farZ);
+}
+
 float XRENGINE_SampleShadowMapFiltered(
     sampler2D shadowMap,
     vec3 shadowCoord,

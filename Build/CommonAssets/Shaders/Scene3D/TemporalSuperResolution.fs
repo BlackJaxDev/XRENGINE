@@ -194,9 +194,11 @@ void main()
 
     vec2 uv = clipXY * 0.5f + 0.5f;
 
-    // Closest-depth velocity for sharper silhouettes
+    // Closest-depth velocity for sharper silhouettes.
+    // MotionVectors.fs writes unjittered current-minus-previous NDC, so do
+    // not apply the temporal jitter delta again here.
     vec2 velocity = FindClosestVelocity(uv);
-    vec2 historyUV = uv - velocity * 0.5f + (PreviousJitterUv - CurrentJitterUv);
+    vec2 historyUV = uv - velocity * 0.5f;
 
     vec3 currentColorRaw = texture(PostProcessOutputTexture, uv).rgb;
     vec3 currentColorFiltered = SampleCurrentReconstruction(PostProcessOutputTexture, uv, SourceTexelSize);

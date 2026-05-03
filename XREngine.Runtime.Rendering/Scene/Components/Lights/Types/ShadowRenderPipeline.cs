@@ -36,12 +36,14 @@ namespace XREngine.Components.Lights
 
             using (c.AddUsing<VPRC_PushShadowOutputFBORenderArea>())
             {
+                // FBO clears honor depth/stencil write masks, so restore them before the bind auto-clear.
+                c.Add<VPRC_StencilMask>().Set(~0u);
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = true;
+
                 using (c.AddUsing<VPRC_BindOutputFBO>())
                 {
-                    c.Add<VPRC_StencilMask>().Set(~0u);
                     c.Add<VPRC_ClearByBoundFBO>();
-                    c.Add<VPRC_DepthTest>().Enable = true;
-                    c.Add<VPRC_DepthWrite>().Allow = true;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.MaskedForward;

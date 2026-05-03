@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
@@ -48,6 +49,39 @@ public sealed class LightProbeComponentYamlDeserializationTests : GpuTestBase
         clone.PreviewDisplay.ShouldBe(LightProbeComponent.ERenderPreview.Irradiance);
     }
 
+    [Test]
+    public void GridSpawnerApplyDefaults_DisabledPreview_DoesNotLoadPreviewShader()
+    {
+        ClearEngineShaderLoadTaskCache();
+        RuntimeShaderServices.Current = new ThrowingRuntimeShaderServices();
+
+        SceneNode spawnerNode = new("Spawner", new Transform());
+        LightProbeGridSpawnerComponent spawner = spawnerNode.AddComponent<LightProbeGridSpawnerComponent>()!;
+        spawner.PreviewProbes = false;
+        spawner.ReleaseTransientEnvironmentTexturesAfterCapture = false;
+
+        SceneNode probeNode = new("Probe", new Transform());
+        LightProbeComponent probe = probeNode.AddComponent<LightProbeComponent>()!;
+
+        MethodInfo applyDefaults = typeof(LightProbeGridSpawnerComponent).GetMethod(
+            "ApplyDefaults",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        applyDefaults.Invoke(spawner, new object[] { probe });
+
+        probe.PreviewEnabled.ShouldBeFalse();
+        probe.AutoShowPreviewOnSelect.ShouldBeTrue();
+    }
+
+    private static void ClearEngineShaderLoadTaskCache()
+    {
+        FieldInfo cacheField = typeof(XREngine.Rendering.Models.Materials.ShaderHelper).GetField(
+            "EngineShaderLoadTasks",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        object cache = cacheField.GetValue(null)!;
+        cache.GetType().GetMethod("Clear")!.Invoke(cache, null);
+    }
+
     private sealed class FileSystemRuntimeShaderServices(string shaderBasePath) : IRuntimeShaderServices
     {
         private readonly string _shaderBasePath = shaderBasePath;
@@ -85,6 +119,22 @@ public sealed class LightProbeComponentYamlDeserializationTests : GpuTestBase
             {
                 Name = Path.GetFileNameWithoutExtension(fullPath),
             };
+        }
+    }
+
+    private sealed class ThrowingRuntimeShaderServices : IRuntimeShaderServices
+    {
+        public T? LoadAsset<T>(string filePath) where T : XRAsset, new()
+            => throw new AssertionException($"Unexpected shader asset load for '{filePath}'.");
+
+        public T LoadEngineAsset<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+            => throw new AssertionException($"Unexpected engine shader load for '{relativePath}'.");
+
+        public Task<T> LoadEngineAssetAsync<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+            => throw new AssertionException($"Unexpected async engine shader load for '{relativePath}'.");
+
+        public void LogWarning(string message)
+        {
         }
     }
 }

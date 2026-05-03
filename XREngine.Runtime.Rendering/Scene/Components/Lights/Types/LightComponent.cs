@@ -473,6 +473,30 @@ namespace XREngine.Components.Capture.Lights.Types
         [Browsable(false)]
         public virtual Vector4 ShadowBiasProjectionParameters => Vector4.Zero;
 
+        internal uint GetDesiredShadowAtlasResolution()
+        {
+            uint desired = Math.Max(ShadowMapResolutionWidth, ShadowMapResolutionHeight);
+            desired = Math.Max(desired, Engine.Rendering.Settings.MinShadowAtlasTileResolution);
+            desired = Math.Min(desired, Engine.Rendering.Settings.MaxShadowAtlasTileResolution);
+            desired = Math.Min(desired, Engine.Rendering.Settings.ShadowAtlasPageSize);
+            return Math.Max(1u, desired);
+        }
+
+        internal float GetShadowAtlasResolutionScale(uint sampleResolution)
+        {
+            if (sampleResolution == 0u)
+                return 1.0f;
+
+            return MathF.Max(1.0f, GetDesiredShadowAtlasResolution() / (float)sampleResolution);
+        }
+
+        internal static uint GetShadowAtlasSampleResolution(in ShadowAtlasAllocation allocation)
+        {
+            int width = allocation.InnerPixelRect.Width > 0 ? allocation.InnerPixelRect.Width : (int)allocation.Resolution;
+            int height = allocation.InnerPixelRect.Height > 0 ? allocation.InnerPixelRect.Height : (int)allocation.Resolution;
+            return (uint)Math.Max(1, Math.Max(width, height));
+        }
+
         private uint _shadowMapResolutionWidth = 4096u;
 
         /// <summary>

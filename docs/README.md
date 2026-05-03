@@ -30,6 +30,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Uber Shader Varianting](architecture/rendering/uber-shader-varianting.md)
 - [CoACD Integration](architecture/CoACD.md)
 - [GPU Render Pass Pipeline](work/design/gpu-render-pass-pipeline.md)
+- [Atmospheric Scattering Component Design](work/design/atmospheric-scattering-component-design.md)
 - [DDGI Integration Plan](work/design/ddgi-integration-plan.md)
 - [VSM And EVSM Shadow Filtering Plan](work/design/shadow-filtering-vsm-evsm-plan.md)
 - [Dynamic Shadow Atlas And LOD Allocation Plan](work/design/dynamic-shadow-atlas-lod-plan.md)

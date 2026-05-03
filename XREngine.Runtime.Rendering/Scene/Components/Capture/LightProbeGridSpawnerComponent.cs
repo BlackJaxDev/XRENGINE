@@ -892,6 +892,12 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
     private void ApplyDefaults(LightProbeComponent probe)
     {
+        // Apply preview visibility first. Several defaults below can recache the
+        // preview material, which synchronously resolves preview shaders when visible.
+        probe.AutoShowPreviewOnSelect = !PreviewProbes;
+        probe.PreviewEnabled = PreviewProbes;
+        probe.PreviewDisplay = PreviewDisplay;
+
         probe.RealtimeCapture = RealtimeCapture;
         probe.AutoCaptureOnActivate = AutoCaptureOnActivate;
         probe.RealTimeCaptureUpdateInterval = RealTimeCaptureUpdateInterval;
@@ -908,9 +914,6 @@ public class LightProbeGridSpawnerComponent : XRComponent
         probe.ProxyBoxCenterOffset = ProxyBoxCenterOffset;
         probe.ProxyBoxHalfExtents = ProxyBoxHalfExtents;
         probe.ProxyBoxRotation = ProxyBoxRotation;
-        probe.AutoShowPreviewOnSelect = !PreviewProbes;
-        probe.PreviewEnabled = PreviewProbes;
-        probe.PreviewDisplay = PreviewDisplay;
     }
 
     private void CleanupGrid()

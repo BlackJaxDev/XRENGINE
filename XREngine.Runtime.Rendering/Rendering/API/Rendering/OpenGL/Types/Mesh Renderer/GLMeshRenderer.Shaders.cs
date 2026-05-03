@@ -16,6 +16,8 @@ namespace XREngine.Rendering.OpenGL
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.GenProgramsAndBuffers");
                 BuffersBound = false;
 
+                PrepareUberVariantForCurrentMaterial();
+
                 var material = Material;
                 if (material is null)
                 {
@@ -24,9 +26,11 @@ namespace XREngine.Rendering.OpenGL
 
                     _separatedVertexProgram?.Destroy();
                     _separatedVertexProgram = null;
+                    CaptureMaterialShaderState();
                     return;
                 }
 
+                CaptureMaterialShaderState();
                 Dbg("GenProgramsAndBuffers start", "Programs");
 
                 bool hasNoVertexShaders = (material.Data.VertexShaders.Count) == 0;
@@ -91,10 +95,52 @@ namespace XREngine.Rendering.OpenGL
                 GenProgramsAndBuffers();
             }
 
+            private void EnsureProgramsMatchMaterialShaderState()
+            {
+                PrepareUberVariantForCurrentMaterial();
+
+                XRMaterial? material = MeshRenderer.Material;
+                long shaderStateRevision = material?.ShaderStateRevision ?? 0;
+                if (ReferenceEquals(_programMaterialStateKey, material) &&
+                    _programMaterialShaderStateRevision == shaderStateRevision)
+                {
+                    return;
+                }
+
+                _programMaterialStateKey = material;
+                _programMaterialShaderStateRevision = shaderStateRevision;
+
+                _combinedProgram?.Destroy();
+                _combinedProgram = null;
+
+                _separatedVertexProgram?.Destroy();
+                _separatedVertexProgram = null;
+
+                _forcedGeneratedVertexProgram?.Destroy();
+                _forcedGeneratedVertexProgram = null;
+
+                _pipeline?.Destroy();
+                _pipeline = null;
+
+                Data.ResetVertexShaderSource();
+                BuffersBound = false;
+            }
+
+            private void PrepareUberVariantForCurrentMaterial()
+                => MeshRenderer.Material?.PrepareUberVariantImmediately();
+
+            private void CaptureMaterialShaderState()
+            {
+                XRMaterial? material = MeshRenderer.Material;
+                _programMaterialStateKey = material;
+                _programMaterialShaderStateRevision = material?.ShaderStateRevision ?? 0;
+            }
+
             public bool IsPreparedForRendering
                 => IsGenerated
                 && _shaderConfigVersion == Engine.Rendering.Settings.ShaderConfigVersion
                 && BuffersBound
+                && !VertexArrayBindingsStale()
                 && AreBuffersReadyForRendering();
 
             public bool TryPrepareForRendering()
@@ -112,6 +158,7 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 EnsureProgramsMatchRenderSettings();
+                EnsureProgramsMatchMaterialShaderState();
 
                 if (_combinedProgram is null && _separatedVertexProgram is null)
                     GenProgramsAndBuffers();
@@ -124,6 +171,9 @@ namespace XREngine.Rendering.OpenGL
                     return false;
 
                 ConfigureDrawTopology(vertexProgram!, materialProgram);
+
+                if (BuffersBound && VertexArrayBindingsStale())
+                    BuffersBound = false;
 
                 if (!BuffersBound)
                     BindBuffers(vertexProgram!);

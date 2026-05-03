@@ -713,6 +713,12 @@ namespace XREngine.Scene
                         Engine.Rendering.Settings.UseDirectionalShadowAtlas &&
                         firstDirLight.CastsShadows;
 
+                    if (useDirectionalShadowAtlas)
+                    {
+                        forwardShadowTex = null;
+                        forwardCascadeShadowTex = null;
+                    }
+
                     if (forwardShadowTex is null && forwardCascadeShadowTex is null)
                     {
                         // Log once per distinct reason — useful when the light casts shadows
@@ -856,7 +862,7 @@ namespace XREngine.Scene
             bool useSpotAtlas = Engine.Rendering.Settings.UseSpotShadowAtlas;
             for (int pageIndex = 0; pageIndex < maxForwardSpotAtlasPages; pageIndex++)
             {
-                XRTexture2D atlasTexture = ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
+                XRTexture2D atlasTexture = ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Spot, EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
                     ? pageTexture
                     : DummyShadowMap;
                 program.Sampler(_spotShadowAtlasPageNames[pageIndex], atlasTexture, spotShadowAtlasStartUnit + pageIndex);
@@ -864,8 +870,8 @@ namespace XREngine.Scene
 
             for (int pageIndex = 0; pageIndex < maxForwardDirectionalAtlasPages; pageIndex++)
             {
-                XRTexture2D atlasTexture = Engine.Rendering.Settings.UseDirectionalShadowAtlas &&
-                    ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
+                XRTexture2D atlasTexture = useDirectionalShadowAtlas &&
+                    ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
                         ? pageTexture
                         : DummyShadowMap;
                 program.Sampler(_directionalShadowAtlasPageNames[pageIndex], atlasTexture, directionalShadowAtlasStartUnit + pageIndex);
@@ -895,11 +901,13 @@ namespace XREngine.Scene
                         allocation.PageIndex < maxForwardSpotAtlasPages;
                     float atlasNearPlane = light.ShadowCamera?.NearZ ?? 0.1f;
                     float atlasFarPlane = light.ShadowCamera?.FarZ ?? MathF.Max(atlasNearPlane + 0.001f, light.Distance);
-                    float texelSize = allocation.Resolution > 0u ? 1.0f / allocation.Resolution : 0.0f;
+                    uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
+                    float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
+                    float resolutionScale = light.GetShadowAtlasResolutionScale(sampleResolution);
 
                     atlasPacked0 = new IVector4(atlasResident ? 1 : 0, allocation.PageIndex, (int)fallback, recordIndex);
                     atlasParams0 = allocation.UvScaleBias;
-                    atlasParams1 = new Vector4(atlasNearPlane, atlasFarPlane, texelSize, 0.0f);
+                    atlasParams1 = new Vector4(atlasNearPlane, atlasFarPlane, texelSize, resolutionScale);
                 }
 
                 if ((!useSpotAtlas || !atlasResident) && spotShadowSlot < maxForwardShadowedSpotLights)
@@ -942,7 +950,7 @@ namespace XREngine.Scene
             Array.Clear(_directionalShadowAtlasPacked0);
             Array.Clear(_directionalShadowAtlasParams0);
             Array.Clear(_directionalShadowAtlasParams1);
-            if (Engine.Rendering.Settings.UseDirectionalShadowAtlas)
+            if (useDirectionalShadowAtlas)
             {
                 for (int i = 0; i < directionalLightCount; i++)
                 {

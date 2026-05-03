@@ -115,6 +115,10 @@ namespace XREngine.Rendering.OpenGL
             private bool _lastLeftMouseDown;
             private bool _lastRightMouseDown;
             private bool _lastMiddleMouseDown;
+            private IMouse? _mainMouse;
+            private readonly Queue<Vector2> _pendingMainMouseWheelDeltas = [];
+            private readonly List<Vector2> _mainMouseWheelDispatchBuffer = [];
+            private readonly object _mainMouseWheelLock = new();
             private nint _monitorData;
             private int _monitorCapacity;
             #endregion
@@ -232,6 +236,7 @@ namespace XREngine.Rendering.OpenGL
 
                 EnsureMainViewportPlatformData();
                 UpdatePlatformMonitors();
+                AttachMainInput();
 
                 io.BackendFlags |=
                     ImGuiBackendFlags.PlatformHasViewports |
@@ -254,6 +259,7 @@ namespace XREngine.Rendering.OpenGL
                 try
                 {
                     _controller.MakeCurrent();
+                    AttachMainInput();
                     EnsureMainViewportPlatformData();
 
                     if (!TryGetMousePosition(out Vector2 position, out uint viewportId))
@@ -264,6 +270,7 @@ namespace XREngine.Rendering.OpenGL
                     io.AddMouseViewportEvent(viewportId);
                     io.MouseHoveredViewport = viewportId;
                     QueueMainMouseButtonEvents(io);
+                    QueueMainMouseWheelEvents(io, viewportId);
                 }
                 catch (Exception ex)
                 {
@@ -282,6 +289,7 @@ namespace XREngine.Rendering.OpenGL
                 try
                 {
                     _controller.MakeCurrent();
+                    AttachMainInput();
                     EnsureMainViewportPlatformData();
 
                     if (!TryGetMousePosition(out Vector2 position, out uint viewportId))
@@ -296,6 +304,12 @@ namespace XREngine.Rendering.OpenGL
                 {
                     LogCallbackException(nameof(UpdateMainViewportInput), ex);
                 }
+            }
+
+            public void ClearQueuedMainMouseWheelEvents()
+            {
+                lock (_mainMouseWheelLock)
+                    _pendingMainMouseWheelDeltas.Clear();
             }
 
             /// <summary>
@@ -363,6 +377,7 @@ namespace XREngine.Rendering.OpenGL
 
                     ClearPlatformMonitors();
                     ClearPlatformCallbacks();
+                    DetachMainInput();
 
                     var io = ImGui.GetIO();
                     io.ConfigFlags &= ~ImGuiConfigFlags.ViewportsEnable;
@@ -471,6 +486,23 @@ namespace XREngine.Rendering.OpenGL
                 QueueMouseButtonTransition(io, 2, middleDown, ref _lastMiddleMouseDown);
             }
 
+            private void QueueMainMouseWheelEvents(ImGuiIOPtr io, uint viewportId)
+            {
+                lock (_mainMouseWheelLock)
+                {
+                    _mainMouseWheelDispatchBuffer.Clear();
+                    while (_pendingMainMouseWheelDeltas.Count > 0)
+                        _mainMouseWheelDispatchBuffer.Add(_pendingMainMouseWheelDeltas.Dequeue());
+                }
+
+                for (int i = 0; i < _mainMouseWheelDispatchBuffer.Count; i++)
+                {
+                    Vector2 delta = _mainMouseWheelDispatchBuffer[i];
+                    io.AddMouseWheelEvent(delta.X, delta.Y);
+                    io.AddMouseViewportEvent(viewportId);
+                }
+            }
+
             private static void QueueMouseButtonTransition(ImGuiIOPtr io, int button, bool down, ref bool previousDown)
             {
                 if (down == previousDown)
@@ -507,6 +539,43 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool IsNativeMouseButtonDown(int virtualKey)
                 => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+
+            private void AttachMainInput()
+            {
+                if (_mainMouse is not null)
+                    return;
+
+                IInputContext? input = _renderer.XRWindow.Input;
+                if (input is null || input.Mice.Count == 0)
+                    return;
+
+                _mainMouse = input.Mice[0];
+                _mainMouse.Scroll += OnMainMouseScroll;
+            }
+
+            private void DetachMainInput()
+            {
+                if (_mainMouse is not null)
+                {
+                    _mainMouse.Scroll -= OnMainMouseScroll;
+                    _mainMouse = null;
+                }
+
+                ClearQueuedMainMouseWheelEvents();
+                _mainMouseWheelDispatchBuffer.Clear();
+            }
+
+            private void OnMainMouseScroll(IMouse mouse, ScrollWheel wheel)
+            {
+                if (_disposed)
+                    return;
+
+                if (MathF.Abs(wheel.X) <= float.Epsilon && MathF.Abs(wheel.Y) <= float.Epsilon)
+                    return;
+
+                lock (_mainMouseWheelLock)
+                    _pendingMainMouseWheelDeltas.Enqueue(new Vector2(wheel.X, wheel.Y));
+            }
 
             private PlatformWindow? GetPlatformWindow(ImGuiViewportPtr viewport)
             {

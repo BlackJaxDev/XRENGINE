@@ -4,13 +4,13 @@ layout (location = 0) in vec3 Position;
 layout (location = 1) in vec3 Normal;
 layout (location = 2) in vec2 TexCoord0;
 
-// All glyph transforms and UVs concatenated across all visible text components (explicit set = 0 for Vulkan)
-layout(std430, set = 0, binding = 0) buffer GlyphTransformsBuffer
+// All glyph transforms and UVs concatenated across all visible text components.
+layout(std430, binding = 0) buffer GlyphTransformsBuffer
 {
     vec4 GlyphTransforms[];
 };
 
-layout(std430, set = 0, binding = 1) buffer GlyphTexCoordsBuffer
+layout(std430, binding = 1) buffer GlyphTexCoordsBuffer
 {
     vec4 GlyphTexCoords[];
 };
@@ -19,18 +19,19 @@ layout(std430, set = 0, binding = 1) buffer GlyphTexCoordsBuffer
 // [0..3] = model matrix rows (row-major)
 // [4]    = text color (rgba)
 // [5]    = UI bounds (x, y, w, h)
-layout(std430, set = 0, binding = 2) buffer TextInstanceBuffer
+layout(std430, binding = 2) buffer TextInstanceBuffer
 {
     vec4 TextInstances[];
 };
 
 // Maps each glyph instance to its parent text index
-layout(std430, set = 0, binding = 3) buffer GlyphTextIndexBuffer
+layout(std430, binding = 3) buffer GlyphTextIndexBuffer
 {
     uint GlyphTextIndex[];
 };
 
 uniform mat4 ViewProjectionMatrix_VTX;
+uniform int TextDebugMode;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -52,6 +53,18 @@ mat4 getTextModelMatrix(uint textIndex)
 
 void main()
 {
+    if (TextDebugMode == 3)
+    {
+        vec2 corner = TexCoord0.xy;
+        vec2 ndc = vec2(-0.94, 0.74) + corner * vec2(0.44, 0.18);
+        FragPos = vec3(ndc, 0.0);
+        gl_Position = vec4(ndc, 0.0, 1.0);
+        FragNorm = Normal;
+        FragUV0 = corner;
+        InstanceTextColor = vec4(0.0, 1.0, 1.0, 1.0);
+        return;
+    }
+
     uint textIdx = GlyphTextIndex[gl_InstanceID];
     mat4 modelMatrix = getTextModelMatrix(textIdx);
 

@@ -38,6 +38,9 @@ public static partial class EditorImGuiUI
 
     // Cache node labels (name + child count string) to avoid per-node per-frame string allocation.
     private static readonly Dictionary<SceneNode, (string? name, int childCount, string label)> _nodeLabelCache = new(ReferenceEqualityComparer.Instance);
+    private static readonly Dictionary<Type, HierarchyTraversalMembers> _hierarchyTraversalMembersCache = new();
+
+    private sealed record HierarchyTraversalMembers(PropertyInfo[] Properties, FieldInfo[] Fields);
 
     private static string GetOrCreateNodeLabel(SceneNode node, int childCount)
     {
@@ -360,7 +363,7 @@ public static partial class EditorImGuiUI
                 && !ReferenceEquals(droppedNode, node)
                 && !IsHierarchyDescendantOf(node, droppedNode))
             {
-                ReparentHierarchyNode(droppedNode, node.Transform, world, owningScene);
+                EnqueueSceneEdit(() => ReparentHierarchyNode(droppedNode, node.Transform, world, owningScene));
             }
             ImGui.EndDragDropTarget();
         }
@@ -402,9 +405,13 @@ public static partial class EditorImGuiUI
             ImGui.SetTooltip("Toggle node active state");
         if (checkboxToggled)
         {
-            using var _ = Undo.TrackChange("Toggle Node Active", node);
-            node.IsActiveSelf = activeSelf;
-            MarkSceneHierarchyDirty(node, owningScene, world);
+            bool capturedActiveSelf = activeSelf;
+            EnqueueSceneEdit(() =>
+            {
+                using var _ = Undo.TrackChange("Toggle Node Active", node);
+                node.IsActiveSelf = capturedActiveSelf;
+                MarkSceneHierarchyDirty(node, owningScene, world);
+            });
         }
         ImGui.OpenPopupOnItemClick("Context", ImGuiPopupFlags.MouseButtonRight);
 
@@ -414,19 +421,25 @@ public static partial class EditorImGuiUI
                 BeginHierarchyNodeRename(node);
 
             if (ImGui.MenuItem("Duplicate"))
-                DuplicateHierarchyNodes(GetHierarchyDuplicateTargets(node), world, preserveAssetReferences: true);
+            {
+                var targets = GetHierarchyDuplicateTargets(node);
+                EnqueueSceneEdit(() => DuplicateHierarchyNodes(targets, world, preserveAssetReferences: true));
+            }
 
             if (ImGui.MenuItem("Deep Duplicate..."))
-                RequestHierarchyDeepDuplicate(GetHierarchyDuplicateTargets(node));
+            {
+                var targets = GetHierarchyDuplicateTargets(node);
+                EnqueueSceneEdit(() => RequestHierarchyDeepDuplicate(targets));
+            }
 
             if (ImGui.MenuItem("Delete"))
-                DeleteHierarchyNode(node, world, owningScene);
+                EnqueueSceneEdit(() => DeleteHierarchyNode(node, world, owningScene));
 
             if (ImGui.MenuItem("Add Child Scene Node"))
-                CreateChildSceneNode(node, owningScene, world);
+                EnqueueSceneEdit(() => CreateChildSceneNode(node, owningScene, world));
 
             if (ImGui.MenuItem("Focus Camera"))
-                FocusCameraOnHierarchyNode(node);
+                EnqueueSceneEdit(() => FocusCameraOnHierarchyNode(node));
 
             ImGui.EndPopup();
         }
@@ -842,7 +855,7 @@ public static partial class EditorImGuiUI
             {
                 var world = TryGetActiveWorldInstance();
                 if (world is not null)
-                    DuplicateHierarchyNodes(nodes, world, preserveAssetReferences: false);
+                    EnqueueSceneEdit(() => DuplicateHierarchyNodes(nodes, world, preserveAssetReferences: false));
 
                 ClearHierarchyDeepDuplicateRequest();
                 ImGui.CloseCurrentPopup();
@@ -922,11 +935,9 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        HierarchyTraversalMembers members = GetHierarchyTraversalMembers(type);
+        foreach (var property in members.Properties)
         {
-            if (!ShouldTraverseHierarchyProperty(property))
-                continue;
-
             object? propertyValue;
             try
             {
@@ -940,11 +951,8 @@ public static partial class EditorImGuiUI
             CollectDeepDuplicateAssets(propertyValue, assets, discovered, visited);
         }
 
-        foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        foreach (var field in members.Fields)
         {
-            if (!ShouldTraverseHierarchyField(field))
-                continue;
-
             CollectDeepDuplicateAssets(field.GetValue(value), assets, discovered, visited);
         }
     }
@@ -1110,11 +1118,9 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        HierarchyTraversalMembers members = GetHierarchyTraversalMembers(type);
+        foreach (var property in members.Properties)
         {
-            if (!ShouldTraverseHierarchyProperty(property))
-                continue;
-
             object? sourceValue;
             object? cloneValue;
             try
@@ -1146,11 +1152,8 @@ public static partial class EditorImGuiUI
             }
         }
 
-        foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        foreach (var field in members.Fields)
         {
-            if (!ShouldTraverseHierarchyField(field))
-                continue;
-
             object? sourceValue = field.GetValue(source);
             object? cloneValue = field.GetValue(clone);
             if (sourceValue is XRAsset asset)
@@ -1168,6 +1171,34 @@ public static partial class EditorImGuiUI
                 RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited);
             }
         }
+    }
+
+    private static HierarchyTraversalMembers GetHierarchyTraversalMembers(Type type)
+    {
+        if (_hierarchyTraversalMembersCache.TryGetValue(type, out var cached))
+            return cached;
+
+        var properties = type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        List<PropertyInfo> traversableProperties = [];
+        for (int i = 0; i < properties.Length; i++)
+        {
+            PropertyInfo property = properties[i];
+            if (ShouldTraverseHierarchyProperty(property))
+                traversableProperties.Add(property);
+        }
+
+        var fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        List<FieldInfo> traversableFields = [];
+        for (int i = 0; i < fields.Length; i++)
+        {
+            FieldInfo field = fields[i];
+            if (ShouldTraverseHierarchyField(field))
+                traversableFields.Add(field);
+        }
+
+        cached = new HierarchyTraversalMembers([.. traversableProperties], [.. traversableFields]);
+        _hierarchyTraversalMembersCache[type] = cached;
+        return cached;
     }
 
     private static bool ShouldDeepDuplicateAsset(XRAsset asset)
@@ -1453,10 +1484,13 @@ public static partial class EditorImGuiUI
             newName = SceneNode.DefaultName;
 
         var node = _nodePendingRename;
-        using var _ = Undo.TrackChange("Rename Node", node);
-        node.Name = newName;
-        MarkSceneHierarchyDirty(node, null, TryGetActiveWorldInstance());
         CancelHierarchyNodeRename();
+        EnqueueSceneEdit(() =>
+        {
+            using var _ = Undo.TrackChange("Rename Node", node);
+            node.Name = newName;
+            MarkSceneHierarchyDirty(node, null, TryGetActiveWorldInstance());
+        });
     }
 
     private static void CancelHierarchyNodeRename()

@@ -518,49 +518,17 @@ namespace XREngine.Scene
             }
 
             int activeCascadeCount = light.ActiveCascadeCount;
-            bool needsPrimaryShadowMap = !light.EnableCascadedShadows ||
-                activeCascadeCount <= 0 ||
-                NeedsPrimaryDirectionalShadowMap();
-            bool needsLegacyCascades = light.EnableCascadedShadows &&
-                activeCascadeCount > 0 &&
-                !AreDirectionalCascadeAtlasTilesReady(light, activeCascadeCount);
-            bool needsLegacyPrimary = needsPrimaryShadowMap &&
-                !IsDirectionalPrimaryAtlasTileReady(light);
-
-            renderCascades = needsLegacyCascades;
-            bool legacyRender = (needsLegacyPrimary && light.ShadowMap is not null) || needsLegacyCascades;
             LogDirectionalLegacyDecision(
                 light,
-                "AtlasEnabled",
-                legacyRender,
-                renderCascades,
-                needsLegacyCascades,
-                needsLegacyPrimary,
+                "AtlasEnabledNoLegacyFallback",
+                legacyRender: false,
+                renderCascades: false,
+                needsLegacyCascades: false,
+                needsLegacyPrimary: false,
                 activeCascadeCount);
-            return legacyRender;
+            renderCascades = false;
+            return false;
         }
-
-        private bool AreDirectionalCascadeAtlasTilesReady(DirectionalLightComponent light, int activeCascadeCount)
-        {
-            for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
-            {
-                if (!TryGetDirectionalCascadeShadowAtlasAllocation(light, cascadeIndex, out ShadowAtlasAllocation allocation, out _) ||
-                    !allocation.IsResident ||
-                    allocation.LastRenderedFrame == 0u ||
-                    allocation.ActiveFallback != ShadowFallbackMode.None)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        private bool IsDirectionalPrimaryAtlasTileReady(DirectionalLightComponent light)
-            => TryGetDirectionalPrimaryShadowAtlasAllocation(light, out ShadowAtlasAllocation allocation, out _) &&
-               allocation.IsResident &&
-               allocation.LastRenderedFrame != 0u &&
-               allocation.ActiveFallback == ShadowFallbackMode.None;
 
         private static bool ViewportTargetsWorld(XRViewport viewport, IRuntimeRenderWorld world)
             => ReferenceEquals(viewport.World, world) ||
@@ -571,13 +539,7 @@ namespace XREngine.Scene
                ReferenceEquals(window.TargetWorldInstance, world);
 
         private uint GetDesiredShadowAtlasResolution(LightComponent light)
-        {
-            uint desired = Math.Max(light.ShadowMapResolutionWidth, light.ShadowMapResolutionHeight);
-            desired = Math.Max(desired, ShadowAtlas.Settings.MinTileResolution);
-            desired = Math.Min(desired, ShadowAtlas.Settings.MaxTileResolution);
-            desired = Math.Min(desired, ShadowAtlas.Settings.PageSize);
-            return desired;
-        }
+            => light.GetDesiredShadowAtlasResolution();
 
         private uint GetMinimumShadowAtlasResolution(uint desiredResolution)
             => Math.Min(desiredResolution, ShadowAtlas.Settings.MinTileResolution);
@@ -678,7 +640,8 @@ namespace XREngine.Scene
                         allocation,
                         recordIndex,
                         request.NearPlane,
-                        request.FarPlane);
+                        request.FarPlane,
+                        request.DesiredResolution);
                 }
                 else if (request.ProjectionType == EShadowProjectionType.DirectionalPrimary)
                 {
@@ -686,7 +649,8 @@ namespace XREngine.Scene
                         allocation,
                         recordIndex,
                         request.NearPlane,
-                        request.FarPlane);
+                        request.FarPlane,
+                        request.DesiredResolution);
                 }
             }
 
@@ -865,7 +829,7 @@ namespace XREngine.Scene
                 TryGetSpotShadowAtlasAllocation(light, out allocation, out shadowRecordIndex) &&
                 allocation.IsResident &&
                 allocation.LastRenderedFrame != 0u &&
-                ShadowAtlas.TryGetPageTexture(EShadowMapEncoding.Depth, allocation.PageIndex, out texture))
+                ShadowAtlas.TryGetPageTexture(allocation.AtlasKind, EShadowMapEncoding.Depth, allocation.PageIndex, out texture))
             {
                 return true;
             }

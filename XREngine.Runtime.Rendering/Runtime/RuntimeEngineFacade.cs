@@ -641,6 +641,16 @@ internal static partial class Engine
 
 internal sealed class RuntimeRenderSettings
 {
+    private bool _useSpotShadowAtlas = true;
+    private bool _useDirectionalShadowAtlas = true;
+    private uint _shadowAtlasPageSize = 4096u;
+    private int _maxShadowAtlasPages = 1;
+    private long _maxShadowAtlasMemoryBytes;
+    private int _maxShadowTilesRenderedPerFrame = 16;
+    private float _maxShadowRenderMilliseconds = 2.0f;
+    private uint _minShadowAtlasTileResolution = 128u;
+    private uint _maxShadowAtlasTileResolution = 4096u;
+
     public bool AllowBinaryProgramCaching { get; set; } = true;
     public bool AllowBlendshapes { get; set; } = true;
     public bool AllowShaderPipelines { get; set; } = true;
@@ -664,12 +674,54 @@ internal sealed class RuntimeRenderSettings
     public bool LogMaterialTextureBindings { get; set; }
     public bool LogMissingShaderSamplers { get; set; }
     public int MaxAsyncShaderProgramsPerFrame { get; set; } = 4;
-    public long MaxShadowAtlasMemoryBytes { get; set; }
-    public int MaxShadowAtlasPages { get; set; } = 4;
-    public uint MaxShadowAtlasTileResolution { get; set; } = 4096u;
-    public float MaxShadowRenderMilliseconds { get; set; } = 2.0f;
-    public int MaxShadowTilesRenderedPerFrame { get; set; } = 16;
-    public uint MinShadowAtlasTileResolution { get; set; } = 128u;
+    public long MaxShadowAtlasMemoryBytes
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.MaxShadowAtlasMemoryBytes
+            : _maxShadowAtlasMemoryBytes;
+        set => _maxShadowAtlasMemoryBytes = Math.Max(0L, value);
+    }
+
+    public int MaxShadowAtlasPages
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.MaxShadowAtlasPages
+            : _maxShadowAtlasPages;
+        set => _maxShadowAtlasPages = 1;
+    }
+
+    public uint MaxShadowAtlasTileResolution
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.MaxShadowAtlasTileResolution
+            : _maxShadowAtlasTileResolution;
+        set => _maxShadowAtlasTileResolution = value;
+    }
+
+    public float MaxShadowRenderMilliseconds
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.MaxShadowRenderMilliseconds
+            : _maxShadowRenderMilliseconds;
+        set => _maxShadowRenderMilliseconds = MathF.Max(0.0f, value);
+    }
+
+    public int MaxShadowTilesRenderedPerFrame
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.MaxShadowTilesRenderedPerFrame
+            : _maxShadowTilesRenderedPerFrame;
+        set => _maxShadowTilesRenderedPerFrame = Math.Max(0, value);
+    }
+
+    public uint MinShadowAtlasTileResolution
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.MinShadowAtlasTileResolution
+            : _minShadowAtlasTileResolution;
+        set => _minShadowAtlasTileResolution = value;
+    }
+
     public bool OpenXrCullWithFrustum { get; set; } = true;
     public bool OpenXrDebugClearOnly { get; set; }
     public bool OpenXrDebugGl { get; set; }
@@ -682,19 +734,46 @@ internal sealed class RuntimeRenderSettings
     public bool ProcessMeshImportsAsynchronously { get; set; } = true;
     public bool RenderVRSinglePassStereo { get; set; } = true;
     public int ShaderConfigVersion { get; set; }
-    public uint ShadowAtlasPageSize { get; set; } = 2048u;
+    public uint ShadowAtlasPageSize
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.ShadowAtlasPageSize
+            : _shadowAtlasPageSize;
+        set => _shadowAtlasPageSize = value;
+    }
+
     public float TsrRenderScale { get; set; } = 1.0f;
     public bool UseAbsoluteBlendshapePositions { get; set; }
     public bool UseDetailPreservingComputeMipmaps { get; set; } = true;
-    public bool UseDirectionalShadowAtlas { get; set; } = true;
+    public bool UseDirectionalShadowAtlas
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.UseDirectionalShadowAtlas
+            : _useDirectionalShadowAtlas;
+        set => _useDirectionalShadowAtlas = value;
+    }
+
     public bool UseGlobalBlendshapeWeightsBufferForComputeSkinning { get; set; } = true;
     public bool UseGlobalBoneMatricesBufferForComputeSkinning { get; set; } = true;
     public bool UseIntegerUniformsInShaders { get; set; } = true;
     public bool UseSkinnedBvhRefitOptimize { get; set; } = true;
-    public bool UseSpotShadowAtlas { get; set; } = true;
+    public bool UseSpotShadowAtlas
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.UseSpotShadowAtlas
+            : _useSpotShadowAtlas;
+        set => _useSpotShadowAtlas = value;
+    }
+
     public RuntimeVulkanRobustnessSettings VulkanRobustnessSettings { get; } = new();
     public float XessCustomScale { get; set; } = 1.0f;
     public float XessSharpness { get; set; }
+
+    private static bool TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+    {
+        services = RuntimeRenderingHostServices.Current;
+        return services.ProvidesShadowAtlasSettings;
+    }
 }
 
 internal sealed class RuntimeEffectiveSettings
