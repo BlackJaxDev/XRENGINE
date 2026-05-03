@@ -121,7 +121,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     AppendMissing(ref missingTextures, DepthViewTexture);
 
                 BoundingRectangle missingRegion = ActivePipelineInstance.RenderState.CurrentRenderRegion;
-                Debug.RenderingWarningEvery(
+                Debug.LightingWarningEvery(
                     $"RenderDiag.LightCombine.MissingTextures.{ActivePipelineInstance.GetHashCode()}",
                     TimeSpan.FromSeconds(1),
                     "[RenderDiag] LightCombine skipped: missing [{0}]. VP={1} World={2} Play={3} Camera={4} Region={5}x{6} Pipeline={7} Generation={8} Albedo={9} Normal={10} RMSE={11} Depth={12}",
@@ -168,7 +168,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             int spotLightCount = lights.DynamicSpotLights.Count;
 
 /*
-            Debug.RenderingEvery(
+            Debug.LightingEvery(
                 $"RenderDiag.LightCombine.{ActivePipelineInstance.GetHashCode()}",
                 TimeSpan.FromSeconds(1),
                 "[RenderDiag] LightCombine: VP={0} World={1} Play={2} Region={3}x{4} Msaa={5} Lights(D/P/S)={6}/{7}/{8} GBuffer={9} | {10} | {11} | {12}",
@@ -189,7 +189,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (viewport is { Width: > 512, Height: > 512 } && (region.Width <= 128 || region.Height <= 128))
             {
-                Debug.RenderingWarningEvery(
+                Debug.LightingWarningEvery(
                     $"RenderDiag.LightCombine.SmallRegion.{ActivePipelineInstance.GetHashCode()}",
                     TimeSpan.FromSeconds(1),
                     "[RenderDiag] LightCombine is running with unexpectedly small region {0}x{1} while viewport is {2}x{3}. World={4} VP={5}",
@@ -540,7 +540,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             ShadowAtlasMetrics metrics = lights?.ShadowAtlas.PublishedFrameData.Metrics ?? default;
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][DeferredBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMap={6} cascadeTex={7} atlasRequests={8} atlasRenderedThisFrame={9} atlasPages={10} c0={11} c1={12} c2={13} c3={14}",

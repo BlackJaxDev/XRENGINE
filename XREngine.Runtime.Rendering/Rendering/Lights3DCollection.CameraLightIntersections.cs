@@ -157,7 +157,7 @@ namespace XREngine.Scene
                 return;
             }
 
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][Source] frame={0} useDirAtlas={1} wantsCascades={2} selectedCamera={3} dirLights={4}",
@@ -179,7 +179,7 @@ namespace XREngine.Scene
         {
             if (viewport is null)
             {
-                Debug.Out(
+                Debug.Lighting(
                     EOutputVerbosity.Normal,
                     false,
                     "[DirectionalShadowAudit][Viewport] frame={0} source={1} ordinal={2} viewport=<null>",
@@ -189,7 +189,7 @@ namespace XREngine.Scene
                 return;
             }
 
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][Viewport] frame={0} source={1} ordinal={2} vpIndex={3} worldMatch={4} suppress3D={5} player={6} mode={7} activeCamera={8}",

@@ -507,7 +507,7 @@ namespace XREngine
                         if (!SetField(ref _useDirectionalShadowAtlas, value))
                             return;
 
-                        XREngine.Debug.Out(
+                        XREngine.Debug.Lighting(
                             EOutputVerbosity.Normal,
                             false,
                             "[DirectionalShadowAudit][Setting] frame={0} UseDirectionalShadowAtlas={1}",

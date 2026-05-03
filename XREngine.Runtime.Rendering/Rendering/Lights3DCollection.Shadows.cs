@@ -717,7 +717,7 @@ namespace XREngine.Scene
 
             ShadowAtlasFrameData frameData = ShadowAtlas.PublishedFrameData;
             ShadowAtlasMetrics metrics = frameData.Metrics;
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][AtlasFrame] frame={0} generation={1} useDirAtlas={2} useSpotAtlas={3} collectVisibleNow={4} activeAtlasCameras={5} requests={6} allocations={7} resident={8} skipped={9} pages={10} renderedThisFrame={11} queueOverflow={12} budgetTiles={13} budgetMs={14:F2}",
@@ -753,7 +753,7 @@ namespace XREngine.Scene
             }
 
             bool contentChanged = !hasPrevious || previous.ContentVersion != request.ContentHash;
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][AtlasSubmit] frame={0} light='{1}' projection={2} cascadeOrFace={3} dirty={4} contentChanged={5} canReuse={6} fallback={7} desired={8} min={9} near={10:F3} far={11:F3} priority={12:F1} previousResident={13} previousRenderedFrame={14} previousFallback={15} previousPage={16} previousRect={17}",
@@ -793,7 +793,7 @@ namespace XREngine.Scene
                 return;
             }
 
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][LegacyDecision] frame={0} light='{1}' reason={2} useDirAtlas={3} legacyRender={4} renderCascades={5} needsLegacyCascades={6} needsLegacyPrimary={7} casts={8} cascadesEnabled={9} activeCascades={10} shadowMap={11} cascadeTex={12} slots={13}",

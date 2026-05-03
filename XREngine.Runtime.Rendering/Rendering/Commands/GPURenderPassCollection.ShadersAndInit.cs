@@ -201,7 +201,7 @@ namespace XREngine.Rendering.Commands
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Lifecycle")} Failed to initialize GPURenderPassCollection: {ex}");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Lifecycle")} Failed to initialize GPURenderPassCollection: {ex}");
                 _initialized = false;
                 Dbg("Initialization failed","Lifecycle");
             }
@@ -356,7 +356,7 @@ namespace XREngine.Rendering.Commands
 
             if (atlasIndexBuffer is null)
             {
-                Debug.LogWarning("Indirect renderer EBO sync failed: no index buffer available.");
+                Debug.MeshesWarning("Indirect renderer EBO sync failed: no index buffer available.");
                 return;
             }
 
@@ -366,7 +366,7 @@ namespace XREngine.Rendering.Commands
             }
             else
             {
-                Debug.LogWarning("Indirect renderer EBO sync failed: TrySyncMeshRendererIndexBuffer returned false.");
+                Debug.MeshesWarning("Indirect renderer EBO sync failed: TrySyncMeshRendererIndexBuffer returned false.");
             }
         }
 
@@ -503,11 +503,11 @@ namespace XREngine.Rendering.Commands
                 if (strideMismatch || countMismatch || missingStorage || missingRange)
                 {
                     if (strideMismatch)
-                        Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer stride mismatch detected. Forcing recreation.");
+                        Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer stride mismatch detected. Forcing recreation.");
                     else if (countMismatch)
                         Dbg("Resizing indirect draw buffer to match new capacity.", "Buffers");
                     else
-                        Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer missing required readback flags. Recreating with map-read support.");
+                        Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer missing required readback flags. Recreating with map-read support.");
                     _indirectDrawBuffer.Destroy();
                     _indirectDrawBuffer = null;
                 }
@@ -548,7 +548,7 @@ namespace XREngine.Rendering.Commands
 
                 if (invalidLayout || missingStorage || missingRange)
                 {
-                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Parameter buffer {name} missing required layout/flags. Recreating.");
+                    Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Parameter buffer {name} missing required layout/flags. Recreating.");
                     buffer.Destroy();
                     buffer = null;
                     requiresMapping = true;
@@ -638,7 +638,7 @@ namespace XREngine.Rendering.Commands
                                       _statsBuffer.ComponentCount != 1;
                 if (layoutMismatch)
                 {
-                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Stats buffer layout mismatch; recreating.");
+                    Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Stats buffer layout mismatch; recreating.");
                     _statsBuffer.Destroy();
                     _statsBuffer = null;
                     requiresMapping = true;
@@ -669,33 +669,33 @@ namespace XREngine.Rendering.Commands
         {
             if (_indirectDrawBuffer is null)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer is null before rendering.");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer is null before rendering.");
                 return;
             }
 
             if (_indirectDrawBuffer.ElementSize != _indirectCommandStride)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw stride mismatch. Expected {_indirectCommandStride} bytes, buffer reports {_indirectDrawBuffer.ElementSize}.");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Indirect draw stride mismatch. Expected {_indirectCommandStride} bytes, buffer reports {_indirectDrawBuffer.ElementSize}.");
             }
 
             if (_indirectDrawBuffer.ElementCount < capacity)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer smaller than required capacity (buffer={_indirectDrawBuffer.ElementCount}, required={capacity}).");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer smaller than required capacity (buffer={_indirectDrawBuffer.ElementCount}, required={capacity}).");
             }
 
             if (_drawCountBuffer is not null && _drawCountBuffer.ElementSize < sizeof(uint))
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Draw count buffer is undersized ({_drawCountBuffer.ElementSize} bytes); expected at least {sizeof(uint)}.");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Draw count buffer is undersized ({_drawCountBuffer.ElementSize} bytes); expected at least {sizeof(uint)}.");
             }
 
             if (_culledCountBuffer is not null && _culledCountBuffer.ElementSize < sizeof(uint))
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Culled count buffer is undersized ({_culledCountBuffer.ElementSize} bytes); expected at least {sizeof(uint)}.");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Culled count buffer is undersized ({_culledCountBuffer.ElementSize} bytes); expected at least {sizeof(uint)}.");
             }
 
             if (_culledCountBuffer is not null && _culledCountBuffer.ElementCount < GPUScene.VisibleCountComponents)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Culled count buffer has insufficient elements (buffer={_culledCountBuffer.ElementCount}, expected>={GPUScene.VisibleCountComponents}).");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} Culled count buffer has insufficient elements (buffer={_culledCountBuffer.ElementCount}, expected>={GPUScene.VisibleCountComponents}).");
             }
 
             if (IndirectDebug.ValidateLiveHandles && !remapPending)
@@ -705,10 +705,10 @@ namespace XREngine.Rendering.Commands
                     return;
 
                 if (_drawCountBuffer is not null && _drawCountBuffer.ActivelyMapping.Count == 0)
-                    Debug.Out($"{FormatDebugPrefix("Buffers")} Draw count buffer is not mapped; GPU count reads may see stale data.");
+                    Debug.Meshes($"{FormatDebugPrefix("Buffers")} Draw count buffer is not mapped; GPU count reads may see stale data.");
 
                 if (_culledCountBuffer is not null && _culledCountBuffer.ActivelyMapping.Count == 0)
-                    Debug.Out($"{FormatDebugPrefix("Buffers")} Culled count buffer is not mapped; visibility counters may be invalid.");
+                    Debug.Meshes($"{FormatDebugPrefix("Buffers")} Culled count buffer is not mapped; visibility counters may be invalid.");
             }
         }
 

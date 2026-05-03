@@ -260,7 +260,7 @@ public partial class XRMesh : XRAsset
                 if (!string.IsNullOrEmpty(names[i]) && !_blendshapeNameToIndex.ContainsKey(names[i]))
                     _blendshapeNameToIndex.Add(names[i], i);
                 else
-                    RuntimeRenderingHostServices.Current.LogWarning($"Duplicate or empty blendshape name '{names[i]}' found in mesh {Name}");
+                    XREngine.Debug.MeshesWarning($"Duplicate or empty blendshape name '{names[i]}' found in mesh {Name}");
             }
         }
     }

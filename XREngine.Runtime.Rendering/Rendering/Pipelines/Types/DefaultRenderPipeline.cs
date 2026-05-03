@@ -3083,7 +3083,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         if (!UsesLightProbeGI)
         {
-            Debug.RenderingEvery("ProbeGI.Disabled", TimeSpan.FromSeconds(5),
+            Debug.LightingEvery("ProbeGI.Disabled", TimeSpan.FromSeconds(5),
                 "[ProbeGI] GI mode disabled (UsesLightProbeGI=false)");
             SuppressOptionalProbeSamplers();
             program.Uniform("ForwardPbrResourcesEnabled", false);
@@ -3172,7 +3172,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         var world = RenderingWorld;
         if (world is null)
         {
-            Debug.RenderingEvery("ProbeGI.NoWorld", TimeSpan.FromSeconds(5),
+            Debug.LightingEvery("ProbeGI.NoWorld", TimeSpan.FromSeconds(5),
                 "[ProbeGI] RenderingWorld is null");
             return;
         }
@@ -3233,13 +3233,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
         {
             if (batchCaptureActive && _pendingProbeRefreshDeferredByBatchCapture)
             {
-                Debug.RenderingEvery("ProbeGI.DeferredByBatchCapture", TimeSpan.FromSeconds(5),
+                Debug.LightingEvery("ProbeGI.DeferredByBatchCapture", TimeSpan.FromSeconds(5),
                     "[ProbeGI] Probe resource build deferred until batch capture completes. Ready={0}",
                     _cachedReadyProbes.Count);
             }
             else
             {
-                Debug.RenderingEvery("ProbeGI.NotEnabled", TimeSpan.FromSeconds(5),
+                Debug.LightingEvery("ProbeGI.NotEnabled", TimeSpan.FromSeconds(5),
                     "[ProbeGI] Probe resources unavailable. Ready={0}, BRDF={1}, IrrArr={2}, PreArr={3}, PosBuffer={4}, ParamBuffer={5}",
                     _cachedReadyProbes.Count, brdfTexture is not null, _probeIrradianceArray is not null,
                     _probePrefilterArray is not null, _probePositionBuffer is not null,
@@ -3255,7 +3255,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             : 0;
 
         /*
-        Debug.RenderingEvery("ProbeGI.Bound", TimeSpan.FromSeconds(10),
+        Debug.LightingEvery("ProbeGI.Bound", TimeSpan.FromSeconds(10),
             "[ProbeGI] Probes bound successfully. Ready={0}, ProbeCount={1}",
             _cachedReadyProbes.Count, _probeBindingProbeCount);
         */
@@ -3326,7 +3326,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 (uint)index2 >= probeCount ||
                 (uint)index3 >= probeCount)
             {
-                Debug.LogWarning($"Skipping stale probe tetrahedron {i}: indices=({index0}, {index1}, {index2}, {index3}) probeCount={probeCount}.");
+                Debug.LightingWarning($"Skipping stale probe tetrahedron {i}: indices=({index0}, {index1}, {index2}, {index3}) probeCount={probeCount}.");
                 continue;
             }
 
@@ -3784,7 +3784,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             _pendingProbeRefresh = false;
             stopwatch.Stop();
             if (deferredByBatchCapture)
-                Debug.Out("[ProbeGI] Batch completed but no usable probe resources were built. Ready=0");
+                Debug.Lighting("[ProbeGI] Batch completed but no usable probe resources were built. Ready=0");
             return;
         }
 
@@ -3897,7 +3897,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             return;
 
         string refreshKind = structuralRefresh ? "structural" : "content";
-        Debug.Out($"[ProbeGI] {refreshKind} refresh ready={readyProbeCount} elapsedMs={elapsed.TotalMilliseconds:F2} deferredByBatchCapture={deferredByBatchCapture}");
+        Debug.Lighting($"[ProbeGI] {refreshKind} refresh ready={readyProbeCount} elapsedMs={elapsed.TotalMilliseconds:F2} deferredByBatchCapture={deferredByBatchCapture}");
     }
 
     private static void ReportNoReadyProbeResources(IReadOnlyList<LightProbeComponent> probes, bool batchCompletedSinceLastSync)
@@ -3907,7 +3907,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         if (!batchCompletedSinceLastSync)
         {
-            Debug.RenderingEvery(
+            Debug.LightingEvery(
                 "ProbeGI.NoReady",
                 TimeSpan.FromSeconds(5),
                 "[ProbeGI] No usable probes. Total={0}, Ready=0 (need valid irradiance+prefilter textures and CaptureVersion>0)",
@@ -3932,7 +3932,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 captured++;
         }
 
-        Debug.Out(
+        Debug.Lighting(
             $"[ProbeGI] Batch completed but no usable probes are available. Total={probes.Count}, WithIrradiance={withIrradiance}, WithPrefilter={withPrefilter}, ValidIbl={validIbl}, Captured={captured}");
     }
 
@@ -3959,14 +3959,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         if (!Lights3DCollection.TryCreateDelaunay(probes, out var triangulation))
         {
-            Debug.LogWarning("Probe tetrahedralization failed; skipping tetra buffer upload.");
+            Debug.LightingWarning("Probe tetrahedralization failed; skipping tetra buffer upload.");
             UploadTetrahedralization([], generation, probeCount);
             yield break;
         }
 
         if (triangulation is null)
         {
-            Debug.LogWarning("Probe tetrahedralization returned null data; skipping tetra buffer upload.");
+            Debug.LightingWarning("Probe tetrahedralization returned null data; skipping tetra buffer upload.");
             UploadTetrahedralization([], generation, probeCount);
             yield break;
         }
@@ -3974,7 +3974,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         var cells = triangulation.Cells?.ToList();
         if (cells is null || cells.Count == 0)
         {
-            Debug.LogWarning("Probe tetrahedralization produced no cells; skipping tetra buffer upload.");
+            Debug.LightingWarning("Probe tetrahedralization produced no cells; skipping tetra buffer upload.");
             UploadTetrahedralization([], generation, probeCount);
             yield break;
         }

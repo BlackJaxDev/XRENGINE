@@ -412,11 +412,11 @@ namespace XREngine.Rendering
         private static void EmitLog(LogLevel level, string message)
         {
             if (level == LogLevel.Error)
-                XREngine.Debug.LogError(message);
+                XREngine.Debug.LogError(XREngine.ELogCategory.Meshes, message);
             else if (level == LogLevel.Warning)
-                XREngine.Debug.LogWarning(message);
+                XREngine.Debug.LogWarning(XREngine.ELogCategory.Meshes, message);
             else
-                XREngine.Debug.Out(message);
+                XREngine.Debug.Log(XREngine.ELogCategory.Meshes, XREngine.EOutputVerbosity.Verbose, false, message);
         }
 
         private static void TrackMessage(string category)

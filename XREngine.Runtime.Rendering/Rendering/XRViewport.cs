@@ -1203,7 +1203,7 @@ namespace XREngine.Rendering
             {
                 if (s_vpResolveUIDiagCount < 5)
                 {
-                    Debug.Out($"[VP:ResolveUI] null/inactive: CamComp={CameraComponent?.GetHashCode()} ui={ui?.GetHashCode()} active={ui?.IsActive} VP[{Index}]");
+                    Debug.Rendering($"[VP:ResolveUI] null/inactive: CamComp={CameraComponent?.GetHashCode()} ui={ui?.GetHashCode()} active={ui?.IsActive} VP[{Index}]");
                     s_vpResolveUIDiagCount++;
                 }
                 return null;
@@ -1213,7 +1213,7 @@ namespace XREngine.Rendering
             {
                 if (s_vpResolveUIDiagCount < 5)
                 {
-                    Debug.Out($"[VP:ResolveUI] wrong DrawSpace VP[{Index}]");
+                    Debug.Rendering($"[VP:ResolveUI] wrong DrawSpace VP[{Index}]");
                     s_vpResolveUIDiagCount++;
                 }
                 return null;
@@ -1221,7 +1221,7 @@ namespace XREngine.Rendering
 
             if (s_vpResolveUIDiagCount < 5)
             {
-                Debug.Out($"[VP:ResolveUI] OK: active={ui.IsActive} VP[{Index}]");
+                Debug.Rendering($"[VP:ResolveUI] OK: active={ui.IsActive} VP[{Index}]");
                 s_vpResolveUIDiagCount++;
             }
 

@@ -480,7 +480,7 @@ namespace XREngine.Rendering
             var currentTargets = Targets;
             if (currentTargets is null || !currentTargets.IndexInRangeArrayT(i))
             {
-                RuntimeRenderingHostServices.Current.LogOutput($"Index {i} is out of range for the number of targets in the framebuffer.");
+                Debug.Rendering($"Index {i} is out of range for the number of targets in the framebuffer.");
                 return;
             }
 

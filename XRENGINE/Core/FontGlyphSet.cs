@@ -171,12 +171,12 @@ namespace XREngine.Rendering
                     TryGenerateDistanceFieldAtlas(filePath, distanceFieldAtlasPath, distanceFieldMetadataPath, options, characterSet))
                 {
                     Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"Font import success: source='{filePath}', atlasType={AtlasType}, glyphs={Glyphs?.Count ?? 0}, atlas='{Atlas?.OriginalPath ?? Atlas?.FilePath ?? distanceFieldAtlasPath}', range={DistanceRange}, middle={DistanceRangeMiddle}, layoutEm={LayoutEmSize}");
-                    Debug.LogWarning($"Font '{name}' loaded with {AtlasType} atlas ({Glyphs?.Count ?? 0} glyphs, range={DistanceRange}, middle={DistanceRangeMiddle}).");
+                Debug.RenderingWarning($"Font '{name}' loaded with {AtlasType} atlas ({Glyphs?.Count ?? 0} glyphs, range={DistanceRange}, middle={DistanceRangeMiddle}).");
                     return true;
                 }
 
                 Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"Font import fallback: source='{filePath}', requested={options.AtlasMode}, atlasPathNull={string.IsNullOrWhiteSpace(distanceFieldAtlasPath)}, metadataPathNull={string.IsNullOrWhiteSpace(distanceFieldMetadataPath)}");
-                Debug.LogWarning($"Font '{name}': {options.AtlasMode} generation failed, falling back to bitmap. (auxPath null? png={string.IsNullOrWhiteSpace(distanceFieldAtlasPath)}, json={string.IsNullOrWhiteSpace(distanceFieldMetadataPath)})");
+                Debug.RenderingWarning($"Font '{name}': {options.AtlasMode} generation failed, falling back to bitmap. (auxPath null? png={string.IsNullOrWhiteSpace(distanceFieldAtlasPath)}, json={string.IsNullOrWhiteSpace(distanceFieldMetadataPath)})");
 
                 if ((options.AtlasMode == EFontAtlasImportMode.Msdf || options.AtlasMode == EFontAtlasImportMode.Mtsdf) && !options.AllowBitmapFallback)
                     return false;
@@ -185,14 +185,14 @@ namespace XREngine.Rendering
             using SKTypeface? typeface = SKTypeface.FromFile(filePath);
             if (typeface is null)
             {
-                Debug.LogWarning($"Failed to load SKTypeface from '{filePath}'");
+                Debug.RenderingWarning($"Failed to load SKTypeface from '{filePath}'");
                 return false;
             }
 
             string? atlasPath = resolveAuxiliaryPath($"{name}.png");
             if (string.IsNullOrWhiteSpace(atlasPath))
             {
-                Debug.LogWarning($"Failed to resolve atlas output path for font '{filePath}'");
+                Debug.RenderingWarning($"Failed to resolve atlas output path for font '{filePath}'");
                 return false;
             }
 
@@ -201,7 +201,7 @@ namespace XREngine.Rendering
             DistanceRange = 0.0f;
             DistanceRangeMiddle = DefaultMsdfDistanceRangeMiddle;
             Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"Font import success: source='{filePath}', atlasType={AtlasType}, glyphs={Glyphs?.Count ?? 0}, atlas='{Atlas?.OriginalPath ?? Atlas?.FilePath ?? atlasPath}', drawSize={options.BitmapFontDrawSize}, layoutEm={LayoutEmSize}");
-            Debug.LogWarning($"Font '{name}' loaded with bitmap atlas ({Glyphs?.Count ?? 0} glyphs, drawSize={options.BitmapFontDrawSize}).");
+            Debug.RenderingWarning($"Font '{name}' loaded with bitmap atlas ({Glyphs?.Count ?? 0} glyphs, drawSize={options.BitmapFontDrawSize}).");
             return true;
         }
 
@@ -220,7 +220,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to ensure SharpFont native dependency: {ex.Message}");
+                Debug.RenderingWarning($"Failed to ensure SharpFont native dependency: {ex.Message}");
             }
         }
 
@@ -257,7 +257,7 @@ namespace XREngine.Rendering
         {
             if (!TryResolveMsdfAtlasGenExecutable(out string? executablePath))
             {
-                Debug.LogWarning("MSDF font import requested, but msdf-atlas-gen.exe was not found. Run Tools/Dependencies/Get-MsdfAtlasGen.ps1 to install it.");
+                Debug.RenderingWarning("MSDF font import requested, but msdf-atlas-gen.exe was not found. Run Tools/Dependencies/Get-MsdfAtlasGen.ps1 to install it.");
                 return false;
             }
 
@@ -327,13 +327,13 @@ namespace XREngine.Rendering
 
             if (process.ExitCode != 0)
             {
-                Debug.LogWarning($"msdf-atlas-gen failed for '{filePath}' with exit code {process.ExitCode}. {stdErr}".Trim());
+                Debug.RenderingWarning($"msdf-atlas-gen failed for '{filePath}' with exit code {process.ExitCode}. {stdErr}".Trim());
                 return false;
             }
 
             if (!TryLoadDistanceFieldMetadata(atlasPath, metadataPath, GetDistanceFieldAtlasType(options.AtlasMode)))
             {
-                Debug.LogWarning($"msdf-atlas-gen completed for '{filePath}', but the generated metadata could not be parsed. {stdOut} {stdErr}".Trim());
+                Debug.RenderingWarning($"msdf-atlas-gen completed for '{filePath}', but the generated metadata could not be parsed. {stdOut} {stdErr}".Trim());
                 return false;
             }
 
@@ -620,7 +620,7 @@ namespace XREngine.Rendering
                 SKRect[] bounds = new SKRect[glyphs.Length];
                 font.GetGlyphWidths(glyphs, widths.AsSpan(), bounds.AsSpan(), paint);
                 if (bounds.Length > 1)
-                    Debug.LogWarning($"Multiple glyphs for character '{character}'");
+                    Debug.RenderingWarning($"Multiple glyphs for character '{character}'");
 
                 SKRect glyphBounds = bounds[0];
                 float x = -glyphBounds.Left;
@@ -1378,7 +1378,7 @@ namespace XREngine.Rendering
             stopwatch?.Stop();
             if (stopwatch is not null)
             {
-                Debug.Out(
+                Debug.Rendering(
                     "[StartupUI] FontGlyphSet.LoadEngineFontDirect completed in {0:F1} ms for '{1}'.",
                     stopwatch.Elapsed.TotalMilliseconds,
                     Path.GetFileName(path));

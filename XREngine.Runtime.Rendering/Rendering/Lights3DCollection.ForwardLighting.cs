@@ -448,7 +448,7 @@ namespace XREngine.Scene
             if (!_loggedForwardLightingOnce)
             {
                 _loggedForwardLightingOnce = true;
-                Debug.Out($"[ForwardLighting] SetForwardLightingUniforms called. DirLights={DynamicDirectionalLights.Count}, PointLights={DynamicPointLights.Count}, SpotLights={DynamicSpotLights.Count}");
+                Debug.Lighting($"[ForwardLighting] SetForwardLightingUniforms called. DirLights={DynamicDirectionalLights.Count}, PointLights={DynamicPointLights.Count}, SpotLights={DynamicSpotLights.Count}");
             }
 
             // Global ambient light - required by ForwardLighting snippet
@@ -577,7 +577,7 @@ namespace XREngine.Scene
             }
 
             /*
-            Debug.RenderingEvery(
+            Debug.LightingEvery(
                 "ForwardAO.Binding",
                 TimeSpan.FromSeconds(1),
                 "[ForwardAO] enabled={0} pipeline={1} texture={2} textureType={3} unit={4} screen={5}x{6} origin={7}",
@@ -600,7 +600,7 @@ namespace XREngine.Scene
                     // but framebuffer textures have maxLevel=0 (no mip chain), so the mip
                     // readback always returns 0.
                     float centerAo = renderer.ReadTextureCenterRedMip0(aoTexture2D);
-                    Debug.RenderingEvery(
+                    Debug.LightingEvery(
                         "ForwardAO.Content.2D",
                         TimeSpan.FromSeconds(1),
                         "[ForwardAO] centerAo={0:F4} size={1}x{2}",
@@ -610,7 +610,7 @@ namespace XREngine.Scene
                 }
                 else if (ambientOcclusionTexture is XRTexture2DArray aoTexture2DArray)
                 {
-                    Debug.RenderingEvery(
+                    Debug.LightingEvery(
                         "ForwardAO.Content.2DArray",
                         TimeSpan.FromSeconds(1),
                         "[ForwardAO] texture2DArray size={0}x{1} layers={2}",
@@ -622,7 +622,7 @@ namespace XREngine.Scene
             if (!_loggedForwardAoBindingOnce)
             {
                 _loggedForwardAoBindingOnce = true;
-                Debug.Out($"[ForwardAO] Initial binding enabled={ambientOcclusionEnabled}, texture={ambientOcclusionTexture?.Name ?? "null"}, textureType={ambientOcclusionTexture?.GetType().Name ?? "null"}, screen={area.Width}x{area.Height}, origin=<{area.X}, {area.Y}>");
+                Debug.Lighting($"[ForwardAO] Initial binding enabled={ambientOcclusionEnabled}, texture={ambientOcclusionTexture?.Name ?? "null"}, textureType={ambientOcclusionTexture?.GetType().Name ?? "null"}, screen={area.Width}x{area.Height}, origin=<{area.X}, {area.Y}>");
             }
             */
 
@@ -723,7 +723,7 @@ namespace XREngine.Scene
                         if (reason != _lastForwardShadowNoTexReason)
                         {
                             _lastForwardShadowNoTexReason = reason;
-                            Debug.Out($"[ForwardShadow] No shadow tex: {reason}");
+                            Debug.Lighting($"[ForwardShadow] No shadow tex: {reason}");
                         }
                     }
                 }
@@ -733,7 +733,7 @@ namespace XREngine.Scene
                     if (reason != _lastForwardShadowNoTexReason)
                     {
                         _lastForwardShadowNoTexReason = reason;
-                        Debug.Out($"[ForwardShadow] No shadow tex: {reason}");
+                        Debug.Lighting($"[ForwardShadow] No shadow tex: {reason}");
                     }
                 }
             }
@@ -766,7 +766,7 @@ namespace XREngine.Scene
                 if (diagKey != _lastForwardShadowDiagKey)
                 {
                     _lastForwardShadowDiagKey = diagKey;
-                    Debug.Out(
+                    Debug.Lighting(
                         $"[ForwardShadowDiag] transition: shadowEnabled={shadowEnabled} " +
                         $"CastsShadows={diagCasts} useCascadedDirShadows={useCascadedDirectionalShadows} " +
                         $"DirLightCount={DynamicDirectionalLights.Count} " +
@@ -996,7 +996,7 @@ namespace XREngine.Scene
             if (!_loggedShadowMapEnabledOnce)
             {
                 _loggedShadowMapEnabledOnce = true;
-                Debug.Out(
+                Debug.Lighting(
                     $"[ForwardShadow] ShadowMapEnabled={shadowEnabled}, " +
                     $"forwardShadowTex={forwardShadowTex?.GetType().Name ?? "null"}, " +
                     $"cascadeTex={forwardCascadeShadowTex?.GetType().Name ?? "null"}, " +
@@ -1058,7 +1058,7 @@ namespace XREngine.Scene
             }
 
             ShadowAtlasMetrics metrics = ShadowAtlas.PublishedFrameData.Metrics;
-            Debug.Out(
+            Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][ForwardBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMapTex={6} cascadeTex={7} atlasRequests={8} atlasRenderedThisFrame={9} atlasPages={10} c0={11} c1={12} c2={13} c3={14}",

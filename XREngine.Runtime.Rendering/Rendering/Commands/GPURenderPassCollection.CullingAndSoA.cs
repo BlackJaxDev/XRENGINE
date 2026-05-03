@@ -86,7 +86,7 @@ namespace XREngine.Rendering.Commands
         {
             if (!buf.IsMapped)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} ReadUints failed - buffer not mapped");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Buffers")} ReadUints failed - buffer not mapped");
                 for (int i = 0; i < values.Length; i++)
                     values[i] = 0;
                 return;
@@ -288,7 +288,7 @@ namespace XREngine.Rendering.Commands
             if (IsCountBufferWriteLoggingEnabledForPass())
             {
                 string label = buf.AttributeName ?? buf.Target.ToString();
-                Debug.Out($"{FormatDebugPrefix("Indirect")} [Indirect/Count] {label} <= {value}");
+                Debug.Meshes($"{FormatDebugPrefix("Indirect")} [Indirect/Count] {label} <= {value}");
             }
         }
 
@@ -351,7 +351,7 @@ namespace XREngine.Rendering.Commands
 
                     if (_filteredCountLogBudget > 0)
                     {
-                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} Visible-count readback returned 0, but stats buffer reported {statsCulled} visible commands. Using stats fallback for this frame.");
+                        Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Visible-count readback returned 0, but stats buffer reported {statsCulled} visible commands. Using stats fallback for this frame.");
                         _filteredCountLogBudget--;
                     }
                 }
@@ -539,7 +539,7 @@ namespace XREngine.Rendering.Commands
             LogCullingResult("Cull", numCommands, VisibleCommandCount, VisibleInstanceCount);
 
             if (IsDebugLoggingEnabledForPass())
-                XREngine.Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands ({VisibleInstanceCount} instances) in CulledSceneToRenderBuffer");
+                XREngine.Debug.Meshes($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands ({VisibleInstanceCount} instances) in CulledSceneToRenderBuffer");
 
             RecordCullTiming();
         }
@@ -629,7 +629,7 @@ namespace XREngine.Rendering.Commands
 
             if (_shippingPolicyLogBudget > 0)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Passthrough culling request ignored for profile {VulkanFeatureProfile.ActiveProfile}; canonical GPU cull path remains active.");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Passthrough culling request ignored for profile {VulkanFeatureProfile.ActiveProfile}; canonical GPU cull path remains active.");
                 _shippingPolicyLogBudget--;
             }
 
@@ -671,7 +671,7 @@ namespace XREngine.Rendering.Commands
                 ? VulkanFeatureProfile.ActiveProfile.ToString()
                 : "non-vulkan";
 
-            Debug.LogWarning($"{FormatDebugPrefix("Culling")} {stageName} returned 0 for pass {RenderPass}; CPU fallback suppressed by profile {profileName}.");
+            Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} {stageName} returned 0 for pass {RenderPass}; CPU fallback suppressed by profile {profileName}.");
             _passthroughFallbackLogBudget--;
         }
 
@@ -757,7 +757,7 @@ namespace XREngine.Rendering.Commands
                 ResetVisibleCounters();
                 _skipGpuSubmissionThisPass = true;
                 _skipGpuSubmissionReason = "ShippingFast profile requires hot-command layout for frustum culling.";
-                Debug.LogWarning($"{FormatDebugPrefix("Culling")} {_skipGpuSubmissionReason}");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} {_skipGpuSubmissionReason}");
                 return;
             }
 
@@ -798,7 +798,7 @@ namespace XREngine.Rendering.Commands
                 {
                     if (_copyAtomicOverflowLogBudget > 0)
                     {
-                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} Frustum cull overflow: {overflowCount} commands exceeded capacity {capacity}.");
+                        Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Frustum cull overflow: {overflowCount} commands exceeded capacity {capacity}.");
                         _copyAtomicOverflowLogBudget--;
                     }
                 }
@@ -813,7 +813,7 @@ namespace XREngine.Rendering.Commands
 
             if (debugLoggingEnabled)
             {
-                Debug.Out($"{FormatDebugPrefix("Culling")} FrustumCull: {inputCount} input -> {visibleCount} visible ({VisibleInstanceCount} instances)");
+                Debug.Meshes($"{FormatDebugPrefix("Culling")} FrustumCull: {inputCount} input -> {visibleCount} visible ({VisibleInstanceCount} instances)");
             }
 
             // Handle CPU fallback if GPU produced no results
@@ -831,7 +831,7 @@ namespace XREngine.Rendering.Commands
                         WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
                         if (_passthroughFallbackLogBudget > 0)
                         {
-                            Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU frustum cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
+                            Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} GPU frustum cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
                             _passthroughFallbackLogBudget--;
                         }
                     }
@@ -1005,7 +1005,7 @@ namespace XREngine.Rendering.Commands
                 ResetVisibleCounters();
                 _skipGpuSubmissionThisPass = true;
                 _skipGpuSubmissionReason = "ShippingFast profile requires hot-command layout for BVH culling.";
-                Debug.LogWarning($"{FormatDebugPrefix("Culling")} {_skipGpuSubmissionReason}");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} {_skipGpuSubmissionReason}");
                 return;
             }
 
@@ -1057,7 +1057,7 @@ namespace XREngine.Rendering.Commands
                 {
                     if (_copyAtomicOverflowLogBudget > 0)
                     {
-                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} BVH cull overflow: {overflowCount} commands exceeded capacity {capacity}.");
+                        Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} BVH cull overflow: {overflowCount} commands exceeded capacity {capacity}.");
                         _copyAtomicOverflowLogBudget--;
                     }
                 }
@@ -1069,7 +1069,7 @@ namespace XREngine.Rendering.Commands
 
             if (debugLoggingEnabled)
             {
-                Debug.Out($"{FormatDebugPrefix("Culling")} BvhCull: {inputCount} input -> {visibleCount} visible ({VisibleInstanceCount} instances) [BVH nodes={nodeCount}, leaves={leafCount}]");
+                Debug.Meshes($"{FormatDebugPrefix("Culling")} BvhCull: {inputCount} input -> {visibleCount} visible ({VisibleInstanceCount} instances) [BVH nodes={nodeCount}, leaves={leafCount}]");
             }
 
             // Handle CPU fallback if GPU produced no results
@@ -1087,7 +1087,7 @@ namespace XREngine.Rendering.Commands
                         WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
                         if (_passthroughFallbackLogBudget > 0)
                         {
-                            Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU BVH cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
+                            Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} GPU BVH cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
                             _passthroughFallbackLogBudget--;
                         }
                     }
@@ -1207,7 +1207,7 @@ namespace XREngine.Rendering.Commands
                     uint offendingIndex = overflowMarker - 1u;
                     if (_copyAtomicOverflowLogBudget > 0)
                     {
-                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} Copy shader overflow detected at cmd={offendingIndex} (capacity={capacity}, copyCount={copyCount}).");
+                        Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Copy shader overflow detected at cmd={offendingIndex} (capacity={capacity}, copyCount={copyCount}).");
                         _copyAtomicOverflowLogBudget--;
                     }
                     _skipGpuSubmissionThisPass = true;
@@ -1219,7 +1219,7 @@ namespace XREngine.Rendering.Commands
             uint filteredCount = VisibleCommandCount;
             if (_filteredCountLogBudget > 0)
             {
-                Debug.Out($"{FormatDebugPrefix("Culling")} Copy shader reported filteredCount={filteredCount} (copyCount={copyCount})");
+                Debug.Meshes($"{FormatDebugPrefix("Culling")} Copy shader reported filteredCount={filteredCount} (copyCount={copyCount})");
                 _filteredCountLogBudget--;
             }
             bool allowCpuFallback = ShouldAllowCpuFallback();
@@ -1236,7 +1236,7 @@ namespace XREngine.Rendering.Commands
                         WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
                         if (_passthroughFallbackLogBudget > 0)
                         {
-                            Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
+                            Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
                             _passthroughFallbackLogBudget--;
                         }
                         Dbg($"Cull passthrough GPU produced 0; CPU fallback restored {cpuRecovered} commands", "Culling");
@@ -1301,7 +1301,7 @@ namespace XREngine.Rendering.Commands
                     {
                         fatalRejected++;
                         if (rejectionReason is not null && _cpuFallbackDetailLogBudget > 0 && Interlocked.Decrement(ref _cpuFallbackDetailLogBudget) >= 0)
-                            Debug.LogWarning($"{FormatDebugPrefix("Culling")} CPU fallback reject idx={i} reason={rejectionReason} {FormatCommandSnapshot(cmd)}");
+                            Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} CPU fallback reject idx={i} reason={rejectionReason} {FormatCommandSnapshot(cmd)}");
 
                         if (firstFatalRejection is null)
                         {
@@ -1322,7 +1322,7 @@ namespace XREngine.Rendering.Commands
             {
                 if (_cpuFallbackRejectLogBudget > 0)
                 {
-                    Debug.LogWarning($"{FormatDebugPrefix("Culling")} CPU fallback rejected {fatalRejected} commands for pass {RenderPass} due to invalid metadata.");
+                    Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} CPU fallback rejected {fatalRejected} commands for pass {RenderPass} due to invalid metadata.");
                     _cpuFallbackRejectLogBudget--;
                 }
 
@@ -1419,11 +1419,11 @@ namespace XREngine.Rendering.Commands
                     sb.Append('#').Append(i).Append(' ').Append(FormatCommandSnapshot(sample[i]));
                 }
 
-                Debug.Out($"{FormatDebugPrefix("Culling")} ProbeSource {sb}");
+                Debug.Meshes($"{FormatDebugPrefix("Culling")} ProbeSource {sb}");
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Failed to probe source commands: {ex.Message}");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Failed to probe source commands: {ex.Message}");
             }
         }
 
@@ -1449,7 +1449,7 @@ namespace XREngine.Rendering.Commands
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Failed to log pass sample: {ex.Message}");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Failed to log pass sample: {ex.Message}");
             }
         }
 
@@ -1476,7 +1476,7 @@ namespace XREngine.Rendering.Commands
 
             if (spheres is null || meta is null)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("SoA")} SoA extraction buffers not available");
+                Debug.MeshesWarning($"{FormatDebugPrefix("SoA")} SoA extraction buffers not available");
                 return;
             }
 
@@ -1485,7 +1485,7 @@ namespace XREngine.Rendering.Commands
             bool useHotCommands = _sourceCommandsUseHotLayout && _sourceHotCommandBuffer is not null;
             if (requireHotCommands && !useHotCommands)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("SoA")} ShippingFast profile requires hot-command layout for SoA extraction.");
+                Debug.MeshesWarning($"{FormatDebugPrefix("SoA")} ShippingFast profile requires hot-command layout for SoA extraction.");
                 return;
             }
 
@@ -1614,7 +1614,7 @@ namespace XREngine.Rendering.Commands
                         string reason = failureReason ?? "invalid";
                         invalidCommands.Add((i, cmd, reason));
                         if (_sanitizerDetailLogBudget > 0 && Interlocked.Decrement(ref _sanitizerDetailLogBudget) >= 0)
-                            Debug.LogWarning($"{FormatDebugPrefix("Materials")} Sanitize drop idx={i} reason={reason} {FormatCommandSnapshot(cmd)}");
+                            Debug.MeshesWarning($"{FormatDebugPrefix("Materials")} Sanitize drop idx={i} reason={reason} {FormatCommandSnapshot(cmd)}");
                     }
                 }
 
@@ -1672,7 +1672,7 @@ namespace XREngine.Rendering.Commands
             uint sampleCount = Math.Min(inputCount, 4u);
             if (sampleCount == 0u)
             {
-                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Zero-visible diagnostic: no source commands available. rejectedFrustum={rejectedFrustum} rejectedDistance={rejectedDistance} cameraMask=0x{unchecked((uint)camera.CullingMask.Value):X8} farZ={camera.FarZ:F2}");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Zero-visible diagnostic: no source commands available. rejectedFrustum={rejectedFrustum} rejectedDistance={rejectedDistance} cameraMask=0x{unchecked((uint)camera.CullingMask.Value):X8} farZ={camera.FarZ:F2}");
                 return;
             }
 
@@ -1691,7 +1691,7 @@ namespace XREngine.Rendering.Commands
                 sb.Append(" | #").Append(i).Append(' ').Append(reason).Append(' ').Append(FormatCommandSnapshot(cmd));
             }
 
-            Debug.LogWarning(sb.ToString());
+            Debug.MeshesWarning(sb.ToString());
         }
 
         private uint ReadStatCounter(uint index)
@@ -1790,7 +1790,7 @@ namespace XREngine.Rendering.Commands
             List<(uint MeshId, uint MaterialId, uint Pass)> gpu = BuildGpuVisibilitySignatures(gpuVisibleCount);
 
             if (cpuVisibleCount != gpuVisibleCount)
-                Debug.LogWarning($"{FormatDebugPrefix("Validation")} GPU/CPU visible count mismatch: gpu={gpuVisibleCount} cpu={cpuVisibleCount} (copyCount={copyCount}, pass={RenderPass})");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Validation")} GPU/CPU visible count mismatch: gpu={gpuVisibleCount} cpu={cpuVisibleCount} (copyCount={copyCount}, pass={RenderPass})");
             
             var cpuSet = new HashSet<(uint MeshId, uint MaterialId, uint Pass)>(cpu);
             var gpuSet = new HashSet<(uint MeshId, uint MaterialId, uint Pass)>(gpu);

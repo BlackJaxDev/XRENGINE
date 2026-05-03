@@ -126,7 +126,7 @@ public partial class XRTexture2D
             return;
         }
 
-        RuntimeRenderingHostServices.Current.LogOutput(
+        Debug.Textures(
             $"[ImportedTextureTiming] '{sourceLabel}' source={sourceWidth}x{sourceHeight} requestedMax={requestedResidentMaxDimension} resident={residentMaxDimension} includeMipChain={includeMipChain} mips={mipCount} decode={decodeMilliseconds:F1}ms clone={cloneMilliseconds:F1}ms resize={resizeMilliseconds:F1}ms mipBuild={mipBuildMilliseconds:F1}ms total={totalMilliseconds:F1}ms");
     }
 
@@ -239,7 +239,7 @@ public partial class XRTexture2D
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;
-        RuntimeRenderingHostServices.Current.LogOutput(
+        Debug.Textures(
             $"[ApplyResidentData] '{texture.Name}' includeMipChain={includeMipChain} " +
             $"previous={previousWidth}x{previousHeight}({previousMipmapCount}mips) -> " +
             $"new={newWidth}x{newHeight}({residentData.Mipmaps.Length}mips) " +

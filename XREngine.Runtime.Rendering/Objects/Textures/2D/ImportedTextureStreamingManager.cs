@@ -189,7 +189,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             string reason = failure is null
                 ? "the cached texture asset was unreadable"
                 : $"{failure.GetType().Name}: {failure.Message}";
-            RuntimeRenderingHostServices.Current.LogWarning(
+            Debug.TexturesWarning(
                 $"Falling back to source texture '{_fallbackSource.SourcePath}' because cache asset '{assetPath}' could not be used ({reason}).");
         }
 
@@ -1642,7 +1642,7 @@ internal sealed class ImportedTextureStreamingManager
         if (!finalizeResult.Succeeded)
         {
             string textureLabel = texture.Name ?? record.FilePath ?? "(unnamed texture)";
-            RuntimeRenderingHostServices.Current.LogWarning(
+            Debug.TexturesWarning(
                 $"Deferred sparse texture transition failed for '{textureLabel}': {finalizeResult.FailureReason ?? "unknown reason"}.");
             ClearPendingTransition(record, cts, texture: null, completedResidentSize: 0, frameId);
             return true;
@@ -1774,7 +1774,7 @@ internal sealed class ImportedTextureStreamingManager
         {
             // Log once when first called with no snapshots, to confirm Evaluate is running
             if (frameId <= 10 && frameId % 5 == 0)
-                RuntimeRenderingHostServices.Current.LogOutput(
+                Debug.Textures(
                     $"[TextureStreaming] frame={frameId} Evaluate called but 0 snapshots (recordRefs={s_recordRefs.Count})");
             return;
         }
@@ -1814,7 +1814,7 @@ internal sealed class ImportedTextureStreamingManager
                     if (snapshot.Record.PendingMaxDimension == 0)
                         continue;
 
-                    RuntimeRenderingHostServices.Current.LogWarning(
+                    Debug.TexturesWarning(
                         $"[TextureStreaming] Clearing stuck pending transition for '{snapshot.Record.FilePath}' "
                         + $"(pending={snapshot.Record.PendingMaxDimension}, resident={snapshot.Record.ResidentMaxDimension}, "
                         + $"staleFrames={framesSincePending})");
@@ -2024,7 +2024,7 @@ internal sealed class ImportedTextureStreamingManager
                 if (s.MaxProjectedPixelSpan > maxPixelSpan) maxPixelSpan = s.MaxProjectedPixelSpan;
             }
 
-            RuntimeRenderingHostServices.Current.LogOutput(
+            Debug.Textures(
                 $"[TextureStreaming] frame={frameId} tracked={snapshots.Count} visible={visibleCount} " +
                 $"previewReady={previewReadyCount} atPreview={atPreviewCount} promoted={promotedCount} " +
                 $"pending={pendingCount} maxResident={maxResident} maxPixelSpan={maxPixelSpan:F0} " +

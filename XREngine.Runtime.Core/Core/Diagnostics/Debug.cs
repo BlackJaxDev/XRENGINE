@@ -20,7 +20,10 @@ namespace XREngine
     {
         General,
         Assets,
+        Meshes,
+        Textures,
         Rendering,
+        Lighting,
         OpenGL,
         Physics,
         Audio,
@@ -101,7 +104,10 @@ namespace XREngine
         {
             [ELogCategory.General] = null,
             [ELogCategory.Assets] = null,
+            [ELogCategory.Meshes] = null,
+            [ELogCategory.Textures] = null,
             [ELogCategory.Rendering] = null,
+            [ELogCategory.Lighting] = null,
             [ELogCategory.OpenGL] = null,
             [ELogCategory.Physics] = null,
             [ELogCategory.Audio] = null,
@@ -314,6 +320,30 @@ namespace XREngine
             => Log(ELogCategory.Assets, EOutputVerbosity.Normal, false, message, args);
 
         /// <summary>
+        /// Convenience helper that routes output through the meshes log.
+        /// </summary>
+        public static void Meshes(string message, params object[] args)
+            => Log(ELogCategory.Meshes, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the meshes log.
+        /// </summary>
+        public static void Meshes(EOutputVerbosity verbosity, bool debugOnly, string message, params object[] args)
+            => Log(ELogCategory.Meshes, verbosity, debugOnly, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the textures log.
+        /// </summary>
+        public static void Textures(string message, params object[] args)
+            => Log(ELogCategory.Textures, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the textures log.
+        /// </summary>
+        public static void Textures(EOutputVerbosity verbosity, bool debugOnly, string message, params object[] args)
+            => Log(ELogCategory.Textures, verbosity, debugOnly, message, args);
+
+        /// <summary>
         /// Convenience helper that routes output through the physics log.
         /// </summary>
         public static void Physics(string message, params object[] args)
@@ -324,6 +354,24 @@ namespace XREngine
         /// </summary>
         public static void Rendering(string message, params object[] args)
             => Log(ELogCategory.Rendering, EOutputVerbosity.Verbose, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the rendering log.
+        /// </summary>
+        public static void Rendering(EOutputVerbosity verbosity, bool debugOnly, string message, params object[] args)
+            => Log(ELogCategory.Rendering, verbosity, debugOnly, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the lighting log.
+        /// </summary>
+        public static void Lighting(string message, params object[] args)
+            => Log(ELogCategory.Lighting, EOutputVerbosity.Verbose, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the lighting log.
+        /// </summary>
+        public static void Lighting(EOutputVerbosity verbosity, bool debugOnly, string message, params object[] args)
+            => Log(ELogCategory.Lighting, verbosity, debugOnly, message, args);
 
         /// <summary>
         /// Convenience helper that routes output through the OpenGL log.
@@ -388,10 +436,28 @@ namespace XREngine
             => LogWarning(ELogCategory.Assets, message, args);
 
         /// <summary>
+        /// Logs a warning message to the meshes log with stack trace.
+        /// </summary>
+        public static void MeshesWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Meshes, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the textures log with stack trace.
+        /// </summary>
+        public static void TexturesWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Textures, message, args);
+
+        /// <summary>
         /// Logs a warning message to the rendering log with stack trace.
         /// </summary>
         public static void RenderingWarning(string message, params object[] args)
             => LogWarning(ELogCategory.Rendering, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the lighting log with stack trace.
+        /// </summary>
+        public static void LightingWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Lighting, message, args);
 
         /// <summary>
         /// Logs a warning message to the OpenGL log with stack trace.
@@ -483,10 +549,28 @@ namespace XREngine
             => LogException(ELogCategory.Assets, ex, message);
 
         /// <summary>
+        /// Logs an exception to the meshes log.
+        /// </summary>
+        public static void MeshesException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Meshes, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the textures log.
+        /// </summary>
+        public static void TexturesException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Textures, ex, message);
+
+        /// <summary>
         /// Logs an exception to the rendering log.
         /// </summary>
         public static void RenderingException(Exception ex, string? message = null)
             => LogException(ELogCategory.Rendering, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the lighting log.
+        /// </summary>
+        public static void LightingException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Lighting, ex, message);
 
         /// <summary>
         /// Logs an exception to the OpenGL log.
@@ -572,10 +656,28 @@ namespace XREngine
             => LogError(ELogCategory.Assets, message, args);
 
         /// <summary>
+        /// Logs an error message to the meshes log with stack trace.
+        /// </summary>
+        public static void MeshesError(string message, params object[] args)
+            => LogError(ELogCategory.Meshes, message, args);
+
+        /// <summary>
+        /// Logs an error message to the textures log with stack trace.
+        /// </summary>
+        public static void TexturesError(string message, params object[] args)
+            => LogError(ELogCategory.Textures, message, args);
+
+        /// <summary>
         /// Logs an error message to the rendering log with stack trace.
         /// </summary>
         public static void RenderingError(string message, params object[] args)
             => LogError(ELogCategory.Rendering, message, args);
+
+        /// <summary>
+        /// Logs an error message to the lighting log with stack trace.
+        /// </summary>
+        public static void LightingError(string message, params object[] args)
+            => LogError(ELogCategory.Lighting, message, args);
 
         /// <summary>
         /// Logs an error message to the OpenGL log with stack trace.
@@ -851,6 +953,42 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Rate-limited meshes log. Intended for per-frame diagnostics.
+        /// </summary>
+        public static void MeshesEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Meshes(message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited textures log. Intended for per-frame diagnostics.
+        /// </summary>
+        public static void TexturesEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Textures(message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited lighting log. Intended for per-frame diagnostics.
+        /// </summary>
+        public static void LightingEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Lighting(message, args);
+    #endif
+        }
+
+        /// <summary>
         /// Rate-limited warning without stack trace (keeps logs readable).
         /// </summary>
         public static void RenderingWarningEvery(string key, TimeSpan interval, string message, params object[] args)
@@ -859,6 +997,42 @@ namespace XREngine
             if (!ShouldLogEvery(key, interval))
                 return;
             Log(ELogCategory.Rendering, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited meshes warning without stack trace (keeps logs readable).
+        /// </summary>
+        public static void MeshesWarningEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Log(ELogCategory.Meshes, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited textures warning without stack trace (keeps logs readable).
+        /// </summary>
+        public static void TexturesWarningEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Log(ELogCategory.Textures, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited lighting warning without stack trace (keeps logs readable).
+        /// </summary>
+        public static void LightingWarningEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Log(ELogCategory.Lighting, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
     #endif
         }
 

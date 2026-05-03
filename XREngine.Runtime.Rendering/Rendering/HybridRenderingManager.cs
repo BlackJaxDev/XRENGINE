@@ -66,7 +66,7 @@ namespace XREngine.Rendering
 
     /// <summary>
     /// Logs a GPU indirect debugging message using the new structured logger.
-    /// Falls back to legacy Debug.Out if needed.
+    /// Falls back to legacy Debug.Meshes if needed.
     /// </summary>
     private static void GpuDebug(string message, params object[] args)
     {
@@ -382,7 +382,7 @@ namespace XREngine.Rendering
 
             if (byteLength == 0 || byteOffset > int.MaxValue || byteLength > uint.MaxValue)
             {
-                Debug.LogWarning($"Skipping indirect tail clear: offset={byteOffset} length={byteLength} exceeds CPU copy limits.");
+                Debug.MeshesWarning($"Skipping indirect tail clear: offset={byteOffset} length={byteLength} exceeds CPU copy limits.");
                 return;
             }
 
@@ -601,7 +601,7 @@ namespace XREngine.Rendering
                 if (!mappedPtr.IsValid)
                 {
                     sb.Append(" MAPPING_FAILED");
-                    Debug.Out(sb.ToString());
+                    Debug.Meshes(sb.ToString());
                     return;
                 }
 
@@ -644,7 +644,7 @@ namespace XREngine.Rendering
                     indirectDrawBuffer.UnmapBufferData();
             }
 
-            Debug.Out(sb.ToString());
+            Debug.Meshes(sb.ToString());
         }
 
         private static void DumpGpuIndirectArguments(
@@ -691,7 +691,7 @@ namespace XREngine.Rendering
 
                 if (!indirectPtr.IsValid)
                 {
-                    Debug.LogWarning("Failed to map indirect draw buffer for argument dump.");
+                    Debug.MeshesWarning("Failed to map indirect draw buffer for argument dump.");
                     return;
                 }
 
@@ -802,7 +802,7 @@ namespace XREngine.Rendering
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogWarning($"Failed to inspect culled commands: {ex.Message}");
+                        Debug.MeshesWarning($"Failed to inspect culled commands: {ex.Message}");
                     }
                     finally
                     {
@@ -817,7 +817,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to dump GPU indirect arguments: {ex.Message}");
+                Debug.MeshesWarning($"Failed to dump GPU indirect arguments: {ex.Message}");
             }
             finally
             {
@@ -940,7 +940,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[GPUIndirect] Failed to read world matrix at index {commandIndex}: {ex.Message}");
+                Debug.MeshesWarning($"[GPUIndirect] Failed to read world matrix at index {commandIndex}: {ex.Message}");
             }
             finally
             {
@@ -969,7 +969,7 @@ namespace XREngine.Rendering
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
             {
-                Debug.LogWarning("No active renderer found for indirect draw.");
+                Debug.MeshesWarning("No active renderer found for indirect draw.");
                 return;
             }
 
@@ -1007,7 +1007,7 @@ namespace XREngine.Rendering
 
             if (!parity.IndexedVaoValid)
             {
-                Debug.LogWarning("Indirect draw aborted: no element buffer bound to VAO.");
+                Debug.MeshesWarning("Indirect draw aborted: no element buffer bound to VAO.");
                 renderer.BindVAOForRenderer(null);
                 return;
             }
@@ -1076,7 +1076,7 @@ namespace XREngine.Rendering
         {
             if (DebugSettings.ValidateLiveHandles && parameterBuffer.APIWrappers.Count == 0)
             {
-                Debug.LogWarning("Parameter buffer has no active API wrappers; disabling count path.");
+                Debug.MeshesWarning("Parameter buffer has no active API wrappers; disabling count path.");
                 return false;
             }
 
@@ -1091,7 +1091,7 @@ namespace XREngine.Rendering
                     parameterBuffer.MapBufferData();
                     if (parameterBuffer.ActivelyMapping.Count == 0)
                     {
-                        Debug.LogWarning("Failed to map parameter buffer; falling back to non-count draw path.");
+                        Debug.MeshesWarning("Failed to map parameter buffer; falling back to non-count draw path.");
                         return false;
                     }
                 }
@@ -1104,10 +1104,10 @@ namespace XREngine.Rendering
         private static void ValidateIndirectBufferState(XRDataBuffer buffer, uint requiredDraws, uint expectedStride)
         {
             if (buffer.ElementSize != expectedStride)
-                Debug.LogWarning($"Indirect buffer stride mismatch. Expected {expectedStride} bytes per command but buffer reports {buffer.ElementSize}.");
+                Debug.MeshesWarning($"Indirect buffer stride mismatch. Expected {expectedStride} bytes per command but buffer reports {buffer.ElementSize}.");
 
             if (requiredDraws > buffer.ElementCount)
-                Debug.LogWarning($"Indirect buffer does not have enough commands allocated (required={requiredDraws}, allocated={buffer.ElementCount}).");
+                Debug.MeshesWarning($"Indirect buffer does not have enough commands allocated (required={requiredDraws}, allocated={buffer.ElementCount}).");
         }
 
         // Traditional indirect path
@@ -1126,14 +1126,14 @@ namespace XREngine.Rendering
             
             if (_indirectCompProgram is null)
             {
-                Debug.LogWarning("Indirect compute program is not initialized for traditional rendering.");
+                Debug.MeshesWarning("Indirect compute program is not initialized for traditional rendering.");
                 return;
             }
 
             var meshDataBuffer = scene.MeshDataBuffer;
             if (meshDataBuffer is null)
             {
-                Debug.LogWarning("Mesh data buffer is not initialized for traditional rendering.");
+                Debug.MeshesWarning("Mesh data buffer is not initialized for traditional rendering.");
                 return;
             }
 
@@ -1215,12 +1215,12 @@ namespace XREngine.Rendering
                 }
                 else
                 {
-                    Debug.LogWarning("Failed to create graphics program!");
+                    Debug.MeshesWarning("Failed to create graphics program!");
                 }
             }
             else
             {
-                Debug.LogWarning("No default material available!");
+                Debug.MeshesWarning("No default material available!");
             }
 
             DumpCulledCommandData(renderPasses, scene, visibleCount);
@@ -1246,7 +1246,7 @@ namespace XREngine.Rendering
 
                 if (built == 0)
                 {
-                    Debug.LogWarning("CPU indirect build produced zero draw commands. Skipping indirect draw dispatch.");
+                    Debug.MeshesWarning("CPU indirect build produced zero draw commands. Skipping indirect draw dispatch.");
                     return;
                 }
 
@@ -1283,7 +1283,7 @@ namespace XREngine.Rendering
             
             if ((mask & EProgramStageMask.ComputeShaderBit) == 0)
             {
-                Debug.LogWarning("Traditional rendering program does not contain a compute shader. Cannot dispatch compute.");
+                Debug.MeshesWarning("Traditional rendering program does not contain a compute shader. Cannot dispatch compute.");
                 return;
             }
 
@@ -1389,7 +1389,7 @@ namespace XREngine.Rendering
             if (logGpu)
                 GpuDebug("Dispatching compute: groups=({0},{1},{2}) groupSize={3}", groupsX, groupsY, groupsZ, groupSize);
             _indirectCompProgram.DispatchCompute(groupsX, groupsY, groupsZ, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
-            //Debug.Out("Compute dispatch complete");
+            //Debug.Meshes("Compute dispatch complete");
 
             // Conservative barrier before consuming indirect buffer
             AbstractRenderer.Current?.MemoryBarrier(
@@ -1397,7 +1397,7 @@ namespace XREngine.Rendering
                 EMemoryBarrierMask.Command |
                 EMemoryBarrierMask.ClientMappedBuffer |
                 EMemoryBarrierMask.BufferUpdate);
-            //Debug.Out("Memory barrier issued");
+            //Debug.Meshes("Memory barrier issued");
 
             if (DebugSettings.DumpIndirectArguments && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                 DumpGpuIndirectArguments(renderPasses, indirectDrawBuffer, maxDrawAllowed, parameterBuffer, visibleCount);
@@ -1671,7 +1671,7 @@ namespace XREngine.Rendering
                 shaderList.Add(generatedVertexShader);
 
             GpuDebug($"Final shader list count: {shaderList.Count}");
-            //Debug.Out("Creating and linking program...");
+            //Debug.Meshes("Creating and linking program...");
             
             var program = new XRRenderProgram(linkNow: false, separable: false, shaderList);
             program.AllowLink();
@@ -1679,7 +1679,7 @@ namespace XREngine.Rendering
             
             if (program is null)
             {
-                Debug.LogWarning("Failed to create render program for material; skipping cache.");
+                Debug.MeshesWarning("Failed to create render program for material; skipping cache.");
                 return null;
             }
 
@@ -1700,7 +1700,7 @@ namespace XREngine.Rendering
                 DestroyMaterialProgramCache(previousPending);
 
             _pendingMaterialPrograms[cacheKey] = cacheEntry;
-            //Debug.Out("Program cached");
+            //Debug.Meshes("Program cached");
             
             return existing.Program;
         }
@@ -2572,7 +2572,7 @@ namespace XREngine.Rendering
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
             {
-                Debug.LogWarning("No active renderer for batched indirect path.");
+                Debug.MeshesWarning("No active renderer for batched indirect path.");
                 return;
             }
 
@@ -2606,11 +2606,11 @@ namespace XREngine.Rendering
             //    cpuBuiltCount = BuildIndirectCommandsCpu(renderPasses, scene, indirectDrawBuffer, requestedDraws, currentRenderPass, cpuMaterialOrder);
             //    if (cpuBuiltCount == 0)
             //    {
-            //        Debug.LogWarning("CPU indirect build produced zero draw commands for batched path. Skipping indirect draw dispatch.");
+            //        Debug.MeshesWarning("CPU indirect build produced zero draw commands for batched path. Skipping indirect draw dispatch.");
             //        return;
             //    }
 
-            //    Debug.Out($"CPU indirect build generated {cpuBuiltCount} draw command(s) for batched path (requested {requestedDraws}).");
+            //    Debug.Meshes($"CPU indirect build generated {cpuBuiltCount} draw command(s) for batched path (requested {requestedDraws}).");
 
             //    // Disable the GPU-driven count path so we rely solely on the explicit batch counts.
             //    dispatchParameterBuffer = null;
@@ -2708,14 +2708,14 @@ namespace XREngine.Rendering
                 //{
                 //    if (batch.Offset >= cpuBuiltCount)
                 //    {
-                //        Debug.Out($"Skipping batch at offset {batch.Offset} - beyond CPU-built draw count {cpuBuiltCount}.");
+                //        Debug.Meshes($"Skipping batch at offset {batch.Offset} - beyond CPU-built draw count {cpuBuiltCount}.");
                 //        continue;
                 //    }
 
                 //    uint maxAvailable = cpuBuiltCount - batch.Offset;
                 //    if (effectiveCount > maxAvailable)
                 //    {
-                //        Debug.LogWarning($"Clamping CPU indirect batch at offset {batch.Offset} from {effectiveCount} to {maxAvailable} draw(s).");
+                //        Debug.MeshesWarning($"Clamping CPU indirect batch at offset {batch.Offset} from {effectiveCount} to {maxAvailable} draw(s).");
                 //        effectiveCount = maxAvailable;
                 //    }
                 //}
@@ -2760,14 +2760,14 @@ namespace XREngine.Rendering
 
                 if (batch.Offset >= renderPasses.VisibleCommandCount)
                 {
-                    Debug.LogWarning($"Batch offset {batch.Offset} out of range for visible count {renderPasses.VisibleCommandCount}; skipping batch.");
+                    Debug.MeshesWarning($"Batch offset {batch.Offset} out of range for visible count {renderPasses.VisibleCommandCount}; skipping batch.");
                     continue;
                 }
 
                 uint available = renderPasses.VisibleCommandCount - batch.Offset;
                 if (effectiveCount > available)
                 {
-                    Debug.LogWarning($"Clamping batch at offset {batch.Offset} from {effectiveCount} to {available} draw(s) due to visible count bounds.");
+                    Debug.MeshesWarning($"Clamping batch at offset {batch.Offset} from {effectiveCount} to {available} draw(s) due to visible count bounds.");
                     effectiveCount = available;
                 }
 
@@ -2839,7 +2839,7 @@ namespace XREngine.Rendering
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
             {
-                Debug.LogWarning("No active renderer for zero-readback indirect path.");
+                Debug.MeshesWarning("No active renderer for zero-readback indirect path.");
                 return;
             }
 
@@ -2848,7 +2848,7 @@ namespace XREngine.Rendering
             XRDataBuffer? culledCommandsBuffer = renderPasses.CulledSceneToRenderBuffer;
             if (indirectDrawBuffer is null || parameterBuffer is null || culledCommandsBuffer is null)
             {
-                Debug.LogWarning("Zero-readback indirect path missing material-tier buffers.");
+                Debug.MeshesWarning("Zero-readback indirect path missing material-tier buffers.");
                 return;
             }
 

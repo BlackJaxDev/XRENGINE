@@ -1094,7 +1094,7 @@ void main()
             if (!ok && !_reportedDlssFailure)
             {
                 _reportedDlssFailure = true;
-                Debug.LogWarning($"Streamline DLSS upscale failed (errorCode={errorCode}). Falling back to standard blit.");
+                Debug.RenderingWarning($"Streamline DLSS upscale failed (errorCode={errorCode}). Falling back to standard blit.");
             }
 
             return ok;

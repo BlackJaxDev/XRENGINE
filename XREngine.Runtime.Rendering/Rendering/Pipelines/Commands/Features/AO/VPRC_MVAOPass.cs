@@ -28,7 +28,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public const float DefaultMaxSampleDist = 1.0f;
 
         private static void Log(string message)
-            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][MVAO] {0}", message);
+            => Debug.Rendering(EOutputVerbosity.Normal, false, "[AO][MVAO] {0}", message);
 
         private string MVAOGenShaderName() =>
             "MVAOGen.fs";

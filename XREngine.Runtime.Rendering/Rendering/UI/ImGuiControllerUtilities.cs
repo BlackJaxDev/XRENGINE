@@ -102,17 +102,17 @@ internal static class ImGuiControllerUtilities
 
             lock (_fontLoadedContexts)
                 _fontLoadedContexts.Add(context);
-            Debug.Out(
+            Debug.Textures(
                 "[StartupUI] ImGui font ready: atlas={0:F1} ms, deviceTexture={1:F1} ms, file={2}",
                 atlasLoadStopwatch.Elapsed.TotalMilliseconds,
                 textureRebuildStopwatch.Elapsed.TotalMilliseconds,
                 fontFileLabel);
-            Debug.Out($"ImGui font: {fontFileLabel} loaded @ {sizePixels:0.#}px");
+            Debug.Textures($"ImGui font: {fontFileLabel} loaded @ {sizePixels:0.#}px");
             return true;
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to load editor ImGui font: {ex.Message}");
+            Debug.TexturesWarning($"Failed to load editor ImGui font: {ex.Message}");
             return false;
         }
     }
@@ -261,11 +261,11 @@ internal static class ImGuiControllerUtilities
             io.Fonts.AddFontFromFileTTF(symbolFontPath, sizePixels, mergeConfig, symRangesPtr);
 
             ImGuiNative.ImFontConfig_destroy(mergeConfig);
-            Debug.Out($"ImGui font: merged symbol fallback from {Path.GetFileName(symbolFontPath)}");
+            Debug.Textures($"ImGui font: merged symbol fallback from {Path.GetFileName(symbolFontPath)}");
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to merge symbol font: {ex.Message}");
+            Debug.TexturesWarning($"Failed to merge symbol font: {ex.Message}");
         }
     }
 
