@@ -81,6 +81,32 @@ namespace XREngine.Components.Lights
             public required Matrix4x4 WorldToLightSpaceMatrix { get; init; }
         }
 
+        private enum DirectionalCascadeShadowFallbackReason
+        {
+            None = 0,
+            SequentialRequested = 1,
+            NoActiveCascades = 2,
+            MissingLayeredFramebuffer = 3,
+            MissingCascadeTextureArray = 4,
+            UnsupportedLayeredFramebuffer = 5,
+            UnsupportedGeometryShader = 6,
+            UnsupportedVertexStageLayerWrites = 7,
+            UnsupportedViewportArray = 8,
+        }
+
+        private readonly struct DirectionalCascadeShadowRenderPlan
+        {
+            public required EDirectionalCascadeShadowRenderMode RequestedMode { get; init; }
+            public required EDirectionalCascadeShadowRenderMode SelectedMode { get; init; }
+            public required int ActiveCascadeCount { get; init; }
+            public required XRFrameBuffer? LayeredFrameBuffer { get; init; }
+            public required XRTexture2DArray? CascadeTextureArray { get; init; }
+            public required DirectionalCascadeShadowFallbackReason FallbackReason { get; init; }
+
+            public bool IsLayered => SelectedMode is EDirectionalCascadeShadowRenderMode.GeometryShader or EDirectionalCascadeShadowRenderMode.InstancedLayered;
+            public bool IsInstancedLayered => SelectedMode == EDirectionalCascadeShadowRenderMode.InstancedLayered;
+        }
+
         /// <summary>
         /// Published world-space bounds for one directional cascade.
         /// </summary>
@@ -157,6 +183,9 @@ namespace XREngine.Components.Lights
         private readonly Frustum[] _cascadeSourceFrusta = new Frustum[3];
         private XRMaterial? _shadowAtlasMaterial;
         private XRMaterial? _cascadeGeometryShadowMaterial;
+        private XRMaterial? _cascadeInstancedShadowMaterial;
+        private EDirectionalCascadeShadowRenderMode _effectiveCascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.Sequential;
+        private DirectionalCascadeShadowFallbackReason _cascadeShadowRenderFallbackReason = DirectionalCascadeShadowFallbackReason.SequentialRequested;
 
         private static string[] CreateCascadeViewProjectionMatrixUniformNames()
         {
@@ -207,6 +236,22 @@ namespace XREngine.Components.Lights
             get => _cascadeShadowRenderMode;
             set => SetField(ref _cascadeShadowRenderMode, value);
         }
+
+        /// <summary>
+        /// Most recent render mode selected for the legacy cascaded texture-array shadow path.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Effective Cascade Render Mode")]
+        [Description("Resolved cascade render path after backend capability checks and fallback handling.")]
+        public EDirectionalCascadeShadowRenderMode EffectiveCascadeShadowRenderMode => _effectiveCascadeShadowRenderMode;
+
+        /// <summary>
+        /// Most recent fallback reason for the legacy cascaded texture-array shadow path.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Cascade Render Fallback")]
+        [Description("Reason the requested cascade render mode could not be used in the most recent shadow pass.")]
+        public string CascadeShadowRenderFallbackReason => _cascadeShadowRenderFallbackReason.ToString();
 
         /// <summary>
         /// When true, the shader replaces lighting output with a per-cascade color overlay for debugging.
@@ -568,6 +613,47 @@ namespace XREngine.Components.Lights
                     Matrix4x4.CreateTranslation(cascade.Center);
                 return new Box(Vector3.Zero, cascade.HalfExtents * 2.0f, transform);
             }
+        }
+
+        private Box? GetPublishedCascadeUnionCullVolume(int cascadeCount)
+        {
+            lock (_cascadeDataLock)
+            {
+                int count = Math.Min(cascadeCount, _cascadeAabbs.Count);
+                if (count <= 0)
+                    return null;
+
+                Vector3 min = new(float.MaxValue);
+                Vector3 max = new(float.MinValue);
+                for (int i = 0; i < count; i++)
+                    IncludeCascadeAabbCorners(_cascadeAabbs[i], ref min, ref max);
+
+                if (max.X < min.X || max.Y < min.Y || max.Z < min.Z)
+                    return null;
+
+                return Box.FromMinMax(min, max);
+            }
+        }
+
+        private static void IncludeCascadeAabbCorners(CascadedShadowAabb cascade, ref Vector3 min, ref Vector3 max)
+        {
+            Matrix4x4 rotation = Matrix4x4.CreateFromQuaternion(cascade.Orientation);
+            Vector3 half = cascade.HalfExtents;
+            IncludeCascadeAabbCorner(cascade.Center, rotation, new Vector3(-half.X, -half.Y, -half.Z), ref min, ref max);
+            IncludeCascadeAabbCorner(cascade.Center, rotation, new Vector3( half.X, -half.Y, -half.Z), ref min, ref max);
+            IncludeCascadeAabbCorner(cascade.Center, rotation, new Vector3(-half.X,  half.Y, -half.Z), ref min, ref max);
+            IncludeCascadeAabbCorner(cascade.Center, rotation, new Vector3( half.X,  half.Y, -half.Z), ref min, ref max);
+            IncludeCascadeAabbCorner(cascade.Center, rotation, new Vector3(-half.X, -half.Y,  half.Z), ref min, ref max);
+            IncludeCascadeAabbCorner(cascade.Center, rotation, new Vector3( half.X, -half.Y,  half.Z), ref min, ref max);
+            IncludeCascadeAabbCorner(cascade.Center, rotation, new Vector3(-half.X,  half.Y,  half.Z), ref min, ref max);
+            IncludeCascadeAabbCorner(cascade.Center, rotation, new Vector3( half.X,  half.Y,  half.Z), ref min, ref max);
+        }
+
+        private static void IncludeCascadeAabbCorner(Vector3 center, Matrix4x4 rotation, Vector3 localCorner, ref Vector3 min, ref Vector3 max)
+        {
+            Vector3 worldCorner = center + Vector3.TransformNormal(localCorner, rotation);
+            min = Vector3.Min(min, worldCorner);
+            max = Vector3.Max(max, worldCorner);
         }
 
         /// <summary>
@@ -1002,6 +1088,10 @@ namespace XREngine.Components.Lights
                 _cascadeGeometryShadowMaterial.SettingShadowUniforms -= SetShadowMapUniforms;
             _cascadeGeometryShadowMaterial?.Destroy();
             _cascadeGeometryShadowMaterial = null;
+            if (_cascadeInstancedShadowMaterial is not null)
+                _cascadeInstancedShadowMaterial.SettingShadowUniforms -= SetShadowMapUniforms;
+            _cascadeInstancedShadowMaterial?.Destroy();
+            _cascadeInstancedShadowMaterial = null;
             _cascadeShadowFrameBuffers = [];
             _cascadeShadowViewports = [];
             _cascadeShadowTransforms = [];
@@ -1025,8 +1115,10 @@ namespace XREngine.Components.Lights
             float farZ = MathF.Max(depth, nearZ + 1e-3f);
             if (camera.Parameters is not XROrthographicCameraParameters ortho)
             {
-                ortho = new XROrthographicCameraParameters(width, height, nearZ, farZ);
-                ortho.InheritAspectRatio = false;
+                ortho = new(width, height, nearZ, farZ)
+                {
+                    InheritAspectRatio = false
+                };
                 ortho.SetOriginPercentages(0.5f, 0.5f);
                 camera.Parameters = ortho;
             }
@@ -1328,6 +1420,107 @@ namespace XREngine.Components.Lights
                 (ShadowMap is not null || Engine.Rendering.Settings.UseDirectionalShadowAtlas);
         }
 
+        private DirectionalCascadeShadowRenderPlan CreateCascadeShadowRenderPlan(int cascadeCount)
+        {
+            EDirectionalCascadeShadowRenderMode requestedMode = _cascadeShadowRenderMode;
+            if (cascadeCount <= 0)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.NoActiveCascades);
+
+            if (_cascadeShadowMapTexture is null)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingCascadeTextureArray);
+
+            if (requestedMode == EDirectionalCascadeShadowRenderMode.Sequential)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.SequentialRequested);
+
+            if (_cascadeLayeredShadowFrameBuffer is null)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingLayeredFramebuffer);
+
+            if (!Engine.Rendering.State.SupportsOpenGLLayeredFramebuffers)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedLayeredFramebuffer);
+
+            EDirectionalCascadeShadowRenderMode selectedMode = requestedMode == EDirectionalCascadeShadowRenderMode.Auto
+                ? SelectAutomaticCascadeShadowRenderMode(cascadeCount)
+                : requestedMode;
+
+            return selectedMode switch
+            {
+                EDirectionalCascadeShadowRenderMode.InstancedLayered => CreateInstancedCascadeShadowRenderPlan(requestedMode, cascadeCount),
+                EDirectionalCascadeShadowRenderMode.GeometryShader => CreateGeometryCascadeShadowRenderPlan(requestedMode, cascadeCount),
+                _ => CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageLayerWrites),
+            };
+        }
+
+        private DirectionalCascadeShadowRenderPlan CreateInstancedCascadeShadowRenderPlan(EDirectionalCascadeShadowRenderMode requestedMode, int cascadeCount)
+        {
+            if (!Engine.Rendering.State.SupportsOpenGLViewportArray)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedViewportArray);
+
+            if (!Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageLayerWrites);
+
+            return new DirectionalCascadeShadowRenderPlan
+            {
+                RequestedMode = requestedMode,
+                SelectedMode = EDirectionalCascadeShadowRenderMode.InstancedLayered,
+                ActiveCascadeCount = cascadeCount,
+                LayeredFrameBuffer = _cascadeLayeredShadowFrameBuffer,
+                CascadeTextureArray = _cascadeShadowMapTexture,
+                FallbackReason = DirectionalCascadeShadowFallbackReason.None,
+            };
+        }
+
+        private DirectionalCascadeShadowRenderPlan CreateGeometryCascadeShadowRenderPlan(EDirectionalCascadeShadowRenderMode requestedMode, int cascadeCount)
+        {
+            if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedGeometryShader);
+
+            return new DirectionalCascadeShadowRenderPlan
+            {
+                RequestedMode = requestedMode,
+                SelectedMode = EDirectionalCascadeShadowRenderMode.GeometryShader,
+                ActiveCascadeCount = cascadeCount,
+                LayeredFrameBuffer = _cascadeLayeredShadowFrameBuffer,
+                CascadeTextureArray = _cascadeShadowMapTexture,
+                FallbackReason = DirectionalCascadeShadowFallbackReason.None,
+            };
+        }
+
+        private DirectionalCascadeShadowRenderPlan CreateSequentialCascadeShadowRenderPlan(
+            EDirectionalCascadeShadowRenderMode requestedMode,
+            int cascadeCount,
+            DirectionalCascadeShadowFallbackReason fallbackReason)
+            => new()
+            {
+                RequestedMode = requestedMode,
+                SelectedMode = EDirectionalCascadeShadowRenderMode.Sequential,
+                ActiveCascadeCount = cascadeCount,
+                LayeredFrameBuffer = null,
+                CascadeTextureArray = _cascadeShadowMapTexture,
+                FallbackReason = fallbackReason,
+            };
+
+        private EDirectionalCascadeShadowRenderMode SelectAutomaticCascadeShadowRenderMode(int cascadeCount)
+        {
+            if (Engine.Rendering.State.SupportsOpenGLViewportArray &&
+                Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
+            {
+                return EDirectionalCascadeShadowRenderMode.InstancedLayered;
+            }
+
+            if (Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
+                return EDirectionalCascadeShadowRenderMode.GeometryShader;
+
+            return EDirectionalCascadeShadowRenderMode.Sequential;
+        }
+
+        private void PublishCascadeShadowRenderPlan(in DirectionalCascadeShadowRenderPlan plan)
+        {
+            if (_effectiveCascadeShadowRenderMode != plan.SelectedMode)
+                _effectiveCascadeShadowRenderMode = plan.SelectedMode;
+            if (_cascadeShadowRenderFallbackReason != plan.FallbackReason)
+                _cascadeShadowRenderFallbackReason = plan.FallbackReason;
+        }
+
         public override void CollectVisibleItems()
         {
             if (!CastsShadows)
@@ -1338,23 +1531,16 @@ namespace XREngine.Components.Lights
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
-            if (ShouldRenderCascadesWithGeometryShader(cascadeCount))
+            DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
+            PublishCascadeShadowRenderPlan(plan);
+            if (plan.IsLayered)
             {
                 XRViewport viewport = cascadeShadowViewports[0];
-                bool previousCullWithFrustum = viewport.CullWithFrustum;
-                viewport.CullWithFrustum = false;
-                try
-                {
-                    viewport.CollectVisible(false);
-                }
-                finally
-                {
-                    viewport.CullWithFrustum = previousCullWithFrustum;
-                }
+                viewport.CollectVisible(false, collectionVolumeOverride: GetPublishedCascadeUnionCullVolume(cascadeCount));
             }
             else
             {
-                LogCascadeRenderModeFallbackIfNeeded(cascadeCount);
+                LogCascadeRenderModeFallbackIfNeeded(plan);
                 for (int i = 0; i < cascadeCount; i++)
                     cascadeShadowViewports[i].CollectVisible(false, collectionVolumeOverride: GetPublishedCascadeCullVolume(i));
             }
@@ -1370,13 +1556,15 @@ namespace XREngine.Components.Lights
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
-            if (ShouldRenderCascadesWithGeometryShader(cascadeCount))
+            DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
+            PublishCascadeShadowRenderPlan(plan);
+            if (plan.IsLayered)
             {
                 cascadeShadowViewports[0].SwapBuffers();
             }
             else
             {
-                LogCascadeRenderModeFallbackIfNeeded(cascadeCount);
+                LogCascadeRenderModeFallbackIfNeeded(plan);
                 for (int i = 0; i < cascadeCount; i++)
                     cascadeShadowViewports[i].SwapBuffers();
             }
@@ -1399,6 +1587,9 @@ namespace XREngine.Components.Lights
         private XRMaterial CascadeGeometryShadowMaterial
             => _cascadeGeometryShadowMaterial ??= CreateCascadeGeometryShadowMaterial();
 
+        private XRMaterial CascadeInstancedShadowMaterial
+            => _cascadeInstancedShadowMaterial ??= CreateCascadeInstancedShadowMaterial();
+
         private XRMaterial CreateCascadeGeometryShadowMaterial()
         {
             XRMaterial mat = new(
@@ -1406,6 +1597,17 @@ namespace XREngine.Components.Lights
                 new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.DirectionalCascadeShadowMaterialKind = EDirectionalCascadeShadowMaterialKind.GeometryShader;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
+            return mat;
+        }
+
+        private XRMaterial CreateCascadeInstancedShadowMaterial()
+        {
+            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
+            mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.DirectionalCascadeShadowMaterialKind = EDirectionalCascadeShadowMaterialKind.InstancedLayered;
             mat.SettingShadowUniforms += SetShadowMapUniforms;
             return mat;
         }
@@ -1527,43 +1729,62 @@ namespace XREngine.Components.Lights
                 RenderCascadeShadowMaps(cascadeShadowViewports, cascadeShadowFrameBuffers, cascadeCount, shadowMaterial);
         }
 
-        private bool ShouldRenderCascadesWithGeometryShader(int cascadeCount)
-            => cascadeCount > 0 &&
-               _cascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.GeometryShader &&
-               _cascadeLayeredShadowFrameBuffer is not null;
-
         private void RenderCascadeShadowMaps(
             XRViewport[] cascadeShadowViewports,
             XRFrameBuffer[] cascadeShadowFrameBuffers,
             int cascadeCount,
             XRMaterial sequentialShadowMaterial)
         {
-            if (ShouldRenderCascadesWithGeometryShader(cascadeCount))
+            DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
+            PublishCascadeShadowRenderPlan(plan);
+            if (plan.IsLayered && plan.LayeredFrameBuffer is not null)
             {
-                cascadeShadowViewports[0].Render(
-                    _cascadeLayeredShadowFrameBuffer!,
-                    null,
-                    null,
-                    true,
-                    CascadeGeometryShadowMaterial);
+                Span<Matrix4x4> cascadeMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
+                int matrixCount = CopyPublishedCascadeMatrices(cascadeMatrices);
+                int layerCount = Math.Min(plan.ActiveCascadeCount, matrixCount);
+                XRMaterial layeredShadowMaterial = plan.IsInstancedLayered
+                    ? CascadeInstancedShadowMaterial
+                    : CascadeGeometryShadowMaterial;
+                using var directionalCascadePass = cascadeShadowViewports[0].RenderPipelineInstance.RenderState
+                    .PushDirectionalCascadeLayeredShadowPass(plan.IsInstancedLayered, cascadeMatrices[..layerCount]);
+                cascadeShadowViewports[0].Render(plan.LayeredFrameBuffer, null, null, true, layeredShadowMaterial);
                 return;
             }
 
-            LogCascadeRenderModeFallbackIfNeeded(cascadeCount);
+            LogCascadeRenderModeFallbackIfNeeded(plan);
             for (int i = 0; i < cascadeCount; i++)
                 cascadeShadowViewports[i].Render(cascadeShadowFrameBuffers[i], null, null, true, sequentialShadowMaterial);
         }
 
-        private void LogCascadeRenderModeFallbackIfNeeded(int cascadeCount)
+        private int CopyPublishedCascadeMatrices(Span<Matrix4x4> matrices)
         {
-            if (_cascadeShadowRenderMode != EDirectionalCascadeShadowRenderMode.InstancedLayered || cascadeCount <= 0)
+            int copyCount = Math.Min(MaxCascadeRenderCount, matrices.Length);
+            lock (_cascadeDataLock)
+            {
+                copyCount = Math.Min(copyCount, _cascadeShadowSlices.Count);
+                for (int i = 0; i < copyCount; i++)
+                    matrices[i] = _cascadeShadowSlices[i].WorldToLightSpaceMatrix;
+            }
+
+            return copyCount;
+        }
+
+        private void LogCascadeRenderModeFallbackIfNeeded(in DirectionalCascadeShadowRenderPlan plan)
+        {
+            if (plan.FallbackReason is DirectionalCascadeShadowFallbackReason.None or DirectionalCascadeShadowFallbackReason.SequentialRequested ||
+                plan.ActiveCascadeCount <= 0)
+            {
                 return;
+            }
 
             Debug.LightingWarningEvery(
                 $"DirectionalCascadeRenderModeFallback.{GetHashCode()}",
                 TimeSpan.FromSeconds(2.0),
-                "[DirectionalShadowAudit] Instanced/layered directional cascades are not implemented yet; rendering '{0}' sequentially.",
-                SceneNode?.Name ?? Name ?? GetType().Name);
+                "[DirectionalShadowAudit] Directional cascade render mode fallback for '{0}': requested={1}, effective={2}, reason={3}.",
+                SceneNode?.Name ?? Name ?? GetType().Name,
+                plan.RequestedMode,
+                plan.SelectedMode,
+                plan.FallbackReason);
         }
 
         private void LogCascadeClearReason(string reason)

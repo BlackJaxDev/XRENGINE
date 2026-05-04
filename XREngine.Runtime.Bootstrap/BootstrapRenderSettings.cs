@@ -35,6 +35,7 @@ public static class BootstrapRenderSettings
         var settings = RuntimeBootstrapState.Settings;
         var renderSettings = Engine.Rendering.Settings;
         var debug = Engine.EditorPreferences.Debug;
+        ApplyOpenGLShaderLinkSettings(settings);
 
         debug.RenderMesh3DBounds = settings.RenderMeshBounds;
         debug.RenderTransformDebugInfo = settings.RenderTransformDebugInfo;
@@ -56,5 +57,18 @@ public static class BootstrapRenderSettings
         // Do not override it here — that would discard the user's saved preference.
 
         EnsureEmulatedVRStereoPreviewRenderingHooked();
+    }
+
+    public static void ApplyOpenGLShaderLinkSettings(UnitTestingWorldSettings settings)
+    {
+        var renderSettings = Engine.Rendering.Settings;
+        renderSettings.AllowBinaryProgramCaching = settings.AllowBinaryProgramCaching;
+        renderSettings.AsyncProgramBinaryUpload = settings.AsyncProgramBinaryUpload;
+        renderSettings.AsyncProgramCompilation = settings.AsyncProgramCompilation;
+        renderSettings.MaxAsyncShaderProgramsPerFrame = settings.MaxAsyncShaderProgramsPerFrame;
+        renderSettings.OpenGLShaderLinkStrategy = settings.OpenGLShaderLinkStrategy;
+        renderSettings.OpenGLShaderCompilerThreadCount = settings.OpenGLShaderCompilerThreadCount;
+        renderSettings.OpenGLParallelShaderCompileProbeEnabled = settings.OpenGLParallelShaderCompileProbeEnabled;
+        renderSettings.OpenGLParallelShaderCompileProbeTimeoutMs = settings.OpenGLParallelShaderCompileProbeTimeoutMs;
     }
 }

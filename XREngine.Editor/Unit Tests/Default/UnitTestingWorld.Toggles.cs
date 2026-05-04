@@ -279,6 +279,14 @@ public static partial class EditorUnitTests
         /// This will break debug shape rendering, and seems to render slower than making combined programs.
         /// </summary>
         public bool AllowShaderPipelines = false;
+        public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy { get; set; } = EOpenGLShaderLinkStrategy.Auto; //Selects the OpenGL shader compile/link path used by startup model shaders.
+        public bool AllowBinaryProgramCaching { get; set; } = true; //Allows linked OpenGL shader programs to be cached as driver binaries.
+        public bool AsyncProgramBinaryUpload { get; set; } = true; //Uploads cached OpenGL program binaries on a shared GL context thread when possible.
+        public bool AsyncProgramCompilation { get; set; } = true; //Compiles and links uncached OpenGL shader programs asynchronously when the selected strategy supports it.
+        public int MaxAsyncShaderProgramsPerFrame { get; set; } = 4; //Maximum number of pending async OpenGL shader programs to advance per render frame.
+        public int OpenGLShaderCompilerThreadCount { get; set; } = -1; //Worker-thread count requested from GL_ARB/KHR_parallel_shader_compile. -1 requests the driver default maximum.
+        public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true; //Runs a small startup probe before using the explicit DriverParallel OpenGL link path.
+        public int OpenGLParallelShaderCompileProbeTimeoutMs { get; set; } = 25; //Maximum time spent polling the startup driver-parallel OpenGL shader-link probe.
         public bool RenderMeshBounds = true;
 
         public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;

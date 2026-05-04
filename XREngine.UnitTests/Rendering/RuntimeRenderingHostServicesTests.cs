@@ -196,6 +196,8 @@ public sealed class RuntimeRenderingHostServicesTests
         public Vector3 DefaultLuminance => Vector3.One;
         public long ElapsedTicks => 0L;
         public float ElapsedTime => 0.0f;
+        public double UpdateDeltaSeconds => 0.0;
+        public long LastUpdateTimestampTicks => 0L;
         public double RenderDeltaSeconds => 0.0;
         public long LastRenderTimestampTicks => 0L;
         public long TrackedVramBytes => 0L;
@@ -224,6 +226,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool ProvidesShadowAtlasSettings => false;
         public bool UseSpotShadowAtlas => true;
         public bool UseDirectionalShadowAtlas => true;
+        public bool UsePointShadowAtlas => true;
         public uint ShadowAtlasPageSize => 4096u;
         public int MaxShadowAtlasPages => 1;
         public long MaxShadowAtlasMemoryBytes => 0L;

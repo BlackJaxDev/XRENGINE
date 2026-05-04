@@ -44,6 +44,19 @@ public sealed partial class XRRenderPipelineInstance
         /// </summary>
         public bool StereoPass { get; private set; } = false;
         /// <summary>
+        /// If true, the current shadow pass targets a layered directional cascade framebuffer.
+        /// </summary>
+        public bool DirectionalCascadeLayeredShadowPass { get; private set; }
+        /// <summary>
+        /// If true, mesh draw instancing supplies the directional cascade layer index.
+        /// </summary>
+        public bool DirectionalCascadeInstancedLayeredShadowPass { get; private set; }
+        /// <summary>
+        /// Number of active directional cascade layers addressed by the current layered shadow pass.
+        /// </summary>
+        public int DirectionalCascadeShadowLayerCount { get; private set; }
+        private readonly Matrix4x4[] _directionalCascadeShadowMatrices = new Matrix4x4[8];
+        /// <summary>
         /// If set, this material will be used to render all objects in the scene.
         /// Typically used for shadow passes.
         /// </summary>
@@ -127,9 +140,49 @@ public sealed partial class XRRenderPipelineInstance
             OutputFBO = null;
             ShadowPass = false;
             StereoPass = false;
+            DirectionalCascadeLayeredShadowPass = false;
+            DirectionalCascadeInstancedLayeredShadowPass = false;
+            DirectionalCascadeShadowLayerCount = 0;
             GlobalMaterialOverride = null;
             ScreenSpaceUserInterface = null;
             MeshRenderCommands = null;
+        }
+
+        private int _directionalCascadeLayeredShadowPassDepth;
+        public StateObject PushDirectionalCascadeLayeredShadowPass(bool instancedLayered, ReadOnlySpan<Matrix4x4> cascadeMatrices)
+        {
+            _directionalCascadeLayeredShadowPassDepth++;
+            DirectionalCascadeLayeredShadowPass = true;
+            DirectionalCascadeInstancedLayeredShadowPass = instancedLayered;
+            DirectionalCascadeShadowLayerCount = Math.Clamp(cascadeMatrices.Length, 0, _directionalCascadeShadowMatrices.Length);
+            for (int i = 0; i < DirectionalCascadeShadowLayerCount; i++)
+                _directionalCascadeShadowMatrices[i] = cascadeMatrices[i];
+            return StateObject.New(PopDirectionalCascadeLayeredShadowPass);
+        }
+
+        public bool TryGetDirectionalCascadeShadowMatrix(int index, out Matrix4x4 matrix)
+        {
+            if ((uint)index < (uint)DirectionalCascadeShadowLayerCount)
+            {
+                matrix = _directionalCascadeShadowMatrices[index];
+                return true;
+            }
+
+            matrix = Matrix4x4.Identity;
+            return false;
+        }
+
+        private void PopDirectionalCascadeLayeredShadowPass()
+        {
+            _directionalCascadeLayeredShadowPassDepth--;
+            if (_directionalCascadeLayeredShadowPassDepth > 0)
+                return;
+
+            _directionalCascadeLayeredShadowPassDepth = 0;
+            DirectionalCascadeLayeredShadowPass = false;
+            DirectionalCascadeInstancedLayeredShadowPass = false;
+            DirectionalCascadeShadowLayerCount = 0;
+            Array.Clear(_directionalCascadeShadowMatrices);
         }
 
         public XRCamera? RenderingCamera

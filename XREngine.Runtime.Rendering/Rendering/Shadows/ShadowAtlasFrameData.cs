@@ -122,45 +122,21 @@ public sealed class ShadowAtlasFrameData
 
 public sealed class ShadowAtlasPageResource
 {
-    internal ShadowAtlasPageResource(ShadowAtlasPageDescriptor descriptor)
+    internal ShadowAtlasPageResource(
+        ShadowAtlasPageDescriptor descriptor,
+        XRTexture2DArray texture,
+        XRTexture2DArray rasterDepthTexture)
     {
         Descriptor = descriptor;
-        Texture = new XRTexture2D(
-            descriptor.PageSize,
-            descriptor.PageSize,
-            descriptor.InternalFormat,
-            descriptor.PixelFormat,
-            descriptor.PixelType,
-            allocateData: false)
-        {
-            SamplerName = $"ShadowAtlas_{descriptor.AtlasKind}_{descriptor.Encoding}_{descriptor.PageIndex}",
-            UWrap = ETexWrapMode.ClampToEdge,
-            VWrap = ETexWrapMode.ClampToEdge,
-            MinFilter = ETexMinFilter.Nearest,
-            MagFilter = ETexMagFilter.Nearest,
-        };
-        RasterDepthTexture = new XRTexture2D(
-            descriptor.PageSize,
-            descriptor.PageSize,
-            EPixelInternalFormat.DepthComponent24,
-            EPixelFormat.DepthComponent,
-            EPixelType.UnsignedInt,
-            allocateData: false)
-        {
-            SamplerName = $"ShadowAtlasDepth_{descriptor.AtlasKind}_{descriptor.Encoding}_{descriptor.PageIndex}",
-            UWrap = ETexWrapMode.ClampToEdge,
-            VWrap = ETexWrapMode.ClampToEdge,
-            MinFilter = ETexMinFilter.Nearest,
-            MagFilter = ETexMagFilter.Nearest,
-            FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
-        };
+        Texture = texture;
+        RasterDepthTexture = rasterDepthTexture;
         FrameBuffer = new XRFrameBuffer(
-            (Texture, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (RasterDepthTexture, EFrameBufferAttachment.DepthAttachment, 0, -1));
+            (Texture, EFrameBufferAttachment.ColorAttachment0, 0, descriptor.PageIndex),
+            (RasterDepthTexture, EFrameBufferAttachment.DepthAttachment, 0, descriptor.PageIndex));
     }
 
     public ShadowAtlasPageDescriptor Descriptor { get; }
-    public XRTexture2D Texture { get; }
-    public XRTexture2D RasterDepthTexture { get; }
+    public XRTexture2DArray Texture { get; }
+    public XRTexture2DArray RasterDepthTexture { get; }
     public XRFrameBuffer FrameBuffer { get; }
 }

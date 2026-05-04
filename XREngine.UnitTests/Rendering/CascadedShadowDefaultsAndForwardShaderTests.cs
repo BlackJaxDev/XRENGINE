@@ -478,26 +478,76 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
-    public void DirectionalCascadeAccelerationMode_IsExposedInRuntimeAndImGui()
+    public void DirectionalCascadeLayeredModes_AreExposedInRuntimeAndDocs()
     {
+        string enumSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "EDirectionalCascadeShadowRenderMode.cs"));
+        enumSource.ShouldContain("Sequential = 0");
+        enumSource.ShouldContain("InstancedLayered = 1");
+        enumSource.ShouldContain("GeometryShader = 2");
+        enumSource.ShouldContain("Auto = 3");
+
         string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
-        cascadeSource.ShouldContain("public enum EDirectionalCascadeRenderingAcceleration");
+        cascadeSource.ShouldContain("DirectionalCascadeShadowRenderPlan");
+        cascadeSource.ShouldContain("CreateCascadeShadowRenderPlan(");
+        cascadeSource.ShouldContain("SelectAutomaticCascadeShadowRenderMode(");
         cascadeSource.ShouldContain("InstancedLayered");
         cascadeSource.ShouldContain("GeometryShader");
-        cascadeSource.ShouldContain("public EDirectionalCascadeRenderingAcceleration CascadeRenderingAcceleration");
-        cascadeSource.ShouldContain("RenderLegacyCascadeShadowMaps(");
-        cascadeSource.ShouldContain("DirectionalShadowAudit.CascadeAccelerationFallback");
-
-        string editorSource = LoadRepoSource(Path.Combine("XREngine.Editor", "ComponentEditors", "DirectionalLightComponentEditor.cs"));
-        editorSource.ShouldContain("Cascade Rendering Acceleration");
-        editorSource.ShouldContain("\"Sequential\"");
-        editorSource.ShouldContain("\"Instanced Layered\"");
-        editorSource.ShouldContain("\"Geometry Shader\"");
-        editorSource.ShouldContain("Directional atlas tiles render independently");
+        cascadeSource.ShouldContain("public EDirectionalCascadeShadowRenderMode CascadeShadowRenderMode");
+        cascadeSource.ShouldContain("public EDirectionalCascadeShadowRenderMode EffectiveCascadeShadowRenderMode");
+        cascadeSource.ShouldContain("public string CascadeShadowRenderFallbackReason");
+        cascadeSource.ShouldContain("DirectionalCascadeRenderModeFallback");
+        cascadeSource.ShouldContain("GetPublishedCascadeUnionCullVolume");
 
         string renderNotes = LoadRepoSource(Path.Combine("docs", "architecture", "rendering", "default-render-pipeline-notes.md"));
-        renderNotes.ShouldContain("CascadeRenderingAcceleration");
+        renderNotes.ShouldContain("CascadeShadowRenderMode");
+        renderNotes.ShouldContain("Auto");
         renderNotes.ShouldContain("Directional atlas tiles render independently");
+    }
+
+    [Test]
+    public void DirectionalCascadeLayeredShader_EmitsOnlyActiveCascadeLayers()
+    {
+        string source = LoadShaderSource("DirectionalCascadeShadowDepth.gs");
+
+        source.ShouldContain("layout (triangle_strip, max_vertices=24) out;");
+        source.ShouldContain("uniform int CascadeLayerCount;");
+        source.ShouldContain("uniform mat4 CascadeViewProjectionMatrices[8];");
+        source.ShouldContain("int layerCount = clamp(CascadeLayerCount, 0, 8);");
+        source.ShouldContain("for (int layer = 0; layer < layerCount; ++layer)");
+        source.ShouldContain("gl_Layer = layer;");
+        source.ShouldContain("CascadeViewProjectionMatrices[layer] * vec4(InFragPos[i], 1.0)");
+    }
+
+    [Test]
+    public void DirectionalCascadeInstancedPath_UsesVertexLayerContractAndMaterialFallbacks()
+    {
+        string generatorSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shaders", "Generator", "DefaultVertexShaderGenerator.cs"));
+        generatorSource.ShouldContain("DirectionalCascadeInstancedVertexShaderGenerator");
+        generatorSource.ShouldContain("UseDirectionalCascadeInstancedLayering");
+        generatorSource.ShouldContain("GL_ARB_shader_viewport_layer_array");
+        generatorSource.ShouldContain("uniform int CascadeLayerCount;");
+        generatorSource.ShouldContain("uniform mat4 CascadeViewProjectionMatrices[8];");
+        generatorSource.ShouldContain("int xreCascadeLayer = gl_InstanceID % xreCascadeLayerCount;");
+        generatorSource.ShouldContain("vec3 xreCascadeWorldPos");
+        generatorSource.ShouldContain("CascadeViewProjectionMatrices[xreCascadeLayer] * vec4(xreCascadeWorldPos");
+        generatorSource.ShouldContain("gl_Layer = xreCascadeLayer;");
+
+        string meshRendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
+        meshRendererSource.ShouldContain("ResolveDirectionalCascadeShadowMaterial(");
+        meshRendererSource.ShouldContain("GetDirectionalCascadeShadowCasterVariant(useGeometryShader: true)");
+        meshRendererSource.ShouldContain("CanUseDirectionalCascadeInstancedMaterial");
+        meshRendererSource.ShouldContain("instances != 1u");
+        meshRendererSource.ShouldContain("MeshRenderer.MeshDeformEnabled");
+        meshRendererSource.ShouldContain("ResolveDirectionalCascadeLayeredInstanceCount");
+        meshRendererSource.ShouldContain("DirectionalCascadeShadowLayerCount");
+        meshRendererSource.ShouldContain("SetDirectionalCascadeLayeredVertexUniforms");
+        meshRendererSource.ShouldContain("material.OnSettingShadowUniforms(vertexProgram.Data)");
+
+        string factorySource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Shaders", "ShadowCasterVariantFactory.cs"));
+        factorySource.ShouldContain("CreateDirectionalCascadeMaterialVariant");
+        factorySource.ShouldContain("DirectionalCascadeShadowDepth.gs");
+        factorySource.ShouldContain("ShadowBindingSourceMaterial = sourceMaterial");
+        factorySource.ShouldContain("DirectionalCascadeShadowMaterialKind");
     }
 
     [Test]
@@ -587,10 +637,16 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string atlasManagerSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasManager.cs"));
 
         atlasManagerSource.ShouldContain("MaxRenderMilliseconds");
+        atlasManagerSource.ShouldContain("scheduled >= budget");
         atlasManagerSource.ShouldContain("scheduled > 0 && HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds)");
+        atlasManagerSource.ShouldContain("ShouldContinueBudgetedLightSet");
+        atlasManagerSource.ShouldContain("candidateRequest.ProjectionType == EShadowProjectionType.DirectionalCascade");
+        atlasManagerSource.ShouldContain("candidateRequest.ProjectionType == EShadowProjectionType.PointFace");
         atlasManagerSource.ShouldContain("if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))");
         atlasManagerSource.ShouldContain("ShadowAtlas.RenderBudget.Deferred");
         atlasManagerSource.ShouldContain("ShadowAtlas.RenderScheduledTiles.Slow");
+        atlasManagerSource.ShouldContain("ContentVersion = request.ContentHash");
+        atlasManagerSource.ShouldContain("SkipReason = SkipReason.None");
     }
 
     [Test]
@@ -802,7 +858,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
 
         string meshRendererSource = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Shaders.cs"));
         meshRendererSource.ShouldContain("bool pointLightShadowPass = renderState?.ShadowPass == true");
-        meshRendererSource.ShouldContain("&& UsesPointLightShadowCubemap(globalMaterialOverride);");
+        meshRendererSource.ShouldContain("&& UsesPointLightShadowDepthOutput(globalMaterialOverride);");
         meshRendererSource.ShouldContain("|| pointLightShadowPass;");
 
         string meshRendererRenderingSource = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));

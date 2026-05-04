@@ -7,6 +7,8 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Extensions;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Shadows;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Capture.Lights.Types
@@ -20,14 +22,44 @@ namespace XREngine.Components.Capture.Lights.Types
     [Description("Emits omnidirectional light with optional shadow maps for local illumination.")]
     public class PointLightComponent : LightComponent
     {
+        public const int ShadowFaceCount = 6;
+
         private XRViewport[] _viewports = [];
         private XRCamera[] _shadowCameras = [];
 
         private bool _useGeometryShader = true;
         private XRFrameBuffer? _perFaceFbo;
+        private XRMaterial? _shadowAtlasMaterial;
         private const float PointShadowNearPlaneDistanceDefault = 0.1f;
         private readonly PositionOnlyTransform _shadowCameraParentTransform = new();
         private float _shadowNearPlaneDistance = PointShadowNearPlaneDistanceDefault;
+        private readonly PointShadowAtlasFaceSlot[] _atlasFaceSlots = new PointShadowAtlasFaceSlot[ShadowFaceCount];
+
+        private static readonly Vector3[] ShadowFaceForwardVectors =
+        [
+            Vector3.UnitX,
+            -Vector3.UnitX,
+            Vector3.UnitY,
+            -Vector3.UnitY,
+            Vector3.UnitZ,
+            -Vector3.UnitZ,
+        ];
+
+        public readonly record struct PointShadowAtlasFaceSlot(
+            bool HasAllocation,
+            bool IsResident,
+            int PageIndex,
+            int RecordIndex,
+            Vector4 UvScaleBias,
+            float NearPlane,
+            float FarPlane,
+            float TexelSize,
+            float ResolutionScale,
+            uint Resolution,
+            ShadowFallbackMode Fallback,
+            BoundingRectangle PixelRect,
+            BoundingRectangle InnerPixelRect,
+            ulong LastRenderedFrame);
 
         /// <summary>
         /// When enabled, renders all 6 cubemap shadow faces in a single draw call
@@ -69,6 +101,14 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         public XRCamera[] ShadowCameras => _shadowCameras;
 
+        protected override bool UsesAtlasOnlyShadowMapResource
+            => Engine.Rendering.Settings.UsePointShadowAtlas;
+
+        internal static Vector3 GetShadowFaceForward(int faceIndex)
+            => (uint)faceIndex < (uint)ShadowFaceForwardVectors.Length
+                ? ShadowFaceForwardVectors[faceIndex]
+                : Vector3.UnitZ;
+
         private XRViewport CreateShadowViewport(uint resolution)
             => new(null, resolution, resolution)
             {
@@ -81,7 +121,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private void EnsureShadowResources()
         {
-            if (_viewports.Length == 6 && _shadowCameras.Length == 6)
+            if (_viewports.Length == ShadowFaceCount && _shadowCameras.Length == ShadowFaceCount)
                 return;
 
             uint resolution = ShadowMapResolutionWidth > ShadowMapResolutionHeight
@@ -90,7 +130,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (resolution == 0)
                 resolution = 1024u;
 
-            _viewports = new XRViewport[6].Fill(_ => CreateShadowViewport(resolution));
+            _viewports = new XRViewport[ShadowFaceCount].Fill(_ => CreateShadowViewport(resolution));
             float farPlane = MathF.Max(_influenceVolume.Radius, _shadowNearPlaneDistance + 0.001f);
             _shadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(_shadowNearPlaneDistance, farPlane, true, _shadowCameraParentTransform);
 
@@ -156,13 +196,13 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public override void CollectVisibleItems()
         {
-            if (!CastsShadows || ShadowMap is null)
+            if (!ShouldProcessShadowViewports())
                 return;
 
             EnsureShadowResources();
             SyncShadowCaptureTransforms();
 
-            if (_useGeometryShader)
+            if (_useGeometryShader && !Engine.Rendering.Settings.UsePointShadowAtlas)
             {
                 // GS renders all 6 cubemap faces per draw call. One viewport
                 // with the influence sphere captures objects visible from any face.
@@ -179,12 +219,12 @@ namespace XREngine.Components.Capture.Lights.Types
         }
         public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
         {
-            if (!CastsShadows || ShadowMap is null)
+            if (!ShouldProcessShadowViewports())
                 return;
 
             EnsureShadowResources();
 
-            if (_useGeometryShader)
+            if (_useGeometryShader && !Engine.Rendering.Settings.UsePointShadowAtlas)
             {
                 _viewports[0].SwapBuffers();
             }
@@ -197,7 +237,11 @@ namespace XREngine.Components.Capture.Lights.Types
         }
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {
-            if (!CastsShadows || ShadowMap is null)
+            if (!CastsShadows || Engine.Rendering.Settings.UsePointShadowAtlas)
+                return;
+
+            EnsureShadowMapForActiveDynamicLight();
+            if (ShadowMap is null)
                 return;
 
             EnsureShadowResources();
@@ -230,6 +274,9 @@ namespace XREngine.Components.Capture.Lights.Types
                 }
             }
         }
+
+        private bool ShouldProcessShadowViewports()
+            => CastsShadows && (ShadowMap is not null || Engine.Rendering.Settings.UsePointShadowAtlas);
 
         /// <summary>
         /// The distance beyond which this light has no visible effect.
@@ -359,6 +406,119 @@ namespace XREngine.Components.Capture.Lights.Types
 
             for (int i = 0; i < _viewports.Length; i++)
                 _viewports[i].WorldInstanceOverride = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
+        }
+
+        private XRMaterial ShadowAtlasMaterial => _shadowAtlasMaterial ??= CreateShadowAtlasMaterial();
+
+        private XRMaterial CreateShadowAtlasMaterial()
+        {
+            XRMaterial mat = new(XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment));
+            mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
+            return mat;
+        }
+
+        internal bool TryGetShadowFaceCamera(int faceIndex, out XRCamera camera)
+        {
+            if ((uint)faceIndex >= ShadowFaceCount)
+            {
+                camera = null!;
+                return false;
+            }
+
+            EnsureShadowResources();
+            SyncShadowCaptureTransforms();
+            camera = _shadowCameras[faceIndex];
+            return true;
+        }
+
+        internal bool RenderShadowAtlasFaceTile(int faceIndex, XRFrameBuffer atlasFbo, BoundingRectangle renderRect, bool collectVisibleNow)
+        {
+            if (!CastsShadows ||
+                World is null ||
+                (uint)faceIndex >= ShadowFaceCount ||
+                renderRect.Width <= 0 ||
+                renderRect.Height <= 0)
+                return false;
+
+            EnsureShadowResources();
+            SyncShadowCaptureTransforms();
+
+            XRViewport viewport = _viewports[faceIndex];
+            if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
+                return false;
+
+            if (collectVisibleNow)
+            {
+                CollectVisibleItems();
+                SwapBuffers();
+            }
+
+            bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
+            shadowPipeline.PreserveExistingRenderArea = true;
+            try
+            {
+                var state = viewport.RenderPipelineInstance.RenderState;
+                using var renderArea = state.PushRenderArea(renderRect);
+                using var cropArea = state.PushCropArea(renderRect);
+                viewport.Render(atlasFbo, null, null, true, ShadowAtlasMaterial);
+            }
+            finally
+            {
+                shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
+            }
+
+            return true;
+        }
+
+        internal void ClearShadowAtlasFaceSlots()
+            => Array.Clear(_atlasFaceSlots);
+
+        internal void SetShadowAtlasFaceSlot(
+            int faceIndex,
+            ShadowAtlasAllocation allocation,
+            int recordIndex,
+            float nearPlane,
+            float farPlane,
+            uint desiredResolution)
+        {
+            if ((uint)faceIndex >= ShadowFaceCount)
+                return;
+
+            uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
+            float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
+            float resolutionScale = sampleResolution > 0u
+                ? MathF.Max(1.0f, Math.Max(1u, desiredResolution) / (float)sampleResolution)
+                : 1.0f;
+
+            _atlasFaceSlots[faceIndex] = new PointShadowAtlasFaceSlot(
+                HasAllocation: true,
+                IsResident: allocation.IsResident,
+                PageIndex: allocation.PageIndex,
+                RecordIndex: recordIndex,
+                UvScaleBias: allocation.UvScaleBias,
+                NearPlane: nearPlane,
+                FarPlane: farPlane,
+                TexelSize: texelSize,
+                ResolutionScale: resolutionScale,
+                Resolution: allocation.Resolution,
+                Fallback: allocation.ActiveFallback,
+                PixelRect: allocation.PixelRect,
+                InnerPixelRect: allocation.InnerPixelRect,
+                LastRenderedFrame: allocation.LastRenderedFrame);
+        }
+
+        internal bool TryGetShadowAtlasFaceSlot(int faceIndex, out PointShadowAtlasFaceSlot slot)
+        {
+            if ((uint)faceIndex < ShadowFaceCount)
+            {
+                slot = _atlasFaceSlots[faceIndex];
+                return slot.HasAllocation;
+            }
+
+            slot = default;
+            return false;
         }
         protected override void OnComponentDeactivated()
         {

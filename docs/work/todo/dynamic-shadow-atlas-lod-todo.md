@@ -1,7 +1,7 @@
 # Dynamic Shadow Atlas And LOD Allocation TODO
 
 > Status: **active phased TODO**
-> Last reconciled: **2026-05-03** after the directional/spot atlas bring-up and directional raster-depth parity fix.
+> Last reconciled: **2026-05-04** after point atlas bring-up, atlas page-array sampler conversion, and point-face refresh grouping.
 > Scope: runtime shadows, renderer integration, editor diagnostics, shader metadata.
 
 ## Target Outcome
@@ -11,7 +11,7 @@ Replace fixed per-light shadow textures with a budgeted shadow atlas system:
 - Lights submit shadow requests instead of owning every live render target.
 - The atlas manager chooses active requests, tile resolution, update cadence, and fallback behavior under memory and render-time budgets.
 - Directional cascades, spot lights, and point-light faces share one request/allocation model.
-- Directional and spot lights currently use the atlas path; point-light atlas requests/resources are reserved but point rendering and sampling remain pending.
+- Directional, spot, and point lights use the atlas path when their atlas toggles are enabled; point lights currently use sequential direct-to-atlas face rendering while the true GS fan-out path remains pending.
 - Receiver shaders sample atlas textures plus metadata, with no undefined reads when a request is skipped.
 - The v1 receiver contract can later move to Virtual Shadow Maps without another major shader API break.
 
@@ -27,7 +27,7 @@ Replace fixed per-light shadow textures with a budgeted shadow atlas system:
 - [x] Every skipped request publishes an explicit fallback: `Lit`, `ContactOnly`, `StaleTile`, `Disabled`, or transition-only `Legacy`.
 - [x] Tile gutters are included in allocation rects; receiver sampling uses only inner rects and clamps atlas-local filter taps.
 - [x] Directional cascade matrices are texel-snapped using the current atlas allocation resolution when available, with desired-resolution fallback before first allocation.
-- [ ] Point lights become six independent direct-to-atlas 2D face requests in atlas mode; no cubemap shadow texture is produced or sampled on the atlas path.
+- [x] Point lights become six independent direct-to-atlas 2D face requests in atlas mode; no cubemap shadow texture is produced or sampled on the atlas path.
 - [ ] Point-light atlas rendering supports per-face priority, LOD, residency, and skip/fallback. A point light does not require all six faces to be resident in order to cast useful shadows.
 - [ ] The optimized point-light atlas path is a true atlas geometry-shader renderer: selected faces fan out directly into atlas pages/tiles, not into an intermediate cubemap.
 - [ ] `Submit(in ShadowMapRequest)` performs no heap allocation after warmup.
@@ -106,7 +106,7 @@ Point-light atlas metadata must reference six independent face records or indice
 ## Recommended Defaults
 
 - [x] Page size: `4096 x 4096`.
-- [x] Max pages: current runtime clamps to `1` page per light-family atlas (`Directional`, `Point`, `Spot`), so the live depth path can own at most three pages total. Configurable multi-page-per-family sampling is deferred.
+- [x] Max pages: atlas pages are backed by one `Texture2DArray` per light-family/encoding atlas (`Directional`, `Point`, `Spot`); `PageIndex` is the array layer. Runtime defaults still use `1` page per family, but `MaxShadowAtlasPages` is now honored per family and memory-budget checks account for the full array allocation.
 - [x] Tile sizes: `4096`, `2048`, `1024`, `512`, `256`, `128` through power-of-two normalization.
 - [x] Gutter: currently `2` texels for opaque, `4` for alpha-tested/two-sided; expand toward `8` only if larger filters require it.
 - [ ] Depth atlas format:
@@ -121,13 +121,14 @@ Point-light atlas metadata must reference six independent face records or indice
 
 As of 2026-05-03:
 
-- [x] Directional and spot atlas paths are live and independently toggleable from the ImGui light editors/settings.
+- [x] Directional, spot, and point atlas paths are live and independently toggleable from the ImGui light editors/settings.
 - [x] Directional atlas mode is authoritative: when enabled, forward and deferred directional receivers do not sample legacy `ShadowMap` / `ShadowMapArray`.
 - [x] Directional cascades are balanced down to fit all active cascades into the directional family atlas instead of falling back to legacy individual cascade maps.
-- [x] The atlas manager has separate resource identity for `Directional`, `Point`, and `Spot`; point atlas rendering is still not implemented.
+- [x] The atlas manager has separate resource identity for `Directional`, `Point`, and `Spot`; each family/encoding atlas uses one `XRTexture2DArray` for sampling plus one raster-depth `XRTexture2DArray` for tile rasterization.
 - [x] Directional atlas page sampling uses the page raster depth texture, which fixed the bias/parity mismatch caused by sampling the `R16f` color page.
-- [x] Directional, spot, and atlas tile preview UI now shows actual atlas pages plus compact tile previews with tile overlays.
-- [x] `CascadeShadowRenderMode` is exposed in ImGui. `Sequential` is the standard legacy cascade path, `GeometryShader` uses the layered framebuffer path when available, and `InstancedLayered` currently logs/falls back to sequential.
+- [x] Directional, spot, and point atlas tile preview UI now shows actual atlas array layers plus compact tile previews with tile overlays.
+- [x] Forward/deferred receivers bind one atlas `sampler2DArray` per light family instead of uniform arrays of per-page `sampler2D` values.
+- [x] `CascadeShadowRenderMode` is exposed in ImGui. `Sequential` is the standard legacy cascade path, `GeometryShader` uses the layered framebuffer path when available, and `InstancedLayered` uses single-pass layered rendering on OpenGL drivers with vertex-stage layer write support.
 - [ ] Unified GPU shadow metadata SSBO, point-light face atlas rendering/sampling, dirty-reason reporting, LOD hysteresis, and allocation-free hot-path validation remain open.
 
 ## Phase 0: Migration Audit And Policy Decisions
@@ -190,7 +191,7 @@ Phase 0 decisions and the migration table are captured in [Shadow Resource Migra
 - [ ] Add request generation for directional, spot, and point lights.
   - [x] Directional cascade/primary requests.
   - [x] Spot primary requests.
-  - [ ] Point face requests; `SubmitPointShadowAtlasRequests` is still intentionally stubbed.
+  - [x] Point face requests; atlas mode submits six `PointFace` requests per dynamic point light.
 - [x] Bridge runtime-rendering shadow atlas settings to the host engine settings so editor toggles and budgets are honored.
 - [ ] Compute desired and minimum resolution from projected size, light importance, cascade index, point-face visibility, and editor pinning.
   - [x] Initial deterministic heuristic uses current shadow-map resolution, active camera distance/brightness for local lights, cascade index, and atlas min/max settings.
@@ -205,21 +206,22 @@ Phase 0 decisions and the migration table are captured in [Shadow Resource Migra
 - [ ] Add inspector/debug output for requested resolution, priority, dirty reason, and fallback preference.
   - [x] Per-light ImGui diagnostics show request count, resident count, max requested/allocated resolution, priority, fallback, and skip reason.
   - [ ] Add explicit dirty-reason reporting.
-- [x] Keep existing `RenderShadowMap` methods available as the non-atlas/debug path. Spot and directional atlas rendering are now active when their atlas toggles are enabled; point lights still use the legacy cubemap path.
+- [x] Keep existing `RenderShadowMap` methods available as the non-atlas/debug path. Spot, directional, and point atlas rendering are now active when their atlas toggles are enabled; point lights use the legacy cubemap path only when point atlas mode is disabled.
 
 ### Exit Criteria
 
 - [x] Enabling diagnostics does not alter rendered shadows.
 - [x] Request order is deterministic for fixed scene input.
-- [ ] Point lights report exactly six face requests in atlas mode diagnostics.
+- [x] Point lights report exactly six face requests in atlas mode diagnostics.
 - [x] Directional lights report one request per active cascade.
 
 ### Validation
 
 - [x] Add unit tests for stable keys and LOD choice boundaries.
-- [ ] Add tests for point-face and cascade request expansion.
+- [x] Add tests for point-face allocation expansion.
+- [ ] Add tests for cascade request expansion.
 - [ ] Run targeted rendering/unit tests for light components.
-  - [ ] `dotnet test XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~ShadowAtlas"` currently cannot execute because unrelated unit-test sources fail to compile (`Audio2Face3DComponent`, `OVRLipSyncComponent`, `HumanoidComponent`, `VRIKSolverComponent`, and `TransformAccessorFastPathTests` API drift).
+  - [ ] `dotnet test XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~ShadowAtlas"` currently cannot execute because unrelated unit-test sources fail to compile (`Audio2Face3DComponent`, `OVRLipSyncComponent`, `HumanoidComponent`, `VRIKSolverComponent`, `Debug` log-helper API drift, and ambiguous `Engine` references between `XREngine` and `XREngine.Runtime.Rendering`).
 
 ## Phase 2: Atlas Manager, Resources, And Allocator
 
@@ -332,7 +334,7 @@ Current state: spot atlas rendering/sampling is live and remains the color-linea
 - [x] Clamp atlas PCF/PCSS/Vogel taps in tile-local UV space before converting to page UVs.
 - [x] Expose `CascadeShadowRenderMode` in ImGui for the legacy non-atlas cascade path.
   - [x] `Sequential` is implemented.
-  - [ ] `InstancedLayered` single-pass cascade rendering.
+  - [x] `InstancedLayered` single-pass cascade rendering.
   - [x] `GeometryShader` layered cascade rendering.
 - [x] Use union of stereo eye frusta for VR cascade fit.
 
@@ -352,7 +354,7 @@ Current state: spot atlas rendering/sampling is live and remains the color-linea
 
 **Goal:** migrate point shadows from cubemap ownership to direct-to-atlas face tiles with independent per-face residency.
 
-Current state: `EShadowProjectionType.PointFace` and `EShadowAtlasKind.Point` exist and the allocator can place point-family requests in a separate atlas resource, but runtime point request generation, direct-to-atlas face rendering, metadata binding, and receiver sampling are not implemented. `SubmitPointShadowAtlasRequests` remains a stub and point lights still use the legacy cubemap path.
+Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic point lights submit six independent `PointFace` requests, render selected faces directly into point-family atlas tiles, publish six face metadata records, and sample the atlas in forward and deferred receivers. The bring-up path is sequential direct-to-atlas rendering; true atlas GS fan-out and seam hardening remain pending.
 
 ### Design Decisions
 
@@ -361,43 +363,52 @@ Current state: `EShadowProjectionType.PointFace` and `EShadowAtlasKind.Point` ex
 - Atlas point shadows are rendered as 2D face tiles. The atlas path must not allocate, render, or sample a cubemap as an intermediate representation.
 - Sequential rendering is valid as a bring-up/debug path, but it still renders each selected face directly into its atlas tile.
 - The production optimized path is true atlas GS fan-out: one draw path may emit only the selected faces and route them to their allocated atlas tile/page state. It must support a face mask, per-face tile metadata, and page grouping or texture-array pages as needed.
-- If atlas pages remain separate `sampler2D` resources, true atlas GS batching is grouped by destination page. If pages become a texture array, the GS can route pages through `gl_Layer`; in both cases tile isolation still comes from viewport/scissor state and inner-rect metadata.
+- Atlas pages are `Texture2DArray` layers, so true atlas GS batching can route destination pages through `gl_Layer`; tile isolation still comes from viewport/scissor state and inner-rect metadata.
 - A legacy cubemap GS face-mask optimization is separate from atlas mode. It may remain useful for the debug/fallback cubemap path, but it must not be treated as the point-light atlas implementation.
 - Receiver sampling selects a face by major axis, converts the direction to face-local UV, and samples that face's atlas metadata. Missing faces return the published fallback (`Lit`, `ContactOnly`, `StaleTile`, or `Disabled`) without undefined reads.
 
 ### Tasks
 
-- [ ] Convert each point light to six face requests.
-- [ ] Add face matrix generation for `+X`, `-X`, `+Y`, `-Y`, `+Z`, `-Z`.
-- [ ] Define point receiver metadata as six face records/indices plus a validity/fallback mask, or as a base index into six contiguous face records.
+- [x] Convert each point light to six face requests.
+- [x] Add face matrix generation for `+X`, `-X`, `+Y`, `-Y`, `+Z`, `-Z`.
+- [x] Define point receiver metadata as six face records/indices plus a validity/fallback mask, or as a base index into six contiguous face records.
 - [ ] Add per-face active-consumer scoring using face frustum overlap, projected receiver/caster importance, distance, light radius, brightness, and editor pinning.
+  - [x] Initial per-face camera-direction relevance scoring.
+  - [ ] Add projected receiver/caster overlap and editor pinning.
 - [ ] Allow per-face LOD and optional per-face skip when the face cannot affect active consumers.
+  - [x] Initial per-face LOD demotion based on face relevance.
+  - [ ] Optional request skip for faces outside active consumers.
 - [ ] Keep valid skipped faces resident when content is reusable and `StaleTile` fallback is allowed.
-- [ ] Add direct-to-atlas sequential rendering for selected point faces.
+- [x] Add direct-to-atlas sequential rendering for selected point faces.
 - [ ] Add true atlas GS rendering for selected point faces:
   - [ ] face mask uniform/metadata,
   - [ ] per-face view-projection matrices,
   - [ ] per-face atlas uv scale/bias and inner rect,
   - [ ] atlas page routing via page-grouped draws or texture-array pages,
   - [ ] viewport/scissor setup that prevents writes outside each allocated tile.
-- [ ] Add shader face selection by major axis.
-- [ ] Convert receiver direction to face-local UV.
-- [ ] Compare radial normalized receiver depth.
+- [x] Add shader face selection by major axis.
+- [x] Convert receiver direction to face-local UV.
+- [x] Compare radial normalized receiver depth.
 - [ ] Duplicate edge texels or otherwise protect gutters against face seams.
-- [ ] Keep legacy cubemap shadows only as a debug/fallback path outside atlas mode until seam validation passes.
+- [x] Keep legacy cubemap shadows only as a debug/fallback path outside atlas mode until seam validation passes.
+- [x] Show point atlas pages and per-face tile previews in the ImGui shadow-map preview panel.
+- [x] Continue budgeted point-face rendering once a point light's face set has started, matching directional cascade set behavior so transform edits do not refresh one cube face at a time.
+- [x] Convert atlas page resources and receivers to one `Texture2DArray` sampler per light family/encoding, with page index carried as the sampled layer.
 
 ### Exit Criteria
 
 - [ ] Point atlas path renders any subset of selected faces correctly, including one-face, partial-face, and all-six-face cases.
 - [ ] Face orientation debug view proves no swapped or mirrored faces.
 - [ ] Seams are no worse than the legacy cubemap path.
-- [ ] Nonresident point faces produce explicit fallback behavior and never sample undefined atlas data.
+- [x] Nonresident point faces produce explicit fallback behavior and never sample undefined atlas data.
 - [ ] True atlas GS output matches sequential direct-to-atlas output for the same selected face set.
 
 ### Validation
 
 - [ ] Point light in a six-sided orientation test scene.
 - [ ] Moving receiver across face boundaries.
+- [x] Unit coverage for six independent point-face atlas allocations and partial point-face residency.
+- [x] Unit coverage for oversized point-face requests demoting to fit one point atlas page before faces are skipped.
 - [ ] Oversubscribed point-light scene near the camera.
 - [ ] Partial-face scene where only one to three faces are resident.
 - [ ] GS path versus sequential path comparison with identical face masks.
@@ -616,8 +627,8 @@ These test sources exist in the working tree, but the unit-test project currentl
 
 Continue from the reconciled 2026-05-03 state:
 
-1. Finish Phase 5 point-light atlas support with sequential direct-to-atlas face rendering first.
-2. Add point receiver metadata and shader face selection with explicit fallback for missing/nonresident faces.
-3. Move toward Phase 6 unified atlas metadata so the atlas path no longer depends on fixed local shadow sampler arrays.
-4. Add Phase 7 dirty-reason reporting, LOD hysteresis, and warmed no-allocation validation once point-face residency exists.
-5. Keep `InstancedLayered` / `GeometryShader` cascade acceleration as a separate legacy directional cascade optimization; it does not block atlas point work.
+1. Validate Phase 5 point-light atlas scenes: one-face, partial-face, all-six-face, and face-boundary movement.
+2. Add the true atlas GS fan-out path for selected point faces now that atlas pages are array layers.
+3. Move toward Phase 6 unified atlas metadata so the atlas path no longer depends on fixed legacy local shadow sampler arrays.
+4. Add Phase 7 dirty-reason reporting, LOD hysteresis, and warmed no-allocation validation once point-face residency scenes are validated.
+5. Keep legacy texture-array `InstancedLayered` / `GeometryShader` cascade acceleration separate from atlas point work; grouped directional atlas cascade parity is tracked in `directional-cascade-layered-rendering-todo.md`.

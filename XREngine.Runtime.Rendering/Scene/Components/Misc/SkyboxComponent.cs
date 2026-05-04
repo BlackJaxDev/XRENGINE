@@ -732,7 +732,7 @@ namespace XREngine.Components.Scene.Mesh
 
             if (_autoCycle)
             {
-                float dt = Math.Max(0.0f, Engine.Delta);
+                float dt = Math.Max(0.0f, Engine.Time.Timer.Update.Delta);
                 float dayLength = Math.Max(1.0f, _dayLengthSeconds);
                 _timeOfDay = (_timeOfDay + dt / dayLength) % 1.0f;
             }

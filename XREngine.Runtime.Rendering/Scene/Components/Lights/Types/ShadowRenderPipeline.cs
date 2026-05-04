@@ -47,10 +47,6 @@ namespace XREngine.Components.Lights
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
-                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.WeightedBlendedOitForward;
-                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PerPixelLinkedListForward;
-                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.DepthPeelingForward;
-                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 }
             }
             c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
@@ -72,11 +68,7 @@ namespace XREngine.Components.Lights
             Chain(metadata, EDefaultRenderPass.OpaqueDeferred, EDefaultRenderPass.PreRender);
             Chain(metadata, EDefaultRenderPass.OpaqueForward, EDefaultRenderPass.OpaqueDeferred);
             Chain(metadata, EDefaultRenderPass.MaskedForward, EDefaultRenderPass.OpaqueForward);
-            Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.MaskedForward);
-            Chain(metadata, EDefaultRenderPass.WeightedBlendedOitForward, EDefaultRenderPass.TransparentForward);
-            Chain(metadata, EDefaultRenderPass.PerPixelLinkedListForward, EDefaultRenderPass.WeightedBlendedOitForward);
-            Chain(metadata, EDefaultRenderPass.DepthPeelingForward, EDefaultRenderPass.PerPixelLinkedListForward);
-            Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.DepthPeelingForward);
+            Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.MaskedForward);
         }
 
         protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()

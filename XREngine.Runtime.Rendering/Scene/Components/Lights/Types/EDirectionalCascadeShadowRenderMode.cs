@@ -11,7 +11,7 @@ public enum EDirectionalCascadeShadowRenderMode
     Sequential = 0,
 
     /// <summary>
-    /// Reserved for a future instanced layered path that writes gl_Layer from the vertex stage.
+    /// Renders active cascades through one layered pass by expanding cascade layers through draw instancing.
     /// </summary>
     InstancedLayered = 1,
 
@@ -19,4 +19,9 @@ public enum EDirectionalCascadeShadowRenderMode
     /// Renders all cascade layers through one layered framebuffer using a geometry shader.
     /// </summary>
     GeometryShader = 2,
+
+    /// <summary>
+    /// Selects the fastest supported layered path at runtime, falling back to sequential rendering.
+    /// </summary>
+    Auto = 3,
 }

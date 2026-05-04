@@ -385,6 +385,51 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 Engine.Rendering.State.OpenGLExtensions = extensions;
+                int glMajor = 0;
+                int glMinor = 0;
+                try
+                {
+                    glMajor = api.GetInteger(GLEnum.MajorVersion);
+                    glMinor = api.GetInteger(GLEnum.MinorVersion);
+                }
+                catch (Exception ex)
+                {
+                    Debug.OpenGLWarning($"Failed to query GL version integers for layered-rendering capability detection: {ex.Message}");
+                }
+
+                bool VersionAtLeast(int major, int minor)
+                    => glMajor > major || (glMajor == major && glMinor >= minor);
+
+                bool HasExtension(string extensionName)
+                    => extensions.Any(e => string.Equals(e, extensionName, StringComparison.Ordinal));
+
+                Engine.Rendering.State.SupportsOpenGLLayeredFramebuffers =
+                    VersionAtLeast(3, 2) ||
+                    HasExtension("GL_ARB_geometry_shader4") ||
+                    HasExtension("GL_EXT_geometry_shader4");
+                Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering =
+                    VersionAtLeast(3, 2) ||
+                    HasExtension("GL_ARB_geometry_shader4") ||
+                    HasExtension("GL_EXT_geometry_shader4");
+                Engine.Rendering.State.SupportsOpenGLViewportArray =
+                    VersionAtLeast(4, 1) ||
+                    HasExtension("GL_ARB_viewport_array") ||
+                    HasExtension("GL_NV_viewport_array");
+                Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering =
+                    VersionAtLeast(4, 5) ||
+                    HasExtension("GL_ARB_shader_viewport_layer_array") ||
+                    HasExtension("GL_AMD_vertex_shader_layer") ||
+                    HasExtension("GL_NV_viewport_array2");
+                try
+                {
+                    Engine.Rendering.State.MaxOpenGLViewports = Math.Max(1, api.GetInteger(GLEnum.MaxViewports));
+                }
+                catch (Exception ex)
+                {
+                    Engine.Rendering.State.MaxOpenGLViewports = 1;
+                    Debug.OpenGLWarning($"Failed to query GL_MAX_VIEWPORTS: {ex.Message}");
+                }
+
                 bool hasExtMultiview = false;
                 for (int i = 0; i < extensions.Length; i++)
                 {
@@ -396,16 +441,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 Engine.Rendering.State.HasOvrMultiViewExtension |= hasExtMultiview;
 
-                // Probe for GL_ARB_parallel_shader_compile � enables non-blocking CompileShader/LinkProgram.
-                bool hasParallelShaderCompile = extensions.Any(
-                    e => string.Equals(e, "GL_ARB_parallel_shader_compile", StringComparison.Ordinal));
-                Engine.Rendering.State.HasParallelShaderCompile = hasParallelShaderCompile;
-                if (hasParallelShaderCompile && api.TryGetExtension<ArbParallelShaderCompile>(out var parallelExt))
-                {
-                    // Request unlimited driver shader-compiler threads.
-                    parallelExt.MaxShaderCompilerThreads(0xFFFF_FFFF);
-                    Debug.OpenGL("GL_ARB_parallel_shader_compile enabled � shader compilation is non-blocking.");
-                }
+                ConfigureParallelShaderCompile(api, extensions);
 
                 InitializeSparseTextureSupport(extensions);
 
@@ -874,7 +910,7 @@ namespace XREngine.Rendering.OpenGL
         {
             bool wantBinaryUpload = Engine.Rendering.Settings.AsyncProgramBinaryUpload
                                  && Engine.Rendering.Settings.AllowBinaryProgramCaching;
-            bool wantCompileLink = Engine.Rendering.Settings.AsyncProgramCompilation;
+            bool wantCompileLink = WantsSharedContextProgramCompileLinkQueue;
             bool wantSparseTextureUploads = GetSparseTextureStreamingSupport(ESizedInternalFormat.Rgba8).IsAvailable;
 
             if (!wantBinaryUpload && !wantCompileLink && !wantSparseTextureUploads)

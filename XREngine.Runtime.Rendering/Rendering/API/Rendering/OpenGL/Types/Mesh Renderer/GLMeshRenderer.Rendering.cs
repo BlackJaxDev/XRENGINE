@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Numerics;
 using XREngine.Data.Rendering;
@@ -11,11 +12,20 @@ namespace XREngine.Rendering.OpenGL
         public partial class GLMeshRenderer
         {
             private bool _inlineGenerateFallbackLogged;
+            private static readonly string[] s_directionalCascadeViewProjectionMatrixUniformNames = CreateDirectionalCascadeViewProjectionMatrixUniformNames();
+
+            private static string[] CreateDirectionalCascadeViewProjectionMatrixUniformNames()
+            {
+                string[] names = new string[8];
+                for (int i = 0; i < names.Length; i++)
+                    names[i] = $"CascadeViewProjectionMatrices[{i}]";
+                return names;
+            }
 
             /// <summary>
             /// Select the effective material, honoring global/pipeline overrides.
             /// </summary>
-            public GLMaterial GetRenderMaterial(XRMaterial? localMaterialOverride = null)
+            public GLMaterial GetRenderMaterial(XRMaterial? localMaterialOverride = null, uint instances = 1)
             {
                 var renderState = Engine.Rendering.State.RenderingPipelineState;
                 var globalMaterialOverride = renderState?.GlobalMaterialOverride;
@@ -25,7 +35,17 @@ namespace XREngine.Rendering.OpenGL
                 {
                     XRMaterial? shadowSourceMaterial = localMaterialOverride ?? MeshRenderer.Material;
                     bool pointLightShadowOverride = globalMaterialOverride is not null
-                        && UsesPointLightShadowCubemap(globalMaterialOverride);
+                        && UsesPointLightShadowDepthOutput(globalMaterialOverride);
+
+                    if (globalMaterialOverride is not null &&
+                        globalMaterialOverride.DirectionalCascadeShadowMaterialKind != EDirectionalCascadeShadowMaterialKind.None)
+                    {
+                        XRMaterial directionalCascadeMaterial = ResolveDirectionalCascadeShadowMaterial(
+                            globalMaterialOverride,
+                            shadowSourceMaterial,
+                            instances);
+                        return GetOrCreateShadowMaterial(directionalCascadeMaterial);
+                    }
 
                     if (pointLightShadowOverride
                         && shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == false)
@@ -44,7 +64,7 @@ namespace XREngine.Rendering.OpenGL
                     // Per-mesh shadow variants wouldn't include the required GS, so the
                     // override takes priority.
                     if (globalMaterialOverride is not null &&
-                        (globalMaterialOverride.GeometryShaders.Count > 0 || UsesPointLightShadowCubemap(globalMaterialOverride)))
+                        (globalMaterialOverride.GeometryShaders.Count > 0 || UsesPointLightShadowDepthOutput(globalMaterialOverride)))
                     {
                         return (Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial)!;
                     }
@@ -57,14 +77,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         shadowVariant.ShadowUniformSourceMaterial = globalMaterialOverride;
 
-                        // Fast path: reuse cached GLMaterial when the shadow variant hasn't changed.
-                        if (ReferenceEquals(shadowVariant, _shadowVariantKey) && _shadowMaterialCache is not null)
-                            return _shadowMaterialCache;
-
-                        var glMat = (Renderer.GetOrCreateAPIRenderObject(shadowVariant) as GLMaterial)!;
-                        _shadowVariantKey = shadowVariant;
-                        _shadowMaterialCache = glMat;
-                        return glMat;
+                        return GetOrCreateShadowMaterial(shadowVariant);
                     }
                 }
 
@@ -92,8 +105,63 @@ namespace XREngine.Rendering.OpenGL
                 return Renderer.GenericToAPI<GLMaterial>(Engine.Rendering.State.CurrentRenderingPipeline!.InvalidMaterial)!;
             }
 
+            private XRMaterial ResolveDirectionalCascadeShadowMaterial(
+                XRMaterial globalMaterialOverride,
+                XRMaterial? shadowSourceMaterial,
+                uint instances)
+            {
+                bool instancedLayeredOverride =
+                    globalMaterialOverride.DirectionalCascadeShadowMaterialKind == EDirectionalCascadeShadowMaterialKind.InstancedLayered &&
+                    Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass;
+
+                if (instancedLayeredOverride && CanUseDirectionalCascadeInstancedMaterial(shadowSourceMaterial, instances))
+                    return globalMaterialOverride;
+
+                if (globalMaterialOverride.DirectionalCascadeShadowMaterialKind == EDirectionalCascadeShadowMaterialKind.GeometryShader &&
+                    shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == true)
+                {
+                    return globalMaterialOverride;
+                }
+
+                XRMaterial? directionalVariant = shadowSourceMaterial?.GetDirectionalCascadeShadowCasterVariant(useGeometryShader: true);
+                if (directionalVariant is not null)
+                {
+                    directionalVariant.ShadowUniformSourceMaterial = globalMaterialOverride;
+                    return directionalVariant;
+                }
+
+                return globalMaterialOverride;
+            }
+
+            private bool CanUseDirectionalCascadeInstancedMaterial(XRMaterial? shadowSourceMaterial, uint instances)
+            {
+                if (instances != 1u)
+                    return false;
+
+                if (MeshRenderer.MeshDeformEnabled)
+                    return false;
+
+                return shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false;
+            }
+
+            private GLMaterial GetOrCreateShadowMaterial(XRMaterial shadowMaterial)
+            {
+                if (ReferenceEquals(shadowMaterial, _shadowVariantKey) && _shadowMaterialCache is not null)
+                    return _shadowMaterialCache;
+
+                var glMat = (Renderer.GetOrCreateAPIRenderObject(shadowMaterial) as GLMaterial)!;
+                _shadowVariantKey = shadowMaterial;
+                _shadowMaterialCache = glMat;
+                return glMat;
+            }
+
             private static bool UsesPointLightShadowCubemap(XRMaterial material)
                 => material.Textures.Any(texture => texture is XRTextureCube { SamplerName: "ShadowMap" });
+
+            private static bool UsesPointLightShadowDepthOutput(XRMaterial material)
+                => UsesPointLightShadowCubemap(material) ||
+                   material.FragmentShaders.Any(shader =>
+                       shader.Source.FilePath?.EndsWith("PointLightShadowDepth.fs", StringComparison.OrdinalIgnoreCase) == true);
 
             private static bool IsPointLightShadowGeometryPass()
             {
@@ -108,8 +176,9 @@ namespace XREngine.Rendering.OpenGL
             {
                 var renderState = Engine.Rendering.State.RenderingPipelineState;
                 return renderState?.ShadowPass == true
-                    && renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
-                    && globalMaterialOverride.GeometryShaders.Count > 0;
+                    && (renderState.DirectionalCascadeLayeredShadowPass ||
+                    (renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
+                    && globalMaterialOverride.GeometryShaders.Count > 0));
             }
 
             internal bool RequiresTriangleOnlyDrawsForCurrentPass()
@@ -226,7 +295,8 @@ namespace XREngine.Rendering.OpenGL
                     EnsureProgramsMatchMaterialShaderState();
                 }
 
-                GLMaterial material = GetRenderMaterial(materialOverride);
+                GLMaterial material = GetRenderMaterial(materialOverride, instances);
+                uint drawInstances = ResolveDirectionalCascadeLayeredInstanceCount(material.Data, instances);
 
                 if (GetPrograms(material, out var vtx, out var mat))
                 {
@@ -267,6 +337,7 @@ namespace XREngine.Rendering.OpenGL
                     }
 
                     OnSettingUniforms(vtx!, mat!);
+                    SetDirectionalCascadeLayeredVertexUniforms(vtx!, material.Data);
                     material.FinalizeUniformBindings(mat);
                     GLRenderProgram materialProgram = mat!;
                     Renderer.SetDrawDebugContext(
@@ -279,8 +350,8 @@ namespace XREngine.Rendering.OpenGL
                     {
                         using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw"))
                         {
-                            LogBatchedTextDraw("Render draw-submit", instances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
-                            Renderer.RenderMesh(this, false, instances);
+                            LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
+                            Renderer.RenderMesh(this, false, drawInstances);
                         }
                     }
                     finally
@@ -295,6 +366,22 @@ namespace XREngine.Rendering.OpenGL
                     Dbg("GetPrograms failed - render skipped", "Render");
                     LogBatchedTextDraw("Render programs-missing", instances);
                 }
+            }
+
+            private static uint ResolveDirectionalCascadeLayeredInstanceCount(XRMaterial material, uint instances)
+            {
+                if (material.DirectionalCascadeShadowMaterialKind != EDirectionalCascadeShadowMaterialKind.InstancedLayered ||
+                    !Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
+                {
+                    return instances;
+                }
+
+                int layerCount = Math.Clamp(Engine.Rendering.State.DirectionalCascadeShadowLayerCount, 0, 8);
+                if (layerCount <= 1)
+                    return instances;
+
+                ulong expanded = (ulong)instances * (ulong)layerCount;
+                return expanded > uint.MaxValue ? uint.MaxValue : (uint)expanded;
             }
 
             /// <summary>
@@ -349,9 +436,39 @@ namespace XREngine.Rendering.OpenGL
                 materialProgram?.Uniform("TransformId", transformId);
                 vertexProgram.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
                 materialProgram?.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
+                SetDirectionalCascadeLayeredUniforms(vertexProgram);
 
                 vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass || shadowGeometryPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);
+            }
+
+            private static void SetDirectionalCascadeLayeredUniforms(GLRenderProgram vertexProgram)
+            {
+                var state = Engine.Rendering.State.RenderingPipelineState;
+                if (state?.DirectionalCascadeInstancedLayeredShadowPass != true)
+                    return;
+
+                int layerCount = Math.Clamp(state.DirectionalCascadeShadowLayerCount, 0, s_directionalCascadeViewProjectionMatrixUniformNames.Length);
+                vertexProgram.Uniform("CascadeLayerCount", layerCount);
+                for (int i = 0; i < layerCount; i++)
+                {
+                    if (state.TryGetDirectionalCascadeShadowMatrix(i, out Matrix4x4 matrix))
+                        vertexProgram.Uniform(s_directionalCascadeViewProjectionMatrixUniformNames[i], matrix);
+                }
+            }
+
+            private static void SetDirectionalCascadeLayeredVertexUniforms(GLRenderProgram vertexProgram, XRMaterial material)
+            {
+                if (material.DirectionalCascadeShadowMaterialKind != EDirectionalCascadeShadowMaterialKind.InstancedLayered ||
+                    !Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
+                {
+                    return;
+                }
+
+                if (material.HasSettingShadowUniformHandlers)
+                    material.OnSettingShadowUniforms(vertexProgram.Data);
+                else
+                    SetDirectionalCascadeLayeredUniforms(vertexProgram);
             }
 
             /// <summary>

@@ -434,6 +434,9 @@ internal static partial class Engine
             public static float DefaultDepthClearValue => StateData.DefaultDepthClearValue;
             public static bool IsShadowPass => StateData.IsShadowPass;
             public static bool IsStereoPass => RenderingPipelineState?.StereoPass ?? false;
+            public static bool IsDirectionalCascadeLayeredShadowPass => RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false;
+            public static bool IsDirectionalCascadeInstancedLayeredShadowPass => RenderingPipelineState?.DirectionalCascadeInstancedLayeredShadowPass ?? false;
+            public static int DirectionalCascadeShadowLayerCount => RenderingPipelineState?.DirectionalCascadeShadowLayerCount ?? 0;
             public static bool IsSceneCapturePass
             {
                 get => StateData.IsSceneCapturePass;
@@ -451,6 +454,11 @@ internal static partial class Engine
             public static bool ReverseWinding { get; internal set; }
             public static bool ReverseCulling { get; internal set; }
             public static bool HasOvrMultiViewExtension { get; internal set; }
+            public static bool SupportsOpenGLLayeredFramebuffers { get; internal set; }
+            public static bool SupportsOpenGLGeometryShaderLayeredRendering { get; internal set; }
+            public static bool SupportsOpenGLVertexShaderLayeredRendering { get; internal set; }
+            public static bool SupportsOpenGLViewportArray { get; internal set; }
+            public static int MaxOpenGLViewports { get; internal set; } = 1;
             public static bool HasVulkanMultiView { get; internal set; }
             public static bool HasAnyMultiViewExtension => HasOvrMultiViewExtension || HasVulkanMultiView;
             public static bool DebugInstanceRenderingAvailable { get; internal set; } = true;
@@ -463,6 +471,8 @@ internal static partial class Engine
             public static bool HasVulkanCopyMemoryIndirect { get; internal set; }
             public static bool HasVulkanRtxIo { get; internal set; }
             public static bool HasParallelShaderCompile { get; internal set; }
+            public static string OpenGLParallelShaderCompileExtension { get; internal set; } = string.Empty;
+            public static bool OpenGLParallelShaderCompileProbePassed { get; internal set; }
             public static string[] OpenGLExtensions { get; internal set; } = [];
             public static string? OpenGLVendor { get; internal set; }
             public static string? OpenGLRendererName { get; internal set; }
@@ -669,6 +679,7 @@ internal sealed class RuntimeRenderSettings
 {
     private bool _useSpotShadowAtlas = true;
     private bool _useDirectionalShadowAtlas = true;
+    private bool _usePointShadowAtlas = true;
     private uint _shadowAtlasPageSize = 4096u;
     private int _maxShadowAtlasPages = 1;
     private long _maxShadowAtlasMemoryBytes;
@@ -700,6 +711,10 @@ internal sealed class RuntimeRenderSettings
     public bool LogMaterialTextureBindings { get; set; }
     public bool LogMissingShaderSamplers { get; set; }
     public int MaxAsyncShaderProgramsPerFrame { get; set; } = 4;
+    public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy { get; set; } = EOpenGLShaderLinkStrategy.Auto;
+    public int OpenGLShaderCompilerThreadCount { get; set; } = -1;
+    public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true;
+    public int OpenGLParallelShaderCompileProbeTimeoutMs { get; set; } = 25;
     public long MaxShadowAtlasMemoryBytes
     {
         get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
@@ -782,6 +797,14 @@ internal sealed class RuntimeRenderSettings
     public bool UseGlobalBlendshapeWeightsBufferForComputeSkinning { get; set; } = true;
     public bool UseGlobalBoneMatricesBufferForComputeSkinning { get; set; } = true;
     public bool UseIntegerUniformsInShaders { get; set; } = true;
+    public bool UsePointShadowAtlas
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.UsePointShadowAtlas
+            : _usePointShadowAtlas;
+        set => _usePointShadowAtlas = value;
+    }
+
     public bool UseSkinnedBvhRefitOptimize { get; set; } = true;
     public bool UseSpotShadowAtlas
     {
@@ -860,8 +883,8 @@ internal sealed class RuntimeTime
 
 internal sealed class RuntimeEngineTimer
 {
-    public RuntimeTimerFrame Update { get; } = new();
-    public RuntimeTimerFrame Render { get; } = new();
+    public RuntimeTimerFrame Update { get; } = new(ERuntimeTimerFrameKind.Update);
+    public RuntimeTimerFrame Render { get; } = new(ERuntimeTimerFrameKind.Render);
     public event Action? UpdateFrame;
     public event Action? CollectVisible;
     public event Action? SwapBuffers;
@@ -871,10 +894,23 @@ internal sealed class RuntimeEngineTimer
     public void RaiseSwapBuffers() => SwapBuffers?.Invoke();
 }
 
-internal sealed class RuntimeTimerFrame
+internal enum ERuntimeTimerFrameKind
 {
-    public float Delta => (float)RuntimeRenderingHostServices.Current.RenderDeltaSeconds;
-    public long LastTimestampTicks => RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+    Update,
+    Render,
+}
+
+internal sealed class RuntimeTimerFrame(ERuntimeTimerFrameKind kind)
+{
+    public float Delta
+        => (float)(kind == ERuntimeTimerFrameKind.Update
+            ? RuntimeRenderingHostServices.Current.UpdateDeltaSeconds
+            : RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
+
+    public long LastTimestampTicks
+        => kind == ERuntimeTimerFrameKind.Update
+            ? RuntimeRenderingHostServices.Current.LastUpdateTimestampTicks
+            : RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
 }
 
 internal sealed class RuntimePlayMode
